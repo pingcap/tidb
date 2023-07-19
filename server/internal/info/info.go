@@ -14,7 +14,10 @@
 
 package info
 
-import "github.com/pingcap/tidb/domain/infosync"
+import (
+	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/parser/model"
+)
 
 // ClusterServerInfo is used to report cluster servers info when do http request.
 type ClusterServerInfo struct {
@@ -53,4 +56,11 @@ type SchemaTableStorage struct {
 	MaxDataLength int64  `json:"max_data_length"`
 	IndexLength   int64  `json:"index_length"`
 	DataFree      int64  `json:"data_free"`
+}
+
+// DBTableInfo is used to report the database, table information and the current schema version.
+type DBTableInfo struct {
+	DBInfo        *model.DBInfo    `json:"db_info"`
+	TableInfo     *model.TableInfo `json:"table_info"`
+	SchemaVersion int64            `json:"schema_version"`
 }

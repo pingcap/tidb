@@ -16,16 +16,12 @@ package httphandler
 
 import (
 	"bytes"
-	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/http/httputil"
 	"sort"
 	"testing"
@@ -36,13 +32,12 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/server/internal/info"
 	"github.com/pingcap/tidb/server/internal/testutil"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -202,7 +197,7 @@ func TestRegionIndexRangeWithStartNoLimit(t *testing.T) {
 
 func TestRegionsAPI(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 	ts.PrepareData(t)
 	resp, err := ts.FetchStatus("/tables/tidb/t/regions")
@@ -218,13 +213,13 @@ func TestRegionsAPI(t *testing.T) {
 
 	// list region
 	for _, region := range data.RecordRegions {
-		require.True(t, ts.regionContainsTable(t, region.ID, data.TableID))
+		require.True(t, ts.RegionContainsTable(t, region.ID, data.TableID))
 	}
 }
 
 func TestRegionsAPIForClusterIndex(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 	ts.PrepareData(t)
 	resp, err := ts.FetchStatus("/tables/tidb/t/regions")
@@ -259,7 +254,7 @@ func TestRegionsAPIForClusterIndex(t *testing.T) {
 
 func TestRangesAPI(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 	ts.PrepareData(t)
 	resp, err := ts.FetchStatus("/tables/tidb/t/ranges")
@@ -281,7 +276,7 @@ func TestRangesAPI(t *testing.T) {
 
 func TestListTableRegions(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 	ts.PrepareData(t)
 	// Test list table regions with error
@@ -307,7 +302,7 @@ func TestListTableRegions(t *testing.T) {
 
 func TestListTableRanges(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 	ts.PrepareData(t)
 	// Test list table regions with error
@@ -332,7 +327,7 @@ func TestListTableRanges(t *testing.T) {
 
 func TestGetRegionByIDWithError(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 	resp, err := ts.FetchStatus("/regions/xxx")
 	require.NoError(t, err)
@@ -342,7 +337,7 @@ func TestGetRegionByIDWithError(t *testing.T) {
 
 func TestBinlogRecover(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 	binloginfo.EnableSkipBinlogFlag()
 	require.Equal(t, true, binloginfo.IsBinlogSkipped())
@@ -425,7 +420,7 @@ func decodeKeyMvcc(closer io.ReadCloser, t *testing.T, valid bool) {
 
 func TestGetTableMVCC(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	ts.PrepareData(t)
 	defer ts.StopServer(t)
 
@@ -523,7 +518,7 @@ func TestGetTableMVCC(t *testing.T) {
 
 func TestGetMVCCNotFound(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	ts.PrepareData(t)
 	defer ts.StopServer(t)
 	resp, err := ts.FetchStatus("/mvcc/key/tidb/test/1234")
@@ -540,7 +535,7 @@ func TestGetMVCCNotFound(t *testing.T) {
 
 func TestDecodeColumnValue(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	ts.PrepareData(t)
 	defer ts.StopServer(t)
 
@@ -606,7 +601,7 @@ func TestDecodeColumnValue(t *testing.T) {
 
 func TestGetIndexMVCC(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	ts.PrepareData(t)
 	defer ts.StopServer(t)
 
@@ -684,7 +679,7 @@ func TestGetIndexMVCC(t *testing.T) {
 
 func TestGetSettings(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	ts.PrepareData(t)
 	defer ts.StopServer(t)
 	resp, err := ts.FetchStatus("/settings")
@@ -705,7 +700,7 @@ func TestGetSettings(t *testing.T) {
 
 func TestGetSchema(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	ts.PrepareData(t)
 	defer ts.StopServer(t)
 	resp, err := ts.FetchStatus("/schema")
@@ -774,14 +769,14 @@ func TestGetSchema(t *testing.T) {
 
 	resp, err = ts.FetchStatus(fmt.Sprintf("/db-table/%d", userTbl.Meta().ID))
 	require.NoError(t, err)
-	var dbtbl *server.dbTableInfo
+	var dbtbl *info.DBTableInfo
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&dbtbl)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "user", dbtbl.TableInfo.Name.L)
 	require.Equal(t, "mysql", dbtbl.DBInfo.Name.L)
-	se, err := session.CreateSession(ts.store)
+	se, err := session.CreateSession(ts.Store())
 	require.NoError(t, err)
 	require.Equal(t, domain.GetDomain(se.(sessionctx.Context)).InfoSchema().SchemaMetaVersion(), dbtbl.SchemaVersion)
 
@@ -832,7 +827,7 @@ func TestGetSchema(t *testing.T) {
 
 func TestAllHistory(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	ts.PrepareData(t)
 	defer ts.StopServer(t)
 	resp, err := ts.FetchStatus("/ddl/history/?limit=3")
@@ -847,7 +842,7 @@ func TestAllHistory(t *testing.T) {
 	decoder := json.NewDecoder(resp.Body)
 
 	var jobs []*model.Job
-	s, _ := session.CreateSession(ts.server.newTikvHandlerTool().Store.(kv.Storage))
+	s, _ := session.CreateSession(ts.Server().NewTikvHandlerTool().Store.(kv.Storage))
 	defer s.Close()
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
 	txn, _ := store.Begin()
@@ -909,7 +904,7 @@ func dummyRecord() *deadlockhistory.DeadlockRecord {
 
 func TestPprof(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 	retryTime := 100
 	for retry := 0; retry < retryTime; retry++ {
@@ -928,7 +923,7 @@ func TestPprof(t *testing.T) {
 
 func TestHotRegionInfo(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 	resp, err := ts.FetchStatus("/regions/hot")
 	require.NoError(t, err)
@@ -938,7 +933,7 @@ func TestHotRegionInfo(t *testing.T) {
 
 func TestDebugZip(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 	resp, err := ts.FetchStatus("/debug/zip?seconds=1")
 	require.NoError(t, err)
@@ -949,23 +944,9 @@ func TestDebugZip(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 }
 
-func TestCheckCN(t *testing.T) {
-	s := &server.Server{cfg: &config.Config{Security: config.Security{ClusterVerifyCN: []string{"a ", "b", "c"}}}}
-	tlsConfig := &tls.Config{}
-	s.setCNChecker(tlsConfig)
-	require.NotNil(t, tlsConfig.VerifyPeerCertificate)
-	err := tlsConfig.VerifyPeerCertificate(nil, [][]*x509.Certificate{{{Subject: pkix.Name{CommonName: "a"}}}})
-	require.NoError(t, err)
-	err = tlsConfig.VerifyPeerCertificate(nil, [][]*x509.Certificate{{{Subject: pkix.Name{CommonName: "b"}}}})
-	require.NoError(t, err)
-	err = tlsConfig.VerifyPeerCertificate(nil, [][]*x509.Certificate{{{Subject: pkix.Name{CommonName: "d"}}}})
-	require.Error(t, err)
-}
-
 func TestDDLHookHandler(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 	resp, err := ts.FetchStatus("/test/ddl/hook")
 	require.NoError(t, err)
@@ -991,52 +972,10 @@ func TestDDLHookHandler(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
-func TestWriteDBTablesData(t *testing.T) {
-	// No table in a schema.
-	info := infoschema.MockInfoSchema([]*model.TableInfo{})
-	rc := httptest.NewRecorder()
-	tbs := info.SchemaTables(model.NewCIStr("test"))
-	require.Equal(t, 0, len(tbs))
-	server.writeDBTablesData(rc, tbs)
-	var ti []*model.TableInfo
-	decoder := json.NewDecoder(rc.Body)
-	err := decoder.Decode(&ti)
-	require.NoError(t, err)
-	require.Equal(t, 0, len(ti))
-
-	// One table in a schema.
-	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
-	rc = httptest.NewRecorder()
-	tbs = info.SchemaTables(model.NewCIStr("test"))
-	require.Equal(t, 1, len(tbs))
-	server.writeDBTablesData(rc, tbs)
-	decoder = json.NewDecoder(rc.Body)
-	err = decoder.Decode(&ti)
-	require.NoError(t, err)
-	require.Equal(t, 1, len(ti))
-	require.Equal(t, ti[0].ID, tbs[0].Meta().ID)
-	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
-
-	// Two tables in a schema.
-	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
-	rc = httptest.NewRecorder()
-	tbs = info.SchemaTables(model.NewCIStr("test"))
-	require.Equal(t, 2, len(tbs))
-	server.writeDBTablesData(rc, tbs)
-	decoder = json.NewDecoder(rc.Body)
-	err = decoder.Decode(&ti)
-	require.NoError(t, err)
-	require.Equal(t, 2, len(ti))
-	require.Equal(t, ti[0].ID, tbs[0].Meta().ID)
-	require.Equal(t, ti[1].ID, tbs[1].Meta().ID)
-	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
-	require.Equal(t, ti[1].Name.String(), tbs[1].Meta().Name.String())
-}
-
 func TestSetLabels(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
 
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 
 	testUpdateLabels := func(labels, expected map[string]string) {

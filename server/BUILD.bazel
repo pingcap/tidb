@@ -142,6 +142,7 @@ go_test(
         "conn_test.go",
         "driver_tidb_test.go",
         "extract_test.go",
+        "http_handler_test.go",
         "main_test.go",
         "mock_conn_test.go",
         "optimize_trace_test.go",

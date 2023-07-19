@@ -140,7 +140,7 @@ partition by range (a)
 	dbt.MustExec("insert into t values(1.1,'111',1),(2.2,'222',2)")
 }
 
-func (ts *BasicHTTPHandlerTestSuite) regionContainsTable(t *testing.T, regionID uint64, tableID int64) bool {
+func (ts *BasicHTTPHandlerTestSuite) RegionContainsTable(t *testing.T, regionID uint64, tableID int64) bool {
 	resp, err := ts.FetchStatus(fmt.Sprintf("/regions/%d", regionID))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)

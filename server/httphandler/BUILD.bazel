@@ -8,7 +8,7 @@ go_test(
         "http_handler_test.go",
     ],
     flaky = True,
-    shard_count = 34,
+    shard_count = 33,
     deps = [
         "//config",
         "//ddl",

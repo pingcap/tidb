@@ -1918,13 +1918,6 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	httputil.WriteData(w, clusterInfo)
 }
 
-// dbTableInfo is used to report the database, table information and the current schema version.
-type dbTableInfo struct {
-	DBInfo        *model.DBInfo    `json:"db_info"`
-	TableInfo     *model.TableInfo `json:"table_info"`
-	SchemaVersion int64            `json:"schema_version"`
-}
-
 // ServeHTTP handles request of database information and table information by tableID.
 func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
@@ -1941,7 +1934,7 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	dbTblInfo := dbTableInfo{
+	dbTblInfo := info.DBTableInfo{
 		SchemaVersion: schema.SchemaMetaVersion(),
 	}
 	tbl, ok := schema.TableByID(int64(physicalID))

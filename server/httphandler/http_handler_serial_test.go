@@ -52,7 +52,7 @@ import (
 
 func TestPostSettings(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	ts.PrepareData(t)
 	defer ts.StopServer(t)
 	se, err := session.CreateSession(ts.Store())
@@ -195,7 +195,7 @@ func TestPostSettings(t *testing.T) {
 
 func TestAllServerInfo(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 	resp, err := ts.FetchStatus("/info/all")
 	require.NoError(t, err)
@@ -229,7 +229,7 @@ func TestAllServerInfo(t *testing.T) {
 
 func TestRegionsFromMeta(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 	resp, err := ts.FetchStatus("/regions/meta")
 	require.NoError(t, err)
@@ -255,7 +255,7 @@ func TestRegionsFromMeta(t *testing.T) {
 
 func TestTiFlashReplica(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	ts.PrepareData(t)
 	defer ts.StopServer(t)
 
@@ -439,7 +439,7 @@ func TestFailpointHandler(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
 
 	// start server without enabling failpoint integration
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 	resp, err := ts.FetchStatus("/fail/")
 	require.NoError(t, err)
@@ -450,7 +450,7 @@ func TestFailpointHandler(t *testing.T) {
 	// enable failpoint integration and start server
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/enableTestAPI", "return"))
 	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/enableTestAPI")) }()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	resp, err = ts.FetchStatus("/fail/")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -464,7 +464,7 @@ func TestTestHandler(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
 
 	// start server without enabling failpoint integration
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 	resp, err := ts.FetchStatus("/test")
 	require.NoError(t, err)
@@ -475,7 +475,7 @@ func TestTestHandler(t *testing.T) {
 	// enable failpoint integration and start server
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/enableTestAPI", "return"))
 	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/enableTestAPI")) }()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 
 	resp, err = ts.FetchStatus("/test/gc/gc")
 	require.NoError(t, err)
@@ -516,7 +516,7 @@ func TestTestHandler(t *testing.T) {
 
 func TestServerInfo(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 	resp, err := ts.FetchStatus("/info")
 	require.NoError(t, err)
@@ -545,7 +545,7 @@ func TestServerInfo(t *testing.T) {
 
 func TestGetSchemaStorage(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	ts.PrepareData(t)
 	defer ts.StopServer(t)
 
@@ -588,7 +588,7 @@ func TestGetSchemaStorage(t *testing.T) {
 
 func TestTTL(t *testing.T) {
 	ts := testutil.CreateBasicHTTPHandlerTestSuite()
-	ts.StartServer(t)
+	ts.StartServer(t, nil)
 	defer ts.StopServer(t)
 
 	db, err := sql.Open("mysql", ts.GetDSN())
