@@ -524,10 +524,11 @@ func TestWaitTTLJobFinish(t *testing.T) {
 		Times(10)
 	adapter.On("GetJob", hook.ctx, data.TableID, data.PhysicalID, timer.EventID).
 		Return(nil, errors.New("mockErr")).
-		Once().
 		Run(func(_ mock.Arguments) { hook.cancel() })
 	hook.wg.Add(1)
+	start := time.Now()
 	hook.waitJobFinished(logutil.BgLogger(), data, timer.ID, eventID, eventStart)
+	require.Less(t, time.Since(start), 10*time.Second)
 	adapter.AssertExpectations(t)
 	checkTTLTimerNotChange(t, cli, timer)
 }
