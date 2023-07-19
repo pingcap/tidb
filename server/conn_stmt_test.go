@@ -32,8 +32,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/server/internal"
 	"github.com/pingcap/tidb/server/internal/column"
+	"github.com/pingcap/tidb/server/internal/pocketio"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/arena"
@@ -395,7 +395,7 @@ func getExpectOutput(t *testing.T, originalConn *mockConn, writeFn func(conn *cl
 	conn := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		capability: originalConn.capability,
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(buf)),
+		pkt:        pocketio.NewPacketIOForTest(bufio.NewWriter(buf)),
 	}
 	conn.pkt.SetSequence(originalConn.pkt.Sequence())
 	conn.setCtx(originalConn.getCtx())

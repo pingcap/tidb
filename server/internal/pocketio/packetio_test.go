@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package internal
+package pocketio
 
 import (
 	"bufio"
@@ -23,7 +23,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/server/internal/testutil"
+	"github.com/pingcap/tidb/server/internal/bytesconn"
 	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/stretchr/testify/require"
 )
@@ -68,7 +68,7 @@ func TestPacketIORead(t *testing.T) {
 		_, err := inBuffer.Write([]byte{0x01, 0x00, 0x00, 0x00, 0x01})
 		require.NoError(t, err)
 		// Test read one packet
-		brc := util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
+		brc := util.NewBufferedReadConn(&bytesconn.BytesConn{Buffer: inBuffer})
 		pkt := NewPacketIO(brc)
 		readBytes, err := pkt.ReadPacket()
 		require.NoError(t, err)
@@ -90,7 +90,7 @@ func TestPacketIORead(t *testing.T) {
 		_, err = inBuffer.Write(buf)
 		require.NoError(t, err)
 		// Test read multiple packets
-		brc = util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
+		brc = util.NewBufferedReadConn(&bytesconn.BytesConn{Buffer: inBuffer})
 		pkt = NewPacketIO(brc)
 		readBytes, err = pkt.ReadPacket()
 		require.NoError(t, err)
@@ -108,7 +108,7 @@ func TestPacketIORead(t *testing.T) {
 
 		require.NoError(t, err)
 		// Test read one packet
-		brc := util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
+		brc := util.NewBufferedReadConn(&bytesconn.BytesConn{Buffer: inBuffer})
 		pkt := NewPacketIO(brc)
 		pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
 		readBytes, err := pkt.ReadPacket()
@@ -140,7 +140,7 @@ func TestPacketIORead(t *testing.T) {
 
 		require.NoError(t, err)
 		// Test read one packet
-		brc := util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
+		brc := util.NewBufferedReadConn(&bytesconn.BytesConn{Buffer: inBuffer})
 		pkt := NewPacketIO(brc)
 		pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
 		readBytes, err := pkt.ReadPacket()
@@ -177,7 +177,7 @@ func TestPacketIORead(t *testing.T) {
 
 		require.NoError(t, err)
 		// Test read one packet
-		brc := util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
+		brc := util.NewBufferedReadConn(&bytesconn.BytesConn{Buffer: inBuffer})
 		pkt := NewPacketIO(brc)
 		pkt.SetCompressionAlgorithm(mysql.CompressionZstd)
 		readBytes, err := pkt.ReadPacket()

@@ -6,7 +6,6 @@ go_library(
         "http_handler.go",
         "server.go",
         "tcp.go",
-        "testutil.go",
     ],
     importpath = "github.com/pingcap/tidb/server/internal/testutil",
     visibility = ["//server:__subpackages__"],

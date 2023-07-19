@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/server/internal"
+	"github.com/pingcap/tidb/server/internal/pocketio"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
@@ -124,7 +124,7 @@ func CreateMockConn(t *testing.T, server *Server) MockConn {
 		collation:    tmysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(1024),
 		chunkAlloc:   chunk.NewAllocator(),
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          pocketio.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		extensions:   tc.GetExtensions(),
 	}
 	cc.setCtx(tc)
