@@ -525,6 +525,7 @@ type TableInfo struct {
 	ETLStoragePath string
 	ETLOutputNames []string
 	ETLOutputFieldTypes  []*types.FieldType 
+	ETLPKColNames []string
 }
 
 

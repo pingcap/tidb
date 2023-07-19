@@ -4622,10 +4622,11 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			v.OutputFieldTypes = append(v.OutputFieldTypes, col.RetType)
 		}
 
-		dsNames := make(map[string]struct{})
+		dsNames := make(map[string]string)
 		dsNames = getDataSourceNames(dsNames, plan.(LogicalPlan))
 		for name := range dsNames {
 			v.DataSourceNames = append(v.DataSourceNames, name)
+			v.PKNames = append(v.PKNames, dsNames[name])
 		}
 	case *ast.CreateTableStmt:
 		if v.TemporaryKeyword != ast.TemporaryNone {
@@ -4846,14 +4847,14 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 	return p, nil
 }
 
-func getDataSourceNames(dsNames map[string]struct{}, plan LogicalPlan) map[string]struct{} {
+func getDataSourceNames(dsNames map[string]string, plan LogicalPlan) map[string]string {
 	children := plan.Children()
 	if len(children) == 0 {
 		return dsNames
 	}
 	for _, child := range children {
 		if ds, ok := child.(*DataSource); ok {
-			dsNames[ds.DBName.O+"."+ds.tableInfo.Name.O] = struct{}{}
+			dsNames[ds.DBName.O+"."+ds.tableInfo.Name.O] = ds.tableInfo.GetPkColInfo().Name.L
 		} else {
 			dsNames = getDataSourceNames(dsNames, child)
 		}

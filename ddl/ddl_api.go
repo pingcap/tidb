@@ -21,9 +21,13 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
 	"fmt"
 	"io/ioutil"
 	"math"
+	"math/rand"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -122,6 +126,7 @@ func (d *ddl) CreateETL(ctx sessionctx.Context, s *ast.CreateETLStmt) error {
 	tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 	tblInfo.ETLOutputNames = s.OutputNames
 	tblInfo.ETLOutputFieldTypes = s.OutputFieldTypes
+	tblInfo.ETLPKColNames = s.PKNames
 
 	onExist := OnExistError
 	if s.IfNotExists {
@@ -142,8 +147,16 @@ func (d *ddl) CreateETL(ctx sessionctx.Context, s *ast.CreateETLStmt) error {
 	sb = writeDemoFlinkT(sb, tblInfo)
 	sb = writeDemoFlinkTInc(sb, tblInfo)
 	sb = writeDemoHudiTInsert(sb, tblInfo)
-	writeTemplateFile(sb)
-
+	etlJobID := NewSHA1Hash()
+	templateFilePath := fmt.Sprintf("/tmp/%s.template", etlJobID)
+	writeTemplateFile(templateFilePath, sb)
+	logutil.BgLogger().Info("template file and etlJobID", zap.String("templateFilePath", templateFilePath), zap.String("etlJobID", etlJobID))
+	// hard code the table name
+	sinkTaskDesc, err := startSinkTask(etlJobID, s.Table.Schema.L, "t", templateFilePath)
+	if err != nil {
+		return err
+	}
+	logutil.BgLogger().Info("sinkTaskDesc", zap.String("sinkTaskDesc", sinkTaskDesc))
 	return d.CreateTableWithInfo(ctx, schema.Name, tblInfo, onExist)
 }
 
@@ -158,6 +171,12 @@ func writeTableDefinition(sb *strings.Builder, tblInfo *model.TableInfo, engineT
 		if strings.Contains(tpStr, "int") {
 			tpStr = "int"
 		}
+		for _, pkname := range tblInfo.ETLPKColNames {
+			if name == pkname {
+				tpStr += " primary key"
+			}
+		}
+
 		s := fmt.Sprintf("  %s %s,\n", name, tpStr)
 		if i == len(tblInfo.ETLOutputNames)-1 {
 			s = fmt.Sprintf("  %s %s\n", name, tpStr)
@@ -235,8 +254,8 @@ func writeDemoHudiTInsert(sb *strings.Builder, tblInfo *model.TableInfo) *string
 	return sb
 }
 
-func writeTemplateFile(sb *strings.Builder) error {
-	filePath := "./flink.sql.template"
+func writeTemplateFile(templateFilePath string, sb *strings.Builder) error {
+	filePath := templateFilePath
 	text := sb.String()
 
 	// 将文本内容写入文件
@@ -247,6 +266,63 @@ func writeTemplateFile(sb *strings.Builder) error {
 	logutil.BgLogger().Warn("write template file success")
 
 	return nil
+}
+
+// NewSHA1Hash generates a new SHA1 hash based on
+// a random number of characters.
+func NewSHA1Hash(n ...int) string {
+	noRandomCharacters := 32
+
+	if len(n) > 0 {
+		noRandomCharacters = n[0]
+	}
+
+	randString := RandomString(noRandomCharacters)
+
+	hash := sha1.New()
+	hash.Write([]byte(randString))
+	bs := hash.Sum(nil)
+
+	return fmt.Sprintf("%x", bs)
+}
+
+var characterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+
+// RandomString generates a random string of n length
+func RandomString(n int) string {
+	b := make([]rune, n)
+	for i := range b {
+		b[i] = characterRunes[rand.Intn(len(characterRunes))]
+	}
+	return string(b)
+}
+
+func startSinkTask(etlJobID, dbName, tblName, templateFilePath string) (string, error) {
+	sink_task_desc := fmt.Sprintf(`etl%s.5.%s.%s`, etlJobID, dbName, tblName)
+	setupDemoBinPath := "/home/xhy/Development/workspace/htap/__tmp/setup-demo.py"
+	cdcBinPath := "/home/xhy/Development/tiup-cluster/tidb-deploy/cdc-8300/bin/cdc"
+	ticdcAddress := "127.0.0.1:8300"
+	tidbAddress := "127.0.0.1:4000"
+	dumplingBinPath := "/home/xhy/.tiup/components/dumpling/v7.2.0/dumpling"
+	dumplingTarPath := "/home/xhy/Development/tiup-cluster"
+	cmd := fmt.Sprintf("sudo %s --cmd sink_task --sink_task_desc=%s --sink_task_flink_schema_path %s --cdc_bin_path %s --ticdc_addr %s --tidb_addr %s --dumpling_bin_path %s --dumpling_tar_path %s", setupDemoBinPath, sink_task_desc, templateFilePath, cdcBinPath, ticdcAddress, tidbAddress, dumplingBinPath, dumplingTarPath)
+
+	logutil.BgLogger().Warn("start sink task", zap.String("cmd", cmd))
+	command := exec.Command("bash", "-c", cmd)
+
+	// 设置命令的输出和错误输出流
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+
+	// 执行命令
+	err := command.Run()
+	if err != nil {
+		cmd = fmt.Sprintf("sudo /home/xhy/Development/workspace/htap/__tmp/setup-demo.py --cmd rm_all_jobs --cdc_bin_path /home/xhy/Development/tiup-cluster/tidb-deploy/cdc-8300/bin/cdc --ticdc_addr 127.0.0.1:8300 --tidb_addr 127.0.0.1:4000 --dumpling_bin_path /home/xhy/.tiup/components/dumpling/v7.2.0/dumpling")
+		logutil.BgLogger().Warn("rm all jobs", zap.String("cmd", cmd))
+		command = exec.Command("bash", "-c", cmd)
+		err = command.Run()
+	}
+	return sink_task_desc, err
 }
 
 func (d *ddl) CreateExternalTable(ctx sessionctx.Context, s *ast.CreateExternalTableStmt) error {

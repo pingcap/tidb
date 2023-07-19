@@ -141,7 +141,7 @@ type CreateETLStmt struct {
 	OutputNames []string
 	OutputFieldTypes []*types.FieldType
 	DataSourceNames []string
-
+	PKNames []string
 }
 
 func (n *CreateETLStmt) Restore(ctx *format.RestoreCtx) error {
