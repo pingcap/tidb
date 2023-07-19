@@ -61,18 +61,10 @@ func (m *MapCache) Del(k int64) {
 
 // Cost implements statsCacheInner
 func (m *MapCache) Cost() int64 {
-	return m.memUsage
-}
-
-// Keys implements statsCacheInner
-func (m *MapCache) Keys() []int64 {
-	ks := make([]int64, 0, len(m.tables))
 	for _, table := range m.tables {
-		table.Iterate(func(k int64, _ *statistics.Table) {
-			ks = append(ks, k)
-		})
+		m.memUsage += table.FreshMemUsage()
 	}
-	return ks
+	return m.memUsage
 }
 
 // Values implements statsCacheInner
@@ -86,17 +78,6 @@ func (m *MapCache) Values() []*statistics.Table {
 	return vs
 }
 
-// Map implements statsCacheInner
-func (m *MapCache) Map() map[int64]*statistics.Table {
-	t := make(map[int64]*statistics.Table, len(m.tables))
-	for _, table := range m.tables {
-		table.Iterate(func(k int64, v *statistics.Table) {
-			t[k] = v
-		})
-	}
-	return t
-}
-
 // Len implements statsCacheInner
 func (m *MapCache) Len() int {
 	var s int
@@ -104,13 +85,6 @@ func (m *MapCache) Len() int {
 		s += m.tables[idx].Len()
 	}
 	return s
-}
-
-// FreshMemUsage implements statsCacheInner
-func (m *MapCache) FreshMemUsage() {
-	for _, table := range m.tables {
-		m.memUsage += table.FreshMemUsage()
-	}
 }
 
 // Copy implements statsCacheInner
