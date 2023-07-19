@@ -205,6 +205,17 @@ func WithConnID(ctx context.Context, connID uint64) context.Context {
 	return context.WithValue(ctx, CtxLogKey, logger.With(zap.Uint64("conn", connID)))
 }
 
+// WithCategory attaches category to context.
+func WithCategory(ctx context.Context, category string) context.Context {
+	var logger *zap.Logger
+	if ctxLogger, ok := ctx.Value(CtxLogKey).(*zap.Logger); ok {
+		logger = ctxLogger
+	} else {
+		logger = log.L()
+	}
+	return context.WithValue(ctx, CtxLogKey, logger.With(zap.String("category", category)))
+}
+
 // WithTraceLogger attaches trace identifier to context
 func WithTraceLogger(ctx context.Context, connID uint64) context.Context {
 	var logger *zap.Logger

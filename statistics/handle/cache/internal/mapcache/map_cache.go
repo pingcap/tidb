@@ -35,9 +35,8 @@ func (c cacheItem) copy() cacheItem {
 
 // MapCache is a cache based on map.
 type MapCache struct {
-	tables               map[int64]cacheItem
-	memUsage             int64
-	maxTableStatsVersion uint64
+	tables   map[int64]cacheItem
+	memUsage int64
 }
 
 // NewMapCache creates a new map cache.
@@ -48,27 +47,14 @@ func NewMapCache() *MapCache {
 	}
 }
 
-// GetByQuery implements StatsCacheInner
-func (m *MapCache) GetByQuery(k int64) (*statistics.Table, bool) {
-	return m.Get(k)
-}
-
 // Get implements StatsCacheInner
-func (m *MapCache) Get(k int64) (*statistics.Table, bool) {
+func (m *MapCache) Get(k int64, _ bool) (*statistics.Table, bool) {
 	v, ok := m.tables[k]
 	return v.value, ok
 }
 
-// PutByQuery implements StatsCacheInner
-func (m *MapCache) PutByQuery(k int64, v *statistics.Table) {
-	m.Put(k, v)
-}
-
 // Put implements StatsCacheInner
-func (m *MapCache) Put(k int64, v *statistics.Table) {
-	if v.Version > m.maxTableStatsVersion {
-		m.maxTableStatsVersion = v.Version
-	}
+func (m *MapCache) Put(k int64, v *statistics.Table, _ bool) {
 	item, ok := m.tables[k]
 	if ok {
 		oldCost := item.cost
@@ -122,35 +108,16 @@ func (m *MapCache) Values() []*statistics.Table {
 	return vs
 }
 
-// Map implements StatsCacheInner
-func (m *MapCache) Map() map[int64]*statistics.Table {
-	t := make(map[int64]*statistics.Table, len(m.tables))
-	for k, v := range m.tables {
-		t[k] = v.value
-	}
-	return t
-}
-
 // Len implements StatsCacheInner
 func (m *MapCache) Len() int {
 	return len(m.tables)
 }
 
-// FreshMemUsage implements StatsCacheInner
-func (m *MapCache) FreshMemUsage() {
-	for _, v := range m.tables {
-		oldCost := v.cost
-		newCost := v.value.MemoryUsage().TotalMemUsage
-		m.memUsage += newCost - oldCost
-	}
-}
-
 // Copy implements StatsCacheInner
 func (m *MapCache) Copy() internal.StatsCacheInner {
 	newM := &MapCache{
-		tables:               make(map[int64]cacheItem, len(m.tables)),
-		memUsage:             m.memUsage,
-		maxTableStatsVersion: m.maxTableStatsVersion,
+		tables:   make(map[int64]cacheItem, len(m.tables)),
+		memUsage: m.memUsage,
 	}
 	for k, v := range m.tables {
 		newM.tables[k] = v.copy()
@@ -164,9 +131,4 @@ func (*MapCache) SetCapacity(int64) {}
 // Front implements StatsCacheInner
 func (*MapCache) Front() int64 {
 	return 0
-}
-
-// Version implements StatsCacheInner
-func (m *MapCache) Version() uint64 {
-	return m.maxTableStatsVersion
 }

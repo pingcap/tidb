@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -48,6 +50,8 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 )
 
 func TestSchemaCheckerSQL(t *testing.T) {
@@ -2433,4 +2437,35 @@ func TestSQLModeOp(t *testing.T) {
 
 	a = mysql.SetSQLMode(s, mysql.ModeAllowInvalidDates)
 	require.Equal(t, mysql.ModeNoBackslashEscapes|mysql.ModeOnlyFullGroupBy|mysql.ModeAllowInvalidDates, a)
+}
+
+func TestRequestSource(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.MockTiKV))
+	tk := testkit.NewTestKit(t, store)
+	withCheckInterceptor := func(source string) interceptor.RPCInterceptor {
+		return interceptor.NewRPCInterceptor("kv-request-source-verify", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
+			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+				requestSource := ""
+				switch r := req.Req.(type) {
+				case *kvrpcpb.PrewriteRequest:
+					requestSource = r.GetContext().GetRequestSource()
+				case *kvrpcpb.CommitRequest:
+					requestSource = r.GetContext().GetRequestSource()
+				case *coprocessor.Request:
+					requestSource = r.GetContext().GetRequestSource()
+				}
+				require.Equal(t, source, requestSource)
+				return next(target, req)
+			}
+		})
+	}
+	ctx := context.Background()
+	tk.MustExecWithContext(ctx, "use test")
+	tk.MustExecWithContext(ctx, "create table t(a int primary key, b int)")
+	tk.MustExecWithContext(ctx, "set @@tidb_request_source_type = 'lightning'")
+	tk.MustQueryWithContext(ctx, "select @@tidb_request_source_type").Check(testkit.Rows("lightning"))
+	insertCtx := interceptor.WithRPCInterceptor(context.Background(), withCheckInterceptor("external_Insert_lightning"))
+	tk.MustExecWithContext(insertCtx, "insert into t values(1, 1)")
+	selectCtx := interceptor.WithRPCInterceptor(context.Background(), withCheckInterceptor("external_Select_lightning"))
+	tk.MustExecWithContext(selectCtx, "select count(*) from t;")
 }

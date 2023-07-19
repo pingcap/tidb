@@ -1133,13 +1133,14 @@ const (
 	ErrPausedDDLJob       = 8262
 
 	// Resource group errors.
-	ErrResourceGroupExists                  = 8248
-	ErrResourceGroupNotExists               = 8249
-	ErrResourceGroupSupportDisabled         = 8250
-	ErrResourceGroupConfigUnavailable       = 8251
-	ErrResourceGroupThrottled               = 8252
-	ErrResourceGroupQueryRunawayInterrupted = 8253
-	ErrResourceGroupQueryRunawayQuarantine  = 8254
+	ErrResourceGroupExists                    = 8248
+	ErrResourceGroupNotExists                 = 8249
+	ErrResourceGroupSupportDisabled           = 8250
+	ErrResourceGroupConfigUnavailable         = 8251
+	ErrResourceGroupThrottled                 = 8252
+	ErrResourceGroupQueryRunawayInterrupted   = 8253
+	ErrResourceGroupQueryRunawayQuarantine    = 8254
+	ErrResourceGroupInvalidBackgroundTaskName = 8255
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

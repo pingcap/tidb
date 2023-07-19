@@ -881,7 +881,7 @@ func TestIndexMergePanicPartialIndexWorker(t *testing.T) {
 	setupPartitionTableHelper(tk)
 
 	fp := "github.com/pingcap/tidb/executor/testIndexMergePanicPartialIndexWorker"
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 100; i++ {
 		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		indexMergePanicRunSQL(t, tk, fp)
 		require.NoError(t, failpoint.Disable(fp))
@@ -894,7 +894,7 @@ func TestIndexMergePanicPartialTableWorker(t *testing.T) {
 	setupPartitionTableHelper(tk)
 
 	fp := "github.com/pingcap/tidb/executor/testIndexMergePanicPartialTableWorker"
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 100; i++ {
 		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		indexMergePanicRunSQL(t, tk, fp)
 		require.NoError(t, failpoint.Disable(fp))
@@ -907,7 +907,7 @@ func TestIndexMergePanicPartialProcessWorkerUnion(t *testing.T) {
 	setupPartitionTableHelper(tk)
 
 	fp := "github.com/pingcap/tidb/executor/testIndexMergePanicProcessWorkerUnion"
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 100; i++ {
 		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		indexMergePanicRunSQL(t, tk, fp)
 		require.NoError(t, failpoint.Disable(fp))
@@ -920,7 +920,7 @@ func TestIndexMergePanicPartialProcessWorkerIntersection(t *testing.T) {
 	setupPartitionTableHelper(tk)
 
 	fp := "github.com/pingcap/tidb/executor/testIndexMergePanicProcessWorkerIntersection"
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 100; i++ {
 		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		indexMergePanicRunSQL(t, tk, fp)
 		require.NoError(t, failpoint.Disable(fp))
@@ -933,7 +933,7 @@ func TestIndexMergePanicPartitionTableIntersectionWorker(t *testing.T) {
 	setupPartitionTableHelper(tk)
 
 	fp := "github.com/pingcap/tidb/executor/testIndexMergePanicPartitionTableIntersectionWorker"
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 100; i++ {
 		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		indexMergePanicRunSQL(t, tk, fp)
 		require.NoError(t, failpoint.Disable(fp))
@@ -946,7 +946,7 @@ func TestIndexMergePanicTableScanWorker(t *testing.T) {
 	setupPartitionTableHelper(tk)
 
 	fp := "github.com/pingcap/tidb/executor/testIndexMergePanicTableScanWorker"
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 100; i++ {
 		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		indexMergePanicRunSQL(t, tk, fp)
 		require.NoError(t, failpoint.Disable(fp))

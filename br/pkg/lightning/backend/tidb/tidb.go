@@ -276,12 +276,29 @@ var _ backend.Backend = (*tidbBackend)(nil)
 //
 // The backend does not take ownership of `db`. Caller should close `db`
 // manually after the backend expired.
-func NewTiDBBackend(ctx context.Context, db *sql.DB, onDuplicate string, errorMgr *errormanager.ErrorManager) backend.Backend {
-	switch onDuplicate {
-	case config.ReplaceOnDup, config.IgnoreOnDup, config.ErrorOnDup:
-	default:
-		log.FromContext(ctx).Warn("unsupported action on duplicate, overwrite with `replace`")
+func NewTiDBBackend(
+	ctx context.Context,
+	db *sql.DB,
+	conflict config.Conflict,
+	errorMgr *errormanager.ErrorManager,
+) backend.Backend {
+	var onDuplicate string
+	switch conflict.Strategy {
+	case config.ErrorOnDup:
+		onDuplicate = config.ErrorOnDup
+	case config.ReplaceOnDup:
 		onDuplicate = config.ReplaceOnDup
+	case config.IgnoreOnDup:
+		if conflict.MaxRecordRows == 0 {
+			onDuplicate = config.IgnoreOnDup
+		} else {
+			// need to stop batch insert on error and fall back to row by row insert
+			// to record the row
+			onDuplicate = config.ErrorOnDup
+		}
+	default:
+		log.FromContext(ctx).Warn("unsupported conflict strategy, overwrite with `error`")
+		onDuplicate = config.ErrorOnDup
 	}
 	return &tidbBackend{
 		db:          db,
@@ -604,7 +621,7 @@ rowLoop:
 				if err = be.WriteRowsToDB(ctx, tableName, columnNames, r); err != nil {
 					// If the error is not nil, it means we reach the max error count in the non-batch mode.
 					// For now, we will treat like maxErrorCount is always 0. So we will just return if any error occurs.
-					return errors.Annotatef(err, "[%s] write rows reach max error count %d", tableName, 0)
+					return errors.Annotatef(err, "[%s] write rows exceed conflict threshold", tableName)
 				}
 				continue rowLoop
 			default:
@@ -701,57 +718,75 @@ func (be *tidbBackend) buildStmt(tableName string, columnNames []string) *string
 }
 
 func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tableName string, batch bool) error {
+stmtLoop:
 	for _, stmtTask := range stmtTasks {
+		var (
+			result sql.Result
+			err    error
+		)
 		for i := 0; i < writeRowsMaxRetryTimes; i++ {
 			stmt := stmtTask.stmt
-			_, err := be.db.ExecContext(ctx, stmt)
-			if err != nil {
-				if !common.IsContextCanceledError(err) {
-					log.FromContext(ctx).Error("execute statement failed",
-						zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.String(stmt)), zap.Error(err))
+			result, err = be.db.ExecContext(ctx, stmt)
+			if err == nil {
+				affected, err2 := result.RowsAffected()
+				if err2 != nil {
+					// should not happen
+					return errors.Trace(err2)
 				}
-				// It's batch mode, just return the error.
-				if batch {
-					return errors.Trace(err)
+				diff := int64(len(stmtTask.rows)) - affected
+				if diff < 0 {
+					diff = -diff
 				}
-				// Retry the non-batch insert here if this is not the last retry.
-				if common.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
-					continue
+				if diff > 0 {
+					if err2 = be.errorMgr.RecordDuplicateCount(diff); err2 != nil {
+						return err2
+					}
 				}
-				firstRow := stmtTask.rows[0]
+				continue stmtLoop
+			}
 
-				if isDupEntryError(err) {
-					// rowID is ignored in tidb backend
-					err = be.errorMgr.RecordDuplicate(
-						ctx,
-						log.FromContext(ctx),
-						tableName,
-						firstRow.path,
-						firstRow.offset,
-						err.Error(),
-						0,
-						firstRow.insertStmt,
-					)
-				} else {
-					err = be.errorMgr.RecordTypeError(
-						ctx,
-						log.FromContext(ctx),
-						tableName,
-						firstRow.path,
-						firstRow.offset,
-						firstRow.insertStmt,
-						err,
-					)
-				}
-				if err == nil {
-					// max-error not yet reached (error consumed by errorMgr), proceed to next stmtTask.
-					break
-				}
+			if !common.IsContextCanceledError(err) {
+				log.FromContext(ctx).Error("execute statement failed",
+					zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.String(stmt)), zap.Error(err))
+			}
+			// It's batch mode, just return the error. Caller will fall back to row-by-row mode.
+			if batch {
 				return errors.Trace(err)
 			}
-			// No error, continue the next stmtTask.
-			break
+			if !common.IsRetryableError(err) {
+				break
+			}
 		}
+
+		firstRow := stmtTask.rows[0]
+
+		if isDupEntryError(err) {
+			// rowID is ignored in tidb backend
+			err = be.errorMgr.RecordDuplicate(
+				ctx,
+				log.FromContext(ctx),
+				tableName,
+				firstRow.path,
+				firstRow.offset,
+				err.Error(),
+				0,
+				firstRow.insertStmt,
+			)
+		} else {
+			err = be.errorMgr.RecordTypeError(
+				ctx,
+				log.FromContext(ctx),
+				tableName,
+				firstRow.path,
+				firstRow.offset,
+				firstRow.insertStmt,
+				err,
+			)
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// max-error not yet reached (error consumed by errorMgr), proceed to next stmtTask.
 	}
 	failpoint.Inject("FailIfImportedSomeRows", func() {
 		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
