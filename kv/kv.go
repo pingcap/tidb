@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/trxevents"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -75,8 +76,8 @@ type Retriever interface {
 	// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 	// The returned iterator will iterate from greater key to smaller key.
 	// If k is nil, the returned iterator will be positioned at the last key.
-	// TODO: Add lower bound limit
-	IterReverse(k Key) (Iterator, error)
+	// It yields only keys that >= lowerBound. If lowerBound is nil, it means the lowerBound is unbounded.
+	IterReverse(k, lowerBound Key) (Iterator, error)
 }
 
 // EmptyIterator is an iterator without any entry
@@ -109,7 +110,7 @@ func (*EmptyRetriever) Get(_ context.Context, _ Key) ([]byte, error) {
 func (*EmptyRetriever) Iter(_ Key, _ Key) (Iterator, error) { return &EmptyIterator{}, nil }
 
 // IterReverse creates a reversed Iterator. Always return EmptyIterator for this retriever
-func (*EmptyRetriever) IterReverse(_ Key) (Iterator, error) {
+func (*EmptyRetriever) IterReverse(_ Key, _ Key) (Iterator, error) {
 	return &EmptyIterator{}, nil
 }
 
@@ -175,6 +176,8 @@ type MemBuffer interface {
 	SnapshotGetter() Getter
 	// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
 	SnapshotIter(k, upperbound Key) Iterator
+	// SnapshotIterReverse returns a reverse Iterator for a snapshot of MemBuffer.
+	SnapshotIterReverse(k, lowerBound Key) Iterator
 
 	// Len returns the number of entries in the DB.
 	Len() int
@@ -308,6 +311,8 @@ type ClientSendOption struct {
 	EnabledRateLimitAction     bool
 	EventCb                    trxevents.EventCallback
 	EnableCollectExecutionInfo bool
+	TiFlashReplicaRead         tiflash.ReplicaRead
+	AppendWarning              func(warn error)
 }
 
 // ReqTypes.
@@ -642,7 +647,7 @@ type SnapshotInterceptor interface {
 	// OnIter intercepts Iter operation for Snapshot
 	OnIter(snap Snapshot, k Key, upperBound Key) (Iterator, error)
 	// OnIterReverse intercepts IterReverse operation for Snapshot
-	OnIterReverse(snap Snapshot, k Key) (Iterator, error)
+	OnIterReverse(snap Snapshot, k Key, lowerBound Key) (Iterator, error)
 }
 
 // BatchGetter is the interface for BatchGet.

@@ -17,6 +17,7 @@ package core
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -268,9 +269,8 @@ func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
 	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
 		return nil, err
 	}
-	if cloned.TablePlans, err = clonePhysicalPlan(p.TablePlans); err != nil {
-		return nil, err
-	}
+	// TablePlans are actually the flattened plans in tablePlan, so can't copy them, just need to extract from tablePlan
+	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
 	return cloned, nil
 }
 
@@ -1058,11 +1058,11 @@ type PhysicalProjection struct {
 func (p *PhysicalProjection) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalProjection)
 	*cloned = *p
-	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalPlan = *base
+	cloned.physicalSchemaProducer = *base
 	cloned.Exprs = util.CloneExprs(p.Exprs)
 	return cloned, err
 }
@@ -1616,12 +1616,15 @@ func (p PhysicalExpand) Init(ctx sessionctx.Context, stats *property.StatsInfo, 
 
 // Clone implements PhysicalPlan interface.
 func (p *PhysicalExpand) Clone() (PhysicalPlan, error) {
+	if len(p.LevelExprs) > 0 {
+		return p.cloneV2()
+	}
 	np := new(PhysicalExpand)
-	base, err := p.basePhysicalPlan.cloneWithSelf(np)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(np)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	np.basePhysicalPlan = *base
+	np.physicalSchemaProducer = *base
 	// clone ID cols.
 	np.GroupingIDCol = p.GroupingIDCol.Clone().(*expression.Column)
 
@@ -1631,6 +1634,25 @@ func (p *PhysicalExpand) Clone() (PhysicalPlan, error) {
 		clonedGroupingSets = append(clonedGroupingSets, one.Clone())
 	}
 	np.GroupingSets = p.GroupingSets
+	return np, nil
+}
+
+func (p *PhysicalExpand) cloneV2() (PhysicalPlan, error) {
+	np := new(PhysicalExpand)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.physicalSchemaProducer = *base
+	// clone level projection expressions.
+	for _, oneLevelProjExprs := range p.LevelExprs {
+		np.LevelExprs = append(np.LevelExprs, util.CloneExprs(oneLevelProjExprs))
+	}
+
+	// clone generated column names.
+	for _, name := range p.ExtraGroupingColNames {
+		np.ExtraGroupingColNames = append(np.ExtraGroupingColNames, strings.Clone(name))
+	}
 	return np, nil
 }
 
