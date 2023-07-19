@@ -1,9 +1,7 @@
 [conflict]
-threshold = 20
+strategy = "ignore"
+threshold = 5
 max-record-rows = 1
 
 [mydumper.csv]
 header = true
-
-[tikv-importer]
-on-duplicate = "ignore"

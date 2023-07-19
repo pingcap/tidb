@@ -495,7 +495,20 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 	return errors.Trace(g.Wait())
 }
 
+// RecordDuplicateCount reduce the counter of "duplicate entry" errors.
+// Currently the count will not be shared for multiple lightning instances.
+func (em *ErrorManager) RecordDuplicateCount(cnt int64) error {
+	if em.conflictErrRemain.Sub(cnt) < 0 {
+		threshold := em.configConflict.Threshold
+		return errors.Errorf(
+			"The number of conflict errors exceeds the threshold configured by `conflict.threshold`: '%d'",
+			threshold)
+	}
+	return nil
+}
+
 // RecordDuplicate records a "duplicate entry" error so user can query them later.
+// Currently the error will not be shared for multiple lightning instances.
 func (em *ErrorManager) RecordDuplicate(
 	ctx context.Context,
 	logger log.Logger,
