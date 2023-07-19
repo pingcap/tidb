@@ -140,6 +140,9 @@ func (d *dispatcherPool) Stop() {
 	d.wg.Wait()
 }
 
+// MockOwnerChange mock owner change in tests.
+var MockOwnerChange func()
+
 // DispatchTaskLoop dispatches the global tasks.
 func (d *dispatcherPool) DispatchTaskLoop() {
 	logutil.BgLogger().Info("dispatch task loop start")
@@ -278,6 +281,14 @@ func (d *dispatcherPool) scheduleTask(taskID int64) {
 					zap.Int64("task-id", gTask.ID), zap.String("state", gTask.State))
 			}
 		}
+
+		failpoint.Inject("mockOwnerChange", func(val failpoint.Value) {
+			if val.(bool) {
+				logutil.BgLogger().Info("mockOwnerChange called")
+				MockOwnerChange()
+				time.Sleep(time.Second)
+			}
+		})
 	}
 }
 
