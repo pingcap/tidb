@@ -17,7 +17,6 @@ go_library(
         "//parser/mysql",
         "//server",
         "//server/internal/util",
-        "//server/statshandler",
         "//session",
         "//store/mockstore",
         "//testkit",

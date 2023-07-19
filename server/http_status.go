@@ -202,7 +202,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/metrics", promhttp.Handler()).Name("Metrics")
 
 	// HTTP path for dump statistics.
-	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).Name("StatsDump")
+	router.Handle("/stats/dump/{db}/{table}", s.NewStatsHandler()).Name("StatsDump")
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
 
 	router.Handle("/plan_replayer/dump/{filename}", s.newPlanReplayerHandler()).Name("PlanReplayerDump")

@@ -11,7 +11,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/server/internal/util"
-	"github.com/pingcap/tidb/server/statshandler"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
@@ -24,7 +23,7 @@ type BasicHTTPHandlerTestSuite struct {
 	store   kv.Storage
 	domain  *domain.Domain
 	tidbdrv *server.TiDBDriver
-	sh      *statshandler.StatsHandler
+	sh      http.Handler
 }
 
 func CreateBasicHTTPHandlerTestSuite() *BasicHTTPHandlerTestSuite {
@@ -45,7 +44,7 @@ func (ts *BasicHTTPHandlerTestSuite) Domain() *domain.Domain {
 	return ts.domain
 }
 
-func (ts *BasicHTTPHandlerTestSuite) StartServer(t *testing.T) {
+func (ts *BasicHTTPHandlerTestSuite) StartServer(t *testing.T, handlerFn func(*domain.Domain) http.Handler) {
 	var err error
 	ts.store, err = mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -73,7 +72,9 @@ func (ts *BasicHTTPHandlerTestSuite) StartServer(t *testing.T) {
 
 	do, err := session.GetDomain(ts.store)
 	require.NoError(t, err)
-	ts.sh = statshandler.NewStatsHandler(do)
+	if handlerFn != nil {
+		ts.sh = handlerFn(do)
+	}
 }
 
 func (ts *BasicHTTPHandlerTestSuite) StopServer(t *testing.T) {

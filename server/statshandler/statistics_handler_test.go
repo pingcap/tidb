@@ -54,8 +54,8 @@ func TestDumpStatsAPI(t *testing.T) {
 	require.NoError(t, err)
 	server.SetDomain(dom)
 
-	client.SetPort(testutil.GetPortFromTCPAddr(server.listener.Addr()))
-	client.SetStatusPort(testutil.GetPortFromTCPAddr(server.statusListener.Addr()))
+	client.SetPort(testutil.GetPortFromTCPAddr(server.ListenerAddr()))
+	client.SetStatusPort(testutil.GetPortFromTCPAddr(server.StatusListenerAddr()))
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)

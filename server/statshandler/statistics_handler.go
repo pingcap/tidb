@@ -44,6 +44,10 @@ func NewStatsHandler(do *domain.Domain) *StatsHandler {
 	return &StatsHandler{do}
 }
 
+func (sh *StatsHandler) Domain() *domain.Domain {
+	return sh.do
+}
+
 func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
