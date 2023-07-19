@@ -272,6 +272,7 @@ type FileImporter struct {
 	rawEndKey          []byte
 	supportMultiIngest bool
 	rewriteMode        RewriteMode
+	resolvedTs         uint64
 
 	cacheKey string
 }
@@ -284,6 +285,7 @@ func NewFileImporter(
 	isRawKvMode bool,
 	isTxnKvMode bool,
 	rewriteMode RewriteMode,
+	resolvedTs uint64,
 ) FileImporter {
 	kvMode := TiDB
 	if isRawKvMode {
@@ -299,6 +301,7 @@ func NewFileImporter(
 		kvMode:       kvMode,
 		rewriteMode:  rewriteMode,
 		cacheKey:     fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
+		resolvedTs:   resolvedTs,
 	}
 }
 
@@ -714,6 +717,7 @@ func (importer *FileImporter) downloadAndMergeSST(
 
 	req := &import_sstpb.DownloadRequest{
 		Ssts:           sstMetas,
+		ResolvedTs:     importer.resolvedTs,
 		StorageBackend: importer.backend,
 		RewriteRule:    rule,
 		CipherInfo:     cipher,

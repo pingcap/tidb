@@ -513,10 +513,20 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 	return nil
 }
 
-func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
+func (rc *Client) InitClients(backend *backuppb.StorageBackend, meta *backuppb.BackupMeta) {
+	var (
+		isRawKvMode bool
+		isTxnKvMode bool
+		resolvedTs  uint64
+	)
+	if meta != nil {
+		isRawKvMode = meta.IsRawKv
+		isTxnKvMode = meta.IsTxnKv
+		resolvedTs = meta.EndVersion
+	}
 	metaClient := split.NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, rc.rewriteMode)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, rc.rewriteMode, resolvedTs)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -556,7 +566,7 @@ func (rc *Client) InitBackupMeta(
 	}
 	rc.backupMeta = backupMeta
 
-	rc.InitClients(backend, backupMeta.IsRawKv, backupMeta.IsTxnKv)
+	rc.InitClients(backend, backupMeta)
 	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 	return rc.fileImporter.CheckMultiIngestSupport(c, rc.pdClient)
 }
@@ -1214,7 +1224,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient,
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, rc.rewriteMode)
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, rc.rewriteMode, 0)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 

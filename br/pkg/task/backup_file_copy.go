@@ -140,13 +140,15 @@ func RunFileCopyBackup(c context.Context, g glue.Glue, cfg *BackupConfig) error 
 	if err != nil {
 		return errors.Trace(err)
 	}
+	resolvedTs -= 1
+	log.Info("get resolved ts of the whole cluster`", zap.Uint64("resolved ts", resolvedTs))
 	if !cfg.SkipPauseGCAndScheduler {
 		sp := utils.BRServiceSafePoint{
 			BackupTS: resolvedTs,
 			TTL:      utils.DefaultBRGCSafePointTTL,
 			ID:       utils.MakeSafePointID(),
 		}
-		log.Info("safe point will be stuck during ebs backup", zap.Object("safePoint", sp))
+		log.Info("safe point will be stuck during backup", zap.Object("safePoint", sp))
 		err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
 		if err != nil {
 			return errors.Trace(err)
@@ -299,6 +301,7 @@ func RunFileCopyBackup(c context.Context, g glue.Glue, cfg *BackupConfig) error 
 	// Step.4 cleanup backup temporary files in all stores.
 	// TODO: we may need cleanup these file automatically.
 	cleanupWorkers := utils.NewWorkerPool(uint(len(allStores)), "cleanup")
+	eg, ectx = errgroup.WithContext(ctx)
 	for _, store := range allStores {
 		storeId := store.Id
 		cleanupWorkers.ApplyOnErrorGroup(eg, func() error {
@@ -316,7 +319,7 @@ func RunFileCopyBackup(c context.Context, g glue.Glue, cfg *BackupConfig) error 
 			}
 			resp, err := cli.Cleanup(ectx, &cleanupReq)
 			if err != nil {
-				log.Error("failed to prepare for store", zap.Any("store", store))
+				log.Error("failed to cleanup for store", zap.Any("store", store), zap.Error(err))
 				return err
 			}
 			if resp.Success {
