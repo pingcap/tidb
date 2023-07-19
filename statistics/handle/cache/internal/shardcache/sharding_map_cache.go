@@ -114,6 +114,7 @@ func (m *MapCache) FreshMemUsage() {
 }
 
 // Copy implements statsCacheInner
+// TODO(hawkingrei): remove Copy. it is unnecessary that ShardMap use COW.
 func (m *MapCache) Copy() internal.StatsCacheInner {
 	var tables [tablesCacheShardCnt]*tableCache
 	for v := range tables {

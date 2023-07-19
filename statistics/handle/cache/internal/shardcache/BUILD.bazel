@@ -20,7 +20,7 @@ go_test(
     srcs = ["sharding_map_cache_test.go"],
     embed = [":shardcache"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = [
         "//statistics/handle/cache/internal/testutil",
         "@com_github_stretchr_testify//require",

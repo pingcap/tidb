@@ -71,9 +71,25 @@ func TestCacheLen(t *testing.T) {
 	cache.Put(int64(1), t1, false)
 	t2 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 	cache.Put(int64(2), t2, false)
-	require.Equal(t, cache.Len(), 2)
+	require.Equal(t, 2, cache.Len())
 	t3 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
 	cache.Put(int64(3), t3, false)
+	require.Equal(t, 3, cache.Len())
+	require.Equal(t, uint64(0), cache.Version())
+	// make coverage happy
+	cache.SetCapacity(0)
+	cache.Front()
+}
 
-	require.Equal(t, cache.Len(), 3)
+func TestCopy(t *testing.T) {
+	cache := NewMapCache()
+	t1 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
+	require.Equal(t, int64(12), t1.MemoryUsage().TotalTrackingMemUsage())
+	cache.Put(int64(1), t1, false)
+	t2 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
+	cache.Put(int64(2), t2, false)
+	require.Equal(t, 2, cache.Len())
+	cache2 := cache.Copy()
+	require.Equal(t, cache2.Len(), cache.Len())
+	require.Equal(t, cache2.Cost(), cache.Cost())
 }
