@@ -29,16 +29,54 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
-// ScalarSubQueryExpr is a expression placeholder for the non-correlated scalar subqueries which can be evaluated during optimizing phase.
-type ScalarSubQueryExpr struct {
+// ScalarSubqueryEvalCtx store the plan for the subquery, used by ScalarSubQueryExpr.
+type ScalarSubqueryEvalCtx struct {
 	basePlan
 
-	scalarSubQueryID int64
-	ScalarSubQuery   PhysicalPlan
+	// The context for evaluating the subquery.
+	scalarSubQuery PhysicalPlan
+	ctx            context.Context
+	is             infoschema.InfoSchema
+	evalErr        error
+	evaled         bool
+
+	outputColIDs []int64
+	colsData     []types.Datum
+}
+
+func (ssctx *ScalarSubqueryEvalCtx) getColVal(colID int64) (*types.Datum, error) {
+	err := ssctx.selfEval()
+	if err != nil {
+		return nil, err
+	}
+	for i, id := range ssctx.outputColIDs {
+		if id == colID {
+			return &ssctx.colsData[i], nil
+		}
+	}
+	return nil, errors.Errorf("Could not found the ScalarSubQueryExpr#%d in the ScalarSubquery_%d", colID, ssctx.ID())
+}
+
+func (ssctx *ScalarSubqueryEvalCtx) selfEval() error {
+	if ssctx.evaled {
+		return ssctx.evalErr
+	}
+	ssctx.evaled = true
+	row, err := EvalSubqueryFirstRow(ssctx.ctx, ssctx.scalarSubQuery, ssctx.is, ssctx.SCtx())
+	if err != nil {
+		ssctx.evalErr = err
+		return err
+	}
+	ssctx.colsData = row
+	return nil
+}
+
+// ScalarSubQueryExpr is a expression placeholder for the non-correlated scalar subqueries which can be evaluated during optimizing phase.
+type ScalarSubQueryExpr struct {
+	scalarSubqueryColID int64
 
 	// The context for evaluating the subquery.
-	ctx     context.Context
-	is      infoschema.InfoSchema
+	evalCtx *ScalarSubqueryEvalCtx
 	evalErr error
 	evaled  bool
 
@@ -53,17 +91,13 @@ func (s *ScalarSubQueryExpr) Traverse(_ expression.TraverseAction) expression.Ex
 }
 
 func (s *ScalarSubQueryExpr) selfEvaluate() error {
-	row, err := EvalSubqueryFirstRow(s.ctx, s.ScalarSubQuery, s.is, s.ScalarSubQuery.SCtx())
+	colVal, err := s.evalCtx.getColVal(s.scalarSubqueryColID)
 	if err != nil {
 		s.evalErr = err
 		s.Constant = *expression.NewNull()
 		return err
 	}
-	if len(row) > 1 {
-		s.evalErr = errors.Errorf("ScalarSubQuery doesn't support multiple return values at a time")
-		return s.evalErr
-	}
-	s.Constant.Value = row[0]
+	s.Constant.Value = *colVal
 	s.evaled = true
 	return nil
 }
@@ -136,7 +170,7 @@ func (s *ScalarSubQueryExpr) Equal(_ sessionctx.Context, e expression.Expression
 	if !ok {
 		return false
 	}
-	if s.ScalarSubQuery == anotherS.ScalarSubQuery {
+	if s.scalarSubqueryColID == anotherS.scalarSubqueryColID {
 		return true
 	}
 	return false
@@ -199,7 +233,7 @@ func (s *ScalarSubQueryExpr) HashCode(_ *stmtctx.StatementContext) []byte {
 	}
 	s.hashcode = make([]byte, 0, 9)
 	s.hashcode = append(s.hashcode, expression.ScalarSubQFlag)
-	s.hashcode = codec.EncodeInt(s.hashcode, s.scalarSubQueryID)
+	s.hashcode = codec.EncodeInt(s.hashcode, s.scalarSubqueryColID)
 	return s.hashcode
 }
 
@@ -209,14 +243,13 @@ func (s *ScalarSubQueryExpr) MemoryUsage() int64 {
 	if s.evaled {
 		ret += s.Constant.MemoryUsage()
 	}
-	ret += s.ScalarSubQuery.MemoryUsage()
 	return ret
 }
 
 // String implements the Stringer interface.
 func (s *ScalarSubQueryExpr) String() string {
 	builder := &strings.Builder{}
-	fmt.Fprintf(builder, "ScalarQuery#%d", s.scalarSubQueryID)
+	fmt.Fprintf(builder, "ScalarQueryCol#%d", s.scalarSubqueryColID)
 	return builder.String()
 }
 
@@ -296,6 +329,19 @@ func (*ScalarSubQueryExpr) Vectorized() bool {
 }
 
 // Schema implements the Plan interface.
-func (*ScalarSubQueryExpr) Schema() *expression.Schema {
+func (*ScalarSubqueryEvalCtx) Schema() *expression.Schema {
 	return nil
+}
+
+// ExplainInfo implements the Plan interface.
+func (ssctx *ScalarSubqueryEvalCtx) ExplainInfo() string {
+	builder := &strings.Builder{}
+	fmt.Fprintf(builder, "Output: ")
+	for i, id := range ssctx.outputColIDs {
+		fmt.Fprintf(builder, "ScalarQueryCol#%d", id)
+		if i+1 != len(ssctx.outputColIDs) {
+			fmt.Fprintf(builder, ",")
+		}
+	}
+	return builder.String()
 }

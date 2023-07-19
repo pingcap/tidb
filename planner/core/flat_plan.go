@@ -198,11 +198,11 @@ func FlattenPhysicalPlan(p Plan, buildSideFirst bool) *FlatPhysicalPlan {
 		res.CTEs = append(res.CTEs, cteExplained)
 		flattenedCTEPlan[cteDef.CTE.IDForStorage] = struct{}{}
 	}
-	if p.SCtx() == nil || p.SCtx().GetSessionVars() == nil || p.SCtx().GetSessionVars().MapScalarSubQ == nil {
+	if p.SCtx() == nil || p.SCtx().GetSessionVars() == nil {
 		return res
 	}
 	for _, scalarSubQ := range p.SCtx().GetSessionVars().MapScalarSubQ {
-		castedScalarSubQ, ok := scalarSubQ.(*ScalarSubQueryExpr)
+		castedScalarSubQ, ok := scalarSubQ.(*ScalarSubqueryEvalCtx)
 		if !ok {
 			continue
 		}
@@ -512,7 +512,7 @@ func (f *FlatPhysicalPlan) flattenCTERecursively(cteDef *CTEDefinition, info *op
 	return target
 }
 
-func (f *FlatPhysicalPlan) flattenScalarSubQRecursively(scalarSubQ *ScalarSubQueryExpr, info *operatorCtx, target FlatPlanTree) FlatPlanTree {
+func (f *FlatPhysicalPlan) flattenScalarSubQRecursively(scalarSubQ *ScalarSubqueryEvalCtx, info *operatorCtx, target FlatPlanTree) FlatPlanTree {
 	flat := f.flattenSingle(scalarSubQ, info)
 	if flat != nil {
 		target = append(target, flat)
@@ -527,7 +527,7 @@ func (f *FlatPhysicalPlan) flattenScalarSubQRecursively(scalarSubQ *ScalarSubQue
 		indent:      texttree.Indent4Child(info.indent, info.isLastChild),
 		isLastChild: true,
 	}
-	target, childIdx = f.flattenRecursively(scalarSubQ.ScalarSubQuery, childInfo, target)
+	target, childIdx = f.flattenRecursively(scalarSubQ.scalarSubQuery, childInfo, target)
 	childIdxs = append(childIdxs, childIdx)
 	if flat != nil {
 		flat.ChildrenIdx = childIdxs

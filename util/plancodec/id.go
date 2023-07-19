@@ -138,7 +138,7 @@ const (
 	// TypeSequence is the type of Sequence
 	TypeSequence = "Sequence"
 	// TypeScalarSubQuery is the type of ScalarQuery
-	TypeScalarSubQuery = "ScalarQuery"
+	TypeScalarSubQuery = "ScalarSubQuery"
 )
 
 // plan id.

@@ -1264,7 +1264,7 @@ const (
 	DefTiDBSkewDistinctAgg                         = false
 	DefTiDB3StageDistinctAgg                       = true
 	DefTiDB3StageMultiDistinctAgg                  = false
-	DefTiDBOptExplainNoEvaledSubquery              = false
+	DefTiDBOptExplainEvaledSubquery                = false
 	DefTiDBReadStaleness                           = 0
 	DefTiDBGCMaxWaitTime                           = 24 * 60 * 60
 	DefMaxAllowedPacket                     uint64 = 67108864

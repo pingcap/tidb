@@ -745,7 +745,7 @@ type SessionVars struct {
 	PlanColumnID atomic.Int64
 
 	// MapScalarSubQ maps the scalar sub queries from its ID to its struct.
-	MapScalarSubQ map[int64]interface{}
+	MapScalarSubQ []interface{}
 
 	// MapHashCode2UniqueID4ExtendedCol map the expr's hash code to specified unique ID.
 	MapHashCode2UniqueID4ExtendedCol map[string]int
@@ -2155,11 +2155,8 @@ func (s *SessionVars) AllocPlanColumnID() int64 {
 }
 
 // RegisterScalarSubQ register a scalar sub query into the map. This will be used for EXPLAIN.
-func (s *SessionVars) RegisterScalarSubQ(id int64, scalarSubQ interface{}) {
-	if s.MapScalarSubQ == nil {
-		s.MapScalarSubQ = make(map[int64]interface{})
-	}
-	s.MapScalarSubQ[id] = scalarSubQ
+func (s *SessionVars) RegisterScalarSubQ(scalarSubQ interface{}) {
+	s.MapScalarSubQ = append(s.MapScalarSubQ, scalarSubQ)
 }
 
 // GetCharsetInfo gets charset and collation for current context.

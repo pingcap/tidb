@@ -678,8 +678,8 @@ func (p PhysicalSequence) Init(ctx sessionctx.Context, stats *property.StatsInfo
 	return &p
 }
 
-// Init initializes ScalarSubQueryExpr
-func (p ScalarSubQueryExpr) Init(ctx sessionctx.Context, offset int) *ScalarSubQueryExpr {
+// Init initializes ScalarSubqueryEvalCtx
+func (p ScalarSubqueryEvalCtx) Init(ctx sessionctx.Context, offset int) *ScalarSubqueryEvalCtx {
 	p.basePlan = newBasePlan(ctx, plancodec.TypeScalarSubQuery, offset)
 	return &p
 }
