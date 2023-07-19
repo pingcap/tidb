@@ -78,7 +78,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20221009092201-b66cddb77c32
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20230703085931-3788ab4ee6b3
+	github.com/pingcap/kvproto v0.0.0-20230719073610-bec221c18225
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -138,6 +138,7 @@ require (
 )
 
 require (
+	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
 	k8s.io/utils v0.0.0-20230209194617-a36077c30491 // indirect
 )

@@ -20,6 +20,7 @@ import (
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
+	"github.com/pingcap/tidb/kv"
 	"go.uber.org/zap"
 )
 
@@ -29,6 +30,8 @@ type TiKVModeSwitcher interface {
 	ToImportMode(ctx context.Context)
 	// ToNormalMode switches all TiKV nodes to Normal mode.
 	ToNormalMode(ctx context.Context)
+	// SetKeyRanges sets the key ranges to be switched.
+	SetKeyRanges(ranges []kv.KeyRange)
 }
 
 // TiKVModeSwitcher is used to switch TiKV nodes between Import and Normal mode.
@@ -36,6 +39,7 @@ type switcher struct {
 	tls    *common.TLS
 	pdAddr string
 	logger *zap.Logger
+	ranges []*sstpb.Range
 }
 
 // NewTiKVModeSwitcher creates a new TiKVModeSwitcher.
@@ -53,6 +57,17 @@ func (rc *switcher) ToImportMode(ctx context.Context) {
 
 func (rc *switcher) ToNormalMode(ctx context.Context) {
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal)
+}
+
+func (rc *switcher) SetKeyRanges(keyRanges []kv.KeyRange) {
+	ranges := make([]*sstpb.Range, 0, len(keyRanges))
+	for _, keyRange := range keyRanges {
+		ranges = append(ranges, &sstpb.Range{
+			Start: keyRange.StartKey,
+			End:   keyRange.EndKey,
+		})
+	}
+	rc.ranges = ranges
 }
 
 func (rc *switcher) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
@@ -76,7 +91,7 @@ func (rc *switcher) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
 		tls,
 		minState,
 		func(c context.Context, store *tikv.Store) error {
-			return tikv.SwitchMode(c, tls, store.Address, mode)
+			return tikv.SwitchMode(c, tls, store.Address, mode, rc.ranges)
 		},
 	)
 }

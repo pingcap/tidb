@@ -30,6 +30,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/backup"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -51,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	tidbconfig "github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
@@ -1177,6 +1179,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 		cancelFuncs = append(cancelFuncs, func(bool) { switchModeTicker.Stop() })
 		cancelFuncs = append(cancelFuncs, func(do bool) {
 			if do {
+				rc.tikvModeSwitcher.SetKeyRanges(rc.buildTablesRanges())
 				rc.tikvModeSwitcher.ToNormalMode(ctx)
 			}
 		})
@@ -1197,6 +1200,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					f()
 				}
 			}()
+			rc.tikvModeSwitcher.SetKeyRanges(rc.buildTablesRanges())
 			if rc.cfg.Cron.SwitchMode.Duration > 0 && isLocalBackend(rc.cfg) {
 				rc.tikvModeSwitcher.ToImportMode(ctx)
 			}
@@ -1357,6 +1361,18 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 				f(do)
 			}
 		}
+}
+
+func (rc *Controller) buildTablesRanges() []kv.KeyRange {
+	var keyRanges []kv.KeyRange
+	for _, dbInfo := range rc.dbInfos {
+		for _, tableInfo := range dbInfo.Tables {
+			if ranges, err := backup.BuildTableRanges(tableInfo.Core); err == nil {
+				keyRanges = append(keyRanges, ranges...)
+			}
+		}
+	}
+	return keyRanges
 }
 
 type checksumManagerKeyType struct{}

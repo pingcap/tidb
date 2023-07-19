@@ -10,6 +10,7 @@ import (
 
 	gomock "github.com/golang/mock/gomock"
 	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
+	kv "github.com/pingcap/tidb/kv"
 )
 
 // MockDiskUsage is a mock of DiskUsage interface.
@@ -70,6 +71,18 @@ func NewMockTiKVModeSwitcher(ctrl *gomock.Controller) *MockTiKVModeSwitcher {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockTiKVModeSwitcher) EXPECT() *MockTiKVModeSwitcherMockRecorder {
 	return m.recorder
+}
+
+// SetKeyRanges mocks base method.
+func (m *MockTiKVModeSwitcher) SetKeyRanges(arg0 []kv.KeyRange) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetKeyRanges", arg0)
+}
+
+// SetKeyRanges indicates an expected call of SetKeyRanges.
+func (mr *MockTiKVModeSwitcherMockRecorder) SetKeyRanges(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetKeyRanges", reflect.TypeOf((*MockTiKVModeSwitcher)(nil).SetKeyRanges), arg0)
 }
 
 // ToImportMode mocks base method.

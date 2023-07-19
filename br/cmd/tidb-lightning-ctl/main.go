@@ -99,7 +99,7 @@ func run() error {
 		return errors.Trace(fetchMode(ctx, cfg, tls))
 	}
 	if len(*mode) != 0 {
-		return errors.Trace(lightning.SwitchMode(ctx, cfg, tls, *mode))
+		return errors.Trace(lightning.SwitchMode(ctx, cfg, tls, *mode, nil))
 	}
 
 	if len(*cpRemove) != 0 {
