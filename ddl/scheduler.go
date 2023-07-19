@@ -24,7 +24,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/remote"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/ddl/ingest"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/disttask/framework/proto"
@@ -42,19 +44,20 @@ import (
 var MockDMLExecutionAddIndexSubTaskFinish func()
 
 type backfillSchedulerHandle struct {
-	d             *ddl
-	db            *model.DBInfo
-	index         *model.IndexInfo
-	job           *model.Job
-	bc            ingest.BackendCtx
-	ptbl          table.PhysicalTable
-	jc            *JobContext
-	eleTypeKey    []byte
-	totalRowCnt   int64
-	isPartition   bool
-	stepForImport bool
-	done          chan struct{}
-	ctx           context.Context
+	d                    *ddl
+	db                   *model.DBInfo
+	index                *model.IndexInfo
+	job                  *model.Job
+	bc                   ingest.BackendCtx
+	ptbl                 table.PhysicalTable
+	jc                   *JobContext
+	eleTypeKey           []byte
+	totalRowCnt          int64
+	isPartition          bool
+	stepForImport        bool
+	stepForOrderedImport bool
+	done                 chan struct{}
+	ctx                  context.Context
 }
 
 // BackfillGlobalMeta is the global task meta for backfilling index.
@@ -66,9 +69,14 @@ type BackfillGlobalMeta struct {
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
 type BackfillSubTaskMeta struct {
-	PhysicalTableID int64  `json:"physical_table_id"`
-	StartKey        []byte `json:"start_key"`
-	EndKey          []byte `json:"end_key"`
+	PhysicalTableID int64    `json:"physical_table_id"`
+	StartKey        []byte   `json:"start_key"`
+	EndKey          []byte   `json:"end_key"`
+	DataFiles       []string `json:"data_files"`
+	StatsFiles      []string `json:"stats_files"`
+	MinKey          []byte   `json:"min_key"`
+	MaxKey          []byte   `json:"max_key"`
+	TotalKVSize     uint64   `json:"total_kv_size"`
 }
 
 // NewBackfillSchedulerHandle creates a new backfill scheduler.
@@ -105,6 +113,12 @@ func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl, stepForImport bool) (sc
 
 	if stepForImport {
 		bh.stepForImport = true
+		if bcCtx, ok := ingest.LitBackCtxMgr.Load(jobMeta.ID); ok {
+			if bc, ok := bcCtx.GetBackend().(*remote.Backend); ok {
+				bc.SetImportPhase()
+				bh.stepForOrderedImport = true
+			}
+		}
 		return bh, nil
 	}
 
@@ -155,6 +169,10 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(ctx context.Context) error 
 	}
 	b.bc = bc
 	if b.stepForImport {
+		if b.stepForOrderedImport {
+			_, err := bc.Register(b.job.ID, b.index.ID, b.job.SchemaName, b.job.TableName)
+			return err
+		}
 		return b.doFlushAndHandleError(ingest.FlushModeForceGlobal)
 	}
 	b.ctx = ctx
@@ -198,6 +216,9 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 	logutil.BgLogger().Info("lightning split subtask", zap.String("category", "ddl"))
 
 	if b.stepForImport {
+		if b.stepForOrderedImport {
+			return nil, b.orderedImport(ctx, subtask)
+		}
 		return nil, nil
 	}
 
@@ -292,20 +313,74 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 		return nil, err
 	}
 
-	if b.isPartition {
+	_, isRemote := b.bc.GetBackend().(*remote.Backend)
+	if b.isPartition || isRemote {
 		return nil, b.doFlushAndHandleError(ingest.FlushModeForceGlobal)
 	}
 	return nil, b.doFlushAndHandleError(ingest.FlushModeForceLocalAndCheckDiskQuota)
 }
 
+func (b *backfillSchedulerHandle) orderedImport(ctx context.Context, subtask []byte) error {
+	subTaskMeta := &BackfillSubTaskMeta{}
+	err := json.Unmarshal(subtask, subTaskMeta)
+	if err != nil {
+		logutil.BgLogger().Error("[ddl] unmarshal error", zap.Error(err))
+		return err
+	}
+	bcCtx, ok := ingest.LitBackCtxMgr.Load(b.job.ID)
+	if !ok {
+		return errors.New("can not find backend context")
+	}
+	bc, ok := bcCtx.GetBackend().(*remote.Backend)
+	if !ok {
+		return errors.New("backend is not remote")
+	}
+	if !bcCtx.EngineLoaded(b.index.ID) {
+		_, err = bcCtx.Register(b.job.ID, b.index.ID, b.job.SchemaName, b.job.TableName)
+		if err != nil {
+			return err
+		}
+	}
+	err = bc.SetRange(ctx, subTaskMeta.StartKey, subTaskMeta.EndKey, subTaskMeta.DataFiles, subTaskMeta.StatsFiles)
+	if err != nil {
+		return err
+	}
+	return b.doFlushAndHandleError(ingest.FlushModeForceGlobal)
+}
+
 // OnSubtaskFinished implements the Scheduler interface.
-func (*backfillSchedulerHandle) OnSubtaskFinished(_ context.Context, meta []byte) ([]byte, error) {
+func (b *backfillSchedulerHandle) OnSubtaskFinished(ctx context.Context, meta []byte) ([]byte, error) {
 	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecutionAddIndexSubTaskFinish != nil {
 			MockDMLExecutionAddIndexSubTaskFinish()
 		}
 	})
+	if bcCtx, ok := ingest.LitBackCtxMgr.Load(b.job.ID); ok {
+		if bc, ok := bcCtx.GetBackend().(*remote.Backend); ok {
+			var subtaskMeta BackfillSubTaskMeta
+			err := json.Unmarshal(meta, &subtaskMeta)
+			if err != nil {
+				return nil, err
+			}
+			// Call FinishImport to close the writers and cleanup the engines.
+			// TODO(tangenta): add table info for unique case.
+			err = bcCtx.FinishImport(b.index.ID, b.index.Unique, nil)
+			if err != nil {
+				return nil, err
+			}
+			subtaskMeta.MinKey, subtaskMeta.MaxKey, subtaskMeta.TotalKVSize = bc.GetSummary()
+			log.FromContext(ctx).Info("get key boundary on subtask finished",
+				zap.String("min", hex.EncodeToString(subtaskMeta.MinKey)),
+				zap.String("max", hex.EncodeToString(subtaskMeta.MaxKey)),
+				zap.Uint64("totalSize", subtaskMeta.TotalKVSize))
+			meta, err = json.Marshal(subtaskMeta)
+			if err != nil {
+				return nil, err
+			}
+			return meta, nil
+		}
+	}
 	return meta, nil
 }
 

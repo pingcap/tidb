@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -145,7 +146,10 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 			p.checkpointMgr.Register(task.id, task.endKey)
 		}
 		var done bool
+
 		for !done {
+			memory := 0
+			startTime := time.Now()
 			srcChk := p.getChunk()
 			done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk)
 			if err != nil {
@@ -157,10 +161,14 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 				p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
 			}
 			idxRs := idxRecResult{id: task.id, chunk: srcChk, done: done}
+			memory += int(srcChk.MemoryUsage())
 			failpoint.Inject("mockCopSenderError", func() {
 				idxRs.err = errors.New("mock cop error")
 			})
 			p.chunkSender.AddTask(idxRs)
+			rate := float64(memory) / 1024.0 / 1024.0 / (float64(time.Since(startTime).Microseconds()) / 1000000.0)
+			logutil.BgLogger().Info("scan tikv rate", zap.Any("m/s", rate))
+			metrics.AddIndexScanRate.WithLabelValues(metrics.LblAddIndex).Observe(rate)
 		}
 		terror.Call(rs.Close)
 		return nil

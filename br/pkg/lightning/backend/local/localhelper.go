@@ -649,7 +649,7 @@ type storeWriteLimiter struct {
 	burst    int
 }
 
-func newStoreWriteLimiter(limit int) *storeWriteLimiter {
+func NewStoreWriteLimiter(limit int) *storeWriteLimiter {
 	var burst int
 	// Allow burst of at most 20% of the limit.
 	if limit <= math.MaxInt-limit/5 {
@@ -699,13 +699,13 @@ func (s *storeWriteLimiter) getLimiter(storeID uint64) *rate.Limiter {
 	return limiter
 }
 
-type noopStoreWriteLimiter struct{}
+type NoopStoreWriteLimiter struct{}
 
-func (noopStoreWriteLimiter) WaitN(_ context.Context, _ uint64, _ int) error {
+func (NoopStoreWriteLimiter) WaitN(_ context.Context, _ uint64, _ int) error {
 	return nil
 }
 
-func (noopStoreWriteLimiter) Limit() int {
+func (NoopStoreWriteLimiter) Limit() int {
 	return math.MaxInt
 }
 

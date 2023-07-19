@@ -904,12 +904,12 @@ func TestNeedSplit(t *testing.T) {
 
 func TestStoreWriteLimiter(t *testing.T) {
 	// Test create store write limiter with limit math.MaxInt.
-	limiter := newStoreWriteLimiter(math.MaxInt)
+	limiter := NewStoreWriteLimiter(math.MaxInt)
 	err := limiter.WaitN(context.Background(), 1, 1024)
 	require.NoError(t, err)
 
 	// Test WaitN exceeds the burst.
-	limiter = newStoreWriteLimiter(100)
+	limiter = NewStoreWriteLimiter(100)
 	start := time.Now()
 	// 120 is the initial burst, 150 is the number of new tokens.
 	err = limiter.WaitN(context.Background(), 1, 120+120)
@@ -917,7 +917,7 @@ func TestStoreWriteLimiter(t *testing.T) {
 	require.Greater(t, time.Since(start), time.Second)
 
 	// Test WaitN with different store id.
-	limiter = newStoreWriteLimiter(100)
+	limiter = NewStoreWriteLimiter(100)
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
 	defer cancel()

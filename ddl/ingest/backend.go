@@ -20,8 +20,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/remote"
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -51,6 +53,9 @@ type BackendCtx interface {
 
 	AttachCheckpointManager(*CheckpointManager)
 	GetCheckpointManager() *CheckpointManager
+
+	GetBackend() backend.Backend
+	EngineLoaded(indexID int64) bool
 }
 
 // FlushMode is used to control how to flush.
@@ -73,7 +78,7 @@ type litBackendCtx struct {
 	MemRoot  MemRoot
 	DiskRoot DiskRoot
 	jobID    int64
-	backend  *local.Backend
+	backend  backend.Backend
 	ctx      context.Context
 	cfg      *lightning.Config
 	sysVars  map[string]string
@@ -92,7 +97,11 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 	// backend must be a local backend.
 	// todo: when we can separate local backend completely from tidb backend, will remove this cast.
 	//nolint:forcetypeassert
-	dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
+	localBackend, ok := bc.backend.(*local.Backend)
+	if !ok {
+		return nil
+	}
+	dupeController := localBackend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
 	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 		SysVars: bc.sysVars,
@@ -133,7 +142,11 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 		// backend must be a local backend.
 		// todo: when we can separate local backend completely from tidb backend, will remove this cast.
 		//nolint:forcetypeassert
-		dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
+		localBackend, ok := bc.backend.(*local.Backend)
+		if !ok {
+			return nil
+		}
+		dupeController := localBackend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
 		hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
 			SQLMode: mysql.ModeStrictAllTables,
 			SysVars: bc.sysVars,
@@ -215,7 +228,21 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 
 	logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
 		zap.String("usage info", bc.diskRoot.UsageInfo()))
-	err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
+	//nolint:forcetypeassert
+	localBackend, ok := bc.backend.(*local.Backend)
+	if !ok {
+		if remoteBackend, ok := bc.backend.(*remote.Backend); ok {
+			err = remoteBackend.ImportEngine(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
+			if err != nil {
+				logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
+					zap.String("usage info", bc.diskRoot.UsageInfo()))
+				return true, false, err
+			}
+			return true, true, nil
+		}
+		return false, false, nil
+	}
+	err = localBackend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
 	if err != nil {
 		logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
 			zap.String("usage info", bc.diskRoot.UsageInfo()))
@@ -263,4 +290,15 @@ func (bc *litBackendCtx) AttachCheckpointManager(mgr *CheckpointManager) {
 // GetCheckpointManager returns the checkpoint manager attached to the backend context.
 func (bc *litBackendCtx) GetCheckpointManager() *CheckpointManager {
 	return bc.checkpointMgr
+}
+
+// GetBackend returns the underlying backend.
+func (bc *litBackendCtx) GetBackend() backend.Backend {
+	return bc.backend
+}
+
+// EngineLoaded returns true if the engine is loaded.
+func (bc *litBackendCtx) EngineLoaded(indexID int64) bool {
+	_, ok := bc.Load(indexID)
+	return ok
 }

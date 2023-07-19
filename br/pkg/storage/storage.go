@@ -4,13 +4,15 @@ package storage
 
 import (
 	"context"
-	"io"
-	"net/http"
-
+	"fmt"
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/request"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"io"
+	"net/http"
 )
 
 // Permission represents the permission we need to check in create storage.
@@ -193,4 +195,49 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 	default:
 		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "storage %T is not supported yet", backend)
 	}
+}
+
+func GetFileMaxOffset(ctx context.Context, storage ExternalStorage, name string) (uint64, error) {
+	st, ok := storage.(*S3Storage)
+	if !ok {
+		return 0, errors.Annotate(berrors.ErrUnsupportedOperation, "only s3 storage can read partial file directly")
+	}
+	input := &s3.HeadObjectInput{
+		Bucket: aws.String(st.options.Bucket),
+		Key:    aws.String(st.options.Prefix + name),
+	}
+	result, err := st.svc.HeadObject(input)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return uint64(*result.ContentLength), nil
+}
+
+func ReadPartialFileDirectly(ctx context.Context, storage ExternalStorage, name string, start, end uint64, readBuffer []byte) (uint64, error) {
+	st, ok := storage.(*S3Storage)
+	if !ok {
+		return 0, errors.Annotate(berrors.ErrUnsupportedOperation, "only s3 storage can read partial file directly")
+	}
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(st.options.Bucket),
+		Key:    aws.String(st.options.Prefix + name),
+	}
+	//logutil.BgLogger().Info("ReadPartialFileDirectly", zap.Any("key", input.Key))
+	input.Range = aws.String(fmt.Sprintf("bytes=%d-%d", start, end-1))
+	result, err := st.svc.GetObjectWithContext(ctx, input)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	readN := 0
+	defer result.Body.Close()
+	b := readBuffer[0:]
+	for {
+		n, err := result.Body.Read(b)
+		readN += n
+		b = b[n:]
+		if err == io.EOF || n == 0 {
+			break
+		}
+	}
+	return uint64(readN), err
 }

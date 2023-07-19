@@ -127,7 +127,7 @@ type importClientFactoryImpl struct {
 	compressionType config.CompressionType
 }
 
-func newImportClientFactoryImpl(
+func NewImportClientFactoryImpl(
 	splitCli split.SplitClient,
 	tls *common.TLS,
 	tcpConcurrency int,
@@ -559,16 +559,16 @@ func NewBackend(
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
+	importClientFactory := NewImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 	keyAdapter := KeyAdapter(noopKeyAdapter{})
 	if config.DupeDetectEnabled {
 		keyAdapter = dupDetectKeyAdapter{}
 	}
 	var writeLimiter StoreWriteLimiter
 	if config.StoreWriteBWLimit > 0 {
-		writeLimiter = newStoreWriteLimiter(config.StoreWriteBWLimit)
+		writeLimiter = NewStoreWriteLimiter(config.StoreWriteBWLimit)
 	} else {
-		writeLimiter = noopStoreWriteLimiter{}
+		writeLimiter = NoopStoreWriteLimiter{}
 	}
 	alloc := manual.Allocator{}
 	if RunInTest {

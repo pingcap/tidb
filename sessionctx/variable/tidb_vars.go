@@ -902,6 +902,18 @@ const (
 
 	// TiDBEnableCheckConstraint indicates whether to enable check constraint feature.
 	TiDBEnableCheckConstraint = "tidb_enable_check_constraint"
+
+	// TiDBTempStorageURI indicates where to create temporary files.
+	TiDBTempStorageURI = "tidb_temp_storage_uri"
+
+	TiDBGlobalSortMemQuota = "tidb_global_sort_mem_quota"
+
+	TiDBGlobalSortReadBufferSize = "tidb_global_sort_read_buffer_size"
+	TiDBGlobalSortWriteBatchSize = "tidb_global_sort_write_batch_size"
+	TiDBGlobalSortStatSampleKeys = "tidb_global_sort_stat_sample_keys"
+	TiDBGlobalSortStatSampleSize = "tidb_global_sort_stat_sample_size"
+	TiDBGlobalSortSubtaskCnt     = "tidb_global_sort_subtask_cnt"
+	TiDBGlobalSortS3ChunkSize    = "tidb_global_sort_s3_chunk_size"
 )
 
 // TiDB vars that have only global scope
@@ -1379,6 +1391,13 @@ const (
 	DefRuntimeFilterMode                              = "OFF"
 	DefTiDBLockUnchangedKeys                          = true
 	DefTiDBEnableCheckConstraint                      = false
+	DefTiDBGlobalSortMemoryQuota                      = int(1 * size.GB)
+	DefTiDBGlobalSortReadBufferSize                   = int(64 * size.KB)
+	DefTiDBGlobalSortWriteBatchSize                   = 8 * 1024
+	DefTiDBGlobalSortStatSampleKeys                   = 8 * 1024
+	DefTiDBGlobalSortStatSampleSize                   = int(1 * size.MB)
+	DefTiDBGlobalSortSubtaskCnt                       = -1
+	DefTiDBGlobalSortS3ChunkSize                      = int(5 * size.MB)
 )
 
 // Process global variables.
@@ -1473,6 +1492,15 @@ var (
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
 	EnableResourceControl = atomic.NewBool(false)
 	EnableCheckConstraint = atomic.NewBool(DefTiDBEnableCheckConstraint)
+
+	TempStorageURI           = atomic.NewString("")
+	GlobalSortMemQuota       = atomic.NewUint64(uint64(DefTiDBGlobalSortMemoryQuota))
+	GlobalSortReadBufferSize = atomic.NewUint64(uint64(DefTiDBGlobalSortReadBufferSize))
+	GlobalSortWriteBatchSize = atomic.NewInt64(DefTiDBGlobalSortWriteBatchSize)
+	GlobalSortStatSampleKeys = atomic.NewInt64(DefTiDBGlobalSortStatSampleKeys)
+	GlobalSortStatSampleSize = atomic.NewUint64(uint64(DefTiDBGlobalSortStatSampleSize))
+	GlobalSortSubtaskCnt     = atomic.NewInt64(DefTiDBGlobalSortSubtaskCnt)
+	GlobalSortS3ChunkSize    = atomic.NewUint64(uint64(DefTiDBGlobalSortS3ChunkSize))
 )
 
 var (

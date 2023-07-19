@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
@@ -888,6 +889,7 @@ func (rs *S3Storage) CreateUploader(ctx context.Context, name string) (ExternalF
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + name),
 	}
+	log.Debug("CreateUploader", zap.Any("key", input.Key))
 	if rs.options.Acl != "" {
 		input = input.SetACL(rs.options.Acl)
 	}
@@ -914,12 +916,51 @@ func (rs *S3Storage) CreateUploader(ctx context.Context, name string) (ExternalF
 
 // Create creates multi upload request.
 func (rs *S3Storage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
-	uploader, err := rs.CreateUploader(ctx, name)
-	if err != nil {
-		return nil, err
+	up := s3manager.NewUploaderWithClient(rs.svc, func(u *s3manager.Uploader) {
+		u.Concurrency = 100
+		u.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(500 * 1024 * 1024)
+	})
+	rd, wd := io.Pipe()
+	upParams := &s3manager.UploadInput{
+		Bucket: aws.String(rs.options.Bucket),
+		Key:    aws.String(rs.options.Prefix + name),
+		Body:   rd,
 	}
-	uploaderWriter := newBufferedWriter(uploader, hardcodedS3ChunkSize, NoCompression)
+
+	s3Writer := &s3ObjectWriter{wd: wd, wg: &sync.WaitGroup{}}
+	s3Writer.wg.Add(1)
+	go func() {
+		_, err := up.Upload(upParams)
+		s3Writer.err = err
+		s3Writer.wg.Done()
+	}()
+
+	//uploader, err := rs.CreateUploader(ctx, name)
+	//if err != nil {
+	//	return nil, err
+	//}
+	uploaderWriter := newBufferedWriter(s3Writer, hardcodedS3ChunkSize, NoCompression)
 	return uploaderWriter, nil
+}
+
+type s3ObjectWriter struct {
+	wd  *io.PipeWriter
+	wg  *sync.WaitGroup
+	err error
+}
+
+func (s *s3ObjectWriter) Write(ctx context.Context, p []byte) (int, error) {
+	n, err := s.wd.Write(p)
+	return n, err
+}
+
+func (s *s3ObjectWriter) Close(ctx context.Context) error {
+	err := s.wd.Close()
+	if err != nil {
+		return err
+	}
+	s.wg.Wait()
+	return s.err
 }
 
 // Rename implements ExternalStorage interface.

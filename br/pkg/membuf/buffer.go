@@ -29,7 +29,8 @@ type Allocator interface {
 type stdAllocator struct{}
 
 func (stdAllocator) Alloc(n int) []byte {
-	return make([]byte, n)
+	res := make([]byte, n)
+	return res
 }
 
 func (stdAllocator) Free(_ []byte) {}

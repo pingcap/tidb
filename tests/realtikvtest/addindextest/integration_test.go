@@ -21,9 +21,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/ddl/testutil"
@@ -33,8 +35,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func TestAddIndexIngestMemoryUsage(t *testing.T) {
@@ -476,4 +480,68 @@ func TestAddIndexBackfillLostUpdate(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 1"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateBeforeImport"))
+}
+
+func TestRemoteBackend(t *testing.T) {
+	store, _ := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	uri := fmt.Sprintf("s3://nfs/tools_test_data/sharedisk?access-key=minioadmin&secret-access-key=minioadmin&endpoint=http://127.0.0.1:9000&force-path-style=true")
+	backend, err := storage.ParseBackend(uri, nil)
+	require.NoError(t, err)
+	exStore, err := storage.New(context.Background(), backend, &storage.ExternalStorageOptions{})
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	err = exStore.WalkDir(ctx, &storage.WalkOption{},
+		func(path string, size int64) error {
+			return exStore.DeleteFile(ctx, path)
+		})
+	require.NoError(t, err)
+
+	go func() {
+		tk2 := testkit.NewTestKit(t, store)
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				rows := tk2.MustQuery("select id, task_key, type, dispatcher_id, state from mysql.tidb_global_task;").Rows()
+				if len(rows) > 0 {
+					val := rows[0]
+					valStr := fmt.Sprintf("%v", val)
+					logutil.BgLogger().Info("global task info", zap.String("id task_key type dispatcher_id state", valStr))
+				}
+			}
+		}
+	}()
+	result := tk.MustQuery("admin show ddl jobs").Rows()
+	for _, row := range result {
+		if row[11] == "running" {
+			tk.MustExec("admin cancel ddl jobs " + row[0].(string))
+			time.Sleep(5 * time.Second)
+		}
+	}
+	tk.MustExec("delete from mysql.tidb_global_task;")
+	tk.MustExec("delete from mysql.tidb_background_subtask;")
+
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task=on;")
+
+	tk.MustExec("create table t(id int primary key, b int, k int);")
+	insertSQLBuilder := &strings.Builder{}
+	insertSQLBuilder.WriteString("insert into t values ")
+	for i := 0; i < 100; i++ {
+		if i != 0 {
+			insertSQLBuilder.WriteString(", ")
+		}
+		insertSQLBuilder.WriteString(fmt.Sprintf("(%d, %d, %d)", i, i, i))
+	}
+	tk.MustExec(insertSQLBuilder.String())
+	tk.MustExec("set @@global.tidb_temp_storage_uri = 's3://nfs/tools_test_data/sharedisk?access-key=minioadmin&secret-access-key=minioadmin&endpoint=http://127.0.0.1:9000&force-path-style=true';")
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
 }

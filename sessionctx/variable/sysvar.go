@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/size"
 	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
@@ -2772,6 +2773,89 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableCheckConstraint.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBTempStorageURI, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		TempStorageURI.Store(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return TempStorageURI.Load(), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBGlobalSortMemQuota, Value: strconv.Itoa(DefTiDBGlobalSortMemoryQuota), Type: TypeInt, MinValue: int64(256 * size.MB), MaxValue: 64 * size.GB,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			GlobalSortMemQuota.Store(uint64(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.Itoa(int(GlobalSortMemQuota.Load())), nil
+		}},
+	{Scope: ScopeGlobal, Name: TiDBGlobalSortReadBufferSize, Value: strconv.Itoa(DefTiDBGlobalSortReadBufferSize), Type: TypeInt, MinValue: int64(8 * size.KB), MaxValue: 1 * size.GB,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			GlobalSortReadBufferSize.Store(uint64(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.Itoa(int(GlobalSortReadBufferSize.Load())), nil
+		}},
+	{Scope: ScopeGlobal, Name: TiDBGlobalSortWriteBatchSize, Value: strconv.Itoa(DefTiDBGlobalSortWriteBatchSize), Type: TypeInt, MinValue: 1024, MaxValue: 1 * size.GB,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			GlobalSortWriteBatchSize.Store(val)
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.Itoa(int(GlobalSortWriteBatchSize.Load())), nil
+		}},
+	{Scope: ScopeGlobal, Name: TiDBGlobalSortStatSampleKeys, Value: strconv.Itoa(DefTiDBGlobalSortStatSampleKeys), Type: TypeInt, MinValue: 1024, MaxValue: 1 * size.GB,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			GlobalSortStatSampleKeys.Store(val)
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.Itoa(int(GlobalSortStatSampleKeys.Load())), nil
+		}},
+	{Scope: ScopeGlobal, Name: TiDBGlobalSortStatSampleSize, Value: strconv.Itoa(DefTiDBGlobalSortStatSampleSize), Type: TypeInt, MinValue: int64(1 * size.KB), MaxValue: 1 * size.GB,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			GlobalSortStatSampleSize.Store(uint64(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.Itoa(int(GlobalSortStatSampleSize.Load())), nil
+		}},
+	{Scope: ScopeGlobal, Name: TiDBGlobalSortSubtaskCnt, Value: strconv.Itoa(DefTiDBGlobalSortSubtaskCnt), Type: TypeInt, MinValue: 1, MaxValue: 1000,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			GlobalSortSubtaskCnt.Store(val)
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.Itoa(int(GlobalSortSubtaskCnt.Load())), nil
+		}},
+	{Scope: ScopeGlobal, Name: TiDBGlobalSortS3ChunkSize, Value: strconv.Itoa(DefTiDBGlobalSortS3ChunkSize), Type: TypeInt, MinValue: int64(1 * size.MB), MaxValue: 1 * size.GB,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			GlobalSortS3ChunkSize.Store(uint64(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.Itoa(int(GlobalSortS3ChunkSize.Load())), nil
+		}},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {
