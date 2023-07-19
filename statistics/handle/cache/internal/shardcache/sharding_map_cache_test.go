@@ -37,7 +37,6 @@ func TestLFUPutGetDel(t *testing.T) {
 	v, ok := cache.Get(mockTableID, false)
 	require.False(t, ok)
 	require.Nil(t, v)
-
 }
 
 func TestLFUFreshMemUsage(t *testing.T) {
@@ -63,7 +62,6 @@ func TestLFUFreshMemUsage(t *testing.T) {
 	t7 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 	cache.Put(int64(1), t7, false)
 	require.Equal(t, cache.Cost(), 6*mockCMSMemoryUsage+6*mockCMSMemoryUsage)
-
 }
 
 func TestCacheLen(t *testing.T) {
