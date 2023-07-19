@@ -754,6 +754,8 @@ const (
 	AppendSchema AppendOp = 2
 	// AppendDDL represents the ddls before last backup.
 	AppendDDL AppendOp = 3
+
+	AppendRange AppendOp = 4
 )
 
 func (op AppendOp) name() string {
@@ -790,6 +792,14 @@ func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (dataFileSize
 			size += f.Size()
 			dataFileSize += int(f.Size_)
 		}
+	case AppendRange:
+		files := b.([]*backuppb.File)
+		// FIXME correct the startKey/endKey
+		a.BackupRanges = append(a.BackupRanges, &backuppb.BackupRange{
+			StartKey: files[0].GetStartKey(),
+			EndKey:   files[len(files)-1].GetEndKey(),
+			Files:    files,
+		})
 	case AppendSchema:
 		a.Schemas = append(a.Schemas, b.(*backuppb.Schema))
 		itemCount++
@@ -984,7 +994,7 @@ func (writer *MetaWriter) FinishWriteMetas(ctx context.Context, op AppendOp) err
 	}
 
 	costs := time.Since(writer.start)
-	if op == AppendDataFile {
+	if op == AppendDataFile || op == AppendRange {
 		summary.CollectSuccessUnit("backup ranges", writer.flushedItemNum, costs)
 	}
 	log.Info("finish the write metas", zap.Int("item", writer.flushedItemNum),
@@ -1027,6 +1037,8 @@ func (writer *MetaWriter) fillMetasV1(_ context.Context, op AppendOp) {
 		writer.backupMeta.Schemas = writer.metafiles.root.Schemas
 	case AppendDDL:
 		writer.backupMeta.Ddls = mergeDDLs(writer.metafiles.root.Ddls)
+	case AppendRange:
+		writer.backupMeta.Ranges = writer.metafiles.root.BackupRanges
 	default:
 		log.Panic("unsupport op type", zap.Any("op", op))
 	}
@@ -1050,6 +1062,15 @@ func (writer *MetaWriter) flushMetasV2(ctx context.Context, op AppendOp) error {
 			return nil
 		}
 		// Add the metafile to backupmeta and reset metafiles.
+		if writer.backupMeta.FileIndex == nil {
+			writer.backupMeta.FileIndex = &backuppb.MetaFile{}
+		}
+		index = writer.backupMeta.FileIndex
+	case AppendRange:
+		if len(writer.metafiles.root.BackupRanges) == 0 {
+			return nil
+		}
+		// we can use FileIndex here, because BackupRanges and BackupFiles cannot exists at same time.
 		if writer.backupMeta.FileIndex == nil {
 			writer.backupMeta.FileIndex = &backuppb.MetaFile{}
 		}

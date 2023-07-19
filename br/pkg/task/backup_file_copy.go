@@ -280,7 +280,7 @@ func RunFileCopyBackup(c context.Context, g glue.Glue, cfg *BackupConfig) error 
 		return errors.Trace(err)
 	}
 
-	err = metawriter.FinishWriteMetas(ctx, metautil.AppendDataFile)
+	err = metawriter.FinishWriteMetas(ctx, metautil.AppendRange)
 	if err != nil {
 		return errors.Trace(err)
 	}

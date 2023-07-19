@@ -404,7 +404,7 @@ func TestRestoreRangesIterator(t *testing.T) {
 			},
 			[][]*backuppb.File{
 				// the files with the same name belong to the same batch
-				[]*backuppb.File{
+				{
 					{
 						Name:     "f0_write.sst",
 						StartKey: []byte("a"),
@@ -416,7 +416,7 @@ func TestRestoreRangesIterator(t *testing.T) {
 						EndKey:   []byte("b"),
 					},
 				},
-				[]*backuppb.File{
+				{
 					{
 						Name:     "f1_default.sst",
 						StartKey: []byte("b"),
@@ -470,7 +470,7 @@ func TestRestoreRangesIterator(t *testing.T) {
 			},
 			[][]*backuppb.File{
 				// the files with the same name belong to the same batch
-				[]*backuppb.File{
+				{
 					{
 						Name:     "f0_write.sst",
 						StartKey: []byte("a"),
@@ -482,14 +482,14 @@ func TestRestoreRangesIterator(t *testing.T) {
 						EndKey:   []byte("b"),
 					},
 				},
-				[]*backuppb.File{
+				{
 					{
 						Name:     "f1_default.sst",
 						StartKey: []byte("b"),
 						EndKey:   []byte("bb"),
 					},
 				},
-				[]*backuppb.File{
+				{
 					{
 						Name:     "f2_write.sst",
 						StartKey: []byte("bb"),
