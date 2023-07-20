@@ -284,7 +284,7 @@ func (s *StatsInnerCache) Front() int64 {
 }
 
 // Stop implements statsCacheInner
-func (s *StatsInnerCache) Stop() {}
+func (*StatsInnerCache) Stop() {}
 
 func (s *StatsInnerCache) onEvict(tblID int64) {
 	element, exist := s.elements[tblID]
