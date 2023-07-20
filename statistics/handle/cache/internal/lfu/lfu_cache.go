@@ -136,6 +136,7 @@ func (s *LFU) Copy() internal.StatsCacheInner {
 // SetCapacity implements statsCacheInner
 func (s *LFU) SetCapacity(maxCost int64) {
 	s.cache.UpdateMaxCost(maxCost)
+	metrics.CostGauge.Set(float64(maxCost))
 }
 
 // wait blocks until all buffered writes have been applied. This ensures a call to Set()
