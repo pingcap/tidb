@@ -467,8 +467,6 @@ func FilterNodesByLabels(serverInfos map[string]*infosync.ServerInfo) []*infosyn
 			if v == "dist_worker" {
 				serverNodes = append(serverNodes, serverInfo)
 			}
-		} else {
-			serverNodes = append(serverNodes, serverInfo)
 		}
 	}
 	// All serverNodes not setting the label or setting the wrong label, back to previous strategy.
