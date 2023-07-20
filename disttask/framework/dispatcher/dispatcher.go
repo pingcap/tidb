@@ -262,9 +262,7 @@ func (d *dispatcher) scheduleTask(taskID int64) {
 			logutil.BgLogger().Info("schedule task exits", zap.Int64("task ID", taskID), zap.Error(d.ctx.Err()))
 			return
 		case <-ticker.C:
-			// TODO: Consider actively obtaining information about task completion.
 			gTask, stepIsFinished, errs := d.monitorTask(taskID)
-
 			failpoint.Inject("cancelTaskAfterMonitorTask", func(val failpoint.Value) {
 				if val.(bool) && gTask.State == proto.TaskStateRunning {
 					err := d.taskMgr.CancelGlobalTask(taskID)
