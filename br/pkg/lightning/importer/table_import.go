@@ -19,6 +19,9 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/br/pkg/logutil"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -1034,6 +1037,16 @@ func (tr *TableImporter) postProcess(
 
 			var remoteChecksum *local.RemoteChecksum
 			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo)
+			failpoint.Inject("checksum-error", func() {
+				logutil.CL(ctx).Debug("failpoint checksum-error injected.")
+				err = status.Error(codes.Unknown, "Checksum meets error.")
+			})
+			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
+				if err != nil {
+					tr.logger.Warn("do checksum failed, will skip this error and go on", log.ShortError(err))
+					err = nil
+				}
+			}
 			if err != nil {
 				return false, err
 			}
