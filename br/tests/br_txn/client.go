@@ -122,13 +122,15 @@ func randGen(client *txnkv.Client, startKey, endKey []byte, maxLen int, concurre
 					// append index to avoid write conflict
 					key = appendIndex(key, i)
 					value := randValue()
-					txn.Set(key, value)
+					err = txn.Set(key, value)
+					if err != nil {
+						errCh <- errors.Trace(err)
+					}
 				}
 				err = txn.Commit(context.TODO())
 				if err != nil {
 					errCh <- errors.Trace(err)
 				}
-
 			}
 		}(i)
 	}
