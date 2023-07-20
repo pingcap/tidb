@@ -168,6 +168,7 @@ func (sc *StatsCache) SetCapacity(c int64) {
 	sc.c.SetCapacity(c)
 }
 
+// Stop stops the cache.
 func (sc *StatsCache) Stop() {
 	sc.c.Stop()
 }
