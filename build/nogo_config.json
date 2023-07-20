@@ -596,7 +596,8 @@
       "/rules_go_work-*": "ignore generated code",
       ".*test_/testmain\\.go$": "ignore generated code",
       ".*failpoint_binding__.go$": "ignore generated code",
-      "util/chunk": "ignore util/chunk"
+      "util/chunk": "ignore util/chunk",
+      "br/pkg/restore": "ignore br/pkg/restore"
     },
     "only_files": {
       "ddl/tests": "ddl/tests code",
