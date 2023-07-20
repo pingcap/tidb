@@ -48,11 +48,11 @@ test_full_txnkv_encryption() {
     check_range_start="hello"
     check_range_end="world"
 
-    rm -rf $BACKUP_TXN_FULL
+    rm -rf $BACKUP_FULL
 
     checksum_full=$(checksum $check_range_start $check_range_end)
     # backup current state of key-values
-    run_br --pd $PD_ADDR backup txn -s "local://$BACKUP_TXN_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
+    run_br --pd $PD_ADDR backup txn -s "local://$BACKUP_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
 
     clean $check_range_start $check_range_end
     # Ensure the data is deleted
@@ -62,15 +62,13 @@ test_full_txnkv_encryption() {
         fail_and_exit
     fi
 
-    run_br --pd $PD_ADDR restore txn -s "local://$BACKUP_TXN_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
+    run_br --pd $PD_ADDR restore txn -s "local://$BACKUP_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
     checksum_new=$(checksum $check_range_start $check_range_end)
     if [ "$checksum_new" != "$checksum_full" ];then
         echo "failed to restore"
         fail_and_exit
     fi
 }
-
-checksum_empty=$(checksum "hello" "world")
 
 run_test() {
     if [ -z "$1" ];then
@@ -134,4 +132,5 @@ run_test() {
 
 # delete data in range[start-key, end-key)
 clean "hello" "world" 
+checksum_empty=$(checksum "hello" "world")
 run_test ""
