@@ -61,12 +61,18 @@ func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
 }
 
 // Put implements statsCacheInner
-func (s *LFU) Put(tblID int64, tbl *statistics.Table, _ bool) {
+func (s *LFU) Put(tblID int64, tbl *statistics.Table, _ bool) bool {
+	return s.put(tblID, tbl)
+}
+
+// Put implements statsCacheInner
+func (s *LFU) put(tblID int64, tbl *statistics.Table) bool {
 	ok := s.cache.Set(tblID, tbl, tbl.MemoryUsage().TotalTrackingMemUsage())
 	if ok { // NOTE: `s.cache` and `s.resultKeySet` may be inconsistent since the update operation is not atomic, but it's acceptable for our scenario
 		s.resultKeySet.Add(tblID)
 		s.cost.Add(tbl.MemoryUsage().TotalTrackingMemUsage())
 	}
+	return ok
 }
 
 // Del implements statsCacheInner

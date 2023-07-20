@@ -24,11 +24,14 @@ type StatsCachePointer struct {
 }
 
 // NewStatsCachePointer creates a new StatsCache.
-func NewStatsCachePointer() *StatsCachePointer {
-	newCache := NewStatsCache()
+func NewStatsCachePointer() (*StatsCachePointer, error) {
+	newCache, err := NewStatsCache()
+	if err != nil {
+		return nil, err
+	}
 	result := StatsCachePointer{}
 	result.Store(newCache)
-	return &result
+	return &result, nil
 }
 
 // Load loads the cached stats from the cache.

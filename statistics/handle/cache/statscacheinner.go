@@ -28,10 +28,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
-	"github.com/pingcap/tidb/statistics/handle/cache/internal/lru"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal/lfu"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/mapcache"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
 )
@@ -57,17 +58,21 @@ func WithTableStatsByQuery() TableStatsOpt {
 }
 
 // NewStatsCache creates a new StatsCacheWrapper.
-func NewStatsCache() *StatsCache {
+func NewStatsCache() (*StatsCache, error) {
 	enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota
 	if enableQuota {
 		capacity := variable.StatsCacheMemQuota.Load()
-		return &StatsCache{
-			c: lru.NewStatsLruCache(capacity),
+		stats, err := lfu.NewLFU(capacity)
+		if err != nil {
+			return nil, err
 		}
+		return &StatsCache{
+			c: stats,
+		}, nil
 	}
 	return &StatsCache{
 		c: mapcache.NewMapCache(),
-	}
+	}, nil
 }
 
 // StatsCache caches the tables in memory for Handle.
@@ -105,10 +110,29 @@ func (sc *StatsCache) PutFromInternal(id int64, t *statistics.Table) {
 	sc.put(id, t, false)
 }
 
+func (sc *StatsCache) putCache(id int64, t *statistics.Table, moveLRUFront bool) bool {
+	ok := sc.c.Put(id, t, moveLRUFront)
+	if ok {
+		return ok
+	}
+	// retry three times and sleep exponentially. 20ms, 40ms and 80ms.
+	for i := 0; i < 3; i++ {
+		time.Sleep(time.Duration(1<<uint(i)) * 10 * time.Millisecond)
+		ok = sc.c.Put(id, t, moveLRUFront)
+		if ok {
+			return ok
+		}
+	}
+	return ok
+}
+
 // Put puts the table statistics to the cache.
 func (sc *StatsCache) put(id int64, t *statistics.Table, moveLRUFront bool) {
-	sc.c.Put(id, t, moveLRUFront)
-
+	ok := sc.putCache(id, t, moveLRUFront)
+	if !ok {
+		logutil.BgLogger().Warn("fail to put the stats cache")
+		return
+	}
 	// update the maxTblStatsVer
 	for v := sc.maxTblStatsVer.Load(); v < t.Version; v = sc.maxTblStatsVer.Load() {
 		if sc.maxTblStatsVer.CompareAndSwap(v, t.Version) {
