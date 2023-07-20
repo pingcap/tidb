@@ -55,6 +55,12 @@ var (
 	// CheckDiskQuotaInterval is the default time interval to check disk quota.
 	// TODO: make it dynamically adjusting according to the speed of import and the disk size.
 	CheckDiskQuotaInterval = 10 * time.Second
+
+	// defaultMaxRegionSize is the default max region size in bytes.
+	// we make it 5 times larger than lightning default engine size to reduce region overlap, especially for index,
+	// since we have an index engine per distributed subtask.
+	// TODO: might not be the best value.
+	defaultMaxRegionSize = int64(5 * config.MaxRegionSize)
 )
 
 // prepareSortDir creates a new directory for import, remove previous sort directory if exists.
@@ -285,7 +291,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 	}
 	dataDivideCfg := &mydump.DataDivideConfig{
 		ColumnCnt:         len(e.Table.Meta().Columns),
-		EngineDataSize:    int64(config.DefaultBatchSize),
+		EngineDataSize:    defaultMaxRegionSize,
 		MaxChunkSize:      int64(config.MaxRegionSize),
 		Concurrency:       int(e.ThreadCnt),
 		EngineConcurrency: config.DefaultTableConcurrency,
