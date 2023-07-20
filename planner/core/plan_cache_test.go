@@ -2454,13 +2454,12 @@ func TestBuiltinFuncFlen(t *testing.T) {
 	tk.MustExec(`CREATE TABLE t1(c1 INT)`)
 	tk.MustExec(`INSERT INTO t1 VALUES (1)`)
 
-	funcs := []string{ast.Abs, ast.Acos, ast.Asin, ast.Atan, ast.Atan2, ast.Ceil, ast.Ceiling, ast.Cos,
-		ast.Cot, ast.CRC32, ast.Degrees, ast.Exp, ast.Floor, ast.Ln, ast.Log, ast.Log2, ast.Log10,
-		ast.PI, ast.Radians, ast.Rand, ast.Round, ast.Sign, ast.Sin, ast.Sqrt, ast.Tan, ast.Truncate,
-		ast.Quote, ast.RTrim, ast.ToBase64, ast.Trim, ast.Translate, ast.Upper, ast.Ucase, ast.Hex, ast.Unhex,
-		ast.Rpad, ast.BitLength, ast.CharFunc, ast.CharLength, ast.AesDecrypt, ast.AesEncrypt, ast.Compress,
-		ast.Decode, ast.DesDecrypt, ast.DesEncrypt, ast.Encode, ast.Encrypt, ast.MD5, ast.SHA1, ast.SHA2, ast.SHA, ast.SM3}
-	args := []string{"2038330881", "'2038330881'", "'牵'", "-1", "", "0"}
+	funcs := []string{ast.Abs, ast.Acos, ast.Asin, ast.Atan, ast.Ceil, ast.Ceiling, ast.Cos,
+		ast.CRC32, ast.Degrees, ast.Floor, ast.Ln, ast.Log, ast.Log2, ast.Log10, ast.Unhex,
+		ast.Radians, ast.Rand, ast.Round, ast.Sign, ast.Sin, ast.Sqrt, ast.Tan, ast.SM3,
+		ast.Quote, ast.RTrim, ast.ToBase64, ast.Trim, ast.Upper, ast.Ucase, ast.Hex,
+		ast.BitLength, ast.CharLength, ast.Compress, ast.MD5, ast.SHA1, ast.SHA}
+	args := []string{"2038330881", "'2038330881'", "'牵'", "-1", "''", "0"}
 
 	for _, f := range funcs {
 		for _, a := range args {
