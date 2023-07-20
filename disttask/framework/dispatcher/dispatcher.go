@@ -114,7 +114,7 @@ type dispatcher struct {
 	detectPendingGTaskCh chan *proto.Task
 }
 
-// NewDispatcher creates a Pool struct.
+// NewDispatcher creates a dispatcher struct.
 func NewDispatcher(ctx context.Context, taskTable *storage.TaskManager) (Dispatcher, error) {
 	dispatcher := &dispatcher{
 		taskMgr:              taskTable,
@@ -131,13 +131,13 @@ func NewDispatcher(ctx context.Context, taskTable *storage.TaskManager) (Dispatc
 	return dispatcher, nil
 }
 
-// Start implements Pool.Start interface.
+// Start implements dispatcher.Start interface.
 func (d *dispatcher) Start() {
 	d.wg.Run(d.DispatchTaskLoop)
 	d.inited = true
 }
 
-// Stop implements Pool.Stop interface.
+// Stop implements dispatcher.Stop interface.
 func (d *dispatcher) Stop() {
 	d.cancel()
 	d.gPool.ReleaseAndWait()
