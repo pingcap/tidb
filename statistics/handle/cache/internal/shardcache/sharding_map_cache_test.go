@@ -62,6 +62,7 @@ func TestLFUFreshMemUsage(t *testing.T) {
 	t7 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 	cache.Put(int64(1), t7, false)
 	require.Equal(t, cache.Cost(), 6*mockCMSMemoryUsage+6*mockCMSMemoryUsage)
+	require.Equal(t, len(cache.Values()), cache.Len())
 }
 
 func TestCacheLen(t *testing.T) {
