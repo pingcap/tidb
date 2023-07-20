@@ -2303,3 +2303,8 @@ func (h *Handle) GetStatsCacheFrontTable() int64 {
 	sc := v
 	return sc.Front()
 }
+
+// Stop stops the background
+func (h *Handle) Stop() {
+	h.statsCache.Load().Stop()
+}

@@ -133,3 +133,6 @@ func (*MapCache) SetCapacity(int64) {}
 func (*MapCache) Front() int64 {
 	return 0
 }
+
+// Stop implements StatsCacheInner
+func (*MapCache) Stop() {}

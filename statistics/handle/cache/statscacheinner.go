@@ -168,6 +168,10 @@ func (sc *StatsCache) SetCapacity(c int64) {
 	sc.c.SetCapacity(c)
 }
 
+func (sc *StatsCache) Stop() {
+	sc.c.Stop()
+}
+
 // Version returns the version of the current cache, which is defined as
 // the max table stats version the cache has in its lifecycle.
 func (sc *StatsCache) Version() uint64 {

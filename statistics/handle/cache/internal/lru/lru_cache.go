@@ -283,6 +283,9 @@ func (s *StatsInnerCache) Front() int64 {
 	return s.lru.cache.Front().Value.(*lruCacheItem).tblID
 }
 
+// Stop implements statsCacheInner
+func (s *StatsInnerCache) Stop() {}
+
 func (s *StatsInnerCache) onEvict(tblID int64) {
 	element, exist := s.elements[tblID]
 	if !exist {
