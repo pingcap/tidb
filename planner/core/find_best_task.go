@@ -1127,10 +1127,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				if hashPartColName == nil {
 					canConvertPointGet = false
 				}
-				// We do not build batch point get for dynamic table partitions now.
-				if ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-					canConvertPointGet = false
-				}
 			}
 			if canConvertPointGet {
 				// If the schema contains ExtraPidColID, do not convert to point get.
