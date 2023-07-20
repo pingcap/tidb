@@ -1466,6 +1466,11 @@ error = '''
 Ingest failed: %s
 '''
 
+["ddl:8256"]
+error = '''
+Check ingest environment failed: %s
+'''
+
 ["ddl:8260"]
 error = '''
 Job [%v] can't be paused: %s
