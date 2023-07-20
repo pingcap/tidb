@@ -19,9 +19,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -43,6 +40,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -57,6 +55,8 @@ import (
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // TableImporter is a helper struct to import a table.
