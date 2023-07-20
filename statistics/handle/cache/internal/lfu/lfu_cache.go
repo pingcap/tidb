@@ -102,7 +102,7 @@ func (s *LFU) onEvict(item *ristretto.Item) {
 	// We do not need to calculate the cost during onEvict, because the onexit function
 	// is also called when the evict event occurs.
 	s.resultKeySet.Remove(int64(item.Key))
-	metrics.StatsCacheCounterEvict.Inc()
+	metrics.EvictCounter.Inc()
 }
 
 func (s *LFU) onExit(val interface{}) {

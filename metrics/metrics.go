@@ -127,7 +127,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(DisconnectionCounter)
 	prometheus.MustRegister(PreparedStmtGauge)
 	prometheus.MustRegister(CriticalErrorCounter)
-	prometheus.MustRegister(StatsCacheCounter)
 	prometheus.MustRegister(DDLCounter)
 	prometheus.MustRegister(BackfillTotalCounter)
 	prometheus.MustRegister(BackfillProgressGauge)

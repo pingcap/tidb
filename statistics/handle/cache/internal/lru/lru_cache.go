@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
-	"github.com/pingcap/tidb/statistics/handle/metrics"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 )
 
 // StatsInnerCache is the LRU cache for statistics.

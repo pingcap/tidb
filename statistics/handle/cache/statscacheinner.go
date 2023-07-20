@@ -99,9 +99,9 @@ func (sc *StatsCache) GetFromUser(id int64) (*statistics.Table, bool) {
 func (sc *StatsCache) getCache(id int64, moveFront bool) (*statistics.Table, bool) {
 	result, ok := sc.c.Get(id, moveFront)
 	if ok {
-		metrics.StatsCacheCounterHit.Add(1)
+		metrics.HitCounter.Add(1)
 	} else {
-		metrics.StatsCacheCounterMiss.Add(1)
+		metrics.MissCounter.Add(1)
 	}
 	return result, ok
 }
@@ -164,6 +164,7 @@ func (sc *StatsCache) Cost() int64 {
 
 // SetCapacity sets the memory capacity of the cache.
 func (sc *StatsCache) SetCapacity(c int64) {
+	metrics.CostGauge.Set(float64(c))
 	sc.c.SetCapacity(c)
 }
 

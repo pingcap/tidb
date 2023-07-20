@@ -20,12 +20,13 @@ import (
 )
 
 var (
-	// StatsCacheCounterEvict is the counter of evicting cache.
-	StatsCacheCounterEvict prometheus.Counter
-	// StatsCacheCounterHit is the counter of hitting cache.
-	StatsCacheCounterHit prometheus.Counter
-	// StatsCacheCounterMiss is the counter of missing cache.
-	StatsCacheCounterMiss prometheus.Counter
+	MissCounter   prometheus.Counter
+	HitCounter    prometheus.Counter
+	UpdateCounter prometheus.Counter
+	DelCounter    prometheus.Counter
+	EvictCounter  prometheus.Counter
+	CostGauge     prometheus.Gauge
+	CapacityGauge prometheus.Gauge
 )
 
 func init() {
@@ -34,7 +35,11 @@ func init() {
 
 // initMetricsVars init copr metrics vars.
 func initMetricsVars() {
-	StatsCacheCounterEvict = metrics.StatsCacheCounter.WithLabelValues("evict")
-	StatsCacheCounterHit = metrics.StatsCacheCounter.WithLabelValues("hit")
-	StatsCacheCounterMiss = metrics.StatsCacheCounter.WithLabelValues("miss")
+	MissCounter = metrics.StatsCacheLRUCounter.WithLabelValues("miss")
+	HitCounter = metrics.StatsCacheLRUCounter.WithLabelValues("hit")
+	UpdateCounter = metrics.StatsCacheLRUCounter.WithLabelValues("update")
+	DelCounter = metrics.StatsCacheLRUCounter.WithLabelValues("del")
+	EvictCounter = metrics.StatsCacheLRUCounter.WithLabelValues("evict")
+	CostGauge = metrics.StatsCacheLRUGauge.WithLabelValues("track")
+	CapacityGauge = metrics.StatsCacheLRUGauge.WithLabelValues("capacity")
 }
