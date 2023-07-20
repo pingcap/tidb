@@ -28,12 +28,12 @@ type DispatcherForTest interface {
 }
 
 // GetRunningGTaskCnt implements Dispatcher.GetRunningGTaskCnt interface.
-func (d *Pool) GetRunningGTaskCnt() int {
+func (d *dispatcher) GetRunningGTaskCnt() int {
 	return d.getRunningGTaskCnt()
 }
 
 // DelRunningGTask implements Dispatcher.DelRunningGTask interface.
-func (d *Pool) DelRunningGTask(globalTaskID int64) {
+func (d *dispatcher) DelRunningGTask(globalTaskID int64) {
 	d.delRunningGTask(globalTaskID)
 }
 

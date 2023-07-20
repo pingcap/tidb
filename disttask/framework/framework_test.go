@@ -198,6 +198,9 @@ func TestFrameworkBasic(t *testing.T) {
 	time.Sleep(2 * time.Second) // make sure owner changed
 	DispatchTaskAndCheckSuccess("key3", t, &v)
 	DispatchTaskAndCheckSuccess("key4", t, &v)
+	distContext.SetOwner(1)
+	time.Sleep(2 * time.Second) // make sure owner changed
+	DispatchTaskAndCheckSuccess("key5", t, &v)
 	distContext.Close()
 }
 

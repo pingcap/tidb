@@ -1702,35 +1702,35 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		logutil.BgLogger().Info("dist task scheduler stopped")
 	}()
 
-	var dispatcherPool *dispatcher.Pool
+	var dispatcherManager dispatcher.Dispatcher
 	startDispatchIfNeeded := func() {
-		if dispatcherPool != nil {
+		if dispatcherManager != nil && dispatcherManager.Inited() {
 			return
 		}
-		newDispatcherPool, err := dispatcher.NewPool(ctx, taskManager)
+		newDispatcherManager, err := dispatcher.NewDispatcher(ctx, taskManager)
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
 			return
 		}
-		dispatcherPool = newDispatcherPool
-		dispatcherPool.Start()
+		dispatcherManager = newDispatcherManager
+		dispatcherManager.Start()
 	}
 	stopDispatchIfNeeded := func() {
-		if dispatcherPool != nil {
+		if dispatcherManager != nil && dispatcherManager.Inited() {
 			logutil.BgLogger().Info("stopping dist task dispatcher because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
-			dispatcherPool.Stop()
-			dispatcherPool = nil
+			dispatcherManager.Stop()
+			dispatcherManager = nil
 			logutil.BgLogger().Info("dist task dispatcher stopped", zap.String("id", do.ddl.GetID()))
 		}
 	}
 
-	ticker := time.Tick(time.Second)
+	ticker := time.NewTicker(time.Second)
 	for {
 		select {
 		case <-do.exit:
 			stopDispatchIfNeeded()
 			return
-		case <-ticker:
+		case <-ticker.C:
 			if do.ddl.OwnerManager().IsOwner() {
 				startDispatchIfNeeded()
 			} else {

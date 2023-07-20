@@ -57,11 +57,11 @@ func (*testFlowHandle) IsRetryableErr(error) bool {
 	return true
 }
 
-func MockDispatcher(t *testing.T, pool *pools.ResourcePool) (dispatcher.Dispatch, *storage.TaskManager) {
+func MockDispatcher(t *testing.T, pool *pools.ResourcePool) (dispatcher.Dispatcher, *storage.TaskManager) {
 	ctx := context.Background()
 	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
 	storage.SetTaskManager(mgr)
-	dsp, err := dispatcher.NewPool(util.WithInternalSourceType(ctx, "dispatcher"), mgr)
+	dsp, err := dispatcher.NewDispatcher(util.WithInternalSourceType(ctx, "dispatcher"), mgr)
 	require.NoError(t, err)
 	dispatcher.RegisterTaskFlowHandle(proto.TaskTypeExample, &testFlowHandle{})
 	return dsp, mgr
