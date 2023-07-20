@@ -596,15 +596,20 @@
       "/rules_go_work-*": "ignore generated code",
       ".*test_/testmain\\.go$": "ignore generated code",
       ".*failpoint_binding__.go$": "ignore generated code",
-      "util/chunk": "ignore util/chunk"
+      "util/chunk": "ignore util/chunk",
+      "br/pkg/restore": "ignore br/pkg/restore"
     },
     "only_files": {
+      "ddl/tests": "ddl/tests code",
       "disttask/": "disttask code",
+      "executor/test/tiflashtest": "executor/test/tiflashtest code",
       "timer/": "timer code",
       "util/": "util code",
       "br/pkg/lightning/config/": "br/pkg/lightning/config code",
       "br/pkg/storage": "br/pkg/storage code",
+      "br/pkg/utils": "br/pkg/utils code",
       "planner/cascades": "planner/cascades code",
+      "store/": "store code",
       "ttl/": "ttl code"
     }
   },
