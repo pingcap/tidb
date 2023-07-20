@@ -269,7 +269,7 @@ func (d *dispatcher) scheduleTask(taskID int64) {
 				if val.(bool) && gTask.State == proto.TaskStateRunning {
 					err := d.taskMgr.CancelGlobalTask(taskID)
 					if err != nil {
-						logutil.BgLogger().Error("cancel global task failed", zap.Error(err))
+						logutil.BgLogger().Error("cancel task failed", zap.Error(err))
 					}
 				}
 			})
@@ -349,7 +349,7 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr []error) error
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
 	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
-		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
+		logutil.BgLogger().Warn("gen task flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
 		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 	meta, err := handle.ProcessErrFlow(d.ctx, d, gTask, receiveErr)
@@ -365,7 +365,7 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr []error) error
 func (d *dispatcher) dispatchSubTask4Revert(gTask *proto.Task, handle TaskFlowHandle, meta []byte) error {
 	instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, handle, gTask)
 	if err != nil {
-		logutil.BgLogger().Warn("get global task's all instances failed", zap.Error(err))
+		logutil.BgLogger().Warn("get task's all instances failed", zap.Error(err))
 		return err
 	}
 
@@ -384,7 +384,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) error {
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
 	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
-		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
+		logutil.BgLogger().Warn("gen task flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
 		gTask.Error = errors.New("unsupported task type")
 		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
 	}
@@ -450,7 +450,7 @@ func (d *dispatcher) dispatchSubTask(gTask *proto.Task, handle TaskFlowHandle, m
 		pos := i % len(serverNodes)
 		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
 		logutil.BgLogger().Debug("create subtasks",
-			zap.Int("gTask.ID", int(gTask.ID)), zap.String("type", gTask.Type), zap.String("instanceID", instanceID))
+			zap.Int("task.ID", int(gTask.ID)), zap.String("type", gTask.Type), zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
 	}
 
@@ -523,7 +523,7 @@ func (d *dispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.Conte
 
 func (*dispatcher) checkConcurrencyOverflow(cnt int) bool {
 	if cnt >= DefaultDispatchConcurrency {
-		logutil.BgLogger().Info("dispatch task loop, running GTask cnt is more than concurrency limitation",
+		logutil.BgLogger().Info("dispatch task loop, running task cnt is more than concurrency limitation",
 			zap.Int("running cnt", cnt), zap.Int("concurrency", DefaultDispatchConcurrency))
 		return true
 	}
