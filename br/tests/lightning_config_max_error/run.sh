@@ -108,7 +108,7 @@ run_sql 'DROP DATABASE IF EXISTS lightning_task_info'
 run_sql 'DROP DATABASE IF EXISTS mytest'
 rm "${TEST_DIR}/lightning.log"
 run_lightning --backend tidb --config "${mydir}/tidb-error.toml" 2>&1 | grep -q "Error 1062 (23000): Duplicate entry '1' for key 'testtbl.PRIMARY'"
-grep -q "Error 1062 (23000): Duplicate entry '1' for key 'testtbl.PRIMARY'" "${TEST_DIR}/lightning.log"
+check_contains "Error 1062 (23000): Duplicate entry '1' for key 'testtbl.PRIMARY'" "${TEST_DIR}/lightning.log"
 run_sql 'SELECT COUNT(*) FROM lightning_task_info.duplicate_records'
 check_contains "COUNT(*): 1"
 run_sql 'SELECT * FROM lightning_task_info.duplicate_records'
