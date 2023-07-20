@@ -20,12 +20,19 @@ import (
 )
 
 var (
-	MissCounter   prometheus.Counter
-	HitCounter    prometheus.Counter
+	// MissCounter is the counter of missing cache.
+	MissCounter prometheus.Counter
+	// HitCounter is the counter of hitting cache.
+	HitCounter prometheus.Counter
+	// UpdateCounter is the counter of updating cache.
 	UpdateCounter prometheus.Counter
-	DelCounter    prometheus.Counter
-	EvictCounter  prometheus.Counter
-	CostGauge     prometheus.Gauge
+	// DelCounter is the counter of deleting cache.
+	DelCounter prometheus.Counter
+	// EvictCounter is the counter of evicting cache.
+	EvictCounter prometheus.Counter
+	// CostGauge is the gauge of cost time.
+	CostGauge prometheus.Gauge
+	// CapacityGauge is the gauge of capacity.
 	CapacityGauge prometheus.Gauge
 )
 
