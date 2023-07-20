@@ -1118,10 +1118,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 		var hashPartColName *model.CIStr
 		if tblInfo := ds.table.Meta(); canConvertPointGet && tblInfo.GetPartitionInfo() != nil {
-			// We do not build [batch] point get for dynamic table partitions now. This can be optimized.
-			if ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-				canConvertPointGet = false
-			}
 			if canConvertPointGet && len(path.Ranges) > 1 {
 				// We can only build batch point get for hash partitions on a simple column now. This is
 				// decided by the current implementation of `BatchPointGetExec::initialize()`, specifically,
@@ -1129,6 +1125,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				// BatchPointGet plan for more cases.
 				hashPartColName = getHashOrKeyPartitionColumnName(ds.ctx, tblInfo)
 				if hashPartColName == nil {
+					canConvertPointGet = false
+				}
+				// We do not build batch point get for dynamic table partitions now.
+				if ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 					canConvertPointGet = false
 				}
 			}
@@ -2364,11 +2364,20 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		Columns:          ds.Columns,
 	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.blockOffset)
 	var partitionInfo *model.PartitionDefinition
-	if ds.isPartition {
-		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
+	pi := ds.tableInfo.GetPartitionInfo()
+	if ds.isPartition || (pi != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode) {
+		if pi != nil {
+			id := ds.physicalTableID
+			if ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
+				tbl, err := partitionPruning(ds.ctx, ds.table.GetPartitionedTable(), ds.allConds, ds.partitionNames, ds.TblCols, ds.names)
+				if err != nil || len(tbl) != 1 {
+					return invalidTask
+				}
+				id = tbl[0].GetPhysicalID()
+			}
 			for i := range pi.Definitions {
 				def := pi.Definitions[i]
-				if def.ID == ds.physicalTableID {
+				if def.ID == id {
 					partitionInfo = &def
 					break
 				}
