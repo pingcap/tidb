@@ -38,7 +38,7 @@ func TestInit(t *testing.T) {
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
-	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
+	cfg.Conflict.Strategy = config.ReplaceOnDup
 	cfg.App.MaxError.Type.Store(10)
 	cfg.Conflict.Threshold = 20
 	cfg.App.TaskInfoSchemaName = "lightning_errors"
