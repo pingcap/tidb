@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	tidbconfig "github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
@@ -1363,8 +1362,8 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 		}
 }
 
-func (rc *Controller) buildTablesRanges() []kv.KeyRange {
-	var keyRanges []kv.KeyRange
+func (rc *Controller) buildTablesRanges() []tidbkv.KeyRange {
+	var keyRanges []tidbkv.KeyRange
 	for _, dbInfo := range rc.dbInfos {
 		for _, tableInfo := range dbInfo.Tables {
 			if ranges, err := backup.BuildTableRanges(tableInfo.Core); err == nil {
