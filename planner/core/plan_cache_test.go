@@ -2446,6 +2446,34 @@ func TestIssue45378(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
+func TestBuiltinFuncFlen(t *testing.T) {
+	// same as TestIssue45378 and TestIssue45253
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t1(c1 INT)`)
+	tk.MustExec(`INSERT INTO t1 VALUES (1)`)
+
+	funcs := []string{ast.Abs, ast.Acos, ast.Asin, ast.Atan, ast.Atan2, ast.Ceil, ast.Ceiling, ast.Cos,
+		ast.Cot, ast.CRC32, ast.Degrees, ast.Exp, ast.Floor, ast.Ln, ast.Log, ast.Log2, ast.Log10,
+		ast.PI, ast.Radians, ast.Rand, ast.Round, ast.Sign, ast.Sin, ast.Sqrt, ast.Tan, ast.Truncate,
+		ast.Quote, ast.RTrim, ast.ToBase64, ast.Trim, ast.Translate, ast.Upper, ast.Ucase, ast.Hex, ast.Unhex,
+		ast.Rpad, ast.BitLength, ast.CharFunc, ast.CharLength, ast.AesDecrypt, ast.AesEncrypt, ast.Compress,
+		ast.Decode, ast.DesDecrypt, ast.DesEncrypt, ast.Encode, ast.Encrypt, ast.MD5, ast.SHA1, ast.SHA2, ast.SHA, ast.SM3}
+	args := []string{"2038330881", "'2038330881'", "'牵'", "-1", "", "0"}
+
+	for _, f := range funcs {
+		for _, a := range args {
+			q := fmt.Sprintf("SELECT c1 from t1 where %s(%s)", f, a)
+			tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+			r1 := tk.MustQuery(q)
+			tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
+			r2 := tk.MustQuery(q)
+			r1.Sort().Check(r2.Sort().Rows())
+		}
+	}
+}
+
 func TestNonPreparedPlanCacheBuiltinFuncs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
