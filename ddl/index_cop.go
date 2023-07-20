@@ -146,10 +146,10 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 			p.checkpointMgr.Register(task.id, task.endKey)
 		}
 		var done bool
-
+		num := 0
+		startTime := time.Now()
 		for !done {
 			memory := 0
-			startTime := time.Now()
 			srcChk := p.getChunk()
 			done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk)
 			if err != nil {
@@ -166,9 +166,13 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 				idxRs.err = errors.New("mock cop error")
 			})
 			p.chunkSender.AddTask(idxRs)
-			rate := float64(memory) / 1024.0 / 1024.0 / (float64(time.Since(startTime).Microseconds()) / 1000000.0)
-			logutil.BgLogger().Info("scan tikv rate", zap.Any("m/s", rate))
-			metrics.AddIndexScanRate.WithLabelValues(metrics.LblAddIndex).Observe(rate)
+			num++
+			if num%100 == 0 {
+				rate := float64(memory) / 1024.0 / 1024.0 / (float64(time.Since(startTime).Microseconds()) / 1000000.0)
+				logutil.BgLogger().Info("scan tikv rate", zap.Any("m/s", rate))
+				metrics.AddIndexScanRate.WithLabelValues(metrics.LblAddIndex).Observe(rate)
+				startTime = time.Now()
+			}
 		}
 		terror.Call(rs.Close)
 		return nil

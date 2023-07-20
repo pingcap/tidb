@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/keyspace"
 	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -337,6 +338,7 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		if err != nil {
 			logutil.BgLogger().Error("close data writer failed", zap.Error(err))
 		}
+		metrics.GlobalSortSharedDiskRate.WithLabelValues("write").Observe(float64(saveBytes) / 1024.0 / 1024.0 / (float64(time.Since(ts).Microseconds()) / 1000000.0))
 		logutil.BgLogger().Info("flush kv", zap.Any("time", time.Since(ts)), zap.Any("bytes", saveBytes), zap.Any("rate", float64(saveBytes)/1024.0/1024.0/time.Since(ts).Seconds()))
 	}()
 
