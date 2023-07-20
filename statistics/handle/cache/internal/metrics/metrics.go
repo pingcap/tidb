@@ -20,9 +20,12 @@ import (
 )
 
 var (
+	// StatsCacheCounterEvict is the counter of evicting cache.
 	StatsCacheCounterEvict prometheus.Counter
-	StatsCacheCounterHit   prometheus.Counter
-	StatsCacheCounterMiss  prometheus.Counter
+	// StatsCacheCounterHit is the counter of hitting cache.
+	StatsCacheCounterHit prometheus.Counter
+	// StatsCacheCounterMiss is the counter of missing cache.
+	StatsCacheCounterMiss prometheus.Counter
 )
 
 func init() {
