@@ -447,7 +447,13 @@ func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, 
 func (h *Handle) Clear() {
 	// TODO: Here h.mu seems to protect all the fields of Handle. Is is reasonable?
 	h.mu.Lock()
-	h.statsCache.Replace(cache.NewStatsCache())
+	cache, err := cache.NewStatsCache()
+	if err != nil {
+		logutil.BgLogger().Warn("create stats cache failed", zap.Error(err))
+		h.mu.Unlock()
+		return
+	}
+	h.statsCache.Replace(cache)
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
@@ -490,7 +496,11 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	handle.lease.Store(lease)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
-	handle.statsCache = cache.NewStatsCachePointer()
+	statsCache, err := cache.NewStatsCachePointer()
+	if err != nil {
+		return nil, err
+	}
+	handle.statsCache = statsCache
 	handle.globalMap.data = make(tableDeltaMap)
 	handle.feedback.data = statistics.NewQueryFeedbackMap()
 	handle.colMap.data = make(colStatsUsageMap)
@@ -498,7 +508,7 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.WorkingColMap = map[model.TableItemID][]chan stmtctx.StatsLoadResult{}
-	err := handle.RefreshVars()
+	err = handle.RefreshVars()
 	if err != nil {
 		return nil, err
 	}

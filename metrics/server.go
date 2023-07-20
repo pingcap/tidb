@@ -36,6 +36,7 @@ var (
 	PreparedStmtGauge      prometheus.Gauge
 	ExecuteErrorCounter    *prometheus.CounterVec
 	CriticalErrorCounter   prometheus.Counter
+	StatsCacheCounter      *prometheus.CounterVec
 
 	EventStart        = "start"
 	EventGracefulDown = "graceful_shutdown"
@@ -145,7 +146,13 @@ func InitServerMetrics() {
 			Name:      "critical_error_total",
 			Help:      "Counter of critical errors.",
 		})
-
+	StatsCacheCounter = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "stats_cache",
+			Help:      "stats cache hit, evict and miss number",
+		}, []string{LblType})
 	ServerEventCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",

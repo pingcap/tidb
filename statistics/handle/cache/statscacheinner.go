@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/lfu"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/mapcache"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -92,12 +93,22 @@ func (sc *StatsCache) Len() int {
 //
 //	e.g. v := sc.Get(id); /* update the value */ v.Version = 123; sc.Put(id, v);
 func (sc *StatsCache) GetFromUser(id int64) (*statistics.Table, bool) {
-	return sc.c.Get(id, true)
+	return sc.getCache(id, true)
+}
+
+func (sc *StatsCache) getCache(id int64, moveFront bool) (*statistics.Table, bool) {
+	result, ok := sc.c.Get(id, moveFront)
+	if ok {
+		metrics.StatsCacheCounterHit.Add(1)
+	} else {
+		metrics.StatsCacheCounterMiss.Add(1)
+	}
+	return result, ok
 }
 
 // GetFromInternal returns the statistics of the specified Table ID.
 func (sc *StatsCache) GetFromInternal(id int64) (*statistics.Table, bool) {
-	return sc.c.Get(id, false)
+	return sc.getCache(id, false)
 }
 
 // PutFromUser puts the table statistics to the cache from query.
