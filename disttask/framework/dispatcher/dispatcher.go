@@ -523,7 +523,7 @@ func (d *dispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.Conte
 
 func (*dispatcher) checkConcurrencyOverflow(cnt int) bool {
 	if cnt >= DefaultDispatchConcurrency {
-		logutil.BgLogger().Info("dispatch task loop, running GTask cnt is more than concurrency",
+		logutil.BgLogger().Info("dispatch task loop, running GTask cnt is more than concurrency limitation",
 			zap.Int("running cnt", cnt), zap.Int("concurrency", DefaultDispatchConcurrency))
 		return true
 	}
