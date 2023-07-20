@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 	"github.com/pingcap/tidb/util/intest"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // LFU is a LFU based on the ristretto.Cache
@@ -33,6 +34,14 @@ type LFU struct {
 
 // NewLFU creates a new LFU cache.
 func NewLFU(totalMemCost int64) (*LFU, error) {
+	if totalMemCost == 0 {
+		memTotal, err := memory.MemTotal()
+		if err != nil {
+			return nil, err
+		}
+		totalMemCost = int64(memTotal)
+	}
+	metrics.CostGauge.Set(float64(totalMemCost))
 	result := &LFU{}
 	bufferItems := int64(64)
 	if intest.InTest {
