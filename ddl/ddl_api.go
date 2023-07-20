@@ -123,7 +123,7 @@ func (d *ddl) CreateETL(ctx sessionctx.Context, s *ast.CreateETLStmt) error {
 	tblInfo.IsETL = true
 	tblInfo.ETLQuery = s.ETLSelect.Text()
 	tblInfo.ETLStoragePath = etlPathPrefix + s.Table.Schema.String() + "/" + s.Table.Name.String()
-	tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	// tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 	tblInfo.ETLOutputNames = s.OutputNames
 	tblInfo.ETLOutputFieldTypes = s.OutputFieldTypes
 	tblInfo.ETLPKColNames = s.PKNames
