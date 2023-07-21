@@ -245,7 +245,7 @@ func (h *litBackfillFlowHandle) splitSubtaskRanges(ctx context.Context, taskHand
 	startKey := firstKey
 	var endKey kv.Key
 	for {
-		splitKey, dataFiles, statsFiles, err := splitter.SplitOne()
+		splitKey, dataFiles, statsFiles, regionKeys, err := splitter.SplitOne()
 		if err != nil {
 			return nil, err
 		}
@@ -264,6 +264,7 @@ func (h *litBackfillFlowHandle) splitSubtaskRanges(ctx context.Context, taskHand
 			EndKey:     endKey,
 			DataFiles:  dataFiles,
 			StatsFiles: statsFiles,
+			RegionKeys: regionKeys,
 		}
 		metaBytes, err := json.Marshal(m)
 		if err != nil {
