@@ -191,6 +191,7 @@ go_library(
         "//util/disk",
         "//util/etcd",
         "//util/execdetails",
+        "//util/filter",
         "//util/format",
         "//util/gcutil",
         "//util/globalconn",
