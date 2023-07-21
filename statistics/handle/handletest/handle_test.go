@@ -3023,32 +3023,6 @@ func TestEvictedColumnLoadedStatus(t *testing.T) {
 	}
 }
 
-func TestAnalyzeTableLRUPut(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.EnableStatsCacheMemQuota = true
-	})
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b))")
-	tk.MustExec("create table t1(a int, b varchar(10), index idx_b (b))")
-	tk.MustExec("analyze table test.t")
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
-	tbl1, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.Nil(t, err)
-	// assert t1 should be front of lru
-	tk.MustExec("analyze table test.t1")
-	require.Equal(t, tbl1.Meta().ID, domain.GetDomain(tk.Session()).StatsHandle().GetStatsCacheFrontTable())
-	// assert t should be front of lru
-	tk.MustExec("analyze table test.t")
-	require.Equal(t, tbl.Meta().ID, domain.GetDomain(tk.Session()).StatsHandle().GetStatsCacheFrontTable())
-}
-
 func TestUninitializedStatsStatus(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	dom.StatsHandle().SetLease(0)

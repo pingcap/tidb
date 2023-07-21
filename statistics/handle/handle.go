@@ -2290,20 +2290,6 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 	sc.SetCapacity(c)
 }
 
-// GetStatsCacheFrontTable gets front table in statsCacheInner implementation
-// only used for test
-func (h *Handle) GetStatsCacheFrontTable() int64 {
-	if h == nil {
-		return 0
-	}
-	v := h.statsCache.Load()
-	if v == nil {
-		return 0
-	}
-	sc := v
-	return sc.Front()
-}
-
 // Stop stops the background
 func (h *Handle) Stop() {
 	h.statsCache.Load().Stop()
