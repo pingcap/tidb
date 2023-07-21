@@ -11,6 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//util/logutil",
+        "@com_github_daixiang0_gci//pkg/log",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@org_golang_google_grpc//codes",
@@ -33,6 +34,8 @@ go_test(
     shard_count = 4,
     deps = [
         ":log",
+        "//util/logutil",
+        "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
