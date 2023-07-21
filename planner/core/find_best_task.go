@@ -912,8 +912,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 
 	cntPlan = 0
 	for _, candidate := range candidates {
-		if ds.tableInfo.IsETLTable() && candidate.path.StoreType != kv.TiFlash {
-			continue
+		if ds.tableInfo.IsETLTable(){
+			candidate.path.StoreType = kv.TiFlash
 		}
 		if ds.tableInfo.IsExternalTable() && candidate.path.StoreType != kv.TiFlash {
 			continue

@@ -95,7 +95,7 @@ const (
 	tiflashCheckPendingTablesRetry = 7
 )
 
-const etlPathPrefix = "/pingcap/etl/"
+const etlPathPrefix = "/pingcap/demo/"
 
 func (d *ddl) CreateETL(ctx sessionctx.Context, s *ast.CreateETLStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
@@ -122,8 +122,6 @@ func (d *ddl) CreateETL(ctx sessionctx.Context, s *ast.CreateETLStmt) error {
 	}
 	tblInfo.IsETL = true
 	tblInfo.ETLQuery = s.ETLSelect.Text()
-	tblInfo.ETLStoragePath = etlPathPrefix + s.Table.Schema.String() + "/" + s.Table.Name.String()
-	// tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 	tblInfo.ETLOutputNames = s.OutputNames
 	tblInfo.ETLOutputFieldTypes = s.OutputFieldTypes
 	tblInfo.ETLPKColNames = s.PKNames
@@ -148,6 +146,8 @@ func (d *ddl) CreateETL(ctx sessionctx.Context, s *ast.CreateETLStmt) error {
 	sb = writeDemoFlinkTInc(sb, tblInfo)
 	sb = writeDemoHudiTInsert(sb, tblInfo)
 	etlJobID := NewSHA1Hash()
+	tblInfo.ETLStoragePath = etlPathPrefix + "etl" + etlJobID + "-sink-5"
+	// tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 	templateFilePath := fmt.Sprintf("/tmp/%s.template", etlJobID)
 	writeTemplateFile(templateFilePath, sb)
 	logutil.BgLogger().Info("template file and etlJobID", zap.String("templateFilePath", templateFilePath), zap.String("etlJobID", etlJobID))
@@ -301,26 +301,33 @@ func startSinkTask(etlJobID, dbName, tblName, templateFilePath string) (string, 
 	sink_task_desc := fmt.Sprintf(`etl%s.5.%s.%s`, etlJobID, dbName, tblName)
 	setupDemoBinPath := "/home/xhy/Development/workspace/htap/__tmp/setup-demo.py"
 	cdcBinPath := "/home/xhy/Development/tiup-cluster/tidb-deploy/cdc-8300/bin/cdc"
-	ticdcAddress := "127.0.0.1:8300"
-	tidbAddress := "127.0.0.1:4000"
+	ticdcAddress := "10.71.200.221:8300"
+	tidbAddress := "10.71.200.221:4000"
 	dumplingBinPath := "/home/xhy/.tiup/components/dumpling/v7.2.0/dumpling"
-	dumplingTarPath := "/home/xhy/Development/tiup-cluster"
-	cmd := fmt.Sprintf("sudo %s --cmd sink_task --sink_task_desc=%s --sink_task_flink_schema_path %s --cdc_bin_path %s --ticdc_addr %s --tidb_addr %s --dumpling_bin_path %s --dumpling_tar_path %s", setupDemoBinPath, sink_task_desc, templateFilePath, cdcBinPath, ticdcAddress, tidbAddress, dumplingBinPath, dumplingTarPath)
+	cmd := fmt.Sprintf("sudo %s --cmd sink_task --sink_task_desc=%s --sink_task_flink_schema_path %s --cdc_bin_path %s --ticdc_addr %s --tidb_addr %s --dumpling_bin_path %s", setupDemoBinPath, sink_task_desc, templateFilePath, cdcBinPath, ticdcAddress, tidbAddress, dumplingBinPath)
 
 	logutil.BgLogger().Warn("start sink task", zap.String("cmd", cmd))
 	command := exec.Command("bash", "-c", cmd)
 
 	// 设置命令的输出和错误输出流
-	command.Stdout = os.Stdout
-	command.Stderr = os.Stderr
-
-	// 执行命令
-	err := command.Run()
+	logFile, err := os.OpenFile("/home/xhy/Development/workspace/htap/__tmp/.hudi.log", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
-		cmd = fmt.Sprintf("sudo /home/xhy/Development/workspace/htap/__tmp/setup-demo.py --cmd rm_all_jobs --cdc_bin_path /home/xhy/Development/tiup-cluster/tidb-deploy/cdc-8300/bin/cdc --ticdc_addr 127.0.0.1:8300 --tidb_addr 127.0.0.1:4000 --dumpling_bin_path /home/xhy/.tiup/components/dumpling/v7.2.0/dumpling")
+		return "", err
+	}
+	defer logFile.Close()
+	command.Stdout = logFile
+
+	command.Stderr = logFile
+	// 执行命令
+	err = command.Run()
+	if err != nil {
+		cmd = fmt.Sprintf("sudo /home/xhy/Development/workspace/htap/__tmp/setup-demo.py --cmd rm_all_jobs --cdc_bin_path %s --ticdc_addr %s  --tidb_addr %s --dumpling_bin_path %s", cdcBinPath, ticdcAddress, tidbAddress, dumplingBinPath)
 		logutil.BgLogger().Warn("rm all jobs", zap.String("cmd", cmd))
 		command = exec.Command("bash", "-c", cmd)
-		err = command.Run()
+		err1 := command.Run()
+		if err1 != nil {
+			err = err1
+		}
 	}
 	return sink_task_desc, err
 }

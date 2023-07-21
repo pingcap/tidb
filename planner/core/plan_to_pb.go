@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tidb/util/logutil"
 	"log"
 	"net/url"
 )
@@ -279,6 +280,12 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	if storeType == kv.TiFlash {
 		executorID = p.ExplainID().String()
 		if p.Table.IsExternalTable() {
+			for _, f := range p.parquetFileUris {
+				tsExec.HdfsUri = append(tsExec.HdfsUri, []byte(f))
+			}
+		}
+		if p.Table.IsETL {
+			logutil.BgLogger().Info("etl table scan")
 			for _, f := range p.parquetFileUris {
 				tsExec.HdfsUri = append(tsExec.HdfsUri, []byte(f))
 			}

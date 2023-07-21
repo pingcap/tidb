@@ -4544,12 +4544,14 @@ func getTableLocation(tbl *model.TableInfo) (tblLocation string, err error) {
 
 func readSchemaFromParquetFile(client *hdfs.Client, path string) (*metadata.FileMetaData, error) {
 	file, err := client.Open(path)
+	logutil.BgLogger().Warn("open file success")
 	if err != nil {
 		logutil.BgLogger().Error("client open fail")
 		return nil, err
 	}
 	defer file.Close()
 	reader, err := file2.NewParquetReader(file)
+	logutil.BgLogger().Warn("new parquet reader success")
 	if err != nil {
 		logutil.BgLogger().Error("file2.NewParquetReader fail")
 		return nil, err
@@ -4602,7 +4604,7 @@ func newHDFSClient(address string) (client *hdfs.Client, err error) {
 
 func FetchColumnInfoFromETLTable(tbl *model.TableInfo) (columns []*table.Column, parquetFileUris []string, err error) {
 	var host, scheme string
-	host = "namenode:8020"
+	host = "10.71.200.221:12347"
 	scheme = "hdfs"
 	hdfsClient, err := newHDFSClient(host)
 	if err != nil {
@@ -4628,6 +4630,7 @@ func FetchColumnInfoFromETLTable(tbl *model.TableInfo) (columns []*table.Column,
 	if err != nil {
 		log.Fatal(err)
 	}
+	logutil.BgLogger().Warn("read schema from parquet file success")
 	for _, f := range parquetFiles {
 		parquetFileUris = append(parquetFileUris, scheme+"://"+host+f)
 	}
