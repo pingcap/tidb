@@ -150,16 +150,9 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 			bo.delayTime = 0
 			bo.attempt = 0
 		default:
-			switch status.Code(e) {
-			case codes.Unavailable, codes.Aborted:
-				bo.delayTime = 2 * bo.delayTime
-				bo.attempt--
-			default:
-				// Unexpected error, directly retry again
-				bo.delayTime = 2 * bo.delayTime
-				bo.attempt--
-				log.Warn("unexpected error, retry", zap.Error(err))
-			}
+			bo.delayTime = 2 * bo.delayTime
+			bo.attempt--
+			log.Warn("unexpected error, retry", zap.Error(err))
 		}
 	}
 	if bo.delayTime > bo.maxDelayTime {
