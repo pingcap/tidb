@@ -1555,7 +1555,7 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reader.Close()) }()
 	for _, file := range reader.File {
-		require.True(t, checkFileName(file.Name))
+		require.True(t, checkFileName(file.Name), file.Name)
 	}
 }
 

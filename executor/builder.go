@@ -1126,9 +1126,10 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) exec.Ex
 	e := &PlanReplayerExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		DumpInfo: &PlanReplayerDumpInfo{
-			Analyze: v.Analyze,
-			Path:    v.File,
-			ctx:     b.ctx,
+			Analyze:           v.Analyze,
+			Path:              v.File,
+			ctx:               b.ctx,
+			HistoricalStatsTS: v.HistoricalStatsTS,
 		},
 	}
 	if v.ExecStmt != nil {

@@ -1236,6 +1236,7 @@ import (
 	PasswordOrLockOption                   "Single password or lock option for create user statement"
 	PasswordOrLockOptionList               "Password or lock options for create user statement"
 	PasswordOrLockOptions                  "Optional password or lock options for create user statement"
+	PlanReplayerDumpOpt                    "Plan Replayer Dump option"
 	CommentOrAttributeOption               "Optional comment or attribute option for CREATE/ALTER USER statements"
 	ColumnPosition                         "Column position [First|After ColumnName]"
 	PrepareSQL                             "Prepare statement sql string"
@@ -14974,26 +14975,29 @@ RowStmt:
  *		| CAPTURE `sql_digest` `plan_digest`]
  *******************************************************************/
 PlanReplayerStmt:
-	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" ExplainableStmt
-	{
-		x := &ast.PlanReplayerStmt{
-			Stmt:    $5,
-			Analyze: false,
-			Load:    false,
-			File:    "",
-			Where:   nil,
-			OrderBy: nil,
-			Limit:   nil,
-		}
-		startOffset := parser.startOffset(&yyS[yypt])
-		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
-
-		$$ = x
-	}
-|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "ANALYZE" ExplainableStmt
+	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt "EXPLAIN" ExplainableStmt
 	{
 		x := &ast.PlanReplayerStmt{
 			Stmt:    $6,
+			Analyze: false,
+			Load:    false,
+			File:    "",
+			Where:   nil,
+			OrderBy: nil,
+			Limit:   nil,
+		}
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
+		}
+		startOffset := parser.startOffset(&yyS[yypt])
+		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt "EXPLAIN" "ANALYZE" ExplainableStmt
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:    $7,
 			Analyze: true,
 			Load:    false,
 			File:    "",
@@ -15001,12 +15005,15 @@ PlanReplayerStmt:
 			OrderBy: nil,
 			Limit:   nil,
 		}
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
+		}
 		startOffset := parser.startOffset(&yyS[yypt])
 		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		$$ = x
 	}
-|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
+|	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt "EXPLAIN" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
 	{
 		x := &ast.PlanReplayerStmt{
 			Stmt:    nil,
@@ -15014,25 +15021,8 @@ PlanReplayerStmt:
 			Load:    false,
 			File:    "",
 		}
-		if $7 != nil {
-			x.Where = $7.(ast.ExprNode)
-		}
-		if $8 != nil {
-			x.OrderBy = $8.(*ast.OrderByClause)
-		}
-		if $9 != nil {
-			x.Limit = $9.(*ast.Limit)
-		}
-
-		$$ = x
-	}
-|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "ANALYZE" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
-	{
-		x := &ast.PlanReplayerStmt{
-			Stmt:    nil,
-			Analyze: true,
-			Load:    false,
-			File:    "",
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
 		}
 		if $8 != nil {
 			x.Where = $8.(ast.ExprNode)
@@ -15046,23 +15036,52 @@ PlanReplayerStmt:
 
 		$$ = x
 	}
-|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" stringLit
-	{
-		x := &ast.PlanReplayerStmt{
-			Stmt:    nil,
-			Analyze: false,
-			Load:    false,
-			File:    $5,
-		}
-		$$ = x
-	}
-|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "ANALYZE" stringLit
+|	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt "EXPLAIN" "ANALYZE" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
 	{
 		x := &ast.PlanReplayerStmt{
 			Stmt:    nil,
 			Analyze: true,
 			Load:    false,
+			File:    "",
+		}
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
+		}
+		if $9 != nil {
+			x.Where = $9.(ast.ExprNode)
+		}
+		if $10 != nil {
+			x.OrderBy = $10.(*ast.OrderByClause)
+		}
+		if $11 != nil {
+			x.Limit = $11.(*ast.Limit)
+		}
+
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt "EXPLAIN" stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:    nil,
+			Analyze: false,
+			Load:    false,
 			File:    $6,
+		}
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
+		}
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt "EXPLAIN" "ANALYZE" stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:    nil,
+			Analyze: true,
+			Load:    false,
+			File:    $7,
+		}
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
 		}
 		$$ = x
 	}
@@ -15109,6 +15128,15 @@ PlanReplayerStmt:
 		}
 
 		$$ = x
+	}
+
+PlanReplayerDumpOpt:
+	{
+		$$ = nil
+	}
+|	"WITH" "STATS" AsOfClause
+	{
+		$$ = $3.(*ast.AsOfClause)
 	}
 
 /* Stored PROCEDURE parameter declaration list */
