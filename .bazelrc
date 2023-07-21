@@ -1,6 +1,7 @@
 startup --host_jvm_args=-Xmx4g
 startup --unlimit_coredumps
-
+dump: --http_connector_attempts=2
+dump: --http_connector_retry_max_timeout=5s
 run:ci --color=yes
 
 build --announce_rc
@@ -17,7 +18,6 @@ build:release --workspace_status_command=./build/print-workspace-status.sh --sta
 build:release --config=ci
 build:race --config=ci
 build:race --@io_bazel_rules_go//go/config:race --test_env=GORACE=halt_on_error=1 --test_sharding_strategy=disabled
-
 test --test_env=TZ=Asia/Shanghai
 test --test_output=errors --test_summary=detailed
 test:ci --color=yes
