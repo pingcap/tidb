@@ -72,6 +72,7 @@ func (ssctx *ScalarSubqueryEvalCtx) selfEval() error {
 }
 
 // ScalarSubQueryExpr is a expression placeholder for the non-correlated scalar subqueries which can be evaluated during optimizing phase.
+// TODO: The methods related with evaluate the function will be revised in next step.
 type ScalarSubQueryExpr struct {
 	scalarSubqueryColID int64
 
@@ -111,10 +112,7 @@ func (s *ScalarSubQueryExpr) Eval(_ chunk.Row) (types.Datum, error) {
 		return s.Value, s.evalErr
 	}
 	err := s.selfEvaluate()
-	if err != nil {
-		return s.Value, err
-	}
-	return s.Value, nil
+	return s.Value, err
 }
 
 // EvalInt returns the int64 representation of expression.

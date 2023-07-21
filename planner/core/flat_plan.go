@@ -15,10 +15,13 @@
 package core
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/texttree"
+	"go.uber.org/zap"
 )
 
 // FlatPhysicalPlan provides an easier structure to traverse a plan and collect needed information.
@@ -204,6 +207,7 @@ func FlattenPhysicalPlan(p Plan, buildSideFirst bool) *FlatPhysicalPlan {
 	for _, scalarSubQ := range p.SCtx().GetSessionVars().MapScalarSubQ {
 		castedScalarSubQ, ok := scalarSubQ.(*ScalarSubqueryEvalCtx)
 		if !ok {
+			logutil.BgLogger().Debug("Wrong item regiestered as scalar subquery", zap.String("the wrong item", fmt.Sprintf("%T", scalarSubQ)))
 			continue
 		}
 		subQExplained := res.flattenScalarSubQRecursively(castedScalarSubQ, initInfo, nil)
