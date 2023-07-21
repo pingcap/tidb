@@ -1707,12 +1707,12 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		if dispatcherManager != nil && dispatcherManager.Inited() {
 			return
 		}
-		newDispatcherManager, err := dispatcher.NewDispatcher(ctx, taskManager)
+		var err error
+		dispatcherManager, err = dispatcher.NewDispatcher(ctx, taskManager)
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
 			return
 		}
-		dispatcherManager = newDispatcherManager
 		dispatcherManager.Start()
 	}
 	stopDispatchIfNeeded := func() {
