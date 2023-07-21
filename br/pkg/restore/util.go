@@ -223,6 +223,10 @@ func GetSSTMetaFromFile(
 	} else if strings.Contains(file.GetName(), writeCFName) {
 		cfName = writeCFName
 	}
+	if len(cfName) == 0 {
+		// get cf name from field
+		cfName = file.GetCf()
+	}
 	// Find the overlapped part between the file and the region.
 	// Here we rewrites the keys to compare with the keys of the region.
 	rangeStart := regionRule.GetNewKeyPrefix()
