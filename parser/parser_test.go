@@ -1133,6 +1133,8 @@ AAAAAAAAAAAA5gm5Mg==
 		{"query watch add resource group `default` resource group `rg1` SQL TEXT SIMILAR to 'select 1'", false, ""},
 		{"query watch add SQL SIMILAR to 'select 1'", false, ""},
 		{"query watch add SQL TEXT SIMILAR 'select 1'", false, ""},
+		{"query watch remove 1", true, "QUERY WATCH REMOVE 1"},
+		{"query watch remove", false, ""},
 	}
 	RunTest(t, table, false)
 }
