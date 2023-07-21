@@ -1719,7 +1719,6 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		if dispatcherManager != nil && dispatcherManager.Inited() {
 			logutil.BgLogger().Info("stopping dist task dispatcher because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
 			dispatcherManager.Stop()
-			dispatcherManager = nil
 			logutil.BgLogger().Info("dist task dispatcher stopped", zap.String("id", do.ddl.GetID()))
 		}
 	}
