@@ -82,6 +82,7 @@ var (
 func InitLogger(cfg *Config, _ string) error {
 	loggerOptions := []zap.Option{}
 	if cfg.EnableDiagnoseLogs {
+		// the value doesn't matter, logutil.InitLogger only checks whether it's empty.
 		if err := os.Setenv(logutil.GRPCDebugEnvName, "true"); err != nil {
 			L().Warn("failed to enable GRPC debug log", zap.Error(err))
 		}
