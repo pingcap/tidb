@@ -539,6 +539,10 @@ func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*Backup
 		for _, f := range m.DataFiles {
 			output(&BackupItem{File: f})
 		}
+		for _, r := range m.BackupRanges {
+			output(&BackupItem{Range: r})
+		}
+
 	}
 	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.FileIndex, reader.cipher, outputFn)
 }
@@ -769,6 +773,8 @@ func (op AppendOp) name() string {
 		name = "schema"
 	case AppendDDL:
 		name = "ddl"
+	case AppendRange:
+		name = "range"
 	default:
 		log.Panic("unsupport op type", zap.Any("op", op))
 	}
@@ -793,12 +799,11 @@ func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (dataFileSize
 			dataFileSize += int(f.Size_)
 		}
 	case AppendRange:
-		files := b.([]*backuppb.File)
-		// FIXME correct the startKey/endKey
+		rg := b.(*rtree.Range)
 		a.BackupRanges = append(a.BackupRanges, &backuppb.BackupRange{
-			StartKey: files[0].GetStartKey(),
-			EndKey:   files[len(files)-1].GetEndKey(),
-			Files:    files,
+			StartKey: rg.StartKey,
+			EndKey:   rg.EndKey,
+			Files:    rg.Files,
 		})
 	case AppendSchema:
 		a.Schemas = append(a.Schemas, b.(*backuppb.Schema))

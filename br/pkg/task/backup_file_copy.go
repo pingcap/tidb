@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -208,10 +209,10 @@ func RunFileCopyBackup(c context.Context, g glue.Glue, cfg *BackupConfig) error 
 	}
 
 	// Metafile size should be less than 64MB.
-	metawriter := metautil.NewMetaWriter(client.GetStorage(),
+	metaWriter := metautil.NewMetaWriter(client.GetStorage(),
 		metautil.MetaFileSize, cfg.UseBackupMetaV2, "", &cfg.CipherInfo)
 	// Hack way to update backupmeta.
-	metawriter.Update(func(m *backuppb.BackupMeta) {
+	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		m.StartVersion = backupReq.StartVersion
 		m.EndVersion = backupReq.EndVersion
 		m.ClusterId = backupReq.ClusterId
@@ -225,7 +226,7 @@ func RunFileCopyBackup(c context.Context, g glue.Glue, cfg *BackupConfig) error 
 		log.Warn("Nothing to backup, maybe connected to cluster for restoring",
 			zap.String("PD address", pdAddress))
 
-		err = metawriter.FlushBackupMeta(ctx)
+		err = metaWriter.FlushBackupMeta(ctx)
 		if err == nil {
 			summary.SetSuccessStatus(true)
 		}
@@ -267,33 +268,36 @@ func RunFileCopyBackup(c context.Context, g glue.Glue, cfg *BackupConfig) error 
 		}
 	}
 
-	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
+	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendRange)
+	metaWriterCallBack := func(r *rtree.Range) error {
+		return metaWriter.Send(r, metautil.AppendRange)
+	}
 	backupCtx := backup.BackupContext{
-		Concurrency:      uint(cfg.Concurrency),
-		ReplicaReadLabel: cfg.ReplicaReadLabel,
-		MetaWriter:       metawriter,
-		ProgressCallBack: progressCallBack,
-		UniqueIdStoreMap: &uniqueIdStore,
+		Concurrency:        uint(cfg.Concurrency),
+		ReplicaReadLabel:   cfg.ReplicaReadLabel,
+		MetaWriterCallBack: metaWriterCallBack,
+		ProgressCallBack:   progressCallBack,
+		UniqueIdStoreMap:   &uniqueIdStore,
 	}
 	err = client.BackupRanges(ctx, ranges, backupReq, backupCtx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = metawriter.FinishWriteMetas(ctx, metautil.AppendRange)
+	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendRange)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	err = schemas.BackupSchemas(
-		ctx, metawriter, client.GetCheckpointRunner(), mgr.GetStorage(), nil, resolvedTs, 64, cfg.ChecksumConcurrency, true, updateCh)
+		ctx, metaWriter, client.GetCheckpointRunner(), mgr.GetStorage(), nil, resolvedTs, 64, cfg.ChecksumConcurrency, true, updateCh)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	// Step.3 save backup meta file to s3.
+	// Step.3 save backup meta file to storage.
 	// NOTE: maybe define the meta file in kvproto in the future.
-	err = metawriter.FlushBackupMeta(ctx)
+	err = metaWriter.FlushBackupMeta(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -329,7 +333,8 @@ func RunFileCopyBackup(c context.Context, g glue.Glue, cfg *BackupConfig) error 
 			if resp.GetError() != nil {
 				return errors.Errorf("unable to cleanup", zap.Any("error", resp.GetError()))
 			}
-			return errors.New("cleanup neither success or not have an error")
+			log.Warn("cleanup neither success or not have an error")
+			return nil
 		})
 	}
 	if err = eg.Wait(); err != nil {

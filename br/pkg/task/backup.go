@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -550,10 +551,10 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	// Metafile size should be less than 64MB.
-	metawriter := metautil.NewMetaWriter(client.GetStorage(),
+	metaWriter := metautil.NewMetaWriter(client.GetStorage(),
 		metautil.MetaFileSize, cfg.UseBackupMetaV2, "", &cfg.CipherInfo)
 	// Hack way to update backupmeta.
-	metawriter.Update(func(m *backuppb.BackupMeta) {
+	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		m.StartVersion = req.StartVersion
 		m.EndVersion = req.EndVersion
 		m.IsRawKv = req.IsRawKv
@@ -566,7 +567,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	log.Info("get placement policies", zap.Int("count", len(policies)))
 	if len(policies) != 0 {
-		metawriter.Update(func(m *backuppb.BackupMeta) {
+		metaWriter.Update(func(m *backuppb.BackupMeta) {
 			m.Policies = policies
 		})
 	}
@@ -577,7 +578,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		log.Warn("Nothing to backup, maybe connected to cluster for restoring",
 			zap.String("PD address", pdAddress))
 
-		err = metawriter.FlushBackupMeta(ctx)
+		err = metaWriter.FlushBackupMeta(ctx)
 		if err == nil {
 			summary.SetSuccessStatus(true)
 		}
@@ -595,12 +596,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			return errors.Trace(err)
 		}
 
-		metawriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
-		err = backup.WriteBackupDDLJobs(metawriter, g, mgr.GetStorage(), cfg.LastBackupTS, backupTS, needDomain)
+		metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
+		err = backup.WriteBackupDDLJobs(metaWriter, g, mgr.GetStorage(), cfg.LastBackupTS, backupTS, needDomain)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err = metawriter.FinishWriteMetas(ctx, metautil.AppendDDL); err != nil {
+		if err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -673,12 +674,17 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			}
 		}()
 	}
-	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
+	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
+	metaWriterCallBack := func(r *rtree.Range) error {
+		// we need keep the files in order after we support multi_ingest sst.
+		// default_sst and write_sst need to be together.
+		return metaWriter.Send(r.Files, metautil.AppendDataFile)
+	}
 	backupCtx := backup.BackupContext{
-		Concurrency:      uint(cfg.Concurrency),
-		ReplicaReadLabel: cfg.ReplicaReadLabel,
-		MetaWriter:       metawriter,
-		ProgressCallBack: progressCallBack,
+		Concurrency:        uint(cfg.Concurrency),
+		ReplicaReadLabel:   cfg.ReplicaReadLabel,
+		MetaWriterCallBack: metaWriterCallBack,
+		ProgressCallBack:   progressCallBack,
 	}
 	err = client.BackupRanges(ctx, ranges, req, backupCtx)
 	if err != nil {
@@ -687,7 +693,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	// Backup has finished
 	updateCh.Close()
 
-	err = metawriter.FinishWriteMetas(ctx, metautil.AppendDataFile)
+	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDataFile)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -708,12 +714,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	schemasConcurrency := uint(mathutil.Min(backup.DefaultSchemaConcurrency, schemas.Len()))
 
 	err = schemas.BackupSchemas(
-		ctx, metawriter, client.GetCheckpointRunner(), mgr.GetStorage(), statsHandle, backupTS, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
+		ctx, metaWriter, client.GetCheckpointRunner(), mgr.GetStorage(), statsHandle, backupTS, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = metawriter.FlushBackupMeta(ctx)
+	err = metaWriter.FlushBackupMeta(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -726,12 +732,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	if !skipChecksum {
 		// Check if checksum from files matches checksum from coprocessor.
-		err = checksum.FastChecksum(ctx, metawriter.Backupmeta(), client.GetStorage(), &cfg.CipherInfo)
+		err = checksum.FastChecksum(ctx, metaWriter.Backupmeta(), client.GetStorage(), &cfg.CipherInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	archiveSize := metawriter.ArchiveSize()
+	archiveSize := metaWriter.ArchiveSize()
 	g.Record(summary.BackupDataSize, archiveSize)
 	//backup from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
 	g.Record("Size", archiveSize)
