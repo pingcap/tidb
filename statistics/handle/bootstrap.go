@@ -58,7 +58,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *cache.Stat
 			Version:  row.GetUint64(0),
 			Name:     getFullTableName(is, tableInfo),
 		}
-		cache.Put(physicalID, tbl)
+		cache.PutFromInternal(physicalID, tbl) // put this table again since it is updated
 	}
 }
 
@@ -89,7 +89,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (*cache.StatsCache, err
 func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID := row.GetInt64(0)
-		table, ok := cache.Get(tblID)
+		table, ok := cache.GetFromInternal(tblID)
 		if !ok {
 			continue
 		}
@@ -153,14 +153,14 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache *
 			}
 			table.Columns[hist.ID] = col
 		}
-		cache.Put(tblID, table)
+		cache.PutFromInternal(tblID, table) // put this table again since it is updated
 	}
 }
 
 func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
-		table, ok := cache.Get(tblID)
+		table, ok := cache.GetFromInternal(tblID)
 		if !ok {
 			continue
 		}
@@ -222,7 +222,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *cach
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.Columns[hist.ID] = col
 		}
-		cache.Put(tblID, table)
+		cache.PutFromInternal(tblID, table) // put this table again since it is updated
 	}
 }
 
@@ -275,7 +275,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *cache.Stat
 func (*Handle) initStatsTopN4Chunk(cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	affectedIndexes := make(map[*statistics.Index]struct{})
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.Get(row.GetInt64(0))
+		table, ok := cache.GetFromInternal(row.GetInt64(0))
 		if !ok {
 			continue
 		}
@@ -290,6 +290,7 @@ func (*Handle) initStatsTopN4Chunk(cache *cache.StatsCache, iter *chunk.Iterator
 		data := make([]byte, len(row.GetBytes(2)))
 		copy(data, row.GetBytes(2))
 		idx.TopN.AppendTopN(data, row.GetUint64(3))
+		cache.PutFromInternal(table.PhysicalID, table) // put this table again since it is updated
 	}
 	for idx := range affectedIndexes {
 		idx.TopN.Sort()
@@ -321,7 +322,7 @@ func (h *Handle) initStatsTopN(cache *cache.StatsCache) error {
 
 func (*Handle) initStatsFMSketch4Chunk(cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.Get(row.GetInt64(0))
+		table, ok := cache.GetFromInternal(row.GetInt64(0))
 		if !ok {
 			continue
 		}
@@ -342,6 +343,7 @@ func (*Handle) initStatsFMSketch4Chunk(cache *cache.StatsCache, iter *chunk.Iter
 				colStats.FMSketch = fms
 			}
 		}
+		cache.PutFromInternal(table.PhysicalID, table) // put this table again since it is updated
 	}
 }
 
@@ -371,7 +373,7 @@ func (h *Handle) initStatsFMSketch(cache *cache.StatsCache) error {
 func (*Handle) initStatsBuckets4Chunk(cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-		table, ok := cache.Get(tableID)
+		table, ok := cache.GetFromInternal(tableID)
 		if !ok {
 			continue
 		}
@@ -413,6 +415,7 @@ func (*Handle) initStatsBuckets4Chunk(cache *cache.StatsCache, iter *chunk.Itera
 			}
 		}
 		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(3), row.GetInt64(4), row.GetInt64(7))
+		cache.PutFromInternal(tableID, table) // put this table again since it is updated
 	}
 }
 
@@ -436,7 +439,8 @@ func (h *Handle) initStatsBuckets(cache *cache.StatsCache) error {
 		}
 		h.initStatsBuckets4Chunk(cache, iter)
 	}
-	for _, table := range cache.Values() {
+	tables := cache.Values()
+	for _, table := range tables {
 		for _, idx := range table.Indices {
 			for i := 1; i < idx.Len(); i++ {
 				idx.Buckets[i].Count += idx.Buckets[i-1].Count
@@ -449,6 +453,7 @@ func (h *Handle) initStatsBuckets(cache *cache.StatsCache) error {
 			}
 			col.PreCalculateScalar()
 		}
+		cache.PutFromInternal(table.PhysicalID, table) // put this table again since it is updated
 	}
 	return nil
 }
@@ -475,7 +480,6 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cache.FreshMemUsage()
 	h.updateStatsCache(cache)
 	return nil
 }
@@ -530,7 +534,6 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 			}
 		}
 	}
-	cache.FreshMemUsage()
 	h.updateStatsCache(cache)
 	return nil
 }

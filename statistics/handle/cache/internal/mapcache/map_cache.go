@@ -47,24 +47,14 @@ func NewMapCache() *MapCache {
 	}
 }
 
-// GetByQuery implements StatsCacheInner
-func (m *MapCache) GetByQuery(k int64) (*statistics.Table, bool) {
-	return m.Get(k)
-}
-
 // Get implements StatsCacheInner
-func (m *MapCache) Get(k int64) (*statistics.Table, bool) {
+func (m *MapCache) Get(k int64, _ bool) (*statistics.Table, bool) {
 	v, ok := m.tables[k]
 	return v.value, ok
 }
 
-// PutByQuery implements StatsCacheInner
-func (m *MapCache) PutByQuery(k int64, v *statistics.Table) {
-	m.Put(k, v)
-}
-
 // Put implements StatsCacheInner
-func (m *MapCache) Put(k int64, v *statistics.Table) {
+func (m *MapCache) Put(k int64, v *statistics.Table, _ bool) {
 	item, ok := m.tables[k]
 	if ok {
 		oldCost := item.cost
@@ -116,15 +106,6 @@ func (m *MapCache) Values() []*statistics.Table {
 		vs = append(vs, v.value)
 	}
 	return vs
-}
-
-// Map implements StatsCacheInner
-func (m *MapCache) Map() map[int64]*statistics.Table {
-	t := make(map[int64]*statistics.Table, len(m.tables))
-	for k, v := range m.tables {
-		t[k] = v.value
-	}
-	return t
 }
 
 // Len implements StatsCacheInner

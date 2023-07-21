@@ -21,7 +21,6 @@ import (
 	"math"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -140,15 +140,19 @@ const (
 
 // ErrorManager records errors during the import process.
 type ErrorManager struct {
-	db                *sql.DB
-	taskID            int64
-	schemaEscaped     string
-	configError       *config.MaxError
-	remainingError    config.MaxError
-	maxErrRecords     *atomic.Int64
-	conflictV1Enabled bool
-	conflictV2Enabled bool
-	logger            log.Logger
+	db             *sql.DB
+	taskID         int64
+	schemaEscaped  string
+	configError    *config.MaxError
+	remainingError config.MaxError
+
+	configConflict        *config.Conflict
+	conflictErrRemain     *atomic.Int64
+	conflictRecordsRemain *atomic.Int64
+	conflictV1Enabled     bool
+	conflictV2Enabled     bool
+	logger                log.Logger
+	recordErrorOnce       *atomic.Bool
 }
 
 // TypeErrorsRemain returns the number of type errors that can be recorded.
@@ -158,29 +162,38 @@ func (em *ErrorManager) TypeErrorsRemain() int64 {
 
 // ConflictErrorsRemain returns the number of conflict errors that can be recorded.
 func (em *ErrorManager) ConflictErrorsRemain() int64 {
-	return em.remainingError.Conflict.Load()
+	return em.conflictErrRemain.Load()
 }
 
-// RemainRecord returns the number of errors that need be recorded.
-func (em *ErrorManager) RemainRecord() int64 {
-	return em.maxErrRecords.Load()
+// ConflictRecordsRemain returns the number of errors that need be recorded.
+func (em *ErrorManager) ConflictRecordsRemain() int64 {
+	return em.conflictRecordsRemain.Load()
+}
+
+// RecordErrorOnce returns if RecordDuplicateOnce has been called. Not that this
+// method is not atomic with RecordDuplicateOnce.
+func (em *ErrorManager) RecordErrorOnce() bool {
+	return em.recordErrorOnce.Load()
 }
 
 // New creates a new error manager.
 func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
-	maxErrRecords := &atomic.Int64{}
-	maxErrRecords.Store(cfg.App.MaxErrorRecords)
+	conflictErrRemain := atomic.NewInt64(cfg.Conflict.Threshold)
+	conflictRecordsRemain := atomic.NewInt64(cfg.Conflict.MaxRecordRows)
 	em := &ErrorManager{
-		taskID:            cfg.TaskID,
-		configError:       &cfg.App.MaxError,
-		remainingError:    cfg.App.MaxError,
-		conflictV1Enabled: cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
-		maxErrRecords:     maxErrRecords,
-		logger:            logger,
+		taskID:                cfg.TaskID,
+		configError:           &cfg.App.MaxError,
+		remainingError:        cfg.App.MaxError,
+		conflictV1Enabled:     cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
+		configConflict:        &cfg.Conflict,
+		conflictErrRemain:     conflictErrRemain,
+		conflictRecordsRemain: conflictRecordsRemain,
+		logger:                logger,
+		recordErrorOnce:       atomic.NewBool(false),
 	}
 	switch cfg.TikvImporter.Backend {
 	case config.BackendLocal:
-		if cfg.TikvImporter.OnDuplicate != "" {
+		if cfg.Conflict.Strategy != "" {
 			em.conflictV2Enabled = true
 		}
 	case config.BackendTiDB:
@@ -195,7 +208,7 @@ func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
 
 // Init creates the schemas and tables to store the task information.
 func (em *ErrorManager) Init(ctx context.Context) error {
-	if em.db == nil || em.maxErrRecords.Load() == 0 {
+	if em.db == nil {
 		return nil
 	}
 
@@ -212,10 +225,10 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 	if em.remainingError.Type.Load() > 0 {
 		sqls = append(sqls, [2]string{"create type error table", createTypeErrorTable})
 	}
-	if em.conflictV1Enabled && em.remainingError.Conflict.Load() > 0 {
+	if em.conflictV1Enabled {
 		sqls = append(sqls, [2]string{"create conflict error v1 table", createConflictErrorTable})
 	}
-	if em.conflictV2Enabled && em.remainingError.Conflict.Load() > 0 {
+	if em.conflictV2Enabled {
 		sqls = append(sqls, [2]string{"create duplicate records table", createDupRecordTable})
 	}
 
@@ -255,9 +268,6 @@ func (em *ErrorManager) RecordTypeError(
 				em.configError.Type.Load())
 		}
 		return encodeErr
-	}
-	if em.maxErrRecords.Add(-1) < 0 {
-		return nil
 	}
 
 	if em.db != nil {
@@ -308,12 +318,12 @@ func (em *ErrorManager) RecordDataConflictError(
 		return nil
 	}
 
-	if em.remainingError.Conflict.Sub(int64(len(conflictInfos))) < 0 {
-		threshold := em.configError.Conflict.Load()
+	if em.conflictErrRemain.Sub(int64(len(conflictInfos))) < 0 {
+		threshold := em.configConflict.Threshold
 		// Still need to record this batch of conflict records, and then return this error at last.
 		// Otherwise, if the max-error.conflict is set a very small value, non of the conflict errors will be recorded
 		gerr = errors.Errorf(
-			"The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'",
+			"The number of conflict errors exceeds the threshold configured by `conflict.threshold`: '%d'",
 			threshold)
 	}
 
@@ -366,12 +376,12 @@ func (em *ErrorManager) RecordIndexConflictError(
 		return nil
 	}
 
-	if em.remainingError.Conflict.Sub(int64(len(conflictInfos))) < 0 {
-		threshold := em.configError.Conflict.Load()
+	if em.conflictErrRemain.Sub(int64(len(conflictInfos))) < 0 {
+		threshold := em.configConflict.Threshold
 		// Still need to record this batch of conflict records, and then return this error at last.
 		// Otherwise, if the max-error.conflict is set a very small value, non of the conflict errors will be recorded
 		gerr = errors.Errorf(
-			"The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'",
+			"The number of conflict errors exceeds the threshold configured by `conflict.threshold`: '%d'",
 			threshold)
 	}
 
@@ -493,7 +503,20 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 	return errors.Trace(g.Wait())
 }
 
+// RecordDuplicateCount reduce the counter of "duplicate entry" errors.
+// Currently the count will not be shared for multiple lightning instances.
+func (em *ErrorManager) RecordDuplicateCount(cnt int64) error {
+	if em.conflictErrRemain.Sub(cnt) < 0 {
+		threshold := em.configConflict.Threshold
+		return errors.Errorf(
+			"The number of conflict errors exceeds the threshold configured by `conflict.threshold`: '%d'",
+			threshold)
+	}
+	return nil
+}
+
 // RecordDuplicate records a "duplicate entry" error so user can query them later.
+// Currently the error will not be shared for multiple lightning instances.
 func (em *ErrorManager) RecordDuplicate(
 	ctx context.Context,
 	logger log.Logger,
@@ -504,19 +527,32 @@ func (em *ErrorManager) RecordDuplicate(
 	rowID int64,
 	rowData string,
 ) error {
-	if em.remainingError.Conflict.Dec() < 0 {
-		threshold := em.configError.Conflict.Load()
+	if em.conflictErrRemain.Dec() < 0 {
+		threshold := em.configConflict.Threshold
 		return errors.Errorf(
-			"The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'",
+			"The number of conflict errors exceeds the threshold configured by `conflict.threshold`: '%d'",
 			threshold)
 	}
 	if em.db == nil {
 		return nil
 	}
-	if em.maxErrRecords.Add(-1) < 0 {
+	if em.conflictRecordsRemain.Add(-1) < 0 {
 		return nil
 	}
 
+	return em.recordDuplicate(ctx, logger, tableName, path, offset, errMsg, rowID, rowData)
+}
+
+func (em *ErrorManager) recordDuplicate(
+	ctx context.Context,
+	logger log.Logger,
+	tableName string,
+	path string,
+	offset int64,
+	errMsg string,
+	rowID int64,
+	rowData string,
+) error {
 	exec := common.SQLWithRetry{
 		DB:           em.db,
 		Logger:       logger,
@@ -532,6 +568,30 @@ func (em *ErrorManager) RecordDuplicate(
 		rowID,
 		rowData,
 	)
+}
+
+// RecordDuplicateOnce records a "duplicate entry" error so user can query them later.
+// Currently the error will not be shared for multiple lightning instances.
+// Different from RecordDuplicate, this function is used when conflict.strategy
+// is "error" and will only write the first conflict error to the table.
+func (em *ErrorManager) RecordDuplicateOnce(
+	ctx context.Context,
+	logger log.Logger,
+	tableName string,
+	path string,
+	offset int64,
+	errMsg string,
+	rowID int64,
+	rowData string,
+) {
+	ok := em.recordErrorOnce.CompareAndSwap(false, true)
+	if !ok {
+		return
+	}
+	err := em.recordDuplicate(ctx, logger, tableName, path, offset, errMsg, rowID, rowData)
+	if err != nil {
+		logger.Warn("meet error when record duplicate entry error", zap.Error(err))
+	}
 }
 
 func (em *ErrorManager) errorCount(typeVal func(*config.MaxError) int64) int64 {
@@ -556,9 +616,11 @@ func (em *ErrorManager) syntaxError() int64 {
 }
 
 func (em *ErrorManager) conflictError() int64 {
-	return em.errorCount(func(maxError *config.MaxError) int64 {
-		return maxError.Conflict.Load()
-	})
+	val := em.conflictErrRemain.Load()
+	if val < 0 {
+		val = 0
+	}
+	return em.configConflict.Threshold - val
 }
 
 func (em *ErrorManager) charsetError() int64 {

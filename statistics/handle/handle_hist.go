@@ -145,7 +145,7 @@ func (h *Handle) removeHistLoadedColumns(neededItems []model.TableItemID) []mode
 	statsCache := h.statsCache.Load()
 	remainedItems := make([]model.TableItemID, 0, len(neededItems))
 	for _, item := range neededItems {
-		tbl, ok := statsCache.Get(item.TableID)
+		tbl, ok := statsCache.GetFromInternal(item.TableID)
 		if !ok {
 			continue
 		}
@@ -238,7 +238,7 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
 	item := result.Item
 	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.Get(item.TableID)
+	tbl, ok := oldCache.GetFromInternal(item.TableID)
 	if !ok {
 		h.writeToResultChan(task.ResultCh, result)
 		return nil, nil
@@ -481,7 +481,7 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.Get(item.TableID)
+	tbl, ok := oldCache.GetFromInternal(item.TableID)
 	if !ok {
 		return true
 	}

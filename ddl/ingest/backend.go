@@ -88,7 +88,7 @@ type litBackendCtx struct {
 
 // CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
 func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
-	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.BgLogger()})
+	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
 	// backend must be a local backend.
 	// todo: when we can separate local backend completely from tidb backend, will remove this cast.
 	//nolint:forcetypeassert
@@ -99,11 +99,11 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 		IndexID: indexID,
 	})
 	if err != nil {
-		logutil.BgLogger().Error(LitInfoRemoteDupCheck, zap.Error(err),
+		logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
 			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
 		return err
 	} else if hasDupe {
-		logutil.BgLogger().Error(LitErrRemoteDupExistErr,
+		logutil.Logger(bc.ctx).Error(LitErrRemoteDupExistErr,
 			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
 		return tikv.ErrKeyExists
 	}
@@ -129,7 +129,7 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 
 	// Check remote duplicate value for the index.
 	if unique {
-		errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.BgLogger()})
+		errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
 		// backend must be a local backend.
 		// todo: when we can separate local backend completely from tidb backend, will remove this cast.
 		//nolint:forcetypeassert
@@ -140,11 +140,11 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 			IndexID: ei.indexID,
 		})
 		if err != nil {
-			logutil.BgLogger().Error(LitInfoRemoteDupCheck, zap.Error(err),
+			logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
 				zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
 			return err
 		} else if hasDupe {
-			logutil.BgLogger().Error(LitErrRemoteDupExistErr,
+			logutil.Logger(bc.ctx).Error(LitErrRemoteDupExistErr,
 				zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
 			return tikv.ErrKeyExists
 		}
@@ -165,7 +165,7 @@ func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*con
 func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error) {
 	ei, exist := bc.Load(indexID)
 	if !exist {
-		logutil.BgLogger().Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))
+		logutil.Logger(bc.ctx).Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))
 		return false, false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
@@ -198,26 +198,26 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 		if err != nil {
 			return true, false, err
 		}
-		logutil.BgLogger().Info("acquire distributed flush lock success", zap.String("category", "ddl"), zap.Int64("jobID", bc.jobID))
+		logutil.Logger(bc.ctx).Info("acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
 		defer func() {
 			err = mu.Unlock(bc.ctx)
 			if err != nil {
-				logutil.BgLogger().Warn("release distributed flush lock error", zap.String("category", "ddl"), zap.Error(err), zap.Int64("jobID", bc.jobID))
+				logutil.Logger(bc.ctx).Warn("release distributed flush lock error", zap.Error(err), zap.Int64("jobID", bc.jobID))
 			} else {
-				logutil.BgLogger().Info("release distributed flush lock success", zap.String("category", "ddl"), zap.Int64("jobID", bc.jobID))
+				logutil.Logger(bc.ctx).Info("release distributed flush lock success", zap.Int64("jobID", bc.jobID))
 			}
 			err = se.Close()
 			if err != nil {
-				logutil.BgLogger().Warn("close session error", zap.String("category", "ddl"), zap.Error(err))
+				logutil.Logger(bc.ctx).Warn("close session error", zap.Error(err))
 			}
 		}()
 	}
 
-	logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
+	logutil.Logger(bc.ctx).Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
 		zap.String("usage info", bc.diskRoot.UsageInfo()))
 	err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
 	if err != nil {
-		logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
+		logutil.Logger(bc.ctx).Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
 			zap.String("usage info", bc.diskRoot.UsageInfo()))
 		return true, false, err
 	}

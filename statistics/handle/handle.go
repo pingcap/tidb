@@ -597,7 +597,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 			continue
 		}
 		tableInfo := table.Meta()
-		if oldTbl, ok := oldCache.Get(physicalID); ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+		if oldTbl, ok := oldCache.GetFromInternal(physicalID); ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
 			continue
 		}
 		tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, false, 0)
@@ -988,9 +988,9 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 		opt(option)
 	}
 	if option.ByQuery() {
-		tbl, ok = statsCache.GetByQuery(pid)
+		tbl, ok = statsCache.GetFromUser(pid)
 	} else {
-		tbl, ok = statsCache.Get(pid)
+		tbl, ok = statsCache.GetFromInternal(pid)
 	}
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo)
@@ -1047,7 +1047,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 
 func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col model.TableItemID, loadFMSketch bool) (err error) {
 	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.Get(col.TableID)
+	tbl, ok := oldCache.GetFromInternal(col.TableID)
 	if !ok {
 		return nil
 	}
@@ -1096,7 +1096,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	oldCache = h.statsCache.Load()
-	tbl, ok = oldCache.Get(col.TableID)
+	tbl, ok = oldCache.GetFromInternal(col.TableID)
 	if !ok {
 		return nil
 	}
@@ -1110,7 +1110,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 
 func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx model.TableItemID, loadFMSketch bool) (err error) {
 	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.Get(idx.TableID)
+	tbl, ok := oldCache.GetFromInternal(idx.TableID)
 	if !ok {
 		return nil
 	}
@@ -1149,7 +1149,7 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 	index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 
 	oldCache = h.statsCache.Load()
-	tbl, ok = oldCache.Get(idx.TableID)
+	tbl, ok = oldCache.GetFromInternal(idx.TableID)
 	if !ok {
 		return nil
 	}
@@ -1194,7 +1194,7 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 			err = err1
 		}
 	}()
-	statsTbl, ok := h.statsCache.Load().Get(physicalID)
+	statsTbl, ok := h.statsCache.Load().GetFromInternal(physicalID)
 	if !ok {
 		statsTbl = nil
 	}
@@ -1792,7 +1792,7 @@ const updateStatsCacheRetryCnt = 5
 func (h *Handle) removeExtendedStatsItem(tableID int64, statsName string) {
 	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
 		oldCache := h.statsCache.Load()
-		tbl, ok := oldCache.Get(tableID)
+		tbl, ok := oldCache.GetFromInternal(tableID)
 		if !ok || tbl.ExtendedStats == nil || len(tbl.ExtendedStats.Stats) == 0 {
 			return
 		}

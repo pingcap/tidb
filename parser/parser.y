@@ -751,6 +751,7 @@ import (
 	substring             "SUBSTRING"
 	survivalPreferences   "SURVIVAL_PREFERENCES"
 	target                "TARGET"
+	taskTypes             "TASK_TYPES"
 	tidbJson              "TIDB_JSON"
 	timestampAdd          "TIMESTAMPADD"
 	timestampDiff         "TIMESTAMPDIFF"
@@ -788,6 +789,7 @@ import (
 	watch                 "WATCH"
 	similar               "SIMILAR"
 	queryLimit            "QUERY_LIMIT"
+	background            "BACKGROUND"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -1234,6 +1236,7 @@ import (
 	PasswordOrLockOption                   "Single password or lock option for create user statement"
 	PasswordOrLockOptionList               "Password or lock options for create user statement"
 	PasswordOrLockOptions                  "Optional password or lock options for create user statement"
+	PlanReplayerDumpOpt                    "Plan Replayer Dump option"
 	CommentOrAttributeOption               "Optional comment or attribute option for CREATE/ALTER USER statements"
 	ColumnPosition                         "Column position [First|After ColumnName]"
 	PrepareSQL                             "Prepare statement sql string"
@@ -1448,7 +1451,9 @@ import (
 	PlacementPolicyOption                  "Anonymous or placement policy option"
 	DirectPlacementOption                  "Subset of anonymous or direct placement option"
 	PlacementOptionList                    "Anomymous or direct placement option list"
+	DirectResourceGroupBackgroundOption    "Subset of direct resource group background option"
 	DirectResourceGroupRunawayOption       "Subset of anonymous or direct resource group runaway option"
+	ResourceGroupBackgroundOptionList      "Direct resource group background option list"
 	ResourceGroupRunawayActionOption       "Resource group runaway action option"
 	ResourceGroupRunawayWatchOption        "Resource group runaway watch option"
 	ResourceGroupRunawayOptionList         "Anomymous or direct resource group runaway option list"
@@ -1823,15 +1828,55 @@ DirectResourceGroupOption:
 	}
 |	"QUERY_LIMIT" EqOpt '(' ResourceGroupRunawayOptionList ')'
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, ResourceGroupRunawayOptionList: $4.([]*ast.ResourceGroupRunawayOption)}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, RunawayOptionList: $4.([]*ast.ResourceGroupRunawayOption)}
 	}
 |	"QUERY_LIMIT" EqOpt '(' ')'
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, ResourceGroupRunawayOptionList: nil}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, RunawayOptionList: nil}
 	}
 |	"QUERY_LIMIT" EqOpt "NULL"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, ResourceGroupRunawayOptionList: nil}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, RunawayOptionList: nil}
+	}
+|	"BACKGROUND" EqOpt '(' ResourceGroupBackgroundOptionList ')'
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupBackground, BackgroundOptions: $4.([]*ast.ResourceGroupBackgroundOption)}
+	}
+|	"BACKGROUND" EqOpt '(' ')'
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupBackground, BackgroundOptions: nil}
+	}
+|	"BACKGROUND" EqOpt "NULL"
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupBackground, BackgroundOptions: nil}
+	}
+
+ResourceGroupBackgroundOptionList:
+	DirectResourceGroupBackgroundOption
+	{
+		$$ = []*ast.ResourceGroupBackgroundOption{$1.(*ast.ResourceGroupBackgroundOption)}
+	}
+|	ResourceGroupBackgroundOptionList DirectResourceGroupBackgroundOption
+	{
+		if !ast.CheckBackgroundAppend($1.([]*ast.ResourceGroupBackgroundOption), $2.(*ast.ResourceGroupBackgroundOption)) {
+			yylex.AppendError(yylex.Errorf("Dupliated background options specified"))
+			return 1
+		}
+		$$ = append($1.([]*ast.ResourceGroupBackgroundOption), $2.(*ast.ResourceGroupBackgroundOption))
+	}
+|	ResourceGroupBackgroundOptionList ',' DirectResourceGroupBackgroundOption
+	{
+		if !ast.CheckBackgroundAppend($1.([]*ast.ResourceGroupBackgroundOption), $3.(*ast.ResourceGroupBackgroundOption)) {
+			yylex.AppendError(yylex.Errorf("Dupliated background options specified"))
+			return 1
+		}
+		$$ = append($1.([]*ast.ResourceGroupBackgroundOption), $3.(*ast.ResourceGroupBackgroundOption))
+	}
+
+DirectResourceGroupBackgroundOption:
+	"TASK_TYPES" EqOpt stringLit
+	{
+		$$ = &ast.ResourceGroupBackgroundOption{Type: ast.BackgroundOptionTaskNames, StrValue: $3}
 	}
 
 PlacementOptionList:
@@ -4160,7 +4205,7 @@ PolicyName:
 
 ResourceGroupName:
 	Identifier
-| 	"DEFAULT"
+|	"DEFAULT"
 
 DatabaseOption:
 	DefaultKwdOpt CharsetKw EqOpt CharsetName
@@ -6934,6 +6979,8 @@ NotKeywordToken:
 |	"WATCH"
 |	"SIMILAR"
 |	"QUERY_LIMIT"
+|	"BACKGROUND"
+|	"TASK_TYPES"
 
 /************************************************************************************
  *
@@ -14928,26 +14975,29 @@ RowStmt:
  *		| CAPTURE `sql_digest` `plan_digest`]
  *******************************************************************/
 PlanReplayerStmt:
-	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" ExplainableStmt
-	{
-		x := &ast.PlanReplayerStmt{
-			Stmt:    $5,
-			Analyze: false,
-			Load:    false,
-			File:    "",
-			Where:   nil,
-			OrderBy: nil,
-			Limit:   nil,
-		}
-		startOffset := parser.startOffset(&yyS[yypt])
-		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
-
-		$$ = x
-	}
-|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "ANALYZE" ExplainableStmt
+	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt "EXPLAIN" ExplainableStmt
 	{
 		x := &ast.PlanReplayerStmt{
 			Stmt:    $6,
+			Analyze: false,
+			Load:    false,
+			File:    "",
+			Where:   nil,
+			OrderBy: nil,
+			Limit:   nil,
+		}
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
+		}
+		startOffset := parser.startOffset(&yyS[yypt])
+		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt "EXPLAIN" "ANALYZE" ExplainableStmt
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:    $7,
 			Analyze: true,
 			Load:    false,
 			File:    "",
@@ -14955,12 +15005,15 @@ PlanReplayerStmt:
 			OrderBy: nil,
 			Limit:   nil,
 		}
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
+		}
 		startOffset := parser.startOffset(&yyS[yypt])
 		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		$$ = x
 	}
-|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
+|	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt "EXPLAIN" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
 	{
 		x := &ast.PlanReplayerStmt{
 			Stmt:    nil,
@@ -14968,25 +15021,8 @@ PlanReplayerStmt:
 			Load:    false,
 			File:    "",
 		}
-		if $7 != nil {
-			x.Where = $7.(ast.ExprNode)
-		}
-		if $8 != nil {
-			x.OrderBy = $8.(*ast.OrderByClause)
-		}
-		if $9 != nil {
-			x.Limit = $9.(*ast.Limit)
-		}
-
-		$$ = x
-	}
-|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "ANALYZE" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
-	{
-		x := &ast.PlanReplayerStmt{
-			Stmt:    nil,
-			Analyze: true,
-			Load:    false,
-			File:    "",
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
 		}
 		if $8 != nil {
 			x.Where = $8.(ast.ExprNode)
@@ -15000,23 +15036,52 @@ PlanReplayerStmt:
 
 		$$ = x
 	}
-|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" stringLit
-	{
-		x := &ast.PlanReplayerStmt{
-			Stmt:    nil,
-			Analyze: false,
-			Load:    false,
-			File:    $5,
-		}
-		$$ = x
-	}
-|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "ANALYZE" stringLit
+|	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt "EXPLAIN" "ANALYZE" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
 	{
 		x := &ast.PlanReplayerStmt{
 			Stmt:    nil,
 			Analyze: true,
 			Load:    false,
+			File:    "",
+		}
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
+		}
+		if $9 != nil {
+			x.Where = $9.(ast.ExprNode)
+		}
+		if $10 != nil {
+			x.OrderBy = $10.(*ast.OrderByClause)
+		}
+		if $11 != nil {
+			x.Limit = $11.(*ast.Limit)
+		}
+
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt "EXPLAIN" stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:    nil,
+			Analyze: false,
+			Load:    false,
 			File:    $6,
+		}
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
+		}
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt "EXPLAIN" "ANALYZE" stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:    nil,
+			Analyze: true,
+			Load:    false,
+			File:    $7,
+		}
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
 		}
 		$$ = x
 	}
@@ -15063,6 +15128,15 @@ PlanReplayerStmt:
 		}
 
 		$$ = x
+	}
+
+PlanReplayerDumpOpt:
+	{
+		$$ = nil
+	}
+|	"WITH" "STATS" AsOfClause
+	{
+		$$ = $3.(*ast.AsOfClause)
 	}
 
 /* Stored PROCEDURE parameter declaration list */

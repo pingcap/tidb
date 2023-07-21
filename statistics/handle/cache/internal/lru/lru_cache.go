@@ -83,8 +83,8 @@ func (l *lruMapElement) copy() *lruMapElement {
 	}
 }
 
-// GetByQuery implements statsCacheInner
-func (s *StatsInnerCache) GetByQuery(tblID int64) (*statistics.Table, bool) {
+// getByQuery implements statsCacheInner
+func (s *StatsInnerCache) getByQuery(tblID int64) (*statistics.Table, bool) {
 	s.Lock()
 	defer s.Unlock()
 	element, ok := s.elements[tblID]
@@ -103,7 +103,10 @@ func (s *StatsInnerCache) GetByQuery(tblID int64) (*statistics.Table, bool) {
 }
 
 // Get implements statsCacheInner
-func (s *StatsInnerCache) Get(tblID int64) (*statistics.Table, bool) {
+func (s *StatsInnerCache) Get(tblID int64, moveLRUFront bool) (*statistics.Table, bool) {
+	if moveLRUFront {
+		return s.getByQuery(tblID)
+	}
 	s.RLock()
 	defer s.RUnlock()
 	element, ok := s.elements[tblID]
@@ -113,18 +116,11 @@ func (s *StatsInnerCache) Get(tblID int64) (*statistics.Table, bool) {
 	return element.tbl, true
 }
 
-// PutByQuery implements statsCacheInner
-func (s *StatsInnerCache) PutByQuery(tblID int64, tbl *statistics.Table) {
-	s.Lock()
-	defer s.Unlock()
-	s.put(tblID, tbl, tbl.MemoryUsage(), true)
-}
-
 // Put implements statsCacheInner
-func (s *StatsInnerCache) Put(tblID int64, tbl *statistics.Table) {
+func (s *StatsInnerCache) Put(tblID int64, tbl *statistics.Table, moveLRUFront bool) {
 	s.Lock()
 	defer s.Unlock()
-	s.put(tblID, tbl, tbl.MemoryUsage(), false)
+	s.put(tblID, tbl, tbl.MemoryUsage(), moveLRUFront)
 }
 
 func (s *StatsInnerCache) put(tblID int64, tbl *statistics.Table, tblMemUsage *statistics.TableMemoryUsage, needMove bool) {
@@ -244,17 +240,6 @@ func (s *StatsInnerCache) Values() []*statistics.Table {
 	r := make([]*statistics.Table, 0, len(s.elements))
 	for _, v := range s.elements {
 		r = append(r, v.tbl)
-	}
-	return r
-}
-
-// Map implements statsCacheInner
-func (s *StatsInnerCache) Map() map[int64]*statistics.Table {
-	s.RLock()
-	defer s.RUnlock()
-	r := make(map[int64]*statistics.Table, len(s.elements))
-	for k, v := range s.elements {
-		r[k] = v.tbl
 	}
 	return r
 }

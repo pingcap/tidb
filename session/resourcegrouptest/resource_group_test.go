@@ -45,4 +45,15 @@ func TestResourceGroupHintInTxn(t *testing.T) {
 	// for final prewrite/commit the resource group should be rg2
 	tk.MustExec("update /*+ RESOURCE_GROUP(rg2) */ t set val = val + 1 where id = 3;")
 	tk.MustExec("COMMIT;")
+
+	tk.MustExec("SET @@autocommit=1;")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/kv/TxnResouceGroupChecker", `return("default")`))
+	tk.MustExec("insert /*+ RESOURCE_GROUP(not_exist_group) */ into t values (4, 4);")
+
+	tk.MustExec("BEGIN;")
+	// for pessimistic lock the resource group should be rg1
+	tk.MustExec("insert /*+ RESOURCE_GROUP(unknown_1) */ into t values (5, 5);")
+	// for final prewrite/commit the resource group should be rg2
+	tk.MustExec("update /*+ RESOURCE_GROUP(unknown_2) */ t set val = val + 1 where id = 5;")
+	tk.MustExec("COMMIT;")
 }
