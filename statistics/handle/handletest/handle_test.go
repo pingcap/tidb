@@ -2963,6 +2963,7 @@ func TestRecordHistoricalStatsToStorage(t *testing.T) {
 }
 
 func TestAnalyzeIncrementalEvictedIndex(t *testing.T) {
+	t.Skip("now we don't support to evict index")
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
