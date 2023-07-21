@@ -103,9 +103,18 @@ func TestResourceGroupBasic(t *testing.T) {
 	re.Equal(uint64(time.Second*15/time.Millisecond), g.Runaway.ExecElapsedTimeMs)
 	re.Equal(model.RunawayActionDryRun, g.Runaway.Action)
 	re.Equal(model.WatchSimilar, g.Runaway.WatchType)
-	re.Equal(uint64(time.Minute*10/time.Millisecond), g.Runaway.WatchDurationMs)
+	re.Equal(int64(time.Minute*10/time.Millisecond), g.Runaway.WatchDurationMs)
 
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 MEDIUM YES EXEC_ELAPSED='15s', ACTION=DRYRUN, WATCH=SIMILAR DURATION='10m0s' <nil>"))
+	tk.MustExec("alter resource group x QUERY_LIMIT=(EXEC_ELAPSED='20s' ACTION DRYRUN WATCH SIMILAR)")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(uint64(2000), g.RURate)
+	re.Equal(int64(-1), g.BurstLimit)
+	re.Equal(uint64(time.Second*20/time.Millisecond), g.Runaway.ExecElapsedTimeMs)
+	re.Equal(model.RunawayActionDryRun, g.Runaway.Action)
+	re.Equal(model.WatchSimilar, g.Runaway.WatchType)
+	re.Equal(int64(-1), g.Runaway.WatchDurationMs)
+
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 MEDIUM YES EXEC_ELAPSED='20s', ACTION=DRYRUN, WATCH=SIMILAR DURATION=UNLIMITED <nil>"))
 
 	tk.MustExec("drop resource group x")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
@@ -135,7 +144,7 @@ func TestResourceGroupBasic(t *testing.T) {
 		re.Equal(int64(-1), groupInfo.BurstLimit)
 		re.Equal(uint64(time.Second*15/time.Millisecond), groupInfo.Runaway.ExecElapsedTimeMs)
 		re.Equal(model.RunawayActionKill, groupInfo.Runaway.Action)
-		re.Equal(uint64(0), groupInfo.Runaway.WatchDurationMs)
+		re.Equal(int64(0), groupInfo.Runaway.WatchDurationMs)
 	}
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	checkFunc(g)
@@ -184,6 +193,9 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("alter resource group y_new RU_PER_SEC=3000")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'y_new'").Check(testkit.Rows("y_new 3000 MEDIUM NO EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
 
+	tk.MustExec("CREATE RESOURCE GROUP `z` RU_PER_SEC=2000 PRIORITY=MEDIUM QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH PLAN DURATION=\"1h0m0s\")")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'z'").Check(testkit.Rows("z 2000 MEDIUM NO EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=PLAN DURATION='1h0m0s' <nil>"))
+
 	tk.MustExec("alter resource group y RU_PER_SEC=4000")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 MEDIUM YES EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000, PRIORITY=MEDIUM, BURSTABLE, QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH=EXACT DURATION=\"1h0m0s\")"))
@@ -192,7 +204,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 HIGH YES EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000, PRIORITY=HIGH, BURSTABLE, QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH=EXACT DURATION=\"1h0m0s\")"))
 
-	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("5"))
+	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("6"))
 	tk.MustGetErrCode("create user usr_fail resource group nil_group", mysql.ErrResourceGroupNotExists)
 	tk.MustContainErrMsg("create user usr_fail resource group nil_group", "Unknown resource group 'nil_group'")
 	tk.MustExec("create user user2")

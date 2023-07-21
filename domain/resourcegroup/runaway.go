@@ -15,6 +15,7 @@
 package resourcegroup
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,6 +39,8 @@ const (
 	maxWatchListCap           = 10000
 	maxWatchRecordChannelSize = 1024
 )
+
+var longestTime time.Time
 
 // RunawayMatchType is used to indicates whether qurey was interrupted by runaway identification or quarantine watch.
 type RunawayMatchType uint
@@ -93,6 +96,7 @@ type RunawayManager struct {
 
 // NewRunawayManager creates a new RunawayManager.
 func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serverAddr string) *RunawayManager {
+	longestTime, _ = time.Parse(time.DateOnly, fmt.Sprintf("%04d-%02d-%02d", 2099, 12, 31))
 	watchList := ttlcache.New[string, struct{}](ttlcache.WithCapacity[string, struct{}](maxWatchListCap))
 	go watchList.Start()
 	return &RunawayManager{
@@ -126,11 +130,17 @@ func (rm *RunawayManager) markQuarantine(resourceGroupName, convict, watchType s
 		}
 		rm.queryLock.Unlock()
 	}
+	var endTime time.Time
+	if ttl < 0 {
+		endTime = longestTime
+	} else {
+		endTime = now.Add(ttl)
+	}
 	select {
 	case rm.quarantineChan <- &QuarantineRecord{
 		ResourceGroupName: resourceGroupName,
 		StartTime:         *now,
-		EndTime:           now.Add(ttl),
+		EndTime:           endTime,
 		Watch:             watchType,
 		WatchText:         convict,
 		From:              rm.serverID,

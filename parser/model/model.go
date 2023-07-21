@@ -1890,6 +1890,7 @@ type RunawayWatchType int32
 const (
 	WatchExact RunawayWatchType = iota
 	WatchSimilar
+	WatchPlan
 )
 
 func (t RunawayWatchType) String() string {
@@ -1898,6 +1899,8 @@ func (t RunawayWatchType) String() string {
 		return "EXACT"
 	case WatchSimilar:
 		return "SIMILAR"
+	case WatchPlan:
+		return "PLAN"
 	default:
 		return "EXACT"
 	}
@@ -1937,7 +1940,7 @@ type ResourceGroupRunawaySettings struct {
 	ExecElapsedTimeMs uint64            `json:"exec_elapsed_time_ms"`
 	Action            RunawayActionType `json:"action"`
 	WatchType         RunawayWatchType  `json:"watch_type"`
-	WatchDurationMs   uint64            `json:"watch_duration_ms"`
+	WatchDurationMs   int64             `json:"watch_duration_ms"`
 }
 
 type ResourceGroupBackgroundSettings struct {
@@ -2014,9 +2017,13 @@ func (p *ResourceGroupSettings) String() string {
 	if p.Runaway != nil {
 		writeSettingDurationToBuilder(sb, "QUERY_LIMIT=(EXEC_ELAPSED", time.Duration(p.Runaway.ExecElapsedTimeMs)*time.Millisecond, separatorFn)
 		writeSettingItemToBuilder(sb, "ACTION="+p.Runaway.Action.String())
-		if p.Runaway.WatchDurationMs > 0 {
+		if p.Runaway.WatchDurationMs != 0 {
 			writeSettingItemToBuilder(sb, "WATCH="+p.Runaway.WatchType.String())
-			writeSettingDurationToBuilder(sb, "DURATION", time.Duration(p.Runaway.WatchDurationMs)*time.Millisecond)
+			if p.Runaway.WatchDurationMs > 0 {
+				writeSettingDurationToBuilder(sb, "DURATION", time.Duration(p.Runaway.WatchDurationMs)*time.Millisecond)
+			} else {
+				writeSettingItemToBuilder(sb, "DURATION=UNLIMITED")
+			}
 		}
 		sb.WriteString(")")
 	}
