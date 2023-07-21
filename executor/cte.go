@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor/internal/exec"
+	"github.com/pingcap/tidb/executor/internal/hash"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -149,12 +150,12 @@ type cteProducer struct {
 	iterInTbl  cteutil.Storage
 	iterOutTbl cteutil.Storage
 
-	hashTbl baseHashTable
+	hashTbl hash.baseHashTable
 
 	// UNION ALL or UNION DISTINCT.
 	isDistinct bool
 	curIter    int
-	hCtx       *hashContext
+	hCtx       *hash.hashContext
 	sel        []int
 
 	// Limit related info.
@@ -202,8 +203,8 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 	}
 
 	if p.isDistinct {
-		p.hashTbl = newConcurrentMapHashTable()
-		p.hCtx = &hashContext{
+		p.hashTbl = hash.newConcurrentMapHashTable()
+		p.hCtx = &hash.hashContext{
 			allTypes: cteExec.Base().RetFieldTypes(),
 		}
 		// We use all columns to compute hash.
@@ -482,7 +483,7 @@ func (p *cteProducer) reset() {
 
 func (p *cteProducer) reopenTbls() (err error) {
 	if p.isDistinct {
-		p.hashTbl = newConcurrentMapHashTable()
+		p.hashTbl = hash.newConcurrentMapHashTable()
 	}
 	if err := p.resTbl.Reopen(); err != nil {
 		return err
@@ -519,7 +520,7 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentM
 
 func (p *cteProducer) tryDedupAndAdd(chk *chunk.Chunk,
 	storage cteutil.Storage,
-	hashTbl baseHashTable) (res *chunk.Chunk, err error) {
+	hashTbl hash.baseHashTable) (res *chunk.Chunk, err error) {
 	if p.isDistinct {
 		if chk, err = p.deduplicate(chk, storage, hashTbl); err != nil {
 			return nil, err
@@ -564,14 +565,14 @@ func (p *cteProducer) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) 
 // Duplicated rows are only marked to be removed by sel in Chunk, instead of really deleted.
 func (p *cteProducer) deduplicate(chk *chunk.Chunk,
 	storage cteutil.Storage,
-	hashTbl baseHashTable) (chkNoDup *chunk.Chunk, err error) {
+	hashTbl hash.baseHashTable) (chkNoDup *chunk.Chunk, err error) {
 	numRows := chk.NumRows()
 	if numRows == 0 {
 		return chk, nil
 	}
 
 	// 1. Compute hash values for chunk.
-	chkHashTbl := newConcurrentMapHashTable()
+	chkHashTbl := hash.newConcurrentMapHashTable()
 	selOri, err := p.computeChunkHash(chk)
 	if err != nil {
 		return nil, err
@@ -632,7 +633,7 @@ func (p *cteProducer) checkHasDup(probeKey uint64,
 	row chunk.Row,
 	curChk *chunk.Chunk,
 	storage cteutil.Storage,
-	hashTbl baseHashTable) (hasDup bool, err error) {
+	hashTbl hash.baseHashTable) (hasDup bool, err error) {
 	ptrs := hashTbl.Get(probeKey)
 
 	if len(ptrs) == 0 {

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/internal/hash"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -113,7 +114,7 @@ func TestJoinExec(t *testing.T) {
 func TestHashJoinRuntimeStats(t *testing.T) {
 	stats := &hashJoinRuntimeStats{
 		fetchAndBuildHashTable: 2 * time.Second,
-		hashStat: hashStatistic{
+		hashStat: hash.hashStatistic{
 			probeCollision:   1,
 			buildTableElapse: time.Millisecond * 100,
 		},

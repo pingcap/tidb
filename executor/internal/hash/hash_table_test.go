@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package hash
 
 import (
 	"fmt"
@@ -80,7 +80,7 @@ func (h *hashCollision) Sum64() uint64 {
 }
 func (h hashCollision) Write(p []byte) (n int, err error) { return len(p), nil }
 func (h hashCollision) Reset()                            {}
-func (h hashCollision) Sum(b []byte) []byte               { panic("not implemented") }
+func (h hashCollision) Sum(_ []byte) []byte               { panic("not implemented") }
 func (h hashCollision) Size() int                         { panic("not implemented") }
 func (h hashCollision) BlockSize() int                    { panic("not implemented") }
 
@@ -111,7 +111,7 @@ func TestHashRowContainer(t *testing.T) {
 	require.Equal(t, rowContainer.stat.buildTableElapse, copiedRC.stat.buildTableElapse)
 }
 
-func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool) (originRC, copiedRC *hashRowContainer) {
+func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool) (originRC, copiedRC *HashRowContainer) {
 	sctx := mock.NewContext()
 	var err error
 	numRows := 10
@@ -119,7 +119,7 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 	chk0, colTypes := initBuildChunk(numRows)
 	chk1, _ := initBuildChunk(numRows)
 
-	hCtx := &hashContext{
+	hCtx := &HashContext{
 		allTypes:  colTypes[1:3],
 		keyColIdx: []int{1, 2},
 	}
@@ -127,7 +127,7 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 	for i := 0; i < numRows; i++ {
 		hCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	}
-	rowContainer := newHashRowContainer(sctx, hCtx, colTypes)
+	rowContainer := NewHashRowContainer(sctx, hCtx, colTypes)
 	copiedRC = rowContainer.ShallowCopy()
 	tracker := rowContainer.GetMemTracker()
 	tracker.SetLabel(memory.LabelForBuildSideResult)
@@ -151,7 +151,7 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 
 	probeChk, probeColType := initProbeChunk(2)
 	probeRow := probeChk.GetRow(1)
-	probeCtx := &hashContext{
+	probeCtx := &HashContext{
 		allTypes:  probeColType[1:3],
 		keyColIdx: []int{1, 2},
 	}
