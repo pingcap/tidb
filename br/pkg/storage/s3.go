@@ -931,6 +931,10 @@ func (rs *S3Storage) Create(ctx context.Context, name string) (ExternalFileWrite
 	s3Writer.wg.Add(1)
 	go func() {
 		_, err := up.Upload(upParams)
+		if err != nil {
+			log.Error("upload to s3 failed", zap.Error(err))
+		}
+		log.Info("upload to s3 success")
 		s3Writer.err = err
 		s3Writer.wg.Done()
 	}()
