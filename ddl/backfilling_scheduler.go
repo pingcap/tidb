@@ -81,7 +81,7 @@ func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.P
 	tp backfillerType, tbl table.PhysicalTable, sessCtx sessionctx.Context,
 	jobCtx *JobContext) (backfillScheduler, error) {
 	if tp == typeAddIndexWorker && info.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-		return newIngestBackfillScheduler(ctx, info, sessPool, tbl, false), nil
+		return newIngestBackfillScheduler(ctx, info, sessPool, tbl, false, -1), nil
 	}
 	return newTxnBackfillScheduler(ctx, info, sessPool, tp, tbl, sessCtx, jobCtx)
 }
@@ -259,6 +259,7 @@ type ingestBackfillScheduler struct {
 	sessPool   *sess.Pool
 	tbl        table.PhysicalTable
 	distribute bool
+	subTaskID  int64
 
 	closed bool
 
@@ -274,8 +275,7 @@ type ingestBackfillScheduler struct {
 	checkpointMgr *ingest.CheckpointManager
 }
 
-func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
-	sessPool *sess.Pool, tbl table.PhysicalTable, distribute bool) *ingestBackfillScheduler {
+func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.Pool, tbl table.PhysicalTable, distribute bool, subtaskID int64) *ingestBackfillScheduler {
 	return &ingestBackfillScheduler{
 		ctx:        ctx,
 		reorgInfo:  info,
@@ -285,6 +285,7 @@ func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
 		resultCh:   make(chan *backfillResult, backfillTaskChanSize),
 		poolErr:    make(chan error),
 		distribute: distribute,
+		subTaskID:  subtaskID,
 	}
 }
 
@@ -401,8 +402,12 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult]
 			zap.Int64("job ID", reorgInfo.ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
 		return nil
 	}
+	writerID := b.writerMaxID
+	if b.subTaskID != -1 {
+		writerID = int(b.subTaskID)
+	}
 	worker, err := newAddIndexIngestWorker(b.tbl, reorgInfo.d, ei, b.resultCh, job.ID,
-		reorgInfo.SchemaName, b.reorgInfo.currElement.ID, b.writerMaxID,
+		reorgInfo.SchemaName, b.reorgInfo.currElement.ID, writerID,
 		b.copReqSenderPool, sessCtx, b.checkpointMgr, b.distribute)
 	if err != nil {
 		// Return an error only if it is the first worker.

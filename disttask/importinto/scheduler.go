@@ -89,9 +89,9 @@ func (s *importStepScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	return nil
 }
 
-func (s *importStepScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.MinimalTask, error) {
+func (s *importStepScheduler) SplitSubtask(ctx context.Context, bs *proto.Subtask) ([]proto.MinimalTask, error) {
 	var subtaskMeta ImportStepMeta
-	err := json.Unmarshal(bs, &subtaskMeta)
+	err := json.Unmarshal(bs.Meta, &subtaskMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -201,12 +201,12 @@ type postStepScheduler struct {
 
 var _ scheduler.Scheduler = &postStepScheduler{}
 
-func (p *postStepScheduler) SplitSubtask(_ context.Context, metaBytes []byte) ([]proto.MinimalTask, error) {
+func (p *postStepScheduler) SplitSubtask(ctx context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error) {
 	mTask := &postProcessStepMinimalTask{
 		taskMeta: p.taskMeta,
 		logger:   p.logger,
 	}
-	if err := json.Unmarshal(metaBytes, &mTask.meta); err != nil {
+	if err := json.Unmarshal(subtask.Meta, &mTask.meta); err != nil {
 		return nil, err
 	}
 	return []proto.MinimalTask{mTask}, nil

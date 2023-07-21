@@ -169,10 +169,10 @@ func TestWriterPerfOnly(t *testing.T) {
 
 	bucket := "globalsorttest"
 	prefix := "tools_test_data/globalsorttestwriter"
-	//uri := fmt.Sprintf("s3://%s/%s&force-path-style=true",
-	//	bucket, prefix)
-	uri := fmt.Sprintf("s3://%s/%s?access-key=%s&secret-access-key=%s&endpoint=http://%s:%s&force-path-style=true",
-		bucket, prefix, "minioadmin", "minioadmin", "127.0.0.1", "9000")
+	uri := fmt.Sprintf("s3://%s/%s&force-path-style=true",
+		bucket, prefix)
+	//uri := fmt.Sprintf("s3://%s/%s?access-key=%s&secret-access-key=%s&endpoint=http://%s:%s&force-path-style=true",
+	//	bucket, prefix, "minioadmin", "minioadmin", "127.0.0.1", "9000")
 
 	backend, err := storage2.ParseBackend(uri, nil)
 	require.NoError(t, err)

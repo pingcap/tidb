@@ -212,12 +212,12 @@ func (b *backfillSchedulerHandle) doFlushAndHandleError(mode ingest.FlushMode) e
 }
 
 // SplitSubtask implements the Scheduler interface.
-func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error) {
+func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error) {
 	logutil.BgLogger().Info("lightning split subtask", zap.String("category", "ddl"))
 
 	if b.stepForImport {
 		if b.stepForOrderedImport {
-			return nil, b.orderedImport(ctx, subtask)
+			return nil, b.orderedImport(ctx, subtask.Meta)
 		}
 		return nil, nil
 	}
@@ -235,7 +235,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 
 	d := b.d
 	sm := &BackfillSubTaskMeta{}
-	err := json.Unmarshal(subtask, sm)
+	err := json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
 		logutil.BgLogger().Error("unmarshal error", zap.String("category", "ddl"), zap.Error(err))
 		return nil, err
@@ -269,7 +269,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 	mockReorgInfo.elements = elements
 	mockReorgInfo.currElement = mockReorgInfo.elements[0]
 
-	ingestScheduler := newIngestBackfillScheduler(ctx, mockReorgInfo, d.sessPool, tbl, true)
+	ingestScheduler := newIngestBackfillScheduler(ctx, mockReorgInfo, d.sessPool, tbl, true, subtask.ID)
 	defer ingestScheduler.close(true)
 
 	consumer := newResultConsumer(d.ddlCtx, mockReorgInfo, nil, true)

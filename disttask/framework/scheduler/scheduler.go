@@ -178,7 +178,7 @@ func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error
 }
 
 func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask, step int64, minimalTaskCh chan func()) {
-	minimalTasks, err := scheduler.SplitSubtask(ctx, subtask.Meta)
+	minimalTasks, err := scheduler.SplitSubtask(ctx, subtask)
 	if err != nil {
 		s.onError(err)
 		if errors.Cause(err) == context.Canceled {

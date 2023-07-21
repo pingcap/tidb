@@ -349,6 +349,9 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 	ts = time.Now()
 
 	w.kvStore, err = Create(w.ctx, dataWriter)
+
+	ts = time.Now()
+
 	w.kvStore.rc = w.engine.rc
 
 	var size uint64

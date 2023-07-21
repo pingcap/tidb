@@ -82,7 +82,7 @@ func (t *rollbackScheduler) Rollback(_ context.Context) error {
 	return nil
 }
 
-func (t *rollbackScheduler) SplitSubtask(_ context.Context, subtask []byte) ([]proto.MinimalTask, error) {
+func (t *rollbackScheduler) SplitSubtask(ctx context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error) {
 	return []proto.MinimalTask{
 		testRollbackMiniTask{},
 		testRollbackMiniTask{},
