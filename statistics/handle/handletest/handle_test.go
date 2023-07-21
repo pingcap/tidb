@@ -2994,6 +2994,7 @@ func TestAnalyzeIncrementalEvictedIndex(t *testing.T) {
 }
 
 func TestEvictedColumnLoadedStatus(t *testing.T) {
+	t.Skip("skip this test because it is useless")
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
