@@ -2361,25 +2361,34 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.blockOffset)
 	var partitionInfo *model.PartitionDefinition
 	pi := ds.tableInfo.GetPartitionInfo()
-	if ds.isPartition || (pi != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode) {
+	if ds.isPartition {
+		// static prune
 		if pi != nil {
-			id := ds.physicalTableID
-			if ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
-				tbl, err := partitionPruning(ds.ctx, ds.table.GetPartitionedTable(), ds.allConds, ds.partitionNames, ds.TblCols, ds.names)
-				if err != nil || len(tbl) != 1 {
-					return invalidTask
-				}
-				id = tbl[0].GetPhysicalID()
-			}
 			for i := range pi.Definitions {
 				def := pi.Definitions[i]
-				if def.ID == id {
+				if def.ID == ds.physicalTableID {
 					partitionInfo = &def
 					break
 				}
 			}
 		}
 		if partitionInfo == nil {
+			return invalidTask
+		}
+	} else if pi != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
+		// dynamic prune
+		idxs, err := PartitionPruning(ds.ctx, ds.table.GetPartitionedTable(), ds.allConds, ds.partitionNames, ds.TblCols, ds.names)
+		if err != nil {
+			return invalidTask
+		}
+		if len(idxs) == 1 && idxs[0] == FullRange {
+			if len(pi.Definitions) != 1 {
+				return invalidTask
+			}
+			partitionInfo = &pi.Definitions[0]
+		} else if len(idxs) == 1 {
+			partitionInfo = &pi.Definitions[idxs[0]]
+		} else {
 			return invalidTask
 		}
 	}
