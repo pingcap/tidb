@@ -351,7 +351,7 @@ func GoValidateFileRanges(
 				tableWithRange := TableWithRange{
 					CreatedTable: t,
 					TableID:      t.Table.ID,
-					Ranges:       &rgs,
+					Ranges:       rgs,
 				}
 				log.Debug("sending range info",
 					zap.Stringer("table", t.Table.Name),

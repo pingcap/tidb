@@ -1078,7 +1078,10 @@ func (bc *Client) fineGrainedBackup(
 	for {
 		// Step1, check whether there is any incomplete range
 		incomplete := pr.Res.GetIncompleteRange(req.StartKey, req.EndKey)
-		logutil.CL(ctx).Info("start fine grained backup", zap.Int("incomplete", len(incomplete)), zap.Any("r", incomplete))
+		if len(incomplete) == 0 {
+			return nil
+		}
+		logutil.CL(ctx).Info("start fine grained backup", zap.Int("incomplete", len(incomplete)))
 		// Step2, retry backup on incomplete range
 		respCh := make(chan *backuppb.BackupResponse, 4)
 		errCh := make(chan error, 4)

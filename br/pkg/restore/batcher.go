@@ -267,6 +267,7 @@ func newDrainResult() DrainResult {
 		RewriteRules:           EmptyRewriteRule(),
 		Ranges:                 make([]rtree.Range, 0),
 		TableEndOffsetInRanges: make([]int, 0),
+		RestoreTyp:             -1,
 	}
 }
 
@@ -332,6 +333,7 @@ func (b *Batcher) drainRanges() DrainResult {
 		thisTableLen := len(thisTable.Ranges.Ranges)
 		collected := len(result.Ranges)
 
+		result.RestoreTyp = thisTable.Ranges.Typ
 		result.RewriteRules.Append(*thisTable.RewriteRule)
 		result.TablesToSend = append(result.TablesToSend, thisTable.CreatedTable)
 
@@ -381,7 +383,6 @@ func (b *Batcher) drainRanges() DrainResult {
 			zap.Int("size", thisTableLen),
 		)
 	}
-
 	// all tables are drained.
 	b.cachedTables = []TableWithRange{}
 	return result

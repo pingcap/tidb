@@ -271,7 +271,7 @@ func TestTransformRestoreRanges(t *testing.T) {
 		}
 	}
 	rgs := BackupItems(items).ToRestoreRanges(mergeFn)
-	require.Equal(t, rgs, RestoreRanges{
+	require.Equal(t, rgs, &RestoreRanges{
 		Typ: MergedFile,
 		Ranges: []rtree.Range{
 			{
@@ -290,7 +290,7 @@ func TestTransformRestoreRanges(t *testing.T) {
 		{Range: &backuppb.BackupRange{StartKey: []byte("e"), EndKey: []byte("f"), Files: []*backuppb.File{{Name: "f2"}}}},
 	}
 	rgs = BackupItems(items).ToRestoreRanges(mergeFn)
-	require.Equal(t, rgs, RestoreRanges{
+	require.Equal(t, rgs, &RestoreRanges{
 		Typ: OriginalFile,
 		Ranges: []rtree.Range{
 			{
@@ -315,7 +315,7 @@ func TestTransformRestoreRanges(t *testing.T) {
 
 	// For Backup range, don't need mergeFn.
 	rgs = BackupItems(items).ToRestoreRanges(nil)
-	require.Equal(t, rgs, RestoreRanges{
+	require.Equal(t, rgs, &RestoreRanges{
 		Typ: OriginalFile,
 		Ranges: []rtree.Range{
 			{

@@ -169,18 +169,18 @@ func (is BackupItems) ValidateRules(checkFn func(*backuppb.File) error) error {
 
 // ToRestoreRanges transform RackupItems to RestoreRanges
 // FIXME: use closure as parameter to avoid cycle import
-func (is BackupItems) ToRestoreRanges(mergeFilesFn func([]*backuppb.File) []rtree.Range) RestoreRanges {
+func (is BackupItems) ToRestoreRanges(mergeFilesFn func([]*backuppb.File) []rtree.Range) *RestoreRanges {
 	var (
 		typ    int
 		files  []*backuppb.File
 		ranges []rtree.Range
-		r      RestoreRanges
 	)
 
 	if len(is) == 0 {
 		log.Warn("BackupItems don't have any items")
-		return r
+		return nil
 	}
+	r := &RestoreRanges{}
 	if is[0].File != nil {
 		typ += 1
 		files = make([]*backuppb.File, 0, len(is))
@@ -298,7 +298,7 @@ func (is BackupItems) GetTableMap() map[int64][]*BackupItem {
 // when RestoreType is MergedFile. then download files one by one and merge different cf files into one ingest per region.
 // when RestoreType is OriginalFile. then merge download files and merge all cf files into one ingest per region.
 func (rr *RestoreRanges) NextFiles() []*backuppb.File {
-	if rr.ImportedRangeIndex >= len(rr.Ranges) {
+	if rr == nil || rr.ImportedRangeIndex >= len(rr.Ranges) {
 		// this restore ranges has been imported completed.
 		return nil
 	}
