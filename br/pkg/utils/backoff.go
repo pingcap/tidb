@@ -155,10 +155,10 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 				bo.delayTime = 2 * bo.delayTime
 				bo.attempt--
 			default:
-				// Unexcepted error
-				bo.delayTime = 0
-				bo.attempt = 0
-				log.Warn("unexcepted error, stop to retry", zap.Error(err))
+				// Unexpected error, directly retry again
+				bo.delayTime = 2 * bo.delayTime
+				bo.attempt--
+				log.Warn("unexpected error, retry", zap.Error(err))
 			}
 		}
 	}
