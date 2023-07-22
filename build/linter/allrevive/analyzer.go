@@ -65,6 +65,7 @@ var defaultRules = []lint.Rule{
 	&rule.TimeNamingRule{},
 	//&rule.ContextKeysType{},
 	&rule.ContextAsArgumentRule{},
+	&rule.OptimizeOperandsOrderRule{},
 }
 
 var allRules = append([]lint.Rule{

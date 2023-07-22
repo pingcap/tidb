@@ -87,6 +87,7 @@ var allRules = append([]lint.Rule{
 	//&rule.NestedStructs{},
 	&rule.UselessBreak{},
 	//&rule.BannedCharsRule{},
+	&rule.OptimizeOperandsOrderRule{},
 }, defaultRules...)
 
 func run(pass *analysis.Pass) (any, error) {
