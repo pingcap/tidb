@@ -265,9 +265,10 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 type PlanReplayerStmt struct {
 	stmtNode
 
-	Stmt    StmtNode
-	Analyze bool
-	Load    bool
+	Stmt                StmtNode
+	Analyze             bool
+	Load                bool
+	HistoricalStatsInfo *AsOfClause
 
 	// Capture indicates 'plan replayer capture <sql_digest> <plan_digest>'
 	Capture bool
@@ -281,6 +282,9 @@ type PlanReplayerStmt struct {
 	// 1. plan replayer load 'file';
 	// 2. plan replayer dump explain <analyze> 'file'
 	File string
+
+	// Fields below are currently useless.
+
 	// Where is the where clause in select statement.
 	Where ExprNode
 	// OrderBy is the ordering expression list.
@@ -311,9 +315,19 @@ func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 		return nil
 	}
 
-	ctx.WriteKeyWord("PLAN REPLAYER DUMP EXPLAIN ")
+	ctx.WriteKeyWord("PLAN REPLAYER DUMP ")
+
+	if n.HistoricalStatsInfo != nil {
+		ctx.WriteKeyWord("WITH STATS ")
+		if err := n.HistoricalStatsInfo.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore PlanReplayerStmt.HistoricalStatsInfo")
+		}
+		ctx.WriteKeyWord(" ")
+	}
 	if n.Analyze {
-		ctx.WriteKeyWord("ANALYZE ")
+		ctx.WriteKeyWord("EXPLAIN ANALYZE ")
+	} else {
+		ctx.WriteKeyWord("EXPLAIN ")
 	}
 	if n.Stmt == nil {
 		if len(n.File) > 0 {
@@ -358,6 +372,14 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 
 	if n.Load {
 		return v.Leave(n)
+	}
+
+	if n.HistoricalStatsInfo != nil {
+		info, ok := n.HistoricalStatsInfo.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.HistoricalStatsInfo = info.(*AsOfClause)
 	}
 
 	if n.Stmt == nil {
@@ -3834,6 +3856,12 @@ func (n *CalibrateResourceStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CalibrateResourceStmt)
+	for _, val := range n.DynamicCalibrateResourceOptionList {
+		_, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+	}
 	return v.Leave(n)
 }
 
@@ -3847,9 +3875,11 @@ const (
 )
 
 type DynamicCalibrateResourceOption struct {
+	stmtNode
 	Tp       DynamicCalibrateType
-	Ts       ExprNode
 	StrValue string
+	Ts       ExprNode
+	Unit     TimeUnitType
 }
 
 func (n *DynamicCalibrateResourceOption) Restore(ctx *format.RestoreCtx) error {
@@ -3866,9 +3896,35 @@ func (n *DynamicCalibrateResourceOption) Restore(ctx *format.RestoreCtx) error {
 		}
 	case CalibrateDuration:
 		ctx.WriteKeyWord("DURATION ")
-		ctx.WriteString(n.StrValue)
+		if len(n.StrValue) > 0 {
+			ctx.WriteString(n.StrValue)
+		} else {
+			ctx.WriteKeyWord("INTERVAL ")
+			if err := n.Ts.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore DynamicCalibrateResourceOption DURATION TS")
+			}
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord(n.Unit.String())
+		}
 	default:
 		return errors.Errorf("invalid DynamicCalibrateResourceOption: %d", n.Tp)
 	}
 	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DynamicCalibrateResourceOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DynamicCalibrateResourceOption)
+	if n.Ts != nil {
+		node, ok := n.Ts.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Ts = node.(ExprNode)
+	}
+	return v.Leave(n)
 }

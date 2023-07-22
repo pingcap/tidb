@@ -160,6 +160,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
+      ".cgo/": "no need to cgo code",
       ".*_generated\\.go$": "ignore generated code",
       ".*_/testmain\\.go$": "ignore code"
     }
@@ -220,6 +221,7 @@
   "forcetypeassert": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
+      ".*test_/testmain\\.go$": "ignore generated code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     },
@@ -277,6 +279,7 @@
       "/cgo/": "ignore cgo code",
       "/rules_go_work-*": "ignore generated code",
       "tools/check/ut.go": "ignore tools/check code",
+      "cmd/mirror": "ignore cmd/mirror code",
       "tools/check/xprog.go": "ignore tools/check code",
       "cmd/pluginpkg/pluginpkg.go": "ignore cmd/pluginpkg code",
       "tools/check/xprog.go:": "ignore tools/check code",
@@ -499,8 +502,9 @@
       "bindinfo/": "bindinfo",
       "br/pkg/lightning/": "br/pkg/lightning/",
       "executor/aggregate.go": "executor/aggregate.go",
-      "executor/analyze": "executor/analyze",
+      "executor/a": "executor/a",
       "executor/change.go": "executor/change.go",
+      "executor/concurrent_map.go": "executor/concurrent_map.go",
       "executor/internal/": "executor/internal/",
       "executor/aggfuncs/": "executor/aggfuncs/",
       "executor/asyncloaddata/": "executor/asyncloaddata/",
@@ -581,6 +585,32 @@
       "parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "toomanytests": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "/cgo/": "ignore cgo code",
+      "/rules_go_work-*": "ignore generated code",
+      ".*test_/testmain\\.go$": "ignore generated code",
+      ".*failpoint_binding__.go$": "ignore generated code",
+      "util/chunk": "ignore util/chunk",
+      "br/pkg/restore": "ignore br/pkg/restore"
+    },
+    "only_files": {
+      "ddl/tests": "ddl/tests code",
+      "disttask/": "disttask code",
+      "executor/test/tiflashtest": "executor/test/tiflashtest code",
+      "timer/": "timer code",
+      "util/": "util code",
+      "br/pkg/lightning/config/": "br/pkg/lightning/config code",
+      "br/pkg/storage": "br/pkg/storage code",
+      "br/pkg/utils": "br/pkg/utils code",
+      "planner/cascades": "planner/cascades code",
+      "store/": "store code",
+      "ttl/": "ttl code"
     }
   },
   "unconvert": {
@@ -1136,6 +1166,7 @@
   "prealloc": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
+      "cmd/mirror": "cmd/mirror code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "parser/yy_parser.go": "ignore generated code",
@@ -1145,6 +1176,7 @@
   "predeclared": {
     "exclude_files": {
       "external/": "no need to vet third party code",
+      "cmd/mirror": "no need to mirror",
       ".*_generated\\.go$": "ignore generated code",
       "parser/yy_parser.go": "ignore generated code",
       "parser/parser.go": "ignore generated code",
