@@ -338,36 +338,55 @@ func rollbackAddingPartitionInfo(tblInfo *model.TableInfo) ([]int64, []string, [
 	return physicalTableIDs, partNames, rollbackBundles
 }
 
-// checkAddPartitionValue values less than value must be strictly increasing for each partition.
+// checkAddPartitionValue check add Partition Values,
+// For Range: values less than value must be strictly increasing for each partition.
+// For List: if a Default partition exists,
+//
+//	no ADD partition can be allowed
+//	(needs reorganize partition instead).
 func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) error {
-	if meta.Partition.Type == model.PartitionTypeRange && len(meta.Partition.Columns) == 0 {
-		newDefs, oldDefs := part.Definitions, meta.Partition.Definitions
-		rangeValue := oldDefs[len(oldDefs)-1].LessThan[0]
-		if strings.EqualFold(rangeValue, "MAXVALUE") {
-			return errors.Trace(dbterror.ErrPartitionMaxvalue)
-		}
-
-		currentRangeValue, err := strconv.Atoi(rangeValue)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		for i := 0; i < len(newDefs); i++ {
-			ifMaxvalue := strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE")
-			if ifMaxvalue && i == len(newDefs)-1 {
-				return nil
-			} else if ifMaxvalue && i != len(newDefs)-1 {
+	switch meta.Partition.Type {
+	case model.PartitionTypeRange:
+		if len(meta.Partition.Columns) == 0 {
+			newDefs, oldDefs := part.Definitions, meta.Partition.Definitions
+			rangeValue := oldDefs[len(oldDefs)-1].LessThan[0]
+			if strings.EqualFold(rangeValue, "MAXVALUE") {
 				return errors.Trace(dbterror.ErrPartitionMaxvalue)
 			}
 
-			nextRangeValue, err := strconv.Atoi(newDefs[i].LessThan[0])
+			currentRangeValue, err := strconv.Atoi(rangeValue)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if nextRangeValue <= currentRangeValue {
-				return errors.Trace(dbterror.ErrRangeNotIncreasing)
+
+			for i := 0; i < len(newDefs); i++ {
+				ifMaxvalue := strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE")
+				if ifMaxvalue && i == len(newDefs)-1 {
+					return nil
+				} else if ifMaxvalue && i != len(newDefs)-1 {
+					return errors.Trace(dbterror.ErrPartitionMaxvalue)
+				}
+
+				nextRangeValue, err := strconv.Atoi(newDefs[i].LessThan[0])
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if nextRangeValue <= currentRangeValue {
+					return errors.Trace(dbterror.ErrRangeNotIncreasing)
+				}
+				currentRangeValue = nextRangeValue
 			}
-			currentRangeValue = nextRangeValue
+		}
+	case model.PartitionTypeList:
+		// Check if current table already contains DEFAULT list partition
+		for i := range meta.Partition.Definitions {
+			for j := range meta.Partition.Definitions[i].InValues {
+				for _, val := range meta.Partition.Definitions[i].InValues[j] {
+					if val == "DEFAULT" { // should already be normalized
+						return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead")
+					}
+				}
+			}
 		}
 	}
 	return nil

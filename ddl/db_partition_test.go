@@ -1288,7 +1288,8 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 		"[ddl:8200]VALUES IN (DEFAULT) is not supported, please use 'tidb_enable_default_list_partition'")
 	tk.MustExec("set @@session.tidb_enable_default_list_partition = ON")
 	tk.MustExec(`alter table t add partition (partition pDef values in (default, 6))`)
-	tk.MustContainErrMsg(`alter table t add partition (partition pDef2 values in (10, default))`, `[ddl:1495]Multiple definition of same constant in list partitioning`)
+	tk.MustContainErrMsg(`alter table t add partition (partition pDef2 values in (10, default))`, `[ddl:8200]Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead.`)
+	tk.MustContainErrMsg(`alter table t add partition (partition pDef2 values in (10))`, `[ddl:8200]Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead.`)
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1325,22 +1326,22 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 		err *terror.Error
 	}{
 		{"alter table t add partition (partition p4 values in (7))",
-			dbterror.ErrSameNamePartition,
+			dbterror.ErrGeneralUnsupportedDDL,
 		},
 		{"alter table t add partition (partition p6 values less than (7))",
 			ast.ErrPartitionWrongValues,
 		},
 		{"alter table t add partition (partition p6 values in (null))",
-			dbterror.ErrMultipleDefConstInListPart,
+			dbterror.ErrGeneralUnsupportedDDL,
 		},
 		{"alter table t add partition (partition p6 values in (7))",
-			dbterror.ErrMultipleDefConstInListPart,
+			dbterror.ErrGeneralUnsupportedDDL,
 		},
 		{"alter table t add partition (partition p6 values in ('a'))",
 			dbterror.ErrValuesIsNotIntType,
 		},
 		{"alter table t add partition (partition p5 values in (10),partition p6 values in (7))",
-			dbterror.ErrSameNamePartition,
+			dbterror.ErrGeneralUnsupportedDDL,
 		},
 	}
 
@@ -1438,7 +1439,7 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 		partition pDef values in (default))`)
 	tk.MustGetErrMsg(`alter table t add partition (
 		partition pDef2 values in (default))`,
-		"[ddl:1495]Multiple definition of same constant in list partitioning")
+		"[ddl:8200]Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead")
 	tk.MustExec(`alter table t drop partition pDef`)
 	tk.MustExec(`alter table t add partition (partition pDef default)`)
 	tk.MustExec(`alter table t drop partition pDef`)
@@ -1514,19 +1515,19 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 		err *terror.Error
 	}{
 		{"alter table t add partition (partition p3 values in ((7,'b')))",
-			dbterror.ErrSameNamePartition,
+			dbterror.ErrGeneralUnsupportedDDL,
 		},
 		{"alter table t add partition (partition p4 values less than ((7,'a')))",
 			ast.ErrPartitionWrongValues,
 		},
 		{"alter table t add partition (partition p6 values in ((5,null)))",
-			dbterror.ErrMultipleDefConstInListPart,
+			dbterror.ErrGeneralUnsupportedDDL,
 		},
 		{"alter table t add partition (partition p6 values in ((9,'d')))",
-			dbterror.ErrMultipleDefConstInListPart,
+			dbterror.ErrGeneralUnsupportedDDL,
 		},
 		{"alter table t add partition (partition p6 values in (default))",
-			dbterror.ErrMultipleDefConstInListPart,
+			dbterror.ErrGeneralUnsupportedDDL,
 		},
 		{"alter table t add partition (partition p6 values in (('a','a')))",
 			dbterror.ErrWrongTypeColumnValue,

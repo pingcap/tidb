@@ -4115,6 +4115,10 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = checkAddPartitionValue(meta, partInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if err := d.assignPartitionIDs(partInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
