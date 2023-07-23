@@ -291,7 +291,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 	}
 	dataDivideCfg := &mydump.DataDivideConfig{
 		ColumnCnt:         len(e.Table.Meta().Columns),
-		EngineDataSize:    defaultMaxEngineSize,
+		EngineDataSize:    int64(e.MaxEngineSize),
 		MaxChunkSize:      int64(config.MaxRegionSize),
 		Concurrency:       int(e.ThreadCnt),
 		EngineConcurrency: config.DefaultTableConcurrency,
