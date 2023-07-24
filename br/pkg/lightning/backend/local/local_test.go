@@ -29,6 +29,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	_ "unsafe"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
@@ -59,6 +60,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/status"
 )
 
@@ -740,6 +742,33 @@ func (m mockWriteClient) Send(request *sst.WriteRequest) error {
 
 func (m mockWriteClient) CloseAndRecv() (*sst.WriteResponse, error) {
 	return m.writeResp, nil
+}
+
+type baseCodec interface {
+	Marshal(v interface{}) ([]byte, error)
+	Unmarshal(data []byte, v interface{}) error
+}
+
+//go:linkname newContextWithRPCInfo google.golang.org/grpc.newContextWithRPCInfo
+func newContextWithRPCInfo(ctx context.Context, failfast bool, codec baseCodec, cp grpc.Compressor, comp encoding.Compressor) context.Context
+
+type mockCodec struct{}
+
+func (m mockCodec) Marshal(v interface{}) ([]byte, error) {
+	return nil, nil
+}
+
+func (m mockCodec) Unmarshal(data []byte, v interface{}) error {
+	return nil
+}
+
+func (m mockWriteClient) Context() context.Context {
+	ctx := context.Background()
+	return newContextWithRPCInfo(ctx, false, mockCodec{}, nil, nil)
+}
+
+func (m mockWriteClient) SendMsg(_ interface{}) error {
+	return nil
 }
 
 func (c *mockImportClient) Write(ctx context.Context, opts ...grpc.CallOption) (sst.ImportSST_WriteClient, error) {
