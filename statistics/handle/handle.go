@@ -1012,7 +1012,8 @@ func (h *Handle) initStatsCache(newCache *cache.StatsCache) {
 	handle_metrics.CostGauge.Set(float64(h.statsCache.Load().Cost()))
 }
 
-// copyAndUpdateStatsCache overrides the global statsCache with a new one, it may fail
+// copyAndUpdateStatsCache will update statsCache into non COW mode.
+// If it is in the COW mode. it overrides the global statsCache with a new one, it may fail
 // if the global statsCache has been modified by others already.
 // Callers should add retry loop if necessary.
 func (h *Handle) copyAndUpdateStatsCache(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64, opts ...cache.TableStatsOpt) (updated bool) {
