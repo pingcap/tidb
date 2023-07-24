@@ -290,14 +290,13 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 		DataFiles: e.toMyDumpFiles(),
 	}
 	dataDivideCfg := &mydump.DataDivideConfig{
-		ColumnCnt:         len(e.Table.Meta().Columns),
-		EngineDataSize:    int64(e.MaxEngineSize),
-		MaxChunkSize:      int64(config.MaxRegionSize),
-		Concurrency:       int(e.ThreadCnt),
-		EngineConcurrency: config.DefaultTableConcurrency,
-		IOWorkers:         nil,
-		Store:             e.dataStore,
-		TableMeta:         tableMeta,
+		ColumnCnt:      len(e.Table.Meta().Columns),
+		EngineDataSize: int64(e.MaxEngineSize),
+		MaxChunkSize:   int64(config.MaxRegionSize),
+		Concurrency:    int(e.ThreadCnt),
+		IOWorkers:      nil,
+		Store:          e.dataStore,
+		TableMeta:      tableMeta,
 	}
 	tableRegions, err2 := mydump.MakeTableRegions(ctx, dataDivideCfg)
 
