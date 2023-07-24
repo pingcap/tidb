@@ -143,7 +143,7 @@ func (sc *StatsCache) putCache(id int64, t *statistics.Table, moveLRUFront bool)
 func (sc *StatsCache) put(id int64, t *statistics.Table, moveLRUFront bool) {
 	ok := sc.putCache(id, t, moveLRUFront)
 	if !ok {
-		logutil.BgLogger().Warn("fail to put the stats cache")
+		logutil.BgLogger().Warn("fail to put the stats cache", zap.Int64("id", id))
 		return
 	}
 	// update the maxTblStatsVer
