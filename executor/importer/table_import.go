@@ -177,6 +177,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		MaxOpenFiles:            int(util.GenRLimit("table_import")),
 		KeyspaceName:            tidb.GetGlobalKeyspaceName(),
 		PausePDSchedulerScope:   config.PausePDSchedulerScopeTable,
+		IsRaftKV2:               e.IsRaftKV2,
 	}
 
 	// todo: use a real region size getter

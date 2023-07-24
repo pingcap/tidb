@@ -362,7 +362,11 @@ func NewImportControllerWithPauser(
 		regionSizeGetter := &local.TableRegionSizeGetterImpl{
 			DB: db,
 		}
-		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName)
+		isRaftKV2, err := common.IsRaftKV2(ctx, db)
+		if err != nil {
+			log.FromContext(ctx).Warn("check isRaftKV2 failed", zap.Error(err))
+		}
+		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName, isRaftKV2)
 		backendObj, err = local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)

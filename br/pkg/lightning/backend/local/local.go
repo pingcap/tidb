@@ -421,10 +421,11 @@ type BackendConfig struct {
 	KeyspaceName string
 	// the scope when pause PD schedulers.
 	PausePDSchedulerScope config.PausePDSchedulerScope
+	IsRaftKV2             bool
 }
 
 // NewBackendConfig creates a new BackendConfig.
-func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string) BackendConfig {
+func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string, isRaftKV2 bool) BackendConfig {
 	return BackendConfig{
 		PDAddr:                  cfg.TiDB.PdAddr,
 		LocalStoreDir:           cfg.TikvImporter.SortedKVDir,
@@ -445,6 +446,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string)
 		MaxOpenFiles:            maxOpenFiles,
 		KeyspaceName:            keyspaceName,
 		PausePDSchedulerScope:   cfg.TikvImporter.PausePDSchedulerScope,
+		IsRaftKV2:               isRaftKV2,
 	}
 }
 
