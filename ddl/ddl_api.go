@@ -3248,7 +3248,7 @@ func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGr
 			}
 			settings.WatchDurationMs = dur.Milliseconds()
 		} else {
-			settings.WatchDurationMs = -1
+			settings.WatchDurationMs = 0
 		}
 	default:
 		return errors.Trace(errors.New("unknown runaway option type"))

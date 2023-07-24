@@ -45,6 +45,10 @@ var longestTime time.Time
 // RunawayMatchType is used to indicates whether qurey was interrupted by runaway identification or quarantine watch.
 type RunawayMatchType uint
 
+func init() {
+	longestTime, _ = time.Parse(time.DateOnly, fmt.Sprintf("%04d-%02d-%02d", 2099, 12, 31))
+}
+
 const (
 	// RunawayMatchTypeWatch shows quarantine watch.
 	RunawayMatchTypeWatch RunawayMatchType = iota
@@ -96,8 +100,7 @@ type RunawayManager struct {
 
 // NewRunawayManager creates a new RunawayManager.
 func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serverAddr string) *RunawayManager {
-	longestTime, _ = time.Parse(time.DateOnly, fmt.Sprintf("%04d-%02d-%02d", 2099, 12, 31))
-	watchList := ttlcache.New[string, struct{}](ttlcache.WithCapacity[string, struct{}](maxWatchListCap))
+	watchList := ttlcache.New[string, struct{}](ttlcache.WithTTL[string, struct{}](ttlcache.NoTTL), ttlcache.WithCapacity[string, struct{}](maxWatchListCap))
 	go watchList.Start()
 	return &RunawayManager{
 		resourceGroupCtl:   resourceGroupCtl,
@@ -131,7 +134,7 @@ func (rm *RunawayManager) markQuarantine(resourceGroupName, convict, watchType s
 		rm.queryLock.Unlock()
 	}
 	var endTime time.Time
-	if ttl < 0 {
+	if ttl == 0 {
 		endTime = longestTime
 	} else {
 		endTime = now.Add(ttl)
@@ -143,7 +146,7 @@ func (rm *RunawayManager) markQuarantine(resourceGroupName, convict, watchType s
 		EndTime:           endTime,
 		Watch:             watchType,
 		WatchText:         convict,
-		From:              rm.serverID,
+		Source:            rm.serverID,
 	}:
 	default:
 		// TODO: add warning for discard flush records

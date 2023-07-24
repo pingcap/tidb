@@ -112,7 +112,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	re.Equal(uint64(time.Second*20/time.Millisecond), g.Runaway.ExecElapsedTimeMs)
 	re.Equal(model.RunawayActionDryRun, g.Runaway.Action)
 	re.Equal(model.WatchSimilar, g.Runaway.WatchType)
-	re.Equal(int64(-1), g.Runaway.WatchDurationMs)
+	re.Equal(int64(0), g.Runaway.WatchDurationMs)
 
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 MEDIUM YES EXEC_ELAPSED='20s', ACTION=DRYRUN, WATCH=SIMILAR DURATION=UNLIMITED <nil>"))
 

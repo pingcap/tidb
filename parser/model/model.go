@@ -1888,7 +1888,8 @@ type RunawayWatchType int32
 
 //revive:disable:exported
 const (
-	WatchExact RunawayWatchType = iota
+	WatchNone RunawayWatchType = iota
+	WatchExact
 	WatchSimilar
 	WatchPlan
 )
@@ -1902,7 +1903,7 @@ func (t RunawayWatchType) String() string {
 	case WatchPlan:
 		return "PLAN"
 	default:
-		return "EXACT"
+		return "NONE"
 	}
 }
 
@@ -2017,7 +2018,7 @@ func (p *ResourceGroupSettings) String() string {
 	if p.Runaway != nil {
 		writeSettingDurationToBuilder(sb, "QUERY_LIMIT=(EXEC_ELAPSED", time.Duration(p.Runaway.ExecElapsedTimeMs)*time.Millisecond, separatorFn)
 		writeSettingItemToBuilder(sb, "ACTION="+p.Runaway.Action.String())
-		if p.Runaway.WatchDurationMs != 0 {
+		if p.Runaway.WatchType != WatchNone {
 			writeSettingItemToBuilder(sb, "WATCH="+p.Runaway.WatchType.String())
 			if p.Runaway.WatchDurationMs > 0 {
 				writeSettingDurationToBuilder(sb, "DURATION", time.Duration(p.Runaway.WatchDurationMs)*time.Millisecond)
