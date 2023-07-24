@@ -134,5 +134,5 @@ func (*MapCache) Front() int64 {
 	return 0
 }
 
-// Stop implements StatsCacheInner
+// Close implements StatsCacheInner
 func (*MapCache) Close() {}
