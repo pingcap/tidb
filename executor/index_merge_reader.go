@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
@@ -160,7 +161,7 @@ func (e *IndexMergeReaderExecutor) Table() table.Table {
 }
 
 // Open implements the Executor Open interface
-func (e *IndexMergeReaderExecutor) Open(ctx context.Context) (err error) {
+func (e *IndexMergeReaderExecutor) Open(_ context.Context) (err error) {
 	e.keyRanges = make([][]kv.KeyRange, 0, len(e.partialPlans))
 	e.initRuntimeStats()
 	if e.isCorColInTableFilter {
@@ -1060,8 +1061,7 @@ func (w *indexMergeProcessWorker) fetchLoopUnionWithOrderByAndPushedLimit(ctx co
 		if len(uselessMap) == len(w.indexMerge.partialPlans) {
 			// consume reset tasks
 			go func() {
-				for range fetchCh {
-				}
+				channel.Clear(fetchCh)
 			}()
 			break
 		}
@@ -1252,7 +1252,7 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 			} else {
 				cnt := 1
 				mapDelta += hMap.Set(h, &cnt) + int64(h.ExtraMemSize())
-				rowDelta += 1
+				rowDelta++
 			}
 		}
 
@@ -1673,7 +1673,7 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 	}
 }
 
-func (w *indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Context, finished <-chan struct{}, task **indexMergeTableTask, worker string) func(r interface{}) {
+func (*indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Context, finished <-chan struct{}, task **indexMergeTableTask, worker string) func(r interface{}) {
 	return func(r interface{}) {
 		if r == nil {
 			logutil.BgLogger().Debug("worker finish without panic", zap.Any("worker", worker))
@@ -1814,6 +1814,6 @@ func (e *IndexMergeRuntimeStat) Merge(other execdetails.RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *IndexMergeRuntimeStat) Tp() int {
+func (*IndexMergeRuntimeStat) Tp() int {
 	return execdetails.TpIndexMergeRunTimeStats
 }

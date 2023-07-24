@@ -95,7 +95,7 @@ func (b *showPlacementLabelsResultBuilder) BuildRows() ([][]interface{}, error) 
 	return rows, nil
 }
 
-func (b *showPlacementLabelsResultBuilder) sortMapKeys(m map[string]interface{}) []string {
+func (*showPlacementLabelsResultBuilder) sortMapKeys(m map[string]interface{}) []string {
 	sorted := make([]string, 0, len(m))
 	for key := range m {
 		sorted = append(sorted, key)
@@ -269,7 +269,7 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 	slices.SortFunc(dbs, func(i, j *model.DBInfo) bool { return i.Name.O < j.Name.O })
 
 	for _, dbInfo := range dbs {
-		if e.Ctx().GetSessionVars().User != nil && checker != nil && !checker.DBIsVisible(activeRoles, dbInfo.Name.O) {
+		if checker != nil && e.Ctx().GetSessionVars().User != nil && !checker.DBIsVisible(activeRoles, dbInfo.Name.O) {
 			continue
 		}
 
