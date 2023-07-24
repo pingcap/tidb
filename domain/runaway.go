@@ -222,10 +222,12 @@ func (do *Domain) runawayRecordFlushLoop() {
 		case <-runawayRecordGCTicker.C:
 			go do.deleteExpiredRows("tidb_runaway_queries", "time", runawayRecordExpiredDuration)
 		case r := <-quarantineRecordCh:
-			err := do.handleRunawayWatch(r)
-			if err != nil {
-				logutil.BgLogger().Error("add runaway watch", zap.Error(err))
-			}
+			go func() {
+				err := do.handleRunawayWatch(r)
+				if err != nil {
+					logutil.BgLogger().Error("add runaway watch", zap.Error(err))
+				}
+			}()
 		case r := <-staleQuarantineRecordCh:
 			go func() {
 				for i := 0; i < 3; i++ {
@@ -263,12 +265,7 @@ func (do *Domain) handleRunawayWatch(record *resourcegroup.QuarantineRecord) err
 			return
 		}
 	}()
-	sql, params := record.GenPreviousDeletionStmt()
-	_, err = exec.ExecuteInternal(ctx, sql, params...)
-	if err != nil {
-		return err
-	}
-	sql, params = record.GenInsertionStmt()
+	sql, params := record.GenInsertionStmt()
 	_, err = exec.ExecuteInternal(ctx, sql, params...)
 	return err
 }

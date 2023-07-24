@@ -132,16 +132,6 @@ func (r *QuarantineRecord) GenDeletionStmt() (string, []interface{}) {
 	return builder.String(), params
 }
 
-func (r *QuarantineRecord) GenPreviousDeletionStmt() (string, []interface{}) {
-	var builder strings.Builder
-	params := make([]interface{}, 0, 2)
-	builder.WriteString("delete from mysql.tidb_runaway_watch ")
-	builder.WriteString("where resource_group_name = %? and watch_text = %?")
-	params = append(params, r.ResourceGroupName)
-	params = append(params, r.WatchText)
-	return builder.String(), params
-}
-
 // RunawayManager is used to detect and record runaway queries.
 type RunawayManager struct {
 	queryLock             sync.Mutex
