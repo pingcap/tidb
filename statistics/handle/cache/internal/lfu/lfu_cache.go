@@ -149,7 +149,7 @@ func (s *LFU) metrics() *ristretto.Metrics {
 	return s.cache.Metrics
 }
 
-// Stop implements statsCacheInner
+// Close implements statsCacheInner
 func (s *LFU) Close() {
 	s.cache.Close()
 	s.cache.Wait()
