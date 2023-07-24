@@ -1019,7 +1019,6 @@ func (h *Handle) statsCacheLen() int {
 
 func (h *Handle) initStatsCache(newCache *cache.StatsCache) {
 	h.statsCache.Replace(newCache)
-
 }
 
 // updateStatsCache will update statsCache into non COW mode.
