@@ -609,7 +609,7 @@
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+          "Warning 1815 Some HASH_JOIN and NO_HASH_JOIN hints conflict, NO_HASH_JOIN is ignored"
         ]
       },
       {
@@ -622,7 +622,7 @@
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join"
+          "Warning 1815 Some HASH_JOIN and NO_HASH_JOIN hints conflict, NO_HASH_JOIN is ignored"
         ]
       },
       {
