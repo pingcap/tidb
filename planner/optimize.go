@@ -335,6 +335,85 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	defer planBuilderPool.Put(builder.ResetForReuse())
 
 	builder.Init(sctx, is, hintProcessor)
+<<<<<<< HEAD
+=======
+	p, err := buildLogicalPlan(ctx, sctx, node, builder)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	activeRoles := sessVars.ActiveRoles
+	// Check privilege. Maybe it's better to move this to the Preprocess, but
+	// we need the table information to check privilege, which is collected
+	// into the visitInfo in the logical plan builder.
+	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+		visitInfo := core.VisitInfo4PrivCheck(is, node, builder.GetVisitInfo())
+		if err := core.CheckPrivilege(activeRoles, pm, visitInfo); err != nil {
+			return nil, nil, 0, err
+		}
+	}
+
+	if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
+		return nil, nil, 0, err
+	}
+
+	names := p.OutputNames()
+
+	// Handle the non-logical plan statement.
+	logic, isLogicalPlan := p.(core.LogicalPlan)
+	if !isLogicalPlan {
+		return p, names, 0, nil
+	}
+
+	// Handle the logical plan statement, use cascades planner if enabled.
+	if sessVars.GetEnableCascadesPlanner() {
+		finalPlan, cost, err := cascades.DefaultOptimizer.FindBestPlan(sctx, logic)
+		return finalPlan, names, cost, err
+	}
+
+	beginOpt := time.Now()
+	finalPlan, cost, err := core.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
+	// TODO: capture plan replayer here if it matches sql and plan digest
+
+	sessVars.DurationOptimization = time.Since(beginOpt)
+	return finalPlan, names, cost, err
+}
+
+// OptimizeExecStmt to handle the "execute" statement
+func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
+	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (core.Plan, types.NameSlice, error) {
+	builder := planBuilderPool.Get().(*core.PlanBuilder)
+	defer planBuilderPool.Put(builder.ResetForReuse())
+	builder.Init(sctx, is, nil)
+
+	p, err := buildLogicalPlan(ctx, sctx, execAst, builder)
+	if err != nil {
+		return nil, nil, err
+	}
+	exec, ok := p.(*core.Execute)
+	if !ok {
+		return nil, nil, errors.Errorf("invalid result plan type, should be Execute")
+	}
+	plan, names, err := core.GetPlanFromSessionPlanCache(ctx, sctx, false, is, exec.PrepStmt, exec.Params)
+	if err != nil {
+		return nil, nil, err
+	}
+	exec.Plan = plan
+	exec.SetOutputNames(names)
+	exec.Stmt = exec.PrepStmt.PreparedAst.Stmt
+	return exec, names, nil
+}
+
+func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, builder *core.PlanBuilder) (core.Plan, error) {
+	sctx.GetSessionVars().PlanID.Store(0)
+	sctx.GetSessionVars().PlanColumnID.Store(0)
+	sctx.GetSessionVars().MapScalarSubQ = nil
+	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
+
+	failpoint.Inject("mockRandomPlanID", func() {
+		sctx.GetSessionVars().PlanID.Store(rand.Int31n(1000)) // nolint:gosec
+	})
+>>>>>>> 2eb698c1d30 (planner: support ScalarSubQuery to display them in EXPLAIN (#45252))
 
 	// reset fields about rewrite
 	sctx.GetSessionVars().RewritePhaseInfo.Reset()

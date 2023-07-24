@@ -1334,8 +1334,16 @@ func (e *Explain) explainPlanInRowFormatCTE() (err error) {
 		}
 		explainedCTEPlan[x.CTE.IDForStorage] = struct{}{}
 	}
+<<<<<<< HEAD
 
 	return
+=======
+	for _, subQ := range flat.ScalarSubQueries {
+		for _, flatOp := range subQ {
+			e.explainFlatOpInRowFormat(flatOp)
+		}
+	}
+>>>>>>> 2eb698c1d30 (planner: support ScalarSubQuery to display them in EXPLAIN (#45252))
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.
@@ -1450,6 +1458,9 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		e.ctes = append(e.ctes, x)
 	case *PhysicalShuffleReceiverStub:
 		err = e.explainPlanInRowFormat(x.DataSource, "root", "", childIndent, true)
+	}
+	for _, subQ := range flat.ScalarSubQueries {
+		encodes = append(encodes, e.explainOpRecursivelyInJSONFormat(subQ[0], subQ))
 	}
 	return
 }
