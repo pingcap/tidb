@@ -2342,7 +2342,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 	}
 	cloneHashAgg := clonedAgg.(*PhysicalHashAgg)
 	// Clone(), it will share same base-plan elements from the finalAgg, including id,tp,stats. Make a new one here.
-	cloneHashAgg.BasePlan = base.NewBasePlan(cloneHashAgg.SCtx(), cloneHashAgg.TP(), cloneHashAgg.BlockOffset())
+	cloneHashAgg.Plan = base.NewBasePlan(cloneHashAgg.SCtx(), cloneHashAgg.TP(), cloneHashAgg.BlockOffset())
 	cloneHashAgg.SetStats(finalAgg.StatsInfo()) // reuse the final agg stats here.
 
 	// step1: adjust partial agg, for normal agg here, adjust it to target for specified group data.

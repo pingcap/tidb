@@ -245,7 +245,7 @@ func ReplaceColumnOfExpr(expr expression.Expression, proj *LogicalProjection, sc
 	return expr
 }
 
-func (p *LogicalJoin) replaceExprColumns(replace map[string]*expression.Column) {
+func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, equalExpr := range p.EqualConditions {
 		ResolveExprAndReplace(equalExpr, replace)
 	}
@@ -260,13 +260,13 @@ func (p *LogicalJoin) replaceExprColumns(replace map[string]*expression.Column) 
 	}
 }
 
-func (p *LogicalProjection) replaceExprColumns(replace map[string]*expression.Column) {
+func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, expr := range p.Exprs {
 		ResolveExprAndReplace(expr, replace)
 	}
 }
 
-func (la *LogicalAggregation) replaceExprColumns(replace map[string]*expression.Column) {
+func (la *LogicalAggregation) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, agg := range la.AggFuncs {
 		for _, aggExpr := range agg.Args {
 			ResolveExprAndReplace(aggExpr, replace)
@@ -277,14 +277,14 @@ func (la *LogicalAggregation) replaceExprColumns(replace map[string]*expression.
 	}
 }
 
-func (p *LogicalSelection) replaceExprColumns(replace map[string]*expression.Column) {
+func (p *LogicalSelection) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, expr := range p.Conditions {
 		ResolveExprAndReplace(expr, replace)
 	}
 }
 
-func (la *LogicalApply) replaceExprColumns(replace map[string]*expression.Column) {
-	la.LogicalJoin.replaceExprColumns(replace)
+func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column) {
+	la.LogicalJoin.ReplaceExprColumns(replace)
 	for _, coCol := range la.CorCols {
 		dst := replace[string(coCol.Column.HashCode(nil))]
 		if dst != nil {
@@ -293,19 +293,19 @@ func (la *LogicalApply) replaceExprColumns(replace map[string]*expression.Column
 	}
 }
 
-func (ls *LogicalSort) replaceExprColumns(replace map[string]*expression.Column) {
+func (ls *LogicalSort) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, byItem := range ls.ByItems {
 		ResolveExprAndReplace(byItem.Expr, replace)
 	}
 }
 
-func (lt *LogicalTopN) replaceExprColumns(replace map[string]*expression.Column) {
+func (lt *LogicalTopN) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, byItem := range lt.ByItems {
 		ResolveExprAndReplace(byItem.Expr, replace)
 	}
 }
 
-func (p *LogicalWindow) replaceExprColumns(replace map[string]*expression.Column) {
+func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, desc := range p.WindowFuncDescs {
 		for _, arg := range desc.Args {
 			ResolveExprAndReplace(arg, replace)

@@ -237,31 +237,31 @@ func (p PhysicalShuffleReceiverStub) Init(ctx sessionctx.Context, stats *propert
 
 // Init initializes Update.
 func (p Update) Init(ctx sessionctx.Context) *Update {
-	p.BasePlan = base.NewBasePlan(ctx, plancodec.TypeUpdate, 0)
+	p.Plan = base.NewBasePlan(ctx, plancodec.TypeUpdate, 0)
 	return &p
 }
 
 // Init initializes Delete.
 func (p Delete) Init(ctx sessionctx.Context) *Delete {
-	p.BasePlan = base.NewBasePlan(ctx, plancodec.TypeDelete, 0)
+	p.Plan = base.NewBasePlan(ctx, plancodec.TypeDelete, 0)
 	return &p
 }
 
 // Init initializes Insert.
 func (p Insert) Init(ctx sessionctx.Context) *Insert {
-	p.BasePlan = base.NewBasePlan(ctx, plancodec.TypeInsert, 0)
+	p.Plan = base.NewBasePlan(ctx, plancodec.TypeInsert, 0)
 	return &p
 }
 
 // Init initializes LoadData.
 func (p LoadData) Init(ctx sessionctx.Context) *LoadData {
-	p.BasePlan = base.NewBasePlan(ctx, plancodec.TypeLoadData, 0)
+	p.Plan = base.NewBasePlan(ctx, plancodec.TypeLoadData, 0)
 	return &p
 }
 
 // Init initializes ImportInto.
 func (p ImportInto) Init(ctx sessionctx.Context) *ImportInto {
-	p.BasePlan = base.NewBasePlan(ctx, plancodec.TypeImportInto, 0)
+	p.Plan = base.NewBasePlan(ctx, plancodec.TypeImportInto, 0)
 	return &p
 }
 
@@ -535,7 +535,7 @@ func (p PhysicalIndexHashJoin) Init(ctx sessionctx.Context) *PhysicalIndexHashJo
 
 // Init initializes BatchPointGetPlan.
 func (p *BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, schema *expression.Schema, names []*types.FieldName, offset int) *BatchPointGetPlan {
-	p.BasePlan = base.NewBasePlan(ctx, plancodec.TypeBatchPointGet, offset)
+	p.Plan = base.NewBasePlan(ctx, plancodec.TypeBatchPointGet, offset)
 	p.schema = schema
 	p.names = names
 	p.SetStats(stats)
@@ -586,7 +586,7 @@ func (p *BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsIn
 
 // Init initializes PointGetPlan.
 func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, _ ...*property.PhysicalProperty) *PointGetPlan {
-	p.BasePlan = base.NewBasePlan(ctx, plancodec.TypePointGet, offset)
+	p.Plan = base.NewBasePlan(ctx, plancodec.TypePointGet, offset)
 	p.SetStats(stats)
 	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
 	return &p
@@ -594,14 +594,14 @@ func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, of
 
 // Init only assigns type and context.
 func (p PhysicalExchangeSender) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalExchangeSender {
-	p.BasePlan = base.NewBasePlan(ctx, plancodec.TypeExchangeSender, 0)
+	p.Plan = base.NewBasePlan(ctx, plancodec.TypeExchangeSender, 0)
 	p.SetStats(stats)
 	return &p
 }
 
 // Init only assigns type and context.
 func (p PhysicalExchangeReceiver) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalExchangeReceiver {
-	p.BasePlan = base.NewBasePlan(ctx, plancodec.TypeExchangeReceiver, 0)
+	p.Plan = base.NewBasePlan(ctx, plancodec.TypeExchangeReceiver, 0)
 	p.SetStats(stats)
 	return &p
 }
@@ -646,7 +646,7 @@ func (p LogicalCTETable) Init(ctx sessionctx.Context, offset int) *LogicalCTETab
 
 // Init only assigns type and context.
 func (p PhysicalCTETable) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalCTETable {
-	p.BasePlan = base.NewBasePlan(ctx, plancodec.TypeCTETable, 0)
+	p.Plan = base.NewBasePlan(ctx, plancodec.TypeCTETable, 0)
 	p.SetStats(stats)
 	return &p
 }
@@ -681,6 +681,6 @@ func (p PhysicalSequence) Init(ctx sessionctx.Context, stats *property.StatsInfo
 
 // Init initializes ScalarSubqueryEvalCtx
 func (p ScalarSubqueryEvalCtx) Init(ctx sessionctx.Context, offset int) *ScalarSubqueryEvalCtx {
-	p.BasePlan = base.NewBasePlan(ctx, plancodec.TypeScalarSubQuery, offset)
+	p.Plan = base.NewBasePlan(ctx, plancodec.TypeScalarSubQuery, offset)
 	return &p
 }

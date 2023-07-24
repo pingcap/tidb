@@ -62,7 +62,7 @@ import (
 // When we detect that the statement has a unique equal access condition, this plan is used.
 // This plan is much faster to build and to execute because it avoid the optimization and coprocessor cost.
 type PointGetPlan struct {
-	base.BasePlan
+	base.Plan
 	dbName             string
 	schema             *expression.Schema
 	TblInfo            *model.TableInfo
@@ -103,7 +103,7 @@ func (p *PointGetPlan) getEstRowCountForDisplay() float64 {
 	if p == nil {
 		return 0
 	}
-	return p.BasePlan.StatsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
+	return p.Plan.StatsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
 }
 
 func (p *PointGetPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
@@ -261,7 +261,7 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyPointGetPlanSize + p.BasePlan.MemoryUsage() + int64(len(p.dbName)) + int64(cap(p.IdxColLens))*size.SizeOfInt +
+	sum = emptyPointGetPlanSize + p.Plan.MemoryUsage() + int64(len(p.dbName)) + int64(cap(p.IdxColLens))*size.SizeOfInt +
 		int64(cap(p.IndexConstants)+cap(p.ColsFieldType)+cap(p.IdxCols)+cap(p.outputNames)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
 	if p.schema != nil {
 		sum += p.schema.MemoryUsage()
@@ -441,12 +441,12 @@ func (*BatchPointGetPlan) GetChildReqProps(_ int) *property.PhysicalProperty {
 
 // StatsCount will return the the RowCount of property.StatsInfo for this plan.
 func (p *BatchPointGetPlan) StatsCount() float64 {
-	return p.BasePlan.StatsInfo().RowCount
+	return p.Plan.StatsInfo().RowCount
 }
 
 // statsInfo will return the the RowCount of property.StatsInfo for this plan.
 func (p *BatchPointGetPlan) StatsInfo() *property.StatsInfo {
-	return p.BasePlan.StatsInfo()
+	return p.Plan.StatsInfo()
 }
 
 // Children gets all the children.
@@ -1204,7 +1204,7 @@ func partitionNameInSet(name model.CIStr, pnames []model.CIStr) bool {
 
 func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
 	p := &PointGetPlan{
-		BasePlan:     base.NewBasePlan(ctx, plancodec.TypePointGet, 0),
+		Plan:         base.NewBasePlan(ctx, plancodec.TypePointGet, 0),
 		dbName:       dbName,
 		schema:       schema,
 		TblInfo:      tbl,

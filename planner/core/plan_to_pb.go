@@ -30,7 +30,7 @@ import (
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *basePhysicalPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
-	return nil, errors.Errorf("plan %s fails converts to PB", p.BasePlan.ExplainID())
+	return nil, errors.Errorf("plan %s fails converts to PB", p.Plan.ExplainID())
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -727,7 +727,7 @@ func (p *PhysicalWindow) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalSort) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	if !p.IsPartialSort {
-		return nil, errors.Errorf("sort %s can't convert to pb, because it isn't a partial sort", p.BasePlan.ExplainID())
+		return nil, errors.Errorf("sort %s can't convert to pb, because it isn't a partial sort", p.Plan.ExplainID())
 	}
 
 	sc := ctx.GetSessionVars().StmtCtx

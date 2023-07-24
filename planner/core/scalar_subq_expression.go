@@ -32,7 +32,7 @@ import (
 
 // ScalarSubqueryEvalCtx store the plan for the subquery, used by ScalarSubQueryExpr.
 type ScalarSubqueryEvalCtx struct {
-	base.BasePlan
+	base.Plan
 
 	// The context for evaluating the subquery.
 	scalarSubQuery PhysicalPlan

@@ -289,13 +289,13 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 
 		// Enforce curTask property
 		if addEnforcer {
-			curTask = enforceProperty(prop, curTask, p.BasePlan.SCtx())
+			curTask = enforceProperty(prop, curTask, p.Plan.SCtx())
 		}
 
 		// Optimize by shuffle executor to running in parallel manner.
 		if _, isMpp := curTask.(*mppTask); !isMpp && prop.IsSortItemEmpty() {
 			// Currently, we do not regard shuffled plan as a new plan.
-			curTask = optimizeByShuffle(curTask, p.BasePlan.SCtx())
+			curTask = optimizeByShuffle(curTask, p.Plan.SCtx())
 		}
 
 		cntPlan += curCntPlan
@@ -650,7 +650,7 @@ func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty, planCoun
 		}
 		if prop.CanAddEnforcer {
 			*prop = *oldProp
-			t = enforceProperty(prop, t, p.BasePlan.SCtx())
+			t = enforceProperty(prop, t, p.Plan.SCtx())
 			prop.CanAddEnforcer = true
 		}
 	}()
@@ -1020,7 +1020,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 		if prop.CanAddEnforcer {
 			*prop = *oldProp
-			t = enforceProperty(prop, t, ds.BasePlan.SCtx())
+			t = enforceProperty(prop, t, ds.Plan.SCtx())
 			prop.CanAddEnforcer = true
 		}
 		ds.storeTask(prop, t)
@@ -2696,7 +2696,7 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, counter *Plan
 		t = &rootTask{p: pcte, isEmpty: false}
 	}
 	if prop.CanAddEnforcer {
-		t = enforceProperty(prop, t, p.BasePlan.SCtx())
+		t = enforceProperty(prop, t, p.Plan.SCtx())
 	}
 	return t, 1, nil
 }

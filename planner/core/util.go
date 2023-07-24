@@ -198,7 +198,7 @@ func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
 type baseSchemaProducer struct {
 	schema *expression.Schema
 	names  types.NameSlice
-	base.BasePlan
+	base.Plan
 }
 
 // OutputNames returns the outputting names of each column.
@@ -234,7 +234,7 @@ func (s *baseSchemaProducer) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = size.SizeOfPointer + size.SizeOfSlice + int64(cap(s.names))*size.SizeOfPointer + s.BasePlan.MemoryUsage()
+	sum = size.SizeOfPointer + size.SizeOfSlice + int64(cap(s.names))*size.SizeOfPointer + s.Plan.MemoryUsage()
 	if s.schema != nil {
 		sum += s.schema.MemoryUsage()
 	}

@@ -1,3 +1,17 @@
+// Copyright 2023 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package base
 
 import (
@@ -13,19 +27,20 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 )
 
-// BasePlan implements base Plan interface.
+// Plan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.
-type BasePlan struct {
-	tp          string
-	id          int
+type Plan struct {
 	ctx         sessionctx.Context
 	stats       *property.StatsInfo
+	tp          string
+	id          int
 	blockOffset int
 }
 
-func NewBasePlan(ctx sessionctx.Context, tp string, offset int) BasePlan {
+// NewBasePlan creates a new base plan.
+func NewBasePlan(ctx sessionctx.Context, tp string, offset int) Plan {
 	id := ctx.GetSessionVars().PlanID.Add(1)
-	return BasePlan{
+	return Plan{
 		tp:          tp,
 		id:          int(id),
 		ctx:         ctx,
@@ -33,47 +48,53 @@ func NewBasePlan(ctx sessionctx.Context, tp string, offset int) BasePlan {
 	}
 }
 
-func (p *BasePlan) SCtx() sessionctx.Context {
+// SCtx implements Plan interface.
+func (p *Plan) SCtx() sessionctx.Context {
 	return p.ctx
 }
 
-func (p *BasePlan) SetSCtx(ctx sessionctx.Context) {
+// SetSCtx implements Plan interface.
+func (p *Plan) SetSCtx(ctx sessionctx.Context) {
 	p.ctx = ctx
 }
 
-func (p *BasePlan) BlockOffset() int {
+// BlockOffset implements Plan interface.
+func (p *Plan) BlockOffset() int {
 	return p.blockOffset
 }
 
 // OutputNames returns the outputting names of each column.
-func (*BasePlan) OutputNames() types.NameSlice {
+func (*Plan) OutputNames() types.NameSlice {
 	return nil
 }
 
-func (*BasePlan) SetOutputNames(_ types.NameSlice) {}
+// SetOutputNames sets the outputting name by the given slice.
+func (*Plan) SetOutputNames(_ types.NameSlice) {}
 
-func (*BasePlan) ReplaceExprColumns(_ map[string]*expression.Column) {}
+// ReplaceExprColumns implements Plan interface.
+func (*Plan) ReplaceExprColumns(_ map[string]*expression.Column) {}
 
 // ID implements Plan ID interface.
-func (p *BasePlan) ID() int {
+func (p *Plan) ID() int {
 	return p.id
 }
 
-func (p *BasePlan) SetID(id int) {
+func (p *Plan) SetID(id int) {
 	p.id = id
 }
 
-// property.StatsInfo implements the Plan interface.
-func (p *BasePlan) StatsInfo() *property.StatsInfo {
+// StatsInfo implements the Plan interface.
+func (p *Plan) StatsInfo() *property.StatsInfo {
 	return p.stats
 }
 
 // ExplainInfo implements Plan interface.
-func (*BasePlan) ExplainInfo() string {
+func (*Plan) ExplainInfo() string {
 	return "N/A"
 }
 
-func (p *BasePlan) ExplainID() fmt.Stringer {
+// ExplainID implements Plan interface.
+func (p *Plan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.tp
@@ -83,39 +104,39 @@ func (p *BasePlan) ExplainID() fmt.Stringer {
 }
 
 // TP implements Plan interface.
-func (p *BasePlan) TP() string {
+func (p *Plan) TP() string {
 	return p.tp
 }
 
-// TP implements Plan interface.
-func (p *BasePlan) SetTP(tp string) {
+// SetTP implements Plan interface.
+func (p *Plan) SetTP(tp string) {
 	p.tp = tp
 }
 
-func (p *BasePlan) SelectBlockOffset() int {
+func (p *Plan) SelectBlockOffset() int {
 	return p.blockOffset
 }
 
 // SetStats sets BasePlan.stats
-func (p *BasePlan) SetStats(s *property.StatsInfo) {
+func (p *Plan) SetStats(s *property.StatsInfo) {
 	p.stats = s
 }
 
-// BasePlanSize is the size of BasePlan.
-const BasePlanSize = int64(unsafe.Sizeof(BasePlan{}))
+// PlanSize is the size of BasePlan.
+const PlanSize = int64(unsafe.Sizeof(Plan{}))
 
 // MemoryUsage return the memory usage of BasePlan
-func (p *BasePlan) MemoryUsage() (sum int64) {
+func (p *Plan) MemoryUsage() (sum int64) {
 	if p == nil {
 		return
 	}
 
-	sum = BasePlanSize + int64(len(p.tp))
+	sum = PlanSize + int64(len(p.tp))
 	return sum
 }
 
 // BuildPlanTrace implements Plan
-func (p *BasePlan) BuildPlanTrace() *tracing.PlanTrace {
+func (p *Plan) BuildPlanTrace() *tracing.PlanTrace {
 	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP()}
 	return planTrace
 }

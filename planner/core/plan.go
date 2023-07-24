@@ -442,7 +442,7 @@ func (op *PlanCostOption) WithOptimizeTracer(v *physicalOptimizeOp) *PlanCostOpt
 }
 
 type baseLogicalPlan struct {
-	base.BasePlan
+	base.Plan
 
 	taskMap map[string]task
 	// taskMapBak forms a backlog stack of taskMap, used to roll back the taskMap.
@@ -517,7 +517,7 @@ func getActualProbeCntFromProbeParents(pps []PhysicalPlan, statsColl *execdetail
 }
 
 type basePhysicalPlan struct {
-	base.BasePlan
+	base.Plan
 
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
@@ -540,7 +540,7 @@ type basePhysicalPlan struct {
 
 func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
 	base := &basePhysicalPlan{
-		BasePlan:                             p.BasePlan,
+		Plan:                                 p.Plan,
 		self:                                 newSelf,
 		TiFlashFineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
 		probeParents:                         p.probeParents,
@@ -591,7 +591,7 @@ func (p *basePhysicalPlan) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.BasePlan.MemoryUsage() + size.SizeOfSlice + int64(cap(p.childrenReqProps))*size.SizeOfPointer +
+	sum = p.Plan.MemoryUsage() + size.SizeOfSlice + int64(cap(p.childrenReqProps))*size.SizeOfPointer +
 		size.SizeOfSlice + int64(cap(p.children)+1)*size.SizeOfInterface + size.SizeOfFloat64 +
 		size.SizeOfUint64 + size.SizeOfBool
 
@@ -733,15 +733,15 @@ func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan, off
 		taskMap:      make(map[string]task),
 		taskMapBak:   make([]string, 0, 10),
 		taskMapBakTS: make([]uint64, 0, 10),
-		BasePlan:     base.NewBasePlan(ctx, tp, offset),
+		Plan:         base.NewBasePlan(ctx, tp, offset),
 		self:         self,
 	}
 }
 
 func newBasePhysicalPlan(ctx sessionctx.Context, tp string, self PhysicalPlan, offset int) basePhysicalPlan {
 	return basePhysicalPlan{
-		BasePlan: base.NewBasePlan(ctx, tp, offset),
-		self:     self,
+		Plan: base.NewBasePlan(ctx, tp, offset),
+		self: self,
 	}
 }
 
