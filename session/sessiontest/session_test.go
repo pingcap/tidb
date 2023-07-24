@@ -2472,6 +2472,6 @@ func TestRequestSource(t *testing.T) {
 	tk.MustExecWithContext(insertCtx, "insert into t values(1, 1)")
 	selectCtx := interceptor.WithRPCInterceptor(context.Background(), withCheckInterceptor("external_Select_lightning"))
 	tk.MustExecWithContext(selectCtx, "select count(*) from t;")
-	tk.MustQueryWithContext(selectCtx, "select b from t where a = 4;")
-	tk.MustQueryWithContext(selectCtx, "select b from t where a in (1, 3, 5);")
+	tk.MustQueryWithContext(selectCtx, "select b from t where a = 1;")
+	tk.MustQueryWithContext(selectCtx, "select b from t where a in (1, 2, 3);")
 }
