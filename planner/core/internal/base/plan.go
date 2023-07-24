@@ -58,11 +58,6 @@ func (p *Plan) SetSCtx(ctx sessionctx.Context) {
 	p.ctx = ctx
 }
 
-// BlockOffset implements Plan interface.
-func (p *Plan) BlockOffset() int {
-	return p.blockOffset
-}
-
 // OutputNames returns the outputting names of each column.
 func (*Plan) OutputNames() types.NameSlice {
 	return nil

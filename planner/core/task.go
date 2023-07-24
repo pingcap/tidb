@@ -836,7 +836,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 				// Strictly speaking, for the row count of stats, we should multiply newCount with "regionNum",
 				// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
 				stats := deriveLimitStats(childProfile, float64(newCount))
-				pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.BlockOffset())
+				pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.SelectBlockOffset())
 				cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 				// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
 				pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
@@ -851,7 +851,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 				for _, partialScan := range cop.idxMergePartPlans {
 					childProfile := partialScan.StatsInfo()
 					stats := deriveLimitStats(childProfile, float64(newCount))
-					pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.BlockOffset())
+					pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.SelectBlockOffset())
 					pushedDownLimit.SetChildren(partialScan)
 					pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 					limitChildren = append(limitChildren, pushedDownLimit)
@@ -867,7 +867,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 		newCount := p.Offset + p.Count
 		childProfile := mpp.plan().StatsInfo()
 		stats := deriveLimitStats(childProfile, float64(newCount))
-		pushedDownLimit := PhysicalLimit{Count: newCount, PartitionBy: newPartitionBy}.Init(p.SCtx(), stats, p.BlockOffset())
+		pushedDownLimit := PhysicalLimit{Count: newCount, PartitionBy: newPartitionBy}.Init(p.SCtx(), stats, p.SelectBlockOffset())
 		mpp = attachPlan2Task(pushedDownLimit, mpp).(*mppTask)
 		pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 		t = mpp.convertToRootTask(p.SCtx())
@@ -911,7 +911,7 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 	if p.Schema().Len() != reader.Schema().Len() {
 		extraProj := PhysicalProjection{
 			Exprs: expression.Column2Exprs(p.schema.Columns),
-		}.Init(p.SCtx(), p.StatsInfo(), p.BlockOffset(), nil)
+		}.Init(p.SCtx(), p.StatsInfo(), p.SelectBlockOffset(), nil)
 		extraProj.SetSchema(p.schema)
 		// If the root.p is already a Projection. We left the optimization for the later Projection Elimination.
 		extraProj.SetChildren(root.p)
@@ -968,7 +968,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 		ByItems:     newByItems,
 		PartitionBy: newPartitionBy,
 		Count:       newCount,
-	}.Init(p.SCtx(), stats, p.BlockOffset(), p.GetChildReqProps(0))
+	}.Init(p.SCtx(), stats, p.SelectBlockOffset(), p.GetChildReqProps(0))
 	topN.SetChildren(childPlan)
 	return topN
 }
@@ -1861,7 +1861,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 			AggFuncs:     finalPref.AggFuncs,
 			GroupByItems: finalPref.GroupByItems,
 			MppRunMode:   p.MppRunMode,
-		}.initForStream(p.SCtx(), p.StatsInfo(), p.BlockOffset(), prop)
+		}.initForStream(p.SCtx(), p.StatsInfo(), p.SelectBlockOffset(), prop)
 		finalAgg.schema = finalPref.Schema
 		return partialAgg, finalAgg
 	}
@@ -1870,7 +1870,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 		AggFuncs:     finalPref.AggFuncs,
 		GroupByItems: finalPref.GroupByItems,
 		MppRunMode:   p.MppRunMode,
-	}.initForHash(p.SCtx(), p.StatsInfo(), p.BlockOffset(), prop)
+	}.initForHash(p.SCtx(), p.StatsInfo(), p.SelectBlockOffset(), prop)
 	finalAgg.schema = finalPref.Schema
 	// partialAgg and finalAgg use the same ref of stats
 	return partialAgg, finalAgg
@@ -2342,7 +2342,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 	}
 	cloneHashAgg := clonedAgg.(*PhysicalHashAgg)
 	// Clone(), it will share same base-plan elements from the finalAgg, including id,tp,stats. Make a new one here.
-	cloneHashAgg.Plan = base.NewBasePlan(cloneHashAgg.SCtx(), cloneHashAgg.TP(), cloneHashAgg.BlockOffset())
+	cloneHashAgg.Plan = base.NewBasePlan(cloneHashAgg.SCtx(), cloneHashAgg.TP(), cloneHashAgg.SelectBlockOffset())
 	cloneHashAgg.SetStats(finalAgg.StatsInfo()) // reuse the final agg stats here.
 
 	// step1: adjust partial agg, for normal agg here, adjust it to target for specified group data.

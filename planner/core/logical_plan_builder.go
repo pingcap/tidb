@@ -713,8 +713,8 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 		return
 	}
 
-	lhsAlias := extractTableAlias(p.children[0], p.BlockOffset())
-	rhsAlias := extractTableAlias(p.children[1], p.BlockOffset())
+	lhsAlias := extractTableAlias(p.children[0], p.SelectBlockOffset())
+	rhsAlias := extractTableAlias(p.children[1], p.SelectBlockOffset())
 	if hintInfo.ifPreferMergeJoin(lhsAlias) {
 		p.preferJoinType |= preferMergeJoin
 		p.leftPreferJoinType |= preferMergeJoin

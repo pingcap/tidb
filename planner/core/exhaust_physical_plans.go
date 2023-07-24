@@ -59,7 +59,7 @@ func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	us := PhysicalUnionScan{
 		Conditions: p.conditions,
 		HandleCols: p.handleCols,
-	}.Init(p.SCtx(), p.StatsInfo(), p.BlockOffset(), childProp)
+	}.Init(p.SCtx(), p.StatsInfo(), p.SelectBlockOffset(), childProp)
 	return []PhysicalPlan{us}, true, nil
 }
 
@@ -214,7 +214,7 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 			RightJoinKeys:   rightKeys,
 			IsNullEQ:        newIsNullEQ,
 		}
-		mergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(p.SCtx(), statsInfo.ScaleByExpectCnt(prop.ExpectedCnt), p.BlockOffset())
+		mergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(p.SCtx(), statsInfo.ScaleByExpectCnt(prop.ExpectedCnt), p.SelectBlockOffset())
 		mergeJoin.SetSchema(schema)
 		mergeJoin.OtherConditions = p.moveEqualToOtherConditions(offsets)
 		mergeJoin.initCompareFuncs()
@@ -359,7 +359,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 		IsNullEQ:        newNullEQ,
 		OtherConditions: otherConditions,
 	}
-	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin, Desc: desc}.Init(p.SCtx(), statsInfo.ScaleByExpectCnt(prop.ExpectedCnt), p.BlockOffset())
+	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin, Desc: desc}.Init(p.SCtx(), statsInfo.ScaleByExpectCnt(prop.ExpectedCnt), p.SelectBlockOffset())
 	enforcedPhysicalMergeJoin.SetSchema(schema)
 	enforcedPhysicalMergeJoin.childrenReqProps = []*property.PhysicalProperty{lProp, rProp}
 	enforcedPhysicalMergeJoin.initCompareFuncs()
@@ -572,7 +572,7 @@ func (p *LogicalJoin) constructIndexJoin(
 		CompareFilters:   compareFilters,
 		OuterHashKeys:    outerHashKeys,
 		InnerHashKeys:    innerHashKeys,
-	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.BlockOffset(), chReqProps...)
+	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.SelectBlockOffset(), chReqProps...)
 	if path != nil {
 		join.IdxColLens = path.IdxColLens
 	}
@@ -1060,7 +1060,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		isPartition:     ds.isPartition,
 		tblCols:         ds.TblCols,
 		tblColHists:     ds.TblColHists,
-	}.Init(ds.SCtx(), ds.BlockOffset())
+	}.Init(ds.SCtx(), ds.SelectBlockOffset())
 	ts.SetSchema(ds.schema.Clone())
 	if rowCount <= 0 {
 		rowCount = float64(1)
@@ -1132,7 +1132,7 @@ func (*LogicalJoin) constructInnerSel(sel *LogicalSelection, child PhysicalPlan)
 	}
 	physicalSel := PhysicalSelection{
 		Conditions: sel.Conditions,
-	}.Init(sel.SCtx(), sel.StatsInfo(), sel.BlockOffset(), nil)
+	}.Init(sel.SCtx(), sel.StatsInfo(), sel.SelectBlockOffset(), nil)
 	physicalSel.SetChildren(child)
 	return physicalSel
 }
@@ -1145,7 +1145,7 @@ func (*LogicalJoin) constructInnerProj(proj *LogicalProjection, child PhysicalPl
 		Exprs:                proj.Exprs,
 		CalculateNoDelay:     proj.CalculateNoDelay,
 		AvoidColumnEvaluator: proj.AvoidColumnEvaluator,
-	}.Init(proj.SCtx(), proj.StatsInfo(), proj.BlockOffset(), nil)
+	}.Init(proj.SCtx(), proj.StatsInfo(), proj.SelectBlockOffset(), nil)
 	physicalProj.SetChildren(child)
 	return physicalProj
 }
@@ -1159,7 +1159,7 @@ func (*LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physica
 	physicalUnionScan := PhysicalUnionScan{
 		Conditions: us.conditions,
 		HandleCols: us.handleCols,
-	}.Init(us.SCtx(), reader.StatsInfo(), us.BlockOffset(), nil)
+	}.Init(us.SCtx(), reader.StatsInfo(), us.SelectBlockOffset(), nil)
 	physicalUnionScan.SetChildren(reader)
 	return physicalUnionScan
 }
@@ -1251,7 +1251,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		physicalTableID:  ds.physicalTableID,
 		tblColHists:      ds.TblColHists,
 		pkIsHandleCol:    ds.getPKIsHandleCol(),
-	}.Init(ds.SCtx(), ds.BlockOffset())
+	}.Init(ds.SCtx(), ds.SelectBlockOffset())
 	cop := &copTask{
 		indexPlan:   is,
 		tblColHists: ds.TblColHists,
@@ -1275,7 +1275,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			physicalTableID: ds.physicalTableID,
 			tblCols:         ds.TblCols,
 			tblColHists:     ds.TblColHists,
-		}.Init(ds.SCtx(), ds.BlockOffset())
+		}.Init(ds.SCtx(), ds.SelectBlockOffset())
 		ts.schema = is.dataSourceSchema.Clone()
 		if ds.tableInfo.IsCommonHandle {
 			commonHandle := ds.handleCols.(*CommonHandleCols)
@@ -2523,7 +2523,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		storeTp:           kv.TiFlash,
 		mppShuffleJoin:    !useBCJ,
 		// Mpp Join has quite heavy cost. Even limit might not suspend it in time, so we don't scale the count.
-	}.Init(p.SCtx(), p.StatsInfo(), p.BlockOffset(), childrenProps...)
+	}.Init(p.SCtx(), p.StatsInfo(), p.SelectBlockOffset(), childrenProps...)
 	join.SetSchema(p.schema)
 	return []PhysicalPlan{join}
 }
@@ -2580,7 +2580,7 @@ func (p *LogicalExpand) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 			GroupingSets:          p.rollupGroupingSets,
 			LevelExprs:            p.LevelExprs,
 			ExtraGroupingColNames: p.ExtraGroupingColNames,
-		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.BlockOffset(), mppProp)
+		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.SelectBlockOffset(), mppProp)
 		expand.SetSchema(p.Schema())
 		return []PhysicalPlan{expand}, true, nil
 	}
@@ -2614,7 +2614,7 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 			Exprs:                p.Exprs,
 			CalculateNoDelay:     p.CalculateNoDelay,
 			AvoidColumnEvaluator: p.AvoidColumnEvaluator,
-		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.BlockOffset(), newProp)
+		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.SelectBlockOffset(), newProp)
 		proj.SetSchema(p.schema)
 		ret = append(ret, proj)
 	}
@@ -2666,7 +2666,7 @@ func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPl
 			PartitionBy: lt.PartitionBy,
 			Count:       lt.Count,
 			Offset:      lt.Offset,
-		}.Init(lt.SCtx(), lt.StatsInfo(), lt.BlockOffset(), resultProp)
+		}.Init(lt.SCtx(), lt.StatsInfo(), lt.SelectBlockOffset(), resultProp)
 		ret = append(ret, topN)
 	}
 	return ret
@@ -2689,7 +2689,7 @@ func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []Physical
 			Count:       lt.Count,
 			Offset:      lt.Offset,
 			PartitionBy: lt.GetPartitionBy(),
-		}.Init(lt.SCtx(), lt.StatsInfo(), lt.BlockOffset(), resultProp)
+		}.Init(lt.SCtx(), lt.StatsInfo(), lt.SelectBlockOffset(), resultProp)
 		limit.SetSchema(lt.Schema())
 		ret = append(ret, limit)
 	}
@@ -2759,7 +2759,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 		CanUseCache:      canUseCache,
 	}.Init(la.SCtx(),
 		la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt),
-		la.BlockOffset(),
+		la.SelectBlockOffset(),
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus},
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus})
 	apply.SetSchema(la.schema)
@@ -2873,7 +2873,7 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 		OrderBy:         lw.OrderBy,
 		Frame:           lw.Frame,
 		storeTp:         kv.TiFlash,
-	}.Init(lw.SCtx(), lw.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), lw.BlockOffset(), childProperty)
+	}.Init(lw.SCtx(), lw.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), lw.SelectBlockOffset(), childProperty)
 	window.SetSchema(lw.Schema())
 
 	return []PhysicalPlan{window}
@@ -2904,7 +2904,7 @@ func (lw *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) (
 		PartitionBy:     lw.PartitionBy,
 		OrderBy:         lw.OrderBy,
 		Frame:           lw.Frame,
-	}.Init(lw.SCtx(), lw.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), lw.BlockOffset(), childProperty)
+	}.Init(lw.SCtx(), lw.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), lw.SelectBlockOffset(), childProperty)
 	window.SetSchema(lw.Schema())
 
 	windows = append(windows, window)
@@ -3044,7 +3044,7 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 		agg := basePhysicalAgg{
 			GroupByItems: newGbyItems,
 			AggFuncs:     newAggFuncs,
-		}.initForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.BlockOffset(), copiedChildProperty)
+		}.initForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.SelectBlockOffset(), copiedChildProperty)
 		agg.SetSchema(la.schema.Clone())
 		enforcedAggs = append(enforcedAggs, agg)
 	}
@@ -3128,7 +3128,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			agg := basePhysicalAgg{
 				GroupByItems: newGbyItems,
 				AggFuncs:     newAggFuncs,
-			}.initForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.BlockOffset(), copiedChildProperty)
+			}.initForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.SelectBlockOffset(), copiedChildProperty)
 			agg.SetSchema(la.schema.Clone())
 			streamAggs = append(streamAggs, agg)
 		}
@@ -3408,7 +3408,7 @@ func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	for _, newProp := range newProps {
 		sel := PhysicalSelection{
 			Conditions: p.Conditions,
-		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.BlockOffset(), newProp)
+		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.SelectBlockOffset(), newProp)
 		ret = append(ret, sel)
 	}
 	return ret, true, nil
@@ -3444,7 +3444,7 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 			Offset:      p.Offset,
 			Count:       p.Count,
 			PartitionBy: p.GetPartitionBy(),
-		}.Init(p.SCtx(), p.StatsInfo(), p.BlockOffset(), resultProp)
+		}.Init(p.SCtx(), p.StatsInfo(), p.SelectBlockOffset(), resultProp)
 		limit.SetSchema(p.Schema())
 		ret = append(ret, limit)
 	}
@@ -3491,7 +3491,7 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	}
 	ua := PhysicalUnionAll{
 		mpp: canUseMpp && prop.TaskTp == property.MppTaskType,
-	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.BlockOffset(), chReqProps...)
+	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.SelectBlockOffset(), chReqProps...)
 	ua.SetSchema(p.Schema())
 	if canUseMpp && prop.TaskTp == property.RootTaskType {
 		chReqProps = make([]*property.PhysicalProperty, 0, len(p.children))
@@ -3503,7 +3503,7 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 				CTEProducerStatus: prop.CTEProducerStatus,
 			})
 		}
-		mppUA := PhysicalUnionAll{mpp: true}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.BlockOffset(), chReqProps...)
+		mppUA := PhysicalUnionAll{mpp: true}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.SelectBlockOffset(), chReqProps...)
 		mppUA.SetSchema(p.Schema())
 		return []PhysicalPlan{ua, mppUA}, true, nil
 	}
@@ -3522,7 +3522,7 @@ func (p *LogicalPartitionUnionAll) exhaustPhysicalPlans(prop *property.PhysicalP
 }
 
 func (ls *LogicalSort) getPhysicalSort(prop *property.PhysicalProperty) *PhysicalSort {
-	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.BlockOffset(), &property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus})
+	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.SelectBlockOffset(), &property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus})
 	return ps
 }
 
@@ -3534,7 +3534,7 @@ func (ls *LogicalSort) getNominalSort(reqProp *property.PhysicalProperty) *Nomin
 	prop.RejectSort = true
 	prop.ExpectedCnt = reqProp.ExpectedCnt
 	ps := NominalSort{OnlyColumn: onlyColumn, ByItems: ls.ByItems}.Init(
-		ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.BlockOffset(), prop)
+		ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.SelectBlockOffset(), prop)
 	return ps
 }
 
@@ -3554,7 +3554,7 @@ func (ls *LogicalSort) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 			newProp := prop.CloneEssentialFields()
 			newProp.RejectSort = true
 			ps := NominalSort{OnlyColumn: true, ByItems: ls.ByItems}.Init(
-				ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.BlockOffset(), newProp)
+				ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.SelectBlockOffset(), newProp)
 			return []PhysicalPlan{ps}, true, nil
 		}
 	}
@@ -3566,7 +3566,7 @@ func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `MaxOneRow` is not supported now.")
 		return nil, true, nil
 	}
-	mor := PhysicalMaxOneRow{}.Init(p.SCtx(), p.StatsInfo(), p.BlockOffset(), &property.PhysicalProperty{ExpectedCnt: 2, CTEProducerStatus: prop.CTEProducerStatus})
+	mor := PhysicalMaxOneRow{}.Init(p.SCtx(), p.StatsInfo(), p.SelectBlockOffset(), &property.PhysicalProperty{ExpectedCnt: 2, CTEProducerStatus: prop.CTEProducerStatus})
 	return []PhysicalPlan{mor}, true, nil
 }
 
@@ -3608,7 +3608,7 @@ func (p *LogicalSequence) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 			childReqs = append(childReqs, propChoice[0].CloneEssentialFields())
 		}
 		childReqs = append(childReqs, propChoice[1])
-		seq := PhysicalSequence{}.Init(p.SCtx(), p.StatsInfo(), p.BlockOffset(), childReqs...)
+		seq := PhysicalSequence{}.Init(p.SCtx(), p.StatsInfo(), p.SelectBlockOffset(), childReqs...)
 		seq.SetSchema(p.children[len(p.children)-1].Schema())
 		seqs = append(seqs, seq)
 	}

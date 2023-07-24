@@ -84,7 +84,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan, opt *logicalOptim
 				us := LogicalUnionScan{
 					conditions: p.conditions,
 					handleCols: p.handleCols,
-				}.Init(ua.SCtx(), ua.BlockOffset())
+				}.Init(ua.SCtx(), ua.SelectBlockOffset())
 				us.SetChildren(child)
 				children = append(children, us)
 			}
@@ -467,7 +467,7 @@ func (s *partitionProcessor) processHashOrKeyPartition(ds *DataSource, pi *model
 	if used != nil {
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
 	}
-	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.BlockOffset())
+	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.SelectBlockOffset())
 	tableDual.schema = ds.Schema()
 	appendNoPartitionChildTraceStep(ds, tableDual, opt)
 	return tableDual, nil
@@ -993,7 +993,7 @@ func (s *partitionProcessor) processListPartition(ds *DataSource, pi *model.Part
 	if used != nil {
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
 	}
-	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.BlockOffset())
+	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.SelectBlockOffset())
 	tableDual.schema = ds.Schema()
 	appendNoPartitionChildTraceStep(ds, tableDual, opt)
 	return tableDual, nil
@@ -1709,7 +1709,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			}
 			// Not a deep copy.
 			newDataSource := *ds
-			newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.BlockOffset())
+			newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.SelectBlockOffset())
 			newDataSource.schema = ds.schema.Clone()
 			newDataSource.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 			copy(newDataSource.Columns, ds.Columns)
@@ -1733,7 +1733,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 
 	if len(children) == 0 {
 		// No result after table pruning.
-		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.BlockOffset())
+		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.SelectBlockOffset())
 		tableDual.schema = ds.Schema()
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, tableDual, children, opt)
 		return tableDual, nil
@@ -1743,7 +1743,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, children[0], children, opt)
 		return children[0], nil
 	}
-	unionAll := LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.BlockOffset())
+	unionAll := LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.SelectBlockOffset())
 	unionAll.SetChildren(children...)
 	unionAll.SetSchema(ds.schema.Clone())
 	appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, unionAll, children, opt)

@@ -143,7 +143,7 @@ func (s *LogicalSelection) deriveTopN(opt *logicalOptimizeOp) LogicalPlan {
 			byItems = append(byItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 		}
 		// Build derived Limit
-		derivedTopN := LogicalTopN{Count: limitValue, ByItems: byItems, PartitionBy: child.GetPartitionBy()}.Init(grandChild.SCtx(), grandChild.BlockOffset())
+		derivedTopN := LogicalTopN{Count: limitValue, ByItems: byItems, PartitionBy: child.GetPartitionBy()}.Init(grandChild.SCtx(), grandChild.SelectBlockOffset())
 		derivedTopN.SetChildren(grandChild)
 		/* return select->datasource->topN->window */
 		child.SetChildren(derivedTopN)
