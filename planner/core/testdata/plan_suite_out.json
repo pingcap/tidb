@@ -2697,9 +2697,9 @@
         "Error": ""
       },
       {
-        "SQL": "explain analyze format = 'brief' select * from t1 where a = (select a from t2 limit 1)",
+        "SQL": "explain analyze select * from t1 where a = (select a from t2 limit 1)",
         "Plan": [
-          "TableDual 0.00 0 root "
+          "TableDual_18 8000.00 0 root "
         ],
         "Error": ""
       },
@@ -2717,9 +2717,9 @@
         "Error": ""
       },
       {
-        "SQL": "explain analyze format = 'brief' select * from t1 where exists(select 1 from t2 where a = 1)",
+        "SQL": "explain analyze select * from t1 where exists(select 1 from t2 where a = 1)",
         "Plan": [
-          "TableDual 0.00 0 root "
+          "TableDual_12 0.00 0 root "
         ],
         "Error": ""
       },
@@ -2737,10 +2737,10 @@
         "Error": ""
       },
       {
-        "SQL": "explain analyze format = 'brief' select * from t1 where not exists(select 1 from t2 where a = 1)",
+        "SQL": "explain analyze select * from t1 where not exists(select 1 from t2 where a = 1)",
         "Plan": [
-          "TableReader 10000.00 0 root ",
-          "└─TableFullScan 10000.00 0 cop[tikv] table:t1"
+          "TableReader_12 10000.00 0 root ",
+          "└─TableFullScan_11 10000.00 0 cop[tikv] table:t1"
         ],
         "Error": ""
       },
@@ -2765,9 +2765,9 @@
         "Error": ""
       },
       {
-        "SQL": "explain analyze format = 'brief' select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
+        "SQL": "explain analyze select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
         "Plan": [
-          "TableDual 0.00 0 root "
+          "TableDual_23 0.00 0 root "
         ],
         "Error": ""
       },
@@ -2787,9 +2787,9 @@
         "Error": ""
       },
       {
-        "SQL": "explain analyze format = 'brief' select * from t1 where (a, b) = (select a, b from t2 limit 1)",
+        "SQL": "explain analyze select * from t1 where (a, b) = (select a, b from t2 limit 1)",
         "Plan": [
-          "TableDual 0.00 0 root "
+          "TableDual_18 8000.00 0 root "
         ],
         "Error": ""
       }

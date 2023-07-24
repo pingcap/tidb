@@ -757,7 +757,7 @@
         "HasErr": false
       },
       {
-        "SQL": "explain analyze format = 'brief' select * from t1 where a = (select a from t2 limit 1)",
+        "SQL": "explain analyze select * from t1 where a = (select a from t2 limit 1)",
         "IsExplainAnalyze": true,
         "HasErr": false
       },
@@ -768,7 +768,7 @@
         "HasErr": false
       },
       {
-        "SQL": "explain analyze format = 'brief' select * from t1 where exists(select 1 from t2 where a = 1)",
+        "SQL": "explain analyze select * from t1 where exists(select 1 from t2 where a = 1)",
         "IsExplainAnalyze": true,
         "HasErr": false
       },
@@ -778,7 +778,7 @@
         "HasErr": false
       },
       {
-        "SQL": "explain analyze format = 'brief' select * from t1 where not exists(select 1 from t2 where a = 1)",
+        "SQL": "explain analyze select * from t1 where not exists(select 1 from t2 where a = 1)",
         "IsExplainAnalyze": true,
         "HasErr": false
       },
@@ -789,7 +789,7 @@
         "HasErr": false
       },
       {
-        "SQL": "explain analyze format = 'brief' select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
+        "SQL": "explain analyze select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
         "IsExplainAnalyze": true,
         "HasErr": false
       },
@@ -800,7 +800,7 @@
         "HasErr": false
       },
       {
-        "SQL": "explain analyze format = 'brief' select * from t1 where (a, b) = (select a, b from t2 limit 1)",
+        "SQL": "explain analyze select * from t1 where (a, b) = (select a, b from t2 limit 1)",
         "IsExplainAnalyze": true,
         "HasErr": false
       }
