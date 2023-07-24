@@ -1913,6 +1913,8 @@ func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 	replicaReadType := sessVars.GetReplicaRead()
 	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
 	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
+	snapshot.SetOption(kv.ResourceGroupName, sessVars.ResourceGroupName)
+	snapshot.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
 
 	if replicaReadType.IsClosestRead() && b.readReplicaScope != kv.GlobalTxnScope {
 		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
@@ -5204,8 +5206,6 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	if e.Ctx().GetSessionVars().IsReplicaReadClosestAdaptive() {
 		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.Ctx(), plan.GetAvgRowSize()))
 	}
-	e.snapshot.SetOption(kv.ResourceGroupName, b.ctx.GetSessionVars().ResourceGroupName)
-	e.snapshot.SetOption(kv.ExplicitRequestSourceType, b.ctx.GetSessionVars().ExplicitRequestSourceType)
 	if e.RuntimeStats() != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
