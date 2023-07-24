@@ -80,7 +80,7 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	if p.Schema().Len() != child.Schema().Len() {
 		return false
 	}
-	for _, ref := range p.ctx.GetSessionVars().StmtCtx.ColRefFromUpdatePlan {
+	for _, ref := range p.SCtx().GetSessionVars().StmtCtx.ColRefFromUpdatePlan {
 		for _, one := range p.Schema().Columns {
 			if ref == one.UniqueID {
 				return false
@@ -203,7 +203,7 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 			resolveColumnAndReplace(dst, replace)
 		}
 	}
-	p.replaceExprColumns(replace)
+	p.ReplaceExprColumns(replace)
 	if isProj {
 		if child, ok := p.Children()[0].(*LogicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
 			for i := range proj.Exprs {
