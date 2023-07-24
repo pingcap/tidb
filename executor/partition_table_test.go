@@ -166,8 +166,6 @@ func TestPointGetwithRangeAndListPartitionTable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create database test_pointget_list_hash")
-	tk.MustExec("use test_pointget_list_hash")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 
@@ -233,6 +231,21 @@ func TestPointGetwithRangeAndListPartitionTable(t *testing.T) {
 	queryList := "select a from tlist where a=200"
 	require.True(t, tk.HasPlan(queryList, "TableDual")) // check if TableDual is used
 	tk.MustQuery(queryList).Check(testkit.Rows())
+
+	// test PointGet for one partition
+	queryOnePartition := "select a from t where a = -1"
+	tk.MustExec("create table t(a int primary key, b int) PARTITION BY RANGE (a) (partition p0 values less than(1))")
+	tk.MustExec("insert into t values (-1, 1), (-2, 1)")
+	tk.MustExec("analyze table t")
+	require.True(t, tk.HasPlan(queryOnePartition, "Point_Get"))
+	tk.MustQuery(queryOnePartition).Check(testkit.Rows(fmt.Sprintf("%v", -1)))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int primary key, b int) PARTITION BY list (a) (partition p0 values in (-1, -2))")
+	tk.MustExec("insert into t values (-1, 1), (-2, 1)")
+	tk.MustExec("analyze table t")
+	require.True(t, tk.HasPlan(queryOnePartition, "Point_Get"))
+	tk.MustQuery(queryOnePartition).Check(testkit.Rows(fmt.Sprintf("%v", -1)))
 }
 
 func TestPartitionReaderUnderApply(t *testing.T) {
