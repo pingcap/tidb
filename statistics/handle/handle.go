@@ -2290,7 +2290,7 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 	sc.SetCapacity(c)
 }
 
-// Stop stops the background
-func (h *Handle) Stop() {
-	h.statsCache.Load().Stop()
+// Close stops the background
+func (h *Handle) Close() {
+	h.statsCache.Load().Close()
 }

@@ -1023,7 +1023,7 @@ func (do *Domain) Close() {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 	}
 	if handle := do.statsHandle.Load(); handle != nil {
-		handle.Stop()
+		handle.Close()
 	}
 
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))

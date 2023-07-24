@@ -43,6 +43,6 @@ type StatsCacheInner interface {
 	// Front returns the front element's owner tableID, only used for test
 	// TODO: this method is mainly for test, remove it in the future.
 	Front() int64
-	// Stop stops the cache
-	Stop()
+	// Close stops the cache
+	Close()
 }

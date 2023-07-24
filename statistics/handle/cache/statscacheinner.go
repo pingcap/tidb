@@ -168,9 +168,9 @@ func (sc *StatsCache) SetCapacity(c int64) {
 	sc.c.SetCapacity(c)
 }
 
-// Stop stops the cache.
-func (sc *StatsCache) Stop() {
-	sc.c.Stop()
+// Close stops the cache.
+func (sc *StatsCache) Close() {
+	sc.c.Close()
 }
 
 // Version returns the version of the current cache, which is defined as
