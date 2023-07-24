@@ -338,6 +338,20 @@ func rollbackAddingPartitionInfo(tblInfo *model.TableInfo) ([]int64, []string, [
 	return physicalTableIDs, partNames, rollbackBundles
 }
 
+// Check if current table already contains DEFAULT list partition
+func checkAddListPartitions(tblInfo *model.TableInfo) error {
+	for i := range tblInfo.Partition.Definitions {
+		for j := range tblInfo.Partition.Definitions[i].InValues {
+			for _, val := range tblInfo.Partition.Definitions[i].InValues[j] {
+				if val == "DEFAULT" { // should already be normalized
+					return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead")
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // checkAddPartitionValue check add Partition Values,
 // For Range: values less than value must be strictly increasing for each partition.
 // For List: if a Default partition exists,
@@ -378,15 +392,9 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 			}
 		}
 	case model.PartitionTypeList:
-		// Check if current table already contains DEFAULT list partition
-		for i := range meta.Partition.Definitions {
-			for j := range meta.Partition.Definitions[i].InValues {
-				for _, val := range meta.Partition.Definitions[i].InValues[j] {
-					if val == "DEFAULT" { // should already be normalized
-						return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead")
-					}
-				}
-			}
+		err := checkAddListPartitions(meta)
+		if err != nil {
+			return err
 		}
 	}
 	return nil

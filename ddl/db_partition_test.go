@@ -1288,8 +1288,8 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 		"[ddl:8200]VALUES IN (DEFAULT) is not supported, please use 'tidb_enable_default_list_partition'")
 	tk.MustExec("set @@session.tidb_enable_default_list_partition = ON")
 	tk.MustExec(`alter table t add partition (partition pDef values in (default, 6))`)
-	tk.MustContainErrMsg(`alter table t add partition (partition pDef2 values in (10, default))`, `[ddl:8200]Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead.`)
-	tk.MustContainErrMsg(`alter table t add partition (partition pDef2 values in (10))`, `[ddl:8200]Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead.`)
+	tk.MustContainErrMsg(`alter table t add partition (partition pDef2 values in (10, default))`, `[ddl:8200]Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead`)
+	tk.MustContainErrMsg(`alter table t add partition (partition pDef2 values in (10))`, `[ddl:8200]Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead`)
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -2058,19 +2058,19 @@ func TestAlterTableAddPartition(t *testing.T) {
 	tk.MustGetErrCode(sql4, errno.ErrRangeNotIncreasing)
 
 	sql5 := `alter table table3 add partition (
-		partition p1 values less than (1993)
+		partition p1 values less than (2011)
 	);`
 	tk.MustGetErrCode(sql5, errno.ErrSameNamePartition)
 
 	sql6 := `alter table table3 add partition (
-		partition p1 values less than (1993),
-		partition p1 values less than (1995)
+		partition p1 values less than (2011),
+		partition p1 values less than (2021)
 	);`
 	tk.MustGetErrCode(sql6, errno.ErrSameNamePartition)
 
 	sql7 := `alter table table3 add partition (
-		partition p4 values less than (1993),
-		partition p1 values less than (1995),
+		partition p4 values less than (2011),
+		partition p1 values less than (2021),
 		partition p5 values less than maxvalue
 	);`
 	tk.MustGetErrCode(sql7, errno.ErrSameNamePartition)
