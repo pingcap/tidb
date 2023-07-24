@@ -4570,6 +4570,19 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "no_hash_join", hints[1].HintName.L)
 	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
 
+	// Test NO_MERGE_JOIN
+	stmt, _, err = p.Parse("select /*+ NO_MERGE_JOIN(t1), NO_MERGE_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "no_merge_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "no_merge_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
 	// Test INDEX_JOIN
 	stmt, _, err = p.Parse("select /*+ INDEX_JOIN(t1), INDEX_JOIN(t3) */ * from t1, t2, t3", "", "")
 	require.NoError(t, err)
@@ -4646,19 +4659,6 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
 
 	require.Equal(t, "no_index_merge_join", hints[1].HintName.L)
-	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
-
-	// Test NO_MERGE_JOIN
-	stmt, _, err = p.Parse("select /*+ NO_MERGE_JOIN(t1), NO_MERGE_JOIN(t3) */ * from t1, t2, t3", "", "")
-	require.NoError(t, err)
-	selectStmt = stmt[0].(*ast.SelectStmt)
-
-	hints = selectStmt.TableHints
-	require.Len(t, hints, 2)
-	require.Equal(t, "no_merge_join", hints[0].HintName.L)
-	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
-
-	require.Equal(t, "no_merge_join", hints[1].HintName.L)
 	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
 }
 
