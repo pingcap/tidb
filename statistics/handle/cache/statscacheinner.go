@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
+	"go.uber.org/zap"
 )
 
 // TableStatsOption used to indicate the way to get table stats
@@ -134,6 +135,7 @@ func (sc *StatsCache) putCache(id int64, t *statistics.Table, moveLRUFront bool)
 			return ok
 		}
 	}
+	logutil.BgLogger().Warn("fail to put the stats cache", zap.Int64("id", id))
 	return ok
 }
 
