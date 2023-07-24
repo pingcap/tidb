@@ -110,7 +110,25 @@ func (tp JoinType) String() string {
 }
 
 const (
+<<<<<<< HEAD
 	preferLeftAsINLJInner uint = 1 << iota
+=======
+	// Hint flag for join
+	preferINLJ uint = 1 << iota
+	preferINLHJ
+	preferINLMJ
+	preferHJBuild
+	preferHJProbe
+	preferHashJoin
+	preferNoHashJoin
+	preferMergeJoin
+	preferBCJoin
+	preferShuffleJoin
+	preferRewriteSemiJoin
+
+	// Hint flag to specify the join with direction
+	preferLeftAsINLJInner
+>>>>>>> 7c2dbbe34e4 (planner: support `no_hash_join` hint on optimizer (#45538))
 	preferRightAsINLJInner
 	preferLeftAsINLHJInner
 	preferRightAsINLHJInner
