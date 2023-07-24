@@ -1140,7 +1140,7 @@ func (remote *Backend) generateAndSendJob(
 	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
 
 	eg, egCtx := errgroup.WithContext(ctx)
-	eg.SetLimit(remote.WorkerConcurrency)
+	eg.SetLimit(1)
 	for _, jobRange := range jobRanges {
 		r := jobRange
 		eg.Go(func() error {
