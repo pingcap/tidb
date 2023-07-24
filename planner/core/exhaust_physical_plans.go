@@ -233,7 +233,8 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 	}
 	// If TiDB_SMJ hint is existed, it should consider enforce merge join,
 	// because we can't trust lhsChildProperty completely.
-	if (p.preferJoinType & preferMergeJoin) > 0 {
+	if (p.preferJoinType&preferMergeJoin) > 0 ||
+		(p.preferJoinType&preferNoHashJoin) > 0 { // if hash join is not allowed, generate as many other types of join as possible to avoid 'cant-find-plan' error.
 		joins = append(joins, p.getEnforcedMergeJoin(prop, schema, statsInfo)...)
 	}
 
@@ -391,6 +392,7 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 		forceLeftToBuild = false
 		forceRightToBuild = false
 	}
+
 	joins = make([]PhysicalPlan, 0, 2)
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
@@ -437,7 +439,15 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 			}
 		}
 	}
+
 	forced = (p.preferJoinType&preferHashJoin > 0) || forceLeftToBuild || forceRightToBuild
+	noHashJoin := (p.preferJoinType & preferNoHashJoin) > 0
+	if !forced && noHashJoin {
+		return nil, false
+	} else if forced && noHashJoin {
+		p.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
+			"Some HASH_JOIN and NO_HASH_JOIN hints conflict, NO_HASH_JOIN is ignored"))
+	}
 	return
 }
 

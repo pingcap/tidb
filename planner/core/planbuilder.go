@@ -96,6 +96,7 @@ type tableHintInfo struct {
 	broadcastJoinTables []hintTableInfo
 	shuffleJoinTables   []hintTableInfo
 	hashJoinTables      []hintTableInfo
+	noHashJoinTables    []hintTableInfo
 	indexHintList       []indexHintInfo
 	tiflashTables       []hintTableInfo
 	tikvTables          []hintTableInfo
@@ -238,6 +239,10 @@ func (info *tableHintInfo) ifPreferShuffleJoin(tableNames ...*hintTableInfo) boo
 
 func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.hashJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferNoHashJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noHashJoinTables)
 }
 
 func (info *tableHintInfo) ifPreferHJBuild(tableNames ...*hintTableInfo) bool {
