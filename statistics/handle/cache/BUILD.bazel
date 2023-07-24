@@ -24,6 +24,7 @@ go_library(
         "//util/logutil",
         "//util/sqlexec",
         "//util/syncutil",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
