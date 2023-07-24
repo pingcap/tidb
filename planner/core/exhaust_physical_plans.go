@@ -392,14 +392,6 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 		forceLeftToBuild = false
 		forceRightToBuild = false
 	}
-	forced = (p.preferJoinType&preferHashJoin > 0) || forceLeftToBuild || forceRightToBuild
-	noHashJoin := (p.preferJoinType & preferNoHashJoin) > 0
-	if !forced && noHashJoin {
-		return
-	} else if forced && noHashJoin {
-		p.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
-			"Some HASH_JOIN and NO_HASH_JOIN hints conflict, NO_HASH_JOIN is ignored"))
-	}
 
 	joins = make([]PhysicalPlan, 0, 2)
 	switch p.JoinType {
@@ -446,6 +438,15 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 				joins = append(joins, p.getHashJoin(prop, 0, false))
 			}
 		}
+	}
+
+	forced = (p.preferJoinType&preferHashJoin > 0) || forceLeftToBuild || forceRightToBuild
+	noHashJoin := (p.preferJoinType & preferNoHashJoin) > 0
+	if !forced && noHashJoin {
+		return nil, false
+	} else if forced && noHashJoin {
+		p.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
+			"Some HASH_JOIN and NO_HASH_JOIN hints conflict, NO_HASH_JOIN is ignored"))
 	}
 	return
 }
