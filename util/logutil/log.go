@@ -94,6 +94,9 @@ const (
 	SlowLogTimeFormat = time.RFC3339Nano
 	// OldSlowLogTimeFormat is the first version of the the time format for slow log, This is use for compatibility.
 	OldSlowLogTimeFormat = "2006-01-02-15:04:05.999999999 -0700"
+
+	// GRPCDebugEnvName is the environment variable name for GRPC_DEBUG.
+	GRPCDebugEnvName = "GRPC_DEBUG"
 )
 
 // SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
@@ -121,7 +124,7 @@ func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 func initGRPCLogger(gl *zap.Logger) {
 	level := zapcore.ErrorLevel
 	verbosity := 0
-	if len(os.Getenv("GRPC_DEBUG")) > 0 {
+	if len(os.Getenv(GRPCDebugEnvName)) > 0 {
 		verbosity = 999
 		level = zapcore.DebugLevel
 	}
