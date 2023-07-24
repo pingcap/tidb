@@ -396,7 +396,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
-func (ow *outerWorker) pushToChan(ctx context.Context, task *lookUpJoinTask, dst chan<- *lookUpJoinTask) bool {
+func (*outerWorker) pushToChan(ctx context.Context, task *lookUpJoinTask, dst chan<- *lookUpJoinTask) bool {
 	select {
 	case <-ctx.Done():
 		return true
@@ -849,6 +849,6 @@ func (e *indexLookUpJoinRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *indexLookUpJoinRuntimeStats) Tp() int {
+func (*indexLookUpJoinRuntimeStats) Tp() int {
 	return execdetails.TpIndexLookUpJoinRuntimeStats
 }

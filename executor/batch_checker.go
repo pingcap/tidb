@@ -53,7 +53,7 @@ type toBeCheckedRow struct {
 
 // getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,
 // which need to be checked whether they are duplicate keys.
-func getKeysNeedCheck(ctx context.Context, sctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([]toBeCheckedRow, error) {
+func getKeysNeedCheck(sctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([]toBeCheckedRow, error) {
 	nUnique := 0
 	for _, v := range t.Indices() {
 		if !tables.IsIndexWritable(v) {

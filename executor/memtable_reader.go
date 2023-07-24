@@ -78,7 +78,7 @@ type MemTableReaderExec struct {
 	cacheRetrieved bool
 }
 
-func (e *MemTableReaderExec) isInspectionCacheableTable(tblName string) bool {
+func (*MemTableReaderExec) isInspectionCacheableTable(tblName string) bool {
 	switch tblName {
 	case strings.ToLower(infoschema.TableClusterConfig),
 		strings.ToLower(infoschema.TableClusterInfo),
@@ -579,7 +579,7 @@ func (e *clusterLogRetriever) close() error {
 	return nil
 }
 
-func (e *clusterLogRetriever) getRuntimeStats() execdetails.RuntimeStats {
+func (*clusterLogRetriever) getRuntimeStats() execdetails.RuntimeStats {
 	return nil
 }
 
@@ -803,7 +803,7 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 	return finalRows, nil
 }
 
-func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
+func (*hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 	hisHotRegion *HistoryHotRegion,
 	tikvHelper *helper.Helper,
 	tables []helper.TableInfoWithKeyRange,

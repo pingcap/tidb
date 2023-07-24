@@ -1640,7 +1640,7 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 		return errors.New("Index Advise: infile is empty")
 	}
 
-	if err := indexAdviseInfo.GetIndexAdvice(ctx, data); err != nil {
+	if err := indexAdviseInfo.GetIndexAdvice(data); err != nil {
 		return err
 	}
 

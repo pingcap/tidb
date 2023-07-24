@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/etcd"
+	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
@@ -180,7 +181,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowColumns:
 		return e.fetchShowColumns(ctx)
 	case ast.ShowConfig:
-		return e.fetchShowClusterConfigs(ctx)
+		return e.fetchShowClusterConfigs()
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
 	case ast.ShowCreateSequence:
@@ -299,8 +300,7 @@ type visibleChecker struct {
 }
 
 func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch x := in.(type) {
-	case *ast.TableName:
+	if x, ok := in.(*ast.TableName); ok {
 		schema := x.Schema.L
 		if schema == "" {
 			schema = v.defaultDB
@@ -317,7 +317,7 @@ func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	return in, false
 }
 
-func (v *visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (*visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
@@ -380,7 +380,7 @@ func (e *ShowExec) fetchShowBind() error {
 			if !checker.ok {
 				continue
 			}
-			e.appendRow([]interface{}{
+			e.appendRow([]any{
 				bindData.OriginalSQL,
 				hint.BindSQL,
 				bindData.Db,
@@ -421,7 +421,7 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 
 	memUsage := handle.GetMemUsage()
 	memCapacity := handle.GetMemCapacity()
-	e.appendRow([]interface{}{
+	e.appendRow([]any{
 		numBindings,
 		rows[0].GetInt64(0),
 		memory.FormatBytes(memUsage),
@@ -445,14 +445,14 @@ func (e *ShowExec) fetchShowEngines(ctx context.Context) error {
 
 // moveInfoSchemaToFront moves information_schema to the first, and the others are sorted in the origin ascending order.
 func moveInfoSchemaToFront(dbs []string) {
-	if len(dbs) > 0 && strings.EqualFold(dbs[0], "INFORMATION_SCHEMA") {
+	if len(dbs) > 0 && strings.EqualFold(dbs[0], filter.InformationSchemaName) {
 		return
 	}
 
-	i := sort.SearchStrings(dbs, "INFORMATION_SCHEMA")
-	if i < len(dbs) && strings.EqualFold(dbs[i], "INFORMATION_SCHEMA") {
+	i := sort.SearchStrings(dbs, filter.InformationSchemaName)
+	if i < len(dbs) && strings.EqualFold(dbs[i], filter.InformationSchemaName) {
 		copy(dbs[1:i+1], dbs[0:i])
-		dbs[0] = "INFORMATION_SCHEMA"
+		dbs[0] = filter.InformationSchemaName
 	}
 }
 
@@ -513,7 +513,7 @@ func (e *ShowExec) fetchShowProcessList() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowOpenTables() error {
+func (*ShowExec) fetchShowOpenTables() error {
 	// TiDB has no concept like mysql's "table cache" and "open table"
 	// For simplicity, we just return an empty result with the same structure as MySQL's SHOW OPEN TABLES
 	return nil
@@ -1059,7 +1059,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 				default:
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
 					// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
-					if col.GetType() == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr {
+					if defaultValStr != types.ZeroDatetimeStr && col.GetType() == mysql.TypeTimestamp {
 						timeValue, err := table.GetColDefaultValue(ctx, col)
 						if err != nil {
 							return errors.Trace(err)
@@ -1407,7 +1407,7 @@ var TestShowClusterConfigKey stringutil.StringerStr = "TestShowClusterConfigKey"
 // TestShowClusterConfigFunc is used to test 'show config ...'.
 type TestShowClusterConfigFunc func() ([][]types.Datum, error)
 
-func (e *ShowExec) fetchShowClusterConfigs(ctx context.Context) error {
+func (e *ShowExec) fetchShowClusterConfigs() error {
 	emptySet := set.NewStringSet()
 	var confItems [][]types.Datum
 	var err error
@@ -1832,11 +1832,11 @@ func (e *ShowExec) fetchShowPrivileges() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowTriggers() error {
+func (*ShowExec) fetchShowTriggers() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowProcedureStatus() error {
+func (*ShowExec) fetchShowProcedureStatus() error {
 	return nil
 }
 

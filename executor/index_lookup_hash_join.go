@@ -382,7 +382,7 @@ func (ow *indexHashJoinOuterWorker) buildTask(ctx context.Context) (*indexHashJo
 	}, nil
 }
 
-func (ow *indexHashJoinOuterWorker) pushToChan(ctx context.Context, task *indexHashJoinTask, dst chan<- *indexHashJoinTask) bool {
+func (*indexHashJoinOuterWorker) pushToChan(ctx context.Context, task *indexHashJoinTask, dst chan<- *indexHashJoinTask) bool {
 	select {
 	case <-ctx.Done():
 		return true
@@ -549,7 +549,7 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 	return joinResult, ok
 }
 
-func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Context, task *indexHashJoinTask, h hash.Hash64) {
+func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(task *indexHashJoinTask, h hash.Hash64) {
 	failpoint.Inject("IndexHashJoinBuildHashTablePanic", nil)
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	if iw.stats != nil {
@@ -641,7 +641,7 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
 	go util.WithRecovery(
 		func() {
-			iw.buildHashTableForOuterResult(ctx, task, h)
+			iw.buildHashTableForOuterResult(task, h)
 		},
 		func(r interface{}) {
 			var err error
@@ -772,7 +772,7 @@ func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(ctx context.Contex
 	return true, joinResult
 }
 
-func (iw *indexHashJoinInnerWorker) collectMatchedInnerPtrs4OuterRows(ctx context.Context, innerRow chunk.Row, innerRowPtr chunk.RowPtr,
+func (iw *indexHashJoinInnerWorker) collectMatchedInnerPtrs4OuterRows(innerRow chunk.Row, innerRowPtr chunk.RowPtr,
 	task *indexHashJoinTask, h hash.Hash64, buf []byte) error {
 	_, matchedOuterRowIdx, err := iw.getMatchedOuterRows(innerRow, task, h, buf)
 	if err != nil {
@@ -809,7 +809,7 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 		for j, chk := 0, task.innerResult.GetChunk(i); j < chk.NumRows(); j++ {
 			row := chk.GetRow(j)
 			ptr := chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)}
-			err = iw.collectMatchedInnerPtrs4OuterRows(ctx, row, ptr, task, h, iw.joinKeyBuf)
+			err = iw.collectMatchedInnerPtrs4OuterRows(row, ptr, task, h, iw.joinKeyBuf)
 			failpoint.Inject("TestIssue31129", func() {
 				err = errors.New("TestIssue31129")
 			})

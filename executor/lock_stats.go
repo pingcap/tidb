@@ -37,7 +37,7 @@ type LockStatsExec struct {
 type lockStatsVarKeyType int
 
 // String defines a Stringer function for debugging and pretty printing.
-func (k lockStatsVarKeyType) String() string {
+func (lockStatsVarKeyType) String() string {
 	return "lock_stats_var"
 }
 
@@ -83,12 +83,12 @@ func (e *LockStatsExec) Next(_ context.Context, _ *chunk.Chunk) error {
 }
 
 // Close implements the Executor Close interface.
-func (e *LockStatsExec) Close() error {
+func (*LockStatsExec) Close() error {
 	return nil
 }
 
 // Open implements the Executor Open interface.
-func (e *LockStatsExec) Open(_ context.Context) error {
+func (*LockStatsExec) Open(context.Context) error {
 	return nil
 }
 
@@ -102,7 +102,7 @@ type UnlockStatsExec struct {
 type unlockStatsVarKeyType int
 
 // String defines a Stringer function for debugging and pretty printing.
-func (k unlockStatsVarKeyType) String() string {
+func (unlockStatsVarKeyType) String() string {
 	return "unlock_stats_var"
 }
 
@@ -110,7 +110,7 @@ func (k unlockStatsVarKeyType) String() string {
 const UnlockStatsVarKey unlockStatsVarKeyType = 0
 
 // Next implements the Executor Next interface.
-func (e *UnlockStatsExec) Next(_ context.Context, _ *chunk.Chunk) error {
+func (e *UnlockStatsExec) Next(context.Context, *chunk.Chunk) error {
 	do := domain.GetDomain(e.Ctx())
 	is := do.InfoSchema()
 	h := do.StatsHandle()
@@ -148,11 +148,11 @@ func (e *UnlockStatsExec) Next(_ context.Context, _ *chunk.Chunk) error {
 }
 
 // Close implements the Executor Close interface.
-func (e *UnlockStatsExec) Close() error {
+func (*UnlockStatsExec) Close() error {
 	return nil
 }
 
 // Open implements the Executor Open interface.
-func (e *UnlockStatsExec) Open(_ context.Context) error {
+func (*UnlockStatsExec) Open(context.Context) error {
 	return nil
 }

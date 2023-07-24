@@ -723,7 +723,7 @@ func (s *SimpleSeekerOnReadCloser) Close() error {
 type loadDataVarKeyType int
 
 // String defines a Stringer function for debugging and pretty printing.
-func (k loadDataVarKeyType) String() string {
+func (loadDataVarKeyType) String() string {
 	return "load_data_var"
 }
 

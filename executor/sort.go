@@ -294,7 +294,7 @@ func (h *multiWayMerge) Len() int {
 	return len(h.elements)
 }
 
-func (h *multiWayMerge) Push(x interface{}) {
+func (*multiWayMerge) Push(interface{}) {
 	// Should never be called.
 }
 
@@ -355,7 +355,7 @@ func (h *topNChunkHeap) Len() int {
 	return len(h.rowPtrs)
 }
 
-func (h *topNChunkHeap) Push(x interface{}) {
+func (*topNChunkHeap) Push(interface{}) {
 	// Should never be called.
 }
 

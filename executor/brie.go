@@ -394,8 +394,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	case ast.BRIEKindRestore:
 		e.restoreCfg = &task.RestoreConfig{Config: cfg}
 		for _, opt := range s.Options {
-			switch opt.Tp {
-			case ast.BRIEOptionOnline:
+			if opt.Tp == ast.BRIEOptionOnline {
 				e.restoreCfg.Online = opt.UintValue != 0
 			}
 		}
@@ -437,7 +436,7 @@ type showQueryExec struct {
 	targetID uint64
 }
 
-func (s *showQueryExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (s *showQueryExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 
 	tsk, ok := globalBRIEQueue.queryTask(s.targetID)
@@ -455,7 +454,7 @@ type cancelJobExec struct {
 	targetID uint64
 }
 
-func (s cancelJobExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (s cancelJobExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !globalBRIEQueue.cancelTask(s.targetID) {
 		s.Ctx().GetSessionVars().StmtCtx.AppendWarning(exeerrors.ErrLoadDataJobNotFound.FastGenByArgs(s.targetID))
@@ -647,12 +646,12 @@ func (gs *tidbGlueSession) GetSessionCtx() sessionctx.Context {
 }
 
 // GetDomain implements glue.Glue
-func (gs *tidbGlueSession) GetDomain(store kv.Storage) (*domain.Domain, error) {
+func (gs *tidbGlueSession) GetDomain(_ kv.Storage) (*domain.Domain, error) {
 	return domain.GetDomain(gs.se), nil
 }
 
 // CreateSession implements glue.Glue
-func (gs *tidbGlueSession) CreateSession(store kv.Storage) (glue.Session, error) {
+func (gs *tidbGlueSession) CreateSession(_ kv.Storage) (glue.Session, error) {
 	return gs, nil
 }
 
@@ -674,7 +673,7 @@ func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args
 }
 
 // CreateDatabase implements glue.Session
-func (gs *tidbGlueSession) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
+func (gs *tidbGlueSession) CreateDatabase(_ context.Context, schema *model.DBInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
 	// 512 is defaultCapOfCreateTable.
 	result := bytes.NewBuffer(make([]byte, 0, 512))
@@ -690,7 +689,7 @@ func (gs *tidbGlueSession) CreateDatabase(ctx context.Context, schema *model.DBI
 }
 
 // CreateTable implements glue.Session
-func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	d := domain.GetDomain(gs.se).DDL()
 
 	// 512 is defaultCapOfCreateTable.
@@ -714,7 +713,7 @@ func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, 
 }
 
 // CreatePlacementPolicy implements glue.Session
-func (gs *tidbGlueSession) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error {
+func (gs *tidbGlueSession) CreatePlacementPolicy(_ context.Context, policy *model.PolicyInfo) error {
 	gs.se.SetValue(sessionctx.QueryString, ConstructResultOfShowCreatePlacementPolicy(policy))
 	d := domain.GetDomain(gs.se).DDL()
 	// the default behaviour is ignoring duplicated policy during restore.
@@ -722,7 +721,7 @@ func (gs *tidbGlueSession) CreatePlacementPolicy(ctx context.Context, policy *mo
 }
 
 // Close implements glue.Session
-func (gs *tidbGlueSession) Close() {
+func (*tidbGlueSession) Close() {
 }
 
 // GetGlobalVariables implements glue.Session.
@@ -736,12 +735,12 @@ func (gs *tidbGlueSession) Open(string, pd.SecurityOption) (kv.Storage, error) {
 }
 
 // OwnsStorage implements glue.Glue
-func (gs *tidbGlueSession) OwnsStorage() bool {
+func (*tidbGlueSession) OwnsStorage() bool {
 	return false
 }
 
 // StartProgress implements glue.Glue
-func (gs *tidbGlueSession) StartProgress(ctx context.Context, cmdName string, total int64, redirectLog bool) glue.Progress {
+func (gs *tidbGlueSession) StartProgress(_ context.Context, cmdName string, total int64, _ bool) glue.Progress {
 	gs.progress.lock.Lock()
 	gs.progress.cmd = cmdName
 	gs.progress.total = total
@@ -762,12 +761,12 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 	}
 }
 
-func (gs *tidbGlueSession) GetVersion() string {
+func (*tidbGlueSession) GetVersion() string {
 	return "TiDB\n" + printer.GetTiDBInfo()
 }
 
 // UseOneShotSession implements glue.Glue
-func (gs *tidbGlueSession) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(se glue.Session) error) error {
+func (gs *tidbGlueSession) UseOneShotSession(_ kv.Storage, _ bool, fn func(se glue.Session) error) error {
 	// in SQL backup. we don't need to close domain.
 	return fn(gs)
 }

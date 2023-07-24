@@ -201,7 +201,7 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 }
 
 // GetPriority get the priority of the Action
-func (a *globalPanicOnExceed) GetPriority() int64 {
+func (*globalPanicOnExceed) GetPriority() int64 {
 	return memory.DefPanicPriority
 }
 
@@ -281,7 +281,7 @@ type CommandDDLJobsExec struct {
 // Open implements the Executor for all Cancel/Pause/Resume command on DDL jobs
 // just with different processes. And, it should not be called directly by the
 // Executor.
-func (e *CommandDDLJobsExec) Open(ctx context.Context) error {
+func (e *CommandDDLJobsExec) Open(context.Context) error {
 	// We want to use a global transaction to execute the admin command, so we don't use e.Ctx() here.
 	newSess, err := e.GetSysSession()
 	if err != nil {
@@ -293,7 +293,7 @@ func (e *CommandDDLJobsExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface for Cancel/Pause/Resume
-func (e *CommandDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *CommandDDLJobsExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.MaxChunkSize())
 	if e.cursor >= len(e.jobIDs) {
 		return nil
@@ -334,7 +334,7 @@ type ShowNextRowIDExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *ShowNextRowIDExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.done {
 		return nil
@@ -665,7 +665,7 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *ShowDDLJobQueriesExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *ShowDDLJobQueriesExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.MaxChunkSize())
 	if e.cursor >= len(e.jobs) {
 		return nil
@@ -757,7 +757,7 @@ func (e *ShowDDLJobQueriesWithRangeExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *ShowDDLJobQueriesWithRangeExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *ShowDDLJobQueriesWithRangeExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.MaxChunkSize())
 	if e.cursor >= len(e.jobs) {
 		return nil
@@ -806,7 +806,7 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *ShowDDLJobsExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.MaxChunkSize())
 	if (e.cursor - len(e.runningJobs)) >= e.jobNumber {
 		return nil
@@ -849,9 +849,9 @@ func (e *ShowDDLJobsExec) Close() error {
 
 func getSchemaName(is infoschema.InfoSchema, id int64) string {
 	var schemaName string
-	DBInfo, ok := is.SchemaByID(id)
+	dbInfo, ok := is.SchemaByID(id)
 	if ok {
-		schemaName = DBInfo.Name.O
+		schemaName = dbInfo.Name.O
 		return schemaName
 	}
 
@@ -954,7 +954,7 @@ func (e *CheckTableExec) handlePanic(r interface{}) {
 }
 
 // Next implements the Executor Next interface.
-func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if e.done || len(e.srcs) == 0 {
 		return nil
 	}
@@ -1088,7 +1088,7 @@ func (e *ShowSlowExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *ShowSlowExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *ShowSlowExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.cursor >= len(e.result) {
 		return nil
@@ -1529,13 +1529,13 @@ type TableDualExec struct {
 }
 
 // Open implements the Executor Open interface.
-func (e *TableDualExec) Open(ctx context.Context) error {
+func (e *TableDualExec) Open(context.Context) error {
 	e.numReturned = 0
 	return nil
 }
 
 // Next implements the Executor Next interface.
-func (e *TableDualExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *TableDualExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.numReturned >= e.numDualRows {
 		return nil
@@ -1578,7 +1578,7 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 	return e.open(ctx)
 }
 
-func (e *SelectionExec) open(ctx context.Context) error {
+func (e *SelectionExec) open(context.Context) error {
 	if e.memTracker != nil {
 		e.memTracker.Reset()
 	} else {
@@ -1722,7 +1722,7 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 }
 
 // Open implements the Executor Open interface.
-func (e *TableScanExec) Open(ctx context.Context) error {
+func (e *TableScanExec) Open(context.Context) error {
 	e.virtualTableChunkList = nil
 	return nil
 }
@@ -1834,7 +1834,7 @@ func (e *UnionExec) waitAllFinished() {
 }
 
 // Open implements the Executor Open interface.
-func (e *UnionExec) Open(ctx context.Context) error {
+func (e *UnionExec) Open(context.Context) error {
 	e.stopFetchData.Store(false)
 	e.initialized = false
 	e.finished = make(chan struct{})
@@ -2312,7 +2312,6 @@ type checkIndexWorker struct {
 	table      table.Table
 	indexInfos []*model.IndexInfo
 	e          *FastCheckTableExec
-	ctx        context.Context
 }
 
 type groupByChecksum struct {
@@ -2686,15 +2685,14 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 }
 
 // Close implements the Worker interface.
-func (w *checkIndexWorker) Close() {
-}
+func (*checkIndexWorker) Close() {}
 
 func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask] {
 	return &checkIndexWorker{sctx: e.Ctx(), dbName: e.dbName, table: e.table, indexInfos: e.indexInfos, e: e}
 }
 
 // Next implements the Executor Next interface.
-func (e *FastCheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *FastCheckTableExec) Next(context.Context, *chunk.Chunk) error {
 	if e.done || len(e.indexInfos) == 0 {
 		return nil
 	}

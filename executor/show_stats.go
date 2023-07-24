@@ -257,7 +257,7 @@ func (e *ShowExec) histogramToRow(dbName, tblName, partitionName, colName string
 	})
 }
 
-func (e *ShowExec) versionToTime(version uint64) types.Time {
+func (*ShowExec) versionToTime(version uint64) types.Time {
 	t := oracle.GetTimeFromTS(version)
 	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, 0)
 }

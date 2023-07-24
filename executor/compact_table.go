@@ -237,7 +237,7 @@ func (task *storeCompactTask) logProgressOptionally() {
 //
 //	Returns: (stopAllTasks, err)
 func (task *storeCompactTask) compactOnePhysicalTable(physicalTableID int64) (bool, error) {
-	var startKey []byte = nil
+	var startKey []byte
 	for { // This loop is to compact incrementally for all data. Each RPC request will only compact a partial of data.
 		if task.ctx.Err() != nil {
 			return true, task.ctx.Err()

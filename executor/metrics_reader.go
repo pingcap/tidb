@@ -142,8 +142,7 @@ func (e *MetricRetriever) getQueryRange(sctx sessionctx.Context) promQLQueryRang
 
 func (e *MetricRetriever) genRows(value pmodel.Value, quantile float64) [][]types.Datum {
 	var rows [][]types.Datum
-	switch value.Type() {
-	case pmodel.ValMatrix:
+	if value.Type() == pmodel.ValMatrix {
 		matrix := value.(pmodel.Matrix)
 		for _, m := range matrix {
 			for _, v := range m.Values {

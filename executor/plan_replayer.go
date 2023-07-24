@@ -229,13 +229,13 @@ type PlanReplayerLoadInfo struct {
 
 type planReplayerDumpKeyType int
 
-func (k planReplayerDumpKeyType) String() string {
+func (planReplayerDumpKeyType) String() string {
 	return "plan_replayer_dump_var"
 }
 
 type planReplayerLoadKeyType int
 
-func (k planReplayerLoadKeyType) String() string {
+func (planReplayerLoadKeyType) String() string {
 	return "plan_replayer_load_var"
 }
 
@@ -246,7 +246,7 @@ const PlanReplayerLoadVarKey planReplayerLoadKeyType = 0
 const PlanReplayerDumpVarKey planReplayerDumpKeyType = 1
 
 // Next implements the Executor Next interface.
-func (e *PlanReplayerLoadExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *PlanReplayerLoadExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.MaxChunkSize())
 	if len(e.info.Path) == 0 {
 		return errors.New("plan replayer: file path is empty")
@@ -267,7 +267,7 @@ func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 			if err != nil {
 				return errors.AddStack(err)
 			}
-			//nolint: errcheck,all_revive
+			//nolint: errcheck,all_revive,revive
 			defer v.Close()
 			buf := new(bytes.Buffer)
 			_, err = buf.ReadFrom(v)
@@ -365,9 +365,9 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 			if err != nil {
 				return errors.AddStack(err)
 			}
-			//nolint: errcheck,all_revive
+			//nolint: errcheck,all_revive,revive
 			defer v.Close()
-			_, err = toml.DecodeReader(v, &varMap)
+			_, err = toml.NewDecoder(v).Decode(&varMap)
 			if err != nil {
 				return errors.AddStack(err)
 			}

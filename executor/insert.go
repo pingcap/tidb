@@ -186,7 +186,7 @@ func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction
 }
 
 // updateDupRow updates a duplicate row to a new row.
-func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Transaction, row toBeCheckedRow, handle kv.Handle, onDuplicate []*expression.Assignment) error {
+func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Transaction, row toBeCheckedRow, handle kv.Handle, _ []*expression.Assignment) error {
 	oldRow, err := getOldRow(ctx, e.Ctx(), txn, row.t, handle, e.GenExprs)
 	if err != nil {
 		return err
@@ -210,7 +210,7 @@ func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Tr
 func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.Datum) error {
 	// Get keys need to be checked.
 	start := time.Now()
-	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.Ctx(), e.Table, newRows)
+	toBeCheckedRows, err := getKeysNeedCheck(e.Ctx(), e.Table, newRows)
 	if err != nil {
 		return err
 	}
