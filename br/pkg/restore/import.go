@@ -707,16 +707,21 @@ func (importer *FileImporter) downloadAndMergeSST(
 	}
 
 	sstMetas := make(map[string]*import_sstpb.SSTMeta)
+	firstMeta := &import_sstpb.SSTMeta{}
 	for _, f := range files {
 		sstMeta, err := GetSSTMetaFromFile(id, f, regionInfo.Region, &rule, importer.rewriteMode)
 		if err != nil {
 			return nil, err
+		}
+		if firstMeta == nil {
+			firstMeta = sstMeta
 		}
 		sstMetas[f.Name] = sstMeta
 	}
 
 	req := &import_sstpb.DownloadRequest{
 		Ssts:           sstMetas,
+		Sst:            *firstMeta,
 		ResolvedTs:     importer.resolvedTs,
 		StorageBackend: importer.backend,
 		RewriteRule:    rule,
@@ -766,8 +771,8 @@ func (importer *FileImporter) downloadAndMergeSST(
 	downloadResp := atomicResp.Load().(*import_sstpb.DownloadResponse)
 	resp := make([]*import_sstpb.SSTMeta, 0, len(sstMetas))
 	for _, r := range downloadResp.Ssts {
-		r.Range.Start = TruncateTS(downloadResp.Range.GetStart())
-		r.Range.End = TruncateTS(downloadResp.Range.GetEnd())
+		r.Range.Start = TruncateTS(downloadResp.Ssts[0].Range.GetStart())
+		r.Range.End = TruncateTS(downloadResp.Ssts[0].Range.GetEnd())
 		r.ApiVersion = apiVersion
 		resp = append(resp, r)
 	}
