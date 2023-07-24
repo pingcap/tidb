@@ -166,7 +166,7 @@ func (sc *StatsCache) Cost() int64 {
 
 // SetCapacity sets the memory capacity of the cache.
 func (sc *StatsCache) SetCapacity(c int64) {
-	metrics.CostGauge.Set(float64(c))
+	// metrics will be updated in the SetCapacity function of the StatsCacheInner.
 	sc.c.SetCapacity(c)
 }
 
