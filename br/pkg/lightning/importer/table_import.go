@@ -1041,13 +1041,12 @@ func (tr *TableImporter) postProcess(
 				remoteChecksum = nil
 				err = status.Error(codes.Unknown, "Checksum meets error.")
 			})
-			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
-				if err != nil {
+			if err != nil {
+				if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
 					tr.logger.Warn("do checksum failed, will skip this error and go on", log.ShortError(err))
 					err = nil
 				}
-			}
-			if err != nil {
+			} else {
 				return false, err
 			}
 			if remoteChecksum != nil {
