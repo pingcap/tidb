@@ -2375,7 +2375,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		if partitionInfo == nil {
 			return invalidTask
 		}
-	} else if pi != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
+	} else if pi != nil {
 		// dynamic prune
 		idxs, err := PartitionPruning(ds.ctx, ds.table.GetPartitionedTable(), ds.allConds, ds.partitionNames, ds.TblCols, ds.names)
 		if err != nil {
