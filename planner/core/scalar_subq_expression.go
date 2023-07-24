@@ -185,11 +185,6 @@ func (s *ScalarSubQueryExpr) Decorrelate(_ *expression.Schema) expression.Expres
 	return s
 }
 
-// resolveIndices implements the Expression interface.
-func (*ScalarSubQueryExpr) resolveIndices(_ *expression.Schema) error {
-	return nil
-}
-
 // ResolveIndices implements the Expression interface.
 func (s *ScalarSubQueryExpr) ResolveIndices(_ *expression.Schema) (expression.Expression, error) {
 	return s, nil
@@ -198,11 +193,6 @@ func (s *ScalarSubQueryExpr) ResolveIndices(_ *expression.Schema) (expression.Ex
 // ResolveIndicesByVirtualExpr implements the Expression interface.
 func (s *ScalarSubQueryExpr) ResolveIndicesByVirtualExpr(_ *expression.Schema) (expression.Expression, bool) {
 	return s, false
-}
-
-// resolveIndicesByVirtualExpr implements the Expression interface.
-func (*ScalarSubQueryExpr) resolveIndicesByVirtualExpr(_ *expression.Schema) bool {
-	return false
 }
 
 // RemapColumn implements the Expression interface.
