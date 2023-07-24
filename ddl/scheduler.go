@@ -74,6 +74,7 @@ type BackfillSubTaskMeta struct {
 	EndKey          []byte   `json:"end_key"`
 	DataFiles       []string `json:"data_files"`
 	StatsFiles      []string `json:"stats_files"`
+	RegionKeys      [][]byte `json:"region_keys"`
 	MinKey          []byte   `json:"min_key"`
 	MaxKey          []byte   `json:"max_key"`
 	TotalKVSize     uint64   `json:"total_kv_size"`
@@ -162,7 +163,7 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(ctx context.Context) error 
 	logutil.BgLogger().Info("lightning init subtask exec env", zap.String("category", "ddl"))
 	d := b.d
 
-	bc, err := ingest.LitBackCtxMgr.Register(d.ctx, b.index.Unique, b.job.ID, d.etcdCli)
+	bc, err := ingest.LitBackCtxMgr.Register(ctx, b.index.Unique, b.job.ID, d.etcdCli)
 	if err != nil {
 		logutil.BgLogger().Warn("lightning register error", zap.String("category", "ddl"), zap.Error(err))
 		return err
@@ -341,7 +342,8 @@ func (b *backfillSchedulerHandle) orderedImport(ctx context.Context, subtask []b
 			return err
 		}
 	}
-	err = bc.SetRange(ctx, subTaskMeta.StartKey, subTaskMeta.EndKey, subTaskMeta.DataFiles, subTaskMeta.StatsFiles)
+	err = bc.SetRange(ctx, subTaskMeta.StartKey, subTaskMeta.EndKey,
+		subTaskMeta.DataFiles, subTaskMeta.StatsFiles, subTaskMeta.RegionKeys)
 	if err != nil {
 		return err
 	}

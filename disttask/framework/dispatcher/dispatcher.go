@@ -201,7 +201,7 @@ func (d *dispatcher) probeTask(taskID int64) (gTask *proto.Task, finished bool, 
 	// TODO: Consider putting the following operations into a transaction.
 	gTask, err := d.taskMgr.GetGlobalTaskByID(taskID)
 	if err != nil {
-		logutil.BgLogger().Error("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
+		logutil.BgLogger().Error("check task failed", zap.Int64("task ID", taskID), zap.Error(err))
 		return nil, false, nil
 	}
 	switch gTask.State {

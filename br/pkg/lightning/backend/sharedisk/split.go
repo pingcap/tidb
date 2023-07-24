@@ -28,9 +28,15 @@ type RangeSplitter struct {
 
 	activeDataFiles map[string]struct{}
 	activeStatFiles map[string]struct{}
+
+	maxSplitRegionSize int64
+	maxSplitRegionKey  int64
+
+	regionSplitKeys [][]byte
 }
 
-func NewRangeSplitter(maxSize, maxKeys, maxWays uint64, propIter *MergePropIter, data FilePathHandle) *RangeSplitter {
+func NewRangeSplitter(maxSize, maxKeys, maxWays uint64, propIter *MergePropIter, data FilePathHandle,
+	maxSplitRegionSize, maxSplitRegionKey int64) *RangeSplitter {
 	return &RangeSplitter{
 		maxSize:         maxSize,
 		maxKeys:         maxKeys,
@@ -39,6 +45,10 @@ func NewRangeSplitter(maxSize, maxKeys, maxWays uint64, propIter *MergePropIter,
 		dataFileHandle:  data,
 		activeDataFiles: make(map[string]struct{}),
 		activeStatFiles: make(map[string]struct{}),
+
+		maxSplitRegionSize: maxSplitRegionSize,
+		maxSplitRegionKey:  maxSplitRegionKey,
+		regionSplitKeys:    make([][]byte, 0, 16),
 	}
 }
 
@@ -46,22 +56,25 @@ func (r *RangeSplitter) Close() error {
 	return r.propIter.Close()
 }
 
-func (r *RangeSplitter) SplitOne() (kv.Key, []string, []string, error) {
+func (r *RangeSplitter) SplitOne() (kv.Key, []string, []string, [][]byte, error) {
 	if r.exhausted {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil
 	}
 
 	var curSize, curKeys uint64
+	var curRegionSize, curRegionKeys int64
 	var lastFilePath string
 	var lastWays int
 	var exhaustedFilePaths []string
 	for r.propIter.Next() {
 		if err := r.propIter.Error(); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		prop := r.propIter.currProp.p
 		curSize += prop.rangeOffsets.Size
+		curRegionSize += int64(prop.rangeOffsets.Size)
 		curKeys += prop.rangeOffsets.Keys
+		curRegionKeys += int64(prop.rangeOffsets.Keys)
 
 		ways := r.propIter.propHeap.Len()
 		if ways < lastWays {
@@ -74,12 +87,19 @@ func (r *RangeSplitter) SplitOne() (kv.Key, []string, []string, error) {
 		statFilePath := r.propIter.statFilePaths[fileIdx]
 		r.activeStatFiles[statFilePath] = struct{}{}
 
+		if curRegionSize >= r.maxSplitRegionSize || curRegionKeys >= r.maxSplitRegionKey {
+			r.regionSplitKeys = append(r.regionSplitKeys, kv.Key(prop.Key).Clone())
+			curRegionSize = 0
+			curRegionKeys = 0
+		}
+
 		if curSize >= r.maxSize || curKeys >= r.maxKeys || uint64(len(r.activeDataFiles)) >= r.maxWays {
 			dataFiles, statsFiles := r.collectFiles()
 			for _, p := range exhaustedFilePaths {
 				delete(r.activeDataFiles, p)
 			}
-			return prop.Key, dataFiles, statsFiles, nil
+			splitKeys := r.collectSplitKeys()
+			return prop.Key, dataFiles, statsFiles, splitKeys, nil
 		}
 
 		lastFilePath = dataFilePath
@@ -87,7 +107,8 @@ func (r *RangeSplitter) SplitOne() (kv.Key, []string, []string, error) {
 	}
 
 	dataFiles, statsFiles := r.collectFiles()
-	return nil, dataFiles, statsFiles, r.propIter.Error()
+	splitKeys := r.collectSplitKeys()
+	return nil, dataFiles, statsFiles, splitKeys, r.propIter.Error()
 }
 
 func (r *RangeSplitter) collectFiles() (data []string, stats []string) {
@@ -100,4 +121,13 @@ func (r *RangeSplitter) collectFiles() (data []string, stats []string) {
 		statsFiles = append(statsFiles, path)
 	}
 	return dataFiles, statsFiles
+}
+
+func (r *RangeSplitter) collectSplitKeys() [][]byte {
+	ret := make([][]byte, 0, len(r.regionSplitKeys))
+	for _, key := range r.regionSplitKeys {
+		ret = append(ret, key)
+	}
+	r.regionSplitKeys = r.regionSplitKeys[:0]
+	return ret
 }
