@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -86,11 +87,6 @@ type ScalarSubQueryExpr struct {
 	expression.Constant
 }
 
-// Traverse implements the TraverseDown interface.
-func (s *ScalarSubQueryExpr) Traverse(_ expression.TraverseAction) expression.Expression {
-	return s
-}
-
 func (s *ScalarSubQueryExpr) selfEvaluate() error {
 	colVal, err := s.evalCtx.getColVal(s.scalarSubqueryColID)
 	if err != nil {
@@ -146,8 +142,8 @@ func (*ScalarSubQueryExpr) EvalDuration(_ sessionctx.Context, _ chunk.Row) (val 
 }
 
 // EvalJSON returns the JSON representation of expression.
-func (*ScalarSubQueryExpr) EvalJSON(_ sessionctx.Context, _ chunk.Row) (val types.BinaryJSON, isNull bool, err error) {
-	return types.BinaryJSON{}, false, errors.Errorf("Evaluation methods is not implemented for ScalarSubQueryExpr")
+func (*ScalarSubQueryExpr) EvalJSON(_ sessionctx.Context, _ chunk.Row) (val json.BinaryJSON, isNull bool, err error) {
+	return json.BinaryJSON{}, false, errors.Errorf("Evaluation methods is not implemented for ScalarSubQueryExpr")
 }
 
 // GetType implements the Expression interface.
@@ -233,15 +229,6 @@ func (s *ScalarSubQueryExpr) HashCode(_ *stmtctx.StatementContext) []byte {
 	s.hashcode = append(s.hashcode, expression.ScalarSubQFlag)
 	s.hashcode = codec.EncodeInt(s.hashcode, s.scalarSubqueryColID)
 	return s.hashcode
-}
-
-// MemoryUsage implements the Expression interface.
-func (s *ScalarSubQueryExpr) MemoryUsage() int64 {
-	ret := int64(0)
-	if s.evaled {
-		ret += s.Constant.MemoryUsage()
-	}
-	return ret
 }
 
 // String implements the Stringer interface.

@@ -555,40 +555,9 @@ func (p PhysicalCTETable) Init(ctx sessionctx.Context, stats *property.StatsInfo
 	p.stats = stats
 	return &p
 }
-<<<<<<< HEAD
-=======
-
-// Init initializes FKCheck.
-func (p FKCheck) Init(ctx sessionctx.Context) *FKCheck {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCheck, &p, 0)
-	p.stats = &property.StatsInfo{}
-	return &p
-}
-
-// Init initializes FKCascade
-func (p FKCascade) Init(ctx sessionctx.Context) *FKCascade {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCascade, &p, 0)
-	p.stats = &property.StatsInfo{}
-	return &p
-}
-
-// Init initializes LogicalSequence
-func (p LogicalSequence) Init(ctx sessionctx.Context, offset int) *LogicalSequence {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeSequence, &p, offset)
-	return &p
-}
-
-// Init initializes PhysicalSequence
-func (p PhysicalSequence) Init(ctx sessionctx.Context, stats *property.StatsInfo, blockOffset int, props ...*property.PhysicalProperty) *PhysicalSequence {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeSequence, &p, blockOffset)
-	p.stats = stats
-	p.childrenReqProps = props
-	return &p
-}
 
 // Init initializes ScalarSubqueryEvalCtx
 func (p ScalarSubqueryEvalCtx) Init(ctx sessionctx.Context, offset int) *ScalarSubqueryEvalCtx {
 	p.basePlan = newBasePlan(ctx, plancodec.TypeScalarSubQuery, offset)
 	return &p
 }
->>>>>>> 2eb698c1d30 (planner: support ScalarSubQuery to display them in EXPLAIN (#45252))

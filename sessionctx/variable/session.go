@@ -533,17 +533,10 @@ type SessionVars struct {
 	PlanID int
 
 	// PlanColumnID is the unique id for column when building plan.
-<<<<<<< HEAD
 	PlanColumnID int64
-=======
-	PlanColumnID atomic.Int64
 
 	// MapScalarSubQ maps the scalar sub queries from its ID to its struct.
 	MapScalarSubQ []interface{}
-
-	// MapHashCode2UniqueID4ExtendedCol map the expr's hash code to specified unique ID.
-	MapHashCode2UniqueID4ExtendedCol map[string]int
->>>>>>> 2eb698c1d30 (planner: support ScalarSubQuery to display them in EXPLAIN (#45252))
 
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
@@ -606,20 +599,8 @@ type SessionVars struct {
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
-<<<<<<< HEAD
-=======
-	// EnableSkewDistinctAgg can be set true to allow skew distinct aggregate rewrite
-	EnableSkewDistinctAgg bool
-
-	// Enable3StageDistinctAgg indicates whether to allow 3 stage distinct aggregate
-	Enable3StageDistinctAgg bool
-
-	// Enable3StageMultiDistinctAgg indicates whether to allow 3 stage multi distinct aggregate
-	Enable3StageMultiDistinctAgg bool
-
 	ExplainNonEvaledSubQuery bool
 
->>>>>>> 2eb698c1d30 (planner: support ScalarSubQuery to display them in EXPLAIN (#45252))
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
 

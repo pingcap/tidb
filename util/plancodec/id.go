@@ -127,19 +127,8 @@ const (
 	TypeCTE = "CTEFullScan"
 	// TypeCTEDefinition is the type of CTE definition
 	TypeCTEDefinition = "CTE"
-<<<<<<< HEAD
-=======
-	// TypeForeignKeyCheck is the type of FKCheck
-	TypeForeignKeyCheck = "Foreign_Key_Check"
-	// TypeForeignKeyCascade is the type of FKCascade
-	TypeForeignKeyCascade = "Foreign_Key_Cascade"
-	// TypeImportInto is the type of ImportInto.
-	TypeImportInto = "ImportInto"
-	// TypeSequence is the type of Sequence
-	TypeSequence = "Sequence"
 	// TypeScalarSubQuery is the type of ScalarQuery
 	TypeScalarSubQuery = "ScalarSubQuery"
->>>>>>> 2eb698c1d30 (planner: support ScalarSubQuery to display them in EXPLAIN (#45252))
 )
 
 // plan id.
@@ -187,7 +176,6 @@ const (
 	typeDataSourceID          int = 40
 	typeLoadDataID            int = 41
 	typeTableSampleID         int = 42
-<<<<<<< HEAD
 	typeTableFullScan         int = 43
 	typeTableRangeScan        int = 44
 	typeTableRowIDScan        int = 45
@@ -198,26 +186,7 @@ const (
 	typeCTE                   int = 50
 	typeCTEDefinition         int = 51
 	typeCTETable              int = 52
-=======
-	typeTableFullScanID       int = 43
-	typeTableRangeScanID      int = 44
-	typeTableRowIDScanID      int = 45
-	typeIndexFullScanID       int = 46
-	typeIndexRangeScanID      int = 47
-	typeExchangeReceiverID    int = 48
-	typeExchangeSenderID      int = 49
-	typeCTEID                 int = 50
-	typeCTEDefinitionID       int = 51
-	typeCTETableID            int = 52
-	typePartitionUnionID      int = 53
-	typeShuffleID             int = 54
-	typeShuffleReceiverID     int = 55
-	typeForeignKeyCheck       int = 56
-	typeForeignKeyCascade     int = 57
-	typeExpandID              int = 58
-	typeImportIntoID          int = 59
 	TypeScalarSubQueryID      int = 60
->>>>>>> 2eb698c1d30 (planner: support ScalarSubQuery to display them in EXPLAIN (#45252))
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -326,21 +295,9 @@ func TypeStringToPhysicalID(tp string) int {
 	case TypeCTEDefinition:
 		return typeCTEDefinition
 	case TypeCTETable:
-<<<<<<< HEAD
 		return typeCTETable
-=======
-		return typeCTETableID
-	case TypeForeignKeyCheck:
-		return typeForeignKeyCheck
-	case TypeForeignKeyCascade:
-		return typeForeignKeyCascade
-	case TypeExpand:
-		return typeExpandID
-	case TypeImportInto:
-		return typeImportIntoID
 	case TypeScalarSubQuery:
 		return TypeScalarSubQueryID
->>>>>>> 2eb698c1d30 (planner: support ScalarSubQuery to display them in EXPLAIN (#45252))
 	}
 	// Should never reach here.
 	return 0
@@ -451,19 +408,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeCTEDefinition
 	case typeCTETable:
 		return TypeCTETable
-<<<<<<< HEAD
-=======
-	case typeForeignKeyCheck:
-		return TypeForeignKeyCheck
-	case typeForeignKeyCascade:
-		return TypeForeignKeyCascade
-	case typeExpandID:
-		return TypeExpand
-	case typeImportIntoID:
-		return TypeImportInto
 	case TypeScalarSubQueryID:
 		return TypeScalarSubQuery
->>>>>>> 2eb698c1d30 (planner: support ScalarSubQuery to display them in EXPLAIN (#45252))
 	}
 
 	// Should never reach here.

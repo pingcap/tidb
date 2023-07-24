@@ -67,7 +67,6 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-<<<<<<< HEAD
 	IsDDLJobInQueue        bool
 	InInsertStmt           bool
 	InUpdateStmt           bool
@@ -75,6 +74,7 @@ type StatementContext struct {
 	InSelectStmt           bool
 	InLoadDataStmt         bool
 	InExplainStmt          bool
+	InExplainAnalyzeStmt   bool
 	InCreateOrAlterStmt    bool
 	InPreparedPlanBuilding bool
 	IgnoreTruncate         bool
@@ -96,42 +96,6 @@ type StatementContext struct {
 	SkipUTF8Check          bool
 	SkipASCIICheck         bool
 	SkipUTF8MB4Check       bool
-=======
-	IsDDLJobInQueue               bool
-	DDLJobID                      int64
-	InInsertStmt                  bool
-	InUpdateStmt                  bool
-	InDeleteStmt                  bool
-	InSelectStmt                  bool
-	InLoadDataStmt                bool
-	InExplainStmt                 bool
-	InExplainAnalyzeStmt          bool
-	ExplainFormat                 string
-	InCreateOrAlterStmt           bool
-	InSetSessionStatesStmt        bool
-	InPreparedPlanBuilding        bool
-	IgnoreTruncate                atomic2.Bool
-	IgnoreZeroInDate              bool
-	NoZeroDate                    bool
-	DupKeyAsWarning               bool
-	BadNullAsWarning              bool
-	DividedByZeroAsWarning        bool
-	TruncateAsWarning             bool
-	OverflowAsWarning             bool
-	ErrAutoincReadFailedAsWarning bool
-	InShowWarning                 bool
-	UseCache                      bool
-	CacheType                     PlanCacheType
-	BatchCheck                    bool
-	InNullRejectCheck             bool
-	AllowInvalidDate              bool
-	IgnoreNoPartition             bool
-	IgnoreExplainIDSuffix         bool
-	SkipUTF8Check                 bool
-	SkipASCIICheck                bool
-	SkipUTF8MB4Check              bool
-	MultiSchemaInfo               *model.MultiSchemaInfo
->>>>>>> 2eb698c1d30 (planner: support ScalarSubQuery to display them in EXPLAIN (#45252))
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx

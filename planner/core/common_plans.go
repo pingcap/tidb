@@ -1303,6 +1303,10 @@ func (e *Explain) RenderResult() error {
 			if err != nil {
 				return err
 			}
+			err = e.explainPlanInRowFormatScalarSubquery()
+			if err != nil {
+				return err
+			}
 		}
 	case types.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
@@ -1334,16 +1338,27 @@ func (e *Explain) explainPlanInRowFormatCTE() (err error) {
 		}
 		explainedCTEPlan[x.CTE.IDForStorage] = struct{}{}
 	}
-<<<<<<< HEAD
 
 	return
-=======
-	for _, subQ := range flat.ScalarSubQueries {
-		for _, flatOp := range subQ {
-			e.explainFlatOpInRowFormat(flatOp)
+}
+
+func (e *Explain) explainPlanInRowFormatScalarSubquery() (err error) {
+	if e.ctx == nil {
+		return nil
+	}
+	for _, subQ := range e.ctx.GetSessionVars().MapScalarSubQ {
+		scalarQ, ok := subQ.(*ScalarSubqueryEvalCtx)
+		if !ok {
+			continue
+		}
+		e.prepareOperatorInfo(scalarQ, "root", "", "", true)
+		childIndent := texttree.Indent4Child("", true)
+		err = e.explainPlanInRowFormat(scalarQ.scalarSubQuery, "root", "", childIndent, true)
+		if err != nil {
+			return
 		}
 	}
->>>>>>> 2eb698c1d30 (planner: support ScalarSubQuery to display them in EXPLAIN (#45252))
+	return
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.
@@ -1458,9 +1473,6 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		e.ctes = append(e.ctes, x)
 	case *PhysicalShuffleReceiverStub:
 		err = e.explainPlanInRowFormat(x.DataSource, "root", "", childIndent, true)
-	}
-	for _, subQ := range flat.ScalarSubQueries {
-		encodes = append(encodes, e.explainOpRecursivelyInJSONFormat(subQ[0], subQ))
 	}
 	return
 }
