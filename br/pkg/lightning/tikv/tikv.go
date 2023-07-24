@@ -150,7 +150,7 @@ func SwitchMode(
 	tls *common.TLS,
 	tikvAddr string,
 	mode import_sstpb.SwitchMode,
-	ranges []*import_sstpb.Range,
+	ranges ...*import_sstpb.Range,
 ) error {
 	task := log.With(zap.Stringer("mode", mode),
 		zap.String("tikv", tikvAddr)).Begin(zap.DebugLevel, "switch mode")

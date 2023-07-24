@@ -1178,7 +1178,6 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 		cancelFuncs = append(cancelFuncs, func(bool) { switchModeTicker.Stop() })
 		cancelFuncs = append(cancelFuncs, func(do bool) {
 			if do {
-				rc.tikvModeSwitcher.SetKeyRanges(rc.buildTablesRanges())
 				rc.tikvModeSwitcher.ToNormalMode(ctx)
 			}
 		})
@@ -1199,7 +1198,6 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					f()
 				}
 			}()
-			rc.tikvModeSwitcher.SetKeyRanges(rc.buildTablesRanges())
 			if rc.cfg.Cron.SwitchMode.Duration > 0 && isLocalBackend(rc.cfg) {
 				rc.tikvModeSwitcher.ToImportMode(ctx)
 			}

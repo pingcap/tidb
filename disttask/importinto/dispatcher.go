@@ -25,7 +25,6 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -38,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor/importer"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
@@ -135,7 +133,6 @@ type flowHandle struct {
 	// It may be changed when we switch to a new task or switch to a new owner.
 	currTaskID            atomic.Int64
 	disableTiKVImportMode atomic.Bool
-	ranges                []tidbkv.KeyRange
 }
 
 var _ dispatcher.TaskFlowHandle = (*flowHandle)(nil)
@@ -173,7 +170,6 @@ func (h *flowHandle) switchTiKVMode(ctx context.Context, task *proto.Task) {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
-	switcher.SetKeyRanges(h.ranges)
 	switcher.ToImportMode(ctx)
 	h.lastSwitchTime.Store(time.Now())
 }
@@ -344,7 +340,6 @@ func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, task *proto.Task
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
-	switcher.SetKeyRanges(h.ranges)
 	switcher.ToNormalMode(ctx)
 
 	// clear it, so next task can switch TiKV mode again.
@@ -355,10 +350,7 @@ func (h *flowHandle) updateCurrentTask(task *proto.Task) {
 	if h.currTaskID.Swap(task.ID) != task.ID {
 		taskMeta := &TaskMeta{}
 		if err := json.Unmarshal(task.Meta, taskMeta); err == nil {
-			h.disableTiKVImportMode.Store(taskMeta.Plan.DisableTiKVImportMode)
-			if ranges, err := backup.BuildTableRanges(taskMeta.Plan.TableInfo); err == nil {
-				h.ranges = ranges
-			}
+			h.disableTiKVImportMode.Store(taskMeta.Plan.DisableTiKVImportMode || taskMeta.Plan.IsRaftKV2)
 		}
 	}
 }
