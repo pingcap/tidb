@@ -253,7 +253,7 @@ func (s *StatsInnerCache) Len() int {
 }
 
 // Close stops statsCacheInner.
-func (s *StatsInnerCache) Close() {}
+func (*StatsInnerCache) Close() {}
 
 // Copy implements statsCacheInner
 func (s *StatsInnerCache) Copy() internal.StatsCacheInner {
