@@ -484,7 +484,7 @@ func TestCheckTableEmpty(t *testing.T) {
 
 	// test incremental mode
 	rc.cfg.TikvImporter.Backend = config.BackendLocal
-	rc.cfg.TikvImporter.IncrementalImport = true
+	rc.cfg.TikvImporter.ParallelImport = true
 	err = rc.checkTableEmpty(ctx)
 	require.NoError(t, err)
 
