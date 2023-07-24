@@ -39,7 +39,6 @@ go_library(
         "//br/pkg/lightning/verification",
         "//br/pkg/lightning/web",
         "//br/pkg/lightning/worker",
-        "//br/pkg/logutil",
         "//br/pkg/pdutil",
         "//br/pkg/redact",
         "//br/pkg/storage",
