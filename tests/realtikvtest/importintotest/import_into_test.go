@@ -31,6 +31,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -851,18 +852,18 @@ func (s *mockGCSSuite) TestImportMode() {
 	var intoImportTime, intoNormalTime time.Time
 	controller := gomock.NewController(s.T())
 	switcher := mocklocal.NewMockTiKVModeSwitcher(controller)
-	toImportModeFn := func(ctx context.Context) error {
+	toImportModeFn := func(ctx context.Context, ranges ...*import_sstpb.Range) error {
 		log.L().Info("ToImportMode")
 		intoImportTime = time.Now()
 		return nil
 	}
-	toNormalModeFn := func(ctx context.Context) error {
+	toNormalModeFn := func(ctx context.Context, ranges ...*import_sstpb.Range) error {
 		log.L().Info("ToNormalMode")
 		intoNormalTime = time.Now()
 		return nil
 	}
-	switcher.EXPECT().ToImportMode(gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
-	switcher.EXPECT().ToNormalMode(gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
+	switcher.EXPECT().ToImportMode(gomock.Any(), gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
+	switcher.EXPECT().ToNormalMode(gomock.Any(), gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
 	backup := importer.NewTiKVModeSwitcher
 	importer.NewTiKVModeSwitcher = func(tls *common.TLS, pdAddr string, logger *zap.Logger) local.TiKVModeSwitcher {
 		return switcher
@@ -893,8 +894,8 @@ func (s *mockGCSSuite) TestImportMode() {
 
 	// after import step, we should enter normal mode, i.e. we only call ToImportMode once
 	intoNormalTime, intoImportTime = time.Time{}, time.Time{}
-	switcher.EXPECT().ToImportMode(gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
-	switcher.EXPECT().ToNormalMode(gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
+	switcher.EXPECT().ToImportMode(gomock.Any(), gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
+	switcher.EXPECT().ToNormalMode(gomock.Any(), gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/clearLastSwitchTime", "return(true)")
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/waitBeforePostProcess", "return(true)")
 	s.tk.MustExec("truncate table load_data.import_mode;")
@@ -915,8 +916,8 @@ func (s *mockGCSSuite) TestImportMode() {
 
 	// to normal mode should be called on error
 	intoNormalTime, intoImportTime = time.Time{}, time.Time{}
-	switcher.EXPECT().ToImportMode(gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
-	switcher.EXPECT().ToNormalMode(gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
+	switcher.EXPECT().ToImportMode(gomock.Any(), gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
+	switcher.EXPECT().ToNormalMode(gomock.Any(), gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/waitBeforeSortChunk", "return(true)")
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/errorWhenSortChunk", "return(true)")
 	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/setLastImportJobID", `return(true)`)
