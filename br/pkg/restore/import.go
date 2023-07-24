@@ -684,8 +684,6 @@ func (importer *FileImporter) downloadAndMergeSST(
 		log.Info("nothing to download and merged")
 		return nil, nil
 	}
-	uid := uuid.New()
-	id := uid[:]
 	// Get the rewrite rule for the file. all files should have the same rules.
 	fileRule := findMatchedRewriteRule(files[0], rewriteRules)
 	if fileRule == nil {
@@ -709,6 +707,8 @@ func (importer *FileImporter) downloadAndMergeSST(
 	sstMetas := make(map[string]*import_sstpb.SSTMeta)
 	firstMeta := &import_sstpb.SSTMeta{}
 	for _, f := range files {
+		uid := uuid.New()
+		id := uid[:]
 		sstMeta, err := GetSSTMetaFromFile(id, f, regionInfo.Region, &rule, importer.rewriteMode)
 		if err != nil {
 			return nil, err
@@ -771,8 +771,8 @@ func (importer *FileImporter) downloadAndMergeSST(
 	downloadResp := atomicResp.Load().(*import_sstpb.DownloadResponse)
 	resp := make([]*import_sstpb.SSTMeta, 0, len(sstMetas))
 	for _, r := range downloadResp.Ssts {
-		r.Range.Start = TruncateTS(downloadResp.Ssts[0].Range.GetStart())
-		r.Range.End = TruncateTS(downloadResp.Ssts[0].Range.GetEnd())
+		r.Range.Start = TruncateTS(r.Range.GetStart())
+		r.Range.End = TruncateTS(r.Range.GetEnd())
 		r.ApiVersion = apiVersion
 		resp = append(resp, r)
 	}
