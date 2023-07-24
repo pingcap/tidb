@@ -143,7 +143,7 @@ func (sc *StatsCache) Front() int64 {
 	return sc.c.Front()
 }
 
-// CopyAndUpdate copies a new cache and updates the new statistics table cache.
+// CopyAndUpdate copies a new cache and updates the new statistics table cache. It is only used in the COW mode.
 func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) *StatsCache {
 	option := &TableStatsOption{}
 	for _, opt := range opts {
@@ -192,8 +192,8 @@ func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, opt
 
 	// update the maxTblStatsVer
 	for _, t := range tables {
-		if t.Version > sc.maxTblStatsVer.Load() {
-			sc.maxTblStatsVer.Store(t.Version)
+		if oldVersion := sc.maxTblStatsVer.Load(); t.Version > oldVersion {
+			sc.maxTblStatsVer.CompareAndSwap(oldVersion, t.Version)
 		}
 	}
 }
