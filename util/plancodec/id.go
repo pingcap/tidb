@@ -137,6 +137,8 @@ const (
 	TypeImportInto = "ImportInto"
 	// TypeSequence is the type of Sequence
 	TypeSequence = "Sequence"
+	// TypeScalarSubQuery is the type of ScalarQuery
+	TypeScalarSubQuery = "ScalarSubQuery"
 )
 
 // plan id.
@@ -201,6 +203,7 @@ const (
 	typeForeignKeyCascade     int = 57
 	typeExpandID              int = 58
 	typeImportIntoID          int = 59
+	TypeScalarSubQueryID      int = 60
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -324,6 +327,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeExpandID
 	case TypeImportInto:
 		return typeImportIntoID
+	case TypeScalarSubQuery:
+		return TypeScalarSubQueryID
 	}
 	// Should never reach here.
 	return 0
@@ -450,6 +455,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeExpand
 	case typeImportIntoID:
 		return TypeImportInto
+	case TypeScalarSubQueryID:
+		return TypeScalarSubQuery
 	}
 
 	// Should never reach here.

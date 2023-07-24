@@ -875,6 +875,33 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 			er.err = err
 			return v, true
 		}
+		if er.b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !er.b.ctx.GetSessionVars().StmtCtx.InExplainAnalyzeStmt && er.b.ctx.GetSessionVars().ExplainNonEvaledSubQuery {
+			newColID := er.b.ctx.GetSessionVars().AllocPlanColumnID()
+			subqueryCtx := ScalarSubqueryEvalCtx{
+				scalarSubQuery: physicalPlan,
+				ctx:            ctx,
+				is:             er.b.is,
+				outputColIDs:   []int64{newColID},
+			}.Init(er.b.ctx, np.SelectBlockOffset())
+			scalarSubQ := &ScalarSubQueryExpr{
+				scalarSubqueryColID: newColID,
+				evalCtx:             subqueryCtx,
+			}
+			scalarSubQ.RetType = np.Schema().Columns[0].GetType()
+			scalarSubQ.SetCoercibility(np.Schema().Columns[0].Coercibility())
+			er.b.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
+			if v.Not {
+				notWrapped, err := expression.NewFunction(er.b.ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), scalarSubQ)
+				if err != nil {
+					er.err = err
+					return v, true
+				}
+				er.ctxStackAppend(notWrapped, types.EmptyName)
+				return v, true
+			}
+			er.ctxStackAppend(scalarSubQ, types.EmptyName)
+			return v, true
+		}
 		row, err := EvalSubqueryFirstRow(ctx, physicalPlan, er.b.is, er.b.ctx)
 		if err != nil {
 			er.err = err
@@ -1084,6 +1111,40 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 	er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = nthPlanBackup
 	if err != nil {
 		er.err = err
+		return v, true
+	}
+	if er.b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !er.b.ctx.GetSessionVars().StmtCtx.InExplainAnalyzeStmt && er.b.ctx.GetSessionVars().ExplainNonEvaledSubQuery {
+		subqueryCtx := ScalarSubqueryEvalCtx{
+			scalarSubQuery: physicalPlan,
+			ctx:            ctx,
+			is:             er.b.is,
+		}.Init(er.b.ctx, np.SelectBlockOffset())
+		newColIDs := make([]int64, 0, np.Schema().Len())
+		newScalarSubQueryExprs := make([]expression.Expression, 0, np.Schema().Len())
+		for _, col := range np.Schema().Columns {
+			newColID := er.b.ctx.GetSessionVars().AllocPlanColumnID()
+			scalarSubQ := &ScalarSubQueryExpr{
+				scalarSubqueryColID: newColID,
+				evalCtx:             subqueryCtx,
+			}
+			scalarSubQ.RetType = col.RetType
+			scalarSubQ.SetCoercibility(col.Coercibility())
+			newColIDs = append(newColIDs, newColID)
+			newScalarSubQueryExprs = append(newScalarSubQueryExprs, scalarSubQ)
+		}
+		subqueryCtx.outputColIDs = newColIDs
+
+		er.b.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
+		if len(newScalarSubQueryExprs) == 1 {
+			er.ctxStackAppend(newScalarSubQueryExprs[0], types.EmptyName)
+		} else {
+			rowFunc, err := er.newFunction(ast.RowFunc, newScalarSubQueryExprs[0].GetType(), newScalarSubQueryExprs...)
+			if err != nil {
+				er.err = err
+				return v, true
+			}
+			er.ctxStack = append(er.ctxStack, rowFunc)
+		}
 		return v, true
 	}
 	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, er.b.is, er.b.ctx)

@@ -969,6 +969,11 @@ func (e *Explain) explainFlatPlanInRowFormat(flat *FlatPhysicalPlan) {
 			e.explainFlatOpInRowFormat(flatOp)
 		}
 	}
+	for _, subQ := range flat.ScalarSubQueries {
+		for _, flatOp := range subQ {
+			e.explainFlatOpInRowFormat(flatOp)
+		}
+	}
 }
 
 func (e *Explain) explainFlatPlanInJSONFormat(flat *FlatPhysicalPlan) (encodes []*ExplainInfoForEncode) {
@@ -980,6 +985,9 @@ func (e *Explain) explainFlatPlanInJSONFormat(flat *FlatPhysicalPlan) (encodes [
 
 	for _, cte := range flat.CTEs {
 		encodes = append(encodes, e.explainOpRecursivelyInJSONFormat(cte[0], cte))
+	}
+	for _, subQ := range flat.ScalarSubQueries {
+		encodes = append(encodes, e.explainOpRecursivelyInJSONFormat(subQ[0], subQ))
 	}
 	return
 }

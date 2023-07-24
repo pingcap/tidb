@@ -677,3 +677,9 @@ func (p PhysicalSequence) Init(ctx sessionctx.Context, stats *property.StatsInfo
 	p.childrenReqProps = props
 	return &p
 }
+
+// Init initializes ScalarSubqueryEvalCtx
+func (p ScalarSubqueryEvalCtx) Init(ctx sessionctx.Context, offset int) *ScalarSubqueryEvalCtx {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeScalarSubQuery, offset)
+	return &p
+}
