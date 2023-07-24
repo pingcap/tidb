@@ -705,7 +705,7 @@ func (importer *FileImporter) downloadAndMergeSST(
 	}
 
 	sstMetas := make(map[string]*import_sstpb.SSTMeta)
-	firstMeta := &import_sstpb.SSTMeta{}
+	var firstMeta *import_sstpb.SSTMeta
 	for _, f := range files {
 		uid := uuid.New()
 		id := uid[:]
