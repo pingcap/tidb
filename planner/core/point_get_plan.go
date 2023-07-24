@@ -103,7 +103,7 @@ func (p *PointGetPlan) getEstRowCountForDisplay() float64 {
 	if p == nil {
 		return 0
 	}
-	return p.Plan.StatsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
+	return p.StatsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
 }
 
 func (p *PointGetPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
@@ -216,13 +216,13 @@ func (*PointGetPlan) StatsCount() float64 {
 	return 1
 }
 
-// statsInfo will return the the RowCount of property.StatsInfo for this plan.
+// StatsInfo will return the the RowCount of property.StatsInfo for this plan.
 func (p *PointGetPlan) StatsInfo() *property.StatsInfo {
-	if p.StatsInfo() == nil {
-		p.SetStats(&property.StatsInfo{})
+	if p.Plan.StatsInfo() == nil {
+		p.Plan.SetStats(&property.StatsInfo{})
 	}
-	p.StatsInfo().RowCount = 1
-	return p.StatsInfo()
+	p.Plan.StatsInfo().RowCount = 1
+	return p.Plan.StatsInfo()
 }
 
 // Children gets all the children.
@@ -444,7 +444,7 @@ func (p *BatchPointGetPlan) StatsCount() float64 {
 	return p.Plan.StatsInfo().RowCount
 }
 
-// statsInfo will return the the RowCount of property.StatsInfo for this plan.
+// StatsInfo will return the the RowCount of property.StatsInfo for this plan.
 func (p *BatchPointGetPlan) StatsInfo() *property.StatsInfo {
 	return p.Plan.StatsInfo()
 }

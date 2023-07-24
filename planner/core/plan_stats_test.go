@@ -84,7 +84,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				pua, ok := p.(*plannercore.PhysicalUnionAll)
 				require.True(t, ok)
 				for _, child := range pua.Children() {
-					require.Greater(t, countFullStats(child.Stats().HistColl, tableInfo.Columns[2].ID), 0)
+					require.Greater(t, countFullStats(child.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 				}
 			},
 		},
@@ -93,8 +93,8 @@ func TestPlanStatsLoad(t *testing.T) {
 			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
 				pp, ok := p.(plannercore.PhysicalPlan)
 				require.True(t, ok)
-				require.Greater(t, countFullStats(pp.Children()[0].Stats().HistColl, tableInfo.Columns[3].ID), 0)
-				require.Greater(t, countFullStats(pp.Children()[1].Stats().HistColl, tableInfo.Columns[3].ID), 0)
+				require.Greater(t, countFullStats(pp.Children()[0].StatsInfo().HistColl, tableInfo.Columns[3].ID), 0)
+				require.Greater(t, countFullStats(pp.Children()[1].StatsInfo().HistColl, tableInfo.Columns[3].ID), 0)
 			},
 		},
 		{ // Apply
@@ -106,8 +106,8 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.True(t, ok)
 				left := pa.PhysicalHashJoin.Children()[0]
 				right := pa.PhysicalHashJoin.Children()[0]
-				require.Greater(t, countFullStats(left.Stats().HistColl, tableInfo.Columns[2].ID), 0)
-				require.Greater(t, countFullStats(right.Stats().HistColl, tableInfo.Columns[3].ID), 0)
+				require.Greater(t, countFullStats(left.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
+				require.Greater(t, countFullStats(right.StatsInfo().HistColl, tableInfo.Columns[3].ID), 0)
 			},
 		},
 		{ // > Any

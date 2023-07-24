@@ -288,6 +288,7 @@ func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 	return corCols
 }
 
+// BuildPlanTrace implements PhysicalPlan interface.
 func (p *PhysicalTableReader) BuildPlanTrace() *tracing.PlanTrace {
 	rp := p.basePhysicalPlan.BuildPlanTrace()
 	if p.tablePlan != nil {
@@ -363,6 +364,7 @@ func (p *PhysicalIndexReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 	return corCols
 }
 
+// BuildPlanTrace implements PhysicalPlan interface.
 func (p *PhysicalIndexReader) BuildPlanTrace() *tracing.PlanTrace {
 	rp := p.basePhysicalPlan.BuildPlanTrace()
 	if p.indexPlan != nil {
@@ -498,6 +500,7 @@ func (p *PhysicalIndexLookUpReader) GetAvgTableRowSize() float64 {
 	return getTblStats(p.tablePlan).GetAvgRowSize(p.SCtx(), p.tablePlan.Schema().Columns, false, false)
 }
 
+// BuildPlanTrace implements PhysicalPlan interface.
 func (p *PhysicalIndexLookUpReader) BuildPlanTrace() *tracing.PlanTrace {
 	rp := p.basePhysicalPlan.BuildPlanTrace()
 	if p.indexPlan != nil {
@@ -598,6 +601,7 @@ func (p *PhysicalIndexMergeReader) ExtractCorrelatedCols() (corCols []*expressio
 	return corCols
 }
 
+// BuildPlanTrace implements PhysicalPlan interface.
 func (p *PhysicalIndexMergeReader) BuildPlanTrace() *tracing.PlanTrace {
 	rp := p.basePhysicalPlan.BuildPlanTrace()
 	if p.tablePlan != nil {

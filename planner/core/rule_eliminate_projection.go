@@ -245,6 +245,7 @@ func ReplaceColumnOfExpr(expr expression.Expression, proj *LogicalProjection, sc
 	return expr
 }
 
+// ReplaceExprColumns implements LogicalPlan interface.
 func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, equalExpr := range p.EqualConditions {
 		ResolveExprAndReplace(equalExpr, replace)
@@ -260,12 +261,14 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 	}
 }
 
+// ReplaceExprColumns implements LogicalPlan interface.
 func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, expr := range p.Exprs {
 		ResolveExprAndReplace(expr, replace)
 	}
 }
 
+// ReplaceExprColumns implements LogicalPlan interface.
 func (la *LogicalAggregation) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, agg := range la.AggFuncs {
 		for _, aggExpr := range agg.Args {
@@ -277,12 +280,14 @@ func (la *LogicalAggregation) ReplaceExprColumns(replace map[string]*expression.
 	}
 }
 
+// ReplaceExprColumns implements LogicalPlan interface.
 func (p *LogicalSelection) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, expr := range p.Conditions {
 		ResolveExprAndReplace(expr, replace)
 	}
 }
 
+// ReplaceExprColumns implements LogicalPlan interface.
 func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column) {
 	la.LogicalJoin.ReplaceExprColumns(replace)
 	for _, coCol := range la.CorCols {
@@ -293,18 +298,21 @@ func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column
 	}
 }
 
+// ReplaceExprColumns implements LogicalPlan interface.
 func (ls *LogicalSort) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, byItem := range ls.ByItems {
 		ResolveExprAndReplace(byItem.Expr, replace)
 	}
 }
 
+// ReplaceExprColumns implements LogicalPlan interface.
 func (lt *LogicalTopN) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, byItem := range lt.ByItems {
 		ResolveExprAndReplace(byItem.Expr, replace)
 	}
 }
 
+// ReplaceExprColumns implements LogicalPlan interface.
 func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, desc := range p.WindowFuncDescs {
 		for _, arg := range desc.Args {

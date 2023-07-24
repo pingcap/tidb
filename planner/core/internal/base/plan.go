@@ -27,8 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 )
 
-// Plan implements base Plan interface.
-// Should be used as embedded struct in Plan implementations.
+// Plan Should be used as embedded struct in Plan implementations.
 type Plan struct {
 	ctx         sessionctx.Context
 	stats       *property.StatsInfo
@@ -48,12 +47,12 @@ func NewBasePlan(ctx sessionctx.Context, tp string, offset int) Plan {
 	}
 }
 
-// SCtx implements Plan interface.
+// SCtx is to get the sessionctx from the plan.
 func (p *Plan) SCtx() sessionctx.Context {
 	return p.ctx
 }
 
-// SetSCtx implements Plan interface.
+// SetSCtx is to set the sessionctx for the plan.
 func (p *Plan) SetSCtx(ctx sessionctx.Context) {
 	p.ctx = ctx
 }
@@ -69,26 +68,27 @@ func (*Plan) SetOutputNames(_ types.NameSlice) {}
 // ReplaceExprColumns implements Plan interface.
 func (*Plan) ReplaceExprColumns(_ map[string]*expression.Column) {}
 
-// ID implements Plan ID interface.
+// ID is to get the id.
 func (p *Plan) ID() int {
 	return p.id
 }
 
+// SetID is to set id.
 func (p *Plan) SetID(id int) {
 	p.id = id
 }
 
-// StatsInfo implements the Plan interface.
+// StatsInfo is to get the stats info.
 func (p *Plan) StatsInfo() *property.StatsInfo {
 	return p.stats
 }
 
-// ExplainInfo implements Plan interface.
+// ExplainInfo is to get the explain information.
 func (*Plan) ExplainInfo() string {
 	return "N/A"
 }
 
-// ExplainID implements Plan interface.
+// ExplainID is to get the explain ID.
 func (p *Plan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
@@ -98,21 +98,22 @@ func (p *Plan) ExplainID() fmt.Stringer {
 	})
 }
 
-// TP implements Plan interface.
+// TP is to get the tp.
 func (p *Plan) TP() string {
 	return p.tp
 }
 
-// SetTP implements Plan interface.
+// SetTP is to set the tp.
 func (p *Plan) SetTP(tp string) {
 	p.tp = tp
 }
 
+// SelectBlockOffset is to get the select block offset.
 func (p *Plan) SelectBlockOffset() int {
 	return p.blockOffset
 }
 
-// SetStats sets BasePlan.stats
+// SetStats sets the stats
 func (p *Plan) SetStats(s *property.StatsInfo) {
 	p.stats = s
 }
@@ -130,7 +131,7 @@ func (p *Plan) MemoryUsage() (sum int64) {
 	return sum
 }
 
-// BuildPlanTrace implements Plan
+// BuildPlanTrace is to build the plan trace.
 func (p *Plan) BuildPlanTrace() *tracing.PlanTrace {
 	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP()}
 	return planTrace
