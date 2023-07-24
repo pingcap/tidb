@@ -15,12 +15,21 @@
 package tablestore
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/timer/api"
+	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -542,4 +551,162 @@ func TestBuildDeleteTimerSQL(t *testing.T) {
 	sql, args := buildDeleteTimerSQL("db1", "tbl1", "123")
 	require.Equal(t, "DELETE FROM `db1`.`tbl1` WHERE ID = %?", sql)
 	require.Equal(t, []any{"123"}, args)
+}
+
+type mockSessionPool struct {
+	mock.Mock
+}
+
+func (p *mockSessionPool) Get() (resource pools.Resource, _ error) {
+	ret := p.Called()
+	if r := ret.Get(0); r != nil {
+		resource = r.(pools.Resource)
+	}
+	return resource, ret.Error(1)
+}
+
+func (p *mockSessionPool) Put(r pools.Resource) {
+	p.Called(r)
+}
+
+type mockSession struct {
+	mock.Mock
+	sessionctx.Context
+	sqlexec.SQLExecutor
+}
+
+func (p *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, _ error) {
+	ret := p.Called(ctx, sql, args)
+	if r := ret.Get(0); r != nil {
+		rs = r.(sqlexec.RecordSet)
+	}
+	return rs, ret.Error(1)
+}
+
+func (p *mockSession) GetSessionVars() *variable.SessionVars {
+	return p.Context.GetSessionVars()
+}
+
+func (p *mockSession) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	p.Context.SetDiskFullOpt(level)
+}
+
+func (p *mockSession) Close() {
+	p.Called()
+}
+
+var matchCtx = mock.MatchedBy(func(ctx context.Context) bool {
+	return kv.GetInternalSourceType(ctx) == kv.InternalTimer
+})
+
+func TestTakeSession(t *testing.T) {
+	pool := &mockSessionPool{}
+	core := tableTimerStoreCore{pool: pool}
+
+	// Get returns error
+	pool.On("Get").Return(nil, errors.New("mockErr")).Once()
+	r, back, err := core.takeSession()
+	require.Nil(t, r)
+	require.Nil(t, back)
+	require.EqualError(t, err, "mockErr")
+	pool.AssertExpectations(t)
+
+	// Get returns a session
+	se := &mockSession{}
+	pool.On("Get").Return(se, nil).Once()
+	r, back, err = core.takeSession()
+	require.Equal(t, r, se)
+	require.NotNil(t, back)
+	require.Nil(t, err)
+	pool.AssertExpectations(t)
+	se.AssertExpectations(t)
+
+	// Put session failed
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []interface{}(nil)).
+		Return(nil, errors.New("mockErr")).
+		Once()
+	se.On("Close").Once()
+	back()
+	pool.AssertExpectations(t)
+	se.AssertExpectations(t)
+
+	// Put session success
+	pool.On("Get").Return(se, nil).Once()
+	r, back, err = core.takeSession()
+	require.Equal(t, r, se)
+	require.NotNil(t, back)
+	require.Nil(t, err)
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []interface{}(nil)).
+		Return(nil, nil).
+		Once()
+	pool.On("Put", se).Once()
+	back()
+	pool.AssertExpectations(t)
+	se.AssertExpectations(t)
+}
+
+func TestRunInTxn(t *testing.T) {
+	se := &mockSession{}
+
+	// success
+	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []interface{}(nil)).
+		Return(nil, nil).
+		Once()
+	se.On("ExecuteInternal", matchCtx, mock.MatchedBy(func(sql string) bool {
+		return strings.HasPrefix(sql, "insert")
+	}), mock.Anything).
+		Return(nil, nil).
+		Once()
+	se.On("ExecuteInternal", matchCtx, "COMMIT", []interface{}(nil)).
+		Return(nil, nil).
+		Once()
+	require.Nil(t, runInTxn(context.Background(), se, func() error {
+		_, err := executeSQL(context.Background(), se, "insert into t value(?)", 1)
+		return err
+	}))
+	se.AssertExpectations(t)
+
+	// start txn failed
+	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []interface{}(nil)).
+		Return(nil, errors.New("mockBeginErr")).
+		Once()
+	err := runInTxn(context.Background(), se, func() error { return nil })
+	require.EqualError(t, err, "mockBeginErr")
+	se.AssertExpectations(t)
+
+	// exec failed, rollback success
+	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []interface{}(nil)).
+		Return(nil, nil).
+		Once()
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []interface{}(nil)).
+		Return(nil, nil).
+		Once()
+	err = runInTxn(context.Background(), se, func() error { return errors.New("mockFuncErr") })
+	require.EqualError(t, err, "mockFuncErr")
+	se.AssertExpectations(t)
+
+	// commit failed
+	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []interface{}(nil)).
+		Return(nil, nil).
+		Once()
+	se.On("ExecuteInternal", matchCtx, "COMMIT", []interface{}(nil)).
+		Return(nil, errors.New("commitErr")).
+		Once()
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []interface{}(nil)).
+		Return(nil, nil).
+		Once()
+	err = runInTxn(context.Background(), se, func() error { return nil })
+	require.EqualError(t, err, "commitErr")
+	se.AssertExpectations(t)
+
+	// rollback failed
+	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []interface{}(nil)).
+		Return(nil, nil).
+		Once()
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []interface{}(nil)).
+		Return(nil, errors.New("rollbackErr")).
+		Once()
+	err = runInTxn(context.Background(), se, func() error { return errors.New("mockFuncErr") })
+	require.EqualError(t, err, "mockFuncErr")
+	se.AssertExpectations(t)
 }

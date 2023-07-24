@@ -321,7 +321,11 @@ func (s *tableTimerStoreCore) takeSession() (sessionctx.Context, func(), error) 
 
 	back := func() {
 		if _, err = executeSQL(context.Background(), sctx, "ROLLBACK"); err != nil {
+			// Though this branch is rarely to be called because "ROLLBACK" will always be successfully, we still need
+			// to handle it here to make sure the code is strong.
 			terror.Log(err)
+			// call `r.Close()` to make sure the resource is released to avoid memory leak
+			r.Close()
 			return
 		}
 		s.pool.Put(r)
