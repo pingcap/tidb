@@ -238,7 +238,7 @@ func (j *baseJoiner) initDefaultInner(innerTypes []*types.FieldType, defaultInne
 	j.defaultInner = mutableRow.ToRow()
 }
 
-func (j *baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row, lUsed, rUsed []int) {
+func (*baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row, lUsed, rUsed []int) {
 	// Call AppendRow() first to increment the virtual rows.
 	// Fix: https://github.com/pingcap/tidb/issues/5771
 	lWide := chk.AppendRowByColIdxs(lhs, lUsed)
@@ -424,8 +424,7 @@ func (j *semiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, ch
 	return outerRowStatus, err
 }
 
-func (j *semiJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
-}
+func (*semiJoiner) onMissMatch(bool, chunk.Row, *chunk.Chunk) {}
 
 // Clone implements joiner interface.
 func (j *semiJoiner) Clone() joiner {
@@ -453,7 +452,7 @@ type nullAwareAntiSemiJoiner struct {
 }
 
 // tryToMatchInners implements joiner interface.
-func (naaj *nullAwareAntiSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk, _ ...NAAJType) (matched bool, hasNull bool, err error) {
+func (naaj *nullAwareAntiSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, _ *chunk.Chunk, _ ...NAAJType) (matched bool, hasNull bool, err error) {
 	// Step1: inner rows come from NULL-bucket OR Same-Key bucket. (no rows mean not matched)
 	if inners.Len() == 0 {
 		return false, false, nil
@@ -482,7 +481,7 @@ func (naaj *nullAwareAntiSemiJoiner) tryToMatchInners(outer chunk.Row, inners ch
 	return false, false, err
 }
 
-func (naaj *nullAwareAntiSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, chk *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
+func (*nullAwareAntiSemiJoiner) tryToMatchOuters(_ chunk.Iterator, _ chunk.Row, _ *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
 	// todo: use the outer build.
 	return outerRowStatus, err
 }
@@ -500,7 +499,7 @@ type antiSemiJoiner struct {
 }
 
 // tryToMatchInners implements joiner interface.
-func (j *antiSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk, _ ...NAAJType) (matched bool, hasNull bool, err error) {
+func (j *antiSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, _ *chunk.Chunk, _ ...NAAJType) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
@@ -709,7 +708,7 @@ func (naal *nullAwareAntiLeftOuterSemiJoiner) onMissMatch(_ bool, outer chunk.Ro
 	chk.AppendInt64(lWide, 1)
 }
 
-func (naal *nullAwareAntiLeftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, chk *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
+func (*nullAwareAntiLeftOuterSemiJoiner) tryToMatchOuters(chunk.Iterator, chunk.Row, *chunk.Chunk, []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
 	// todo:
 	return nil, err
 }
@@ -1034,8 +1033,7 @@ func (j *innerJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, c
 	return j.filterAndCheckOuterRowStatus(chkForJoin, chk, inner.Len(), outerRowStatus, lUsedForFilter, rUsedForFilter)
 }
 
-func (j *innerJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
-}
+func (*innerJoiner) onMissMatch(bool, chunk.Row, *chunk.Chunk) {}
 
 func (j *innerJoiner) Clone() joiner {
 	return &innerJoiner{baseJoiner: j.baseJoiner.Clone()}
