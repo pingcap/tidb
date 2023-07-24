@@ -4596,19 +4596,6 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "no_index_join", hints[1].HintName.L)
 	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
 
-	// Test NO_INL_JOIN
-	stmt, _, err = p.Parse("select /*+ NO_INL_JOIN(t1), NO_INL_JOIN(t3) */ * from t1, t2, t3", "", "")
-	require.NoError(t, err)
-	selectStmt = stmt[0].(*ast.SelectStmt)
-
-	hints = selectStmt.TableHints
-	require.Len(t, hints, 2)
-	require.Equal(t, "no_inl_join", hints[0].HintName.L)
-	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
-
-	require.Equal(t, "no_inl_join", hints[1].HintName.L)
-	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
-
 	// Test INDEX_HASH_JOIN
 	stmt, _, err = p.Parse("select /*+ INDEX_HASH_JOIN(t1), INDEX_HASH_JOIN(t3) */ * from t1, t2, t3", "", "")
 	require.NoError(t, err)
@@ -4633,6 +4620,32 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
 
 	require.Equal(t, "no_index_hash_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test INDEX_MERGE_JOIN
+	stmt, _, err = p.Parse("select /*+ INDEX_MERGE_JOIN(t1), INDEX_MERGE_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "index_merge_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "index_merge_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test NO_INDEX_MERGE_JOIN
+	stmt, _, err = p.Parse("select /*+ NO_INDEX_MERGE_JOIN(t1), NO_INDEX_MERGE_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "no_index_merge_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "no_index_merge_join", hints[1].HintName.L)
 	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
 
 	// Test NO_MERGE_JOIN
