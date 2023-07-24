@@ -1321,27 +1321,28 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 		"p5 5 LIST `id` 8,9  <nil>",
 		"pDef 6 LIST `id` DEFAULT,6  <nil>"))
 
+	tk.MustExec(`alter table t reorganize partition pDef into (partition p_6 values in (6))`)
 	errorCases := []struct {
 		sql string
 		err *terror.Error
 	}{
 		{"alter table t add partition (partition p4 values in (7))",
-			dbterror.ErrGeneralUnsupportedDDL,
+			dbterror.ErrSameNamePartition,
 		},
 		{"alter table t add partition (partition p6 values less than (7))",
 			ast.ErrPartitionWrongValues,
 		},
 		{"alter table t add partition (partition p6 values in (null))",
-			dbterror.ErrGeneralUnsupportedDDL,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{"alter table t add partition (partition p6 values in (7))",
-			dbterror.ErrGeneralUnsupportedDDL,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{"alter table t add partition (partition p6 values in ('a'))",
 			dbterror.ErrValuesIsNotIntType,
 		},
 		{"alter table t add partition (partition p5 values in (10),partition p6 values in (7))",
-			dbterror.ErrGeneralUnsupportedDDL,
+			dbterror.ErrSameNamePartition,
 		},
 	}
 
@@ -1440,6 +1441,10 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 	tk.MustGetErrMsg(`alter table t add partition (
 		partition pDef2 values in (default))`,
 		"[ddl:8200]Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead")
+	tk.MustGetErrMsg("alter table t add partition (partition p6 values in ((9,'d')))",
+		"[ddl:8200]Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead")
+	tk.MustGetErrMsg("alter table t add partition (partition p6 values in (default))",
+		"[ddl:8200]Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead")
 	tk.MustExec(`alter table t drop partition pDef`)
 	tk.MustExec(`alter table t add partition (partition pDef default)`)
 	tk.MustExec(`alter table t drop partition pDef`)
@@ -1510,24 +1515,19 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 	require.Equal(t, [][]string{{"9", `'d'`}, {`DEFAULT`}, {`10`, `'d'`}}, part.Definitions[5].InValues)
 	require.Equal(t, model.NewCIStr("pDef"), part.Definitions[5].Name)
 
+	tk.MustExec(`alter table t reorganize partition pDef into (partition pd VALUES IN ((9,'d'),(10,'d')))`)
 	errorCases := []struct {
 		sql string
 		err *terror.Error
 	}{
-		{"alter table t add partition (partition p3 values in ((7,'b')))",
-			dbterror.ErrGeneralUnsupportedDDL,
+		{"alter table t add partition (partition p4 values in ((7,'b')))",
+			dbterror.ErrSameNamePartition,
 		},
-		{"alter table t add partition (partition p4 values less than ((7,'a')))",
+		{"alter table t add partition (partition p6 values less than ((7,'a')))",
 			ast.ErrPartitionWrongValues,
 		},
 		{"alter table t add partition (partition p6 values in ((5,null)))",
-			dbterror.ErrGeneralUnsupportedDDL,
-		},
-		{"alter table t add partition (partition p6 values in ((9,'d')))",
-			dbterror.ErrGeneralUnsupportedDDL,
-		},
-		{"alter table t add partition (partition p6 values in (default))",
-			dbterror.ErrGeneralUnsupportedDDL,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{"alter table t add partition (partition p6 values in (('a','a')))",
 			dbterror.ErrWrongTypeColumnValue,
@@ -1822,14 +1822,16 @@ func TestAlterTableDropPartitionByListColumns(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec("set @@session.tidb_enable_default_list_partition = ON")
 	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id,name) (
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),
-	    partition p3 values in ((5,'a'),(null,null))
-	);`)
-	// TODO: Add cases for dropping DEFAULT partition
-	tk.MustExec(`insert into t values (1,'a'),(3,'a'),(5,'a'),(null,null)`)
+	    partition p3 values in ((5,'a'),(null,null)),
+	    partition pDef values in (default)
+	)`)
+	tk.MustExec(`insert into t values (1,'a'),(3,'a'),(5,'a'),(null,null),(9,9)`)
 	tk.MustExec(`alter table t drop partition p1`)
+	tk.MustExec(`alter table t drop partition pDef`)
 	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 a", "5 a", "<nil> <nil>"))
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
@@ -2058,19 +2060,19 @@ func TestAlterTableAddPartition(t *testing.T) {
 	tk.MustGetErrCode(sql4, errno.ErrRangeNotIncreasing)
 
 	sql5 := `alter table table3 add partition (
-		partition p1 values less than (2011)
+		partition p1 values less than (1993)
 	);`
 	tk.MustGetErrCode(sql5, errno.ErrSameNamePartition)
 
 	sql6 := `alter table table3 add partition (
-		partition p1 values less than (2011),
-		partition p1 values less than (2021)
+		partition p1 values less than (1993),
+		partition p1 values less than (1995)
 	);`
 	tk.MustGetErrCode(sql6, errno.ErrSameNamePartition)
 
 	sql7 := `alter table table3 add partition (
-		partition p4 values less than (2011),
-		partition p1 values less than (2021),
+		partition p4 values less than (1993),
+		partition p1 values less than (1995),
 		partition p5 values less than maxvalue
 	);`
 	tk.MustGetErrCode(sql7, errno.ErrSameNamePartition)
