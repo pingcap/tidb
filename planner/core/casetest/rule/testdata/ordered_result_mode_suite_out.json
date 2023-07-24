@@ -440,8 +440,7 @@
     "Cases": [
       {
         "Plan": [
-          "TableReader_11 2.00 root partition:p0,p1 data:TableRangeScan_10",
-          "└─TableRangeScan_10 2.00 cop[tikv] table:thash range:[1,1], [200,200], keep order:true, stats:pseudo"
+          "Batch_Point_Get_9 2.00 root table:thash handle:[1 200], keep order:true, desc:false"
         ]
       },
       {

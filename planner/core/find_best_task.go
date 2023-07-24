@@ -1118,10 +1118,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 		var hashPartColName *model.CIStr
 		if tblInfo := ds.table.Meta(); canConvertPointGet && tblInfo.GetPartitionInfo() != nil {
-			// We do not build [batch] point get for dynamic table partitions now. This can be optimized.
-			if ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-				canConvertPointGet = false
-			}
 			if canConvertPointGet && len(path.Ranges) > 1 {
 				// We can only build batch point get for hash partitions on a simple column now. This is
 				// decided by the current implementation of `BatchPointGetExec::initialize()`, specifically,
@@ -2364,8 +2360,10 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		Columns:          ds.Columns,
 	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.blockOffset)
 	var partitionInfo *model.PartitionDefinition
+	pi := ds.tableInfo.GetPartitionInfo()
 	if ds.isPartition {
-		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
+		// static prune
+		if pi != nil {
 			for i := range pi.Definitions {
 				def := pi.Definitions[i]
 				if def.ID == ds.physicalTableID {
@@ -2375,6 +2373,22 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 			}
 		}
 		if partitionInfo == nil {
+			return invalidTask
+		}
+	} else if pi != nil {
+		// dynamic prune
+		idxs, err := PartitionPruning(ds.ctx, ds.table.GetPartitionedTable(), ds.allConds, ds.partitionNames, ds.TblCols, ds.names)
+		if err != nil {
+			return invalidTask
+		}
+		if len(idxs) == 1 && idxs[0] == FullRange {
+			if len(pi.Definitions) != 1 {
+				return invalidTask
+			}
+			partitionInfo = &pi.Definitions[0]
+		} else if len(idxs) == 1 {
+			partitionInfo = &pi.Definitions[idxs[0]]
+		} else {
 			return invalidTask
 		}
 	}

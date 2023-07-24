@@ -1467,8 +1467,7 @@
       {
         "SQL": "explain format = 'brief' select * from t where a = 1 OR a = 2",
         "DynamicPlan": [
-          "TableReader 2.00 root partition:p1,P2 data:TableRangeScan",
-          "└─TableRangeScan 2.00 cop[tikv] table:t range:[1,1], [2,2], keep order:false"
+          "Batch_Point_Get 2.00 root table:t handle:[1 2], keep order:false, desc:false"
         ],
         "StaticPlan": [
           "PartitionUnion 2.00 root  ",
@@ -1624,12 +1623,11 @@
         "SQL": "explain format = 'brief' select * from t,t2 where t2.a = 1 and t2.b = t.b and t.a = 1",
         "DynamicPlan": [
           "HashJoin 1.00 root  inner join, equal:[eq(test.t.b, test.t2.b)]",
-          "├─TableReader(Build) 1.00 root  data:Selection",
-          "│ └─Selection 1.00 cop[tikv]  eq(test.t2.a, 1), not(isnull(test.t2.b))",
-          "│   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
-          "└─TableReader(Probe) 1.00 root partition:p1 data:Selection",
-          "  └─Selection 1.00 cop[tikv]  not(isnull(test.t.b))",
-          "    └─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false"
+          "├─Selection(Build) 1.00 root  not(isnull(test.t.b))",
+          "│ └─Point_Get 1.00 root table:t, partition:p1 handle:1",
+          "└─TableReader(Probe) 1.00 root  data:Selection",
+          "  └─Selection 1.00 cop[tikv]  eq(test.t2.a, 1), not(isnull(test.t2.b))",
+          "    └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false"
         ],
         "StaticPlan": [
           "HashJoin 1.00 root  inner join, equal:[eq(test.t.b, test.t2.b)]",
