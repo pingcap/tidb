@@ -688,6 +688,23 @@ func TestRouter(t *testing.T) {
 	}
 }
 
+func TestRoutesPanic(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+	s.cfg.Routes = []*router.TableRule{
+		{
+			SchemaPattern: "test1",
+			TargetSchema:  "test",
+		},
+	}
+
+	s.touch(t, "test1.dump_test.001.sql")
+	s.touch(t, "test1.dump_test.002.sql")
+	s.touch(t, "test1.dump_test.003.sql")
+
+	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	require.NoError(t, err)
+}
+
 func TestBadRouterRule(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
 
