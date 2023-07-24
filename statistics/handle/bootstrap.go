@@ -480,7 +480,7 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	h.updateStatsCache(cache)
+	h.initStatsCache(cache)
 	return nil
 }
 
@@ -534,7 +534,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 			}
 		}
 	}
-	h.updateStatsCache(cache)
+	h.initStatsCache(cache)
 	return nil
 }
 
