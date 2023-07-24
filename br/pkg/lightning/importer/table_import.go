@@ -40,7 +40,6 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -1038,7 +1037,8 @@ func (tr *TableImporter) postProcess(
 			var remoteChecksum *local.RemoteChecksum
 			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo)
 			failpoint.Inject("checksum-error", func() {
-				logutil.CL(ctx).Debug("failpoint checksum-error injected.")
+				tr.logger.Info("failpoint checksum-error injected.")
+				remoteChecksum = nil
 				err = status.Error(codes.Unknown, "Checksum meets error.")
 			})
 			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
@@ -1050,12 +1050,14 @@ func (tr *TableImporter) postProcess(
 			if err != nil {
 				return false, err
 			}
-			err = tr.compareChecksum(remoteChecksum, localChecksum)
-			// with post restore level 'optional', we will skip checksum error
-			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
-				if err != nil {
-					tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
-					err = nil
+			if remoteChecksum != nil {
+				err = tr.compareChecksum(remoteChecksum, localChecksum)
+				// with post restore level 'optional', we will skip checksum error
+				if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
+					if err != nil {
+						tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
+						err = nil
+					}
 				}
 			}
 		} else {
