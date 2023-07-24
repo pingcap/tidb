@@ -1280,7 +1280,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 	for _, expr := range expressions {
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
-			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
+			if con, ok := item.(*expression.Constant); ok && con.ConstItem(b.ctx.GetSessionVars().StmtCtx) {
 				ret, _, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
 				if err != nil {
 					return nil, errors.Trace(err)

@@ -68,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -5442,14 +5443,60 @@ func convert2OutputSchemasAndNames(names []string, ftypes []byte) (schema *expre
 	return
 }
 
-func (*PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
+func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
 	p := &PlanReplayer{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
 		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
+
+	if pc.HistoricalStatsInfo != nil {
+		p.HistoricalStatsTS = calcTSForPlanReplayer(b.ctx, pc.HistoricalStatsInfo.TsExpr)
+	}
+
 	schema := newColumnsWithNames(1)
 	schema.Append(buildColumnWithName("", "File_token", mysql.TypeVarchar, 128))
 	p.SetSchema(schema.col2Schema())
 	p.names = schema.names
 	return p
+}
+
+func calcTSForPlanReplayer(sctx sessionctx.Context, tsExpr ast.ExprNode) uint64 {
+	tsVal, err := expression.EvalAstExpr(sctx, tsExpr)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return 0
+	}
+	// mustn't be NULL
+	if tsVal.IsNull() {
+		return 0
+	}
+
+	// first, treat it as a TSO
+	tpLonglong := types.NewFieldType(mysql.TypeLonglong)
+	tpLonglong.SetFlag(mysql.UnsignedFlag)
+	// We need a strict check, which means no truncate or any other warnings/errors, or it will wrongly try to parse
+	// a date/time string into a TSO.
+	// To achieve this, we need to set fields like StatementContext.IgnoreTruncate to false, and maybe it's better
+	// not to modify and reuse the original StatementContext, so we use a temporary one here.
+	tmpStmtCtx := &stmtctx.StatementContext{TimeZone: sctx.GetSessionVars().Location()}
+	tso, err := tsVal.ConvertTo(tmpStmtCtx, tpLonglong)
+	if err == nil {
+		return tso.GetUint64()
+	}
+
+	// if failed, treat it as a date/time
+	// this part is similar to CalculateAsOfTsExpr
+	tpDateTime := types.NewFieldType(mysql.TypeDatetime)
+	tpDateTime.SetDecimal(6)
+	timestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, tpDateTime)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return 0
+	}
+	goTime, err := timestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().Location())
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return 0
+	}
+	return oracle.GoTimeToTS(goTime)
 }
 
 func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {

@@ -211,6 +211,10 @@ var defaultSysVars = []*SysVar{
 		s.Enable3StageMultiDistinctAgg = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptExplainNoEvaledSubQuery, Value: BoolToOnOff(DefTiDBOptExplainEvaledSubquery), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.ExplainNonEvaledSubQuery = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBOptWriteRowID, Value: BoolToOnOff(DefOptWriteRowID), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowWriteRowID = TiDBOptOn(val)
 		return nil

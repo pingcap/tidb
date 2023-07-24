@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal/lfu"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/lru"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/mapcache"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/testutil"
@@ -41,6 +42,13 @@ var cases = []struct {
 		name: "mapcache",
 		newFunc: func() internal.StatsCacheInner {
 			return mapcache.NewMapCache()
+		},
+	},
+	{
+		name: "LFU",
+		newFunc: func() internal.StatsCacheInner {
+			result, _ := lfu.NewLFU(defaultSize)
+			return result
 		},
 	},
 }
