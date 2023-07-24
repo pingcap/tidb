@@ -1019,7 +1019,7 @@ func (h *Handle) statsCacheLen() int {
 
 func (h *Handle) initStatsCache(newCache *cache.StatsCache) {
 	h.statsCache.Replace(newCache)
-	handle_metrics.CostGauge.Set(float64(h.statsCache.Load().Cost()))
+
 }
 
 // updateStatsCache will update statsCache into non COW mode.
@@ -1032,7 +1032,6 @@ func (h *Handle) updateStatsCache(newCache *cache.StatsCache, tables []*statisti
 	} else {
 		h.statsCache.Replace(newCache.CopyAndUpdate(tables, deletedIDs, opts...))
 	}
-	handle_metrics.CostGauge.Set(float64(h.statsCache.Load().Cost()))
 	return true
 }
 

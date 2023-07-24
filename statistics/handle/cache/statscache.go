@@ -16,6 +16,8 @@ package cache
 
 import (
 	"sync/atomic"
+
+	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 )
 
 // StatsCachePointer is used to cache the stats of a table.
@@ -42,4 +44,5 @@ func (s *StatsCachePointer) Load() *StatsCache {
 // Replace replaces the cache with the new cache.
 func (s *StatsCachePointer) Replace(newCache *StatsCache) {
 	s.Store(newCache)
+	metrics.CostGauge.Set(float64(newCache.Cost()))
 }
