@@ -172,6 +172,32 @@ func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int
 	return newCache
 }
 
+// Update updates the new statistics table cache.
+func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) {
+	option := &TableStatsOption{}
+	for _, opt := range opts {
+		opt(option)
+	}
+	for _, tbl := range tables {
+		id := tbl.PhysicalID
+		if option.byQuery {
+			sc.c.Put(id, tbl, true)
+		} else {
+			sc.c.Put(id, tbl, false)
+		}
+	}
+	for _, id := range deletedIDs {
+		sc.c.Del(id)
+	}
+
+	// update the maxTblStatsVer
+	for _, t := range tables {
+		if t.Version > sc.maxTblStatsVer.Load() {
+			sc.maxTblStatsVer.Store(t.Version)
+		}
+	}
+}
+
 // TableRowStatsCache is the cache of table row count.
 var TableRowStatsCache = &StatsTableRowCache{}
 
