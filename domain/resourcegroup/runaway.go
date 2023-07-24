@@ -81,7 +81,7 @@ type QuarantineRecord struct {
 	EndTime           time.Time
 	Watch             string
 	WatchText         string
-	From              string
+	Source            string
 }
 
 // RunawayManager is used to detect and record runaway queries.
