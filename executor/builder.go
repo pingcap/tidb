@@ -915,7 +915,7 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 			OptionList:   s.DynamicCalibrateResourceOptionList,
 		}
 	case *ast.AddQueryWatchStmt:
-		return &querywatch.CreateExecutor{
+		return &querywatch.AddExecutor{
 			BaseExecutor:         exec.NewBaseExecutor(b.ctx, v.Schema(), 0),
 			QueryWatchOptionList: s.QueryWatchOptionList,
 		}

@@ -23,14 +23,15 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-type CreateExecutor struct {
+// AddExecutor is used as executor of add query watch.
+type AddExecutor struct {
 	exec.BaseExecutor
 	QueryWatchOptionList []*ast.QueryWatchOption
 	done                 bool
 }
 
 // Next implements the interface of Executor.
-func (e *CreateExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *AddExecutor) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.done {
 		return nil
@@ -40,6 +41,7 @@ func (e *CreateExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func ExecDropQueryWatch(ctx context.Context, sctx sessionctx.Context, watchID int64) error {
+// ExecDropQueryWatch is use to exec DropQueryWatchStmt.
+func ExecDropQueryWatch(_ context.Context, _ sessionctx.Context, _ int64) error {
 	return nil
 }
