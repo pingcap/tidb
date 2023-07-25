@@ -22,7 +22,7 @@ const (
 	importSSTWaitInterval    = 40 * time.Millisecond
 	importSSTMaxWaitInterval = 10 * time.Second
 
-	downloadSSTRetryTimes      = 8
+	downloadSSTRetryTimes      = 24
 	downloadSSTWaitInterval    = 1 * time.Second
 	downloadSSTMaxWaitInterval = 4 * time.Second
 
@@ -150,9 +150,16 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 			bo.delayTime = 0
 			bo.attempt = 0
 		default:
-			bo.delayTime = 2 * bo.delayTime
-			bo.attempt--
-			log.Warn("unexpected error, retry", zap.Error(err))
+			switch status.Code(e) {
+			case codes.Unavailable, codes.Aborted:
+				bo.delayTime = 2 * bo.delayTime
+				bo.attempt--
+			default:
+				// Unexcepted error
+				bo.delayTime = 0
+				bo.attempt = 0
+				log.Warn("unexcepted error, stop to retry", zap.Error(err))
+			}
 		}
 	}
 	if bo.delayTime > bo.maxDelayTime {
