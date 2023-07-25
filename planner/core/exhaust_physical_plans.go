@@ -231,6 +231,11 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 			joins = append(joins, mergeJoin)
 		}
 	}
+
+	if len(joins) > 0 {
+
+	}
+
 	// If TiDB_SMJ hint is existed, it should consider enforce merge join,
 	// because we can't trust lhsChildProperty completely.
 	if (p.preferJoinType&preferMergeJoin) > 0 ||
