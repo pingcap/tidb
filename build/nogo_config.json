@@ -498,6 +498,18 @@
       "plugin/conn_ip_example/": "plugin/conn_ip_example/"
     },
     "only_files": {
+      "planer/core/casetest/binaryplan": "planer/core/casetest/binaryplan",
+      "planer/core/casetest/cbotest": "planer/core/casetest/cbotest",
+      "planer/core/casetest/enforcempp": "planer/core/casetest/enforcempp",
+      "planer/core/casetest/flatplan": "planer/core/casetest/flatplan",
+      "planer/core/casetest/hint": "planer/core/casetest/hint",
+      "planer/core/casetest/mpp": "planer/core/casetest/mpp",
+      "planer/core/casetest/partition": "planer/core/casetest/partition",
+      "planer/core/casetest/pushdown": "planer/core/casetest/pushdown",
+      "planer/core/casetest/rule": "planer/core/casetest/rule",
+      "planer/core/casetest/scalarsubquery": "planer/core/casetest/scalarsubquery",
+      "planer/core/casetest/testdata": "planer/core/casetest/testdata",
+      "planer/core/casetest/windows": "planer/core/casetest/windows",
       "autoid_service/": "autoid_service",
       "bindinfo/": "bindinfo",
       "br/pkg/lightning/": "br/pkg/lightning/",
