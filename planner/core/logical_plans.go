@@ -119,6 +119,7 @@ const (
 	preferHJProbe
 	preferHashJoin
 	preferMergeJoin
+	preferNoMergeJoin
 	preferBCJoin
 	preferShuffleJoin
 	preferRewriteSemiJoin

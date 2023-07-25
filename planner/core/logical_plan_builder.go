@@ -73,6 +73,8 @@ const (
 	TiDBMergeJoin = "tidb_smj"
 	// HintSMJ is hint enforce merge join.
 	HintSMJ = "merge_join"
+	// HintNoMergeJoin is the hint to enforce the query not to use merge join.
+	HintNoMergeJoin = "no_merge_join"
 
 	// TiDBBroadCastJoin indicates applying broadcast join by force.
 	TiDBBroadCastJoin = "tidb_bcj"
@@ -600,6 +602,14 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if hintInfo.ifPreferMergeJoin(rhsAlias) {
 		p.preferJoinType |= preferMergeJoin
 		p.rightPreferJoinType |= preferMergeJoin
+	}
+	if hintInfo.ifPreferNoMergeJoin(lhsAlias) {
+		p.preferJoinType |= preferNoMergeJoin
+		p.leftPreferJoinType |= preferNoMergeJoin
+	}
+	if hintInfo.ifPreferNoMergeJoin(rhsAlias) {
+		p.preferJoinType |= preferNoMergeJoin
+		p.rightPreferJoinType |= preferNoMergeJoin
 	}
 	if hintInfo.ifPreferBroadcastJoin(lhsAlias) {
 		p.preferJoinType |= preferBCJoin
@@ -3710,6 +3720,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
 	var (
 		sortMergeTables, inljTables, inlhjTables, inlmjTables, hashJoinTables, bcTables []hintTableInfo
+<<<<<<< HEAD
+=======
+		noHashJoinTables, noMergeJoinTables                                             []hintTableInfo
+>>>>>>> ef27b0ef7a6 (planner: support `no_merge_join` hint on optimizer (#45562))
 		shuffleJoinTables                                                               []hintTableInfo
 		indexHintList, indexMergeHintList                                               []indexHintInfo
 		tiflashTables, tikvTables                                                       []hintTableInfo
@@ -3724,7 +3738,11 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
 		switch hint.HintName.L {
+<<<<<<< HEAD
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
+=======
+		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ, HintNoHashJoin, HintNoMergeJoin,
+>>>>>>> ef27b0ef7a6 (planner: support `no_merge_join` hint on optimizer (#45562))
 			TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge, HintLeading:
 			if len(hint.Tables) == 0 {
 				b.pushHintWithoutTableWarning(hint)
@@ -3747,6 +3765,13 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			inlmjTables = append(inlmjTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case TiDBHashJoin, HintHJ:
 			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+<<<<<<< HEAD
+=======
+		case HintNoHashJoin:
+			noHashJoinTables = append(noHashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+		case HintNoMergeJoin:
+			noMergeJoinTables = append(noMergeJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+>>>>>>> ef27b0ef7a6 (planner: support `no_merge_join` hint on optimizer (#45562))
 		case HintMPP1PhaseAgg:
 			aggHints.preferAggType |= preferMPP1PhaseAgg
 		case HintMPP2PhaseAgg:
@@ -3857,6 +3882,11 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		shuffleJoinTables:         shuffleJoinTables,
 		indexNestedLoopJoinTables: indexNestedLoopJoinTables{inljTables, inlhjTables, inlmjTables},
 		hashJoinTables:            hashJoinTables,
+<<<<<<< HEAD
+=======
+		noHashJoinTables:          noHashJoinTables,
+		noMergeJoinTables:         noMergeJoinTables,
+>>>>>>> ef27b0ef7a6 (planner: support `no_merge_join` hint on optimizer (#45562))
 		indexHintList:             indexHintList,
 		tiflashTables:             tiflashTables,
 		tikvTables:                tikvTables,
@@ -7062,6 +7092,12 @@ func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 // containDifferentJoinTypes checks whether `preferJoinType` contains different
 // join types.
 func containDifferentJoinTypes(preferJoinType uint) bool {
+<<<<<<< HEAD
+=======
+	preferJoinType &= ^preferNoHashJoin
+	preferJoinType &= ^preferNoMergeJoin
+
+>>>>>>> ef27b0ef7a6 (planner: support `no_merge_join` hint on optimizer (#45562))
 	inlMask := preferRightAsINLJInner ^ preferLeftAsINLJInner
 	inlhjMask := preferRightAsINLHJInner ^ preferLeftAsINLHJInner
 	inlmjMask := preferRightAsINLMJInner ^ preferLeftAsINLMJInner

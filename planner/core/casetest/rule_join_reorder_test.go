@@ -61,6 +61,31 @@ func TestStraightJoinHint(t *testing.T) {
 	runJoinReorderTestData(t, tk, "TestStraightJoinHint")
 }
 
+<<<<<<< HEAD:planner/core/casetest/rule_join_reorder_test.go
+=======
+func TestNoHashJoinHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, b int, key(a));")
+	tk.MustExec("create table t2(a int, b int, key(a));")
+	tk.MustExec("create table t3(a int, b int, key(a));")
+	tk.MustExec("create table t4(a int, b int, key(a));")
+	runJoinReorderTestData(t, tk, "TestNoHashJoinHint")
+}
+
+func TestNoMergeJoinHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, key(a));")
+	tk.MustExec("create table t2(a int, key(a));")
+	tk.MustExec("create table t3(a int, key(a));")
+	tk.MustExec("create table t4(a int, key(a));")
+	runJoinReorderTestData(t, tk, "TestNoMergeJoinHint")
+}
+
+>>>>>>> ef27b0ef7a6 (planner: support `no_merge_join` hint on optimizer (#45562)):planner/core/casetest/rule/rule_join_reorder_test.go
 func TestLeadingJoinHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

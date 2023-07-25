@@ -31,6 +31,41 @@
     ]
   },
   {
+<<<<<<< HEAD:planner/core/casetest/testdata/join_reorder_suite_in.json
+=======
+    "name": "TestNoHashJoinHint",
+    "cases": [
+      "select /*+ no_hash_join() */ * from t1, t2",
+      "select /*+ no_hash_join(t1), hash_join(t1) */ * from t1, t2",
+      "select /*+ no_hash_join(t1), hash_join(t2) */ * from t1, t2",
+      "select /*+ no_hash_join(t1) */ * from t1, t2",
+      "select /*+ no_hash_join(t1, t2) */ * from t1, t2",
+      "select /*+ no_hash_join(t1) */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ no_hash_join(t1, t2) */ * from t1, t2 where t1.b=t2.b",
+      "select /*+ no_hash_join(t1) */ * from t1, t2 where t1.a=t2.a and t1.b=t2.b",
+      "select /*+ no_hash_join(t2) */ * from t1 left join t2 on t1.b=t2.b",
+      "select /*+ no_hash_join(t2) */ * from t1 left join t2 on t1.a=t2.a",
+      "select /*+ no_hash_join(t2) */ * from t1 right join t2 on t1.b=t2.b",
+      "select /*+ no_hash_join(t2) */ * from t1 right join t2 on t1.a=t2.a",
+      "select /*+ leading(t4, t3, t2, t1), no_hash_join(t2, t3) */ * from t1, t2, t3, t4",
+      "select /*+ leading(t1, t2, t3, t4), hash_join(t1, t2), no_hash_join(t3), hash_join(t4) */ * from t1, t2, t3, t4"
+    ]
+  },
+  {
+    "name": "TestNoMergeJoinHint",
+    "cases": [
+      "select /*+ no_merge_join() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ no_merge_join(t1), merge_join(t1) */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ no_merge_join(t1), merge_join(t2) */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ no_merge_join(t1) */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ no_merge_join(t1, t2) */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ no_merge_join(t2) */ * from t1 right join t2 on t1.a=t2.a",
+      "select /*+ leading(t4, t3, t2, t1), no_merge_join(t2, t3) */ * from t1, t2, t3, t4 where t1.a=t2.a and t2.a=t3.a and t3.a=t4.a",
+      "select /*+ leading(t1, t2, t3, t4), merge_join(t1, t2), no_merge_join(t3), merge_join(t4) */ * from t1, t2, t3, t4 where t1.a=t2.a and t2.a=t3.a and t3.a=t4.a"
+    ]
+  },
+  {
+>>>>>>> ef27b0ef7a6 (planner: support `no_merge_join` hint on optimizer (#45562)):planner/core/casetest/rule/testdata/join_reorder_suite_in.json
     "name": "TestLeadingJoinHint",
     "cases": [
       "select /*+ leading(t, t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
