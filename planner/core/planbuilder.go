@@ -93,6 +93,11 @@ type tableHintInfo struct {
 	broadcastJoinTables []hintTableInfo
 	shuffleJoinTables   []hintTableInfo
 	hashJoinTables      []hintTableInfo
+<<<<<<< HEAD
+=======
+	noHashJoinTables    []hintTableInfo
+	noMergeJoinTables   []hintTableInfo
+>>>>>>> ef27b0ef7a6 (planner: support `no_merge_join` hint on optimizer (#45562))
 	indexHintList       []indexHintInfo
 	tiflashTables       []hintTableInfo
 	tikvTables          []hintTableInfo
@@ -237,6 +242,17 @@ func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.hashJoinTables)
 }
 
+<<<<<<< HEAD
+=======
+func (info *tableHintInfo) ifPreferNoHashJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noHashJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferNoMergeJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noMergeJoinTables)
+}
+
+>>>>>>> ef27b0ef7a6 (planner: support `no_merge_join` hint on optimizer (#45562))
 func (info *tableHintInfo) ifPreferHJBuild(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.hjBuildTables)
 }
