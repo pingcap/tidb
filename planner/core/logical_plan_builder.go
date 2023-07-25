@@ -713,8 +713,8 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 		return
 	}
 
-	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
-	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
+	lhsAlias := extractTableAlias(p.children[0], p.SelectBlockOffset())
+	rhsAlias := extractTableAlias(p.children[1], p.SelectBlockOffset())
 	if hintInfo.ifPreferMergeJoin(lhsAlias) {
 		p.preferJoinType |= preferMergeJoin
 		p.leftPreferJoinType |= preferMergeJoin
@@ -796,11 +796,11 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 		p.rightPreferJoinType |= preferHJProbe
 	}
 	hasConflict := false
-	if !p.ctx.GetSessionVars().EnableAdvancedJoinHint || p.ctx.GetSessionVars().StmtCtx.StraightJoinOrder {
+	if !p.SCtx().GetSessionVars().EnableAdvancedJoinHint || p.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
 		if containDifferentJoinTypes(p.preferJoinType) {
 			hasConflict = true
 		}
-	} else if p.ctx.GetSessionVars().EnableAdvancedJoinHint {
+	} else if p.SCtx().GetSessionVars().EnableAdvancedJoinHint {
 		if containDifferentJoinTypes(p.leftPreferJoinType) || containDifferentJoinTypes(p.rightPreferJoinType) {
 			hasConflict = true
 		}
@@ -808,7 +808,7 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if hasConflict {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
-		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
 		p.preferJoinType = 0
 	}
 	// set the join order
@@ -878,7 +878,7 @@ func (p *LogicalJoin) setPreferredJoinType() {
 	if containDifferentJoinTypes(p.preferJoinType) {
 		errMsg := "Join hints conflict after join reorder phase, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
-		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
 		p.preferJoinType = 0
 	}
 }
@@ -905,11 +905,11 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		if ds.preferStoreType&preferTiKV == 0 {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
-				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
+				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
 			warning := ErrInternal.GenWithStack(errMsg)
-			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
 		} else {
-			ds.ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have set a hint to read table `" + hintTbl.tblName.O + "` from TiKV.")
+			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have set a hint to read table `" + hintTbl.tblName.O + "` from TiKV.")
 		}
 	}
 	if hintTbl := hintInfo.ifPreferTiFlash(alias); hintTbl != nil {
@@ -919,7 +919,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			errMsg := fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s.%s",
 				alias.dbName.L, alias.tblName.L)
 			warning := ErrInternal.GenWithStack(errMsg)
-			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
 			ds.preferStoreType = 0
 			return
 		}
@@ -933,9 +933,9 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		if ds.preferStoreType&preferTiFlash == 0 {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
-				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
+				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
 			warning := ErrInternal.GenWithStack(errMsg)
-			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
 	}
 }
@@ -4524,7 +4524,7 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	tp.SetFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
 	return &expression.Column{
 		RetType:  tp,
-		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
 		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraHandleName),
 	}
@@ -4544,7 +4544,7 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 	}
 	pidCol := &expression.Column{
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
-		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraPhysTblID,
 		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPhysTblIdName),
 	}
@@ -5152,10 +5152,10 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 			changed       bool
 			err           error
 		)
-		check := ds.ctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.isForUpdateRead
-		check = check && ds.ctx.GetSessionVars().ConnectionID > 0
+		check := ds.SCtx().GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.isForUpdateRead
+		check = check && ds.SCtx().GetSessionVars().ConnectionID > 0
 		if check {
-			latestIndexes, changed, err = getLatestIndexInfo(ds.ctx, ds.table.Meta().ID, 0)
+			latestIndexes, changed, err = getLatestIndexInfo(ds.SCtx(), ds.table.Meta().ID, 0)
 			if err != nil {
 				ds.fdSet = fds
 				return fds
@@ -5593,7 +5593,7 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 
 	setIsInApplyForCTE(innerPlan, join.Schema())
 	ap := &LogicalApply{LogicalJoin: *join, NoDecorrelate: markNoDecorrelate}
-	ap.tp = plancodec.TypeApply
+	ap.SetTP(plancodec.TypeApply)
 	ap.self = ap
 	return ap, nil
 }

@@ -481,7 +481,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateJoinOrderNode(joinNodePlans []L
 
 // baseNodeCumCost calculate the cumulative cost of the node in the join group.
 func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode LogicalPlan) float64 {
-	cost := groupNode.statsInfo().RowCount
+	cost := groupNode.StatsInfo().RowCount
 	for _, child := range groupNode.Children() {
 		cost += s.baseNodeCumCost(child)
 	}
@@ -643,7 +643,7 @@ func (s *baseSingleGroupJoinOrderSolver) setNewJoinWithHint(newJoin *LogicalJoin
 
 // calcJoinCumCost calculates the cumulative cost of the join node.
 func (*baseSingleGroupJoinOrderSolver) calcJoinCumCost(join LogicalPlan, lNode, rNode *jrNode) float64 {
-	return join.statsInfo().RowCount + lNode.cumCost + rNode.cumCost
+	return join.StatsInfo().RowCount + lNode.cumCost + rNode.cumCost
 }
 
 func (*joinReOrderSolver) name() string {
@@ -771,16 +771,16 @@ func (t *joinReorderTrace) traceJoinReorder(p LogicalPlan) {
 		return
 	}
 	if len(t.initial) > 0 {
-		t.final = allJoinOrderToString(extractJoinAndDataSource(p.buildPlanTrace()))
+		t.final = allJoinOrderToString(extractJoinAndDataSource(p.BuildPlanTrace()))
 		return
 	}
-	t.initial = allJoinOrderToString(extractJoinAndDataSource(p.buildPlanTrace()))
+	t.initial = allJoinOrderToString(extractJoinAndDataSource(p.BuildPlanTrace()))
 }
 
 func (t *joinReorderTrace) appendLogicalJoinCost(join LogicalPlan, cost float64) {
 	if t == nil || t.opt == nil || t.opt.tracer == nil {
 		return
 	}
-	joinMapKey := allJoinOrderToString(extractJoinAndDataSource(join.buildPlanTrace()))
+	joinMapKey := allJoinOrderToString(extractJoinAndDataSource(join.BuildPlanTrace()))
 	t.cost[joinMapKey] = cost
 }

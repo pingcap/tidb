@@ -70,7 +70,7 @@ func TestPlanStatsLoad(t *testing.T) {
 			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
 				switch pp := p.(type) {
 				case *plannercore.PhysicalTableReader:
-					stats := pp.Stats().HistColl
+					stats := pp.StatsInfo().HistColl
 					require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[1].ID))
 					require.Greater(t, countFullStats(stats, tableInfo.Columns[2].ID), 0)
 				default:
@@ -84,7 +84,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				pua, ok := p.(*plannercore.PhysicalUnionAll)
 				require.True(t, ok)
 				for _, child := range pua.Children() {
-					require.Greater(t, countFullStats(child.Stats().HistColl, tableInfo.Columns[2].ID), 0)
+					require.Greater(t, countFullStats(child.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 				}
 			},
 		},
@@ -93,8 +93,8 @@ func TestPlanStatsLoad(t *testing.T) {
 			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
 				pp, ok := p.(plannercore.PhysicalPlan)
 				require.True(t, ok)
-				require.Greater(t, countFullStats(pp.Children()[0].Stats().HistColl, tableInfo.Columns[3].ID), 0)
-				require.Greater(t, countFullStats(pp.Children()[1].Stats().HistColl, tableInfo.Columns[3].ID), 0)
+				require.Greater(t, countFullStats(pp.Children()[0].StatsInfo().HistColl, tableInfo.Columns[3].ID), 0)
+				require.Greater(t, countFullStats(pp.Children()[1].StatsInfo().HistColl, tableInfo.Columns[3].ID), 0)
 			},
 		},
 		{ // Apply
@@ -106,8 +106,8 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.True(t, ok)
 				left := pa.PhysicalHashJoin.Children()[0]
 				right := pa.PhysicalHashJoin.Children()[0]
-				require.Greater(t, countFullStats(left.Stats().HistColl, tableInfo.Columns[2].ID), 0)
-				require.Greater(t, countFullStats(right.Stats().HistColl, tableInfo.Columns[3].ID), 0)
+				require.Greater(t, countFullStats(left.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
+				require.Greater(t, countFullStats(right.StatsInfo().HistColl, tableInfo.Columns[3].ID), 0)
 			},
 		},
 		{ // > Any
@@ -117,7 +117,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.True(t, ok)
 				ptr, ok := ph.Children()[0].(*plannercore.PhysicalTableReader)
 				require.True(t, ok)
-				require.Greater(t, countFullStats(ptr.Stats().HistColl, tableInfo.Columns[2].ID), 0)
+				require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 			},
 		},
 		{ // in
@@ -127,7 +127,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.True(t, ok)
 				ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
 				require.True(t, ok)
-				require.Greater(t, countFullStats(ptr.Stats().HistColl, tableInfo.Columns[2].ID), 0)
+				require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 			},
 		},
 		{ // not in
@@ -137,7 +137,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.True(t, ok)
 				ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
 				require.True(t, ok)
-				require.Greater(t, countFullStats(ptr.Stats().HistColl, tableInfo.Columns[2].ID), 0)
+				require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 			},
 		},
 		{ // exists
@@ -147,7 +147,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.True(t, ok)
 				ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
 				require.True(t, ok)
-				require.Greater(t, countFullStats(ptr.Stats().HistColl, tableInfo.Columns[2].ID), 0)
+				require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 			},
 		},
 		{ // not exists
@@ -157,7 +157,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.True(t, ok)
 				ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
 				require.True(t, ok)
-				require.Greater(t, countFullStats(ptr.Stats().HistColl, tableInfo.Columns[2].ID), 0)
+				require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 			},
 		},
 		{ // CTE
@@ -171,7 +171,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.True(t, ok)
 				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableReader)
 				require.True(t, ok)
-				require.Greater(t, countFullStats(reader.Stats().HistColl, tableInfo.Columns[2].ID), 0)
+				require.Greater(t, countFullStats(reader.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 			},
 		},
 		{ // recursive CTE
@@ -183,7 +183,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.True(t, ok)
 				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableReader)
 				require.True(t, ok)
-				require.Greater(t, countFullStats(reader.Stats().HistColl, tableInfo.Columns[2].ID), 0)
+				require.Greater(t, countFullStats(reader.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 			},
 		},
 		{ // check idx(b)
@@ -193,7 +193,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.True(t, ok)
 				pis, ok := pr.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 				require.True(t, ok)
-				require.True(t, pis.Stats().HistColl.Indices[1].IsEssentialStatsLoaded())
+				require.True(t, pis.StatsInfo().HistColl.Indices[1].IsEssentialStatsLoaded())
 			},
 		},
 	}
@@ -287,7 +287,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	require.NoError(t, err) // not fail sql for timeout when pseudo=true
 	switch pp := plan.(type) {
 	case *plannercore.PhysicalTableReader:
-		stats := pp.Stats().HistColl
+		stats := pp.StatsInfo().HistColl
 		require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[0].ID))
 		require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[2].ID)) // pseudo stats
 	default:

@@ -108,7 +108,7 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 		DBName:  model.NewCIStr("test"),
 	})
 	dataSourceNode.schema = dsSchema
-	dataSourceNode.stats = &property.StatsInfo{StatsVersion: statistics.PseudoVersion}
+	dataSourceNode.SetStats(&property.StatsInfo{StatsVersion: statistics.PseudoVersion})
 	path := &util.AccessPath{
 		IdxCols:    append(make([]*expression.Column, 0, 5), dsSchema.Columns...),
 		IdxColLens: []int{types.UnspecifiedLength, types.UnspecifiedLength, 2, types.UnspecifiedLength, 2},
@@ -179,7 +179,7 @@ type indexJoinTestCase struct {
 }
 
 func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase *indexJoinTestCase, msgAndArgs ...interface{}) *indexJoinBuildHelper {
-	ctx := testCtx.dataSourceNode.ctx
+	ctx := testCtx.dataSourceNode.SCtx()
 	ctx.GetSessionVars().RangeMaxSize = testCase.rangeMaxSize
 	dataSourceNode := testCtx.dataSourceNode
 	joinNode := testCtx.joinNode
@@ -343,7 +343,7 @@ func checkRangeFallbackAndReset(t *testing.T, ctx sessionctx.Context, expectedRa
 
 func TestRangeFallbackForAnalyzeLookUpFilters(t *testing.T) {
 	ijCtx := prepareForAnalyzeLookUpFilters()
-	ctx := ijCtx.dataSourceNode.ctx
+	ctx := ijCtx.dataSourceNode.SCtx()
 	dsSchema := ijCtx.dataSourceNode.schema
 
 	type testOutput struct {

@@ -91,7 +91,7 @@ func windowIsTopN(p *LogicalSelection) (bool, uint64) {
 
 	// Check if filter on window function
 	windowColumns := child.GetWindowResultColumns()
-	if len(windowColumns) != 1 || !(column.Equal(p.ctx, windowColumns[0])) {
+	if len(windowColumns) != 1 || !(column.Equal(p.SCtx(), windowColumns[0])) {
 		return false, 0
 	}
 
@@ -143,7 +143,7 @@ func (s *LogicalSelection) deriveTopN(opt *logicalOptimizeOp) LogicalPlan {
 			byItems = append(byItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 		}
 		// Build derived Limit
-		derivedTopN := LogicalTopN{Count: limitValue, ByItems: byItems, PartitionBy: child.GetPartitionBy()}.Init(grandChild.ctx, grandChild.blockOffset)
+		derivedTopN := LogicalTopN{Count: limitValue, ByItems: byItems, PartitionBy: child.GetPartitionBy()}.Init(grandChild.SCtx(), grandChild.SelectBlockOffset())
 		derivedTopN.SetChildren(grandChild)
 		/* return select->datasource->topN->window */
 		child.SetChildren(derivedTopN)

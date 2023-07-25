@@ -157,16 +157,16 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 		var err error
 		var newAgg *aggregation.AggFuncDesc
 		if allFirstRow {
-			newAgg, err = aggregation.NewAggFuncDesc(la.ctx, ast.AggFuncFirstRow, []expression.Expression{expression.NewOne()}, false)
+			newAgg, err = aggregation.NewAggFuncDesc(la.SCtx(), ast.AggFuncFirstRow, []expression.Expression{expression.NewOne()}, false)
 		} else {
-			newAgg, err = aggregation.NewAggFuncDesc(la.ctx, ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
+			newAgg, err = aggregation.NewAggFuncDesc(la.SCtx(), ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
 		}
 		if err != nil {
 			return err
 		}
 		la.AggFuncs = append(la.AggFuncs, newAgg)
 		col := &expression.Column{
-			UniqueID: la.ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID: la.SCtx().GetSessionVars().AllocPlanColumnID(),
 			RetType:  newAgg.RetTp,
 		}
 		la.schema.Columns = append(la.schema.Columns, col)
@@ -301,7 +301,7 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 				for j, col := range schema.Columns {
 					exprs[j] = col
 				}
-				proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(p.ctx, p.blockOffset)
+				proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(p.SCtx(), p.SelectBlockOffset())
 				proj.SetSchema(schema)
 
 				proj.SetChildren(child)
@@ -603,7 +603,7 @@ func addConstOneForEmptyProjection(p LogicalPlan) {
 
 	constOne := expression.NewOne()
 	proj.schema.Append(&expression.Column{
-		UniqueID: proj.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: proj.SCtx().GetSessionVars().AllocPlanColumnID(),
 		RetType:  constOne.GetType(),
 	})
 	proj.Exprs = append(proj.Exprs, &expression.Constant{

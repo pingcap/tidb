@@ -701,7 +701,7 @@ func TestAllocID(t *testing.T) {
 	ctx := MockContext()
 	pA := DataSource{}.Init(ctx, 0)
 	pB := DataSource{}.Init(ctx, 0)
-	require.Equal(t, pB.id, pA.id+1)
+	require.Equal(t, pB.ID(), pA.ID()+1)
 }
 
 func checkDataSourceCols(p LogicalPlan, t *testing.T, ans map[int][]string, comment string) {

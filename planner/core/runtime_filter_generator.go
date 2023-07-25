@@ -81,7 +81,7 @@ func (generator *RuntimeFilterGenerator) generateRuntimeFilterInterval(hashJoinP
 	// precondition: the storage type of hash join must be TiFlash
 	if hashJoinPlan.storeTp != kv.TiFlash {
 		logutil.BgLogger().Warn("RF only support TiFlash compute engine while storage type of hash join node is not TiFlash",
-			zap.Int("PhysicalHashJoinId", hashJoinPlan.id),
+			zap.Int("PhysicalHashJoinId", hashJoinPlan.ID()),
 			zap.String("StoreTP", hashJoinPlan.storeTp.Name()))
 		return
 	}
@@ -114,17 +114,17 @@ func (generator *RuntimeFilterGenerator) assignRuntimeFilter(physicalTableScan *
 		for _, runtimeFilter := range currentColumnRFList {
 			// compute rf mode
 			var rfMode RuntimeFilterMode
-			if cacheBuildNodeIDToRFMode[runtimeFilter.buildNode.id] != 0 {
-				rfMode = cacheBuildNodeIDToRFMode[runtimeFilter.buildNode.id]
+			if cacheBuildNodeIDToRFMode[runtimeFilter.buildNode.ID()] != 0 {
+				rfMode = cacheBuildNodeIDToRFMode[runtimeFilter.buildNode.ID()]
 			} else {
 				rfMode = generator.calculateRFMode(runtimeFilter.buildNode, physicalTableScan)
-				cacheBuildNodeIDToRFMode[runtimeFilter.buildNode.id] = rfMode
+				cacheBuildNodeIDToRFMode[runtimeFilter.buildNode.ID()] = rfMode
 			}
 			// todo support global RF
 			if rfMode == variable.RFGlobal {
 				logutil.BgLogger().Debug("Now we don't support global RF. Remove it",
-					zap.Int("BuildNodeId", runtimeFilter.buildNode.id),
-					zap.Int("TargetNodeId", physicalTableScan.id))
+					zap.Int("BuildNodeId", runtimeFilter.buildNode.ID()),
+					zap.Int("TargetNodeId", physicalTableScan.ID()))
 				continue
 			}
 			runtimeFilter.rfMode = rfMode
@@ -162,7 +162,7 @@ func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) b
 		if hashJoinPlan.JoinType == LeftOuterJoin || hashJoinPlan.JoinType == AntiSemiJoin ||
 			hashJoinPlan.JoinType == LeftOuterSemiJoin || hashJoinPlan.JoinType == AntiLeftOuterSemiJoin {
 			logutil.BgLogger().Debug("Join type does not match RF pattern when build side is on the right",
-				zap.Int32("PlanNodeId", int32(hashJoinPlan.id)),
+				zap.Int32("PlanNodeId", int32(hashJoinPlan.ID())),
 				zap.String("JoinType", hashJoinPlan.JoinType.String()))
 			return false
 		}
@@ -170,7 +170,7 @@ func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) b
 		// case2: build side is on the left
 		if hashJoinPlan.JoinType == RightOuterJoin {
 			logutil.BgLogger().Debug("Join type does not match RF pattern when build side is on the left",
-				zap.Int32("PlanNodeId", int32(hashJoinPlan.id)),
+				zap.Int32("PlanNodeId", int32(hashJoinPlan.ID())),
 				zap.String("JoinType", hashJoinPlan.JoinType.String()))
 			return false
 		}
@@ -233,7 +233,7 @@ func (generator *RuntimeFilterGenerator) belongsToSameFragment(currentNode Physi
 		// terminal traversal
 		return false
 	case *PhysicalTableScan:
-		if currentNode.ID() == targetNode.id {
+		if currentNode.ID() == targetNode.ID() {
 			return true
 		}
 		return false

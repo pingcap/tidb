@@ -88,7 +88,7 @@ func NewRuntimeFilter(rfIDGenerator *util.IDGenerator, eqPredicate *expression.S
 		targetExprUniqueID = eqPredicate.GetArgs()[1].(*expression.Column).UniqueID
 	}
 
-	rfTypes := buildNode.ctx.GetSessionVars().GetRuntimeFilterTypes()
+	rfTypes := buildNode.SCtx().GetSessionVars().GetRuntimeFilterTypes()
 	result := make([]*RuntimeFilter, 0, len(rfTypes))
 	for _, rfType := range rfTypes {
 		rf := &RuntimeFilter{
@@ -143,12 +143,12 @@ func (rf *RuntimeFilter) String() string {
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "id=%d", rf.id)
 	builder.WriteString(", ")
-	fmt.Fprintf(&builder, "buildNodeID=%d", rf.buildNode.id)
+	fmt.Fprintf(&builder, "buildNodeID=%d", rf.buildNode.ID())
 	builder.WriteString(", ")
 	if rf.targetNode == nil {
 		fmt.Fprintf(&builder, "targetNodeID=nil")
 	} else {
-		fmt.Fprintf(&builder, "targetNodeID=%d", rf.targetNode.id)
+		fmt.Fprintf(&builder, "targetNodeID=%d", rf.targetNode.ID())
 	}
 	builder.WriteString(", ")
 	fmt.Fprintf(&builder, "srcColumn=")
@@ -181,12 +181,12 @@ func (rf *RuntimeFilter) Clone() *RuntimeFilter {
 	if rf.buildNode == nil {
 		cloned.buildNodeID = rf.buildNodeID
 	} else {
-		cloned.buildNodeID = rf.buildNode.id
+		cloned.buildNodeID = rf.buildNode.ID()
 	}
 	if rf.targetNode == nil {
 		cloned.targetNodeID = rf.targetNodeID
 	} else {
-		cloned.targetNodeID = rf.targetNode.id
+		cloned.targetNodeID = rf.targetNode.ID()
 	}
 
 	for _, srcExpr := range rf.srcExprList {

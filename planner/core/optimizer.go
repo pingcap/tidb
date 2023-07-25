@@ -132,7 +132,7 @@ func (op *logicalOptimizeOp) appendBeforeRuleOptimize(index int, name string, be
 	if op == nil || op.tracer == nil {
 		return
 	}
-	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.buildPlanTrace())
+	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.BuildPlanTrace())
 }
 
 func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp string, reason, action func() string) {
@@ -146,7 +146,7 @@ func (op *logicalOptimizeOp) recordFinalLogicalPlan(final LogicalPlan) {
 	if op == nil || op.tracer == nil {
 		return
 	}
-	op.tracer.RecordFinalLogicalPlan(final.buildPlanTrace())
+	op.tracer.RecordFinalLogicalPlan(final.BuildPlanTrace())
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
@@ -324,7 +324,7 @@ func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag 
 		refineCETrace(sctx)
 	}
 	if sessVars.StmtCtx.EnableOptimizeTrace {
-		sessVars.StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.buildPlanTrace())
+		sessVars.StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.BuildPlanTrace())
 	}
 	return logic, finalPlan, cost, nil
 }
@@ -515,7 +515,7 @@ func prunePhysicalColumnForHashJoinChild(sctx sessionctx.Context, hashJoin *Phys
 		ch := sender.children[0]
 		proj := PhysicalProjection{
 			Exprs: usedExprs,
-		}.Init(sctx, ch.statsInfo(), ch.SelectBlockOffset())
+		}.Init(sctx, ch.StatsInfo(), ch.SelectBlockOffset())
 
 		proj.SetSchema(prunedSchema)
 		proj.SetChildren(ch)
@@ -689,7 +689,7 @@ func rewriteTableScanAndAggArgs(physicalTableScan *PhysicalTableScan, aggFuncs [
 			if columnInfo.GetFlen() < resultColumnInfo.GetFlen() {
 				resultColumnInfo = columnInfo
 				resultColumn = &expression.Column{
-					UniqueID: physicalTableScan.ctx.GetSessionVars().AllocPlanColumnID(),
+					UniqueID: physicalTableScan.SCtx().GetSessionVars().AllocPlanColumnID(),
 					ID:       resultColumnInfo.ID,
 					RetType:  resultColumnInfo.FieldType.Clone(),
 					OrigName: fmt.Sprintf("%s.%s.%s", physicalTableScan.DBName.L, physicalTableScan.Table.Name.L, resultColumnInfo.Name),
@@ -1179,7 +1179,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 				panic(r) /* pass panic to upper function to handle */
 			}
 			if err == nil {
-				tracer.RecordFinalPlanTrace(plan.buildPlanTrace())
+				tracer.RecordFinalPlanTrace(plan.BuildPlanTrace())
 				stmtCtx.OptimizeTracer.Physical = tracer
 			}
 		}()

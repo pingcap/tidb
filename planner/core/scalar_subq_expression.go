@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/planner/core/internal/base"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -31,7 +32,7 @@ import (
 
 // ScalarSubqueryEvalCtx store the plan for the subquery, used by ScalarSubQueryExpr.
 type ScalarSubqueryEvalCtx struct {
-	basePlan
+	base.Plan
 
 	// The context for evaluating the subquery.
 	scalarSubQuery PhysicalPlan

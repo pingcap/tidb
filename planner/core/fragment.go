@@ -460,7 +460,7 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 		for i, col := range cols {
 			col.Index = i
 		}
-		proj := PhysicalProjection{Exprs: expression.Column2Exprs(cols)}.Init(cteReader.ctx, cteReader.stats, 0, nil)
+		proj := PhysicalProjection{Exprs: expression.Column2Exprs(cols)}.Init(cteReader.SCtx(), cteReader.StatsInfo(), 0, nil)
 		proj.SetSchema(cteReader.schema.Clone())
 		proj.SetChildren(receiver)
 		cteReader.SetChildren(proj)
