@@ -46,7 +46,7 @@ var longestTime time.Time
 type RunawayMatchType uint
 
 func init() {
-	longestTime, _ = time.Parse(time.DateOnly, fmt.Sprintf("%04d-%02d-%02d", 2099, 12, 31))
+	longestTime, _ = time.Parse(time.DateOnly, fmt.Sprintf("%04d-%02d-%02d", 2038, 1, 1))
 }
 
 const (

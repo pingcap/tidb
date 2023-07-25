@@ -299,9 +299,8 @@ func TestResourceGroupRunaway(t *testing.T) {
 	err = tk.QueryToErr("select /*+ resource_group(rg3) */ * from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
 	tk.MustGetErrCode("select /*+ resource_group(rg3) */ * from t", mysql.ErrResourceGroupQueryRunawayQuarantine)
-	time.Sleep(time.Second)
-	tk.MustQuery("select SQL_NO_CACHE resource_group_name, watch_text from mysql.tidb_runaway_quarantined_watch").
-		Check(testkit.Rows("rg3 select /*+ resource_group(rg3) */ * from t"))
+	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, watch_text from mysql.tidb_runaway_quarantined_watch", nil,
+		testkit.Rows("rg3 select /*+ resource_group(rg3) */ * from t"), maxWaitDuration, tryInterval)
 
 	tk.MustExec("alter resource group rg2 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=COOLDOWN)")
 	tk.MustQuery("select /*+ resource_group(rg2) */ * from t").Check(testkit.Rows("1"))
