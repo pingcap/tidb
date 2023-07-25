@@ -130,7 +130,7 @@ func TestSchedulerRun(t *testing.T) {
 	// 9. run subtask concurrently
 	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ int64, task []byte, step int64) (Scheduler, error) {
 		return mockScheduler, nil
-	}, WithConcurrentSubtask())
+	})
 	mockScheduler.On("InitSubtaskExecEnv", mock.Anything).Return(nil).Once()
 	mockPool.On("RunWithConcurrency", mock.Anything, mock.Anything).Return(nil).Once()
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending}).Return(&proto.Subtask{ID: 1, Type: tp}, nil).Once()
