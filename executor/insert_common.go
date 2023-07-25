@@ -113,7 +113,7 @@ func (e *InsertValues) insertCommon() *InsertValues {
 	return e
 }
 
-func (e *InsertValues) exec(_ context.Context, _ [][]types.Datum) error {
+func (*InsertValues) exec(context.Context, [][]types.Datum) error {
 	panic("derived should overload exec function")
 }
 
@@ -1185,7 +1185,7 @@ func (e *InsertValues) batchCheckAndInsert(
 	defer tracing.StartRegion(ctx, "InsertValues.batchCheckAndInsert").End()
 	start := time.Now()
 	// Get keys need to be checked.
-	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.Ctx(), e.Table, rows)
+	toBeCheckedRows, err := getKeysNeedCheck(e.Ctx(), e.Table, rows)
 	if err != nil {
 		return err
 	}
@@ -1556,6 +1556,6 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *InsertRuntimeStat) Tp() int {
+func (*InsertRuntimeStat) Tp() int {
 	return execdetails.TpInsertRuntimeStat
 }

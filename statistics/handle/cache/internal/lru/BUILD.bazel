@@ -4,7 +4,7 @@ go_library(
     name = "lru",
     srcs = ["lru_cache.go"],
     importpath = "github.com/pingcap/tidb/statistics/handle/cache/internal/lru",
-    visibility = ["//statistics/handle:__subpackages__"],
+    visibility = ["//statistics/handle/cache:__subpackages__"],
     deps = [
         "//statistics",
         "//statistics/handle/cache/internal",
