@@ -118,10 +118,10 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryHistory(t *testing.T) {
 	filename1 := "tidb-statements-2022-12-27T16-21-20.245.log"
 	filename2 := "tidb-statements.log"
 
-	file, err := os.Create(filename1)
+	file, err := os.CreateTemp("", filename1)
 	require.NoError(t, err)
 	defer func() {
-		require.NoError(t, os.Remove(filename1))
+		require.NoError(t, os.Remove(file.Name()))
 	}()
 	_, err = file.WriteString("{\"begin\":1672128520,\"end\":1672128530,\"digest\":\"digest1\",\"exec_count\":1}\n")
 	require.NoError(t, err)
@@ -129,16 +129,16 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
 
-	file, err = os.Create(filename2)
+	file2, err := os.Create(filename2)
 	require.NoError(t, err)
 	defer func() {
-		require.NoError(t, os.Remove(filename2))
+		require.NoError(t, os.Remove(file2.Name()))
 	}()
-	_, err = file.WriteString("{\"begin\":1672129270,\"end\":1672129280,\"digest\":\"digest3\",\"exec_count\":3}\n")
+	_, err = file2.WriteString("{\"begin\":1672129270,\"end\":1672129280,\"digest\":\"digest3\",\"exec_count\":3}\n")
 	require.NoError(t, err)
-	_, err = file.WriteString("{\"begin\":1672129380,\"end\":1672129390,\"digest\":\"digest4\",\"exec_count\":4}\n")
+	_, err = file2.WriteString("{\"begin\":1672129380,\"end\":1672129390,\"digest\":\"digest4\",\"exec_count\":4}\n")
 	require.NoError(t, err)
-	require.NoError(t, file.Close())
+	require.NoError(t, file2.Close())
 
 	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(2)
 	defer stmtSummary.Close()

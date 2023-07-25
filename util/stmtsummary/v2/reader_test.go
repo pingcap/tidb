@@ -96,27 +96,27 @@ func TestStmtFiles(t *testing.T) {
 	filename1 := "tidb-statements-2022-12-27T16-21-20.245.log"
 	filename2 := "tidb-statements.log"
 
-	file, err := os.Create(filename1)
+	file1, err := os.CreateTemp("", filename1)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, os.Remove(filename1))
 	}()
-	_, err = file.WriteString("{\"begin\":1672128520,\"end\":1672128530}\n")
+	_, err = file1.WriteString("{\"begin\":1672128520,\"end\":1672128530}\n")
 	require.NoError(t, err)
-	_, err = file.WriteString("{\"begin\":1672129270,\"end\":1672129280}\n")
+	_, err = file1.WriteString("{\"begin\":1672129270,\"end\":1672129280}\n")
 	require.NoError(t, err)
-	require.NoError(t, file.Close())
+	require.NoError(t, file1.Close())
 
-	file, err = os.Create(filename2)
+	file2, err := os.CreateTemp("", filename2)
 	require.NoError(t, err)
 	defer func() {
-		require.NoError(t, os.Remove(filename2))
+		require.NoError(t, os.Remove(file2.Name()))
 	}()
-	_, err = file.WriteString("{\"begin\":1672129270,\"end\":1672129280}\n")
+	_, err = file2.WriteString("{\"begin\":1672129270,\"end\":1672129280}\n")
 	require.NoError(t, err)
-	_, err = file.WriteString("{\"begin\":1672129380,\"end\":1672129390}\n")
+	_, err = file2.WriteString("{\"begin\":1672129380,\"end\":1672129390}\n")
 	require.NoError(t, err)
-	require.NoError(t, file.Close())
+	require.NoError(t, file2.Close())
 
 	func() {
 		files, err := newStmtFiles(context.Background(), nil)
@@ -254,10 +254,10 @@ func TestHistoryReader(t *testing.T) {
 	filename1 := "tidb-statements-2022-12-27T16-21-20.245.log"
 	filename2 := "tidb-statements.log"
 
-	file, err := os.Create(filename1)
+	file, err := os.CreateTemp("", filename1)
 	require.NoError(t, err)
 	defer func() {
-		require.NoError(t, os.Remove(filename1))
+		require.NoError(t, os.Remove(file.Name()))
 	}()
 	_, err = file.WriteString("{\"begin\":1672128520,\"end\":1672128530,\"digest\":\"digest1\",\"exec_count\":10}\n")
 	require.NoError(t, err)
@@ -265,16 +265,16 @@ func TestHistoryReader(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
 
-	file, err = os.Create(filename2)
+	file2, err := os.CreateTemp("", filename2)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, os.Remove(filename2))
 	}()
-	_, err = file.WriteString("{\"begin\":1672129270,\"end\":1672129280,\"digest\":\"digest2\",\"exec_count\":30}\n")
+	_, err = file2.WriteString("{\"begin\":1672129270,\"end\":1672129280,\"digest\":\"digest2\",\"exec_count\":30}\n")
 	require.NoError(t, err)
-	_, err = file.WriteString("{\"begin\":1672129380,\"end\":1672129390,\"digest\":\"digest3\",\"exec_count\":40}\n")
+	_, err = file2.WriteString("{\"begin\":1672129380,\"end\":1672129390,\"digest\":\"digest3\",\"exec_count\":40}\n")
 	require.NoError(t, err)
-	require.NoError(t, file.Close())
+	require.NoError(t, file2.Close())
 
 	timeLocation, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
@@ -407,10 +407,10 @@ func TestHistoryReader(t *testing.T) {
 func TestHistoryReaderInvalidLine(t *testing.T) {
 	filename := "tidb-statements.log"
 
-	file, err := os.Create(filename)
+	file, err := os.CreateTemp("", filename)
 	require.NoError(t, err)
 	defer func() {
-		require.NoError(t, os.Remove(filename))
+		require.NoError(t, os.Remove(file.Name()))
 	}()
 	_, err = file.WriteString("invalid header line\n")
 	require.NoError(t, err)
