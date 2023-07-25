@@ -421,26 +421,37 @@ func (d *dispatcher) dispatchSubTask(gTask *proto.Task, handle TaskFlowHandle, m
 		return nil
 	}
 	// select all available TiDB nodes for this global tasks.
-	serverNodes, err1 := handle.GetEligibleInstances(d.ctx, gTask)
-	logutil.BgLogger().Debug("eligible instances", zap.Int("num", len(serverNodes)))
+	for i := 0; i < retryTimes; i++ {
+		serverNodes, err1 := handle.GetEligibleInstances(d.ctx, gTask)
+		logutil.BgLogger().Debug("eligible instances", zap.Int("num", len(serverNodes)))
 
-	if err1 != nil {
-		return err1
-	}
-	if len(serverNodes) == 0 {
-		return errors.New("no available TiDB node")
-	}
-	subTasks := make([]*proto.Subtask, 0, len(metas))
-	for i, meta := range metas {
-		// we assign the subtask to the instance in a round-robin way.
-		pos := i % len(serverNodes)
-		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
-		logutil.BgLogger().Debug("create subtasks",
-			zap.Int("gTask.ID", int(gTask.ID)), zap.String("type", gTask.Type), zap.String("instanceID", instanceID))
-		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
+		if err1 != nil {
+			return err1
+		}
+		if len(serverNodes) == 0 {
+			logutil.BgLogger().Info("no eligible instances")
+			continue
+		}
+		subTasks := make([]*proto.Subtask, 0, len(metas))
+		for i, meta := range metas {
+			// we assign the subtask to the instance in a round-robin way.
+			pos := i % len(serverNodes)
+			instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
+			logutil.BgLogger().Debug("create subtasks",
+				zap.Int("gTask.ID", int(gTask.ID)), zap.String("type", gTask.Type), zap.String("instanceID", instanceID))
+			subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
+		}
+		return d.updateTask(gTask, gTask.State, subTasks, retrySQLTimes)
 	}
 
-	return d.updateTask(gTask, gTask.State, subTasks, retrySQLTimes)
+	for i := 0; i < retryTimes; i++ {
+		err := d.taskMgr.CancelGlobalTask(gTask.ID)
+		if err == nil {
+			break
+		}
+	}
+
+	return errors.New("cancel task failed")
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.
@@ -458,20 +469,20 @@ func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error)
 }
 
 // FilterNodesByLabels filter eligible instance by label:tidb_role.
-// Currently, only dist_worker can be selected as eligile instances.
+// Currently, server with label "all" or "background" can be selected as eligile instances.
 func FilterNodesByLabels(serverInfos map[string]*infosync.ServerInfo) []*infosync.ServerInfo {
 	serverNodes := make([]*infosync.ServerInfo, 0, len(serverInfos))
 	for _, serverInfo := range serverInfos {
 		// check server label.
 		if v, ok := serverInfo.Labels["tidb_role"]; ok {
-			if v == "dist_worker" {
+			logutil.BgLogger().Info("role", zap.String("role", v))
+			if v != "background" && v != "regular" && v != "all" {
+				v = "regular"
+			}
+			if v == "background" || v == "all" {
 				serverNodes = append(serverNodes, serverInfo)
 			}
-		}
-	}
-	// All serverNodes not setting the label or setting the wrong label, back to previous strategy.
-	if len(serverNodes) == 0 {
-		for _, serverInfo := range serverInfos {
+		} else {
 			serverNodes = append(serverNodes, serverInfo)
 		}
 	}
