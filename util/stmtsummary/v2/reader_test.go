@@ -268,7 +268,7 @@ func TestHistoryReader(t *testing.T) {
 	file2, err := os.CreateTemp("", filename2)
 	require.NoError(t, err)
 	defer func() {
-		require.NoError(t, os.Remove(filename2))
+		require.NoError(t, os.Remove(file2.Name()))
 	}()
 	_, err = file2.WriteString("{\"begin\":1672129270,\"end\":1672129280,\"digest\":\"digest2\",\"exec_count\":30}\n")
 	require.NoError(t, err)
