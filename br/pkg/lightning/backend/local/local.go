@@ -420,33 +420,33 @@ type BackendConfig struct {
 	MaxOpenFiles int
 	KeyspaceName string
 	// the scope when pause PD schedulers.
-	PausePDSchedulerScope config.PausePDSchedulerScope
-	IsRaftKV2             bool
+	PausePDSchedulerScope    config.PausePDSchedulerScope
+	RaftKV2SwithModeDuration time.Duration
 }
 
 // NewBackendConfig creates a new BackendConfig.
-func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string, isRaftKV2 bool) BackendConfig {
+func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string, raftKV2SwithModeDuration time.Duration) BackendConfig {
 	return BackendConfig{
-		PDAddr:                  cfg.TiDB.PdAddr,
-		LocalStoreDir:           cfg.TikvImporter.SortedKVDir,
-		MaxConnPerStore:         cfg.TikvImporter.RangeConcurrency,
-		ConnCompressType:        cfg.TikvImporter.CompressKVPairs,
-		WorkerConcurrency:       cfg.TikvImporter.RangeConcurrency * 2,
-		KVWriteBatchSize:        int64(cfg.TikvImporter.SendKVSize),
-		RegionSplitBatchSize:    cfg.TikvImporter.RegionSplitBatchSize,
-		RegionSplitConcurrency:  cfg.TikvImporter.RegionSplitConcurrency,
-		CheckpointEnabled:       cfg.Checkpoint.Enable,
-		MemTableSize:            int(cfg.TikvImporter.EngineMemCacheSize),
-		LocalWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
-		ShouldCheckTiKV:         cfg.App.CheckRequirements,
-		DupeDetectEnabled:       cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
-		DuplicateDetectOpt:      DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
-		StoreWriteBWLimit:       int(cfg.TikvImporter.StoreWriteBWLimit),
-		ShouldCheckWriteStall:   cfg.Cron.SwitchMode.Duration == 0,
-		MaxOpenFiles:            maxOpenFiles,
-		KeyspaceName:            keyspaceName,
-		PausePDSchedulerScope:   cfg.TikvImporter.PausePDSchedulerScope,
-		IsRaftKV2:               isRaftKV2,
+		PDAddr:                   cfg.TiDB.PdAddr,
+		LocalStoreDir:            cfg.TikvImporter.SortedKVDir,
+		MaxConnPerStore:          cfg.TikvImporter.RangeConcurrency,
+		ConnCompressType:         cfg.TikvImporter.CompressKVPairs,
+		WorkerConcurrency:        cfg.TikvImporter.RangeConcurrency * 2,
+		KVWriteBatchSize:         int64(cfg.TikvImporter.SendKVSize),
+		RegionSplitBatchSize:     cfg.TikvImporter.RegionSplitBatchSize,
+		RegionSplitConcurrency:   cfg.TikvImporter.RegionSplitConcurrency,
+		CheckpointEnabled:        cfg.Checkpoint.Enable,
+		MemTableSize:             int(cfg.TikvImporter.EngineMemCacheSize),
+		LocalWriterMemCacheSize:  int64(cfg.TikvImporter.LocalWriterMemCacheSize),
+		ShouldCheckTiKV:          cfg.App.CheckRequirements,
+		DupeDetectEnabled:        cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
+		DuplicateDetectOpt:       DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
+		StoreWriteBWLimit:        int(cfg.TikvImporter.StoreWriteBWLimit),
+		ShouldCheckWriteStall:    cfg.Cron.SwitchMode.Duration == 0,
+		MaxOpenFiles:             maxOpenFiles,
+		KeyspaceName:             keyspaceName,
+		PausePDSchedulerScope:    cfg.TikvImporter.PausePDSchedulerScope,
+		RaftKV2SwithModeDuration: raftKV2SwithModeDuration,
 	}
 }
 
@@ -476,6 +476,8 @@ type Backend struct {
 	metrics      *metric.Metrics
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
+
+	switchModeDuration time.Duration
 }
 
 var _ DiskUsage = (*Backend)(nil)
@@ -594,6 +596,8 @@ func NewBackend(
 		bufferPool:          membuf.NewPool(membuf.WithAllocator(alloc)),
 		writeLimiter:        writeLimiter,
 		logger:              log.FromContext(ctx),
+
+		switchModeDuration: config.RaftKV2SwithModeDuration,
 	}
 	if m, ok := metric.FromContext(ctx); ok {
 		local.metrics = m
@@ -1454,6 +1458,21 @@ func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, re
 		}()
 	}
 
+	if len(regionRanges) > 0 && local.switchModeDuration > 0 {
+		log.FromContext(ctx).Info("switch import mode of ranges", zap.ByteString("startKey", regionRanges[0].start), zap.ByteString("endKey", regionRanges[len(regionRanges)-1].end))
+		subCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		done, err := local.SwitchModeByKeyRanges(subCtx, regionRanges)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer func() {
+			cancel()
+			<-done
+		}()
+	}
+
 	log.FromContext(ctx).Info("start import engine", zap.Stringer("uuid", engineUUID),
 		zap.Int("region ranges", len(regionRanges)), zap.Int64("count", lfLength), zap.Int64("size", lfTotalSize))
 
@@ -1693,6 +1712,42 @@ func (local *Backend) LocalWriter(_ context.Context, cfg *backend.LocalWriterCon
 	}
 	engine := e.(*Engine)
 	return openLocalWriter(cfg, engine, local.tikvCodec, local.LocalWriterMemCacheSize, local.bufferPool.NewBuffer())
+}
+
+// SwitchModeByKeyRange will swith tikv mode for regions in the specific key range for multirocksdb.
+// This function will spawn a goroutine to keep switch mode periodically until the context is done.
+// The return done channel is used to notify the caller that the background goroutine is exited.
+func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []Range) (<-chan struct{}, error) {
+	switcher := NewTiKVModeSwitcher(local.tls, local.PDAddr, log.FromContext(ctx).Logger)
+	done := make(chan struct{})
+
+	keyRanges := make([]*sst.Range, 0, len(ranges))
+	for _, r := range ranges {
+		keyRanges = append(keyRanges, &sst.Range{
+			Start: r.start,
+			End:   r.end,
+		})
+	}
+
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(local.switchModeDuration)
+		defer ticker.Stop()
+	loop:
+		for {
+			select {
+			case <-ticker.C:
+				switcher.ToImportMode(ctx, keyRanges...)
+			case <-ctx.Done():
+				break loop
+			}
+		}
+		// Use a new context to avoid the context is canceled by the caller.
+		recoverCtx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+		defer cancel()
+		switcher.ToNormalMode(recoverCtx, keyRanges...)
+	}()
+	return done, nil
 }
 
 func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, tikvCodec tikvclient.Codec, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {

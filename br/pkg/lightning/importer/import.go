@@ -366,7 +366,11 @@ func NewImportControllerWithPauser(
 		if err != nil {
 			log.FromContext(ctx).Warn("check isRaftKV2 failed", zap.Error(err))
 		}
-		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName, isRaftKV2)
+		var raftKV2SwithModeDuration time.Duration
+		if isRaftKV2 {
+			raftKV2SwithModeDuration = cfg.Cron.SwitchMode.Duration
+		}
+		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName, raftKV2SwithModeDuration)
 		backendObj, err = local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)

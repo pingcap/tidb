@@ -129,7 +129,11 @@ func createLocalBackend(ctx context.Context, cfg *Config) (*local.Backend, error
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{
 		DB: nil,
 	}
-	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName, cfg.IsRaftKV2)
+	var raftKV2SwithModeDuration time.Duration
+	if cfg.IsRaftKV2 {
+		raftKV2SwithModeDuration = config.DefaultSwitchTiKVModeInterval
+	}
+	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName, raftKV2SwithModeDuration)
 	return local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 }
 
