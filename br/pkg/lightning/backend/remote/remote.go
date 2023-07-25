@@ -1139,50 +1139,34 @@ func (remote *Backend) generateAndSendJob(
 	//}
 	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
 
-	eg, egCtx := errgroup.WithContext(ctx)
-	eg.SetLimit(1)
+	iter, err := remote.createMergeIter(ctx, jobRanges[0].start)
+	if err != nil {
+		if common.IsContextCanceledError(err) {
+			return nil
+		}
+		return err
+	}
+	//nolint: errcheck
+	defer iter.Close()
 	for _, jobRange := range jobRanges {
 		r := jobRange
-		eg.Go(func() error {
-			if egCtx.Err() != nil {
+		failpoint.Inject("beforeGenerateJob", nil)
+		jobs, err := remote.generateJobForRange(ctx, r, regionSplitSize, regionSplitKeys)
+		if err != nil {
+			if common.IsContextCanceledError(err) {
 				return nil
 			}
-
-			failpoint.Inject("beforeGenerateJob", nil)
-			jobs, err := remote.generateJobForRange(egCtx, r, regionSplitSize, regionSplitKeys)
-			if err != nil {
-				if common.IsContextCanceledError(err) {
-					return nil
-				}
-				return err
+			return err
+		}
+		for _, job := range jobs {
+			remote.fillJobKVs(job, iter)
+			jobWg.Add(1)
+			select {
+			case jobToWorkerCh <- job:
 			}
-			iter, err := remote.createMergeIter(ctx, r.start)
-			if err != nil {
-				if common.IsContextCanceledError(err) {
-					return nil
-				}
-				return err
-			}
-			//nolint: errcheck
-			defer iter.Close()
-			for _, job := range jobs {
-				remote.fillJobKVs(job, iter)
-				jobWg.Add(1)
-				select {
-				case <-egCtx.Done():
-					// this job is not put into jobToWorkerCh
-					jobWg.Done()
-					// if the context is canceled, it means worker has error, the first error can be
-					// found by worker's error group LATER. if this function returns an error it will
-					// seize the "first error".
-					return nil
-				case jobToWorkerCh <- job:
-				}
-			}
-			return nil
-		})
+		}
 	}
-	return eg.Wait()
+	return nil
 }
 
 // SplitAndScatterRegionInBatches splits&scatter regions in batches.
