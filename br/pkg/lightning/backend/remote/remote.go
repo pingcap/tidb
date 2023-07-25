@@ -885,12 +885,16 @@ func (remote *Backend) fillRetryJobKVs(ctx context.Context, newJob, oldJob *regi
 		return false
 	}
 	endIdx := sort.Search(len(oldJob.writeBatch), func(i int) bool {
-		return bytes.Compare(oldJob.writeBatch[i].key, newJob.keyRange.end) >= 0
+		return bytes.Compare(oldJob.writeBatch[i].key, newJob.keyRange.end) > 0
 	})
-	if endIdx == -1 {
-		endIdx = len(oldJob.writeBatch)
+	if endIdx == 0 {
+		return false
 	}
-	newJob.writeBatch = oldJob.writeBatch[startIdx:endIdx]
+	if endIdx == -1 {
+		newJob.writeBatch = oldJob.writeBatch[startIdx:]
+	} else {
+		newJob.writeBatch = oldJob.writeBatch[startIdx : endIdx-1]
+	}
 	if len(newJob.writeBatch) == 0 {
 		return false
 	}
@@ -995,14 +999,14 @@ func (remote *Backend) generateJobForRange(
 
 	jobs := make([]*regionJob, 0, len(regions))
 	for _, region := range regions {
-		jobKeyRange := intersectRange(region.Region, Range{start: start, end: end})
+		//jobKeyRange := intersectRange(region.Region, Range{start: start, end: end})
 		log.FromContext(ctx).Info("get region",
 			zap.Uint64("id", region.Region.GetId()),
 			zap.Stringer("epoch", region.Region.GetRegionEpoch()),
 			logutil.Key("region start", region.Region.GetStartKey()),
 			logutil.Key("region end", region.Region.GetEndKey()),
-			logutil.Key("job start", jobKeyRange.start),
-			logutil.Key("job end", jobKeyRange.end),
+			logutil.Key("job start", startKey),
+			logutil.Key("job end", codec.EncodeBytes([]byte{}, end)),
 			zap.Reflect("peers", region.Region.GetPeers()))
 
 		jobs = append(jobs, &regionJob{
