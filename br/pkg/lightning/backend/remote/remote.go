@@ -887,13 +887,10 @@ func (remote *Backend) fillRetryJobKVs(ctx context.Context, newJob, oldJob *regi
 	endIdx := sort.Search(len(oldJob.writeBatch), func(i int) bool {
 		return bytes.Compare(oldJob.writeBatch[i].key, newJob.keyRange.end) > 0
 	})
-	if endIdx == 0 {
-		return false
-	}
 	if endIdx == -1 {
 		newJob.writeBatch = oldJob.writeBatch[startIdx:]
 	} else {
-		newJob.writeBatch = oldJob.writeBatch[startIdx : endIdx-1]
+		newJob.writeBatch = oldJob.writeBatch[startIdx:endIdx]
 	}
 	if len(newJob.writeBatch) == 0 {
 		return false
