@@ -41,7 +41,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 		}
 		totalMemCost = int64(memTotal / 2)
 	}
-	metrics.CostGauge.Set(float64(totalMemCost))
+	metrics.CapacityGauge.Set(float64(totalMemCost))
 	result := &LFU{}
 	bufferItems := int64(64)
 	if intest.InTest {
@@ -81,6 +81,7 @@ func (s *LFU) put(tblID int64, tbl *statistics.Table) bool {
 	if ok { // NOTE: `s.cache` and `s.resultKeySet` may be inconsistent since the update operation is not atomic, but it's acceptable for our scenario
 		s.resultKeySet.Add(tblID)
 		s.cost.Add(tbl.MemoryUsage().TotalTrackingMemUsage())
+		metrics.CostGauge.Set(float64(s.cost.Load()))
 	}
 	return ok
 }
@@ -116,6 +117,7 @@ func (s *LFU) onEvict(item *ristretto.Item) {
 
 func (s *LFU) onExit(val interface{}) {
 	s.cost.Add(-1 * val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
+	metrics.CostGauge.Set(float64(s.cost.Load()))
 }
 
 // Len implements statsCacheInner
@@ -136,7 +138,7 @@ func (s *LFU) Copy() internal.StatsCacheInner {
 // SetCapacity implements statsCacheInner
 func (s *LFU) SetCapacity(maxCost int64) {
 	s.cache.UpdateMaxCost(maxCost)
-	metrics.CostGauge.Set(float64(maxCost))
+	metrics.CapacityGauge.Set(float64(maxCost))
 }
 
 // wait blocks until all buffered writes have been applied. This ensures a call to Set()
