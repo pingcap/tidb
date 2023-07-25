@@ -538,8 +538,6 @@ func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPla
 		return expression.ExprFromSchema(expr, mergedSchema)
 	})
 
-	var stuckLeft, stuckRight, stuckOther []expression.Expression
-
 	if joinType.JoinType == LeftOuterJoin || joinType.JoinType == RightOuterJoin || joinType.JoinType == LeftOuterSemiJoin || joinType.JoinType == AntiLeftOuterSemiJoin {
 		// the original outer join's other conditions has been bound to the outer join Edge,
 		// these remained other condition here shouldn't be appended to it because on-mismatch
@@ -568,14 +566,8 @@ func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPla
 		// has been forbidden by: filters of the outer join is related with multiple leaves of the outer join side in #34603)
 		// so noway here we got remainOBOtherConds remained.
 	}
-	newJoin := s.newJoinWithEdges(leftPlan, rightPlan, eqEdges,
-		append(otherConds, obOtherConds...), append(leftConds, obLeftConds...), append(rightConds, obRightConds...), joinType.JoinType)
-	if len(stuckLeft)+len(stuckRight)+len(stuckOther) > 0 {
-		sel := LogicalSelection{Conditions: append(stuckLeft, append(stuckRight, stuckOther...)...)}.Init(newJoin.SCtx(), newJoin.SelectBlockOffset())
-		sel.SetChildren(newJoin)
-		return sel, remainOtherConds
-	}
-	return newJoin, remainOtherConds
+	return s.newJoinWithEdges(leftPlan, rightPlan, eqEdges,
+		append(otherConds, obOtherConds...), append(leftConds, obLeftConds...), append(rightConds, obRightConds...), joinType.JoinType), remainOtherConds
 }
 
 // makeBushyJoin build bushy tree for the nodes which have no equal condition to connect them.
