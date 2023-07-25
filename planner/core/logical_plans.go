@@ -212,7 +212,7 @@ func (p *LogicalJoin) isNAAJ() bool {
 // Shallow shallow copies a LogicalJoin struct.
 func (p *LogicalJoin) Shallow() *LogicalJoin {
 	join := *p
-	return join.Init(p.ctx, p.blockOffset)
+	return join.Init(p.SCtx(), p.SelectBlockOffset())
 }
 
 // ExtractFD implements the interface LogicalPlan.
@@ -367,7 +367,7 @@ func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expres
 		// if one of the inner condition is constant false, the inner side are all null, left make constant all of that.
 		for _, one := range innerCondition {
 			if c, ok := one.(*expression.Constant); ok && c.DeferredExpr == nil && c.ParamMarker == nil {
-				if isTrue, err := c.Value.ToBool(p.ctx.GetSessionVars().StmtCtx); err == nil {
+				if isTrue, err := c.Value.ToBool(p.SCtx().GetSessionVars().StmtCtx); err == nil {
 					if isTrue == 0 {
 						// c is false
 						opt.InnerIsFalse = true
@@ -858,21 +858,21 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 			// take c as constant column here.
 			continue
 		case *expression.Constant:
-			hashCode := string(x.HashCode(p.ctx.GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))
 			var (
 				ok               bool
 				constantUniqueID int
 			)
 			if constantUniqueID, ok = fds.IsHashCodeRegistered(hashCode); !ok {
 				constantUniqueID = outputColsUniqueIDsArray[idx]
-				fds.RegisterUniqueID(string(x.HashCode(p.ctx.GetSessionVars().StmtCtx)), constantUniqueID)
+				fds.RegisterUniqueID(string(x.HashCode(p.SCtx().GetSessionVars().StmtCtx)), constantUniqueID)
 			}
 			fds.AddConstants(fd.NewFastIntSet(constantUniqueID))
 		case *expression.ScalarFunction:
 			// t1(a,b,c), t2(m,n)
 			// select a, (select c+n from t2 where m=b) from t1;
 			// expr(c+n) contains correlated column , but we can treat it as constant here.
-			hashCode := string(x.HashCode(p.ctx.GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))
 			var (
 				ok             bool
 				scalarUniqueID int
@@ -905,7 +905,7 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 				// the dependent columns in scalar function should be also considered as output columns as well.
 				outputColsUniqueIDs.Insert(int(one.UniqueID))
 			}
-			notnull := isNullRejected(p.ctx, p.schema, x)
+			notnull := isNullRejected(p.SCtx(), p.schema, x)
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
@@ -1018,7 +1018,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 			// shouldn't be here, interpreted as pos param by plan builder.
 			continue
 		case *expression.ScalarFunction:
-			hashCode := string(x.HashCode(la.ctx.GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode(la.SCtx().GetSessionVars().StmtCtx))
 			var (
 				ok             bool
 				scalarUniqueID int
@@ -1027,8 +1027,8 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 				groupByColsUniqueIDs.Insert(scalarUniqueID)
 			} else {
 				// retrieve unique plan column id.  1: completely new one, allocating new unique id. 2: registered by projection earlier, using it.
-				if scalarUniqueID, ok = la.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol[hashCode]; !ok {
-					scalarUniqueID = int(la.ctx.GetSessionVars().AllocPlanColumnID())
+				if scalarUniqueID, ok = la.SCtx().GetSessionVars().MapHashCode2UniqueID4ExtendedCol[hashCode]; !ok {
+					scalarUniqueID = int(la.SCtx().GetSessionVars().AllocPlanColumnID())
 				}
 				fds.RegisterUniqueID(hashCode, scalarUniqueID)
 				groupByColsUniqueIDs.Insert(scalarUniqueID)
@@ -1044,7 +1044,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 				determinants.Insert(int(one.UniqueID))
 				groupByColsOutputCols.Insert(int(one.UniqueID))
 			}
-			notnull := isNullRejected(la.ctx, la.schema, x)
+			notnull := isNullRejected(la.SCtx(), la.schema, x)
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
@@ -1377,7 +1377,7 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 		for _, col := range innerPlan.Schema().Columns {
 			if cc.UniqueID == col.CorrelatedColUniqueID {
 				ccc := &cc.Column
-				cond := expression.NewFunctionInternal(la.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), ccc, col)
+				cond := expression.NewFunctionInternal(la.SCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), ccc, col)
 				eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 			}
 		}
@@ -1587,9 +1587,9 @@ func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 }
 
 func (ds *DataSource) buildTableGather() LogicalPlan {
-	ts := LogicalTableScan{Source: ds, HandleCols: ds.handleCols}.Init(ds.ctx, ds.blockOffset)
+	ts := LogicalTableScan{Source: ds, HandleCols: ds.handleCols}.Init(ds.SCtx(), ds.SelectBlockOffset())
 	ts.SetSchema(ds.Schema())
-	sg := TiKVSingleGather{Source: ds, IsIndexGather: false}.Init(ds.ctx, ds.blockOffset)
+	sg := TiKVSingleGather{Source: ds, IsIndexGather: false}.Init(ds.SCtx(), ds.SelectBlockOffset())
 	sg.SetSchema(ds.Schema())
 	sg.SetChildren(ts)
 	return sg
@@ -1604,7 +1604,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) LogicalPlan {
 		FullIdxColLens: path.FullIdxColLens,
 		IdxCols:        path.IdxCols,
 		IdxColLens:     path.IdxColLens,
-	}.Init(ds.ctx, ds.blockOffset)
+	}.Init(ds.SCtx(), ds.SelectBlockOffset())
 
 	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(is.Columns, ds.Columns)
@@ -1615,7 +1615,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) LogicalPlan {
 		Source:        ds,
 		IsIndexGather: true,
 		Index:         path.Index,
-	}.Init(ds.ctx, ds.blockOffset)
+	}.Init(ds.SCtx(), ds.SelectBlockOffset())
 	sg.SetSchema(ds.Schema())
 	sg.SetChildren(is)
 	return sg
@@ -1644,7 +1644,7 @@ func (ds *DataSource) detachCondAndBuildRangeForPath(path *util.AccessPath, cond
 		path.TableFilters = conds
 		return nil
 	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens, ds.ctx.GetSessionVars().RangeMaxSize)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(ds.SCtx(), conds, path.IdxCols, path.IdxColLens, ds.SCtx().GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return err
 	}
@@ -1660,7 +1660,7 @@ func (ds *DataSource) detachCondAndBuildRangeForPath(path *util.AccessPath, cond
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
 	}
-	path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(ds.ctx, path.Index.ID, path.Ranges)
+	path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(ds.SCtx(), path.Index.ID, path.Ranges)
 	return err
 }
 
@@ -1676,7 +1676,7 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 		return err
 	}
 	if path.EqOrInCondCount == len(path.AccessConds) {
-		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.ctx, path.EqOrInCondCount)
+		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
 		if len(accesses) > 0 && ds.statisticTable.Pseudo {
@@ -1696,8 +1696,8 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 	}
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
-	if path.CountAfterAccess < ds.stats.RowCount && !isIm {
-		path.CountAfterAccess = math.Min(ds.stats.RowCount/SelectionFactor, float64(ds.statisticTable.RealtimeCount))
+	if path.CountAfterAccess < ds.StatsInfo().RowCount && !isIm {
+		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/SelectionFactor, float64(ds.statisticTable.RealtimeCount))
 	}
 	return nil
 }
@@ -1705,9 +1705,9 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 // deriveTablePathStats will fulfill the information that the AccessPath need.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
 func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) error {
-	if ds.ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ds.ctx)
-		defer debugtrace.LeaveContextCommon(ds.ctx)
+	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.SCtx())
+		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
 	if path.IsCommonHandlePath {
 		return ds.deriveCommonHandleTablePathStats(path, conds, isIm)
@@ -1734,7 +1734,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	if len(conds) == 0 {
 		return nil
 	}
-	path.AccessConds, path.TableFilters = ranger.DetachCondsForColumn(ds.ctx, conds, pkCol)
+	path.AccessConds, path.TableFilters = ranger.DetachCondsForColumn(ds.SCtx(), conds, pkCol)
 	// If there's no access cond, we try to find that whether there's expression containing correlated column that
 	// can be used to access data.
 	corColInAccessConds := false
@@ -1745,7 +1745,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 				continue
 			}
 			lCol, lOk := eqFunc.GetArgs()[0].(*expression.Column)
-			if lOk && lCol.Equal(ds.ctx, pkCol) {
+			if lOk && lCol.Equal(ds.SCtx(), pkCol) {
 				_, rOk := eqFunc.GetArgs()[1].(*expression.CorrelatedColumn)
 				if rOk {
 					path.AccessConds = append(path.AccessConds, filter)
@@ -1755,7 +1755,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 				}
 			}
 			rCol, rOk := eqFunc.GetArgs()[1].(*expression.Column)
-			if rOk && rCol.Equal(ds.ctx, pkCol) {
+			if rOk && rCol.Equal(ds.SCtx(), pkCol) {
 				_, lOk := eqFunc.GetArgs()[0].(*expression.CorrelatedColumn)
 				if lOk {
 					path.AccessConds = append(path.AccessConds, filter)
@@ -1771,24 +1771,24 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 		return nil
 	}
 	var remainedConds []expression.Expression
-	path.Ranges, path.AccessConds, remainedConds, err = ranger.BuildTableRange(path.AccessConds, ds.ctx, pkCol.RetType, ds.ctx.GetSessionVars().RangeMaxSize)
+	path.Ranges, path.AccessConds, remainedConds, err = ranger.BuildTableRange(path.AccessConds, ds.SCtx(), pkCol.RetType, ds.SCtx().GetSessionVars().RangeMaxSize)
 	path.TableFilters = append(path.TableFilters, remainedConds...)
 	if err != nil {
 		return err
 	}
-	path.CountAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(ds.ctx, pkCol.ID, path.Ranges)
+	path.CountAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(ds.SCtx(), pkCol.ID, path.Ranges)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
-	if path.CountAfterAccess < ds.stats.RowCount && !isIm {
-		path.CountAfterAccess = math.Min(ds.stats.RowCount/SelectionFactor, float64(ds.statisticTable.RealtimeCount))
+	if path.CountAfterAccess < ds.StatsInfo().RowCount && !isIm {
+		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/SelectionFactor, float64(ds.statisticTable.RealtimeCount))
 	}
 	return err
 }
 
 func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Expression) error {
-	if ds.ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ds.ctx)
-		defer debugtrace.LeaveContextCommon(ds.ctx)
+	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.SCtx())
+		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
 	path.Ranges = ranger.FullRange()
 	path.CountAfterAccess = float64(ds.statisticTable.RealtimeCount)
@@ -1822,12 +1822,12 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 // conds is the conditions used to generate the DetachRangeResult for path.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
 func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression.Expression, isIm bool) {
-	if ds.ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ds.ctx)
-		defer debugtrace.LeaveContextCommon(ds.ctx)
+	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.SCtx())
+		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
 	if path.EqOrInCondCount == len(path.AccessConds) {
-		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.ctx, path.EqOrInCondCount)
+		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
 		if len(accesses) > 0 && ds.statisticTable.Pseudo {
@@ -1850,11 +1850,11 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression
 	path.IndexFilters = append(path.IndexFilters, indexFilters...)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
-	if path.CountAfterAccess < ds.stats.RowCount && !isIm {
-		path.CountAfterAccess = math.Min(ds.stats.RowCount/SelectionFactor, float64(ds.statisticTable.RealtimeCount))
+	if path.CountAfterAccess < ds.StatsInfo().RowCount && !isIm {
+		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/SelectionFactor, float64(ds.statisticTable.RealtimeCount))
 	}
 	if path.IndexFilters != nil {
-		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, path.IndexFilters, nil)
+		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.SCtx(), path.IndexFilters, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = SelectionFactor
@@ -1862,7 +1862,7 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression
 		if isIm {
 			path.CountAfterIndex = path.CountAfterAccess * selectivity
 		} else {
-			path.CountAfterIndex = math.Max(path.CountAfterAccess*selectivity, ds.stats.RowCount)
+			path.CountAfterIndex = math.Max(path.CountAfterAccess*selectivity, ds.StatsInfo().RowCount)
 		}
 	} else {
 		path.CountAfterIndex = path.CountAfterAccess
