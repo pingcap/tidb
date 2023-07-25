@@ -36,8 +36,8 @@ import (
 )
 
 func TestWriter(t *testing.T) {
-	t.Skip("")
-	bucket := "nfs"
+	//t.Skip("")
+	bucket := "globalsorttest"
 	prefix := "tools_test_data/sharedisk"
 	uri := fmt.Sprintf("s3://%s/%s?access-key=%s&secret-access-key=%s&endpoint=http://%s:%s&force-path-style=true",
 		bucket, prefix, "minioadmin", "minioadmin", "127.0.0.1", "9000")
@@ -64,7 +64,7 @@ func TestWriter(t *testing.T) {
 	for i := 0; i < 16; i++ {
 		binary.BigEndian.PutUint64(value[i*8:], uint64(i))
 	}
-	for i := 1; i <= 20000; i++ {
+	for i := 1; i <= 200000; i++ {
 		var kv common.KvPair
 		kv.Key = make([]byte, 16)
 		kv.Val = make([]byte, 128)
@@ -103,7 +103,7 @@ func TestWriter(t *testing.T) {
 	})
 	logutil.BgLogger().Info("flush cnt", zap.Any("cnt", writer.currentSeq+1))
 
-	require.Equal(t, 20000, i)
+	require.Equal(t, 200000, i)
 
 	for _, fileName := range stats {
 		statReader, err := newStatsReader(ctx, storage, fileName, 4096)
@@ -134,10 +134,11 @@ func TestWriter(t *testing.T) {
 		if len(prevKey) > 0 {
 			currKey := mIter.Key()
 			require.Equal(t, 1, bytes.Compare(currKey, prevKey))
-			prevKey = currKey
 		}
+		prevKey = mIter.Key()
+
 	}
-	require.Equal(t, 20000, mCnt)
+	require.Equal(t, 200000, mCnt)
 }
 
 func cleanupFiles(ctx context.Context, store storage2.ExternalStorage, subDir string) error {

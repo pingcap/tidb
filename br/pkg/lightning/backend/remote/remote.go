@@ -1060,12 +1060,12 @@ func (remote *Backend) fillJobKVs(j *regionJob, iter *sharedisk.MergeIter) {
 		kBuf := memBuf.AllocBytes(len(k))
 		key := append(kBuf[:0], k...)
 		val := memBuf.AddBytes(v)
+		if len(prevKey) != 0 && bytes.Compare(prevKey, k) >= 0 {
+			log.FromContext(context.Background()).Error("key is not in order", zap.ByteString("prevKey", prevKey), zap.ByteString("key", k))
+		}
+		prevKey = key
 		if bytes.Compare(k, j.keyRange.end) >= 0 {
 			if bytes.Compare(k, j.keyRange.start) == 0 {
-				if len(prevKey) != 0 && bytes.Compare(prevKey, k) >= 0 {
-					log.FromContext(context.Background()).Error("key is not in order")
-				}
-				prevKey = key
 				j.writeBatch = append(j.writeBatch, kvPair{key: key, val: val})
 			}
 			if len(j.writeBatch) > 0 {
@@ -1721,7 +1721,7 @@ func (remote *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			var prevKey []byte
 			for _, pair := range pairs[:count] {
 				if len(prevKey) > 0 && bytes.Compare(prevKey, pair.Key) >= 0 {
-					log.FromContext(context.Background()).Error("", zap.Any("prevKey", prevKey), zap.Any("key", pair.Key))
+					log.FromContext(context.Background()).Error("", zap.ByteString("prevKey", prevKey), zap.ByteString("key", pair.Key))
 					return errors.New("write batch keys are not in order")
 				}
 				prevKey = pair.Key
