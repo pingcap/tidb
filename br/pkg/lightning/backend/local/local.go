@@ -1714,7 +1714,7 @@ func (local *Backend) LocalWriter(_ context.Context, cfg *backend.LocalWriterCon
 	return openLocalWriter(cfg, engine, local.tikvCodec, local.LocalWriterMemCacheSize, local.bufferPool.NewBuffer())
 }
 
-// SwitchModeByKeyRange will swith tikv mode for regions in the specific key range for multirocksdb.
+// SwitchModeByKeyRanges will swith tikv mode for regions in the specific key range for multirocksdb.
 // This function will spawn a goroutine to keep switch mode periodically until the context is done.
 // The return done channel is used to notify the caller that the background goroutine is exited.
 func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []Range) (<-chan struct{}, error) {
