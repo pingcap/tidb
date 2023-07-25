@@ -469,13 +469,12 @@ func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error)
 }
 
 // FilterNodesByLabels filter eligible instance by label:tidb_role.
-// Currently, server with label "all" or "background" can be selected as eligile instances.
+// Currently, server with label "all" or "background" can be selected as eligible instances.
 func FilterNodesByLabels(serverInfos map[string]*infosync.ServerInfo) []*infosync.ServerInfo {
 	serverNodes := make([]*infosync.ServerInfo, 0, len(serverInfos))
 	for _, serverInfo := range serverInfos {
 		// check server label.
 		if v, ok := serverInfo.Labels["tidb_role"]; ok {
-			logutil.BgLogger().Info("role", zap.String("role", v))
 			if v != "background" && v != "regular" && v != "all" {
 				v = "regular"
 			}
