@@ -3943,10 +3943,7 @@ func (n *DropQueryWatchStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *DropQueryWatchStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
+	newNode, _ := v.Enter(n)
 	n = newNode.(*DropQueryWatchStmt)
 	return v.Leave(n)
 }
@@ -3970,10 +3967,7 @@ func (n *AddQueryWatchStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *AddQueryWatchStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
+	newNode, _ := v.Enter(n)
 	n = newNode.(*AddQueryWatchStmt)
 	for _, val := range n.QueryWatchOptionList {
 		_, ok := val.Accept(v)
