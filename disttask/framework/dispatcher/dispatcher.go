@@ -483,6 +483,7 @@ func FilterNodesByLabels(serverInfos map[string]*infosync.ServerInfo) []*infosyn
 				serverNodes = append(serverNodes, serverInfo)
 			}
 		} else {
+			// means tidb_role with default value "all".
 			serverNodes = append(serverNodes, serverInfo)
 		}
 	}
