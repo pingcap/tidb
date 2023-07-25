@@ -991,7 +991,7 @@ func (remote *Backend) generateJobForRange(
 ) ([]*regionJob, error) {
 	start, end := keyRange.start, keyRange.end
 	startKey := codec.EncodeBytes([]byte{}, start)
-	endKey := codec.EncodeBytes([]byte{}, nextKey(end))
+	endKey := codec.EncodeBytes([]byte{}, end)
 	regions, err := split.PaginateScanRegion(ctx, remote.splitCli, startKey, endKey, scanRegionLimit)
 	if err != nil {
 		log.FromContext(ctx).Error("scan region failed",
