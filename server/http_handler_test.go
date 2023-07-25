@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -1206,7 +1207,9 @@ func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
 	ts.startServer(t)
 	defer ts.stopServer(t)
 
-	testUpdateLabels := func(labels, expected map[string]string) {
+	testUpdateLabels := func() {
+		labels := map[string]string{}
+		labels["zone"] = fmt.Sprintf("z-%v", rand.Intn(100000))
 		buffer := bytes.NewBuffer([]byte{})
 		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
 		resp, err := ts.postStatus("/labels", "application/json", buffer)
@@ -1217,29 +1220,23 @@ func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
 		}()
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		newLabels := config.GetGlobalConfig().Labels
-		require.Equal(t, newLabels, expected)
+		require.Equal(t, newLabels, labels)
 	}
-
-	labels := map[string]string{
-		"zone": "us-west-1",
-		"test": "123",
-	}
-
-	testUpdateLabels(labels, labels)
-
-	updated := map[string]string{
-		"zone": "bj-1",
-	}
-	labels["zone"] = "bj-1"
-
+	done := make(chan struct{})
 	go func() {
-		for i := 0; i < 100; i++ {
-			config.GetGlobalConfig().GetTiKVConfig()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				config.GetGlobalConfig().GetTiKVConfig()
+			}
 		}
 	}()
 	for i := 0; i < 100; i++ {
-		testUpdateLabels(updated, labels)
+		testUpdateLabels()
 	}
+	close(done)
 
 	// reset the global variable
 	config.GetGlobalConfig().Labels = map[string]string{}
