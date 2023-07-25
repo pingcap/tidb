@@ -99,7 +99,7 @@ func TestStmtFiles(t *testing.T) {
 	file1, err := os.CreateTemp("", filename1)
 	require.NoError(t, err)
 	defer func() {
-		require.NoError(t, os.Remove(filename1))
+		require.NoError(t, os.Remove(file1.Name()))
 	}()
 	_, err = file1.WriteString("{\"begin\":1672128520,\"end\":1672128530}\n")
 	require.NoError(t, err)
