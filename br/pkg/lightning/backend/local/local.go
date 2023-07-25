@@ -1733,13 +1733,14 @@ func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []Range)
 		defer close(done)
 		ticker := time.NewTicker(local.switchModeDuration)
 		defer ticker.Stop()
+		switcher.ToImportMode(ctx, keyRanges...)
 	loop:
 		for {
 			select {
-			case <-ticker.C:
-				switcher.ToImportMode(ctx, keyRanges...)
 			case <-ctx.Done():
 				break loop
+			case <-ticker.C:
+				switcher.ToImportMode(ctx, keyRanges...)
 			}
 		}
 		// Use a new context to avoid the context is canceled by the caller.
