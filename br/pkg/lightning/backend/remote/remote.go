@@ -1054,6 +1054,7 @@ func (remote *Backend) createMergeIter(ctx context.Context, start kv.Key) (*shar
 func (remote *Backend) fillJobKVs(j *regionJob, iter *sharedisk.MergeIter) {
 	j.writeBatch = remote.kvPairSlicePool.get()
 	memBuf := remote.bufferPool.NewBuffer()
+	var prevKey kv.Key
 	for iter.Valid() {
 		k, v := iter.Key(), iter.Value()
 		kBuf := memBuf.AllocBytes(len(k))
@@ -1061,6 +1062,10 @@ func (remote *Backend) fillJobKVs(j *regionJob, iter *sharedisk.MergeIter) {
 		val := memBuf.AddBytes(v)
 		if bytes.Compare(k, j.keyRange.end) >= 0 {
 			if bytes.Compare(k, j.keyRange.start) == 0 {
+				if len(prevKey) != 0 && bytes.Compare(prevKey, k) > 0 {
+					log.FromContext(context.Background()).Error("key is not in order")
+				}
+				prevKey = key
 				j.writeBatch = append(j.writeBatch, kvPair{key: key, val: val})
 			}
 			if len(j.writeBatch) > 0 {
@@ -1712,6 +1717,15 @@ func (remote *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 				return errors.Trace(err)
 			}
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
+
+			var prevKey []byte
+			for _, pair := range pairs[:count] {
+				if len(prevKey) > 0 && bytes.Compare(prevKey, pair.Key) > 0 {
+					return errors.New("write batch keys are not in order")
+				}
+				prevKey = pair.Key
+			}
+
 			if err := clients[i].Send(requests[i]); err != nil {
 				res := sst.WriteResponse{}
 				newErr := clients[i].RecvMsg(&res)
@@ -1737,6 +1751,7 @@ func (remote *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 
 	var remainingStartKey []byte
 	startTime := time.Now()
+	var prevKey []byte
 	for iter.Next() {
 		key := kv.Key(iter.Key())
 		if key.Cmp(j.keyRange.start) < 0 {
@@ -1745,6 +1760,11 @@ func (remote *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		if key.Cmp(j.keyRange.end) > 0 {
 			break
 		}
+
+		if len(prevKey) > 0 && bytes.Compare(prevKey, key) > 0 {
+			return errors.New("write batch keys are not in order")
+		}
+		prevKey = key.Clone()
 
 		//readableKey := hex.EncodeToString(iter.Key())
 		//_, _, vals, err := tablecodec.DecodeIndexKey(iter.Key())
