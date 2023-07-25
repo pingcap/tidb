@@ -445,7 +445,7 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 	if !forced && noHashJoin {
 		return nil, false
 	} else if forced && noHashJoin {
-		p.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
+		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
 			"Some HASH_JOIN and NO_HASH_JOIN hints conflict, NO_HASH_JOIN is ignored"))
 	}
 	return
