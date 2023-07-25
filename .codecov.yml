@@ -6,15 +6,17 @@ codecov:
 coverage:
   precision: 4
   round: down
-  range: "65...90"
+  range: "70...100"
 
   status:
-    project: 
+    project:
       default:
-        threshold: 0.2 #Allow the coverage to drop by threshold%, and posting a success status.
+        target: auto
+        threshold: 0% # decline in denial coverage.
     patch: 
       default:
-        target: 0% # trial operation
+        target: auto
+        threshold: 0%
     changes: no
 
 parsers:
