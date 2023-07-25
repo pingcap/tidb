@@ -543,8 +543,8 @@ func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPla
 		// these remained other condition here shouldn't be appended to it because on-mismatch
 		// logic will produce more append-null rows which is banned in original semantic.
 		remainOtherConds = append(remainOtherConds, otherConds...) // nozero
-		remainOtherConds = append(remainOtherConds, leftConds...)
-		remainOtherConds = append(remainOtherConds, rightConds...)
+		remainOtherConds = append(remainOtherConds, leftConds...)  // nozero
+		remainOtherConds = append(remainOtherConds, rightConds...) // nozero
 		otherConds = otherConds[:0]
 		leftConds = leftConds[:0]
 		rightConds = rightConds[:0]
