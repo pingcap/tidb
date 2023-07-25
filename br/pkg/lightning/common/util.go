@@ -649,7 +649,7 @@ func getSessionVariable(ctx context.Context, db *sql.DB, variable string) (value
 	return value, nil
 }
 
-// IsRaftKv2 checks whether the raft-kv2 is enabled
+// IsRaftKV2 checks whether the raft-kv2 is enabled
 func IsRaftKV2(ctx context.Context, db *sql.DB) (bool, error) {
 	var (
 		getRaftKvVersionSQL       = "show config where type = 'tikv' && name = 'storage.engine'"
@@ -667,7 +667,9 @@ func IsRaftKV2(ctx context.Context, db *sql.DB) (bool, error) {
 		if err = rows.Scan(&tp, &instance, &name, &value); err != nil {
 			return false, errors.Trace(err)
 		}
-		return value == raftKv2, nil
+		if value == raftKv2 {
+			return true, nil
+		}
 	}
-	return false, nil
+	return false, rows.Err()
 }
