@@ -592,9 +592,9 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 				totalCreateSnapshotTimeMs:          summary.GetTiflashScanContext().GetTotalCreateSnapshotTimeMs(),
 				totalLocalRegionNum:                summary.GetTiflashScanContext().GetTotalLocalRegionNum(),
 				totalRemoteRegionNum:               summary.GetTiflashScanContext().GetTotalRemoteRegionNum(),
-				totalWaitIndexMs:                   summary.GetTiflashScanContext().GetTotalWaitIndexMs(),
-				totalCacheReadDmfileSize:           summary.GetTiflashScanContext().GetTotalCacheReadDmfileSize(),
-				totalS3ReadDmfileSize:              summary.GetTiflashScanContext().GetTotalS3ReadDmfileSize()}}, threads: int32(summary.GetConcurrency()),
+				totalLearnerReadMs:                 summary.GetTiflashScanContext().GetTotalLearnerReadMs(),
+				totalDisaggReadCacheHitSize:        summary.GetTiflashScanContext().GetTotalDisaggReadCacheHitSize(),
+				totalDisaggReadCacheMissSize:       summary.GetTiflashScanContext().GetTotalDisaggReadCacheMissSize()}}, threads: int32(summary.GetConcurrency()),
 		totalTasks: 1,
 	}
 	data.BasicRuntimeStats.loop.Store(int32(*summary.NumIterations))
@@ -728,9 +728,9 @@ type TiFlashScanContext struct {
 	totalCreateSnapshotTimeMs          uint64
 	totalLocalRegionNum                uint64
 	totalRemoteRegionNum               uint64
-	totalWaitIndexMs                   uint64
-	totalCacheReadDmfileSize           uint64
-	totalS3ReadDmfileSize              uint64
+	totalLearnerReadMs                 uint64
+	totalDisaggReadCacheHitSize        uint64
+	totalDisaggReadCacheMissSize       uint64
 }
 
 // Clone implements the deep copy of * TiFlashshScanContext
@@ -745,13 +745,13 @@ func (context *TiFlashScanContext) Clone() TiFlashScanContext {
 		totalCreateSnapshotTimeMs:          context.totalCreateSnapshotTimeMs,
 		totalLocalRegionNum:                context.totalLocalRegionNum,
 		totalRemoteRegionNum:               context.totalRemoteRegionNum,
-		totalWaitIndexMs:                   context.totalWaitIndexMs,
-		totalCacheReadDmfileSize:           context.totalCacheReadDmfileSize,
-		totalS3ReadDmfileSize:              context.totalS3ReadDmfileSize,
+		totalLearnerReadMs:                 context.totalLearnerReadMs,
+		totalDisaggReadCacheHitSize:        context.totalDisaggReadCacheHitSize,
+		totalDisaggReadCacheMissSize:       context.totalDisaggReadCacheMissSize,
 	}
 }
 func (context *TiFlashScanContext) String() string {
-	return fmt.Sprintf("tiflash_scan:{dtfile:{total_scanned_packs:%d, total_skipped_packs:%d, total_scanned_rows:%d, total_skipped_rows:%d, total_rs_index_load_time: %dms, total_read_time: %dms, total_cache_read_size: %d, total_s3_read_size: %d}, total_create_snapshot_time: %dms, total_local_region_num: %d, total_remote_region_num: %d, total_wait_index_time: %dms}", context.totalDmfileScannedPacks, context.totalDmfileSkippedPacks, context.totalDmfileScannedRows, context.totalDmfileSkippedRows, context.totalDmfileRoughSetIndexLoadTimeMs, context.totalDmfileReadTimeMs, context.totalCacheReadDmfileSize, context.totalS3ReadDmfileSize, context.totalCreateSnapshotTimeMs, context.totalLocalRegionNum, context.totalRemoteRegionNum, context.totalWaitIndexMs)
+	return fmt.Sprintf("tiflash_scan:{dtfile:{total_scanned_packs:%d, total_skipped_packs:%d, total_scanned_rows:%d, total_skipped_rows:%d, total_rs_index_load_time: %dms, total_read_time: %dms, total_cache_read_size: %d, total_s3_read_size: %d}, total_create_snapshot_time: %dms, total_local_region_num: %d, total_remote_region_num: %d, total_wait_index_time: %dms}", context.totalDmfileScannedPacks, context.totalDmfileSkippedPacks, context.totalDmfileScannedRows, context.totalDmfileSkippedRows, context.totalDmfileRoughSetIndexLoadTimeMs, context.totalDmfileReadTimeMs, context.totalDisaggReadCacheHitSize, context.totalDisaggReadCacheMissSize, context.totalCreateSnapshotTimeMs, context.totalLocalRegionNum, context.totalRemoteRegionNum, context.totalLearnerReadMs)
 }
 
 // Merge make sum to merge the information in TiFlashScanContext
@@ -765,9 +765,9 @@ func (context *TiFlashScanContext) Merge(other TiFlashScanContext) {
 	context.totalCreateSnapshotTimeMs += other.totalCreateSnapshotTimeMs
 	context.totalLocalRegionNum += other.totalLocalRegionNum
 	context.totalRemoteRegionNum += other.totalRemoteRegionNum
-	context.totalWaitIndexMs += other.totalWaitIndexMs
-	context.totalCacheReadDmfileSize += other.totalCacheReadDmfileSize
-	context.totalS3ReadDmfileSize += other.totalS3ReadDmfileSize
+	context.totalLearnerReadMs += other.totalLearnerReadMs
+	context.totalDisaggReadCacheHitSize += other.totalDisaggReadCacheHitSize
+	context.totalDisaggReadCacheMissSize += other.totalDisaggReadCacheMissSize
 }
 
 // Empty check whether TiFlashScanContext is Empty, if scan no pack and skip no pack, we regard it as empty
