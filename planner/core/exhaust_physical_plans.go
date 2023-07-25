@@ -233,12 +233,11 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 	}
 
 	if p.preferJoinType&preferNoMergeJoin > 0 {
-		if p.preferJoinType&preferMergeJoin > 0 {
-			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
-				"Some MERGE_JOIN and NO_MERGE_JOIN hints conflict, NO_MERGE_JOIN is ignored"))
-		} else {
+		if p.preferJoinType&preferMergeJoin == 0 {
 			return nil
 		}
+		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
+			"Some MERGE_JOIN and NO_MERGE_JOIN hints conflict, NO_MERGE_JOIN is ignored"))
 	}
 
 	// If TiDB_SMJ hint is existed, it should consider enforce merge join,
