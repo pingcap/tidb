@@ -145,6 +145,8 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(ctx context.Context, taskHandl
 			subTaskMeta := &BackfillSubTaskMeta{StartKey: batch[0].StartKey(), EndKey: batch[len(batch)-1].EndKey()}
 			if i == 0 {
 				subTaskMeta.StartKey = startKey
+			} else {
+				subTaskMeta.StartKey = kv.Key(subTaskMeta.StartKey).Next()
 			}
 			if end == len(recordRegionMetas) {
 				subTaskMeta.EndKey = endKey
