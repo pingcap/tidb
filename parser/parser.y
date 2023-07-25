@@ -1812,14 +1812,18 @@ DirectResourceGroupRunawayOption:
 	}
 |	"WATCH" EqOpt ResourceGroupRunawayWatchOption WatchDurationOption
 	{
-		if len($4.(string)) > 0 {
-			_, err := time.ParseDuration($4.(string))
+		dur := strings.ToLower($4.(string))
+		if dur == "unlimited" {
+			dur = ""
+		} 
+		if len(dur) > 0 {
+			_, err := time.ParseDuration(dur)
 			if err != nil {
 				yylex.AppendError(yylex.Errorf("The WATCH DURATION option is not a valid duration: %s", err.Error()))
 				return 1
 			}
 		}
-		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayWatch, StrValue: $4.(string), IntValue: $3.(int32)}
+		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayWatch, StrValue: dur, IntValue: $3.(int32)}
 	}
 
 WatchDurationOption:
