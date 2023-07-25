@@ -35,6 +35,7 @@ const (
 	RegisterRestore RegisterTaskType = iota
 	RegisterLightning
 	RegisterImportInto
+	RegisterSnapshotBackup
 )
 
 func (tp RegisterTaskType) String() string {
@@ -45,6 +46,8 @@ func (tp RegisterTaskType) String() string {
 		return "lightning"
 	case RegisterImportInto:
 		return "import-into"
+	case RegisterSnapshotBackup:
+		return "snap_backup"
 	}
 	return "default"
 }
@@ -54,6 +57,7 @@ const (
 	// RegisterImportTaskPrefix is the prefix of the key for task register
 	// todo: remove "/import" suffix, it's confusing to have a key like "/tidb/brie/import/restore/restore-xxx"
 	RegisterImportTaskPrefix = "/tidb/brie/import"
+	RegisterExportTaskPrefix = "/tidb/brie/export"
 
 	RegisterRetryInternal  = 10 * time.Second
 	defaultTaskRegisterTTL = 3 * time.Minute // 3 minutes
@@ -88,13 +92,24 @@ type taskRegister struct {
 	cancel     context.CancelFunc
 }
 
+func prefixForTask(tp RegisterTaskType) string {
+	switch tp {
+	case RegisterRestore, RegisterLightning, RegisterImportInto:
+		return RegisterImportTaskPrefix
+	case RegisterSnapshotBackup:
+		return RegisterExportTaskPrefix
+	default:
+		panic(fmt.Sprintf("unknown task %s", tp))
+	}
+}
+
 // NewTaskRegisterWithTTL build a TaskRegister with key format {RegisterTaskPrefix}/{RegisterTaskType}/{taskName}
 func NewTaskRegisterWithTTL(client *clientv3.Client, ttl time.Duration, tp RegisterTaskType, taskName string) TaskRegister {
 	return &taskRegister{
 		client:    client,
 		ttl:       ttl,
 		secondTTL: int64(ttl / time.Second),
-		key:       path.Join(RegisterImportTaskPrefix, tp.String(), taskName),
+		key:       path.Join(prefixForTask(tp), tp.String(), taskName),
 
 		curLeaseID: clientv3.NoLease,
 	}
