@@ -783,6 +783,119 @@
     ]
   },
   {
+    "Name": "TestNoMergeJoinHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ no_merge_join() */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 Hint no_merge_join() is inapplicable. Please specify the table names in the arguments."
+        ]
+      },
+      {
+        "SQL": "select /*+ no_merge_join(t1), merge_join(t1) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 Some MERGE_JOIN and NO_MERGE_JOIN hints conflict, NO_MERGE_JOIN is ignored"
+        ]
+      },
+      {
+        "SQL": "select /*+ no_merge_join(t1), merge_join(t2) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 Some MERGE_JOIN and NO_MERGE_JOIN hints conflict, NO_MERGE_JOIN is ignored"
+        ]
+      },
+      {
+        "SQL": "select /*+ no_merge_join(t1) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ no_merge_join(t1, t2) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ no_merge_join(t2) */ * from t1 right join t2 on t1.a=t2.a",
+        "Plan": [
+          "HashJoin 12487.50 root  right outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 10000.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 10000.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t4, t3, t2, t1), no_merge_join(t2, t3) */ * from t1, t2, t3, t4 where t1.a=t2.a and t2.a=t3.a and t3.a=t4.a",
+        "Plan": [
+          "Projection 19511.72 root  test.t1.a, test.t2.a, test.t3.a, test.t4.a",
+          "└─HashJoin 19511.72 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "  ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
+          "    ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t4.a, test.t3.a)]",
+          "      ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "      │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "      └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "        └─IndexFullScan 9990.00 cop[tikv] table:t4, index:a(a) keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1, t2, t3, t4), merge_join(t1, t2), no_merge_join(t3), merge_join(t4) */ * from t1, t2, t3, t4 where t1.a=t2.a and t2.a=t3.a and t3.a=t4.a",
+        "Plan": [
+          "MergeJoin 19511.72 root  inner join, left key:test.t3.a, right key:test.t4.a",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t4, index:a(a) keep order:true, stats:pseudo",
+          "└─Sort(Probe) 15609.38 root  test.t3.a",
+          "  └─HashJoin 15609.38 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "    ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "    └─MergeJoin(Probe) 12487.50 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "      ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "      │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:true, stats:pseudo",
+          "      └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "        └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
     "Name": "TestLeadingJoinHint",
     "Cases": [
       {
