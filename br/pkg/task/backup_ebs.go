@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	brpb "github.com/pingcap/kvproto/pkg/brpb"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -142,6 +144,22 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
+
+	ecli, err := dialEtcdWithCfg(ctx, cfg.Config)
+	if err != nil {
+		return errors.Annotate(err, "failed to dial etcd for registering the task")
+	}
+
+	rg := utils.NewTaskRegister(ecli, utils.RegisterSnapshotBackup, uuid.New().String())
+	rg.RegisterTask(ctx)
+	defer func() {
+		cx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := rg.Close(cx); err != nil {
+			log.Warn("Failed to deregister the task.", logutil.ShortError(err))
+		}
+	}()
+
 	client := backup.NewBackupClient(ctx, mgr)
 
 	opts := storage.ExternalStorageOptions{
