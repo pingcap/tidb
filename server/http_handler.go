@@ -2220,7 +2220,7 @@ func (h labelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	if len(labels) > 0 {
 		cfg := *config.GetGlobalConfig()
-		// Be careful. The key & value of cfg.Labels must not be changed, otherwise data race will happen.
+		// Be careful of data race. The key & value of cfg.Labels must not be changed.
 		if cfg.Labels != nil {
 			for k, v := range cfg.Labels {
 				if _, found := labels[k]; !found {
