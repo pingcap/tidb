@@ -1713,6 +1713,10 @@ func (remote *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			}
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 			if err := clients[i].Send(requests[i]); err != nil {
+				res := sst.WriteResponse{}
+				newErr := clients[i].RecvMsg(&res)
+				log.FromContext(ctx).Error("err", zap.Error(newErr), zap.Any("res", res.Error))
+
 				return annotateErr(err, allPeers[i])
 			}
 		}
