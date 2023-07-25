@@ -3951,13 +3951,13 @@ func (n *DropQueryWatchStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// CreateQueryWatchStmt is a statement to create a runaway watch item.
-type CreateQueryWatchStmt struct {
+// AddQueryWatchStmt is a statement to create a runaway watch item.
+type AddQueryWatchStmt struct {
 	stmtNode
 	QueryWatchOptionList []*QueryWatchOption
 }
 
-func (n *CreateQueryWatchStmt) Restore(ctx *format.RestoreCtx) error {
+func (n *AddQueryWatchStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("QUERY WATCH ADD")
 	for i, option := range n.QueryWatchOptionList {
 		ctx.WritePlain(" ")
@@ -3969,12 +3969,12 @@ func (n *CreateQueryWatchStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 // Accept implements Node Accept interface.
-func (n *CreateQueryWatchStmt) Accept(v Visitor) (Node, bool) {
+func (n *AddQueryWatchStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*CreateQueryWatchStmt)
+	n = newNode.(*AddQueryWatchStmt)
 	for _, val := range n.QueryWatchOptionList {
 		_, ok := val.Accept(v)
 		if !ok {

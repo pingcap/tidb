@@ -953,7 +953,7 @@ import (
 	CreateBindingStmt          "CREATE BINDING  statement"
 	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
 	CreateProcedureStmt        "CREATE PROCEDURE statement"
-	CreateQueryWatchStmt       "CREATE QUERY WATCH statement"
+	AddQueryWatchStmt       "CREATE QUERY WATCH statement"
 	CreateResourceGroupStmt    "CREATE RESOURCE GROUP statement"
 	CreateSequenceStmt         "CREATE SEQUENCE statement"
 	CreateStatisticsStmt       "CREATE STATISTICS statement"
@@ -1460,7 +1460,7 @@ import (
 	ResourceGroupRunawayActionOption       "Resource group runaway action option"
 	ResourceGroupRunawayWatchOption        "Resource group runaway watch option"
 	ResourceGroupRunawayOptionList         "Anomymous or direct resource group runaway option list"
-	WatchDurationOption                    "runaway watch duration option"
+	WatchDurationOption                    "Runaway watch duration option"
 	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	ResourceGroupPriorityOption            "Resource group priority option"
@@ -11876,7 +11876,7 @@ Statement:
 |	CreatePolicyStmt
 |	CreateProcedureStmt
 |	CreateResourceGroupStmt
-|	CreateQueryWatchStmt
+|	AddQueryWatchStmt
 |	CreateSequenceStmt
 |	CreateStatisticsStmt
 |	DoStmt
@@ -15860,10 +15860,10 @@ CalibrateResourceWorkloadOption:
  *
  * Query Watch
  *******************************************************************/
-CreateQueryWatchStmt:
+AddQueryWatchStmt:
 	"QUERY" "WATCH" "ADD" QueryWatchOptionList
 	{
-		$$ = &ast.CreateQueryWatchStmt{
+		$$ = &ast.AddQueryWatchStmt{
 			QueryWatchOptionList: $4.([]*ast.QueryWatchOption),
 		}
 	}

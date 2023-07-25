@@ -844,7 +844,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
 		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt,
-		*ast.LoadDataActionStmt, *ast.ImportIntoActionStmt, *ast.CalibrateResourceStmt, *ast.CreateQueryWatchStmt, *ast.DropQueryWatchStmt:
+		*ast.LoadDataActionStmt, *ast.ImportIntoActionStmt, *ast.CalibrateResourceStmt, *ast.AddQueryWatchStmt, *ast.DropQueryWatchStmt:
 		return b.buildSimple(ctx, node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -3552,7 +3552,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
 		p.setSchemaAndNames(buildCalibrateResourceSchema())
-	case *ast.CreateQueryWatchStmt:
+	case *ast.AddQueryWatchStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
 		p.setSchemaAndNames(buildCreateQueryWatchSchema())
