@@ -241,7 +241,7 @@ func handlePlanReplayerCaptureFile(content []byte, path string, handler download
 		return nil, err
 	}
 	for _, tbl := range tbls {
-		jsonStats, err := handler.statsHandle.DumpHistoricalStatsBySnapshot(tbl.dbName, tbl.info, startTS)
+		jsonStats, _, err := handler.statsHandle.DumpHistoricalStatsBySnapshot(tbl.dbName, tbl.info, startTS)
 		if err != nil {
 			return nil, err
 		}

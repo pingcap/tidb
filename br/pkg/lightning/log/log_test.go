@@ -19,7 +19,9 @@ import (
 	"os"
 	"testing"
 
+	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -72,4 +74,15 @@ func TestInitStdoutLogger(t *testing.T) {
 	output := <-outputC
 	require.NoError(t, r.Close())
 	require.Contains(t, output, msg)
+
+	// filter packages on default
+	require.Equal(t, "", os.Getenv(logutil.GRPCDebugEnvName))
+	require.IsType(t, &log.FilterCore{}, log.L().Logger.Core())
+	// output all packages when EnableDiagnoseLogs=true
+	logCfg.EnableDiagnoseLogs = true
+	require.NoError(t, log.InitLogger(logCfg, "info"))
+	require.IsType(t, &zaplog.TextIOCore{}, log.L().Logger.Core())
+	require.Equal(t, "true", os.Getenv(logutil.GRPCDebugEnvName))
+	// reset GRPCDebugEnvName
+	require.NoError(t, os.Unsetenv(logutil.GRPCDebugEnvName))
 }

@@ -61,6 +61,17 @@ func TestStraightJoinHint(t *testing.T) {
 	runJoinReorderTestData(t, tk, "TestStraightJoinHint")
 }
 
+func TestNoHashJoinHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, b int, key(a));")
+	tk.MustExec("create table t2(a int, b int, key(a));")
+	tk.MustExec("create table t3(a int, b int, key(a));")
+	tk.MustExec("create table t4(a int, b int, key(a));")
+	runJoinReorderTestData(t, tk, "TestNoHashJoinHint")
+}
+
 func TestLeadingJoinHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

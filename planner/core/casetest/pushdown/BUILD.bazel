@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "pushdown_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "push_down_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    race = "on",
+    shard_count = 8,
+    deps = [
+        "//domain",
+        "//parser/model",
+        "//testkit",
+        "//testkit/testdata",
+        "//testkit/testmain",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

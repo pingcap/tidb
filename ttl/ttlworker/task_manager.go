@@ -306,6 +306,7 @@ loop:
 		err = idleWorker.Schedule(task.ttlScanTask)
 		if err != nil {
 			logger.Warn("fail to schedule task", zap.Error(err))
+			task.cancel()
 			continue
 		}
 
@@ -457,6 +458,8 @@ func (m *taskManager) checkFinishedTask(se session.Session, now time.Time) {
 			stillRunningTasks = append(stillRunningTasks, task)
 			continue
 		}
+		// we should cancel task to release inner context and avoid memory leak
+		task.cancel()
 		err := m.reportTaskFinished(se, now, task)
 		if err != nil {
 			logutil.Logger(m.ctx).Error("fail to report finished task", zap.Error(err))
@@ -577,6 +580,11 @@ type runningScanTask struct {
 	*ttlScanTask
 	cancel func()
 	result *ttlScanTaskExecResult
+}
+
+// Context returns context for the task and is only used by test now
+func (t *runningScanTask) Context() context.Context {
+	return t.ctx
 }
 
 func (t *runningScanTask) finished() bool {

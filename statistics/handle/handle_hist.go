@@ -500,7 +500,7 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 		tbl = tbl.Copy()
 		tbl.Indices[item.ID] = idxHist
 	}
-	return h.updateStatsCache(oldCache.CopyAndUpdate([]*statistics.Table{tbl}, nil, cache.WithTableStatsByQuery()))
+	return h.updateStatsCache(oldCache, []*statistics.Table{tbl}, nil, cache.WithTableStatsByQuery())
 }
 
 func (h *Handle) setWorking(item model.TableItemID, resultCh chan stmtctx.StatsLoadResult) bool {

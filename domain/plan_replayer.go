@@ -553,13 +553,14 @@ type PlanReplayerDumpTask struct {
 	TblStats map[int64]interface{}
 
 	// variables used to dump the plan
-	StartTS         uint64
-	SessionBindings []*bindinfo.BindRecord
-	EncodedPlan     string
-	SessionVars     *variable.SessionVars
-	ExecStmts       []ast.StmtNode
-	Analyze         bool
-	DebugTrace      []interface{}
+	StartTS           uint64
+	SessionBindings   []*bindinfo.BindRecord
+	EncodedPlan       string
+	SessionVars       *variable.SessionVars
+	ExecStmts         []ast.StmtNode
+	Analyze           bool
+	HistoricalStatsTS uint64
+	DebugTrace        []interface{}
 
 	FileName string
 	Zf       *os.File
