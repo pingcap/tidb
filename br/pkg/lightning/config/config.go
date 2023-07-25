@@ -1068,12 +1068,9 @@ func (t *TikvImporter) adjust() error {
 		return common.ErrInvalidConfig.GenWithStack("tikv-importer.backend must not be empty!")
 	}
 	t.Backend = strings.ToLower(t.Backend)
+	// only need to assign t.IncrementalImport to t.ParallelImport when t.ParallelImport is false and t.IncrementalImport is true
 	if !t.ParallelImport && t.IncrementalImport {
-		// need to assign t.IncrementalImport to t.ParallelImport when t.ParallelImport is false and t.IncrementalImport is true
 		t.ParallelImport = t.IncrementalImport
-	} else if t.ParallelImport && !t.IncrementalImport {
-		// need to assign t.ParallelImport to t.IncrementalImport when t.IncrementalImport is false and t.ParallelImport is true, to keep compatibility
-		t.IncrementalImport = t.ParallelImport
 	}
 	switch t.Backend {
 	case BackendTiDB:
