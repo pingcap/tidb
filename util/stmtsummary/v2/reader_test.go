@@ -407,10 +407,10 @@ func TestHistoryReader(t *testing.T) {
 func TestHistoryReaderInvalidLine(t *testing.T) {
 	filename := "tidb-statements.log"
 
-	file, err := os.CreateTemp("", filename)
+	file, err := os.Create(filename)
 	require.NoError(t, err)
 	defer func() {
-		require.NoError(t, os.Remove(file.Name()))
+		require.NoError(t, os.Remove(filename))
 	}()
 	_, err = file.WriteString("invalid header line\n")
 	require.NoError(t, err)
