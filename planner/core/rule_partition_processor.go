@@ -1147,6 +1147,14 @@ func maxCmp(ctx sessionctx.Context, hiVal []types.Datum, columnsPruner *rangeCol
 				return false
 			}
 		}
+		// All hiVal == columnsPruner.lessThan
+		if len(hiVal) < len(columnsPruner.lessThan[i]) {
+			// Not all columns given
+			if columnsPruner.lessThan[i][len(hiVal)] == nil {
+				// MAXVALUE
+				return true
+			}
+		}
 		// if point is included, then false, due to LESS THAN
 		return hiExclude
 	}
