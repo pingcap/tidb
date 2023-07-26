@@ -151,7 +151,9 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	}
 
 	rg := utils.NewTaskRegister(ecli, utils.RegisterSnapshotBackup, uuid.New().String())
-	rg.RegisterTask(ctx)
+	if err := rg.RegisterTask(ctx); err != nil {
+		return errors.Annotate(err, "failed to register the task")
+	}
 	defer func() {
 		cx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
