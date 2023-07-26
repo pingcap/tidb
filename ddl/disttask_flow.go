@@ -252,7 +252,7 @@ func (h *litBackfillFlowHandle) splitSubtaskRanges(ctx context.Context, taskHand
 			return nil, err
 		}
 		if len(splitKey) == 0 {
-			endKey = lastKey
+			endKey = lastKey.Next()
 		} else {
 			endKey = splitKey.Clone()
 		}

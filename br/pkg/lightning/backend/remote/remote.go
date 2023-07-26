@@ -1717,16 +1717,6 @@ func (remote *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 				return errors.Trace(err)
 			}
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
-
-			var prevKey []byte
-			for _, pair := range pairs[:count] {
-				if len(prevKey) > 0 && bytes.Compare(prevKey, pair.Key) >= 0 {
-					log.FromContext(context.Background()).Error("", zap.ByteString("prevKey", prevKey), zap.ByteString("key", pair.Key))
-					return errors.New("write batch keys are not in order")
-				}
-				prevKey = pair.Key
-			}
-
 			if err := clients[i].Send(requests[i]); err != nil {
 				res := sst.WriteResponse{}
 				newErr := clients[i].RecvMsg(&res)
@@ -1752,7 +1742,6 @@ func (remote *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 
 	var remainingStartKey []byte
 	startTime := time.Now()
-	var prevKey []byte
 	for iter.Next() {
 		key := kv.Key(iter.Key())
 		if key.Cmp(j.keyRange.start) < 0 {
@@ -1761,12 +1750,6 @@ func (remote *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		if key.Cmp(j.keyRange.end) > 0 {
 			break
 		}
-
-		if len(prevKey) > 0 && bytes.Compare(prevKey, key) >= 0 {
-			log.FromContext(context.Background()).Error("", zap.Any("prevKey", prevKey), zap.Any("key", key))
-			return errors.New("write batch keys are not in order")
-		}
-		prevKey = key.Clone()
 
 		//readableKey := hex.EncodeToString(iter.Key())
 		//_, _, vals, err := tablecodec.DecodeIndexKey(iter.Key())
