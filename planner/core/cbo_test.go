@@ -279,16 +279,14 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 	))
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	testKit.MustQuery("explain format = 'brief' select * from t1 where a in (1,2) and b = 1").Check(testkit.Rows(
-		"IndexReader 2.00 root partition:p1 index:IndexRangeScan",
-		"└─IndexRangeScan 2.00 cop[tikv] table:t1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo",
+		"Batch_Point_Get 2.00 root table:t1, index:PRIMARY(a, b) keep order:false, desc:false",
 	))
 	testKit.MustQuery("select * from t1 where a in (1,2) and b = 1").Sort().Check(testkit.Rows(
 		"1 1",
 		"2 1",
 	))
 	testKit.MustQuery("explain format = 'brief' select * from t1 where a = 1 and b in (1,2)").Check(testkit.Rows(
-		"IndexReader 2.00 root partition:p0,p1 index:IndexRangeScan",
-		"└─IndexRangeScan 2.00 cop[tikv] table:t1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+		"Batch_Point_Get 2.00 root table:t1, index:PRIMARY(a, b) keep order:false, desc:false",
 	))
 	testKit.MustQuery("select * from t1 where a = 1 and b in (1,2)").Sort().Check(testkit.Rows(
 		"1 1",
@@ -358,16 +356,14 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 	))
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	testKit.MustQuery("explain format = 'brief' select * from t3 where a in (1,2) and b = 1").Check(testkit.Rows(
-		"TableReader 2.00 root partition:p1 data:TableRangeScan",
-		"└─TableRangeScan 2.00 cop[tikv] table:t3 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo",
+		"Batch_Point_Get 2.00 root table:t3, clustered index:PRIMARY(a, b) keep order:false, desc:false",
 	))
 	testKit.MustQuery("select * from t3 where a in (1,2) and b = 1").Sort().Check(testkit.Rows(
 		"1 1",
 		"2 1",
 	))
 	testKit.MustQuery("explain format = 'brief' select * from t3 where a = 1 and b in (1,2)").Check(testkit.Rows(
-		"TableReader 2.00 root partition:p0,p1 data:TableRangeScan",
-		"└─TableRangeScan 2.00 cop[tikv] table:t3 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+		"Batch_Point_Get 2.00 root table:t3, clustered index:PRIMARY(a, b) keep order:false, desc:false",
 	))
 	testKit.MustQuery("select * from t3 where a = 1 and b in (1,2)").Sort().Check(testkit.Rows(
 		"1 1",
@@ -435,16 +431,14 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 	))
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	testKit.MustQuery("explain format = 'brief' select * from t5 where a in (1,2) and 1 = 1").Check(testkit.Rows(
-		"TableReader 2.00 root partition:p0,p1 data:TableRangeScan",
-		"└─TableRangeScan 2.00 cop[tikv] table:t5 range:[1,1], [2,2], keep order:false, stats:pseudo",
+		"Batch_Point_Get 2.00 root table:t5 handle:[1 2], keep order:false, desc:false",
 	))
 	testKit.MustQuery("select * from t5 where a in (1,2) and 1 = 1").Sort().Check(testkit.Rows(
 		"1 0",
 		"2 0",
 	))
 	testKit.MustQuery("explain format = 'brief' select * from t5 where a in (1,3) and 1 = 1").Check(testkit.Rows(
-		"TableReader 2.00 root partition:p1 data:TableRangeScan",
-		"└─TableRangeScan 2.00 cop[tikv] table:t5 range:[1,1], [3,3], keep order:false, stats:pseudo",
+		"Batch_Point_Get 2.00 root table:t5 handle:[1 3], keep order:false, desc:false",
 	))
 	testKit.MustQuery("select * from t5 where a in (1,3) and 1 = 1").Sort().Check(testkit.Rows(
 		"1 0",

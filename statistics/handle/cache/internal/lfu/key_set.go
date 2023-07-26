@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,14 +12,41 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package lfu
 
 import (
-	"time"
+	"sync"
+
+	"golang.org/x/exp/maps"
 )
 
-// TSOToRoughTime translates tso to rough time that used to display
-func TSOToRoughTime(ts int64) time.Time {
-	t := time.Unix(ts>>18/1000, 0)
-	return t
+type keySet struct {
+	set map[int64]struct{}
+	mu  sync.RWMutex
+}
+
+func (ks *keySet) Add(key int64) {
+	ks.mu.Lock()
+	ks.set[key] = struct{}{}
+	ks.mu.Unlock()
+}
+
+func (ks *keySet) Remove(key int64) {
+	ks.mu.Lock()
+	delete(ks.set, key)
+	ks.mu.Unlock()
+}
+
+func (ks *keySet) Keys() []int64 {
+	ks.mu.RLock()
+	result := maps.Keys(ks.set)
+	ks.mu.RUnlock()
+	return result
+}
+
+func (ks *keySet) Len() int {
+	ks.mu.RLock()
+	result := len(ks.set)
+	ks.mu.RUnlock()
+	return result
 }

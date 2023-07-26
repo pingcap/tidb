@@ -33,7 +33,7 @@
 // The above copyright notice and this permission notice shall be included in all
 // copies or substantial portions of the Software.
 
-package server
+package internal
 
 import (
 	"bufio"
@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/server/err"
 	"github.com/pingcap/tidb/server/internal/util"
 	server_metrics "github.com/pingcap/tidb/server/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -53,47 +54,88 @@ import (
 
 const defaultWriterSize = 16 * 1024
 
-// packetIO is a helper to read and write data in packet format.
+// PacketIO is a helper to read and write data in packet format.
 // MySQL Packets: https://dev.mysql.com/doc/internals/en/mysql-packet.html
-type packetIO struct {
-	bufReadConn *util.BufferedReadConn
-	bufWriter   *bufio.Writer
-	sequence    uint8
-	readTimeout time.Duration
-	// maxAllowedPacket is the maximum size of one packet in readPacket.
+type PacketIO struct {
+	bufReadConn      *util.BufferedReadConn
+	bufWriter        *bufio.Writer
+	compressedWriter *compressedWriter
+	readTimeout      time.Duration
+	// maxAllowedPacket is the maximum size of one packet in ReadPacket.
 	maxAllowedPacket uint64
-	// accumulatedLength count the length of totally received 'payload' in readPacket.
+	// accumulatedLength count the length of totally received 'payload' in ReadPacket.
 	accumulatedLength    uint64
 	compressionAlgorithm int
-	compressedSequence   uint8
 	zstdLevel            zstd.EncoderLevel
-	compressedWriter     *compressedWriter
+	sequence             uint8
+	compressedSequence   uint8
 }
 
-func newPacketIO(bufReadConn *util.BufferedReadConn) *packetIO {
-	p := &packetIO{sequence: 0, compressionAlgorithm: mysql.CompressionNone, compressedSequence: 0, zstdLevel: 3}
-	p.setBufferedReadConn(bufReadConn)
-	p.setMaxAllowedPacket(variable.DefMaxAllowedPacket)
+// NewPacketIO creates a new PacketIO with given net.Conn.
+func NewPacketIO(bufReadConn *util.BufferedReadConn) *PacketIO {
+	p := &PacketIO{sequence: 0, compressionAlgorithm: mysql.CompressionNone, compressedSequence: 0, zstdLevel: 3}
+	p.SetBufferedReadConn(bufReadConn)
+	p.SetMaxAllowedPacket(variable.DefMaxAllowedPacket)
 	return p
 }
 
-func (p *packetIO) SetCompressionAlgorithm(ca int) {
+// NewPacketIOForTest creates a new PacketIO with given bufio.Writer.
+func NewPacketIOForTest(bufWriter *bufio.Writer) *PacketIO {
+	p := &PacketIO{}
+	p.SetBufWriter(bufWriter)
+	return p
+}
+
+// SetZstdLevel sets the zstd compression level.
+func (p *PacketIO) SetZstdLevel(level zstd.EncoderLevel) {
+	p.zstdLevel = level
+}
+
+// Sequence returns the sequence of PacketIO.
+func (p *PacketIO) Sequence() uint8 {
+	return p.sequence
+}
+
+// SetSequence sets the sequence of PacketIO.
+func (p *PacketIO) SetSequence(s uint8) {
+	p.sequence = s
+}
+
+// SetCompressedSequence sets the compressed sequence of PacketIO.
+func (p *PacketIO) SetCompressedSequence(s uint8) {
+	p.compressedSequence = s
+}
+
+// SetBufWriter sets the bufio.Writer of PacketIO.
+func (p *PacketIO) SetBufWriter(bufWriter *bufio.Writer) {
+	p.bufWriter = bufWriter
+}
+
+// ResetBufWriter resets the bufio.Writer of PacketIO.
+func (p *PacketIO) ResetBufWriter(w io.Writer) {
+	p.bufWriter.Reset(w)
+}
+
+// SetCompressionAlgorithm sets the compression algorithm of PacketIO.
+func (p *PacketIO) SetCompressionAlgorithm(ca int) {
 	p.compressionAlgorithm = ca
 	p.compressedWriter = newCompressedWriter(p.bufReadConn, ca)
 	p.compressedWriter.zstdLevel = p.zstdLevel
 	p.bufWriter.Flush()
 }
 
-func (p *packetIO) setBufferedReadConn(bufReadConn *util.BufferedReadConn) {
+// SetBufferedReadConn sets the BufferedReadConn of PacketIO.
+func (p *PacketIO) SetBufferedReadConn(bufReadConn *util.BufferedReadConn) {
 	p.bufReadConn = bufReadConn
 	p.bufWriter = bufio.NewWriterSize(bufReadConn, defaultWriterSize)
 }
 
-func (p *packetIO) setReadTimeout(timeout time.Duration) {
+// SetReadTimeout sets the read timeout of PacketIO.
+func (p *PacketIO) SetReadTimeout(timeout time.Duration) {
 	p.readTimeout = timeout
 }
 
-func (p *packetIO) readOnePacket() ([]byte, error) {
+func (p *PacketIO) readOnePacket() ([]byte, error) {
 	var header [4]byte
 	r := io.NopCloser(p.bufReadConn)
 	if p.readTimeout > 0 {
@@ -108,7 +150,7 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 		}
 		compressedSequence := compressedHeader[3]
 		if compressedSequence != p.compressedSequence {
-			return nil, errInvalidSequence.GenWithStack(
+			return nil, err.ErrInvalidSequence.GenWithStack(
 				"invalid compressed sequence %d != %d", compressedSequence, p.compressedSequence)
 		}
 		p.compressedSequence++
@@ -140,7 +182,7 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 
 	sequence := header[3]
 	if sequence != p.sequence {
-		return nil, errInvalidSequence.GenWithStack("invalid sequence %d != %d", sequence, p.sequence)
+		return nil, err.ErrInvalidSequence.GenWithStack("invalid sequence %d != %d", sequence, p.sequence)
 	}
 
 	p.sequence++
@@ -149,8 +191,8 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 
 	// Accumulated payload length exceeds the limit.
 	if p.accumulatedLength += uint64(length); p.accumulatedLength > p.maxAllowedPacket {
-		terror.Log(errNetPacketTooLarge)
-		return nil, errNetPacketTooLarge
+		terror.Log(err.ErrNetPacketTooLarge)
+		return nil, err.ErrNetPacketTooLarge
 	}
 
 	data := make([]byte, length)
@@ -169,11 +211,13 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 	return data, nil
 }
 
-func (p *packetIO) setMaxAllowedPacket(maxAllowedPacket uint64) {
+// SetMaxAllowedPacket sets the max allowed packet size of PacketIO.
+func (p *PacketIO) SetMaxAllowedPacket(maxAllowedPacket uint64) {
 	p.maxAllowedPacket = maxAllowedPacket
 }
 
-func (p *packetIO) readPacket() ([]byte, error) {
+// ReadPacket reads a packet from the connection.
+func (p *PacketIO) ReadPacket() ([]byte, error) {
 	p.accumulatedLength = 0
 	if p.readTimeout == 0 {
 		if err := p.bufReadConn.SetReadDeadline(time.Time{}); err != nil {
@@ -208,8 +252,8 @@ func (p *packetIO) readPacket() ([]byte, error) {
 	return data, nil
 }
 
-// writePacket writes data that already have header
-func (p *packetIO) writePacket(data []byte) error {
+// WritePacket writes data that already have header
+func (p *PacketIO) WritePacket(data []byte) error {
 	length := len(data) - 4
 	server_metrics.WritePacketBytes.Add(float64(len(data)))
 
@@ -269,7 +313,8 @@ func (p *packetIO) writePacket(data []byte) error {
 	}
 }
 
-func (p *packetIO) flush() error {
+// Flush flushes buffered data to network.
+func (p *PacketIO) Flush() error {
 	var err error
 	if p.compressionAlgorithm != mysql.CompressionNone {
 		err = p.compressedWriter.Flush()

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -44,6 +45,7 @@ func New() Glue {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.SkipRegisterToDashboard = true
 		conf.Log.EnableSlowLog.Store(false)
+		conf.TiKVClient.CoprReqTimeout = 1800 * time.Second
 	})
 	return Glue{}
 }

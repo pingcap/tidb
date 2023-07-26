@@ -151,7 +151,7 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 	return nil
 }
 
-func (e *WindowExec) fetchChild(ctx context.Context) (EOF bool, err error) {
+func (e *WindowExec) fetchChild(ctx context.Context) (eof bool, err error) {
 	childResult := tryNewCacheChunk(e.Children(0))
 	err = Next(ctx, e.Children(0), childResult)
 	if err != nil {
@@ -288,7 +288,7 @@ func (p *rowFrameWindowProcessor) getEndOffset(numRows uint64) uint64 {
 	return 0
 }
 
-func (p *rowFrameWindowProcessor) consumeGroupRows(_ sessionctx.Context, rows []chunk.Row) ([]chunk.Row, error) {
+func (*rowFrameWindowProcessor) consumeGroupRows(_ sessionctx.Context, rows []chunk.Row) ([]chunk.Row, error) {
 	return rows, nil
 }
 
@@ -523,7 +523,7 @@ func (p *rangeFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, r
 	return rows, nil
 }
 
-func (p *rangeFrameWindowProcessor) consumeGroupRows(_ sessionctx.Context, rows []chunk.Row) ([]chunk.Row, error) {
+func (*rangeFrameWindowProcessor) consumeGroupRows(_ sessionctx.Context, rows []chunk.Row) ([]chunk.Row, error) {
 	return rows, nil
 }
 

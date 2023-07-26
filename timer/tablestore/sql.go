@@ -54,7 +54,6 @@ func CreateTimerTableSQL(dbName, tableName string) string {
 		VERSION BIGINT(64) UNSIGNED NOT NULL,
 		PRIMARY KEY (ID),
 		UNIQUE KEY timer_key(NAMESPACE, TIMER_KEY),
-		KEY tags((CAST(TIMER_EXT->'$.tags' AS CHAR(256) ARRAY))),
 		KEY hook_class(HOOK_CLASS)
 	)`, indentString(dbName, tableName))
 }

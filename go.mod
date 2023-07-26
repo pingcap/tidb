@@ -17,6 +17,7 @@ require (
 	github.com/ashanbrown/makezero v1.1.1
 	github.com/aws/aws-sdk-go v1.44.259
 	github.com/bazelbuild/buildtools v0.0.0-20230317132445-9c3c1fc0106e
+	github.com/bazelbuild/rules_go v0.41.0
 	github.com/blacktear23/go-proxyprotocol v1.0.6
 	github.com/butuzov/mirror v1.1.0
 	github.com/carlmjohnson/flagext v0.21.0
@@ -51,6 +52,7 @@ require (
 	github.com/golangci/prealloc v0.0.0-20180630174525-215b22d4de21
 	github.com/google/btree v1.1.2
 	github.com/google/pprof v0.0.0-20211122183932-1daafda22083
+	github.com/google/skylark v0.0.0-20181101142754-a5f7082aabed
 	github.com/google/uuid v1.3.0
 	github.com/gordonklaus/ineffassign v0.0.0-20230107090616-13ace0543b28
 	github.com/gorilla/mux v1.8.0
@@ -76,7 +78,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20221009092201-b66cddb77c32
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20230705080816-a48f4fe282a2
+	github.com/pingcap/kvproto v0.0.0-20230720094213-a3b4a77b4333
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -98,7 +100,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.8-0.20230707070242-178f6fa01aab
-	github.com/tikv/pd/client v0.0.0-20230613052906-7158cb319935
+	github.com/tikv/pd/client v0.0.0-20230724080549-de985b8e0afc
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -302,7 +304,6 @@ replace (
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/parser => ./parser
-	github.com/tikv/client-go/v2 => github.com/HuSharp/client-go/v2 v2.0.0-20230711090949-a30ce371a330
-	github.com/tikv/pd/client => github.com/HuSharp/pd/client v0.0.0-20230712084312-c6edabc30fc6
+	github.com/tikv/client-go/v2 => github.com/HuSharp/client-go/v2 v2.0.0-20230724091137-dea7372e8aca
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )

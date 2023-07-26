@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
+	servererr "github.com/pingcap/tidb/server/err"
 	"github.com/pingcap/tidb/server/internal/column"
 	"github.com/pingcap/tidb/server/internal/resultset"
 	"github.com/pingcap/tidb/session"
@@ -271,7 +272,7 @@ func (tc *TiDBContext) checkSandBoxMode(stmt ast.StmtNode) error {
 		switch stmt.(type) {
 		case *ast.SetPwdStmt, *ast.AlterUserStmt:
 		default:
-			return errMustChangePassword.GenWithStackByArgs()
+			return servererr.ErrMustChangePassword.GenWithStackByArgs()
 		}
 	}
 	return nil
