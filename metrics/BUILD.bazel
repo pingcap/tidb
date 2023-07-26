@@ -19,6 +19,7 @@ go_library(
         "sli.go",
         "stats.go",
         "telemetry.go",
+        "timer.go",
         "topsql.go",
         "ttl.go",
         "wrapper.go",
