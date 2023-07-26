@@ -1198,7 +1198,9 @@ func TestSetLabels(t *testing.T) {
 	testUpdateLabels(updated, labels)
 
 	// reset the global variable
-	config.GetGlobalConfig().Labels = map[string]string{}
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels = map[string]string{}
+	})
 }
 
 func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
@@ -1236,8 +1238,10 @@ func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		testUpdateLabels()
 	}
-	done <- struct{}{}
+	close(done)
 
 	// reset the global variable
-	config.GetGlobalConfig().Labels = map[string]string{}
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels = map[string]string{}
+	})
 }
