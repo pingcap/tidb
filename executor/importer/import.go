@@ -91,7 +91,8 @@ const (
 	recordErrorsOption          = "record_errors"
 	detachedOption              = "detached"
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
-	maxEngineSizeOption         = "__max_engine_size"
+	// used for test
+	maxEngineSizeOption = "__max_engine_size"
 )
 
 var (
