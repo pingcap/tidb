@@ -21,17 +21,20 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-type zapTableIDWithFilesMarshaler []TableIDWithFiles
+type zapTableIDWithFilesMarshaler []TableIDWithRange
 
-func zapTableIDWithFiles(fs []TableIDWithFiles) zap.Field {
-	return zap.Object("files", zapTableIDWithFilesMarshaler(fs))
+func zapTableIDWithRange(rg []TableIDWithRange) zap.Field {
+	return zap.Object("files", zapTableIDWithFilesMarshaler(rg))
 }
 
-func (fs zapTableIDWithFilesMarshaler) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
-	for _, f := range fs {
-		encoder.AddInt64("table-id", f.TableID)
-		if err := logutil.MarshalLogObjectForFiles(f.Files, encoder); err != nil {
-			return errors.Trace(err)
+func (rg zapTableIDWithFilesMarshaler) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
+	for _, r := range rg {
+		encoder.AddInt64("table-id", r.TableID)
+		encoder.AddInt64("range-type", int64(r.Ranges.Typ))
+		for _, f := range r.Ranges.Ranges {
+			if err := logutil.MarshalLogObjectForFiles(f.Files, encoder); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil

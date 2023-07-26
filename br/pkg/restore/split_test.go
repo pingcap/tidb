@@ -637,18 +637,20 @@ func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, re
 	return nil
 }
 
-func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, tableIDWithFiles []restore.TableIDWithFiles, rewriteRules *restore.RewriteRules, updateCh glue.Progress) error {
+func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, tableIDWithRange []restore.TableIDWithRange, rewriteRules *restore.RewriteRules, updateCh glue.Progress) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	for i, tableIDWithFile := range tableIDWithFiles {
-		if int64(i) != tableIDWithFile.TableID {
+	for i, rg := range tableIDWithRange {
+		if int64(i) != rg.TableID {
 			f.tableIDIsInsequence = false
 		}
-		f.restoredFiles = append(f.restoredFiles, tableIDWithFile.Files...)
+		for _, rgFile := range rg.Ranges.Ranges {
+			f.restoredFiles = append(f.restoredFiles, rgFile.Files...)
+		}
 	}
 	err := errors.Annotatef(berrors.ErrRestoreWriteAndIngest, "the files to restore are taken by a hijacker, meow :3")
 	log.Error("error happens :3", logutil.ShortError(err))

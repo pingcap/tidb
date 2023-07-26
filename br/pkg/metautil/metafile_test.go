@@ -11,6 +11,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	mockstorage "github.com/pingcap/tidb/br/pkg/mock/storage"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/stretchr/testify/require"
 )
 
@@ -252,4 +253,314 @@ func TestMetaFileSize(t *testing.T) {
 	needFlush = metafiles.append(&backuppb.File{Name: "meta4", Size_: 99999}, AppendMetaFile)
 	t.Logf("needFlush: %v, %+v", needFlush, metafiles)
 	require.True(t, needFlush)
+}
+
+func TestTransformRestoreRanges(t *testing.T) {
+	items := []*BackupItem{
+		{File: &backuppb.File{Name: "f0", StartKey: []byte("a"), EndKey: []byte("b")}},
+		{File: &backuppb.File{Name: "f1", StartKey: []byte("c"), EndKey: []byte("d")}},
+		{File: &backuppb.File{Name: "f2", StartKey: []byte("e"), EndKey: []byte("f")}},
+	}
+	mergeFn := func(files []*backuppb.File) []rtree.Range {
+		return []rtree.Range{
+			{
+				StartKey: files[0].GetStartKey(),
+				EndKey:   files[len(files)-1].GetEndKey(),
+				Files:    files,
+			},
+		}
+	}
+	rgs := BackupItems(items).ToRestoreRanges(mergeFn)
+	require.Equal(t, rgs, &RestoreRanges{
+		Typ: MergedFile,
+		Ranges: []rtree.Range{
+			{
+				StartKey: items[0].File.GetStartKey(),
+				EndKey:   items[2].File.GetEndKey(),
+				Files:    BackupItems(items).GetOriginFiles(),
+			},
+		},
+		ImportedRangeIndex: 0,
+		ImportedFileIndex:  0,
+	})
+
+	items = []*BackupItem{
+		{Range: &backuppb.BackupRange{StartKey: []byte("a"), EndKey: []byte("b"), Files: []*backuppb.File{{Name: "f0"}}}},
+		{Range: &backuppb.BackupRange{StartKey: []byte("c"), EndKey: []byte("d"), Files: []*backuppb.File{{Name: "f1"}}}},
+		{Range: &backuppb.BackupRange{StartKey: []byte("e"), EndKey: []byte("f"), Files: []*backuppb.File{{Name: "f2"}}}},
+	}
+	rgs = BackupItems(items).ToRestoreRanges(mergeFn)
+	require.Equal(t, rgs, &RestoreRanges{
+		Typ: OriginalFile,
+		Ranges: []rtree.Range{
+			{
+				StartKey: items[0].Range.GetStartKey(),
+				EndKey:   items[0].Range.GetEndKey(),
+				Files:    items[0].Range.Files,
+			},
+			{
+				StartKey: items[1].Range.GetStartKey(),
+				EndKey:   items[1].Range.GetEndKey(),
+				Files:    items[1].Range.Files,
+			},
+			{
+				StartKey: items[2].Range.GetStartKey(),
+				EndKey:   items[2].Range.GetEndKey(),
+				Files:    items[2].Range.Files,
+			},
+		},
+		ImportedRangeIndex: 0,
+		ImportedFileIndex:  0,
+	})
+
+	// For Backup range, don't need mergeFn.
+	rgs = BackupItems(items).ToRestoreRanges(nil)
+	require.Equal(t, rgs, &RestoreRanges{
+		Typ: OriginalFile,
+		Ranges: []rtree.Range{
+			{
+				StartKey: items[0].Range.GetStartKey(),
+				EndKey:   items[0].Range.GetEndKey(),
+				Files:    items[0].Range.Files,
+			},
+			{
+				StartKey: items[1].Range.GetStartKey(),
+				EndKey:   items[1].Range.GetEndKey(),
+				Files:    items[1].Range.Files,
+			},
+			{
+				StartKey: items[2].Range.GetStartKey(),
+				EndKey:   items[2].Range.GetEndKey(),
+				Files:    items[2].Range.Files,
+			},
+		},
+		ImportedRangeIndex: 0,
+		ImportedFileIndex:  0,
+	})
+
+	// not support mixed item for now
+	items = []*BackupItem{
+		{File: &backuppb.File{Name: "f0", StartKey: []byte("a"), EndKey: []byte("b")}},
+		{Range: &backuppb.BackupRange{StartKey: []byte("c"), EndKey: []byte("d"), Files: []*backuppb.File{{Name: "f1"}}}},
+		{Range: &backuppb.BackupRange{StartKey: []byte("e"), EndKey: []byte("f"), Files: []*backuppb.File{{Name: "f2"}}}},
+	}
+	require.Panics(t, func() { BackupItems(items).ToRestoreRanges(mergeFn) })
+
+	// not support item with both File and Range for now
+	items = []*BackupItem{
+		{
+			File:  &backuppb.File{Name: "f0", StartKey: []byte("a"), EndKey: []byte("b")},
+			Range: &backuppb.BackupRange{StartKey: []byte("a"), EndKey: []byte("b"), Files: []*backuppb.File{{Name: "f0"}}},
+		},
+		{Range: &backuppb.BackupRange{StartKey: []byte("c"), EndKey: []byte("d"), Files: []*backuppb.File{{Name: "f1"}}}},
+		{Range: &backuppb.BackupRange{StartKey: []byte("e"), EndKey: []byte("f"), Files: []*backuppb.File{{Name: "f2"}}}},
+	}
+	require.Panics(t, func() { BackupItems(items).ToRestoreRanges(mergeFn) })
+
+	// not support item with both File and Range for now
+	items = []*BackupItem{
+		{Range: &backuppb.BackupRange{StartKey: []byte("c"), EndKey: []byte("d"), Files: []*backuppb.File{{Name: "f1"}}}},
+		{
+			File:  &backuppb.File{Name: "f0", StartKey: []byte("a"), EndKey: []byte("b")},
+			Range: &backuppb.BackupRange{StartKey: []byte("a"), EndKey: []byte("b"), Files: []*backuppb.File{{Name: "f0"}}},
+		},
+		{Range: &backuppb.BackupRange{StartKey: []byte("e"), EndKey: []byte("f"), Files: []*backuppb.File{{Name: "f2"}}}},
+	}
+	require.Panics(t, func() { BackupItems(items).ToRestoreRanges(mergeFn) })
+
+}
+
+func TestRestoreRangesIterator(t *testing.T) {
+	cases := []struct {
+		rg  *RestoreRanges
+		res [][]*backuppb.File
+	}{
+		{
+			&RestoreRanges{
+				Typ: MergedFile,
+				Ranges: []rtree.Range{
+					{
+						StartKey: []byte("a"),
+						EndKey:   []byte("bb"),
+						Files: []*backuppb.File{
+							{
+								Name:     "f0_write.sst",
+								StartKey: []byte("a"),
+								EndKey:   []byte("b"),
+							},
+							{
+								Name:     "f0_default.sst",
+								StartKey: []byte("a"),
+								EndKey:   []byte("b"),
+							},
+							{
+								Name:     "f1_default.sst",
+								StartKey: []byte("b"),
+								EndKey:   []byte("bb"),
+							},
+						},
+					},
+				},
+			},
+			[][]*backuppb.File{
+				// the files with the same name belong to the same batch
+				{
+					{
+						Name:     "f0_write.sst",
+						StartKey: []byte("a"),
+						EndKey:   []byte("b"),
+					},
+					{
+						Name:     "f0_default.sst",
+						StartKey: []byte("a"),
+						EndKey:   []byte("b"),
+					},
+				},
+				{
+					{
+						Name:     "f1_default.sst",
+						StartKey: []byte("b"),
+						EndKey:   []byte("bb"),
+					},
+				},
+			},
+		},
+		{
+			&RestoreRanges{
+				Typ: MergedFile,
+				Ranges: []rtree.Range{
+					{
+						StartKey: []byte("a"),
+						EndKey:   []byte("bb"),
+						Files: []*backuppb.File{
+							{
+								Name:     "f0_write.sst",
+								StartKey: []byte("a"),
+								EndKey:   []byte("b"),
+							},
+							{
+								Name:     "f0_default.sst",
+								StartKey: []byte("a"),
+								EndKey:   []byte("b"),
+							},
+							{
+								Name:     "f1_default.sst",
+								StartKey: []byte("b"),
+								EndKey:   []byte("bb"),
+							},
+						},
+					},
+					{
+						StartKey: []byte("bb"),
+						EndKey:   []byte("c"),
+						Files: []*backuppb.File{
+							{
+								Name:     "f2_write.sst",
+								StartKey: []byte("bb"),
+								EndKey:   []byte("c"),
+							},
+							{
+								Name:     "f2_default.sst",
+								StartKey: []byte("bb"),
+								EndKey:   []byte("c"),
+							},
+						},
+					},
+				},
+			},
+			[][]*backuppb.File{
+				// the files with the same name belong to the same batch
+				{
+					{
+						Name:     "f0_write.sst",
+						StartKey: []byte("a"),
+						EndKey:   []byte("b"),
+					},
+					{
+						Name:     "f0_default.sst",
+						StartKey: []byte("a"),
+						EndKey:   []byte("b"),
+					},
+				},
+				{
+					{
+						Name:     "f1_default.sst",
+						StartKey: []byte("b"),
+						EndKey:   []byte("bb"),
+					},
+				},
+				{
+					{
+						Name:     "f2_write.sst",
+						StartKey: []byte("bb"),
+						EndKey:   []byte("c"),
+					},
+					{
+						Name:     "f2_default.sst",
+						StartKey: []byte("bb"),
+						EndKey:   []byte("c"),
+					},
+				},
+			},
+		},
+		{
+			&RestoreRanges{
+				Typ: OriginalFile,
+				Ranges: []rtree.Range{
+					{
+						StartKey: []byte("a"),
+						EndKey:   []byte("bb"),
+						Files: []*backuppb.File{
+							{
+								Name:     "f0_write.sst",
+								StartKey: []byte("a"),
+								EndKey:   []byte("b"),
+							},
+							{
+								Name:     "f0_default.sst",
+								StartKey: []byte("a"),
+								EndKey:   []byte("b"),
+							},
+							{
+								Name:     "f1_default.sst",
+								StartKey: []byte("b"),
+								EndKey:   []byte("bb"),
+							},
+						},
+					},
+				},
+			},
+			[][]*backuppb.File{
+				{
+					{
+						Name:     "f0_write.sst",
+						StartKey: []byte("a"),
+						EndKey:   []byte("b"),
+					},
+					{
+						Name:     "f0_default.sst",
+						StartKey: []byte("a"),
+						EndKey:   []byte("b"),
+					},
+					{
+						Name:     "f1_default.sst",
+						StartKey: []byte("b"),
+						EndKey:   []byte("bb"),
+					},
+				},
+			},
+		},
+	}
+
+	for _, ca := range cases {
+		res := make([][]*backuppb.File, 0, 1)
+		for {
+			files := ca.rg.NextFiles()
+			if len(files) == 0 {
+				break
+			}
+			res = append(res, files)
+		}
+		require.ElementsMatch(t, res, ca.res)
+	}
 }

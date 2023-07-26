@@ -163,7 +163,7 @@ func fakeTableWithRange(id int64, rngs []rtree.Range) restore.TableWithRange {
 			Table:       tbl.Info,
 			OldTable:    tbl,
 		},
-		Range: rngs,
+		Ranges: &metautil.RestoreRanges{Typ: metautil.MergedFile, Ranges: rngs},
 	}
 	return tblWithRng
 }
@@ -250,7 +250,7 @@ func TestAutoSend(t *testing.T) {
 	batcher.Close()
 
 	rngs := sender.Ranges()
-	require.Equal(t, simpleTable.Range, rngs)
+	require.Equal(t, simpleTable.Ranges, rngs)
 	select {
 	case err := <-errCh:
 		t.Fatal(errors.Trace(err))
@@ -278,7 +278,7 @@ func TestSplitRangeOnSameTable(t *testing.T) {
 	require.Equal(t, 4, sender.BatchCount())
 
 	rngs := sender.Ranges()
-	require.Equal(t, simpleTable.Range, rngs)
+	require.Equal(t, simpleTable.Ranges, rngs)
 	select {
 	case err := <-errCh:
 		t.Fatal(errors.Trace(err))

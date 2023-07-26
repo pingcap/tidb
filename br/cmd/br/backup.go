@@ -37,9 +37,17 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 		defer trace.TracerFinishSpan(ctx, store)
 	}
 
+	if cfg.FullBackupType == task.FullBackupTypeFile {
+		if err := task.RunFileCopyBackup(ctx, tidbGlue, &cfg); err != nil {
+			log.Error("failed to run file-copy backup", zap.Error(err))
+			return errors.Trace(err)
+		}
+		return nil
+	}
+
 	if cfg.FullBackupType == task.FullBackupTypeEBS {
 		if err := task.RunBackupEBS(ctx, tidbGlue, &cfg); err != nil {
-			log.Error("failed to backup", zap.Error(err))
+			log.Error("failed to run EBS backup", zap.Error(err))
 			return errors.Trace(err)
 		}
 		return nil

@@ -20,6 +20,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
@@ -222,6 +223,10 @@ func GetSSTMetaFromFile(
 	} else if strings.Contains(file.GetName(), writeCFName) {
 		cfName = writeCFName
 	}
+	if len(cfName) == 0 {
+		// get cf name from field
+		cfName = file.GetCf()
+	}
 	// Find the overlapped part between the file and the region.
 	// Here we rewrites the keys to compare with the keys of the region.
 	rangeStart := regionRule.GetNewKeyPrefix()
@@ -280,52 +285,17 @@ func makeDBPool(size uint, dbFactory func() (*DB, error)) ([]*DB, error) {
 	return dbPool, nil
 }
 
-// EstimateRangeSize estimates the total range count by file.
-func EstimateRangeSize(files []*backuppb.File) int {
-	result := 0
-	for _, f := range files {
-		if strings.HasSuffix(f.GetName(), "_write.sst") {
-			result++
-		}
-	}
-	return result
-}
-
-// MapTableToFiles makes a map that mapping table ID to its backup files.
-// aware that one file can and only can hold one table.
-func MapTableToFiles(files []*backuppb.File) map[int64][]*backuppb.File {
-	result := map[int64][]*backuppb.File{}
-	for _, file := range files {
-		tableID := tablecodec.DecodeTableID(file.GetStartKey())
-		tableEndID := tablecodec.DecodeTableID(file.GetEndKey())
-		if tableID != tableEndID {
-			log.Panic("key range spread between many files.",
-				zap.String("file name", file.Name),
-				logutil.Key("startKey", file.StartKey),
-				logutil.Key("endKey", file.EndKey))
-		}
-		if tableID == 0 {
-			log.Panic("invalid table key of file",
-				zap.String("file name", file.Name),
-				logutil.Key("startKey", file.StartKey),
-				logutil.Key("endKey", file.EndKey))
-		}
-		result[tableID] = append(result[tableID], file)
-	}
-	return result
-}
-
 // GoValidateFileRanges validate files by a stream of tables and yields
 // tables with range.
 func GoValidateFileRanges(
 	ctx context.Context,
 	tableStream <-chan CreatedTable,
-	fileOfTable map[int64][]*backuppb.File,
+	itemsOfTable map[int64][]*metautil.BackupItem,
 	splitSizeBytes, splitKeyCount uint64,
 	errCh chan<- error,
 ) <-chan TableWithRange {
 	// Could we have a smaller outCh size?
-	outCh := make(chan TableWithRange, len(fileOfTable))
+	outCh := make(chan TableWithRange, len(itemsOfTable))
 	go func() {
 		defer close(outCh)
 		defer log.Info("all range generated")
@@ -338,7 +308,7 @@ func GoValidateFileRanges(
 				if !ok {
 					return
 				}
-				files := fileOfTable[t.OldTable.Info.ID]
+				items := itemsOfTable[t.OldTable.Info.ID]
 				if partitions := t.OldTable.Info.Partition; partitions != nil {
 					log.Debug("table partition",
 						zap.Stringer("database", t.OldTable.DB.Name),
@@ -346,44 +316,49 @@ func GoValidateFileRanges(
 						zap.Any("partition info", partitions),
 					)
 					for _, partition := range partitions.Definitions {
-						files = append(files, fileOfTable[partition.ID]...)
+						items = append(items, itemsOfTable[partition.ID]...)
 					}
 				}
-				for _, file := range files {
-					err := ValidateFileRewriteRule(file, t.RewriteRule)
-					if err != nil {
-						errCh <- err
-						return
-					}
+				// Need a transform to invode such ValidateRules/ToRestoreRanges methods
+				backupItems := metautil.BackupItems(items)
+				checkFn := func(file *backuppb.File) error {
+					return ValidateFileRewriteRule(file, t.RewriteRule)
 				}
-				// Merge small ranges to reduce split and scatter regions.
-				ranges, stat, err := MergeFileRanges(
-					files, splitSizeBytes, splitKeyCount)
+				err := backupItems.ValidateRules(checkFn)
 				if err != nil {
 					errCh <- err
 					return
 				}
-				log.Info("merge and validate file",
-					zap.Stringer("database", t.OldTable.DB.Name),
-					zap.Stringer("table", t.Table.Name),
-					zap.Int("Files(total)", stat.TotalFiles),
-					zap.Int("File(write)", stat.TotalWriteCFFile),
-					zap.Int("File(default)", stat.TotalDefaultCFFile),
-					zap.Int("Region(total)", stat.TotalRegions),
-					zap.Int("Regoin(keys avg)", stat.RegionKeysAvg),
-					zap.Int("Region(bytes avg)", stat.RegionBytesAvg),
-					zap.Int("Merged(regions)", stat.MergedRegions),
-					zap.Int("Merged(keys avg)", stat.MergedRegionKeysAvg),
-					zap.Int("Merged(bytes avg)", stat.MergedRegionBytesAvg))
-
+				// Merge small ranges to reduce split and scatter regions.
+				mergeFn := func(files []*backuppb.File) []rtree.Range {
+					ranges, stat, err := MergeFileRanges(
+						files, splitSizeBytes, splitKeyCount)
+					if err != nil {
+						errCh <- err
+						return nil
+					}
+					log.Info("merge and validate file",
+						zap.Stringer("database", t.OldTable.DB.Name),
+						zap.Stringer("table", t.Table.Name),
+						zap.Int("Files(total)", stat.TotalFiles),
+						zap.Int("File(write)", stat.TotalWriteCFFile),
+						zap.Int("File(default)", stat.TotalDefaultCFFile),
+						zap.Int("Region(total)", stat.TotalRegions),
+						zap.Int("Regoin(keys avg)", stat.RegionKeysAvg),
+						zap.Int("Region(bytes avg)", stat.RegionBytesAvg),
+						zap.Int("Merged(regions)", stat.MergedRegions),
+						zap.Int("Merged(keys avg)", stat.MergedRegionKeysAvg),
+						zap.Int("Merged(bytes avg)", stat.MergedRegionBytesAvg))
+					return ranges
+				}
+				rgs := backupItems.ToRestoreRanges(mergeFn)
 				tableWithRange := TableWithRange{
 					CreatedTable: t,
-					Range:        ranges,
+					TableID:      t.Table.ID,
+					Ranges:       rgs,
 				}
 				log.Debug("sending range info",
 					zap.Stringer("table", t.Table.Name),
-					zap.Int("files", len(files)),
-					zap.Int("range size", len(ranges)),
 					zap.Int("output channel size", len(outCh)))
 				outCh <- tableWithRange
 			}
@@ -497,7 +472,7 @@ func TruncateTS(key []byte) []byte {
 func SplitRanges(
 	ctx context.Context,
 	client *Client,
-	ranges []rtree.Range,
+	ranges rtree.Ranges,
 	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
 	isRawKv bool,

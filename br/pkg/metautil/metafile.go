@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/parser/model"
@@ -54,6 +56,318 @@ const (
 	// MetaV2 represents the new version of backupmeta.
 	MetaV2
 )
+
+// RestoreType repesents types of different backup modes.
+// For now. it should be one of scan backup and file-copy backup.
+type RestoreTyp int
+
+const (
+	// MergedFile represents scan backup generated files.
+	// it merged small files into one range in #GoValidateFileRanges.
+	MergedFile RestoreTyp = 1
+	// OriginalFile represents file-copy backup generated files.
+	// it only represents region related SST Files.
+	// normally 12 total files for write + default CF for one region.
+	OriginalFile RestoreTyp = 2
+)
+
+type BackupItem struct {
+	// File represents the backup file generated with scan entries.
+	File *backuppb.File
+	// Ragne is for File backup, including a region range and all related SST files.
+	Range *backuppb.BackupRange
+}
+type BackupItems []*BackupItem
+
+type RestoreRanges struct {
+	Typ RestoreTyp
+	// Ranges represent all related SST Files in a batch.
+	// normally these ranges belong to one TiDB Table.
+	Ranges []rtree.Range
+
+	// one import task will have many restore ranges.
+	// (ImportedRangeIndex, ImportedFileIndex) will locate the files index of an iterator.
+	// used to record the range index of import files.
+	ImportedRangeIndex int
+	// used to record the file index of a range.
+	ImportedFileIndex int
+}
+
+func (i *BackupItem) Size() uint64 {
+	if i.File != nil {
+		return i.File.Size_
+	}
+	if i.Range != nil {
+		s := uint64(0)
+		for _, f := range i.Range.Files {
+			s += f.Size_
+		}
+		return s
+	}
+	log.Panic("BackupItem not supported in Size() ", zap.Any("item", i))
+	return 0
+}
+
+func (i *BackupItem) GetStartKey() []byte {
+	if i.File != nil {
+		return i.File.GetStartKey()
+	}
+	if i.Range != nil {
+		return i.Range.GetStartKey()
+	}
+	log.Panic("BackupItem not supported in GetStartKey() ", zap.Any("item", i))
+	return nil
+}
+
+func (i *BackupItem) GetEndKey() []byte {
+	if i.File != nil {
+		return i.File.GetEndKey()
+	}
+	if i.Range != nil {
+		return i.Range.GetEndKey()
+	}
+	log.Panic("BackupItem not supported in GetEndKey() ", zap.Any("item", i))
+	return nil
+}
+
+// only for log
+func (i *BackupItem) GetName() string {
+	if i.File != nil {
+		return i.File.GetName()
+	}
+	if i.Range != nil {
+		if len(i.Range.Files) <= 1 {
+			return "Range: start " + i.Range.Files[0].GetName()
+		}
+		return "Range: start " + i.Range.Files[0].GetName() + " end " + i.Range.Files[len(i.Range.Files)-1].GetName()
+	}
+	log.Panic("BackupItem not supported in GetName() ", zap.Any("item", i))
+	return ""
+}
+
+// ValidateFileRewriteRule transform RackupItems to RestoreRanges
+// FIXME: use closure as parameter to avoid cycle import
+func (is BackupItems) ValidateRules(checkFn func(*backuppb.File) error) error {
+	for _, i := range is {
+		if i.File != nil {
+			err := checkFn(i.File)
+			if err != nil {
+				return err
+			}
+		}
+		if i.Range != nil {
+			for _, f := range i.Range.Files {
+				err := checkFn(f)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// ToRestoreRanges transform RackupItems to RestoreRanges
+// FIXME: use closure as parameter to avoid cycle import
+func (is BackupItems) ToRestoreRanges(mergeFilesFn func([]*backuppb.File) []rtree.Range) *RestoreRanges {
+	var (
+		typ    int
+		files  []*backuppb.File
+		ranges []rtree.Range
+	)
+
+	if len(is) == 0 {
+		log.Warn("BackupItems don't have any items")
+		return nil
+	}
+	r := &RestoreRanges{}
+	if is[0].File != nil {
+		typ += 1
+		files = make([]*backuppb.File, 0, len(is))
+	}
+	if is[0].Range != nil {
+		typ += 2
+		ranges = make([]rtree.Range, 0, len(is))
+	}
+	if typ >= 1 && typ <= 2 {
+		// translate backupItem to rtree.Range
+		for _, i := range is {
+			if typ == 1 && i.File != nil && i.Range == nil {
+				files = append(files, i.File)
+			} else if typ == 2 && i.Range != nil && i.File == nil {
+				ranges = append(ranges, rtree.Range{
+					StartKey: i.Range.StartKey,
+					EndKey:   i.Range.EndKey,
+					Files:    i.Range.Files,
+				})
+			} else {
+				log.Panic("not support mixed files and ranges for now")
+			}
+		}
+		if typ == 1 {
+			r.Ranges = mergeFilesFn(files)
+		}
+		if typ == 2 {
+			r.Ranges = ranges
+		}
+		r.Typ = RestoreTyp(typ)
+		return r
+	}
+	log.Panic("not support mixed files and ranges for now")
+	return r
+}
+
+// GetOriginFiles return the backuppb.File, usually these files were generate by scan kv entries.
+func (is BackupItems) GetOriginFiles() []*backuppb.File {
+	files := make([]*backuppb.File, 0, len(is))
+	for _, i := range is {
+		if i.File != nil {
+			files = append(files, i.File)
+		}
+	}
+	return files
+}
+
+// GetOriginRanges return the backuppb.BackupRange, usually these ranges were generate by file-copy .
+func (is BackupItems) GetOriginRanges() []*backuppb.BackupRange {
+	ranges := make([]*backuppb.BackupRange, 0, len(is))
+	for _, i := range is {
+		if i.Range != nil {
+			ranges = append(ranges, i.Range)
+		}
+	}
+	return ranges
+}
+
+// ArchiveSize return the size of Archive data
+func (is BackupItems) ArchiveSize() uint64 {
+	total := uint64(0)
+	for _, i := range is {
+		if i.File != nil {
+			total += i.File.Size_
+		}
+		if i.Range != nil {
+			for _, f := range i.Range.Files {
+				total += f.Size_
+			}
+		}
+	}
+	return total
+}
+
+// EstimateCount estimates the total range count by file or range.
+func (is BackupItems) EstimateCount() int {
+	result := 0
+	for _, i := range is {
+		if i.File != nil {
+			if strings.HasSuffix(i.File.GetName(), "_write.sst") {
+				result++
+			}
+		}
+		if i.Range != nil {
+			result++
+		}
+	}
+	return result
+}
+
+// GetTableMap makes a map that mapping table ID to its backup items.
+// aware that one file or range can and only can hold one table.
+func (is BackupItems) GetTableMap() map[int64][]*BackupItem {
+	result := make(map[int64][]*BackupItem)
+	for _, item := range is {
+		tableID := tablecodec.DecodeTableID(item.GetStartKey())
+		tableEndID := tablecodec.DecodeTableID(item.GetEndKey())
+		if tableID != tableEndID {
+			log.Panic("key range spread between many files.",
+				zap.String("file name", item.GetName()),
+				logutil.Key("startKey", item.GetStartKey()),
+				logutil.Key("endKey", item.GetEndKey()))
+		}
+		if tableID == 0 {
+			log.Panic("invalid table key of file",
+				zap.String("file name", item.GetName()),
+				logutil.Key("startKey", item.GetStartKey()),
+				logutil.Key("endKey", item.GetEndKey()))
+		}
+		result[tableID] = append(result[tableID], item)
+	}
+	return result
+}
+
+// when RestoreType is MergedFile. then download files one by one and merge different cf files into one ingest per region.
+// when RestoreType is OriginalFile. then merge download files and merge all cf files into one ingest per region.
+func (rr *RestoreRanges) NextFiles() []*backuppb.File {
+	if rr == nil || rr.ImportedRangeIndex >= len(rr.Ranges) {
+		// this restore ranges has been imported completed.
+		return nil
+	}
+	if rr.Typ == MergedFile {
+		// import one range or partial files at a time, depends on file range.
+		for rr.ImportedRangeIndex < len(rr.Ranges) {
+			// locate the range first.
+			rg := rr.Ranges[rr.ImportedRangeIndex]
+			idx := getFilesRangeIndex(rr.ImportedFileIndex, rg.Files)
+			if idx == 0 {
+				// no files of this range, try next range next time
+				rr.ImportedRangeIndex += 1
+				rr.ImportedFileIndex = 0
+				continue
+			}
+			// update ImportedFileIndex
+			files := rg.Files[rr.ImportedFileIndex:idx]
+			rr.ImportedFileIndex = idx
+			return files
+		}
+		// reach the end of this RestoreRanges.
+		return nil
+	} else if rr.Typ == OriginalFile {
+		// import one range at a time, because one range represents one region.
+		for idx, r := range rr.Ranges {
+			if rr.ImportedRangeIndex <= idx {
+				rr.ImportedRangeIndex += 1
+				return r.Files
+			}
+		}
+		// reach the end of this RestoreRanges.
+		return nil
+	} else {
+		// [unreachable] this should be checked in #ToRestoreRanges.
+		log.Panic("not support type NextFiles", zap.Any("range", rr))
+	}
+	return nil
+}
+
+// isFilesBelongToSameRange check whether two files are belong to the same range with different cf.
+func isFilesBelongToSameRange(f1, f2 string) bool {
+	return GetFileRangeKey(f1) == GetFileRangeKey(f2)
+}
+
+func GetFileRangeKey(f string) string {
+	// the backup date file pattern is `{store_id}_{region_id}_{epoch_version}_{key}_{ts}_{cf}.sst`
+	// so we need to compare with out the `_{cf}.sst` suffix
+	idx := strings.LastIndex(f, "_")
+	if idx < 0 {
+		panic(fmt.Sprintf("invalid backup data file name: '%s'", f))
+	}
+
+	return f[:idx]
+}
+
+func getFilesRangeIndex(startIdx int, files []*backuppb.File) int {
+	if len(files) <= startIdx {
+		return 0
+	}
+	idx := startIdx + 1
+	for idx < len(files) {
+		if !isFilesBelongToSameRange(files[idx-1].Name, files[idx].Name) {
+			break
+		}
+		idx++
+	}
+
+	return idx
+}
 
 // PitrIDMapsFilename is filename that used to save id maps in pitr.
 func PitrIDMapsFilename(clusterID, restoreTS uint64) string {
@@ -151,7 +465,7 @@ type Table struct {
 	Crc64Xor        uint64
 	TotalKvs        uint64
 	TotalBytes      uint64
-	Files           []*backuppb.File
+	Items           []*BackupItem
 	TiFlashReplicas int
 	Stats           *handle.JSONTable
 }
@@ -210,16 +524,25 @@ func (reader *MetaReader) readSchemas(ctx context.Context, output func(*backuppb
 	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.SchemaIndex, reader.cipher, outputFn)
 }
 
-func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backuppb.File)) error {
+func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*BackupItem)) error {
 	// Read backupmeta v1 data files.
 	for _, f := range reader.backupMeta.Files {
-		output(f)
+		output(&BackupItem{File: f})
 	}
+	// Read backupmeta range files for file-copy.
+	for _, r := range reader.backupMeta.Ranges {
+		output(&BackupItem{Range: r})
+	}
+
 	// Read backupmeta v2 data files.
 	outputFn := func(m *backuppb.MetaFile) {
 		for _, f := range m.DataFiles {
-			output(f)
+			output(&BackupItem{File: f})
 		}
+		for _, r := range m.BackupRanges {
+			output(&BackupItem{Range: r})
+		}
+
 	}
 	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.FileIndex, reader.cipher, outputFn)
 }
@@ -227,8 +550,8 @@ func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backup
 // ArchiveSize return the size of Archive data
 func (*MetaReader) ArchiveSize(_ context.Context, files []*backuppb.File) uint64 {
 	total := uint64(0)
-	for _, file := range files {
-		total += file.Size_
+	for _, i := range files {
+		total += i.Size_
 	}
 	return total
 }
@@ -311,15 +634,15 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 
 	// It's not easy to balance memory and time costs for current structure.
 	// put all files in memory due to https://github.com/pingcap/br/issues/705
-	var fileMap map[int64][]*backuppb.File
+	var itemMap map[int64][]*BackupItem
 	if !cfg.skipFiles {
-		fileMap = make(map[int64][]*backuppb.File)
-		outputFn := func(file *backuppb.File) {
-			tableID := tablecodec.DecodeTableID(file.GetStartKey())
+		itemMap = make(map[int64][]*BackupItem)
+		outputFn := func(item *BackupItem) {
+			tableID := tablecodec.DecodeTableID(item.GetStartKey())
 			if tableID == 0 {
-				log.Panic("tableID must not equal to 0", logutil.File(file))
+				log.Panic("tableID must not equal to 0", zap.Any("item", item))
 			}
-			fileMap[tableID] = append(fileMap[tableID], file)
+			itemMap[tableID] = append(itemMap[tableID], item)
 		}
 		err := reader.readDataFiles(ctx, outputFn)
 		if err != nil {
@@ -362,15 +685,15 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 				Stats:           stats,
 			}
 			if tableInfo != nil {
-				if fileMap != nil {
-					if files, ok := fileMap[tableInfo.ID]; ok {
-						table.Files = append(table.Files, files...)
+				if itemMap != nil {
+					if items, ok := itemMap[tableInfo.ID]; ok {
+						table.Items = append(table.Items, items...)
 					}
 					if tableInfo.Partition != nil {
 						// Partition table can have many table IDs (partition IDs).
 						for _, p := range tableInfo.Partition.Definitions {
-							if files, ok := fileMap[p.ID]; ok {
-								table.Files = append(table.Files, files...)
+							if items, ok := itemMap[p.ID]; ok {
+								table.Items = append(table.Items, items...)
 							}
 						}
 					}
@@ -435,6 +758,8 @@ const (
 	AppendSchema AppendOp = 2
 	// AppendDDL represents the ddls before last backup.
 	AppendDDL AppendOp = 3
+
+	AppendRange AppendOp = 4
 )
 
 func (op AppendOp) name() string {
@@ -448,6 +773,8 @@ func (op AppendOp) name() string {
 		name = "schema"
 	case AppendDDL:
 		name = "ddl"
+	case AppendRange:
+		name = "range"
 	default:
 		log.Panic("unsupport op type", zap.Any("op", op))
 	}
@@ -471,6 +798,13 @@ func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (dataFileSize
 			size += f.Size()
 			dataFileSize += int(f.Size_)
 		}
+	case AppendRange:
+		rg := b.(*rtree.Range)
+		a.BackupRanges = append(a.BackupRanges, &backuppb.BackupRange{
+			StartKey: rg.StartKey,
+			EndKey:   rg.EndKey,
+			Files:    rg.Files,
+		})
 	case AppendSchema:
 		a.Schemas = append(a.Schemas, b.(*backuppb.Schema))
 		itemCount++
@@ -665,7 +999,7 @@ func (writer *MetaWriter) FinishWriteMetas(ctx context.Context, op AppendOp) err
 	}
 
 	costs := time.Since(writer.start)
-	if op == AppendDataFile {
+	if op == AppendDataFile || op == AppendRange {
 		summary.CollectSuccessUnit("backup ranges", writer.flushedItemNum, costs)
 	}
 	log.Info("finish the write metas", zap.Int("item", writer.flushedItemNum),
@@ -708,6 +1042,8 @@ func (writer *MetaWriter) fillMetasV1(_ context.Context, op AppendOp) {
 		writer.backupMeta.Schemas = writer.metafiles.root.Schemas
 	case AppendDDL:
 		writer.backupMeta.Ddls = mergeDDLs(writer.metafiles.root.Ddls)
+	case AppendRange:
+		writer.backupMeta.Ranges = writer.metafiles.root.BackupRanges
 	default:
 		log.Panic("unsupport op type", zap.Any("op", op))
 	}
@@ -731,6 +1067,15 @@ func (writer *MetaWriter) flushMetasV2(ctx context.Context, op AppendOp) error {
 			return nil
 		}
 		// Add the metafile to backupmeta and reset metafiles.
+		if writer.backupMeta.FileIndex == nil {
+			writer.backupMeta.FileIndex = &backuppb.MetaFile{}
+		}
+		index = writer.backupMeta.FileIndex
+	case AppendRange:
+		if len(writer.metafiles.root.BackupRanges) == 0 {
+			return nil
+		}
+		// we can use FileIndex here, because BackupRanges and BackupFiles cannot exists at same time.
 		if writer.backupMeta.FileIndex == nil {
 			writer.backupMeta.FileIndex = &backuppb.MetaFile{}
 		}

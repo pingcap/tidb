@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -160,14 +159,15 @@ func DefaultOutputTableChan() chan *CreatedTable {
 // TableWithRange is a CreatedTable that has been bind to some of key ranges.
 type TableWithRange struct {
 	CreatedTable
-
-	Range []rtree.Range
-}
-
-type TableIDWithFiles struct {
 	TableID int64
 
-	Files []*backuppb.File
+	Ranges *metautil.RestoreRanges
+}
+
+type TableIDWithRange struct {
+	TableID int64
+
+	Ranges *metautil.RestoreRanges
 }
 
 // Exhaust drains all remaining errors in the channel, into a slice of errors.
@@ -208,7 +208,7 @@ type TiKVRestorer interface {
 		isRawKv bool) error
 	// RestoreSSTFiles import the files to the TiKV.
 	RestoreSSTFiles(ctx context.Context,
-		tableIDWithFiles []TableIDWithFiles,
+		tableIDWithRange []TableIDWithRange,
 		rewriteRules *RewriteRules,
 		updateCh glue.Progress) error
 }
@@ -385,13 +385,13 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 			if !ok {
 				return
 			}
-			files := r.result.Files()
+			rg := r.result.RestoreRanges()
 			// There has been a worker in the `RestoreSSTFiles` procedure.
 			// Spawning a raw goroutine won't make too many requests to TiKV.
 			eg.Go(func() error {
-				e := b.client.RestoreSSTFiles(ectx, files, r.result.RewriteRules, b.updateCh)
+				e := b.client.RestoreSSTFiles(ectx, rg, r.result.RewriteRules, b.updateCh)
 				if e != nil {
-					log.Error("restore batch meet error", logutil.ShortError(e), zapTableIDWithFiles(files))
+					log.Error("restore batch meet error", logutil.ShortError(e), zapTableIDWithRange(rg))
 					r.done()
 					return e
 				}

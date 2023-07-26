@@ -54,7 +54,7 @@ type OnSplitFunc func(key [][]byte)
 // note: all ranges and rewrite rules must have raw key.
 func (rs *RegionSplitter) Split(
 	ctx context.Context,
-	ranges []rtree.Range,
+	ranges rtree.Ranges,
 	rewriteRules *RewriteRules,
 	isRawKv bool,
 	onSplit OnSplitFunc,

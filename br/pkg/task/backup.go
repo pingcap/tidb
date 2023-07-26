@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -91,7 +92,6 @@ type BackupConfig struct {
 	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
 	CompressionConfig
 
-	// for ebs-based backup
 	FullBackupType          FullBackupType `json:"full-backup-type" toml:"full-backup-type"`
 	VolumeFile              string         `json:"volume-file" toml:"volume-file"`
 	SkipAWS                 bool           `json:"skip-aws" toml:"skip-aws"`
@@ -150,6 +150,11 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
 	flags.String(flagReplicaReadLabel, "", "specify the label of the stores to be used for backup, e.g. 'label_key:label_value'")
+	// Currently we have 3 type of backup, and correponsed to different rstore procedure.
+	// 1. scan precisely on leader and generate SST files
+	// 2. use EBS volume backup to backup all raft log and SST Files.
+	// 3. copy SST Files by region leader
+	flags.String(flagFullBackupType, string(FullBackupTypeScan), "full backup type")
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
@@ -219,35 +224,35 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if flags.Lookup(flagFullBackupType) != nil {
+	f := flags.Lookup(flagFullBackupType)
+	if f != nil {
 		// for backup full
-		fullBackupType, err := flags.GetString(flagFullBackupType)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		fullBackupType := f.Value.String()
 		if !FullBackupType(fullBackupType).Valid() {
 			return errors.New("invalid full backup type")
 		}
 		cfg.FullBackupType = FullBackupType(fullBackupType)
-		cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cfg.VolumeFile, err = flags.GetString(flagBackupVolumeFile)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cfg.ProgressFile, err = flags.GetString(flagProgressFile)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cfg.SkipPauseGCAndScheduler, err = flags.GetBool(flagOperatorPausedGCAndSchedulers)
-		if err != nil {
-			return errors.Trace(err)
+		if fullBackupType == string(FullBackupTypeEBS) {
+			cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cfg.VolumeFile, err = flags.GetString(flagBackupVolumeFile)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cfg.SkipPauseGCAndScheduler, err = flags.GetBool(flagOperatorPausedGCAndSchedulers)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 
@@ -546,10 +551,10 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	// Metafile size should be less than 64MB.
-	metawriter := metautil.NewMetaWriter(client.GetStorage(),
+	metaWriter := metautil.NewMetaWriter(client.GetStorage(),
 		metautil.MetaFileSize, cfg.UseBackupMetaV2, "", &cfg.CipherInfo)
 	// Hack way to update backupmeta.
-	metawriter.Update(func(m *backuppb.BackupMeta) {
+	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		m.StartVersion = req.StartVersion
 		m.EndVersion = req.EndVersion
 		m.IsRawKv = req.IsRawKv
@@ -562,7 +567,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	log.Info("get placement policies", zap.Int("count", len(policies)))
 	if len(policies) != 0 {
-		metawriter.Update(func(m *backuppb.BackupMeta) {
+		metaWriter.Update(func(m *backuppb.BackupMeta) {
 			m.Policies = policies
 		})
 	}
@@ -573,7 +578,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		log.Warn("Nothing to backup, maybe connected to cluster for restoring",
 			zap.String("PD address", pdAddress))
 
-		err = metawriter.FlushBackupMeta(ctx)
+		err = metaWriter.FlushBackupMeta(ctx)
 		if err == nil {
 			summary.SetSuccessStatus(true)
 		}
@@ -591,12 +596,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			return errors.Trace(err)
 		}
 
-		metawriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
-		err = backup.WriteBackupDDLJobs(metawriter, g, mgr.GetStorage(), cfg.LastBackupTS, backupTS, needDomain)
+		metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
+		err = backup.WriteBackupDDLJobs(metaWriter, g, mgr.GetStorage(), cfg.LastBackupTS, backupTS, needDomain)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err = metawriter.FinishWriteMetas(ctx, metautil.AppendDDL); err != nil {
+		if err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -669,15 +674,26 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			}
 		}()
 	}
-	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	err = client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.ReplicaReadLabel, metawriter, progressCallBack)
+	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
+	metaWriterCallBack := func(r *rtree.Range) error {
+		// we need keep the files in order after we support multi_ingest sst.
+		// default_sst and write_sst need to be together.
+		return metaWriter.Send(r.Files, metautil.AppendDataFile)
+	}
+	backupCtx := backup.BackupContext{
+		Concurrency:        uint(cfg.Concurrency),
+		ReplicaReadLabel:   cfg.ReplicaReadLabel,
+		MetaWriterCallBack: metaWriterCallBack,
+		ProgressCallBack:   progressCallBack,
+	}
+	err = client.BackupRanges(ctx, ranges, req, backupCtx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Backup has finished
 	updateCh.Close()
 
-	err = metawriter.FinishWriteMetas(ctx, metautil.AppendDataFile)
+	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDataFile)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -698,12 +714,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	schemasConcurrency := uint(mathutil.Min(backup.DefaultSchemaConcurrency, schemas.Len()))
 
 	err = schemas.BackupSchemas(
-		ctx, metawriter, client.GetCheckpointRunner(), mgr.GetStorage(), statsHandle, backupTS, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
+		ctx, metaWriter, client.GetCheckpointRunner(), mgr.GetStorage(), statsHandle, backupTS, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = metawriter.FlushBackupMeta(ctx)
+	err = metaWriter.FlushBackupMeta(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -716,12 +732,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	if !skipChecksum {
 		// Check if checksum from files matches checksum from coprocessor.
-		err = checksum.FastChecksum(ctx, metawriter.Backupmeta(), client.GetStorage(), &cfg.CipherInfo)
+		err = checksum.FastChecksum(ctx, metaWriter.Backupmeta(), client.GetStorage(), &cfg.CipherInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	archiveSize := metawriter.ArchiveSize()
+	archiveSize := metaWriter.ArchiveSize()
 	g.Record(summary.BackupDataSize, archiveSize)
 	//backup from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
 	g.Record("Size", archiveSize)

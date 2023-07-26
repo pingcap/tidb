@@ -46,7 +46,7 @@ const (
 
 // DefineRestoreSnapshotFlags defines common flags for the backup command.
 func DefineRestoreSnapshotFlags(command *cobra.Command) {
-	command.Flags().String(flagFullBackupType, string(FullBackupTypeKV), "full backup type")
+	command.Flags().String(flagFullBackupType, string(FullBackupTypeScan), "full backup type")
 	command.Flags().Bool(flagPrepare, false, "prepare for snapshot based restore")
 	command.Flags().String(flagOutputMetaFile, "output.json", "the file path of output meta file")
 	command.Flags().Bool(flagSkipAWS, false, "don't access to aws environment if set to true")

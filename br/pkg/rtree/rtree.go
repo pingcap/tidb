@@ -18,6 +18,8 @@ type Range struct {
 	Files    []*backuppb.File
 }
 
+type Ranges []Range
+
 // BytesAndKeys returns total bytes and keys in a range.
 func (rg *Range) BytesAndKeys() (bytes, keys uint64) {
 	for _, f := range rg.Files {

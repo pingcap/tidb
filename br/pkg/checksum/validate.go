@@ -58,7 +58,7 @@ func FastChecksum(
 			// empty database
 			continue
 		}
-		for _, file := range tbl.Files {
+		for _, file := range metautil.BackupItems(tbl.Items).GetOriginFiles() {
 			checksum ^= file.Crc64Xor
 			totalKvs += file.TotalKvs
 			totalBytes += file.TotalBytes
