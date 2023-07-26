@@ -58,7 +58,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	ttlcient "github.com/pingcap/tidb/ttl/client"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
@@ -2220,50 +2219,18 @@ func (h labelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	if len(labels) > 0 {
 		cfg := *config.GetGlobalConfig()
-		if cfg.Labels == nil {
-			cfg.Labels = make(map[string]string, len(labels))
+		// Be careful of data race. The key & value of cfg.Labels must not be changed.
+		if cfg.Labels != nil {
+			for k, v := range cfg.Labels {
+				if _, found := labels[k]; !found {
+					labels[k] = v
+				}
+			}
 		}
-		for k, v := range labels {
-			cfg.Labels[k] = v
-		}
+		cfg.Labels = labels
 		config.StoreGlobalConfig(&cfg)
 		logutil.BgLogger().Info("update server labels", zap.Any("labels", cfg.Labels))
 	}
 
 	writeData(w, config.GetGlobalConfig().Labels)
-}
-
-// ttlJobTriggerHandler is used to trigger a TTL job manually
-type ttlJobTriggerHandler struct {
-	store kv.Storage
-}
-
-// ServeHTTP handles request of triger a ttl job
-func (h ttlJobTriggerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodPost {
-		writeError(w, errors.Errorf("This api only support POST method"))
-		return
-	}
-
-	params := mux.Vars(req)
-	dbName := strings.ToLower(params["db"])
-	tableName := strings.ToLower(params["table"])
-
-	ctx := req.Context()
-	dom, err := session.GetDomain(h.store)
-	if err != nil {
-		log.Error("failed to get session domain", zap.Error(err))
-		writeError(w, err)
-		return
-	}
-
-	cli := dom.TTLJobManager().GetCommandCli()
-	resp, err := ttlcient.TriggerNewTTLJob(ctx, cli, dbName, tableName)
-	if err != nil {
-		log.Error("failed to trigger new TTL job", zap.Error(err))
-		writeError(w, err)
-		return
-	}
-	writeData(w, resp)
-	logutil.Logger(ctx).Info("trigger TTL job manually successfully", zap.String("dbName", dbName), zap.String("tableName", tableName), zap.Any("response", resp))
 }

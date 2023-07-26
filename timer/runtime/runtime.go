@@ -115,6 +115,13 @@ func (rt *TimerGroupRuntime) Start() {
 	go rt.loop()
 }
 
+// Running returns whether the runtime is running
+func (rt *TimerGroupRuntime) Running() bool {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.ctx != nil && rt.cancel != nil
+}
+
 func (rt *TimerGroupRuntime) initCtx() {
 	rt.ctx, rt.cancel = context.WithCancel(context.Background())
 }
