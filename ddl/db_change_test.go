@@ -946,7 +946,27 @@ func (s *stateChangeSuite) TestShowIndex() {
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY NO", "vv NO"))
 }
 
+<<<<<<< HEAD
 func (s *stateChangeSuite) TestParallelAlterModifyColumn() {
+=======
+func TestParallelAlterIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	sql := "alter table t alter index idx1 invisible;"
+	f := func(err1, err2 error) {
+		require.NoError(t, err1)
+		require.NoError(t, err2)
+		tk.MustExec("select * from t")
+	}
+	testControlParallelExecSQL(t, tk, store, dom, "", sql, sql, f)
+}
+
+func TestParallelAlterModifyColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+>>>>>>> 7e18f79dd4a (ddl: add parallel execution of  "alter table tbl_name alter index" tests (#45582))
 	sql := "ALTER TABLE t MODIFY COLUMN b int FIRST;"
 	f := func(err1, err2 error) {
 		s.Require().NoError(err1)
