@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/remote"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -342,6 +343,11 @@ func NewClosedEngine(backend Backend, logger log.Logger, uuid uuid.UUID, id int3
 // Import the data written to the engine into the target.
 func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize, regionSplitKeys int64) error {
 	var err error
+
+	_, ok := engine.backend.(*remote.Backend)
+	if ok {
+		return nil
+	}
 
 	for i := 0; i < importMaxRetryTimes; i++ {
 		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
