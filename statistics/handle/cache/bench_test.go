@@ -48,7 +48,11 @@ func BenchmarkStatsCacheLRUCopyAndUpdate(b *testing.B) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = true
 	})
-	benchCopyAndUpdate(b, NewStatsCachePointer())
+	cache, err := NewStatsCachePointer()
+	if err != nil {
+		b.Fail()
+	}
+	benchCopyAndUpdate(b, cache)
 }
 
 func BenchmarkStatsCacheMapCacheCopyAndUpdate(b *testing.B) {
@@ -57,7 +61,11 @@ func BenchmarkStatsCacheMapCacheCopyAndUpdate(b *testing.B) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = false
 	})
-	benchCopyAndUpdate(b, NewStatsCachePointer())
+	cache, err := NewStatsCachePointer()
+	if err != nil {
+		b.Fail()
+	}
+	benchCopyAndUpdate(b, cache)
 }
 
 func TestBenchDaily(t *testing.T) {

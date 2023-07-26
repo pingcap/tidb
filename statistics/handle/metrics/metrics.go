@@ -21,13 +21,6 @@ import (
 
 // statistics metrics vars
 var (
-	MissCounter        prometheus.Counter
-	HitCounter         prometheus.Counter
-	UpdateCounter      prometheus.Counter
-	DelCounter         prometheus.Counter
-	EvictCounter       prometheus.Counter
-	CostGauge          prometheus.Gauge
-	CapacityGauge      prometheus.Gauge
 	StatsHealthyGauges []prometheus.Gauge
 
 	DumpHistoricalStatsSuccessCounter prometheus.Counter
@@ -40,14 +33,6 @@ func init() {
 
 // InitMetricsVars init statistics metrics vars.
 func InitMetricsVars() {
-	MissCounter = metrics.StatsCacheLRUCounter.WithLabelValues("miss")
-	HitCounter = metrics.StatsCacheLRUCounter.WithLabelValues("hit")
-	UpdateCounter = metrics.StatsCacheLRUCounter.WithLabelValues("update")
-	DelCounter = metrics.StatsCacheLRUCounter.WithLabelValues("del")
-	EvictCounter = metrics.StatsCacheLRUCounter.WithLabelValues("evict")
-	CostGauge = metrics.StatsCacheLRUGauge.WithLabelValues("track")
-	CapacityGauge = metrics.StatsCacheLRUGauge.WithLabelValues("capacity")
-
 	StatsHealthyGauges = []prometheus.Gauge{
 		metrics.StatsHealthyGauge.WithLabelValues("[0,50)"),
 		metrics.StatsHealthyGauge.WithLabelValues("[50,80)"),

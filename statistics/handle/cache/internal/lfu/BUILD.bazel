@@ -12,7 +12,9 @@ go_library(
     deps = [
         "//statistics",
         "//statistics/handle/cache/internal",
+        "//statistics/handle/cache/internal/metrics",
         "//util/intest",
+        "//util/memory",
         "@com_github_dgraph_io_ristretto//:ristretto",
         "@org_golang_x_exp//maps",
     ],

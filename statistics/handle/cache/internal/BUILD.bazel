@@ -24,7 +24,6 @@ go_test(
     deps = [
         ":internal",
         "//statistics/handle/cache/internal/lfu",
-        "//statistics/handle/cache/internal/lru",
         "//statistics/handle/cache/internal/mapcache",
         "//statistics/handle/cache/internal/testutil",
         "//util/benchdaily",

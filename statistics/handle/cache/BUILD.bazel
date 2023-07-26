@@ -16,12 +16,15 @@ go_library(
         "//sessionctx/variable",
         "//statistics",
         "//statistics/handle/cache/internal",
-        "//statistics/handle/cache/internal/lru",
+        "//statistics/handle/cache/internal/lfu",
         "//statistics/handle/cache/internal/mapcache",
+        "//statistics/handle/cache/internal/metrics",
         "//types",
         "//util/chunk",
+        "//util/logutil",
         "//util/sqlexec",
         "//util/syncutil",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//statistics",
         "//statistics/handle/cache/internal",
-        "//statistics/handle/metrics",
+        "//statistics/handle/cache/internal/metrics",
     ],
 )
 

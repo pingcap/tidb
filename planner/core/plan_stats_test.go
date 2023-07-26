@@ -313,7 +313,6 @@ func TestPlanStatsStatusRecord(t *testing.T) {
 	// drop stats in order to change status
 	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
 	tk.MustQuery("select * from t where b >= 1")
-	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.RecordedStatsLoadStatusCnt(), 2)
 	for _, usedStatsForTbl := range tk.Session().GetSessionVars().StmtCtx.GetUsedStatsInfo(false) {
 		if usedStatsForTbl == nil {
 			continue

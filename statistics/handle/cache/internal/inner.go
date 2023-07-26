@@ -26,7 +26,7 @@ type StatsCacheInner interface {
 	// Get gets the cache.
 	Get(tid int64, moveFront bool) (*statistics.Table, bool)
 	// Put puts a cache.
-	Put(tid int64, tbl *statistics.Table, moveLRUFront bool)
+	Put(tid int64, tbl *statistics.Table, moveLRUFront bool) bool
 	// Del deletes a cache.
 	Del(int64)
 	// Cost returns the memory usage of the cache.
@@ -43,4 +43,6 @@ type StatsCacheInner interface {
 	// Front returns the front element's owner tableID, only used for test
 	// TODO: this method is mainly for test, remove it in the future.
 	Front() int64
+	// Close stops the cache
+	Close()
 }

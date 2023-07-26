@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
-	"github.com/pingcap/tidb/statistics/handle/metrics"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 )
 
 // StatsInnerCache is the LRU cache for statistics.
@@ -117,10 +117,11 @@ func (s *StatsInnerCache) Get(tblID int64, moveLRUFront bool) (*statistics.Table
 }
 
 // Put implements statsCacheInner
-func (s *StatsInnerCache) Put(tblID int64, tbl *statistics.Table, moveLRUFront bool) {
+func (s *StatsInnerCache) Put(tblID int64, tbl *statistics.Table, moveLRUFront bool) bool {
 	s.Lock()
 	defer s.Unlock()
 	s.put(tblID, tbl, tbl.MemoryUsage(), moveLRUFront)
+	return true
 }
 
 func (s *StatsInnerCache) put(tblID int64, tbl *statistics.Table, tblMemUsage *statistics.TableMemoryUsage, needMove bool) {
@@ -250,6 +251,9 @@ func (s *StatsInnerCache) Len() int {
 	defer s.RUnlock()
 	return len(s.elements)
 }
+
+// Close stops statsCacheInner.
+func (*StatsInnerCache) Close() {}
 
 // Copy implements statsCacheInner
 func (s *StatsInnerCache) Copy() internal.StatsCacheInner {

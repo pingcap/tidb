@@ -28,12 +28,15 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
-	"github.com/pingcap/tidb/statistics/handle/cache/internal/lru"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal/lfu"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/mapcache"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
+	"go.uber.org/zap"
 )
 
 // TableStatsOption used to indicate the way to get table stats
@@ -57,17 +60,21 @@ func WithTableStatsByQuery() TableStatsOpt {
 }
 
 // NewStatsCache creates a new StatsCacheWrapper.
-func NewStatsCache() *StatsCache {
+func NewStatsCache() (*StatsCache, error) {
 	enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota
 	if enableQuota {
 		capacity := variable.StatsCacheMemQuota.Load()
-		return &StatsCache{
-			c: lru.NewStatsLruCache(capacity),
+		stats, err := lfu.NewLFU(capacity)
+		if err != nil {
+			return nil, err
 		}
+		return &StatsCache{
+			c: stats,
+		}, nil
 	}
 	return &StatsCache{
 		c: mapcache.NewMapCache(),
-	}
+	}, nil
 }
 
 // StatsCache caches the tables in memory for Handle.
@@ -87,12 +94,22 @@ func (sc *StatsCache) Len() int {
 //
 //	e.g. v := sc.Get(id); /* update the value */ v.Version = 123; sc.Put(id, v);
 func (sc *StatsCache) GetFromUser(id int64) (*statistics.Table, bool) {
-	return sc.c.Get(id, true)
+	return sc.getCache(id, true)
+}
+
+func (sc *StatsCache) getCache(id int64, moveFront bool) (*statistics.Table, bool) {
+	result, ok := sc.c.Get(id, moveFront)
+	if ok {
+		metrics.HitCounter.Add(1)
+	} else {
+		metrics.MissCounter.Add(1)
+	}
+	return result, ok
 }
 
 // GetFromInternal returns the statistics of the specified Table ID.
 func (sc *StatsCache) GetFromInternal(id int64) (*statistics.Table, bool) {
-	return sc.c.Get(id, false)
+	return sc.getCache(id, false)
 }
 
 // PutFromUser puts the table statistics to the cache from query.
@@ -105,10 +122,23 @@ func (sc *StatsCache) PutFromInternal(id int64, t *statistics.Table) {
 	sc.put(id, t, false)
 }
 
+func (sc *StatsCache) putCache(id int64, t *statistics.Table, moveLRUFront bool) bool {
+	ok := sc.c.Put(id, t, moveLRUFront)
+	if ok {
+		return ok
+	}
+	// TODO(hawkingrei): If necessary, add asynchronous retries
+	logutil.BgLogger().Warn("fail to put the stats cache", zap.Int64("id", id))
+	return ok
+}
+
 // Put puts the table statistics to the cache.
 func (sc *StatsCache) put(id int64, t *statistics.Table, moveLRUFront bool) {
-	sc.c.Put(id, t, moveLRUFront)
-
+	ok := sc.putCache(id, t, moveLRUFront)
+	if !ok {
+		logutil.BgLogger().Warn("fail to put the stats cache", zap.Int64("id", id))
+		return
+	}
 	// update the maxTblStatsVer
 	for v := sc.maxTblStatsVer.Load(); v < t.Version; v = sc.maxTblStatsVer.Load() {
 		if sc.maxTblStatsVer.CompareAndSwap(v, t.Version) {
@@ -129,7 +159,13 @@ func (sc *StatsCache) Cost() int64 {
 
 // SetCapacity sets the memory capacity of the cache.
 func (sc *StatsCache) SetCapacity(c int64) {
+	// metrics will be updated in the SetCapacity function of the StatsCacheInner.
 	sc.c.SetCapacity(c)
+}
+
+// Close stops the cache.
+func (sc *StatsCache) Close() {
+	sc.c.Close()
 }
 
 // Version returns the version of the current cache, which is defined as
