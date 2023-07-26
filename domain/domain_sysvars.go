@@ -31,7 +31,8 @@ import (
 // because the domain is not available. Instead a noop func is specified,
 // which is overwritten here.
 func (do *Domain) initDomainSysVars() {
-	variable.SetStatsCacheCapacity.Store(do.setStatsCacheCapacity)
+	setStatsCacheCapacityFunc := do.setStatsCacheCapacity
+	variable.SetStatsCacheCapacity.Store(&setStatsCacheCapacityFunc)
 	pdClientDynamicOptionFunc := do.setPDClientDynamicOption
 	variable.SetPDClientDynamicOption.Store(&pdClientDynamicOptionFunc)
 

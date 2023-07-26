@@ -33,8 +33,8 @@ var (
 	SyncLoadTimeoutCounter     prometheus.Counter
 	SyncLoadHistogram          prometheus.Histogram
 	ReadStatsHistogram         prometheus.Histogram
-	StatsCacheLRUCounter       *prometheus.CounterVec
-	StatsCacheLRUGauge         *prometheus.GaugeVec
+	StatsCacheCounter          *prometheus.CounterVec
+	StatsCacheGauge            *prometheus.GaugeVec
 	StatsHealthyGauge          *prometheus.GaugeVec
 
 	HistoricalStatsCounter        *prometheus.CounterVec
@@ -153,19 +153,19 @@ func InitStatsMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 22), // 1ms ~ 1h
 		})
 
-	StatsCacheLRUCounter = NewCounterVec(
+	StatsCacheCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
-			Name:      "stats_cache_lru_op",
-			Help:      "Counter of lru for statsCache operation",
+			Name:      "stats_cache_op",
+			Help:      "Counter for statsCache operation",
 		}, []string{LblType})
 
-	StatsCacheLRUGauge = NewGaugeVec(prometheus.GaugeOpts{
+	StatsCacheGauge = NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "statistics",
-		Name:      "stats_cache_lru_val",
-		Help:      "gauge of stats cache lru value",
+		Name:      "stats_cache_val",
+		Help:      "gauge of stats cache value",
 	}, []string{LblType})
 
 	StatsHealthyGauge = NewGaugeVec(prometheus.GaugeOpts{

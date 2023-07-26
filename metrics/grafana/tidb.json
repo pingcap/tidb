@@ -14768,7 +14768,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB managing stats cache by lru",
+          "description": "TiDB managing stats cache",
           "editable": true,
           "error": false,
           "fieldConfig": {
@@ -14819,7 +14819,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "tidb_statistics_stats_cache_lru_val{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"track\"}",
+              "expr": "tidb_statistics_stats_cache_val{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"track\"}",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 1,
@@ -14828,7 +14828,7 @@
             },
             {
               "exemplar": true,
-              "expr": "tidb_statistics_stats_cache_lru_val{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"capacity\"}",
+              "expr": "tidb_statistics_stats_cache_val{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"capacity\"}",
               "hide": true,
               "interval": "",
               "legendFormat": "capacity--{{instance}}",
@@ -14839,7 +14839,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Stats Cache LRU Cost",
+          "title": "Stats Cache Cost",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -14883,7 +14883,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB managing stats cache by lru",
+          "description": "TiDB managing stats cache",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -14928,7 +14928,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_statistics_stats_cache_lru_op{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
+              "expr": "sum(rate(tidb_statistics_stats_cache_op{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
@@ -14941,7 +14941,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Stats Cache LRU OPS",
+          "title": "Stats Cache OPS",
           "tooltip": {
             "shared": true,
             "sort": 0,
