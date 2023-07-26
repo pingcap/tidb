@@ -407,6 +407,7 @@ func (remote *Backend) LocalWriter(ctx context.Context, cfg *backend.LocalWriter
 			zap.String("max", hex.EncodeToString(s.Max)),
 			zap.Uint64("totalSize", s.TotalSize))
 	}
+	remote.mu.totalSize = 0
 	prefix := filepath.Join(strconv.Itoa(int(remote.jobID)), engineUUID.String())
 	writer := sharedisk.NewWriter(ctx, remote.externalStorage, prefix,
 		remote.allocWriterID(), remote.bufferPool, remote.config.MemQuota, remote.config.StatSampleKeys,
