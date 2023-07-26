@@ -464,6 +464,7 @@ func (remote *Backend) GetRangeSplitter(ctx context.Context, dataFiles sharedisk
 		approxSubtaskCnt = uint64(remote.config.SubtaskCnt)
 	}
 	maxSize := totalKVSize / approxSubtaskCnt
+	log.FromContext(ctx).Info("split range", zap.Uint64("totalKVSize", totalKVSize), zap.Uint64("maxSize", maxSize))
 	maxSplitRegionSize, maxSplitRegionKey, err := remote.getRegionSplitSizeKeys(ctx)
 	if err != nil {
 		return nil, err
