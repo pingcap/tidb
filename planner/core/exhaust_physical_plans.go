@@ -1978,6 +1978,32 @@ func (p *LogicalJoin) prefer(joinFlags ...uint) bool {
 	return false
 }
 
+func (p *LogicalJoin) canPassJoinHint(join PhysicalPlan, leftOuter bool) bool {
+	const left, right = 0, 1
+	const indexJoin, indexHashJoin, indexMergeJoin = 0, 1, 2
+	innerSide := left
+	if leftOuter {
+		innerSide = right
+	}
+	joinMethod := indexJoin
+	switch join.(type) {
+	case *PhysicalIndexHashJoin:
+		joinMethod = indexHashJoin
+	case *PhysicalIndexMergeJoin:
+		joinMethod = indexMergeJoin
+	}
+
+	if p.prefer(preferLeftAsINLJInner) && !(innerSide == left && joinMethod == indexJoin) ||
+		p.prefer(preferRightAsINLJInner) && !(innerSide == right && joinMethod == indexJoin) ||
+		p.prefer(preferLeftAsINLHJInner) && !(innerSide == left && joinMethod == indexHashJoin) ||
+		p.prefer(preferRightAsINLHJInner) && !(innerSide == right && joinMethod == indexHashJoin) ||
+		p.prefer(preferLeftAsINLMJInner) && !(innerSide == left && joinMethod == indexMergeJoin) ||
+		p.prefer(preferRightAsINLMJInner) && !(innerSide == right && joinMethod == indexMergeJoin) {
+		return false
+	}
+	return true
+}
+
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
 func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, canForced bool) {
@@ -2032,19 +2058,8 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		allLeftOuterJoins = p.getIndexJoinByOuterIdx(prop, 0)
 		forcedLeftOuterJoins = make([]PhysicalPlan, 0, len(allLeftOuterJoins))
 		for _, j := range allLeftOuterJoins {
-			switch j.(type) {
-			case *PhysicalIndexJoin:
-				if p.prefer(preferRightAsINLJInner) {
-					forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
-				}
-			case *PhysicalIndexHashJoin:
-				if p.prefer(preferRightAsINLHJInner) {
-					forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
-				}
-			case *PhysicalIndexMergeJoin:
-				if p.prefer(preferRightAsINLMJInner) {
-					forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
-				}
+			if p.canPassJoinHint(j, true) {
+				forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
 			}
 		}
 		switch {
@@ -2059,19 +2074,8 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		allRightOuterJoins = p.getIndexJoinByOuterIdx(prop, 1)
 		forcedRightOuterJoins = make([]PhysicalPlan, 0, len(allRightOuterJoins))
 		for _, j := range allRightOuterJoins {
-			switch j.(type) {
-			case *PhysicalIndexJoin:
-				if p.prefer(preferLeftAsINLJInner) {
-					forcedRightOuterJoins = append(forcedRightOuterJoins, j)
-				}
-			case *PhysicalIndexHashJoin:
-				if p.prefer(preferLeftAsINLHJInner) {
-					forcedRightOuterJoins = append(forcedRightOuterJoins, j)
-				}
-			case *PhysicalIndexMergeJoin:
-				if p.prefer(preferLeftAsINLMJInner) {
-					forcedRightOuterJoins = append(forcedRightOuterJoins, j)
-				}
+			if p.canPassJoinHint(j, false) {
+				forcedRightOuterJoins = append(forcedRightOuterJoins, j)
 			}
 		}
 		switch {
