@@ -795,6 +795,30 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 		p.preferJoinType |= preferRightAsINLMJInner
 		p.rightPreferJoinType |= preferINLMJ
 	}
+	if hintInfo.ifPreferNoIndexJoin(lhsAlias) {
+		p.preferJoinType |= preferNoIndexJoin
+		p.leftPreferJoinType |= preferNoIndexJoin
+	}
+	if hintInfo.ifPreferNoIndexJoin(rhsAlias) {
+		p.preferJoinType |= preferNoIndexJoin
+		p.rightPreferJoinType |= preferNoIndexJoin
+	}
+	if hintInfo.ifPreferNoIndexHashJoin(lhsAlias) {
+		p.preferJoinType |= preferNoIndexHashJoin
+		p.leftPreferJoinType |= preferNoIndexHashJoin
+	}
+	if hintInfo.ifPreferNoIndexHashJoin(rhsAlias) {
+		p.preferJoinType |= preferNoIndexHashJoin
+		p.rightPreferJoinType |= preferNoIndexHashJoin
+	}
+	if hintInfo.ifPreferNoIndexMergeJoin(lhsAlias) {
+		p.preferJoinType |= preferNoIndexMergeJoin
+		p.leftPreferJoinType |= preferNoIndexMergeJoin
+	}
+	if hintInfo.ifPreferNoIndexMergeJoin(rhsAlias) {
+		p.preferJoinType |= preferNoIndexMergeJoin
+		p.rightPreferJoinType |= preferNoIndexMergeJoin
+	}
 	if hintInfo.ifPreferHJBuild(lhsAlias) {
 		p.preferJoinType |= preferLeftAsHJBuild
 		p.leftPreferJoinType |= preferHJBuild

@@ -271,6 +271,18 @@ func (info *tableHintInfo) ifPreferINLMJ(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inlmjTables)
 }
 
+func (info *tableHintInfo) ifPreferNoIndexJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noIndexJoinTables.inljTables)
+}
+
+func (info *tableHintInfo) ifPreferNoIndexHashJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noIndexJoinTables.inlhjTables)
+}
+
+func (info *tableHintInfo) ifPreferNoIndexMergeJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noIndexJoinTables.inlmjTables)
+}
+
 func (info *tableHintInfo) ifPreferTiFlash(tableName *hintTableInfo) *hintTableInfo {
 	if tableName == nil {
 		return nil
