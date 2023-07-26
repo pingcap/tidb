@@ -279,7 +279,6 @@ func (recovery *Recovery) SpawnTiKVShutDownWatchers(ctx context.Context) {
 	cb := storewatch.MakeCallback(storewatch.WithOnReboot(func(s *metapb.Store) {
 		log.Info("Store reboot detected, will regenerate leaders.", zap.Uint64("id", s.GetId()))
 		failedMark[s.Id] = struct{}{}
-
 	}), storewatch.WithOnDisconnect(func(s *metapb.Store) {
 		log.Warn("A store disconnected.", zap.Uint64("id", s.GetId()), zap.String("addr", s.GetAddress()))
 	}), storewatch.WithOnNewStoreRegistered(func(s *metapb.Store) {
