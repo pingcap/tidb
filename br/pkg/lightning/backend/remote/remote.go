@@ -200,6 +200,7 @@ type Backend struct {
 	statsFiles          []string
 	regionKeys          [][]byte
 	phase               string
+	imported            bool
 }
 
 const (
@@ -281,12 +282,17 @@ func (remote *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, r
 		// Do nothing for uploading stage.
 		return nil
 	case PhaseImport:
-		if len(remote.startKey) == 0 {
+		if len(remote.startKey) == 0 || remote.imported {
 			// No data.
 			return nil
 		}
 		ranges := generateRanges(remote.regionKeys, remote.startKey, remote.endKey)
-		return remote.importEngine(ctx, engineUUID, ranges, regionSplitSize, regionSplitKeys)
+		err := remote.importEngine(ctx, engineUUID, ranges, regionSplitSize, regionSplitKeys)
+		if err != nil {
+			return err
+		}
+		remote.imported = true
+		return nil
 	default:
 		panic("unreachable")
 	}
