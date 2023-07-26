@@ -946,6 +946,16 @@ func (s *stateChangeSuite) TestShowIndex() {
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY NO", "vv NO"))
 }
 
+func (s *stateChangeSuite) TestParallelAlterIndex() {
+	sql := "alter table t alter index idx1 invisible;"
+	f := func(err1, err2 error) {
+		s.Require().NoError(err1)
+		s.Require().NoError(err2)
+		s.tk.MustExec("select * from t")
+	}
+	s.testControlParallelExecSQL("", sql, sql, f)
+}
+
 func (s *stateChangeSuite) TestParallelAlterModifyColumn() {
 	sql := "ALTER TABLE t MODIFY COLUMN b int FIRST;"
 	f := func(err1, err2 error) {
