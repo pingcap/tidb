@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/server/handler/ttlhandler"
 	util2 "github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/util"
@@ -420,7 +421,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/test/ddl/hook", &ddlHookHandler{tikvHandlerTool.Store.(kv.Storage)})
 
 	// ttlJobTriggerHandler is enabled only for tests, so we can accelerate the schedule of TTL job
-	router.Handle("/test/ttl/trigger/{db}/{table}", &ttlJobTriggerHandler{tikvHandlerTool.Store.(kv.Storage)})
+	router.Handle("/test/ttl/trigger/{db}/{table}", ttlhandler.NewTTLJobTriggerHandler(tikvHandlerTool.Store.(kv.Storage)))
 
 	var (
 		httpRouterPage bytes.Buffer
