@@ -1983,19 +1983,24 @@ func (p *LogicalJoin) prefer(joinFlags ...uint) bool {
 func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, canForced bool) {
 	inljRightOuter := p.prefer(preferLeftAsINLJInner)
 	inljLeftOuter := p.prefer(preferRightAsINLJInner)
-	hasINLJHint := inljLeftOuter || inljRightOuter
 
 	inlhjRightOuter := p.prefer(preferLeftAsINLHJInner)
 	inlhjLeftOuter := p.prefer(preferRightAsINLHJInner)
-	hasINLHJHint := inlhjLeftOuter || inlhjRightOuter
 
 	inlmjRightOuter := p.prefer(preferLeftAsINLMJInner)
 	inlmjLeftOuter := p.prefer(preferRightAsINLMJInner)
-	hasINLMJHint := inlmjLeftOuter || inlmjRightOuter
 
 	forceLeftOuter := inljLeftOuter || inlhjLeftOuter || inlmjLeftOuter
 	forceRightOuter := inljRightOuter || inlhjRightOuter || inlmjRightOuter
 	needForced := forceLeftOuter || forceRightOuter
+
+	// handle hint conflicts
+	if  p.prefer(preferLeftAsINLJInner, preferRightAsINLJInner) && p.prefer(preferNoIndexJoin) {
+	}
+	if  p.prefer(preferLeftAsINLHJInner, preferRightAsINLHJInner) && p.prefer(preferNoIndexJoin) {
+	}
+	if  p.prefer(preferLeftAsINLMJInner, preferRightAsINLMJInner) && p.prefer(preferNoIndexJoin) {
+	}
 
 	defer func() {
 		// refine error message
@@ -2005,11 +2010,11 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 			// Construct warning message prefix.
 			var errMsg string
 			switch {
-			case hasINLJHint:
+			case p.prefer(preferLeftAsINLJInner, preferRightAsINLJInner):
 				errMsg = "Optimizer Hint INL_JOIN or TIDB_INLJ is inapplicable"
-			case hasINLHJHint:
+			case p.prefer(preferLeftAsINLHJInner, preferRightAsINLHJInner):
 				errMsg = "Optimizer Hint INL_HASH_JOIN is inapplicable"
-			case hasINLMJHint:
+			case p.prefer(preferLeftAsINLMJInner, preferRightAsINLMJInner):
 				errMsg = "Optimizer Hint INL_MERGE_JOIN is inapplicable"
 			}
 			if p.hintInfo != nil && p.preferJoinType > 0 {
