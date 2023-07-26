@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/bindinfo/internal"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser"
@@ -126,7 +127,7 @@ func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
 	defer func() {
@@ -177,7 +178,7 @@ func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 }
 
 func TestCaptureDBCaseSensitivity(t *testing.T) {
@@ -326,7 +327,7 @@ func TestBindingSource(t *testing.T) {
 	// Test Source for SQL created sql
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t ignore index(idx_a) where a > 10")
 	bindHandle := dom.BindHandle()
-	sql, hash := utilNormalizeWithDefaultDB(t, "select * from t where a > ?", "test")
+	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
 	bindData := bindHandle.GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
@@ -338,7 +339,7 @@ func TestBindingSource(t *testing.T) {
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
 	tk.MustQuery("select * from t where a > 10")
 	bindHandle.SaveEvolveTasksToStore()
-	sql, hash = utilNormalizeWithDefaultDB(t, "select * from t where a > ?", "test")
+	sql, hash = internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
@@ -359,7 +360,7 @@ func TestBindingSource(t *testing.T) {
 	tk.MustExec("select * from t ignore index(idx_a) where a < 10")
 	tk.MustExec("admin capture bindings")
 	bindHandle.CaptureBaselines()
-	sql, hash = utilNormalizeWithDefaultDB(t, "select * from t where a < ?", "test")
+	sql, hash = internal.UtilNormalizeWithDefaultDB(t, "select * from t where a < ?")
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` < ?", bindData.OriginalSQL)
@@ -463,7 +464,7 @@ func TestIssue20417(t *testing.T) {
 		)`)
 
 	// Test for create binding
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t using select /*+ use_index(t, idxb) */ * from t")
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
@@ -477,7 +478,7 @@ func TestIssue20417(t *testing.T) {
 	require.True(t, tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"))
 
 	// Test for capture baseline
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
 	dom.BindHandle().CaptureBaselines()
@@ -492,7 +493,7 @@ func TestIssue20417(t *testing.T) {
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
 
 	// Test for evolve baseline
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
 	tk.MustExec("create global binding for select * from t WHERE c=3924541 using select /*+ use_index(@sel_1 test.t idxb) */ * from t WHERE c=3924541")
 	rows = tk.MustQuery("show global bindings").Rows()
@@ -628,7 +629,7 @@ func TestCaptureUserFilter(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", rows[0][0])
 
 	// test user filter
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('user', 'root')")
 	tk.MustExec("select * from t where a > 10")
@@ -650,7 +651,7 @@ func TestCaptureUserFilter(t *testing.T) {
 	require.Len(t, rows, 1) // can capture the stmt
 
 	// use user-filter with other types of filter together
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('user', 'root')")
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'test.t')")
@@ -751,48 +752,48 @@ func TestCaptureWildcardFilter(t *testing.T) {
 		}
 	}
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'db11.t1*')`)
 	mustExecTwice()
 	checkBindings("db11.t2", "db12.t11", "db12.t12", "db12.t2", "db2.t11", "db2.t12", "db2.t2") // db11.t11 and db11.t12 are filtered
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'db1*.t11')`)
 	mustExecTwice()
 	checkBindings("db11.t12", "db11.t2", "db12.t12", "db12.t2", "db2.t11", "db2.t12", "db2.t2") // db11.t11 and db12.t11 are filtered
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'db1*.t1*')`)
 	mustExecTwice()
 	checkBindings("db11.t2", "db12.t2", "db2.t11", "db2.t12", "db2.t2") // db11.t11 / db12.t11 / db11.t12 / db12.t12 are filtered
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'db1*.*')`)
 	mustExecTwice()
 	checkBindings("db2.t11", "db2.t12", "db2.t2") // db11.* / db12.* are filtered
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', '*.t1*')`)
 	mustExecTwice()
 	checkBindings("db11.t2", "db12.t2", "db2.t2") // *.t11 and *.t12 are filtered
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'db*.t*')`)
 	mustExecTwice()
 	checkBindings() // all are filtered
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 	mustExecTwice()
@@ -822,7 +823,7 @@ func TestCaptureFilter(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", rows[0][0])
 
 	// Valid table filter.
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'test.t')")
 	tk.MustExec("select * from t where a > 10")
@@ -845,7 +846,7 @@ func TestCaptureFilter(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", rows[1][0])
 
 	// Invalid table filter.
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 't')")
 	tk.MustExec("select * from t where a > 10")
@@ -856,7 +857,7 @@ func TestCaptureFilter(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", rows[0][0])
 
 	// Valid database filter.
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'mysql.*')")
 	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
@@ -879,7 +880,7 @@ func TestCaptureFilter(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", rows[1][0])
 
 	// Valid frequency filter.
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('frequency', '2')")
 	tk.MustExec("select * from t where a > 10")
@@ -896,7 +897,7 @@ func TestCaptureFilter(t *testing.T) {
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 
 	// Invalid frequency filter.
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('frequency', '0')")
 	tk.MustExec("select * from t where a > 10")
@@ -912,7 +913,7 @@ func TestCaptureFilter(t *testing.T) {
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 
 	// Invalid filter type.
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('unknown', 'xx')")
 	tk.MustExec("select * from t where a > 10")
@@ -924,7 +925,7 @@ func TestCaptureFilter(t *testing.T) {
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 
 	// Case sensitivity.
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('tABle', 'tESt.T')")
 	tk.MustExec("select * from t where a > 10")
@@ -939,7 +940,7 @@ func TestCaptureFilter(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", rows[0][0])
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'mySQl.*')")
 	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
@@ -1007,7 +1008,7 @@ func TestCaptureHints(t *testing.T) {
 	}
 	for _, capCase := range captureCases {
 		stmtsummary.StmtSummaryByDigestMap.Clear()
-		utilCleanBindingEnv(tk, dom)
+		internal.UtilCleanBindingEnv(tk, dom)
 		tk.MustExec(capCase.query)
 		tk.MustExec(capCase.query)
 		tk.MustExec("admin capture bindings")

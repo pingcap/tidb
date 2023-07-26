@@ -615,7 +615,8 @@
       "br/pkg/utils": "br/pkg/utils code",
       "planner/cascades": "planner/cascades code",
       "store/": "store code",
-      "ttl/": "ttl code"
+      "ttl/": "ttl code",
+      "bindinfo/": "bindinfo code"
     }
   },
   "unconvert": {

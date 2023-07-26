@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/bindinfo/internal"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
@@ -89,7 +90,7 @@ func TestSessionBinding(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	for _, testSQL := range testSQLs {
-		utilCleanBindingEnv(tk, dom)
+		internal.UtilCleanBindingEnv(tk, dom)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("drop table if exists t1")
@@ -215,7 +216,7 @@ func TestBaselineDBLowerCase(t *testing.T) {
 	// DROP SESSION BINGING should remove the binding even if we are in SPM database.
 	require.Len(t, rows, 0)
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 
 	// Simulate existing bindings with upper case default_db.
 	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t`', 'SPM', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
@@ -234,7 +235,7 @@ func TestBaselineDBLowerCase(t *testing.T) {
 	// DROP GLOBAL BINGING should remove the binding even if we are in SPM database.
 	require.Len(t, rows, 0)
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	// Simulate existing bindings with upper case default_db.
 	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t`', 'SPM', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
 		bindinfo.Manual + "', '', '')")

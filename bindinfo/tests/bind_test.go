@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bindinfo_test
+package tests
 
 import (
 	"context"
@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/bindinfo/internal"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser"
@@ -504,7 +505,7 @@ func TestBestPlanInBaselines(t *testing.T) {
 	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t ia) */ a, b from t where a = 1 limit 0, 1`)
 	tk.MustExec(`create global binding for select a, b from t where b = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t ib) */ a, b from t where b = 1 limit 0, 1`)
 
-	sql, hash := utilNormalizeWithDefaultDB(t, "select a, b from t where a = 1 limit 0, 1", "test")
+	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select a, b from t where a = 1 limit 0, 1")
 	bindData := dom.BindHandle().GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", bindData.OriginalSQL)
@@ -708,7 +709,7 @@ func TestCaptureBaselinesScope(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
-	utilCleanBindingEnv(tk1, dom)
+	internal.UtilCleanBindingEnv(tk1, dom)
 	tk1.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
 		"tidb_capture_plan_baselines OFF",
 	))
@@ -790,7 +791,7 @@ func TestHintsSetEvolveTask(t *testing.T) {
 	bindHandle := dom.BindHandle()
 	bindHandle.SaveEvolveTasksToStore()
 	// Verify the added Binding for evolution contains valid ID and Hint, otherwise, panic may happen.
-	sql, hash := utilNormalizeWithDefaultDB(t, "select * from t where a > ?", "test")
+	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
 	bindData := bindHandle.GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
@@ -811,7 +812,7 @@ func TestHintsSetID(t *testing.T) {
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(test.t, idx_a) */ * from t where a > 10")
 	bindHandle := dom.BindHandle()
 	// Verify the added Binding contains ID with restored query block.
-	sql, hash := utilNormalizeWithDefaultDB(t, "select * from t where a > ?", "test")
+	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
 	bindData := bindHandle.GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
@@ -819,7 +820,7 @@ func TestHintsSetID(t *testing.T) {
 	bind := bindData.Bindings[0]
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(t, idx_a) */ * from t where a > 10")
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
@@ -828,7 +829,7 @@ func TestHintsSetID(t *testing.T) {
 	bind = bindData.Bindings[0]
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@sel_1 t, idx_a) */ * from t where a > 10")
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
@@ -837,7 +838,7 @@ func TestHintsSetID(t *testing.T) {
 	bind = bindData.Bindings[0]
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@qb1 t, idx_a) qb_name(qb1) */ * from t where a > 10")
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
@@ -846,7 +847,7 @@ func TestHintsSetID(t *testing.T) {
 	bind = bindData.Bindings[0]
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(T, IDX_A) */ * from t where a > 10")
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
@@ -855,7 +856,7 @@ func TestHintsSetID(t *testing.T) {
 	bind = bindData.Bindings[0]
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	err := tk.ExecToErr("create global binding for select * from t using select /*+ non_exist_hint() */ * from t")
 	require.True(t, terror.ErrorEqual(err, parser.ErrParse))
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t where a > 10")
@@ -1150,8 +1151,8 @@ func TestSPMWithoutUseDatabase(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
-	utilCleanBindingEnv(tk, dom)
-	utilCleanBindingEnv(tk1, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk1, dom)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1291,7 +1292,7 @@ func TestBindSQLDigest(t *testing.T) {
 	}
 	for _, c := range cases {
 		stmtsummary.StmtSummaryByDigestMap.Clear()
-		utilCleanBindingEnv(tk, dom)
+		internal.UtilCleanBindingEnv(tk, dom)
 		sql := "create global binding for " + c.origin + " using " + c.hint
 		tk.MustExec(sql)
 		res := tk.MustQuery(`show global bindings`).Rows()
@@ -1354,7 +1355,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 	h := dom.BindHandle()
 	// global scope
 	for _, c := range cases {
-		utilCleanBindingEnv(tk, dom)
+		internal.UtilCleanBindingEnv(tk, dom)
 		sql := "create global binding for " + c.origin + " using " + c.hint
 		tk.MustExec(sql)
 		h.ReloadBindings()
@@ -1371,7 +1372,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 
 	// session scope
 	for _, c := range cases {
-		utilCleanBindingEnv(tk, dom)
+		internal.UtilCleanBindingEnv(tk, dom)
 		sql := "create binding for " + c.origin + " using " + c.hint
 		tk.MustExec(sql)
 		res := tk.MustQuery(`show bindings`).Rows()
