@@ -42,11 +42,11 @@ func init() {
 
 // initMetricsVars init copr metrics vars.
 func initMetricsVars() {
-	MissCounter = metrics.StatsCacheLRUCounter.WithLabelValues("miss")
-	HitCounter = metrics.StatsCacheLRUCounter.WithLabelValues("hit")
-	UpdateCounter = metrics.StatsCacheLRUCounter.WithLabelValues("update")
-	DelCounter = metrics.StatsCacheLRUCounter.WithLabelValues("del")
-	EvictCounter = metrics.StatsCacheLRUCounter.WithLabelValues("evict")
-	CostGauge = metrics.StatsCacheLRUGauge.WithLabelValues("track")
-	CapacityGauge = metrics.StatsCacheLRUGauge.WithLabelValues("capacity")
+	MissCounter = metrics.StatsCacheCounter.WithLabelValues("miss")
+	HitCounter = metrics.StatsCacheCounter.WithLabelValues("hit")
+	UpdateCounter = metrics.StatsCacheCounter.WithLabelValues("update")
+	DelCounter = metrics.StatsCacheCounter.WithLabelValues("del")
+	EvictCounter = metrics.StatsCacheCounter.WithLabelValues("evict")
+	CostGauge = metrics.StatsCacheGauge.WithLabelValues("track")
+	CapacityGauge = metrics.StatsCacheGauge.WithLabelValues("capacity")
 }
