@@ -1643,8 +1643,8 @@ func (remote *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	begin := time.Now()
 	region := j.region.Region
 
-	firstKey := codec.EncodeBytes([]byte{}, j.keyRange.start)
-	lastKey := codec.EncodeBytes([]byte{}, j.keyRange.end)
+	firstKey := codec.EncodeBytes([]byte{}, j.writeBatch[0].key)
+	lastKey := codec.EncodeBytes([]byte{}, j.writeBatch[len(j.writeBatch)-1].key)
 
 	u := uuid.New()
 	meta := &sst.SSTMeta{
@@ -1743,14 +1743,6 @@ func (remote *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	var remainingStartKey []byte
 	startTime := time.Now()
 	for iter.Next() {
-		key := kv.Key(iter.Key())
-		if key.Cmp(j.keyRange.start) < 0 {
-			continue
-		}
-		if key.Cmp(j.keyRange.end) > 0 {
-			break
-		}
-
 		//readableKey := hex.EncodeToString(iter.Key())
 		//_, _, vals, err := tablecodec.DecodeIndexKey(iter.Key())
 		//log.FromContext(ctx).Info("iter", zap.String("key", readableKey), zap.String("colVal", vals[0]), zap.Error(err))
