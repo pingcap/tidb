@@ -204,27 +204,27 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 	}
 
 	// Use distributed lock if run in distributed mode).
-	if bc.etcdClient != nil {
-		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", bc.jobID, indexID)
-		se, _ := concurrency.NewSession(bc.etcdClient)
-		mu, err := acquireLock(bc.ctx, se, distLockKey)
-		if err != nil {
-			return true, false, err
-		}
-		logutil.BgLogger().Info("acquire distributed flush lock success", zap.String("category", "ddl"), zap.Int64("jobID", bc.jobID))
-		defer func() {
-			err = mu.Unlock(bc.ctx)
-			if err != nil {
-				logutil.BgLogger().Warn("release distributed flush lock error", zap.String("category", "ddl"), zap.Error(err), zap.Int64("jobID", bc.jobID))
-			} else {
-				logutil.BgLogger().Info("release distributed flush lock success", zap.String("category", "ddl"), zap.Int64("jobID", bc.jobID))
-			}
-			err = se.Close()
-			if err != nil {
-				logutil.BgLogger().Warn("close session error", zap.String("category", "ddl"), zap.Error(err))
-			}
-		}()
-	}
+	//if bc.etcdClient != nil {
+	//	distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", bc.jobID, indexID)
+	//	se, _ := concurrency.NewSession(bc.etcdClient)
+	//	mu, err := acquireLock(bc.ctx, se, distLockKey)
+	//	if err != nil {
+	//		return true, false, err
+	//	}
+	//	logutil.BgLogger().Info("acquire distributed flush lock success", zap.String("category", "ddl"), zap.Int64("jobID", bc.jobID))
+	//	defer func() {
+	//		err = mu.Unlock(bc.ctx)
+	//		if err != nil {
+	//			logutil.BgLogger().Warn("release distributed flush lock error", zap.String("category", "ddl"), zap.Error(err), zap.Int64("jobID", bc.jobID))
+	//		} else {
+	//			logutil.BgLogger().Info("release distributed flush lock success", zap.String("category", "ddl"), zap.Int64("jobID", bc.jobID))
+	//		}
+	//		err = se.Close()
+	//		if err != nil {
+	//			logutil.BgLogger().Warn("close session error", zap.String("category", "ddl"), zap.Error(err))
+	//		}
+	//	}()
+	//}
 
 	logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
 		zap.String("usage info", bc.diskRoot.UsageInfo()))
