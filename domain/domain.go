@@ -1022,6 +1022,9 @@ func (do *Domain) Close() {
 	if intest.InTest {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 	}
+	if handle := do.statsHandle.Load(); handle != nil {
+		handle.Close()
+	}
 
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }

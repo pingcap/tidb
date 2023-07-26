@@ -70,7 +70,10 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (*cache.StatsCache, err
 		return nil, errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	tables := cache.NewStatsCache()
+	tables, err := cache.NewStatsCache()
+	if err != nil {
+		return nil, err
+	}
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
