@@ -127,6 +127,7 @@ func (sc *StatsCache) putCache(id int64, t *statistics.Table, moveLRUFront bool)
 	if ok {
 		return ok
 	}
+	// TODO(hawkingrei): If necessary, add asynchronous retries
 	logutil.BgLogger().Warn("fail to put the stats cache", zap.Int64("id", id))
 	return ok
 }
