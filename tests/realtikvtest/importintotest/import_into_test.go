@@ -920,6 +920,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
+	s.tk.MustExec("truncate table load_data.import_mode;")
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/ddl/util/IsRaftKv2"))
 
 	// to normal mode should be called on error
