@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"io"
 	"math"
 	"net"
@@ -1459,7 +1460,9 @@ func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, re
 	}
 
 	if len(regionRanges) > 0 && local.switchModeDuration > 0 {
-		log.FromContext(ctx).Info("switch import mode of ranges", zap.ByteString("startKey", regionRanges[0].start), zap.ByteString("endKey", regionRanges[len(regionRanges)-1].end))
+		log.FromContext(ctx).Info("switch import mode of ranges",
+			zap.String("startKey", hex.EncodeToString(regionRanges[0].start)),
+			zap.String("endKey", hex.EncodeToString(regionRanges[len(regionRanges)-1].end)))
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
@@ -1723,9 +1726,17 @@ func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []Range)
 
 	keyRanges := make([]*sst.Range, 0, len(ranges))
 	for _, r := range ranges {
+		startKey := r.start
+		if len(r.start) > 0 {
+			startKey = codec.EncodeBytes(nil, r.start)
+		}
+		endKey := r.end
+		if len(r.end) > 0 {
+			endKey = codec.EncodeBytes(nil, r.end)
+		}
 		keyRanges = append(keyRanges, &sst.Range{
-			Start: r.start,
-			End:   r.end,
+			Start: startKey,
+			End:   endKey,
 		})
 	}
 
