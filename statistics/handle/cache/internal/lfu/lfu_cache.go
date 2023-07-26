@@ -49,7 +49,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 		bufferItems = 1
 	}
 	cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters:        math.MaxInt64 / 2,
+		NumCounters:        math.MaxInt64,
 		MaxCost:            totalMemCost,
 		BufferItems:        bufferItems,
 		OnEvict:            result.onEvict,
