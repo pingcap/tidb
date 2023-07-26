@@ -127,14 +127,6 @@ func (sc *StatsCache) putCache(id int64, t *statistics.Table, moveLRUFront bool)
 	if ok {
 		return ok
 	}
-	// retry three times and sleep exponentially. 20ms, 40ms and 80ms.
-	for i := 0; i < 3; i++ {
-		time.Sleep(time.Duration(1<<uint(i)) * 10 * time.Millisecond)
-		ok = sc.c.Put(id, t, moveLRUFront)
-		if ok {
-			return ok
-		}
-	}
 	logutil.BgLogger().Warn("fail to put the stats cache", zap.Int64("id", id))
 	return ok
 }
