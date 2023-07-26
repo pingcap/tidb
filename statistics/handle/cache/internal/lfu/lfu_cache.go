@@ -15,7 +15,6 @@
 package lfu
 
 import (
-	"math"
 	"sync/atomic"
 
 	"github.com/dgraph-io/ristretto"
