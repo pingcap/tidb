@@ -15,6 +15,7 @@
 package lfu
 
 import (
+	"math"
 	"sync/atomic"
 
 	"github.com/dgraph-io/ristretto"
@@ -48,7 +49,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 		bufferItems = 1
 	}
 	cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters:        1024 * 1024 * 1024, // TODO(hawkingrei): make it configurable for NumCounters and MaxCost
+		NumCounters:        math.MaxInt64 / 2,
 		MaxCost:            totalMemCost,
 		BufferItems:        bufferItems,
 		OnEvict:            result.onEvict,
