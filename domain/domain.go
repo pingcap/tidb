@@ -1022,6 +1022,9 @@ func (do *Domain) Close() {
 	if intest.InTest {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 	}
+	if handle := do.statsHandle.Load(); handle != nil {
+		handle.Close()
+	}
 
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
@@ -1197,6 +1200,7 @@ func (do *Domain) Init(
 	if err != nil {
 		return err
 	}
+	startReloadTime := time.Now()
 	// step 2: domain reload the infoSchema.
 	err = do.Reload()
 	if err != nil {
@@ -1212,6 +1216,17 @@ func (do *Domain) Init(
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop.
 	if ddlLease > 0 {
+		sub := time.Since(startReloadTime)
+		// The reload(in step 2) operation takes more than ddlLease and a new reload operation was not performed,
+		// the next query will respond by ErrInfoSchemaExpired error. So we do a new reload to update schemaValidator.latestSchemaExpire.
+		if sub > (ddlLease / 2) {
+			logutil.BgLogger().Warn("loading schema takes a long time, we do a new reload", zap.Duration("take time", sub))
+			err = do.Reload()
+			if err != nil {
+				return err
+			}
+		}
+
 		// Local store needs to get the change information for every DDL state in each session.
 		do.wg.Run(func() {
 			do.loadSchemaInLoop(ctx, ddlLease)
@@ -3078,7 +3093,7 @@ func (do *Domain) StartTTLJobManager() {
 			logutil.BgLogger().Info("ttlJobManager exited.")
 		}()
 
-		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient)
+		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
 		do.ttlJobManager.Store(ttlJobManager)
 		ttlJobManager.Start()
 

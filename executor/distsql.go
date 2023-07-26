@@ -301,7 +301,7 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	return e.open(ctx, kvRanges)
 }
 
-func (e *IndexReaderExecutor) buildKVReq(ctx context.Context, r []kv.KeyRange) (*kv.Request, error) {
+func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 	var builder distsql.RequestBuilder
 	builder.SetKeyRanges(r).
 		SetDAGRequest(e.dagPB).
@@ -388,7 +388,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	})
 	// use sortedSelectResults only when byItems pushed down and partition numbers > 1
 	if e.byItems == nil || len(e.partitions) <= 1 {
-		kvReq, err := e.buildKVReq(ctx, kvRanges)
+		kvReq, err := e.buildKVReq(kvRanges)
 		if err != nil {
 			e.feedback.Invalidate()
 			return err
@@ -401,7 +401,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	} else {
 		kvReqs := make([]*kv.Request, 0, len(kvRanges))
 		for _, kvRange := range kvRanges {
-			kvReq, err := e.buildKVReq(ctx, []kv.KeyRange{kvRange})
+			kvReq, err := e.buildKVReq([]kv.KeyRange{kvRange})
 			if err != nil {
 				e.feedback.Invalidate()
 				return err
@@ -1336,7 +1336,7 @@ func (e *IndexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *IndexLookUpRunTimeStats) Tp() int {
+func (*IndexLookUpRunTimeStats) Tp() int {
 	return execdetails.TpIndexLookUpRunTimeStats
 }
 
