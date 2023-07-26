@@ -124,6 +124,7 @@ go_library(
         "//executor/internal/exec",
         "//executor/internal/mpp",
         "//executor/internal/pdhelper",
+        "//executor/internal/querywatch",
         "//executor/internal/util",
         "//executor/metrics",
         "//executor/mppcoordmanager",

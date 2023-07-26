@@ -3270,8 +3270,12 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			fmt.Fprintf(limitBuilder, "EXEC_ELAPSED='%s'", dur.String())
 			fmt.Fprintf(limitBuilder, ", ACTION=%s", model.RunawayActionType(setting.Action+1).String())
 			if setting.Watch != nil {
-				dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond
-				fmt.Fprintf(limitBuilder, ", WATCH=%s DURATION='%s'", model.RunawayWatchType(setting.Watch.Type).String(), dur.String())
+				if setting.Watch.LastingDurationMs > 0 {
+					dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond
+					fmt.Fprintf(limitBuilder, ", WATCH=%s DURATION='%s'", model.RunawayWatchType(setting.Watch.Type).String(), dur.String())
+				} else {
+					fmt.Fprintf(limitBuilder, ", WATCH=%s DURATION=UNLIMITED", model.RunawayWatchType(setting.Watch.Type).String())
+				}
 			}
 		}
 		queryLimit := limitBuilder.String()

@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "querywatch",
+    srcs = ["query_watch.go"],
+    importpath = "github.com/pingcap/tidb/executor/internal/querywatch",
+    visibility = ["//executor:__subpackages__"],
+    deps = [
+        "//executor/internal/exec",
+        "//parser/ast",
+        "//sessionctx",
+        "//util/chunk",
+    ],
+)
+
+go_test(
+    name = "querywatch_test",
+    timeout = "short",
+    srcs = ["query_watch_test.go"],
+    flaky = True,
+    deps = [
+        "//testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)
