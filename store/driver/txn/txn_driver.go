@@ -143,15 +143,14 @@ func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (iter kv.Iterator, err err
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 // The returned iterator will iterate from greater key to smaller key.
 // If k is nil, the returned iterator will be positioned at the last key.
-// TODO: Add lower bound limit
-func (txn *tikvTxn) IterReverse(k kv.Key) (iter kv.Iterator, err error) {
+func (txn *tikvTxn) IterReverse(k kv.Key, lowerBound kv.Key) (iter kv.Iterator, err error) {
 	var dirtyIter, snapIter kv.Iterator
 
-	if dirtyIter, err = txn.GetMemBuffer().IterReverse(k); err != nil {
+	if dirtyIter, err = txn.GetMemBuffer().IterReverse(k, lowerBound); err != nil {
 		return nil, err
 	}
 
-	if snapIter, err = txn.GetSnapshot().IterReverse(k); err != nil {
+	if snapIter, err = txn.GetSnapshot().IterReverse(k, lowerBound); err != nil {
 		dirtyIter.Close()
 		return nil, err
 	}

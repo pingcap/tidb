@@ -15,17 +15,21 @@
 package core
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/texttree"
+	"go.uber.org/zap"
 )
 
 // FlatPhysicalPlan provides an easier structure to traverse a plan and collect needed information.
 // Note: Although it's named FlatPhysicalPlan, there also could be Insert, Delete and Update at the beginning of Main.
 type FlatPhysicalPlan struct {
-	Main FlatPlanTree
-	CTEs []FlatPlanTree
+	Main             FlatPlanTree
+	CTEs             []FlatPlanTree
+	ScalarSubQueries []FlatPlanTree
 
 	// InExecute and InExplain are expected to handle some special cases. Usually you don't need to use them.
 
@@ -196,6 +200,18 @@ func FlattenPhysicalPlan(p Plan, buildSideFirst bool) *FlatPhysicalPlan {
 		cteExplained := res.flattenCTERecursively(cteDef, initInfo, nil)
 		res.CTEs = append(res.CTEs, cteExplained)
 		flattenedCTEPlan[cteDef.CTE.IDForStorage] = struct{}{}
+	}
+	if p.SCtx() == nil || p.SCtx().GetSessionVars() == nil {
+		return res
+	}
+	for _, scalarSubQ := range p.SCtx().GetSessionVars().MapScalarSubQ {
+		castedScalarSubQ, ok := scalarSubQ.(*ScalarSubqueryEvalCtx)
+		if !ok {
+			logutil.BgLogger().Debug("Wrong item regiestered as scalar subquery", zap.String("the wrong item", fmt.Sprintf("%T", scalarSubQ)))
+			continue
+		}
+		subQExplained := res.flattenScalarSubQRecursively(castedScalarSubQ, initInfo, nil)
+		res.ScalarSubQueries = append(res.ScalarSubQueries, subQExplained)
 	}
 	return res
 }
@@ -494,6 +510,29 @@ func (f *FlatPhysicalPlan) flattenCTERecursively(cteDef *CTEDefinition, info *op
 		target, childIdx = f.flattenRecursively(cteDef.RecurPlan, childInfo, target)
 		childIdxs = append(childIdxs, childIdx)
 	}
+	if flat != nil {
+		flat.ChildrenIdx = childIdxs
+	}
+	return target
+}
+
+func (f *FlatPhysicalPlan) flattenScalarSubQRecursively(scalarSubQ *ScalarSubqueryEvalCtx, info *operatorCtx, target FlatPlanTree) FlatPlanTree {
+	flat := f.flattenSingle(scalarSubQ, info)
+	if flat != nil {
+		target = append(target, flat)
+	}
+	childIdxs := make([]int, 0)
+	var childIdx int
+	childInfo := &operatorCtx{
+		depth:       info.depth + 1,
+		label:       Empty,
+		isRoot:      true,
+		storeType:   kv.TiDB,
+		indent:      texttree.Indent4Child(info.indent, info.isLastChild),
+		isLastChild: true,
+	}
+	target, childIdx = f.flattenRecursively(scalarSubQ.scalarSubQuery, childInfo, target)
+	childIdxs = append(childIdxs, childIdx)
 	if flat != nil {
 		flat.ChildrenIdx = childIdxs
 	}

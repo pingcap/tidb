@@ -1019,6 +1019,9 @@ func (do *Domain) Close() {
 	if intest.InTest {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 	}
+	if handle := do.statsHandle.Load(); handle != nil {
+		handle.Close()
+	}
 
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
@@ -2839,7 +2842,7 @@ func (do *Domain) StartTTLJobManager() {
 			logutil.BgLogger().Info("ttlJobManager exited.")
 		}()
 
-		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient)
+		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
 		do.ttlJobManager.Store(ttlJobManager)
 		ttlJobManager.Start()
 

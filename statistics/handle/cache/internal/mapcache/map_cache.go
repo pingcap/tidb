@@ -54,7 +54,7 @@ func (m *MapCache) Get(k int64, _ bool) (*statistics.Table, bool) {
 }
 
 // Put implements StatsCacheInner
-func (m *MapCache) Put(k int64, v *statistics.Table, _ bool) {
+func (m *MapCache) Put(k int64, v *statistics.Table, _ bool) bool {
 	item, ok := m.tables[k]
 	if ok {
 		oldCost := item.cost
@@ -63,7 +63,7 @@ func (m *MapCache) Put(k int64, v *statistics.Table, _ bool) {
 		item.cost = newCost
 		m.tables[k] = item
 		m.memUsage += newCost - oldCost
-		return
+		return true
 	}
 	cost := v.MemoryUsage().TotalMemUsage
 	item = cacheItem{
@@ -73,6 +73,7 @@ func (m *MapCache) Put(k int64, v *statistics.Table, _ bool) {
 	}
 	m.tables[k] = item
 	m.memUsage += cost
+	return true
 }
 
 // Del implements StatsCacheInner
@@ -132,3 +133,6 @@ func (*MapCache) SetCapacity(int64) {}
 func (*MapCache) Front() int64 {
 	return 0
 }
+
+// Close implements StatsCacheInner
+func (*MapCache) Close() {}

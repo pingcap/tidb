@@ -159,6 +159,7 @@ type StatementContext struct {
 	InSelectStmt                  bool
 	InLoadDataStmt                bool
 	InExplainStmt                 bool
+	InExplainAnalyzeStmt          bool
 	ExplainFormat                 string
 	InCreateOrAlterStmt           bool
 	InSetSessionStatesStmt        bool

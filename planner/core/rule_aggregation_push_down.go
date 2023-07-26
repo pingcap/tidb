@@ -143,7 +143,7 @@ func (a *aggregationPushDownSolver) collectAggFuncs(agg *LogicalAggregation, joi
 // treated as group by columns in join subquery.
 func (a *aggregationPushDownSolver) collectGbyCols(agg *LogicalAggregation, join *LogicalJoin) (leftGbyCols, rightGbyCols []*expression.Column) {
 	leftChild := join.children[0]
-	ctx := agg.ctx
+	ctx := agg.SCtx()
 	for _, gbyExpr := range agg.GroupByItems {
 		cols := expression.ExtractColumns(gbyExpr)
 		for _, col := range cols {
@@ -265,7 +265,7 @@ func (a *aggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation,
 	}
 	nullGenerating := (join.JoinType == LeftOuterJoin && childIdx == 1) ||
 		(join.JoinType == RightOuterJoin && childIdx == 0)
-	agg, err := a.makeNewAgg(join.ctx, aggFuncs, gbyCols, aggHints, blockOffset, nullGenerating)
+	agg, err := a.makeNewAgg(join.SCtx(), aggFuncs, gbyCols, aggHints, blockOffset, nullGenerating)
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +291,7 @@ func (a *aggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation,
 func (*aggregationPushDownSolver) getDefaultValues(agg *LogicalAggregation) ([]types.Datum, bool) {
 	defaultValues := make([]types.Datum, 0, agg.Schema().Len())
 	for _, aggFunc := range agg.AggFuncs {
-		value, existsDefaultValue := aggFunc.EvalNullValueInOuterJoin(agg.ctx, agg.children[0].Schema())
+		value, existsDefaultValue := aggFunc.EvalNullValueInOuterJoin(agg.SCtx(), agg.children[0].Schema())
 		if !existsDefaultValue {
 			return nil, false
 		}
@@ -339,7 +339,7 @@ func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs 
 		newAggFuncDescs = append(newAggFuncDescs, newFuncs...)
 	}
 	for _, gbyCol := range gbyCols {
-		firstRow, err := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
+		firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx(), ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
 		if err != nil {
 			return nil, err
 		}
@@ -356,7 +356,7 @@ func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs 
 }
 
 func (*aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation) (pushedAgg *LogicalAggregation) {
-	partial, final, _ := BuildFinalModeAggregation(agg.ctx, &AggInfo{
+	partial, final, _ := BuildFinalModeAggregation(agg.SCtx(), &AggInfo{
 		AggFuncs:     agg.AggFuncs,
 		GroupByItems: agg.GroupByItems,
 		Schema:       agg.schema,
@@ -373,7 +373,7 @@ func (*aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation) (push
 		AggFuncs:     partial.AggFuncs,
 		GroupByItems: partial.GroupByItems,
 		aggHints:     agg.aggHints,
-	}.Init(agg.ctx, agg.blockOffset)
+	}.Init(agg.SCtx(), agg.SelectBlockOffset())
 	pushedAgg.SetSchema(partial.Schema)
 	return
 }
@@ -381,12 +381,12 @@ func (*aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation) (push
 // pushAggCrossUnion will try to push the agg down to the union. If the new aggregation's group-by columns doesn't contain unique key.
 // We will return the new aggregation. Otherwise we will transform the aggregation to projection.
 func (*aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, unionSchema *expression.Schema, unionChild LogicalPlan) (LogicalPlan, error) {
-	ctx := agg.ctx
+	ctx := agg.SCtx()
 	newAgg := LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs)),
 		GroupByItems: make([]expression.Expression, 0, len(agg.GroupByItems)),
 		aggHints:     agg.aggHints,
-	}.Init(ctx, agg.blockOffset)
+	}.Init(ctx, agg.SelectBlockOffset())
 	newAgg.SetSchema(agg.schema.Clone())
 	for _, aggFunc := range agg.AggFuncs {
 		newAggFunc := aggFunc.Clone()
@@ -401,7 +401,7 @@ func (*aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, uni
 		newExpr := expression.ColumnSubstitute(gbyExpr, unionSchema, expression.Column2Exprs(unionChild.Schema().Columns))
 		newAgg.GroupByItems = append(newAgg.GroupByItems, newExpr)
 		// TODO: if there is a duplicated first_row function, we can delete it.
-		firstRow, err := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{gbyExpr}, false)
+		firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx(), ast.AggFuncFirstRow, []expression.Expression{gbyExpr}, false)
 		if err != nil {
 			return nil, err
 		}
@@ -489,7 +489,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 					if rightInvalid {
 						rChild = join.children[1]
 					} else {
-						rChild, err = a.tryToPushDownAgg(agg, rightAggFuncs, rightGbyCols, join, 1, agg.aggHints, agg.blockOffset, opt)
+						rChild, err = a.tryToPushDownAgg(agg, rightAggFuncs, rightGbyCols, join, 1, agg.aggHints, agg.SelectBlockOffset(), opt)
 						if err != nil {
 							return nil, err
 						}
@@ -497,7 +497,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 					if leftInvalid {
 						lChild = join.children[0]
 					} else {
-						lChild, err = a.tryToPushDownAgg(agg, leftAggFuncs, leftGbyCols, join, 0, agg.aggHints, agg.blockOffset, opt)
+						lChild, err = a.tryToPushDownAgg(agg, leftAggFuncs, leftGbyCols, join, 0, agg.aggHints, agg.SelectBlockOffset(), opt)
 						if err != nil {
 							return nil, err
 						}

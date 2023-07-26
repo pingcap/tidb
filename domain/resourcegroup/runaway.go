@@ -16,6 +16,7 @@ package resourcegroup
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,8 +41,14 @@ const (
 	maxWatchRecordChannelSize = 1024
 )
 
+var longestTime time.Time
+
 // RunawayMatchType is used to indicates whether qurey was interrupted by runaway identification or quarantine watch.
 type RunawayMatchType uint
+
+func init() {
+	longestTime, _ = time.Parse(time.DateOnly, fmt.Sprintf("%04d-%02d-%02d", 2038, 1, 1))
+}
 
 const (
 	// RunawayMatchTypeWatch shows quarantine watch.
@@ -146,7 +153,7 @@ type RunawayManager struct {
 
 // NewRunawayManager creates a new RunawayManager.
 func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serverAddr string) *RunawayManager {
-	watchList := ttlcache.New[string, *QuarantineRecord](ttlcache.WithCapacity[string, *QuarantineRecord](maxWatchListCap))
+	watchList := ttlcache.New[string, *QuarantineRecord](ttlcache.WithTTL[string, *QuarantineRecord](ttlcache.NoTTL), ttlcache.WithCapacity[string, *QuarantineRecord](maxWatchListCap))
 	go watchList.Start()
 	staleQuarantineChan := make(chan *QuarantineRecord, maxWatchRecordChannelSize)
 	evictionCancel := watchList.OnEviction(func(ctx context.Context, er ttlcache.EvictionReason, i *ttlcache.Item[string, *QuarantineRecord]) {
@@ -181,10 +188,16 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName string, originalSQL st
 }
 
 func (rm *RunawayManager) markQuarantine(resourceGroupName, convict, watchType string, ttl time.Duration, now *time.Time) {
+	var endTime time.Time
+	if ttl == 0 {
+		endTime = longestTime
+	} else {
+		endTime = now.Add(ttl)
+	}
 	record := &QuarantineRecord{
 		ResourceGroupName: resourceGroupName,
 		StartTime:         *now,
-		EndTime:           now.Add(ttl),
+		EndTime:           endTime,
 		Watch:             watchType,
 		WatchText:         convict,
 		Source:            rm.serverID,
