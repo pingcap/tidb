@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 )
 
+//revive:disable
 const (
 	DBName             = "db"
 	HexKey             = "hexKey"
@@ -48,6 +49,8 @@ const (
 	HeaderContentType = "Content-Type"
 	ContentTypeJSON   = "application/json"
 )
+
+//revive:enable
 
 func WriteError(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusBadRequest)
