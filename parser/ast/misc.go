@@ -3929,7 +3929,7 @@ func (n *DynamicCalibrateResourceOption) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// DropQueryWatchStmt is a statement to create a runaway watch item.
+// DropQueryWatchStmt is a statement to drop a runaway watch item.
 type DropQueryWatchStmt struct {
 	stmtNode
 	IntValue int64
@@ -3948,7 +3948,7 @@ func (n *DropQueryWatchStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// AddQueryWatchStmt is a statement to create a runaway watch item.
+// AddQueryWatchStmt is a statement to add a runaway watch item.
 type AddQueryWatchStmt struct {
 	stmtNode
 	QueryWatchOptionList []*QueryWatchOption

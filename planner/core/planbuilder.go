@@ -3277,7 +3277,7 @@ func buildCalibrateResourceSchema() (*expression.Schema, types.NameSlice) {
 	return schema.col2Schema(), schema.names
 }
 
-func buildCreateQueryWatchSchema() (*expression.Schema, types.NameSlice) {
+func buildAddQueryWatchSchema() (*expression.Schema, types.NameSlice) {
 	longlongSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	cols := newColumnsWithNames(1)
 	cols.Append(buildColumnWithName("", "WATCH_ID", mysql.TypeLonglong, longlongSize))
@@ -3555,7 +3555,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 	case *ast.AddQueryWatchStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
-		p.setSchemaAndNames(buildCreateQueryWatchSchema())
+		p.setSchemaAndNames(buildAddQueryWatchSchema())
 	case *ast.DropQueryWatchStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
