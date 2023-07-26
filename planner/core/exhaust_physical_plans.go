@@ -1957,30 +1957,6 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 	return
 }
 
-// tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
-// will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
-func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, canForced bool) {
-	// supportLeftOuter and supportRightOuter indicates whether this type of join
-	// supports the left side or right side to be the outer side.
-	var supportLeftOuter, supportRightOuter bool
-	switch p.JoinType {
-	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
-		supportLeftOuter = true
-	case RightOuterJoin:
-		supportRightOuter = true
-	case InnerJoin:
-		supportLeftOuter, supportRightOuter = true, true
-	}
-	var leftAsInner, rightAsInner []PhysicalPlan
-	if supportLeftOuter {
-		rightAsInner = p.getIndexJoinByOuterIdx(prop, 0)
-	}
-	if supportRightOuter {
-		leftAsInner = p.getIndexJoinByOuterIdx(prop, 1)
-	}
-	return p.filterIndexJoinCandidates(prop, leftAsInner, rightAsInner)
-}
-
 // filterIndexJoinCandidates will filter the candidates according to hints and SQL variables.
 func (p *LogicalJoin) filterIndexJoinCandidates(prop *property.PhysicalProperty, leftAsInner, rightAsInner []PhysicalPlan) ([]PhysicalPlan, bool) {
 	candidates := make([]PhysicalPlan, 0, len(leftAsInner)+len(rightAsInner))
@@ -2052,6 +2028,30 @@ func (p *LogicalJoin) preferJoin(flags ...uint) bool {
 		}
 	}
 	return false
+}
+
+// tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
+// will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
+func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, canForced bool) {
+	// supportLeftOuter and supportRightOuter indicates whether this type of join
+	// supports the left side or right side to be the outer side.
+	var supportLeftOuter, supportRightOuter bool
+	switch p.JoinType {
+	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
+		supportLeftOuter = true
+	case RightOuterJoin:
+		supportRightOuter = true
+	case InnerJoin:
+		supportLeftOuter, supportRightOuter = true, true
+	}
+	var leftAsInner, rightAsInner []PhysicalPlan
+	if supportLeftOuter {
+		rightAsInner = p.getIndexJoinByOuterIdx(prop, 0)
+	}
+	if supportRightOuter {
+		leftAsInner = p.getIndexJoinByOuterIdx(prop, 1)
+	}
+	return p.filterIndexJoinCandidates(prop, leftAsInner, rightAsInner)
 }
 
 func checkChildFitBC(p Plan) bool {
