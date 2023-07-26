@@ -2081,15 +2081,29 @@ func (p *LogicalJoin) preferMppBCJ() bool {
 	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
 }
 
-// filterIndexJoinCandidates will filter the candidates according to hints and SQL variables.
-func (p *LogicalJoin) filterIndexJoinCandidates(prop *property.PhysicalProperty, leftAsInner, rightAsInner []PhysicalPlan) ([]PhysicalPlan, bool) {
+func (p *LogicalJoin) filterIndexJoinByVars(candidates []PhysicalPlan) []PhysicalPlan {
+	if !p.SCtx().GetSessionVars().EnableIndexMergeJoin {
+		result := make([]PhysicalPlan, 0, len(candidates))
+		for _, candidate := range candidates {
+			switch candidate.(type) {
+			case *PhysicalIndexMergeJoin:
+			default:
+				result = append(result, candidate)
+			}
+		}
+		candidates = result
+	}
+	return candidates
+}
+
+func (p *LogicalJoin) filterIndexJoinByHints(prop *property.PhysicalProperty, leftAsInner, rightAsInner []PhysicalPlan) ([]PhysicalPlan, bool) {
 	candidates := make([]PhysicalPlan, 0, len(leftAsInner)+len(rightAsInner))
 	candidates = append(candidates, leftAsInner...)
 	candidates = append(candidates, rightAsInner...)
 
 	const left, right = 0, 1
 	const indexJoin, indexMergeJoin, indexHashJoin = 0, 1, 2
-	selected := make([]PhysicalPlan, 0, len(candidates))
+	preferJoins := make([]PhysicalPlan, 0, len(candidates))
 	for i, candidate := range candidates {
 		innerSide := left
 		if i >= len(leftAsInner) {
@@ -2103,9 +2117,6 @@ func (p *LogicalJoin) filterIndexJoinCandidates(prop *property.PhysicalProperty,
 			joinMethod = indexHashJoin
 		}
 
-		if !p.SCtx().GetSessionVars().EnableIndexMergeJoin && joinMethod == indexMergeJoin {
-			continue
-		}
 		if (p.preferJoin(preferLeftAsINLJInner) && !(innerSide == left && joinMethod == indexJoin)) ||
 			(p.preferJoin(preferRightAsINLJInner) && !(innerSide == right && joinMethod == indexJoin)) ||
 			(p.preferJoin(preferLeftAsINLHJInner) && !(innerSide == left && joinMethod == indexHashJoin)) ||
@@ -2114,13 +2125,14 @@ func (p *LogicalJoin) filterIndexJoinCandidates(prop *property.PhysicalProperty,
 			(p.preferJoin(preferRightAsINLMJInner) && !(innerSide == right && joinMethod == indexMergeJoin)) {
 			continue
 		}
-		selected = append(selected, candidate)
+
+		preferJoins = append(preferJoins, candidate)
 	}
 
 	if p.preferJoin(preferLeftAsINLJInner, preferRightAsINLJInner, preferLeftAsINLHJInner,
 		preferRightAsINLHJInner, preferLeftAsINLMJInner, preferRightAsINLMJInner) {
-		if len(selected) > 0 {
-			return selected, true
+		if len(preferJoins) > 0 {
+			return preferJoins, true
 		}
 		// Cannot find any index join under the current hints, generate some warnings.
 		// If the required property is not empty, we will enforce it and try the hint again.
@@ -2175,7 +2187,10 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	if supportRightOuter {
 		leftAsInner = p.getIndexJoinByOuterIdx(prop, 1)
 	}
-	return p.filterIndexJoinCandidates(prop, leftAsInner, rightAsInner)
+
+	leftAsInner = p.filterIndexJoinByVars(leftAsInner)
+	rightAsInner = p.filterIndexJoinByVars(rightAsInner)
+	return p.filterIndexJoinByHints(prop, leftAsInner, rightAsInner)
 }
 
 // LogicalJoin can generates hash join, index join and sort merge join.
