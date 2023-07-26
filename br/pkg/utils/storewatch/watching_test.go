@@ -22,7 +22,7 @@ func NewSequentialReturningStoreMeta(sequence [][]*metapb.Store) storewatch.Stor
 
 func (s *SequentialReturningStoreMeta) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	if len(s.sequence) == 0 {
-		return nil, fmt.Errorf("too many call to `GetAllStores` in test!")
+		return nil, fmt.Errorf("too many call to `GetAllStores` in test")
 	}
 	stores := s.sequence[0]
 	s.sequence = s.sequence[1:]
