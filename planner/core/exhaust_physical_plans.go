@@ -2019,17 +2019,16 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 			// Construct warning message prefix.
 			var indexJoinTables, indexHashJoinTables, indexMergeJoinTables []hintTableInfo
 			if p.hintInfo != nil {
-				indexJoinTables = p.hintInfo.indexNestedLoopJoinTables.inljTables
-				indexHashJoinTables = p.hintInfo.indexNestedLoopJoinTables.inlhjTables
-				indexMergeJoinTables = p.hintInfo.indexNestedLoopJoinTables.inlmjTables
+				t := p.hintInfo.indexNestedLoopJoinTables
+				indexJoinTables, indexHashJoinTables, indexMergeJoinTables = t.inljTables, t.inlhjTables, t.inlmjTables
 			}
 			var errMsg string
 			switch {
-			case p.prefer(preferLeftAsINLJInner, preferRightAsINLJInner): // index join
+			case p.prefer(preferLeftAsINLJInner, preferRightAsINLJInner): // prefer index join
 				errMsg = fmt.Sprintf("Optimizer Hint %s or %s is inapplicable", restore2JoinHint(HintINLJ, indexJoinTables), restore2JoinHint(TiDBIndexNestedLoopJoin, indexJoinTables))
-			case p.prefer(preferLeftAsINLHJInner, preferRightAsINLHJInner): // index hash join
+			case p.prefer(preferLeftAsINLHJInner, preferRightAsINLHJInner): // prefer index hash join
 				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLHJ, indexHashJoinTables))
-			case p.prefer(preferLeftAsINLMJInner, preferRightAsINLMJInner): // index merge join
+			case p.prefer(preferLeftAsINLMJInner, preferRightAsINLMJInner): // prefer index merge join
 				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLMJ, indexMergeJoinTables))
 			}
 			// Append inapplicable reason.
