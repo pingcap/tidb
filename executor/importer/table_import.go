@@ -285,7 +285,7 @@ func (e *LoadDataController) getAdjustedMaxEngineSize() int64 {
 	// we want to split data files into subtask of size close to MaxEngineSize to reduce range overlap,
 	// and evenly distribute them to subtasks.
 	// so we adjust MaxEngineSize to make sure each subtask has a similar amount of data to import.
-	// we calculate subtask count first by round(TotalFileSize) / maxEngineSize), then adjust maxEngineSize
+	// we calculate subtask count first by round(TotalFileSize / maxEngineSize), then adjust maxEngineSize
 	//
 	// AllocateEngineIDs is using ceil() to calculate subtask count, engine size might be too small in some case,
 	// such as 501G data, maxEngineSize will be about 250G, so we don't relay on it.
