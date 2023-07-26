@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/kv"
@@ -139,33 +140,83 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 func (do *Domain) runawayWatchSyncLoop() {
 	defer util.Recover(metrics.LabelDomain, "runawayWatchSyncLoop", nil, false)
 	runawayWatchSyncTicker := time.NewTicker(runawayWatchSyncInterval)
+	updateFn := func() error {
+		records, err := do.runawaySyncer.getNewWatchRecords()
+		if err != nil {
+			logutil.BgLogger().Error("try to get new runaway watch", zap.Error(err))
+			return err
+		}
+		for _, r := range records {
+			do.runawayManager.AddWatch(r)
+		}
+		doneRecords, err := do.runawaySyncer.getNewWatchDoneRecords()
+		if err != nil {
+			logutil.BgLogger().Error("try to get done runaway watch", zap.Error(err))
+			return err
+		}
+		for _, r := range doneRecords {
+			do.runawayManager.RemoveWatch(r)
+		}
+		return nil
+	}
 	for {
 		select {
 		case <-do.exit:
 			return
+		case <-do.runawaySyncer.notifyChan:
+			err := updateFn()
+			do.runawaySyncer.doneChan <- err
 		case <-runawayWatchSyncTicker.C:
-			records, err := do.tryGetNewRunawayWatch()
+			updateFn()
+		}
+	}
+}
+
+func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) (int64, error) {
+	if err := do.handleRunawayWatch(record); err != nil {
+		return 0, err
+	}
+	timer := time.NewTimer(10 * time.Second)
+	ticker := time.NewTicker(time.Second)
+	defer func() {
+		ticker.Stop()
+		timer.Stop()
+	}()
+	for {
+		select {
+		case <-timer.C:
+			return 0, errors.Errorf("add runaway watch timeout")
+		case <-ticker.C:
+			r := do.runawayManager.GetWatchInWatchList(record.GetRecordKey())
+			if r.ID > 0 {
+				return r.ID, nil
+			}
+		case err := <-do.runawaySyncer.doneChan:
 			if err != nil {
-				logutil.BgLogger().Error("try to get new runaway watch", zap.Error(err))
 				continue
 			}
-			for _, r := range records {
-				do.runawayManager.AddWatch(r)
+			r := do.runawayManager.GetWatchInWatchList(record.GetRecordKey())
+			if r.ID > 0 {
+				return r.ID, nil
 			}
 		}
 	}
 }
 
-func (do *Domain) tryGetNewRunawayWatch() ([]*resourcegroup.QuarantineRecord, error) {
-	se, err := do.sysSessionPool.Get()
-	defer func() {
-		do.sysSessionPool.Put(se)
-	}()
+func (do *Domain) RemoveRunawayWatch(recordID int64) error {
+	records, err := do.runawaySyncer.getWatchRecordByID(recordID)
 	if err != nil {
-		return nil, errors.Annotate(err, "get session failed")
+		return err
 	}
-	exec, _ := se.(sqlexec.RestrictedSQLExecutor)
-	return do.runawaySyncer.getNewWatchRecord(exec)
+	if len(records) != 1 {
+		return errors.Errorf("no runaway watch with the specific ID")
+	}
+	err = do.handleRunawayWatchDone(records[0])
+	if err != nil {
+		return err
+	}
+	err = do.handleRemoveStaleRunawayWatch(records[0])
+	return err
 }
 
 func (do *Domain) runawayRecordFlushLoop() {
@@ -270,6 +321,33 @@ func (do *Domain) handleRunawayWatch(record *resourcegroup.QuarantineRecord) err
 	return err
 }
 
+func (do *Domain) handleRunawayWatchDone(record *resourcegroup.QuarantineRecord) error {
+	se, err := do.sysSessionPool.Get()
+	defer func() {
+		do.sysSessionPool.Put(se)
+	}()
+	if err != nil {
+		return errors.Annotate(err, "get session failed")
+	}
+	exec, _ := se.(sqlexec.SQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	_, err = exec.ExecuteInternal(ctx, "BEGIN")
+	defer func() {
+		if err != nil {
+			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
+			terror.Log(err1)
+			return
+		}
+		_, err = exec.ExecuteInternal(ctx, "COMMIT")
+		if err != nil {
+			return
+		}
+	}()
+	sql, params := record.GenInsertionDoneStmt()
+	_, err = exec.ExecuteInternal(ctx, sql, params...)
+	return err
+}
+
 func (do *Domain) handleRemoveStaleRunawayWatch(record *resourcegroup.QuarantineRecord) error {
 	// we only need to do remove runaway watch job in ddl owner.
 	logutil.BgLogger().Info("handleRemoveStaleRunawayWatch in Domain", zap.Int64("id", record.ID))
@@ -336,55 +414,96 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 	}
 	serverAddr := net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
 	do.runawayManager = resourcegroup.NewRunawayManager(control, serverAddr)
-	do.runawaySyncer = newRunawaySyncer()
+	do.runawaySyncer = newRunawaySyncer(do.sysSessionPool)
 	do.resourceGroupsController = control
 	tikv.SetResourceControlInterceptor(control)
 	return nil
 }
 
 type runawaySyncer struct {
-	newWatchReader *systemTableReader
+	newWatchReader      *systemTableReader
+	deletionWatchReader *systemTableReader
+	sysSessionPool      *sessionPool
+	notifyChan          chan struct{}
+	doneChan            chan error
 }
 
-func newRunawaySyncer() *runawaySyncer {
+func newRunawaySyncer(sysSessionPool *sessionPool) *runawaySyncer {
 	return &runawaySyncer{
-		newWatchReader: &systemTableReader{"mysql.tidb_runaway_watch ", 0},
+		sysSessionPool:      sysSessionPool,
+		newWatchReader:      &systemTableReader{"mysql.tidb_runaway_watch", 0},
+		deletionWatchReader: &systemTableReader{"mysql.tidb_runaway_watch_done", 0},
+		notifyChan:          make(chan struct{}, 32),
+		doneChan:            make(chan error, 32),
 	}
 }
 
-func (s *runawaySyncer) getNewWatchRecord(exec sqlexec.RestrictedSQLExecutor) ([]*resourcegroup.QuarantineRecord, error) {
-	rs, err := s.newWatchReader.Read(exec)
+func (s *runawaySyncer) getWatchRecord(reader *systemTableReader, sqlGenFn func() (string, []interface{}), baseCol int) ([]*resourcegroup.QuarantineRecord, error) {
+	se, err := s.sysSessionPool.Get()
+	defer func() {
+		s.sysSessionPool.Put(se)
+	}()
+	if err != nil {
+		return nil, errors.Annotate(err, "get session failed")
+	}
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	rs, err := reader.Read(exec, sqlGenFn)
 	if err != nil {
 		return nil, err
 	}
 	ret := make([]*resourcegroup.QuarantineRecord, 0, len(rs))
 	for _, r := range rs {
-		startTime, err := r.GetTime(2).GoTime(time.Local)
+		startTime, err := r.GetTime(baseCol + 2).GoTime(time.Local)
 		if err != nil {
 			continue
 		}
-		endTime, err := r.GetTime(3).GoTime(time.Local)
+		endTime, err := r.GetTime(baseCol + 3).GoTime(time.Local)
 		if err != nil {
 			continue
 		}
 		qr := &resourcegroup.QuarantineRecord{
-			ID:                r.GetInt64(0),
-			ResourceGroupName: r.GetString(1),
+			ID:                r.GetInt64(baseCol + 0),
+			ResourceGroupName: r.GetString(baseCol + 1),
 			StartTime:         startTime,
 			EndTime:           endTime,
-			Watch:             r.GetString(4),
-			WatchText:         r.GetString(5),
-			Source:            r.GetString(6),
+			Watch:             rmpb.RunawayWatchType(r.GetInt64(baseCol + 4)),
+			WatchText:         r.GetString(baseCol + 5),
+			Source:            r.GetString(baseCol + 6),
+			Action:            rmpb.RunawayAction(r.GetInt64(baseCol + 7)),
 		}
-		s.newWatchReader.CheckPoint = mathutil.Max(qr.ID, s.newWatchReader.CheckPoint)
+		reader.CheckPoint = mathutil.Max(qr.ID, reader.CheckPoint)
 		ret = append(ret, qr)
 	}
 	return ret, nil
 }
 
+func (s *runawaySyncer) getWatchRecordByID(id int64) ([]*resourcegroup.QuarantineRecord, error) {
+	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectByIDStmt(id), 0)
+}
+
+func (s *runawaySyncer) getNewWatchRecords() ([]*resourcegroup.QuarantineRecord, error) {
+	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectStmt, 0)
+}
+
+func (s *runawaySyncer) getNewWatchDoneRecords() ([]*resourcegroup.QuarantineRecord, error) {
+	return s.getWatchRecord(s.deletionWatchReader, s.deletionWatchReader.genSelectStmt, 1)
+}
+
 type systemTableReader struct {
 	TableName  string
 	CheckPoint int64
+}
+
+func (r *systemTableReader) genSelectByIDStmt(id int64) func() (string, []interface{}) {
+	return func() (string, []interface{}) {
+		var builder strings.Builder
+		params := make([]interface{}, 0, 1)
+		builder.WriteString("select * from ")
+		builder.WriteString(r.TableName)
+		builder.WriteString(" where id = %?")
+		params = append(params, id)
+		return builder.String(), params
+	}
 }
 
 func (r *systemTableReader) genSelectStmt() (string, []interface{}) {
@@ -397,9 +516,9 @@ func (r *systemTableReader) genSelectStmt() (string, []interface{}) {
 	return builder.String(), params
 }
 
-func (r *systemTableReader) Read(exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, error) {
+func (r *systemTableReader) Read(exec sqlexec.RestrictedSQLExecutor, genFn func() (string, []interface{})) ([]chunk.Row, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	sql, params := r.genSelectStmt()
+	sql, params := genFn()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
 		sql, params...,
 	)
