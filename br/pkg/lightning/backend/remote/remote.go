@@ -319,7 +319,7 @@ func generateRanges(splitKeys [][]byte, start, end kv.Key) []Range {
 		}
 		ranges = append(ranges, Range{start: splitKeys[i], end: endK})
 	}
-	ranges[len(ranges)-1].end = end
+	ranges[len(ranges)-1].end = end.Next()
 	for _, r := range ranges {
 		log.FromContext(context.Background()).Info("range", zap.String("start", hex.EncodeToString(r.start)), zap.String("end", hex.EncodeToString(r.end)))
 	}
@@ -1643,8 +1643,8 @@ func (remote *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	begin := time.Now()
 	region := j.region.Region
 
-	firstKey := codec.EncodeBytes([]byte{}, j.keyRange.start)
-	lastKey := codec.EncodeBytes([]byte{}, j.keyRange.end)
+	firstKey := codec.EncodeBytes([]byte{}, j.writeBatch[0].key)
+	lastKey := codec.EncodeBytes([]byte{}, j.writeBatch[len(j.writeBatch)-1].key)
 
 	u := uuid.New()
 	meta := &sst.SSTMeta{
@@ -1744,12 +1744,6 @@ func (remote *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	startTime := time.Now()
 	for iter.Next() {
 		key := kv.Key(iter.Key())
-		if key.Cmp(j.keyRange.start) < 0 {
-			continue
-		}
-		if key.Cmp(j.keyRange.end) > 0 {
-			break
-		}
 
 		//readableKey := hex.EncodeToString(iter.Key())
 		//_, _, vals, err := tablecodec.DecodeIndexKey(iter.Key())
