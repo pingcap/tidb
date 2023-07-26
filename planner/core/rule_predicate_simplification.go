@@ -156,8 +156,8 @@ func applyPredicateSimplification(sctx sessionctx.Context, predicates []expressi
 
 func (ds *DataSource) predicateSimplification(*logicalOptimizeOp) LogicalPlan {
 	p := ds.self.(*DataSource)
-	p.pushedDownConds = applyPredicateSimplification(p.ctx, p.pushedDownConds)
-	p.allConds = applyPredicateSimplification(p.ctx, p.allConds)
+	p.pushedDownConds = applyPredicateSimplification(p.SCtx(), p.pushedDownConds)
+	p.allConds = applyPredicateSimplification(p.SCtx(), p.allConds)
 	return p
 }
 
