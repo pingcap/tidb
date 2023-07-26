@@ -910,6 +910,84 @@ const (
 	PasswordReuseHistory = "password_history"
 	// PasswordReuseTime limit how long passwords can be reused.
 	PasswordReuseTime = "password_reuse_interval"
+<<<<<<< HEAD
+=======
+	// TiDBHistoricalStatsDuration indicates the duration to remain tidb historical stats
+	TiDBHistoricalStatsDuration = "tidb_historical_stats_duration"
+	// TiDBEnableHistoricalStatsForCapture indicates whether use historical stats in plan replayer capture
+	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
+	// TiDBEnableResourceControl indicates whether resource control feature is enabled
+	TiDBEnableResourceControl = "tidb_enable_resource_control"
+	// TiDBStmtSummaryEnablePersistent indicates whether to enable file persistence for stmtsummary.
+	TiDBStmtSummaryEnablePersistent = "tidb_stmt_summary_enable_persistent"
+	// TiDBStmtSummaryFilename indicates the file name written by stmtsummary.
+	TiDBStmtSummaryFilename = "tidb_stmt_summary_filename"
+	// TiDBStmtSummaryFileMaxDays indicates how many days the files written by stmtsummary will be kept.
+	TiDBStmtSummaryFileMaxDays = "tidb_stmt_summary_file_max_days"
+	// TiDBStmtSummaryFileMaxSize indicates the maximum size (in mb) of a single file written by stmtsummary.
+	TiDBStmtSummaryFileMaxSize = "tidb_stmt_summary_file_max_size"
+	// TiDBStmtSummaryFileMaxBackups indicates the maximum number of files written by stmtsummary.
+	TiDBStmtSummaryFileMaxBackups = "tidb_stmt_summary_file_max_backups"
+	// TiDBTTLRunningTasks limits the count of running ttl tasks. Default to 0, means 3 times the count of TiKV (or no
+	// limitation, if the storage is not TiKV).
+	TiDBTTLRunningTasks = "tidb_ttl_running_tasks"
+	// AuthenticationLDAPSASLAuthMethodName defines the authentication method used by LDAP SASL authentication plugin
+	AuthenticationLDAPSASLAuthMethodName = "authentication_ldap_sasl_auth_method_name"
+	// AuthenticationLDAPSASLCAPath defines the ca certificate to verify LDAP connection in LDAP SASL authentication plugin
+	AuthenticationLDAPSASLCAPath = "authentication_ldap_sasl_ca_path"
+	// AuthenticationLDAPSASLTLS defines whether to use TLS connection in LDAP SASL authentication plugin
+	AuthenticationLDAPSASLTLS = "authentication_ldap_sasl_tls"
+	// AuthenticationLDAPSASLServerHost defines the server host of LDAP server for LDAP SASL authentication plugin
+	AuthenticationLDAPSASLServerHost = "authentication_ldap_sasl_server_host"
+	// AuthenticationLDAPSASLServerPort defines the port of LDAP server for LDAP SASL authentication plugin
+	AuthenticationLDAPSASLServerPort = "authentication_ldap_sasl_server_port"
+	// AuthenticationLDAPSASLReferral defines whether to enable LDAP referral for LDAP SASL authentication plugin
+	AuthenticationLDAPSASLReferral = "authentication_ldap_sasl_referral"
+	// AuthenticationLDAPSASLUserSearchAttr defines the attribute of username in LDAP server
+	AuthenticationLDAPSASLUserSearchAttr = "authentication_ldap_sasl_user_search_attr"
+	// AuthenticationLDAPSASLBindBaseDN defines the `dn` to search the users in. It's used to limit the search scope of TiDB.
+	AuthenticationLDAPSASLBindBaseDN = "authentication_ldap_sasl_bind_base_dn"
+	// AuthenticationLDAPSASLBindRootDN defines the `dn` of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSASLBindRootDN = "authentication_ldap_sasl_bind_root_dn"
+	// AuthenticationLDAPSASLBindRootPWD defines the password of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSASLBindRootPWD = "authentication_ldap_sasl_bind_root_pwd"
+	// AuthenticationLDAPSASLInitPoolSize defines the init size of connection pool to LDAP server for SASL plugin.
+	AuthenticationLDAPSASLInitPoolSize = "authentication_ldap_sasl_init_pool_size"
+	// AuthenticationLDAPSASLMaxPoolSize defines the max size of connection pool to LDAP server for SASL plugin.
+	AuthenticationLDAPSASLMaxPoolSize = "authentication_ldap_sasl_max_pool_size"
+	// AuthenticationLDAPSimpleAuthMethodName defines the authentication method used by LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleAuthMethodName = "authentication_ldap_simple_auth_method_name"
+	// AuthenticationLDAPSimpleCAPath defines the ca certificate to verify LDAP connection in LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleCAPath = "authentication_ldap_simple_ca_path"
+	// AuthenticationLDAPSimpleTLS defines whether to use TLS connection in LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleTLS = "authentication_ldap_simple_tls"
+	// AuthenticationLDAPSimpleServerHost defines the server host of LDAP server for LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleServerHost = "authentication_ldap_simple_server_host"
+	// AuthenticationLDAPSimpleServerPort defines the port of LDAP server for LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleServerPort = "authentication_ldap_simple_server_port"
+	// AuthenticationLDAPSimpleReferral defines whether to enable LDAP referral for LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleReferral = "authentication_ldap_simple_referral"
+	// AuthenticationLDAPSimpleUserSearchAttr defines the attribute of username in LDAP server
+	AuthenticationLDAPSimpleUserSearchAttr = "authentication_ldap_simple_user_search_attr"
+	// AuthenticationLDAPSimpleBindBaseDN defines the `dn` to search the users in. It's used to limit the search scope of TiDB.
+	AuthenticationLDAPSimpleBindBaseDN = "authentication_ldap_simple_bind_base_dn"
+	// AuthenticationLDAPSimpleBindRootDN defines the `dn` of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSimpleBindRootDN = "authentication_ldap_simple_bind_root_dn"
+	// AuthenticationLDAPSimpleBindRootPWD defines the password of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSimpleBindRootPWD = "authentication_ldap_simple_bind_root_pwd"
+	// AuthenticationLDAPSimpleInitPoolSize defines the init size of connection pool to LDAP server for SASL plugin.
+	AuthenticationLDAPSimpleInitPoolSize = "authentication_ldap_simple_init_pool_size"
+	// AuthenticationLDAPSimpleMaxPoolSize defines the max size of connection pool to LDAP server for SASL plugin.
+	AuthenticationLDAPSimpleMaxPoolSize = "authentication_ldap_simple_max_pool_size"
+	// TiDBRuntimeFilterTypeName the value of is string, a runtime filter type list split by ",", such as: "IN,MIN_MAX"
+	TiDBRuntimeFilterTypeName = "tidb_runtime_filter_type"
+	// TiDBRuntimeFilterModeName the mode of runtime filter, such as "OFF", "LOCAL"
+	TiDBRuntimeFilterModeName = "tidb_runtime_filter_mode"
+	// TiDBSkipMissingPartitionStats controls how to handle missing partition stats when merging partition stats to global stats.
+	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
+	// When set to false, give up merging partition stats to global stats.
+	TiDBSkipMissingPartitionStats = "tidb_skip_missing_partition_stats"
+>>>>>>> a492a371a74 (statistics: merge global stats even if some partition stats are missing (#41176))
 )
 
 // TiDB intentional limits
@@ -1147,6 +1225,7 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
+<<<<<<< HEAD
 	DefTiDBGOGCTunerThreshold                float64 = 0.6
 	DefTiDBOptPrefixIndexSingleScan                  = true
 	DefTiDBExternalTS                                = 0
@@ -1171,6 +1250,65 @@ const (
 	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                        = 4
 	DefTiDBTTLDeleteWorkerCount                      = 4
+=======
+	DefTiDBGOGCTunerThreshold                 float64 = 0.6
+	DefTiDBOptPrefixIndexSingleScan                   = true
+	DefTiDBExternalTS                                 = 0
+	DefTiDBEnableExternalTSRead                       = false
+	DefTiDBEnableReusechunk                           = true
+	DefTiDBUseAlloc                                   = false
+	DefTiDBEnablePlanReplayerCapture                  = true
+	DefTiDBIndexMergeIntersectionConcurrency          = ConcurrencyUnset
+	DefTiDBTTLJobEnable                               = true
+	DefTiDBTTLScanBatchSize                           = 500
+	DefTiDBTTLScanBatchMaxSize                        = 10240
+	DefTiDBTTLScanBatchMinSize                        = 1
+	DefTiDBTTLDeleteBatchSize                         = 100
+	DefTiDBTTLDeleteBatchMaxSize                      = 10240
+	DefTiDBTTLDeleteBatchMinSize                      = 1
+	DefTiDBTTLDeleteRateLimit                         = 0
+	DefTiDBTTLRunningTasks                            = -1
+	DefPasswordReuseHistory                           = 0
+	DefPasswordReuseTime                              = 0
+	DefTiDBStoreBatchSize                             = 4
+	DefTiDBHistoricalStatsDuration                    = 7 * 24 * time.Hour
+	DefTiDBEnableHistoricalStatsForCapture            = false
+	DefTiDBTTLJobScheduleWindowStartTime              = "00:00 +0000"
+	DefTiDBTTLJobScheduleWindowEndTime                = "23:59 +0000"
+	DefTiDBTTLScanWorkerCount                         = 4
+	DefTiDBTTLDeleteWorkerCount                       = 4
+	DefaultExchangeCompressionMode                    = kv.ExchangeCompressionModeUnspecified
+	DefTiDBEnableResourceControl                      = true
+	DefTiDBPessimisticTransactionFairLocking          = false
+	DefTiDBEnablePlanCacheForParamLimit               = true
+	DefTiFlashComputeDispatchPolicy                   = tiflashcompute.DispatchPolicyConsistentHashStr
+	DefTiDBEnablePlanCacheForSubquery                 = true
+	DefTiDBLoadBasedReplicaReadThreshold              = time.Second
+	DefTiDBOptEnableLateMaterialization               = true
+	DefTiDBOptOrderingIdxSelThresh                    = 0.0
+	DefTiDBOptEnableMPPSharedCTEExecution             = false
+	DefTiDBPlanCacheInvalidationOnFreshStats          = true
+	DefTiDBEnableRowLevelChecksum                     = false
+	DefAuthenticationLDAPSASLAuthMethodName           = "SCRAM-SHA-1"
+	DefAuthenticationLDAPSASLServerPort               = 389
+	DefAuthenticationLDAPSASLTLS                      = false
+	DefAuthenticationLDAPSASLUserSearchAttr           = "uid"
+	DefAuthenticationLDAPSASLInitPoolSize             = 10
+	DefAuthenticationLDAPSASLMaxPoolSize              = 1000
+	DefAuthenticationLDAPSimpleAuthMethodName         = "SIMPLE"
+	DefAuthenticationLDAPSimpleServerPort             = 389
+	DefAuthenticationLDAPSimpleTLS                    = false
+	DefAuthenticationLDAPSimpleUserSearchAttr         = "uid"
+	DefAuthenticationLDAPSimpleInitPoolSize           = 10
+	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
+	DefTiFlashReplicaRead                             = tiflash.AllReplicaStr
+	DefTiDBEnableFastCheckTable                       = true
+	DefRuntimeFilterType                              = "IN"
+	DefRuntimeFilterMode                              = "OFF"
+	DefTiDBLockUnchangedKeys                          = true
+	DefTiDBEnableCheckConstraint                      = false
+	DefTiDBSkipMissingPartitionStats                  = true
+>>>>>>> a492a371a74 (statistics: merge global stats even if some partition stats are missing (#41176))
 )
 
 // Process global variables.
@@ -1237,6 +1375,7 @@ var (
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
+<<<<<<< HEAD
 	TTLJobRunInterval                  = atomic.NewDuration(mustParseDuration(DefTiDBTTLJobRunInterval))
 	TTLJobScheduleWindowStartTime      = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowStartTime))
 	TTLJobScheduleWindowEndTime        = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowEndTime))
@@ -1246,6 +1385,34 @@ var (
 	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled               = atomic.NewBool(false)
 	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
+=======
+	TTLJobScheduleWindowStartTime      = atomic.NewTime(
+		mustParseTime(
+			FullDayTimeFormat,
+			DefTiDBTTLJobScheduleWindowStartTime,
+		),
+	)
+	TTLJobScheduleWindowEndTime = atomic.NewTime(
+		mustParseTime(
+			FullDayTimeFormat,
+			DefTiDBTTLJobScheduleWindowEndTime,
+		),
+	)
+	TTLScanWorkerCount              = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
+	TTLDeleteWorkerCount            = atomic.NewInt32(DefTiDBTTLDeleteWorkerCount)
+	PasswordHistory                 = atomic.NewInt64(DefPasswordReuseHistory)
+	PasswordReuseInterval           = atomic.NewInt64(DefPasswordReuseTime)
+	IsSandBoxModeEnabled            = atomic.NewBool(false)
+	MaxPreparedStmtCountValue       = atomic.NewInt64(DefMaxPreparedStmtCount)
+	HistoricalStatsDuration         = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
+	EnableHistoricalStatsForCapture = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
+	TTLRunningTasks                 = atomic.NewInt32(DefTiDBTTLRunningTasks)
+	// always set the default value to false because the resource control in kv-client is not inited
+	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
+	EnableResourceControl     = atomic.NewBool(false)
+	EnableCheckConstraint     = atomic.NewBool(DefTiDBEnableCheckConstraint)
+	SkipMissingPartitionStats = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
+>>>>>>> a492a371a74 (statistics: merge global stats even if some partition stats are missing (#41176))
 )
 
 var (
