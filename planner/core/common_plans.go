@@ -934,7 +934,7 @@ func (e *Explain) RenderResult() error {
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	case types.ExplainFormatBinary:
 		flat := FlattenPhysicalPlan(e.TargetPlan, false)
-		str := BinaryPlanStrFromFlatPlan(e.ctx, flat)
+		str := BinaryPlanStrFromFlatPlan(e.SCtx(), flat)
 		e.Rows = append(e.Rows, []string{str})
 	case types.ExplainFormatTiDBJSON:
 		flat := FlattenPhysicalPlan(e.TargetPlan, true)
@@ -969,6 +969,11 @@ func (e *Explain) explainFlatPlanInRowFormat(flat *FlatPhysicalPlan) {
 			e.explainFlatOpInRowFormat(flatOp)
 		}
 	}
+	for _, subQ := range flat.ScalarSubQueries {
+		for _, flatOp := range subQ {
+			e.explainFlatOpInRowFormat(flatOp)
+		}
+	}
 }
 
 func (e *Explain) explainFlatPlanInJSONFormat(flat *FlatPhysicalPlan) (encodes []*ExplainInfoForEncode) {
@@ -980,6 +985,9 @@ func (e *Explain) explainFlatPlanInJSONFormat(flat *FlatPhysicalPlan) (encodes [
 
 	for _, cte := range flat.CTEs {
 		encodes = append(encodes, e.explainOpRecursivelyInJSONFormat(cte[0], cte))
+	}
+	for _, subQ := range flat.ScalarSubQueries {
+		encodes = append(encodes, e.explainOpRecursivelyInJSONFormat(subQ[0], subQ))
 	}
 	return
 }
@@ -1088,7 +1096,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, id string) {
 		if strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost || strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
 			row = append(row, costFormula)
 		}
-		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(e.ctx, p, e.RuntimeStatsColl)
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(e.SCtx(), p, e.RuntimeStatsColl)
 		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
 		row = []string{id, estRows}
@@ -1120,7 +1128,7 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p Plan, taskType, id string, 
 	}
 
 	if e.Analyze || e.RuntimeStatsColl != nil {
-		jsonRow.ActRows, jsonRow.ExecuteInfo, jsonRow.MemoryInfo, jsonRow.DiskInfo = getRuntimeInfoStr(e.ctx, p, e.RuntimeStatsColl)
+		jsonRow.ActRows, jsonRow.ExecuteInfo, jsonRow.MemoryInfo, jsonRow.DiskInfo = getRuntimeInfoStr(e.SCtx(), p, e.RuntimeStatsColl)
 	}
 	return jsonRow
 }
@@ -1142,7 +1150,7 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (estRows, estCost, costForm
 	costFormula = "N/A"
 	if isPhysicalPlan {
 		estRows = strconv.FormatFloat(pp.getEstRowCountForDisplay(), 'f', 2, 64)
-		if e.ctx != nil && e.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+		if e.SCtx() != nil && e.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
 			costVer2, _ := pp.getPlanCostVer2(property.RootTaskType, NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(costVer2.cost, 'f', 2, 64)
 			if costVer2.trace != nil {
@@ -1152,7 +1160,7 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (estRows, estCost, costForm
 			planCost, _ := getPlanCost(pp, property.RootTaskType, NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
 		}
-	} else if si := p.statsInfo(); si != nil {
+	} else if si := p.StatsInfo(); si != nil {
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
 
@@ -1160,8 +1168,8 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (estRows, estCost, costForm
 		accessObject = plan.AccessObject().String()
 		operatorInfo = plan.OperatorInfo(false)
 	} else {
-		if pa, ok := p.(partitionAccesser); ok && e.ctx != nil {
-			accessObject = pa.accessObject(e.ctx).String()
+		if pa, ok := p.(partitionAccesser); ok && e.SCtx() != nil {
+			accessObject = pa.accessObject(e.SCtx()).String()
 		}
 		operatorInfo = p.ExplainInfo()
 	}
@@ -1255,7 +1263,7 @@ func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *ti
 		p := op.Origin.(PhysicalPlan)
 		out.Cost, _ = getPlanCost(p, property.RootTaskType, NewDefaultPlanCostOption())
 		out.EstRows = p.getEstRowCountForDisplay()
-	} else if statsInfo := op.Origin.statsInfo(); statsInfo != nil {
+	} else if statsInfo := op.Origin.StatsInfo(); statsInfo != nil {
 		out.EstRows = statsInfo.RowCount
 	}
 
