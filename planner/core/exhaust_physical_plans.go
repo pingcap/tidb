@@ -1978,6 +1978,7 @@ func (p *LogicalJoin) prefer(joinFlags ...uint) bool {
 	return false
 }
 
+// canPassJoinHint returns whether this join plan can pass current join hints.
 func (p *LogicalJoin) canPassJoinHint(join PhysicalPlan, leftOuter bool) bool {
 	const left, right = 0, 1
 	const indexJoin, indexHashJoin, indexMergeJoin = 0, 1, 2
@@ -2007,8 +2008,8 @@ func (p *LogicalJoin) canPassJoinHint(join PhysicalPlan, leftOuter bool) bool {
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
 func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, canForced bool) {
-	forceLeftOuter := p.prefer(preferRightAsINLJInner, preferRightAsINLHJInner, preferRightAsINLMJInner)
-	forceRightOuter := p.prefer(preferLeftAsINLJInner, preferLeftAsINLHJInner, preferLeftAsINLMJInner)
+	forceLeftOuter := p.prefer(preferRightAsINLJInner, preferRightAsINLHJInner, preferRightAsINLMJInner) // left as outer == right as inner
+	forceRightOuter := p.prefer(preferLeftAsINLJInner, preferLeftAsINLHJInner, preferLeftAsINLMJInner)   // right as outer == left as inner
 	needForced := forceLeftOuter || forceRightOuter
 
 	defer func() {
