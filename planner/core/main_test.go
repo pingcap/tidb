@@ -35,6 +35,7 @@ func TestMain(m *testing.M) {
 
 	testDataMap.LoadTestSuiteData("testdata", "integration_partition_suite")
 	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite")
+<<<<<<< HEAD
 	testDataMap.LoadTestSuiteData("testdata", "plan_normalized_suite")
 	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
 	testDataMap.LoadTestSuiteData("testdata", "ordered_result_mode_suite")
@@ -51,6 +52,10 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "flat_plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "binary_plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "json_plan_suite")
+=======
+	testDataMap.LoadTestSuiteData("testdata", "runtime_filter_generator_suite")
+	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
+>>>>>>> dc04e2ca077 (planner: clean the one side filters for outer join reorder which is not done in #44409 (#45565))
 
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
@@ -138,4 +143,8 @@ func GetIndexMergeSuiteData() testdata.TestData {
 
 func GetJSONPlanSuiteData() testdata.TestData {
 	return testDataMap["json_plan_suite"]
+}
+
+func GetJoinReorderData() testdata.TestData {
+	return testDataMap["join_reorder_suite"]
 }
