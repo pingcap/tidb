@@ -505,7 +505,7 @@ func TestBestPlanInBaselines(t *testing.T) {
 	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t ia) */ a, b from t where a = 1 limit 0, 1`)
 	tk.MustExec(`create global binding for select a, b from t where b = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t ib) */ a, b from t where b = 1 limit 0, 1`)
 
-	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select a, b from t where a = 1 limit 0, 1", "test")
+	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select a, b from t where a = 1 limit 0, 1")
 	bindData := dom.BindHandle().GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", bindData.OriginalSQL)
@@ -791,7 +791,7 @@ func TestHintsSetEvolveTask(t *testing.T) {
 	bindHandle := dom.BindHandle()
 	bindHandle.SaveEvolveTasksToStore()
 	// Verify the added Binding for evolution contains valid ID and Hint, otherwise, panic may happen.
-	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?", "test")
+	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
 	bindData := bindHandle.GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
@@ -812,7 +812,7 @@ func TestHintsSetID(t *testing.T) {
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(test.t, idx_a) */ * from t where a > 10")
 	bindHandle := dom.BindHandle()
 	// Verify the added Binding contains ID with restored query block.
-	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?", "test")
+	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
 	bindData := bindHandle.GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)

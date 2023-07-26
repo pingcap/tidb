@@ -488,7 +488,7 @@ func TestGlobalBinding(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
 
-		sql, hash := internal.UtilNormalizeWithDefaultDB(t, testSQL.querySQL, "test")
+		sql, hash := internal.UtilNormalizeWithDefaultDB(t, testSQL.querySQL)
 
 		bindData := dom.BindHandle().GetBindRecord(hash, sql, "test")
 		require.NotNil(t, bindData)

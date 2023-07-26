@@ -31,10 +31,10 @@ func UtilCleanBindingEnv(tk *testkit.TestKit, dom *domain.Domain) {
 }
 
 // UtilNormalizeWithDefaultDB normalizes the SQL and returns the normalized SQL and its digest.
-func UtilNormalizeWithDefaultDB(t *testing.T, sql, db string) (string, string) {
+func UtilNormalizeWithDefaultDB(t *testing.T, sql string) (normalized, digest string) {
 	testParser := parser.New()
 	stmt, err := testParser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	normalized, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, "test", ""))
-	return normalized, digest.String()
+	normalized, digestResult := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, "test", ""))
+	return normalized, digestResult.String()
 }
