@@ -562,7 +562,8 @@ type LogicalExpand struct {
 	logicalSchemaProducer
 
 	// distinct group by columns. (maybe projected below if it's a non-col)
-	distinctGroupByCol []*expression.Column
+	distinctGroupByCol  []*expression.Column
+	distinctGbyColNames []*types.FieldName
 	// keep the old gbyExprs for resolve cases like grouping(a+b), the args:
 	// a+b should be resolved to new projected gby col according to ref pos.
 	distinctGbyExprs []expression.Expression
