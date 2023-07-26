@@ -2087,31 +2087,31 @@ func (p *LogicalJoin) filterIndexJoinCandidates(prop *property.PhysicalProperty,
 	candidates = append(candidates, leftAsInner...)
 	candidates = append(candidates, rightAsInner...)
 
-	const Left, Right = 0, 1
-	const IndexJoin, IndexMergeJoin, IndexHashJoin = 0, 1, 2
-	selected := make([]PhysicalPlan, len(candidates))
+	const left, right = 0, 1
+	const indexJoin, indexMergeJoin, indexHashJoin = 0, 1, 2
+	selected := make([]PhysicalPlan, 0, len(candidates))
 	for i, candidate := range candidates {
-		innerSide := Left
+		innerSide := left
 		if i >= len(leftAsInner) {
-			innerSide = Right
+			innerSide = right
 		}
-		joinMethod := IndexJoin
+		joinMethod := indexJoin
 		switch candidate.(type) {
 		case *PhysicalIndexMergeJoin:
-			joinMethod = IndexMergeJoin
+			joinMethod = indexMergeJoin
 		case *PhysicalIndexHashJoin:
-			joinMethod = IndexHashJoin
+			joinMethod = indexHashJoin
 		}
 
-		if !p.SCtx().GetSessionVars().EnableIndexMergeJoin && joinMethod == IndexMergeJoin {
+		if !p.SCtx().GetSessionVars().EnableIndexMergeJoin && joinMethod == indexMergeJoin {
 			continue
 		}
-		if (p.preferJoin(preferLeftAsINLJInner) && !(innerSide == Left && joinMethod == IndexJoin)) ||
-			(p.preferJoin(preferRightAsINLJInner) && !(innerSide == Right && joinMethod == IndexJoin)) ||
-			(p.preferJoin(preferLeftAsINLHJInner) && !(innerSide == Left && joinMethod == IndexHashJoin)) ||
-			(p.preferJoin(preferRightAsINLHJInner) && !(innerSide == Right && joinMethod == IndexHashJoin)) ||
-			(p.preferJoin(preferLeftAsINLMJInner) && !(innerSide == Left && joinMethod == IndexMergeJoin)) ||
-			(p.preferJoin(preferRightAsINLMJInner) && !(innerSide == Right && joinMethod == IndexMergeJoin)) {
+		if (p.preferJoin(preferLeftAsINLJInner) && !(innerSide == left && joinMethod == indexJoin)) ||
+			(p.preferJoin(preferRightAsINLJInner) && !(innerSide == right && joinMethod == indexJoin)) ||
+			(p.preferJoin(preferLeftAsINLHJInner) && !(innerSide == left && joinMethod == indexHashJoin)) ||
+			(p.preferJoin(preferRightAsINLHJInner) && !(innerSide == right && joinMethod == indexHashJoin)) ||
+			(p.preferJoin(preferLeftAsINLMJInner) && !(innerSide == left && joinMethod == indexMergeJoin)) ||
+			(p.preferJoin(preferRightAsINLMJInner) && !(innerSide == right && joinMethod == indexMergeJoin)) {
 			continue
 		}
 		selected = append(selected, candidate)
