@@ -299,18 +299,26 @@ func RandomString(n int) string {
 
 func startSinkTask(etlJobID, dbName, tblName, templateFilePath string) (string, error) {
 	sink_task_desc := fmt.Sprintf(`etl%s.5.%s.%s`, etlJobID, dbName, tblName)
-	setupDemoBinPath := "/home/xhy/Development/workspace/htap/__tmp/setup-demo.py"
-	cdcBinPath := "/home/xhy/Development/tiup-cluster/tidb-deploy/cdc-8300/bin/cdc"
-	ticdcAddress := "10.71.200.221:8300"
-	tidbAddress := "10.71.200.221:4000"
-	dumplingBinPath := "/home/xhy/.tiup/components/dumpling/v7.2.0/dumpling"
+	// setupDemoBinPath := "/home/xhy/Development/workspace/htap/__tmp/setup-demo.py"
+	// cdcBinPath := "/home/xhy/Development/tiup-cluster/tidb-deploy/cdc-8300/bin/cdc"
+	// ticdcAddress := "10.71.200.221:8300"
+	// tidbAddress := "10.71.200.221:4000"
+	// dumplingBinPath := "/home/xhy/.tiup/components/dumpling/v7.2.0/dumpling"
+	globalConfig := config.GetGlobalConfig()
+	setupDemoBinPath := globalConfig.SetupDemoBinPath
+	cdcBinPath := globalConfig.CdcBinPath
+	ticdcAddress := globalConfig.TiCDCAddr
+	tidbAddress := globalConfig.TiDBAddr
+	dumplingBinPath := globalConfig.DumplingBinPath
+	setupDemoLogPath := globalConfig.SetupDemoLogPath
 	cmd := fmt.Sprintf("sudo %s --cmd sink_task --sink_task_desc=%s --sink_task_flink_schema_path %s --cdc_bin_path %s --ticdc_addr %s --tidb_addr %s --dumpling_bin_path %s", setupDemoBinPath, sink_task_desc, templateFilePath, cdcBinPath, ticdcAddress, tidbAddress, dumplingBinPath)
 
 	logutil.BgLogger().Warn("start sink task", zap.String("cmd", cmd))
 	command := exec.Command("bash", "-c", cmd)
 
 	// 设置命令的输出和错误输出流
-	logFile, err := os.OpenFile("/home/xhy/Development/workspace/htap/__tmp/.hudi.log", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	logFile, err := os.OpenFile(setupDemoLogPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	// logFile, err := os.OpenFile("/home/xhy/Development/workspace/htap/__tmp/.hudi.log", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
 		return "", err
 	}
@@ -321,7 +329,7 @@ func startSinkTask(etlJobID, dbName, tblName, templateFilePath string) (string, 
 	// 执行命令
 	err = command.Run()
 	if err != nil {
-		cmd = fmt.Sprintf("sudo /home/xhy/Development/workspace/htap/__tmp/setup-demo.py --cmd rm_all_jobs --cdc_bin_path %s --ticdc_addr %s  --tidb_addr %s --dumpling_bin_path %s", cdcBinPath, ticdcAddress, tidbAddress, dumplingBinPath)
+		cmd = fmt.Sprintf("sudo %s --cmd rm_all_jobs --cdc_bin_path %s --ticdc_addr %s  --tidb_addr %s --dumpling_bin_path %s", setupDemoBinPath, cdcBinPath, ticdcAddress, tidbAddress, dumplingBinPath)
 		logutil.BgLogger().Warn("rm all jobs", zap.String("cmd", cmd))
 		command = exec.Command("bash", "-c", cmd)
 		err1 := command.Run()
@@ -6405,6 +6413,32 @@ func (d *ddl) dropTableObject(
 			Type:        jobType,
 			BinlogInfo:  &model.HistoryInfo{},
 			Args:        jobArgs,
+		}
+		if tableInfo.Meta().IsETL {
+			globalConfig := config.GetGlobalConfig()
+			setupDemoBinPath := globalConfig.SetupDemoBinPath
+			cdcBinPath := globalConfig.CdcBinPath
+			ticdcAddress := globalConfig.TiCDCAddr
+			tidbAddress := globalConfig.TiDBAddr
+			dumplingBinPath := globalConfig.DumplingBinPath
+			setupDemoLogPath := globalConfig.SetupDemoLogPath
+			logFile, err := os.OpenFile(setupDemoLogPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+			// logFile, err := os.OpenFile("/home/xhy/Development/workspace/htap/__tmp/.hudi.log", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+			if err != nil {
+				return err
+			}
+			defer logFile.Close()
+			cmd := fmt.Sprintf("sudo %s --cmd rm_all_jobs --cdc_bin_path %s --ticdc_addr %s  --tidb_addr %s --dumpling_bin_path %s", setupDemoBinPath, cdcBinPath, ticdcAddress, tidbAddress, dumplingBinPath)
+			logutil.BgLogger().Warn("rm all jobs", zap.String("cmd", cmd))
+			command := exec.Command("bash", "-c", cmd)
+			command.Stdout = logFile
+
+			command.Stderr = logFile
+			// 执行命令
+			err = command.Run()
+			if err != nil {
+				return err
+			}
 		}
 
 		err = d.DoDDLJob(ctx, job)

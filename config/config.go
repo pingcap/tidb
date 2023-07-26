@@ -183,6 +183,12 @@ type Config struct {
 	// TempStorageQuota describe the temporary storage Quota during query exector when TiDBEnableTmpStorageOnOOM is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
+	SetupDemoBinPath           string                  `toml:"setup-demo-binpath" json:"setup-demo-binpath"`
+	CdcBinPath                 string                  `toml:"cdc-binpath" json:"cdc-binpath"`
+	TiCDCAddr                  string                  `toml:"ticdc-addr" json:"ticdc-addr"`
+	TiDBAddr                   string                  `toml:"tidb-addr" json:"tidb-addr"`
+	DumplingBinPath            string                  `toml:"dumpling-binpath" json:"dumpling-binpath"`
+	SetupDemoLogPath           string                  `toml:"setup-demo-logpath" json:"setup-demo-logpath"`
 	TxnLocalLatches            tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
 	ServerVersion              string                  `toml:"server-version" json:"server-version"`
 	VersionComment             string                  `toml:"version-comment" json:"version-comment"`
@@ -877,6 +883,12 @@ var defaultConf = Config{
 	OOMUseTmpStorage:             true,
 	TempDir:                      DefTempDir,
 	TempStorageQuota:             -1,
+	SetupDemoBinPath:             "/home/xhy/Development/workspace/htap/__tmp/setup-demo.py",
+	CdcBinPath:                   "/home/xhy/Development/tiup-cluster/tidb-deploy/cdc-8300/bin/cdc",
+	TiCDCAddr:                    "10.71.200.221:8300",
+	TiDBAddr:                     "10.71.200.221:4000",
+	DumplingBinPath:              "/home/xhy/.tiup/components/dumpling/v7.2.0/dumpling",
+	SetupDemoLogPath:             "/home/xhy/Development/workspace/htap/__tmp/.hudi.log",
 	TempStoragePath:              tempStorageDirName,
 	MemQuotaQuery:                1 << 30,
 	OOMAction:                    "cancel",
