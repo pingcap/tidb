@@ -1525,6 +1525,11 @@ type SessionVars struct {
 
 	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
 	AnalyzeSkipColumnTypes map[string]struct{}
+
+	// SkipMissingPartitionStats controls how to handle missing partition stats when merging partition stats to global stats.
+	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
+	// When set to false, give up merging partition stats to global stats.
+	SkipMissingPartitionStats bool
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
