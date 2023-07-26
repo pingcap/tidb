@@ -74,8 +74,8 @@ type TriggerNewTTLJobTableResult struct {
 	DBName        string `json:"db_name"`
 	TableName     string `json:"table_name"`
 	PartitionName string `json:"partition_name,omitempty"`
-	JobID         string `json:"job_id"`
-	ErrorMessage  string `json:"error_message"`
+	JobID         string `json:"job_id,omitempty"`
+	ErrorMessage  string `json:"error_message,omitempty"`
 }
 
 // TriggerNewTTLJobResponse is the response detail for trigger_ttl_job command

@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	workerRecvChanCap               = 8
+	workerRecvChanCap               = 128
 	workerRespChanCap               = 128
 	workerEventDefaultRetryInterval = 10 * time.Second
 	chanBlockInterval               = time.Second

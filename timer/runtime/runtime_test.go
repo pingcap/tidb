@@ -67,9 +67,11 @@ func TestRuntimeStartStop(t *testing.T) {
 		Build()
 
 	runtime.Start()
+	require.True(t, runtime.Running())
 	waitDone(timerProcessed, time.Minute)
 	go func() {
 		runtime.Stop()
+		require.False(t, runtime.Running())
 		cancel()
 	}()
 	waitDone(ctx.Done(), time.Minute)
