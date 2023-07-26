@@ -1969,19 +1969,28 @@ func filterIndexJoinBySessionVars(sc sessionctx.Context, indexJoins []PhysicalPl
 	return indexJoins
 }
 
+func (p *LogicalJoin) prefer(joinFlags ...uint) bool {
+	for _, flag := range joinFlags {
+		if p.preferJoinType&flag > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
 func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, canForced bool) {
-	inljRightOuter := (p.preferJoinType & preferLeftAsINLJInner) > 0
-	inljLeftOuter := (p.preferJoinType & preferRightAsINLJInner) > 0
+	inljRightOuter := p.prefer(preferLeftAsINLJInner)
+	inljLeftOuter := p.prefer(preferRightAsINLJInner)
 	hasINLJHint := inljLeftOuter || inljRightOuter
 
-	inlhjRightOuter := (p.preferJoinType & preferLeftAsINLHJInner) > 0
-	inlhjLeftOuter := (p.preferJoinType & preferRightAsINLHJInner) > 0
+	inlhjRightOuter := p.prefer(preferLeftAsINLHJInner)
+	inlhjLeftOuter := p.prefer(preferRightAsINLHJInner)
 	hasINLHJHint := inlhjLeftOuter || inlhjRightOuter
 
-	inlmjRightOuter := (p.preferJoinType & preferLeftAsINLMJInner) > 0
-	inlmjLeftOuter := (p.preferJoinType & preferRightAsINLMJInner) > 0
+	inlmjRightOuter := p.prefer(preferLeftAsINLMJInner)
+	inlmjLeftOuter := p.prefer(preferRightAsINLMJInner)
 	hasINLMJHint := inlmjLeftOuter || inlmjRightOuter
 
 	forceLeftOuter := inljLeftOuter || inlhjLeftOuter || inlmjLeftOuter
@@ -2006,12 +2015,12 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 			if p.hintInfo != nil && p.preferJoinType > 0 {
 				t := p.hintInfo.indexNestedLoopJoinTables
 				switch {
-				case len(t.inljTables) != 0 && ((p.preferJoinType&preferLeftAsINLJInner > 0) || (p.preferJoinType&preferRightAsINLJInner > 0)):
+				case len(t.inljTables) != 0 && p.prefer(preferLeftAsINLJInner, preferRightAsINLJInner):
 					errMsg = fmt.Sprintf("Optimizer Hint %s or %s is inapplicable",
 						restore2JoinHint(HintINLJ, t.inljTables), restore2JoinHint(TiDBIndexNestedLoopJoin, t.inljTables))
-				case len(t.inlhjTables) != 0 && ((p.preferJoinType&preferLeftAsINLHJInner > 0) || (p.preferJoinType&preferRightAsINLHJInner > 0)):
+				case len(t.inlhjTables) != 0 && p.prefer(preferLeftAsINLHJInner, preferRightAsINLHJInner):
 					errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLHJ, t.inlhjTables))
-				case len(t.inlmjTables) != 0 && ((p.preferJoinType&preferLeftAsINLMJInner > 0) || (p.preferJoinType&preferRightAsINLMJInner > 0)):
+				case len(t.inlmjTables) != 0 && p.prefer(preferLeftAsINLMJInner, preferRightAsINLMJInner):
 					errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLMJ, t.inlmjTables))
 				}
 			}
