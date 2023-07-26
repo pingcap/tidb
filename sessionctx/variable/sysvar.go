@@ -1088,6 +1088,8 @@ var defaultSysVars = []*SysVar{
 			oldv := StatsCacheMemQuota.Load()
 			if v != oldv {
 				StatsCacheMemQuota.Store(v)
+				SetStatsCacheCapacityFunc := SetStatsCacheCapacity.Load()
+				(*SetStatsCacheCapacityFunc)(v)
 			}
 			return nil
 		},
