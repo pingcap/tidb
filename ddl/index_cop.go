@@ -166,6 +166,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 				idxRs.err = errors.New("mock cop error")
 			})
 			p.chunkSender.AddTask(idxRs)
+			metrics.AddIndexScanThroughput.WithLabelValues(metrics.LblAddIndex).Add(float64(memory))
 			num++
 			if num%100 == 0 {
 				rate := float64(memory) / 1024.0 / 1024.0 / (float64(time.Since(startTime).Microseconds()) / 1000000.0)

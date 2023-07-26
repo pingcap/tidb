@@ -1816,6 +1816,7 @@ func (remote *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	rate := float64(totalSize) / 1024.0 / 1024.0 / (float64(time.Since(startTime).Microseconds()) / 1000000.0)
 	log.FromContext(ctx).Info("global sort rate", zap.Any("m/s", rate))
 	metrics.GlobalSortMergeSortRate.WithLabelValues("sort before write to TiKV").Observe(rate)
+	metrics.GlobalSortMergeSortThroughput.WithLabelValues("sort before write to TiKV").Add(float64(totalSize) / 1024.0 / 1024.0)
 
 	var leaderPeerMetas []*sst.SSTMeta
 	for i, wStream := range clients {
