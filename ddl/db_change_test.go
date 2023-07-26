@@ -1050,7 +1050,27 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(checkResult(result, testkit.Rows("PRIMARY NO", "vv NO")), IsNil)
 }
 
+<<<<<<< HEAD
 func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
+=======
+func TestParallelAlterIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	sql := "alter table t alter index idx1 invisible;"
+	f := func(err1, err2 error) {
+		require.NoError(t, err1)
+		require.NoError(t, err2)
+		tk.MustExec("select * from t")
+	}
+	testControlParallelExecSQL(t, tk, store, dom, "", sql, sql, f)
+}
+
+func TestParallelAlterModifyColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+>>>>>>> 7e18f79dd4a (ddl: add parallel execution of  "alter table tbl_name alter index" tests (#45582))
 	sql := "ALTER TABLE t MODIFY COLUMN b int FIRST;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
