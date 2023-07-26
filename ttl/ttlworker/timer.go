@@ -180,7 +180,7 @@ func (t *ttlTimerHook) OnSchedEvent(ctx context.Context, event timerapi.TimerShe
 func (t *ttlTimerHook) waitJobFinished(logger *zap.Logger, data *TTLTimerData, timerID string, eventID string, eventStart time.Time) {
 	defer func() {
 		t.wg.Done()
-		logger.Info("stop to wait job")
+		logger.Info("stop to wait TTL job")
 	}()
 
 	ticker := time.NewTicker(t.checkTTLJobInterval)

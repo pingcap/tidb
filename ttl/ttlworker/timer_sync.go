@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
 
@@ -51,6 +52,9 @@ type TTLTimersSyncer struct {
 	key2Timers     map[string]*timerapi.TimerRecord
 	lastPullTimers time.Time
 	delayDelete    time.Duration
+	lastSyncTime   time.Time
+	lastSyncVer    int64
+	nowFunc        func() time.Time
 }
 
 // NewTTLTimerSyncer creates a new TTLTimersSyncer
@@ -59,6 +63,7 @@ func NewTTLTimerSyncer(pool sessionPool, cli timerapi.TimerClient) *TTLTimersSyn
 		pool:        pool,
 		cli:         cli,
 		key2Timers:  make(map[string]*timerapi.TimerRecord),
+		nowFunc:     time.Now,
 		delayDelete: timerDelayDeleteInterval,
 	}
 }
@@ -120,12 +125,40 @@ func (g *TTLTimersSyncer) ManualTriggerTTLTimer(ctx context.Context, tbl *cache.
 			return "", false, errors.New("manual request failed to trigger, request cancelled")
 		}
 
-		return timer.ManualEventID, true, nil
+		jobID := timer.ManualEventID
+		rows, err := se.ExecuteSQL(ctx, "select 1 from mysql.tidb_ttl_job_history where job_id=%?", jobID)
+		if err != nil {
+			return "", false, err
+		}
+
+		if len(rows) == 0 {
+			return "", false, nil
+		}
+
+		return jobID, true, nil
 	}, nil
+}
+
+// Reset resets the syncer's state
+func (g *TTLTimersSyncer) Reset() {
+	var zeroTime time.Time
+	g.lastPullTimers = zeroTime
+	g.lastSyncTime = zeroTime
+	g.lastSyncVer = 0
+	if len(g.key2Timers) > 0 {
+		maps.Clear(g.key2Timers)
+	}
+}
+
+// GetLastSyncInfo returns last sync time and information schema version
+func (g *TTLTimersSyncer) GetLastSyncInfo() (time.Time, int64) {
+	return g.lastSyncTime, g.lastSyncVer
 }
 
 // SyncTimers syncs timers with TTL tables
 func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSchema) {
+	g.lastSyncTime = g.nowFunc()
+	g.lastSyncVer = is.SchemaMetaVersion()
 	if time.Since(g.lastPullTimers) > fullRefreshTimersCacheInterval {
 		newKey2Timers := make(map[string]*timerapi.TimerRecord, len(g.key2Timers))
 		timers, err := g.cli.GetTimers(ctx, timerapi.WithKeyPrefix(timerKeyPrefix))
@@ -138,7 +171,7 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 			newKey2Timers[timer.Key] = timer
 		}
 		g.key2Timers = newKey2Timers
-		g.lastPullTimers = time.Now()
+		g.lastPullTimers = g.nowFunc()
 	}
 
 	se, err := getSession(g.pool)
