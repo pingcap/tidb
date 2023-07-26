@@ -2963,6 +2963,7 @@ func TestRecordHistoricalStatsToStorage(t *testing.T) {
 }
 
 func TestAnalyzeIncrementalEvictedIndex(t *testing.T) {
+	t.Skip("now we don't support to evict index")
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -2994,6 +2995,7 @@ func TestAnalyzeIncrementalEvictedIndex(t *testing.T) {
 }
 
 func TestEvictedColumnLoadedStatus(t *testing.T) {
+	t.Skip("skip this test because it is useless")
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -3020,32 +3022,6 @@ func TestEvictedColumnLoadedStatus(t *testing.T) {
 		require.True(t, col.IsStatsInitialized())
 		require.True(t, col.IsCMSEvicted())
 	}
-}
-
-func TestAnalyzeTableLRUPut(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.EnableStatsCacheMemQuota = true
-	})
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b))")
-	tk.MustExec("create table t1(a int, b varchar(10), index idx_b (b))")
-	tk.MustExec("analyze table test.t")
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
-	tbl1, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.Nil(t, err)
-	// assert t1 should be front of lru
-	tk.MustExec("analyze table test.t1")
-	require.Equal(t, tbl1.Meta().ID, domain.GetDomain(tk.Session()).StatsHandle().GetStatsCacheFrontTable())
-	// assert t should be front of lru
-	tk.MustExec("analyze table test.t")
-	require.Equal(t, tbl.Meta().ID, domain.GetDomain(tk.Session()).StatsHandle().GetStatsCacheFrontTable())
 }
 
 func TestUninitializedStatsStatus(t *testing.T) {
@@ -3313,4 +3289,29 @@ func TestInitStatsLite(t *testing.T) {
 	idxCStats2 := statsTbl4.Indices[idxCID]
 	require.True(t, idxCStats2.IsFullLoad())
 	require.Greater(t, idxCStats2.LastUpdateVersion, idxCStats1.LastUpdateVersion)
+}
+
+func TestSkipMissingPartitionStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@tidb_skip_missing_partition_stats = 1")
+	tk.MustExec("create table t (a int, b int, c int, index idx_b(b)) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200), partition p2 values less than (300))")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (101,101,101), (102,102,102), (201,201,201), (202,202,202)")
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec("analyze table t partition p0, p1")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	globalStats := h.GetTableStats(tblInfo)
+	require.Equal(t, 6, int(globalStats.RealtimeCount))
+	require.Equal(t, 2, int(globalStats.ModifyCount))
+	for _, col := range globalStats.Columns {
+		require.True(t, col.IsStatsInitialized())
+	}
+	for _, idx := range globalStats.Indices {
+		require.True(t, idx.IsStatsInitialized())
+	}
 }

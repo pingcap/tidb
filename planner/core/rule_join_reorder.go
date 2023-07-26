@@ -537,12 +537,17 @@ func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPla
 	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
 		return expression.ExprFromSchema(expr, mergedSchema)
 	})
-	if (joinType.JoinType == LeftOuterJoin || joinType.JoinType == RightOuterJoin || joinType.JoinType == LeftOuterSemiJoin || joinType.JoinType == AntiLeftOuterSemiJoin) && len(otherConds) > 0 {
+
+	if joinType.JoinType == LeftOuterJoin || joinType.JoinType == RightOuterJoin || joinType.JoinType == LeftOuterSemiJoin || joinType.JoinType == AntiLeftOuterSemiJoin {
 		// the original outer join's other conditions has been bound to the outer join Edge,
 		// these remained other condition here shouldn't be appended to it because on-mismatch
 		// logic will produce more append-null rows which is banned in original semantic.
 		remainOtherConds = append(remainOtherConds, otherConds...) // nozero
+		remainOtherConds = append(remainOtherConds, leftConds...)  // nozero
+		remainOtherConds = append(remainOtherConds, rightConds...) // nozero
 		otherConds = otherConds[:0]
+		leftConds = leftConds[:0]
+		rightConds = rightConds[:0]
 	}
 	if len(joinType.outerBindCondition) > 0 {
 		remainOBOtherConds := make([]expression.Expression, len(joinType.outerBindCondition))
