@@ -1743,8 +1743,6 @@ func (remote *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	var remainingStartKey []byte
 	startTime := time.Now()
 	for iter.Next() {
-		key := kv.Key(iter.Key())
-
 		//readableKey := hex.EncodeToString(iter.Key())
 		//_, _, vals, err := tablecodec.DecodeIndexKey(iter.Key())
 		//log.FromContext(ctx).Info("iter", zap.String("key", readableKey), zap.String("colVal", vals[0]), zap.Error(err))
