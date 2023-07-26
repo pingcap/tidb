@@ -1993,15 +1993,15 @@ func (p *LogicalJoin) canPassJoinHint(join PhysicalPlan, leftOuter bool) bool {
 		joinMethod = indexMergeJoin
 	}
 
-	if p.prefer(preferLeftAsINLJInner) && !(innerSide == left && joinMethod == indexJoin) ||
-		p.prefer(preferRightAsINLJInner) && !(innerSide == right && joinMethod == indexJoin) ||
-		p.prefer(preferLeftAsINLHJInner) && !(innerSide == left && joinMethod == indexHashJoin) ||
-		p.prefer(preferRightAsINLHJInner) && !(innerSide == right && joinMethod == indexHashJoin) ||
-		p.prefer(preferLeftAsINLMJInner) && !(innerSide == left && joinMethod == indexMergeJoin) ||
-		p.prefer(preferRightAsINLMJInner) && !(innerSide == right && joinMethod == indexMergeJoin) {
-		return false
+	if (p.prefer(preferLeftAsINLJInner) && innerSide == left && joinMethod == indexJoin) ||
+		(p.prefer(preferRightAsINLJInner) && innerSide == right && joinMethod == indexJoin) ||
+		(p.prefer(preferLeftAsINLHJInner) && innerSide == left && joinMethod == indexHashJoin) ||
+		(p.prefer(preferRightAsINLHJInner) && innerSide == right && joinMethod == indexHashJoin) ||
+		(p.prefer(preferLeftAsINLMJInner) && innerSide == left && joinMethod == indexMergeJoin) ||
+		(p.prefer(preferRightAsINLMJInner) && innerSide == right && joinMethod == indexMergeJoin) {
+		return true
 	}
-	return true
+	return false
 }
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
