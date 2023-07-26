@@ -1969,61 +1969,49 @@ func filterIndexJoinBySessionVars(sc sessionctx.Context, indexJoins []PhysicalPl
 	return indexJoins
 }
 
+func (p *LogicalJoin) prefer(joinFlags ...uint) bool {
+	for _, flag := range joinFlags {
+		if p.preferJoinType&flag > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
 func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, canForced bool) {
-	inljRightOuter := (p.preferJoinType & preferLeftAsINLJInner) > 0
-	inljLeftOuter := (p.preferJoinType & preferRightAsINLJInner) > 0
-	hasINLJHint := inljLeftOuter || inljRightOuter
-
-	inlhjRightOuter := (p.preferJoinType & preferLeftAsINLHJInner) > 0
-	inlhjLeftOuter := (p.preferJoinType & preferRightAsINLHJInner) > 0
-	hasINLHJHint := inlhjLeftOuter || inlhjRightOuter
-
-	inlmjRightOuter := (p.preferJoinType & preferLeftAsINLMJInner) > 0
-	inlmjLeftOuter := (p.preferJoinType & preferRightAsINLMJInner) > 0
-	hasINLMJHint := inlmjLeftOuter || inlmjRightOuter
-
-	forceLeftOuter := inljLeftOuter || inlhjLeftOuter || inlmjLeftOuter
-	forceRightOuter := inljRightOuter || inlhjRightOuter || inlmjRightOuter
+	forceLeftOuter := p.prefer(preferRightAsINLJInner, preferRightAsINLHJInner, preferRightAsINLMJInner)
+	forceRightOuter := p.prefer(preferLeftAsINLJInner, preferLeftAsINLHJInner, preferLeftAsINLMJInner)
 	needForced := forceLeftOuter || forceRightOuter
 
 	defer func() {
-		// refine error message
+		// Print warning message if any hints cannot work.
 		// If the required property is not empty, we will enforce it and try the hint again.
 		// So we only need to generate warning message when the property is empty.
 		if !canForced && needForced && prop.IsSortItemEmpty() {
 			// Construct warning message prefix.
+			var indexJoinTables, indexHashJoinTables, indexMergeJoinTables []hintTableInfo
+			if p.hintInfo != nil {
+				indexJoinTables = p.hintInfo.indexNestedLoopJoinTables.inljTables
+				indexHashJoinTables = p.hintInfo.indexNestedLoopJoinTables.inlhjTables
+				indexMergeJoinTables = p.hintInfo.indexNestedLoopJoinTables.inlmjTables
+			}
 			var errMsg string
 			switch {
-			case hasINLJHint:
-				errMsg = "Optimizer Hint INL_JOIN or TIDB_INLJ is inapplicable"
-			case hasINLHJHint:
-				errMsg = "Optimizer Hint INL_HASH_JOIN is inapplicable"
-			case hasINLMJHint:
-				errMsg = "Optimizer Hint INL_MERGE_JOIN is inapplicable"
+			case p.prefer(preferLeftAsINLJInner, preferRightAsINLJInner): // index join
+				errMsg = fmt.Sprintf("Optimizer Hint %s or %s is inapplicable", restore2JoinHint(HintINLJ, indexJoinTables), restore2JoinHint(TiDBIndexNestedLoopJoin, indexJoinTables))
+			case p.prefer(preferLeftAsINLHJInner, preferRightAsINLHJInner): // index hash join
+				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLHJ, indexHashJoinTables))
+			case p.prefer(preferLeftAsINLMJInner, preferRightAsINLMJInner): // index merge join
+				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLMJ, indexMergeJoinTables))
 			}
-			if p.hintInfo != nil && p.preferJoinType > 0 {
-				t := p.hintInfo.indexNestedLoopJoinTables
-				switch {
-				case len(t.inljTables) != 0 && ((p.preferJoinType&preferLeftAsINLJInner > 0) || (p.preferJoinType&preferRightAsINLJInner > 0)):
-					errMsg = fmt.Sprintf("Optimizer Hint %s or %s is inapplicable",
-						restore2JoinHint(HintINLJ, t.inljTables), restore2JoinHint(TiDBIndexNestedLoopJoin, t.inljTables))
-				case len(t.inlhjTables) != 0 && ((p.preferJoinType&preferLeftAsINLHJInner > 0) || (p.preferJoinType&preferRightAsINLHJInner > 0)):
-					errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLHJ, t.inlhjTables))
-				case len(t.inlmjTables) != 0 && ((p.preferJoinType&preferLeftAsINLMJInner > 0) || (p.preferJoinType&preferRightAsINLMJInner > 0)):
-					errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLMJ, t.inlmjTables))
-				}
-			}
-
 			// Append inapplicable reason.
 			if len(p.EqualConditions) == 0 {
 				errMsg += " without column equal ON condition"
 			}
-
 			// Generate warning message to client.
-			warning := ErrInternal.GenWithStack(errMsg)
-			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 		}
 	}()
 
@@ -2046,15 +2034,15 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		for _, j := range allLeftOuterJoins {
 			switch j.(type) {
 			case *PhysicalIndexJoin:
-				if inljLeftOuter {
+				if p.prefer(preferRightAsINLJInner) {
 					forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
 				}
 			case *PhysicalIndexHashJoin:
-				if inlhjLeftOuter {
+				if p.prefer(preferRightAsINLHJInner) {
 					forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
 				}
 			case *PhysicalIndexMergeJoin:
-				if inlmjLeftOuter {
+				if p.prefer(preferRightAsINLMJInner) {
 					forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
 				}
 			}
@@ -2066,21 +2054,22 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 			return forcedLeftOuterJoins, true
 		}
 	}
+
 	if supportRightOuter {
 		allRightOuterJoins = p.getIndexJoinByOuterIdx(prop, 1)
 		forcedRightOuterJoins = make([]PhysicalPlan, 0, len(allRightOuterJoins))
 		for _, j := range allRightOuterJoins {
 			switch j.(type) {
 			case *PhysicalIndexJoin:
-				if inljRightOuter {
+				if p.prefer(preferLeftAsINLJInner) {
 					forcedRightOuterJoins = append(forcedRightOuterJoins, j)
 				}
 			case *PhysicalIndexHashJoin:
-				if inlhjRightOuter {
+				if p.prefer(preferLeftAsINLHJInner) {
 					forcedRightOuterJoins = append(forcedRightOuterJoins, j)
 				}
 			case *PhysicalIndexMergeJoin:
-				if inlmjRightOuter {
+				if p.prefer(preferLeftAsINLMJInner) {
 					forcedRightOuterJoins = append(forcedRightOuterJoins, j)
 				}
 			}
