@@ -643,7 +643,7 @@ const (
 		watch_text TEXT NOT NULL,
 		source varchar(64) NOT NULL,
 		action bigint(10),
-		done_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+		done_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateImportJobs is a table that IMPORT INTO uses.

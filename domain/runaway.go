@@ -350,7 +350,6 @@ func (do *Domain) handleRunawayWatchDone(record *resourcegroup.QuarantineRecord)
 
 func (do *Domain) handleRemoveStaleRunawayWatch(record *resourcegroup.QuarantineRecord) error {
 	// we only need to do remove runaway watch job in ddl owner.
-	logutil.BgLogger().Info("handleRemoveStaleRunawayWatch in Domain", zap.Int64("id", record.ID))
 	if !do.DDL().OwnerManager().IsOwner() {
 		return nil
 	}

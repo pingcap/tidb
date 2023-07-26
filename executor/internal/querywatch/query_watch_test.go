@@ -15,8 +15,12 @@
 package querywatch_test
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -24,8 +28,56 @@ import (
 func TestQueryWatch(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("query watch add sql digest xsxqwqw12312d").Check(testkit.Rows("0"))
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t2 values(1)")
+	tk.MustExec("create table t3(a int)")
+	tk.MustExec("insert into t3 values(1)")
+	err := tk.QueryToErr("query watch add sql text exact to 'select * from test.t1'")
+	require.ErrorContains(t, err, "must set runaway config for resource group `default`")
+	err = tk.QueryToErr("query watch add action DRYRUN sql text exact to 'select * from test.t1'")
+	require.ErrorContains(t, err, "must set runaway config for resource group `default`")
+
+	tk.MustExec("alter resource group default QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=DRYRUN)")
+	tk.MustQuery("query watch add sql text exact to 'select * from test.t1'").Check(testkit.Rows("1"))
+	tk.MustQuery("QUERY WATCH ADD ACTION COOLDOWN SQL TEXT EXACT TO 'select * from test.t2'").Check(testkit.Rows("2"))
+	tk.MustQuery("select SQL_NO_CACHE resource_group_name, watch_text, action, watch from mysql.tidb_runaway_watch").
+		Check(testkit.Rows("default select * from test.t1 1 1", "default select * from test.t2 2 1"))
+
+	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
+
+	tk.MustQuery("query watch add resource group rg1 sql text exact to 'select * from test.t1'").Check(testkit.Rows("3"))
+	tk.MustQuery("query watch add resource group rg1 sql text similar to 'select * from test.t2'").Check(testkit.Rows("4"))
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	tk.MustQueryWithContext(ctx, "query watch add resource group rg1 sql text plan to 'select * from test.t3'").Check(testkit.Rows("5"))
+
+	tk.MustQuery("query watch add action KILL SQL DIGEST '4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0'").Check(testkit.Rows("6"))
+	tk.MustQuery("query watch add action KILL PLAN DIGEST 'd08bc323a934c39dc41948b0a073725be3398479b6fa4f6dd1db2a9b115f7f57'").Check(testkit.Rows("7"))
+	tk.MustQuery("query watch add action KILL sql text similar to 'select * from test.t1'").Check(testkit.Rows("8"))
+
+	tk.MustQuery("select SQL_NO_CACHE resource_group_name, watch_text, action, watch from mysql.tidb_runaway_watch").
+		Check(testkit.Rows("default select * from test.t1 1 1",
+			"default select * from test.t2 2 1",
+			"rg1 select * from test.t1 3 1",
+			"rg1 02576c15e1f35a8aa3eb7e3b1f977c9f9f9921a22421b3e9f42bad5ab632b4f6 3 2",
+			"rg1 d08bc323a934c39dc41948b0a073725be3398479b6fa4f6dd1db2a9b115f7f57 3 3",
+			"default d08bc323a934c39dc41948b0a073725be3398479b6fa4f6dd1db2a9b115f7f57 3 3",
+			"default 4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0 3 2",
+		))
+	tk.MustGetErrCode("select * from t3", mysql.ErrResourceGroupQueryRunawayQuarantine)
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ resource_group(rg1) */ * from t1").Check(testkit.Rows("1"))
+	tk.MustExec("SET RESOURCE GROUP rg1")
+	// hit and schema will affect sql digest
+	tk.MustGetErrCode("select * from test.t2", mysql.ErrResourceGroupQueryRunawayQuarantine)
+	tk.MustGetErrCode("select /*+ resource_group(rg1) */ * from t3", mysql.ErrResourceGroupQueryRunawayQuarantine)
+
+	// test remove
 	rs, err := tk.Exec("query watch remove 1")
 	require.NoError(t, err)
 	require.Nil(t, rs)
+	time.Sleep(2 * time.Second)
+	tk.MustGetErrCode("select * from test.t1", mysql.ErrResourceGroupQueryRunawayQuarantine)
 }

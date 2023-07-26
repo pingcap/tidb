@@ -16,6 +16,7 @@ package querywatch
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -90,11 +91,8 @@ func SetWatchOption(ctx context.Context,
 				_, digest := parser.NormalizeDigest(sql)
 				record.WatchText = digest.String()
 			case model.WatchPlan:
-				explainStmt := &ast.ExplainStmt{
-					Stmt: stmts[0],
-				}
 				sqlExecutor := newSctx.(sqlexec.SQLExecutor)
-				if _, err := sqlExecutor.ExecuteStmt(ctx, explainStmt); err != nil {
+				if _, err := sqlExecutor.ExecuteInternal(ctx, fmt.Sprintf("explain %s", stmts[0].Text())); err != nil {
 					return err
 				}
 				_, digest := newSctx.GetSessionVars().StmtCtx.GetPlanDigest()
@@ -132,14 +130,14 @@ func validateWatchRecord(record *resourcegroup.QuarantineRecord, client *rmclien
 	if len(record.ResourceGroupName) == 0 {
 		record.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	}
+	rg, err := client.GetResourceGroup(record.ResourceGroupName)
+	if err != nil {
+		return err
+	}
+	if rg == nil || rg.RunawaySettings == nil {
+		return errors.Errorf("must set runaway config for resource group `%s`", record.ResourceGroupName)
+	}
 	if record.Action == rmpb.RunawayAction_NoneAction {
-		rg, err := client.GetResourceGroup(record.ResourceGroupName)
-		if err != nil {
-			return err
-		}
-		if rg == nil || rg.RunawaySettings == nil {
-			return errors.Errorf("must specify action type")
-		}
 		record.Action = rg.RunawaySettings.GetAction()
 	}
 	if record.Watch == rmpb.RunawayWatchType_NoneWatch {

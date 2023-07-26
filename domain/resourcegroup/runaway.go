@@ -134,9 +134,9 @@ func (r *QuarantineRecord) GenInsertionStmt() (string, []interface{}) {
 
 func (r *QuarantineRecord) GenInsertionDoneStmt() (string, []interface{}) {
 	var builder strings.Builder
-	params := make([]interface{}, 0, 7)
+	params := make([]interface{}, 0, 8)
 	builder.WriteString("insert into mysql.tidb_runaway_watch_done VALUES ")
-	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?)")
+	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, null)")
 	params = append(params, r.ID)
 	params = append(params, r.ResourceGroupName)
 	params = append(params, r.StartTime)
@@ -179,7 +179,6 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serv
 	go watchList.Start()
 	staleQuarantineChan := make(chan *QuarantineRecord, maxWatchRecordChannelSize)
 	evictionCancel := watchList.OnEviction(func(ctx context.Context, er ttlcache.EvictionReason, i *ttlcache.Item[string, *QuarantineRecord]) {
-		logutil.BgLogger().Info("OnEviction in runaway manager", zap.Int64("id", i.Value().ID))
 		if i.Value().ID == 0 {
 			return
 		}
