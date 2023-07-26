@@ -378,7 +378,7 @@ func NewImportControllerWithPauser(
 	var metaBuilder metaMgrBuilder
 	isSSTImport := cfg.TikvImporter.Backend == config.BackendLocal
 	switch {
-	case isSSTImport && cfg.TikvImporter.IncrementalImport:
+	case isSSTImport && cfg.TikvImporter.ParallelImport:
 		metaBuilder = &dbMetaMgrBuilder{
 			db:           db,
 			taskID:       cfg.TaskID,

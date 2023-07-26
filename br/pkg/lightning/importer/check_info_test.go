@@ -482,13 +482,13 @@ func TestCheckTableEmpty(t *testing.T) {
 	err := rc.checkTableEmpty(ctx)
 	require.NoError(t, err)
 
-	// test incremental mode
+	// test parallel mode
 	rc.cfg.TikvImporter.Backend = config.BackendLocal
-	rc.cfg.TikvImporter.IncrementalImport = true
+	rc.cfg.TikvImporter.ParallelImport = true
 	err = rc.checkTableEmpty(ctx)
 	require.NoError(t, err)
 
-	rc.cfg.TikvImporter.IncrementalImport = false
+	rc.cfg.TikvImporter.ParallelImport = false
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	mock.MatchExpectationsInOrder(false)
