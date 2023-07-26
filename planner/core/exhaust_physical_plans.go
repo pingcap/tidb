@@ -1969,7 +1969,7 @@ func filterIndexJoinBySessionVars(sc sessionctx.Context, indexJoins []PhysicalPl
 	return indexJoins
 }
 
-func (p *LogicalJoin) prefer(joinFlags ...uint) bool {
+func (p *LogicalJoin) preferAny(joinFlags ...uint) bool {
 	for _, flag := range joinFlags {
 		if p.preferJoinType&flag > 0 {
 			return true
@@ -1978,28 +1978,35 @@ func (p *LogicalJoin) prefer(joinFlags ...uint) bool {
 	return false
 }
 
-// canPassJoinHint returns whether this join plan can pass current join hints.
-func (p *LogicalJoin) canPassJoinHint(join PhysicalPlan, leftOuter bool) bool {
+// satisfyIndexJoinHint returns whether this join plan can satisfy current index join hints.
+func (p *LogicalJoin) satisfyIndexJoinHint(join PhysicalPlan) bool {
 	const left, right = 0, 1
 	const indexJoin, indexHashJoin, indexMergeJoin = 0, 1, 2
-	innerSide := left
-	if leftOuter {
-		innerSide = right
-	}
-	joinMethod := indexJoin
-	switch join.(type) {
+	var innerSide, innerIdx, joinMethod int
+	switch ij := join.(type) {
+	case *PhysicalIndexJoin:
+		innerIdx = ij.getInnerChildIdx()
+		joinMethod = indexJoin
 	case *PhysicalIndexHashJoin:
+		innerIdx = ij.getInnerChildIdx()
 		joinMethod = indexHashJoin
 	case *PhysicalIndexMergeJoin:
+		innerIdx = ij.getInnerChildIdx()
 		joinMethod = indexMergeJoin
+	default:
+		return false
+	}
+	innerSide = left
+	if innerIdx == 1 {
+		innerSide = right
 	}
 
-	if (p.prefer(preferLeftAsINLJInner) && innerSide == left && joinMethod == indexJoin) ||
-		(p.prefer(preferRightAsINLJInner) && innerSide == right && joinMethod == indexJoin) ||
-		(p.prefer(preferLeftAsINLHJInner) && innerSide == left && joinMethod == indexHashJoin) ||
-		(p.prefer(preferRightAsINLHJInner) && innerSide == right && joinMethod == indexHashJoin) ||
-		(p.prefer(preferLeftAsINLMJInner) && innerSide == left && joinMethod == indexMergeJoin) ||
-		(p.prefer(preferRightAsINLMJInner) && innerSide == right && joinMethod == indexMergeJoin) {
+	if (p.preferAny(preferLeftAsINLJInner) && innerSide == left && joinMethod == indexJoin) ||
+		(p.preferAny(preferRightAsINLJInner) && innerSide == right && joinMethod == indexJoin) ||
+		(p.preferAny(preferLeftAsINLHJInner) && innerSide == left && joinMethod == indexHashJoin) ||
+		(p.preferAny(preferRightAsINLHJInner) && innerSide == right && joinMethod == indexHashJoin) ||
+		(p.preferAny(preferLeftAsINLMJInner) && innerSide == left && joinMethod == indexMergeJoin) ||
+		(p.preferAny(preferRightAsINLMJInner) && innerSide == right && joinMethod == indexMergeJoin) {
 		return true
 	}
 	return false
@@ -2008,8 +2015,8 @@ func (p *LogicalJoin) canPassJoinHint(join PhysicalPlan, leftOuter bool) bool {
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
 func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, canForced bool) {
-	forceLeftOuter := p.prefer(preferRightAsINLJInner, preferRightAsINLHJInner, preferRightAsINLMJInner) // left as outer == right as inner
-	forceRightOuter := p.prefer(preferLeftAsINLJInner, preferLeftAsINLHJInner, preferLeftAsINLMJInner)   // right as outer == left as inner
+	forceLeftOuter := p.preferAny(preferRightAsINLJInner, preferRightAsINLHJInner, preferRightAsINLMJInner) // left as outer == right as inner
+	forceRightOuter := p.preferAny(preferLeftAsINLJInner, preferLeftAsINLHJInner, preferLeftAsINLMJInner)   // right as outer == left as inner
 	needForced := forceLeftOuter || forceRightOuter
 
 	defer func() {
@@ -2025,11 +2032,11 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 			}
 			var errMsg string
 			switch {
-			case p.prefer(preferLeftAsINLJInner, preferRightAsINLJInner): // prefer index join
+			case p.preferAny(preferLeftAsINLJInner, preferRightAsINLJInner): // prefer index join
 				errMsg = fmt.Sprintf("Optimizer Hint %s or %s is inapplicable", restore2JoinHint(HintINLJ, indexJoinTables), restore2JoinHint(TiDBIndexNestedLoopJoin, indexJoinTables))
-			case p.prefer(preferLeftAsINLHJInner, preferRightAsINLHJInner): // prefer index hash join
+			case p.preferAny(preferLeftAsINLHJInner, preferRightAsINLHJInner): // prefer index hash join
 				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLHJ, indexHashJoinTables))
-			case p.prefer(preferLeftAsINLMJInner, preferRightAsINLMJInner): // prefer index merge join
+			case p.preferAny(preferLeftAsINLMJInner, preferRightAsINLMJInner): // prefer index merge join
 				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLMJ, indexMergeJoinTables))
 			}
 			// Append inapplicable reason.
@@ -2058,7 +2065,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		allLeftOuterJoins = p.getIndexJoinByOuterIdx(prop, 0)
 		forcedLeftOuterJoins = make([]PhysicalPlan, 0, len(allLeftOuterJoins))
 		for _, j := range allLeftOuterJoins {
-			if p.canPassJoinHint(j, true) {
+			if p.satisfyIndexJoinHint(j) {
 				forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
 			}
 		}
@@ -2074,7 +2081,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		allRightOuterJoins = p.getIndexJoinByOuterIdx(prop, 1)
 		forcedRightOuterJoins = make([]PhysicalPlan, 0, len(allRightOuterJoins))
 		for _, j := range allRightOuterJoins {
-			if p.canPassJoinHint(j, false) {
+			if p.satisfyIndexJoinHint(j) {
 				forcedRightOuterJoins = append(forcedRightOuterJoins, j)
 			}
 		}
