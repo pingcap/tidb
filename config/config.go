@@ -189,6 +189,7 @@ type Config struct {
 	TiDBAddr                   string                  `toml:"tidb-addr" json:"tidb-addr"`
 	DumplingBinPath            string                  `toml:"dumpling-binpath" json:"dumpling-binpath"`
 	SetupDemoLogPath           string                  `toml:"setup-demo-logpath" json:"setup-demo-logpath"`
+	NamenodeHost               string                  `toml:"namenode-host" json:"namenode-host"`
 	TxnLocalLatches            tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
 	ServerVersion              string                  `toml:"server-version" json:"server-version"`
 	VersionComment             string                  `toml:"version-comment" json:"version-comment"`
@@ -889,6 +890,7 @@ var defaultConf = Config{
 	TiDBAddr:                     "10.71.200.221:4000",
 	DumplingBinPath:              "/home/xhy/.tiup/components/dumpling/v7.2.0/dumpling",
 	SetupDemoLogPath:             "/home/xhy/Development/workspace/htap/__tmp/.hudi.log",
+	NamenodeHost:                 "10.71.200.221:12347",
 	TempStoragePath:              tempStorageDirName,
 	MemQuotaQuery:                1 << 30,
 	OOMAction:                    "cancel",

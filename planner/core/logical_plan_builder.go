@@ -40,6 +40,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -4604,7 +4605,7 @@ func newHDFSClient(address string) (client *hdfs.Client, err error) {
 
 func FetchColumnInfoFromETLTable(tbl *model.TableInfo) (columns []*table.Column, parquetFileUris []string, err error) {
 	var host, scheme string
-	host = "10.71.200.221:12347"
+	host = config.GetGlobalConfig().NamenodeHost
 	scheme = "hdfs"
 	hdfsClient, err := newHDFSClient(host)
 	if err != nil {
