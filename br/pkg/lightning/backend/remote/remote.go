@@ -319,7 +319,7 @@ func generateRanges(splitKeys [][]byte, start, end kv.Key) []Range {
 		}
 		ranges = append(ranges, Range{start: splitKeys[i], end: endK})
 	}
-	ranges[len(ranges)-1].end = end.Next()
+	ranges[len(ranges)-1].end = end
 	for _, r := range ranges {
 		log.FromContext(context.Background()).Info("range", zap.String("start", hex.EncodeToString(r.start)), zap.String("end", hex.EncodeToString(r.end)))
 	}
