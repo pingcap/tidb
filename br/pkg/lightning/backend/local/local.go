@@ -1684,7 +1684,7 @@ func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
 }
 
 // LocalWriter returns a new local writer.
-func (local *Backend) LocalWriter(_ context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
+func (local *Backend) LocalWriter(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID, subtaskID int64) (backend.EngineWriter, error) {
 	e, ok := local.engines.Load(engineUUID)
 	if !ok {
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())

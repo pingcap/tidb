@@ -122,7 +122,7 @@ func (mr *MockBackendMockRecorder) ImportEngine(arg0, arg1, arg2, arg3 interface
 }
 
 // LocalWriter mocks base method.
-func (m *MockBackend) LocalWriter(arg0 context.Context, arg1 *backend.LocalWriterConfig, arg2 uuid.UUID) (backend.EngineWriter, error) {
+func (m *MockBackend) LocalWriter(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID, subtaskID int64) (backend.EngineWriter, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "LocalWriter", arg0, arg1, arg2)
 	ret0, _ := ret[0].(backend.EngineWriter)

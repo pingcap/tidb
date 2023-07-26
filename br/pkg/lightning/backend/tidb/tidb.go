@@ -783,11 +783,7 @@ func (*tidbBackend) ResetEngine(context.Context, uuid.UUID) error {
 }
 
 // LocalWriter returns a writer that writes data to local storage.
-func (be *tidbBackend) LocalWriter(
-	_ context.Context,
-	cfg *backend.LocalWriterConfig,
-	_ uuid.UUID,
-) (backend.EngineWriter, error) {
+func (be *tidbBackend) LocalWriter(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID, subtaskID int64) (backend.EngineWriter, error) {
 	return &Writer{be: be, tableName: cfg.TableName}, nil
 }
 

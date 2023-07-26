@@ -398,7 +398,7 @@ func (remote *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) er
 	return nil
 }
 
-func (remote *Backend) LocalWriter(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
+func (remote *Backend) LocalWriter(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID, subtaskID int64) (backend.EngineWriter, error) {
 	onClose := func(s *sharedisk.WriterSummary) {
 		remote.handleWriterSummary(s)
 		log.FromContext(ctx).Info("record boundary key on close",
@@ -408,9 +408,9 @@ func (remote *Backend) LocalWriter(ctx context.Context, cfg *backend.LocalWriter
 			zap.Uint64("totalSize", s.TotalSize))
 	}
 	remote.mu.totalSize = 0
-	prefix := filepath.Join(strconv.Itoa(int(remote.jobID)), engineUUID.String())
+	prefix := filepath.Join(strconv.Itoa(int(remote.jobID)), strconv.Itoa(int(subtaskID)))
 	writer := sharedisk.NewWriter(ctx, remote.externalStorage, prefix,
-		remote.allocWriterID(), remote.bufferPool, remote.config.MemQuota, remote.config.StatSampleKeys,
+		int(subtaskID), remote.bufferPool, remote.config.MemQuota, remote.config.StatSampleKeys,
 		remote.config.StatSampleSize, remote.config.WriteBatchSize, onClose)
 	return writer, nil
 }

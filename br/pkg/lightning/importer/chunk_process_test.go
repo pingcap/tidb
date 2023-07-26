@@ -130,11 +130,11 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData() {
 
 	dataEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, 0)
 	require.NoError(s.T(), err)
-	dataWriter, err := dataEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
+	dataWriter, err := dataEngine.LocalWriter(ctx, &backend.LocalWriterConfig{}, 0)
 	require.NoError(s.T(), err)
 	indexEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, -1)
 	require.NoError(s.T(), err)
-	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
+	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{}, 0)
 	require.NoError(s.T(), err)
 
 	// Deliver nothing.
@@ -188,9 +188,9 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 	indexEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, -1)
 	require.NoError(s.T(), err)
 
-	dataWriter, err := dataEngine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: s.tr.tableName})
+	dataWriter, err := dataEngine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: s.tr.tableName}, 0)
 	require.NoError(s.T(), err)
-	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
+	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{}, 0)
 	require.NoError(s.T(), err)
 
 	// Set up the expected API calls to the data engine...
@@ -677,9 +677,9 @@ func (s *chunkRestoreSuite) TestRestore() {
 	indexEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, -1)
 	require.NoError(s.T(), err)
 
-	dataWriter, err := dataEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
+	dataWriter, err := dataEngine.LocalWriter(ctx, &backend.LocalWriterConfig{}, 0)
 	require.NoError(s.T(), err)
-	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
+	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{}, 0)
 	require.NoError(s.T(), err)
 
 	saveCpCh := make(chan saveCp, 16)

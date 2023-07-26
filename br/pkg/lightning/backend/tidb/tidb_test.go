@@ -135,7 +135,7 @@ func TestWriteRowsReplaceOnDup(t *testing.T) {
 	require.NoError(t, err)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"}, 0)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"b", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows)
 	require.NoError(t, err)
@@ -172,7 +172,7 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	require.NoError(t, err)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"}, 0)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.NoError(t, err)
@@ -220,7 +220,7 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"}, 0)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.NoError(t, err)
@@ -496,7 +496,7 @@ func TestWriteRowsErrorNoRetry(t *testing.T) {
 	ctx := context.Background()
 	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
-	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"}, 0)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.Error(t, err)
@@ -565,7 +565,7 @@ func TestWriteRowsErrorDowngradingAll(t *testing.T) {
 	ctx := context.Background()
 	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
-	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"}, 0)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.NoError(t, err)
@@ -622,7 +622,7 @@ func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
 	ctx := context.Background()
 	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
-	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"}, 0)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.Error(t, err)

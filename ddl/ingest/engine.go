@@ -200,7 +200,7 @@ func (ei *engineInfo) newWriterContext(workerID int, unique bool) (*writerContex
 	lWrite, exist := ei.writerCache.Load(workerID)
 	if !exist {
 		var err error
-		lWrite, err = ei.openedEngine.LocalWriter(ei.ctx, &backend.LocalWriterConfig{})
+		lWrite, err = ei.openedEngine.LocalWriter(ei.ctx, &backend.LocalWriterConfig{}, int64(workerID))
 		if err != nil {
 			return nil, err
 		}

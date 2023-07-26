@@ -177,7 +177,7 @@ type Backend interface {
 	ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 
 	// LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
-	LocalWriter(ctx context.Context, cfg *LocalWriterConfig, engineUUID uuid.UUID) (EngineWriter, error)
+	LocalWriter(ctx context.Context, cfg *LocalWriterConfig, engineUUID uuid.UUID, subtaskID int64) (EngineWriter, error)
 }
 
 // EngineManager is the manager of engines.
@@ -271,8 +271,8 @@ func (engine *OpenedEngine) Flush(ctx context.Context) error {
 }
 
 // LocalWriter returns a writer that writes to the local backend.
-func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterConfig) (EngineWriter, error) {
-	return engine.backend.LocalWriter(ctx, cfg, engine.uuid)
+func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterConfig, subtaskID int64) (EngineWriter, error) {
+	return engine.backend.LocalWriter(ctx, cfg, engine.uuid, subtaskID)
 }
 
 // UnsafeCloseEngine closes the engine without first opening it.

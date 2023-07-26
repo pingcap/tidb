@@ -728,13 +728,13 @@ ChunkLoop:
 			}
 		}
 
-		dataWriter, err := dataEngine.LocalWriter(ctx, dataWriterCfg)
+		dataWriter, err := dataEngine.LocalWriter(ctx, dataWriterCfg, 0)
 		if err != nil {
 			setError(err)
 			break
 		}
 
-		indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: tr.tableName})
+		indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: tr.tableName}, 0)
 		if err != nil {
 			_, _ = dataWriter.Close(ctx)
 			setError(err)

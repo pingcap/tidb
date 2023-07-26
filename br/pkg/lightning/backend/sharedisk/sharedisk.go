@@ -153,7 +153,6 @@ func NewWriter(ctx context.Context, externalStorage storage.ExternalStorage,
 	memSizeLimit uint64, keyDist int64, sizeDist uint64, writeBatchSize int64,
 	onClose OnCloseFunc) *Writer {
 	engine := NewEngine(sizeDist, uint64(keyDist))
-	filePrefix := filepath.Join(prefix, strconv.Itoa(writerID))
 	return &Writer{
 		ctx:            ctx,
 		engine:         engine,
@@ -163,7 +162,7 @@ func NewWriter(ctx context.Context, externalStorage storage.ExternalStorage,
 		writeBatch:     make([]common.KvPair, writeBatchSize),
 		currentSeq:     0,
 		tikvCodec:      keyspace.CodecV1,
-		filenamePrefix: filePrefix,
+		filenamePrefix: prefix,
 		writerID:       writerID,
 		kvStore:        nil,
 		onClose:        onClose,

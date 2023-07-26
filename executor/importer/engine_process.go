@@ -65,7 +65,7 @@ func ProcessChunk(
 			logger.Warn("close encoder failed", zap.Error(err2))
 		}
 	}()
-	dataWriter, err := dataEngine.LocalWriter(ctx, dataWriterCfg)
+	dataWriter, err := dataEngine.LocalWriter(ctx, dataWriterCfg, 0)
 	if err != nil {
 		return err
 	}
@@ -74,7 +74,7 @@ func ProcessChunk(
 			logger.Warn("close data writer failed", zap.Error(err2))
 		}
 	}()
-	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
+	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{}, 0)
 	if err != nil {
 		return err
 	}
