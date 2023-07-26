@@ -336,7 +336,7 @@ const (
 func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	// Mock store does not support `show config` now, so we  use failpoint here
 	// to control whether we are in raft-kv2
-	failpoint.Inject("isRaftKv2", func(v failpoint.Value) (bool, error) {
+	failpoint.Inject("IsRaftKv2", func(v failpoint.Value) (bool, error) {
 		v2, _ := v.(bool)
 		return v2, nil
 	})
