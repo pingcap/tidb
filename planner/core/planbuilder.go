@@ -343,6 +343,9 @@ func restore2TableHint(hintTables ...hintTableInfo) string {
 }
 
 func restore2JoinHint(hintType string, hintTables []hintTableInfo) string {
+	if len(hintTables) == 0 {
+		return strings.ToUpper(hintType)
+	}
 	buffer := bytes.NewBufferString("/*+ ")
 	buffer.WriteString(strings.ToUpper(hintType))
 	buffer.WriteString("(")
