@@ -1485,7 +1485,7 @@ func genQuarantineQueriesStmt(records []*resourcegroup.QuarantineRecord) (string
 		params = append(params, r.EndTime)
 		params = append(params, r.Watch)
 		params = append(params, r.WatchText)
-		params = append(params, r.From)
+		params = append(params, r.Source)
 	}
 	return builder.String(), params
 }
