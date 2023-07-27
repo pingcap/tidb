@@ -163,7 +163,7 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(ctx context.Context) error 
 	logutil.BgLogger().Info("lightning init subtask exec env", zap.String("category", "ddl"))
 	d := b.d
 
-	bc, err := ingest.LitBackCtxMgr.Register(ctx, b.index.Unique, b.job.ID, d.etcdCli)
+	bc, err := ingest.LitBackCtxMgr.Register(d.ctx, b.index.Unique, b.job.ID, d.etcdCli)
 	if err != nil {
 		logutil.BgLogger().Warn("lightning register error", zap.String("category", "ddl"), zap.Error(err))
 		return err
