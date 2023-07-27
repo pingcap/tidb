@@ -41,7 +41,8 @@ type VecGroupChecker struct {
 	firstGroupKey []byte
 	lastGroupKey  []byte
 
-	// firstRowDatums and lastRowDatums store the results of the expression evaluation for the first and last rows of the current chunk in datum
+	// firstRowDatums and lastRowDatums store the results of the expression evaluation
+	// for the first and last rows of the current chunk in datum
 	// They are used to encode to get firstGroupKey and lastGroupKey
 	firstRowDatums []types.Datum
 
@@ -59,6 +60,7 @@ type VecGroupChecker struct {
 	groupCount int
 }
 
+// NewVecGroupChecker creates a new VecGroupChecker
 func NewVecGroupChecker(ctx sessionctx.Context, items []expression.Expression) *VecGroupChecker {
 	return &VecGroupChecker{
 		ctx:          ctx,
@@ -149,7 +151,8 @@ func (e *VecGroupChecker) SplitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 	return isFirstGroupSameAsPrev, nil
 }
 
-func (e *VecGroupChecker) getFirstAndLastRowDatum(item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
+func (e *VecGroupChecker) getFirstAndLastRowDatum(
+	item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
 	var firstRowDatum, lastRowDatum types.Datum
 	tp := item.GetType()
 	eType := tp.EvalType()
@@ -317,7 +320,8 @@ func (e *VecGroupChecker) getFirstAndLastRowDatum(item expression.Expression, ch
 
 // evalGroupItemsAndResolveGroups evaluates the chunk according to the expression item.
 // And resolve the rows into groups according to the evaluation results
-func (e *VecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
+func (e *VecGroupChecker) evalGroupItemsAndResolveGroups(
+	item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
 	tp := item.GetType()
 	eType := tp.EvalType()
 	if e.allocateBuffer == nil {
@@ -465,6 +469,7 @@ func (e *VecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 	return err
 }
 
+// GetNextGroup returns the begin and end position of the next group.
 func (e *VecGroupChecker) GetNextGroup() (begin, end int) {
 	if e.nextGroupID == 0 {
 		begin = 0
@@ -476,10 +481,12 @@ func (e *VecGroupChecker) GetNextGroup() (begin, end int) {
 	return begin, end
 }
 
+// IsExhausted returns true if there is no more group to check.
 func (e *VecGroupChecker) IsExhausted() bool {
 	return e.nextGroupID >= e.groupCount
 }
 
+// Reset resets the group checker.
 func (e *VecGroupChecker) Reset() {
 	if e.groupOffset != nil {
 		e.groupOffset = e.groupOffset[:0]
@@ -501,6 +508,7 @@ func (e *VecGroupChecker) Reset() {
 	}
 }
 
+// GroupCount returns the number of groups.
 func (e *VecGroupChecker) GroupCount() int {
 	return e.groupCount
 }
