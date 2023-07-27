@@ -152,7 +152,7 @@ func TestGetReservedConnID(t *testing.T) {
 		return 1001
 	}
 
-	globalAlloc := globalconn.NewGlobalAllocator(serverID)
+	globalAlloc := globalconn.NewGlobalAllocator(serverID, true)
 	var maxLocalConnID uint64 = 1<<40 - 1
 	assert.Equal(uint64(1001)<<41|(maxLocalConnID)<<1|1, globalAlloc.GetReservedConnID(0))
 	assert.Equal(uint64(1001)<<41|(maxLocalConnID-1)<<1|1, globalAlloc.GetReservedConnID(1))
