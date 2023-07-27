@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "internal",
+    srcs = ["testutil.go"],
+    importpath = "github.com/pingcap/tidb/bindinfo/internal",
+    visibility = ["//bindinfo:__subpackages__"],
+    deps = [
+        "//domain",
+        "//parser",
+        "//testkit",
+        "//util/parser",
+        "@com_github_stretchr_testify//require",
+    ],
+)

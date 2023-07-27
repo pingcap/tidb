@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "handler",
+    srcs = ["util.go"],
+    importpath = "github.com/pingcap/tidb/server/handler",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/terror",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)

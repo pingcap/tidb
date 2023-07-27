@@ -1022,6 +1022,9 @@ func (do *Domain) Close() {
 	if intest.InTest {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 	}
+	if handle := do.statsHandle.Load(); handle != nil {
+		handle.Close()
+	}
 
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
@@ -1482,7 +1485,7 @@ func genQuarantineQueriesStmt(records []*resourcegroup.QuarantineRecord) (string
 		params = append(params, r.EndTime)
 		params = append(params, r.Watch)
 		params = append(params, r.WatchText)
-		params = append(params, r.From)
+		params = append(params, r.Source)
 	}
 	return builder.String(), params
 }
@@ -3090,7 +3093,7 @@ func (do *Domain) StartTTLJobManager() {
 			logutil.BgLogger().Info("ttlJobManager exited.")
 		}()
 
-		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient)
+		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
 		do.ttlJobManager.Store(ttlJobManager)
 		ttlJobManager.Start()
 

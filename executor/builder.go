@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/executor/internal/calibrateresource"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/executor/internal/pdhelper"
+	"github.com/pingcap/tidb/executor/internal/querywatch"
 	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -912,6 +913,11 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), 0),
 			WorkloadType: s.Tp,
 			OptionList:   s.DynamicCalibrateResourceOptionList,
+		}
+	case *ast.AddQueryWatchStmt:
+		return &querywatch.AddExecutor{
+			BaseExecutor:         exec.NewBaseExecutor(b.ctx, v.Schema(), 0),
+			QueryWatchOptionList: s.QueryWatchOptionList,
 		}
 	case *ast.LoadDataActionStmt:
 		return &LoadDataActionExec{
