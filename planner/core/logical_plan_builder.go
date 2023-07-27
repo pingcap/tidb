@@ -4706,6 +4706,15 @@ func (s *schemaToColumnInfo) VisitPre(n schema.Node) bool {
 		case "double":
 			columnInfo.FieldType = *types.NewFieldType(mysql.TypeDouble)
 		}
+		if p.ConvertedType() == 5 { // decimal
+			columnInfo.FieldType = *types.NewFieldType(mysql.TypeNewDecimal)
+			flen := int(p.DecimalMetadata().Precision) + int(p.DecimalMetadata().Scale)
+			flen = mathutil.Min(flen, 65)
+			decimal := int(p.DecimalMetadata().Scale)
+			decimal = mathutil.Min(decimal, 30)
+			columnInfo.FieldType.SetFlen(flen)
+			columnInfo.FieldType.SetDecimal(decimal)
+		}
 		s.idAllocator++
 		s.columnInfos = append(s.columnInfos, columnInfo)
 	}
