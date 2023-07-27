@@ -593,7 +593,7 @@
       "br/pkg/restore": "ignore br/pkg/restore"
     },
     "only_files": {
-       "planer/core/casetest/binaryplan": "planer/core/casetest/binaryplan",
+      "planer/core/casetest/binaryplan": "planer/core/casetest/binaryplan",
       "planer/core/casetest/cbotest": "planer/core/casetest/cbotest",
       "planer/core/casetest/enforcempp": "planer/core/casetest/enforcempp",
       "planer/core/casetest/flatplan": "planer/core/casetest/flatplan",
