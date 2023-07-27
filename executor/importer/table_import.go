@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -48,7 +49,71 @@ import (
 	"go.uber.org/zap"
 )
 
+<<<<<<< HEAD
 func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
+=======
+// NewTiKVModeSwitcher make it a var, so we can mock it in tests.
+var NewTiKVModeSwitcher = local.NewTiKVModeSwitcher
+
+var (
+	// CheckDiskQuotaInterval is the default time interval to check disk quota.
+	// TODO: make it dynamically adjusting according to the speed of import and the disk size.
+	CheckDiskQuotaInterval = 10 * time.Second
+
+	// defaultMaxEngineSize is the default max engine size in bytes.
+	// we make it 5 times larger than lightning default engine size to reduce range overlap, especially for index,
+	// since we have an index engine per distributed subtask.
+	// for 1TiB data, we can divide it into 2 engines that runs on 2 TiDB. it can have a good balance between
+	// range overlap and sort speed in one of our test of:
+	// 	- 10 columns, PK + 6 secondary index 2 of which is mv index
+	//	- 1.05 KiB per row, 527 MiB per file, 1024000000 rows, 1 TiB total
+	//
+	// it might not be the optimal value for other cases.
+	defaultMaxEngineSize = int64(5 * config.DefaultBatchSize)
+)
+
+// prepareSortDir creates a new directory for import, remove previous sort directory if exists.
+func prepareSortDir(e *LoadDataController, taskID int64, tidbCfg *tidb.Config) (string, error) {
+	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
+	importDir := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
+	sortDir := filepath.Join(importDir, strconv.FormatInt(taskID, 10))
+
+	if info, err := os.Stat(importDir); err != nil || !info.IsDir() {
+		if err != nil && !os.IsNotExist(err) {
+			e.logger.Error("stat import dir failed", zap.String("import_dir", importDir), zap.Error(err))
+			return "", errors.Trace(err)
+		}
+		if info != nil && !info.IsDir() {
+			e.logger.Warn("import dir is not a dir, remove it", zap.String("import_dir", importDir))
+			if err := os.RemoveAll(importDir); err != nil {
+				return "", errors.Trace(err)
+			}
+		}
+		e.logger.Info("import dir not exists, create it", zap.String("import_dir", importDir))
+		if err := os.MkdirAll(importDir, 0o700); err != nil {
+			e.logger.Error("failed to make dir", zap.String("import_dir", importDir), zap.Error(err))
+			return "", errors.Trace(err)
+		}
+	}
+
+	// todo: remove this after we support checkpoint
+	if _, err := os.Stat(sortDir); err != nil {
+		if !os.IsNotExist(err) {
+			e.logger.Error("stat sort dir failed", zap.String("sort_dir", sortDir), zap.Error(err))
+			return "", errors.Trace(err)
+		}
+	} else {
+		e.logger.Warn("sort dir already exists, remove it", zap.String("sort_dir", sortDir))
+		if err := os.RemoveAll(sortDir); err != nil {
+			return "", errors.Trace(err)
+		}
+	}
+	return sortDir, nil
+}
+
+// GetTiKVModeSwitcher creates a new TiKV mode switcher.
+func GetTiKVModeSwitcher(logger *zap.Logger) (local.TiKVModeSwitcher, error) {
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488))
 	tidbCfg := tidb.GetGlobalConfig()
 	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
 	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix, strconv.FormatInt(jobID, 10))
@@ -331,6 +396,31 @@ func (ti *TableImporter) checksumTable(ctx context.Context) error {
 	return nil
 }
 
+func (e *LoadDataController) getAdjustedMaxEngineSize() int64 {
+	// we want to split data files into subtask of size close to MaxEngineSize to reduce range overlap,
+	// and evenly distribute them to subtasks.
+	// so we adjust MaxEngineSize to make sure each subtask has a similar amount of data to import.
+	// we calculate subtask count first by round(TotalFileSize / maxEngineSize), then adjust maxEngineSize
+	//
+	// AllocateEngineIDs is using ceil() to calculate subtask count, engine size might be too small in some case,
+	// such as 501G data, maxEngineSize will be about 250G, so we don't relay on it.
+	// see https://github.com/pingcap/tidb/blob/b4183e1dc9bb01fb81d3aa79ca4b5b74387c6c2a/br/pkg/lightning/mydump/region.go#L109
+	//
+	// for default e.MaxEngineSize = 500GiB, we have:
+	// data size range(G)   cnt    adjusted-engine-size range(G)
+	// [0, 750)               1    [0, 750)
+	// [750, 1250)            2    [375, 625)
+	// [1250, 1750)           3    [416, 583)
+	// [1750, 2250)           4    [437, 562)
+	maxEngineSize := int64(e.MaxEngineSize)
+	if e.TotalFileSize <= maxEngineSize {
+		return e.TotalFileSize
+	}
+	subtaskCount := math.Round(float64(e.TotalFileSize) / float64(maxEngineSize))
+	adjusted := math.Ceil(float64(e.TotalFileSize) / subtaskCount)
+	return int64(adjusted)
+}
+
 // PopulateChunks populates chunks from table regions.
 // in dist framework, this should be done in the tidb node which is responsible for splitting job into subtasks
 // then table-importer handles data belongs to the subtask.
@@ -338,9 +428,34 @@ func (ti *TableImporter) PopulateChunks(ctx context.Context) (map[int32]*checkpo
 	ti.logger.Info("populate chunks")
 	tableRegions, err := mydump.MakeTableRegions(ctx, ti.dataDivideCfg)
 
+<<<<<<< HEAD
 	if err != nil {
 		ti.logger.Error("populate chunks failed", zap.Error(err))
 		return nil, err
+=======
+	tableMeta := &mydump.MDTableMeta{
+		DB:        e.DBName,
+		Name:      e.Table.Meta().Name.O,
+		DataFiles: e.toMyDumpFiles(),
+	}
+	adjustedMaxEngineSize := e.getAdjustedMaxEngineSize()
+	e.logger.Info("adjust max engine size", zap.Int64("before", int64(e.MaxEngineSize)),
+		zap.Int64("after", adjustedMaxEngineSize))
+	dataDivideCfg := &mydump.DataDivideConfig{
+		ColumnCnt:      len(e.Table.Meta().Columns),
+		EngineDataSize: adjustedMaxEngineSize,
+		MaxChunkSize:   int64(config.MaxRegionSize),
+		Concurrency:    int(e.ThreadCnt),
+		IOWorkers:      nil,
+		Store:          e.dataStore,
+		TableMeta:      tableMeta,
+	}
+	tableRegions, err2 := mydump.MakeTableRegions(ctx, dataDivideCfg)
+
+	if err2 != nil {
+		e.logger.Error("populate chunks failed", zap.Error(err2))
+		return nil, err2
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488))
 	}
 
 	var maxRowID int64

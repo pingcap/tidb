@@ -69,6 +69,7 @@ const (
 	unlimitedWriteSpeed = config.ByteSize(0)
 	minDiskQuota        = config.ByteSize(10 << 30) // 10GiB
 
+<<<<<<< HEAD
 	importModeOption    = "import_mode"
 	diskQuotaOption     = "disk_quota"
 	checksumOption      = "checksum_table"
@@ -79,6 +80,25 @@ const (
 	maxWriteSpeedOption = "max_write_speed"
 	splitFileOption     = "split_file"
 	recordErrorsOption  = "record_errors"
+=======
+	characterSetOption          = "character_set"
+	fieldsTerminatedByOption    = "fields_terminated_by"
+	fieldsEnclosedByOption      = "fields_enclosed_by"
+	fieldsEscapedByOption       = "fields_escaped_by"
+	fieldsDefinedNullByOption   = "fields_defined_null_by"
+	linesTerminatedByOption     = "lines_terminated_by"
+	skipRowsOption              = "skip_rows"
+	splitFileOption             = "split_file"
+	diskQuotaOption             = "disk_quota"
+	threadOption                = "thread"
+	maxWriteSpeedOption         = "max_write_speed"
+	checksumTableOption         = "checksum_table"
+	recordErrorsOption          = "record_errors"
+	detachedOption              = "detached"
+	disableTiKVImportModeOption = "disable_tikv_import_mode"
+	// used for test
+	maxEngineSizeOption = "__max_engine_size"
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488))
 )
 
 var (
@@ -86,6 +106,7 @@ var (
 
 	// name -> whether the option has value
 	supportedOptions = map[string]bool{
+<<<<<<< HEAD
 		importModeOption:    true,
 		diskQuotaOption:     true,
 		checksumOption:      true,
@@ -97,6 +118,24 @@ var (
 		splitFileOption:     true,
 		recordErrorsOption:  true,
 		detachedOption:      false,
+=======
+		characterSetOption:          true,
+		fieldsTerminatedByOption:    true,
+		fieldsEnclosedByOption:      true,
+		fieldsEscapedByOption:       true,
+		fieldsDefinedNullByOption:   true,
+		linesTerminatedByOption:     true,
+		skipRowsOption:              true,
+		splitFileOption:             false,
+		diskQuotaOption:             true,
+		threadOption:                true,
+		maxWriteSpeedOption:         true,
+		checksumTableOption:         true,
+		recordErrorsOption:          true,
+		detachedOption:              false,
+		disableTiKVImportModeOption: false,
+		maxEngineSizeOption:         true,
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488))
 	}
 
 	// options only allowed when import mode is physical
@@ -135,6 +174,55 @@ type Plan struct {
 	TableName *ast.TableName
 	TableInfo *model.TableInfo
 
+<<<<<<< HEAD
+=======
+	Path   string
+	Format string
+	// Data interpretation is restrictive if the SQL mode is restrictive and neither
+	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
+	// operation.
+	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
+	Restrictive bool
+
+	SQLMode          mysql.SQLMode
+	Charset          *string
+	ImportantSysVars map[string]string
+
+	// used for LOAD DATA and CSV format of IMPORT INTO
+	FieldNullDef []string
+	// this is not used in IMPORT INTO
+	NullValueOptEnclosed bool
+	// LinesStartingBy is not used in IMPORT INTO
+	// FieldsOptEnclosed is not used in either IMPORT INTO or LOAD DATA
+	plannercore.LineFieldsInfo
+	IgnoreLines uint64
+
+	DiskQuota             config.ByteSize
+	Checksum              config.PostOpLevel
+	ThreadCnt             int64
+	MaxWriteSpeed         config.ByteSize
+	SplitFile             bool
+	MaxRecordedErrors     int64
+	Detached              bool
+	DisableTiKVImportMode bool
+	MaxEngineSize         config.ByteSize
+
+	// used for checksum in physical mode
+	DistSQLScanConcurrency int
+
+	// todo: remove it when load data code is reverted.
+	InImportInto bool
+	// only initialized for IMPORT INTO, used when creating job.
+	Parameters *ImportParameters `json:"-"`
+	// the user who executes the statement, in the form of user@host
+	// only initialized for IMPORT INTO
+	User string `json:"-"`
+}
+
+// ASTArgs is the arguments for ast.LoadDataStmt.
+// TODO: remove this struct and use the struct which can be serialized.
+type ASTArgs struct {
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488))
 	FileLocRef         ast.FileLocRefTp
 	Path               string
 	Format             string
@@ -442,6 +530,14 @@ func (p *Plan) initDefaultOptions() {
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
 	p.Detached = false
+<<<<<<< HEAD
+=======
+	p.DisableTiKVImportMode = false
+	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
+
+	v := "utf8mb4"
+	p.Charset = &v
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488))
 }
 
 func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
@@ -568,6 +664,21 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 	if _, ok := specifiedOptions[detachedOption]; ok {
 		p.Detached = true
 	}
+<<<<<<< HEAD
+=======
+	if _, ok := specifiedOptions[disableTiKVImportModeOption]; ok {
+		p.DisableTiKVImportMode = true
+	}
+	if opt, ok := specifiedOptions[maxEngineSizeOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if err = p.MaxEngineSize.UnmarshalText([]byte(v)); err != nil || p.MaxEngineSize < 0 {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488))
 
 	p.adjustOptions()
 	return nil

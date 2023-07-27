@@ -51,6 +51,12 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, false, plan.SplitFile)
 	require.Equal(t, int64(100), plan.MaxRecordedErrors)
 	require.Equal(t, false, plan.Detached)
+<<<<<<< HEAD
+=======
+	require.Equal(t, "utf8mb4", *plan.Charset)
+	require.Equal(t, false, plan.DisableTiKVImportMode)
+	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488))
 
 	plan = &Plan{Format: LoadDataFormatParquet}
 	plan.initDefaultOptions()
@@ -160,7 +166,14 @@ func TestInitOptions(t *testing.T) {
 		maxWriteSpeedOption+"='200mib', "+
 		splitFileOption+"=true, "+
 		recordErrorsOption+"=123, "+
+<<<<<<< HEAD
 		detachedOption)
+=======
+		detachedOption+", "+
+		disableTiKVImportModeOption+", "+
+		maxEngineSizeOption+"='100gib'",
+	)
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488))
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
 	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.LoadDataStmt).Options))
@@ -176,6 +189,11 @@ func TestInitOptions(t *testing.T) {
 	require.True(t, plan.SplitFile, sql)
 	require.Equal(t, int64(123), plan.MaxRecordedErrors, sql)
 	require.True(t, plan.Detached, sql)
+<<<<<<< HEAD
+=======
+	require.True(t, plan.DisableTiKVImportMode, sql)
+	require.Equal(t, config.ByteSize(100<<30), plan.MaxEngineSize, sql)
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488))
 }
 
 func TestAdjustOptions(t *testing.T) {

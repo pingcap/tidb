@@ -75,7 +75,11 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 6,
+=======
+    shard_count = 12,
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/config",
