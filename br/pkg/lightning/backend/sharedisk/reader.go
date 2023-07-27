@@ -155,6 +155,7 @@ func newByteReader(ctx context.Context, store storage.ExternalStorage, name stri
 		ctx:           ctx,
 		name:          name,
 		storageReader: storageReader,
+		fileStart:     initFileOffset,
 		buf:           make([]byte, bufSize),
 		bufOffset:     bufSize,
 	}
