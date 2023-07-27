@@ -22,13 +22,14 @@ run_sql 'CREATE DATABASE lightning_auto_bigint1;'
 run_sql 'CREATE DATABASE lightning_auto_bigint;'
 run_sql 'CREATE TABLE lightning_auto_bigint1.t_bigint (id bigint unsigned NOT NULL PRIMARY KEY AUTO_INCREMENT, c varchar(255) NOT NULL);'
 run_sql 'CREATE TABLE lightning_auto_bigint.u (id bigint unsigned NOT NULL PRIMARY KEY AUTO_INCREMENT, c varchar(255) NOT NULL);'
+run_sql "INSERT INTO lightning_auto_bigint1.t_bigint (id, c) VALUES (10942694589135710584, 'test0');"
 
 run_lightning
 
 run_sql "SELECT CONCAT_WS(':', id, c) AS row_data FROM lightning_auto_bigint.u;"
 check_contains "row_data: 1:normal_pk_01"
 check_contains "row_data: 2:null_pk_02"
-check_contains "row_data: 10942694589135710585:test0"
-check_contains "row_data: 10942694589135710586:test1"
+check_contains "row_data: 10942694589135710585:test1"
+check_contains "row_data: 10942694589135710586:test2"
 run_sql "SELECT COUNT(*) AS row_count FROM lightning_auto_bigint.u;"
 check_contains "row_count: 4"
