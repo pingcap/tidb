@@ -167,10 +167,15 @@ func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error
 
 func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask, step int64, minimalTaskCh chan func()) {
 	minimalTasks, err := scheduler.SplitSubtask(ctx, subtask.Meta)
+	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
+		if val.(bool) {
+			err = context.Canceled
+		}
+	})
 	if err != nil {
 		s.onError(err)
 		if errors.Cause(err) == context.Canceled {
-			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, nil)
+			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, s.getError())
 		} else {
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError())
 		}
@@ -207,9 +212,14 @@ func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler
 			s.onError(err)
 		}
 	}
+	failpoint.Inject("MockSubtaskFinishedCancel", func(val failpoint.Value) {
+		if val.(bool) {
+			s.onError(context.Canceled)
+		}
+	})
 	if err := s.getError(); err != nil {
 		if errors.Cause(err) == context.Canceled {
-			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, nil)
+			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, s.getError())
 		} else {
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError())
 		}
