@@ -102,3 +102,15 @@ run_sql 'DROP DATABASE IF EXISTS mytest'
 cp "${mydir}/tidb-limit-record.toml" "${TEST_DIR}/tidb-limit-record.toml"
 sed -i.bak "s/threshold = 5/threshold = 4/g" "${TEST_DIR}/tidb-limit-record.toml"
 run_lightning --backend tidb --config "${TEST_DIR}/tidb-limit-record.toml" 2>&1 | grep -q "The number of conflict errors exceeds the threshold"
+
+# Check when strategy is "error", the stderr, log and duplicate record table all contains the error message
+run_sql 'DROP DATABASE IF EXISTS lightning_task_info'
+run_sql 'DROP DATABASE IF EXISTS mytest'
+rm "${TEST_DIR}/lightning.log"
+run_lightning --backend tidb --config "${mydir}/tidb-error.toml" 2>&1 | grep -q "Error 1062 (23000): Duplicate entry '1' for key 'testtbl.PRIMARY'"
+check_contains "Error 1062 (23000): Duplicate entry '1' for key 'testtbl.PRIMARY'" "${TEST_DIR}/lightning.log"
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.duplicate_records'
+check_contains "COUNT(*): 1"
+run_sql 'SELECT * FROM lightning_task_info.duplicate_records'
+check_contains "error: Error 1062 (23000): Duplicate entry '1' for key 'testtbl.PRIMARY'"
+check_contains "row_data: ('1','bbb01')"

@@ -744,6 +744,9 @@ type SessionVars struct {
 	// PlanColumnID is the unique id for column when building plan.
 	PlanColumnID atomic.Int64
 
+	// MapScalarSubQ maps the scalar sub queries from its ID to its struct.
+	MapScalarSubQ []interface{}
+
 	// MapHashCode2UniqueID4ExtendedCol map the expr's hash code to specified unique ID.
 	MapHashCode2UniqueID4ExtendedCol map[string]int
 
@@ -821,6 +824,8 @@ type SessionVars struct {
 
 	// Enable3StageMultiDistinctAgg indicates whether to allow 3 stage multi distinct aggregate
 	Enable3StageMultiDistinctAgg bool
+
+	ExplainNonEvaledSubQuery bool
 
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
@@ -1520,6 +1525,11 @@ type SessionVars struct {
 
 	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
 	AnalyzeSkipColumnTypes map[string]struct{}
+
+	// SkipMissingPartitionStats controls how to handle missing partition stats when merging partition stats to global stats.
+	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
+	// When set to false, give up merging partition stats to global stats.
+	SkipMissingPartitionStats bool
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -2147,6 +2157,11 @@ func (s *SessionVars) CleanBuffers() {
 // AllocPlanColumnID allocates column id for plan.
 func (s *SessionVars) AllocPlanColumnID() int64 {
 	return s.PlanColumnID.Add(1)
+}
+
+// RegisterScalarSubQ register a scalar sub query into the map. This will be used for EXPLAIN.
+func (s *SessionVars) RegisterScalarSubQ(scalarSubQ interface{}) {
+	s.MapScalarSubQ = append(s.MapScalarSubQ, scalarSubQ)
 }
 
 // GetCharsetInfo gets charset and collation for current context.

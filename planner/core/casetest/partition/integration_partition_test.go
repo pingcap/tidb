@@ -219,3 +219,40 @@ func TestEstimationForTopNPushToDynamicPartition(t *testing.T) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func TestPartitionTableExplain(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int primary key, b int, key (b)) partition by hash(a) (partition P0, partition p1, partition P2)`)
+	tk.MustExec(`create table t2 (a int, b int)`)
+	tk.MustExec(`insert into t values (1,1),(2,2),(3,3)`)
+	tk.MustExec(`insert into t2 values (1,1),(2,2),(3,3)`)
+	tk.MustExec(`analyze table t, t2`)
+
+	var input []string
+	var output []struct {
+		SQL         string
+		DynamicPlan []string
+		StaticPlan  []string
+	}
+	integrationPartitionSuiteData := getIntegrationPartitionSuiteData()
+	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+			output[i].DynamicPlan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+			output[i].StaticPlan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+
+		tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].DynamicPlan...))
+		tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].StaticPlan...))
+	}
+}

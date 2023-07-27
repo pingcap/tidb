@@ -498,17 +498,22 @@
       "plugin/conn_ip_example/": "plugin/conn_ip_example/"
     },
     "only_files": {
+      "planer/core/casetest/binaryplan": "planer/core/casetest/binaryplan",
+      "planer/core/casetest/cbotest": "planer/core/casetest/cbotest",
+      "planer/core/casetest/enforcempp": "planer/core/casetest/enforcempp",
+      "planer/core/casetest/flatplan": "planer/core/casetest/flatplan",
+      "planer/core/casetest/hint": "planer/core/casetest/hint",
+      "planer/core/casetest/mpp": "planer/core/casetest/mpp",
+      "planer/core/casetest/partition": "planer/core/casetest/partition",
+      "planer/core/casetest/pushdown": "planer/core/casetest/pushdown",
+      "planer/core/casetest/rule": "planer/core/casetest/rule",
+      "planer/core/casetest/scalarsubquery": "planer/core/casetest/scalarsubquery",
+      "planer/core/casetest/testdata": "planer/core/casetest/testdata",
+      "planer/core/casetest/windows": "planer/core/casetest/windows",
       "autoid_service/": "autoid_service",
       "bindinfo/": "bindinfo",
       "br/pkg/lightning/": "br/pkg/lightning/",
-      "executor/aggregate.go": "executor/aggregate.go",
-      "executor/a": "executor/a",
-      "executor/change.go": "executor/change.go",
-      "executor/concurrent_map.go": "executor/concurrent_map.go",
-      "executor/internal/": "executor/internal/",
-      "executor/aggfuncs/": "executor/aggfuncs/",
-      "executor/asyncloaddata/": "executor/asyncloaddata/",
-      "executor/importer/": "executor/importer/",
+      "executor/": "executor/",
       "types/json_binary_functions.go": "types/json_binary_functions.go",
       "types/json_binary_test.go": "types/json_binary_test.go",
       "ddl/": "ddl",
@@ -610,7 +615,8 @@
       "br/pkg/utils": "br/pkg/utils code",
       "planner/cascades": "planner/cascades code",
       "store/": "store code",
-      "ttl/": "ttl code"
+      "ttl/": "ttl code",
+      "bindinfo/": "bindinfo code"
     }
   },
   "unconvert": {

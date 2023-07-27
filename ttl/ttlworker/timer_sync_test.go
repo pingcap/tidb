@@ -92,6 +92,37 @@ func TestTTLManualTriggerOneTimer(t *testing.T) {
 		}
 	}
 
+	createJobHistory := func(jobID string) {
+		tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb_ttl_job_history (
+				job_id,
+				table_id,
+				parent_table_id,
+				table_schema,
+				table_name,
+				partition_name,
+				create_time,
+				finish_time,
+				ttl_expire,
+				expired_rows,
+				deleted_rows,
+				error_delete_rows,
+                status
+			)
+		VALUES
+			(
+			 	'%s', %d, %d, 'test', '%s', '',
+			 	from_unixtime(%d),
+			 	from_unixtime(%d),
+			 	from_unixtime(%d),
+			 	100, 100, 0, 'running'
+		)`,
+			jobID, physical.TableInfo.ID, physical.ID, physical.TableInfo.Name.O,
+			time.Now().Unix(),
+			time.Now().Unix()+int64(time.Minute.Seconds()),
+			time.Now().Unix()-int64(time.Hour.Seconds()),
+		))
+	}
+
 	// start trigger -> not finished -> finished
 	check, manual := startTrigger(context.TODO(), "")
 	testCheckFunc(check, "", "")
@@ -102,6 +133,8 @@ func TestTTLManualTriggerOneTimer(t *testing.T) {
 	require.NoError(t, timerStore.Update(context.TODO(), timer.ID, &timerapi.TimerUpdate{
 		ManualRequest: timerapi.NewOptionalVal(manual),
 	}))
+	testCheckFunc(check, "", "")
+	createJobHistory("event123")
 	testCheckFunc(check, "event123", "")
 
 	// start trigger -> trigger done but no event id
@@ -191,8 +224,16 @@ func TestTTLTimerSync(t *testing.T) {
 	cli := timerapi.NewDefaultTimerClient(timerStore)
 	sync := ttlworker.NewTTLTimerSyncer(do.SysSessionPool(), cli)
 
+	lastSyncTime, lastSyncVer := sync.GetLastSyncInfo()
+	require.True(t, lastSyncTime.IsZero())
+	require.Zero(t, lastSyncVer)
+
 	// first sync
+	now := time.Now()
 	sync.SyncTimers(context.TODO(), do.InfoSchema())
+	lastSyncTime, lastSyncVer = sync.GetLastSyncInfo()
+	require.Equal(t, do.InfoSchema().SchemaMetaVersion(), lastSyncVer)
+	require.GreaterOrEqual(t, lastSyncTime.Unix(), now.Unix())
 	checkTimerCnt(t, cli, 6)
 	timer1 := checkTimerWithTableMeta(t, do, cli, "test", "t1", "", zeroTime)
 	timer2 := checkTimerWithTableMeta(t, do, cli, "test", "t2", "", wm1)
@@ -209,7 +250,11 @@ func TestTTLTimerSync(t *testing.T) {
 		"partition p0 values less than (10)," +
 		"partition p1 values less than (100)" +
 		")")
+	now = time.Now()
 	sync.SyncTimers(context.TODO(), do.InfoSchema())
+	lastSyncTime, lastSyncVer = sync.GetLastSyncInfo()
+	require.Equal(t, do.InfoSchema().SchemaMetaVersion(), lastSyncVer)
+	require.GreaterOrEqual(t, lastSyncTime.Unix(), now.Unix())
 	checkTimerCnt(t, cli, 10)
 	timer4 := checkTimerWithTableMeta(t, do, cli, "test", "t4", "", zeroTime)
 	checkTimerWithTableMeta(t, do, cli, "test", "tp1", "p3", zeroTime)
@@ -282,6 +327,21 @@ func TestTTLTimerSync(t *testing.T) {
 	sync.SetDelayDeleteInterval(time.Millisecond)
 	time.Sleep(time.Second)
 	sync.SyncTimers(context.TODO(), do.InfoSchema())
+	checkTimerCnt(t, cli, 7)
+	checkTimersNotChange(t, cli, timer2, timer3, timer4, timer5, timerP10, timerP11, timerP12)
+
+	// reset timers
+	sync.Reset()
+	lastSyncTime, lastSyncVer = sync.GetLastSyncInfo()
+	require.True(t, lastSyncTime.IsZero())
+	require.Zero(t, lastSyncVer)
+
+	// sync after reset
+	now = time.Now()
+	sync.SyncTimers(context.TODO(), do.InfoSchema())
+	lastSyncTime, lastSyncVer = sync.GetLastSyncInfo()
+	require.Equal(t, do.InfoSchema().SchemaMetaVersion(), lastSyncVer)
+	require.GreaterOrEqual(t, lastSyncTime.Unix(), now.Unix())
 	checkTimerCnt(t, cli, 7)
 	checkTimersNotChange(t, cli, timer2, timer3, timer4, timer5, timerP10, timerP11, timerP12)
 }
