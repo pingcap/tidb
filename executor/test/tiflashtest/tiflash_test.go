@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/stretchr/testify/require"
@@ -204,9 +203,6 @@ func TestJoinRace(t *testing.T) {
 }
 
 func TestMppExecution(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("skip race test because of long running")
-	}
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
