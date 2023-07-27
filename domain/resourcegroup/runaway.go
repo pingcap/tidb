@@ -159,14 +159,18 @@ func (r *QuarantineRecord) GenDeletionStmt() (string, []interface{}) {
 
 // RunawayManager is used to detect and record runaway queries.
 type RunawayManager struct {
-	queryLock             sync.Mutex
-	resourceGroupCtl      *rmclient.ResourceGroupsController
-	watchList             *ttlcache.Cache[string, *QuarantineRecord]
+	queryLock        sync.Mutex
+	resourceGroupCtl *rmclient.ResourceGroupsController
+	watchList        *ttlcache.Cache[string, *QuarantineRecord]
+	// activeGroup is used to manage the active runaway watches of resource group
+	activeGroup           map[string]int64
+	activeLock            sync.RWMutex
 	serverID              string
 	runawayQueriesChan    chan *RunawayRecord
 	quarantineChan        chan *QuarantineRecord
 	staleQuarantineRecord chan *QuarantineRecord
 	evictionCancel        func()
+	insertionCancel       func()
 }
 
 // NewRunawayManager creates a new RunawayManager.
@@ -178,21 +182,30 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serv
 	)
 	go watchList.Start()
 	staleQuarantineChan := make(chan *QuarantineRecord, maxWatchRecordChannelSize)
-	evictionCancel := watchList.OnEviction(func(ctx context.Context, er ttlcache.EvictionReason, i *ttlcache.Item[string, *QuarantineRecord]) {
-		if i.Value().ID == 0 {
-			return
-		}
-		staleQuarantineChan <- i.Value()
-	})
-	return &RunawayManager{
+	m := &RunawayManager{
 		resourceGroupCtl:      resourceGroupCtl,
 		watchList:             watchList,
 		serverID:              serverAddr,
 		runawayQueriesChan:    make(chan *RunawayRecord, maxWatchRecordChannelSize),
 		quarantineChan:        make(chan *QuarantineRecord, maxWatchRecordChannelSize),
 		staleQuarantineRecord: staleQuarantineChan,
-		evictionCancel:        evictionCancel,
+		activeGroup:           make(map[string]int64),
 	}
+	m.insertionCancel = watchList.OnInsertion(func(ctx context.Context, i *ttlcache.Item[string, *QuarantineRecord]) {
+		m.activeLock.Lock()
+		m.activeGroup[i.Value().ResourceGroupName]++
+		m.activeLock.Unlock()
+	})
+	m.evictionCancel = watchList.OnEviction(func(ctx context.Context, er ttlcache.EvictionReason, i *ttlcache.Item[string, *QuarantineRecord]) {
+		m.activeLock.Lock()
+		m.activeGroup[i.Value().ResourceGroupName]--
+		m.activeLock.Unlock()
+		if i.Value().ID == 0 {
+			return
+		}
+		staleQuarantineChan <- i.Value()
+	})
+	return m
 }
 
 // DeriveChecker derives a RunawayChecker from the given resource group
@@ -202,7 +215,9 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDiges
 		logutil.BgLogger().Warn("cannot setup up runaway checker", zap.Error(err))
 		return nil
 	}
-	if group.RunawaySettings == nil {
+	rm.activeLock.RLock()
+	defer rm.activeLock.RUnlock()
+	if group.RunawaySettings == nil && rm.activeGroup[resourceGroupName] == 0 {
 		return nil
 	}
 	return newRunawayChecker(rm, resourceGroupName, group.RunawaySettings, originalSQL, sqlDigest, planDigest)
