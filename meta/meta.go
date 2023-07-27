@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -84,7 +85,7 @@ var (
 	// the default meta of the `default` group
 	defaultRGroupMeta = &model.ResourceGroupInfo{
 		ResourceGroupSettings: &model.ResourceGroupSettings{
-			RURate:     1000000,
+			RURate:     math.MaxInt32,
 			BurstLimit: -1,
 			Priority:   model.MediumPriorityValue,
 		},

@@ -19827,7 +19827,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "The hit/miss count of kv request that read from closest tikv. null means the request don't not support follower read",
+          "description": "The hit/miss count of kv requests that read from closest tikv. null means the request don't not support follower read",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -19982,7 +19982,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Coprocssor Response Size Per Instance and TiKV",
+          "title": "Coprocessor Response Size Per Instance and TiKV",
           "tooltip": {
             "shared": true,
             "sort": 0,
