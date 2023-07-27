@@ -770,7 +770,7 @@ func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableN
 		//| testsysbench | t          | _tidb_rowid |                  1 | AUTO_INCREMENT |
 		//+--------------+------------+-------------+--------------------+----------------+
 
-		// if columns length is 4, it doesn't contains the last column `ID_TYPE`, and it will always be 'AUTO_INCREMENT'
+		// if columns length is 4, it doesn't contain the last column `ID_TYPE`, and it will always be 'AUTO_INCREMENT'
 		// for v4.0.0~v4.0.2 show table t next_row_id only returns 4 columns.
 		if len(columns) == 4 {
 			err = rows.Scan(&dbName, &tblName, &columnName, &nextID)
