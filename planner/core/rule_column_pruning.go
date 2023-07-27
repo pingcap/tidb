@@ -95,6 +95,7 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 	used := expression.GetUsedList(parentUsedCols, p.schema)
 	prunedColumns := make([]*expression.Column, 0)
 
+	// for implicit projected cols, once the ancestor doesn't use it, the implicit expr will be automatically pruned here.
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !exprHasSetVarOrSleep(p.Exprs[i]) {
 			prunedColumns = append(prunedColumns, p.schema.Columns[i])
