@@ -54,7 +54,7 @@ func (m *MapCache) Get(k int64, _ bool) (*statistics.Table, bool) {
 }
 
 // Put implements StatsCacheInner
-func (m *MapCache) Put(k int64, v *statistics.Table, _ bool) bool {
+func (m *MapCache) Put(k int64, v *statistics.Table) bool {
 	item, ok := m.tables[k]
 	if ok {
 		oldCost := item.cost
