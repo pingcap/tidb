@@ -75,7 +75,7 @@ func benchGet(b *testing.B, c *StatsCachePointer) {
 			c.UpdateStatsCache(c.Load(), []*statistics.Table{t1}, nil)
 		}(i)
 	}
-	w.Done()
+	w.Wait()
 	b.ResetTimer()
 	var wg sync.WaitGroup
 	for i := 0; i < b.N; i++ {
