@@ -17,6 +17,8 @@ package cache
 import (
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 )
 
@@ -45,4 +47,13 @@ func (s *StatsCachePointer) Load() *StatsCache {
 func (s *StatsCachePointer) Replace(newCache *StatsCache) {
 	s.Store(newCache)
 	metrics.CostGauge.Set(float64(newCache.Cost()))
+}
+
+// UpdateStatsCache updates the cache with the new cache.
+func (s *StatsCachePointer) UpdateStatsCache(newCache *StatsCache, tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) {
+	if enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota; enableQuota {
+		s.Load().Update(tables, deletedIDs, opts...)
+	} else {
+		s.Replace(newCache.CopyAndUpdate(tables, deletedIDs, opts...))
+	}
 }

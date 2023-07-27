@@ -34,7 +34,7 @@ func TestLFUPutGetDel(t *testing.T) {
 	require.NoError(t, err)
 	mockTable := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 	mockTableID := int64(1)
-	lfu.Put(mockTableID, mockTable, false)
+	lfu.Put(mockTableID, mockTable)
 	lfu.wait()
 	lfu.Del(mockTableID)
 	v, ok := lfu.Get(mockTableID, false)
@@ -51,23 +51,23 @@ func TestLFUFreshMemUsage(t *testing.T) {
 	t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 	t2 := testutil.NewMockStatisticsTable(2, 2, true, false, false)
 	t3 := testutil.NewMockStatisticsTable(3, 3, true, false, false)
-	lfu.Put(int64(1), t1, false)
-	lfu.Put(int64(2), t2, false)
-	lfu.Put(int64(3), t3, false)
+	lfu.Put(int64(1), t1)
+	lfu.Put(int64(2), t2)
+	lfu.Put(int64(3), t3)
 	require.Equal(t, lfu.Cost(), 6*mockCMSMemoryUsage+6*mockCMSMemoryUsage)
 	t4 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
-	lfu.Put(int64(1), t4, false)
+	lfu.Put(int64(1), t4)
 	require.Equal(t, lfu.Cost(), 6*mockCMSMemoryUsage+7*mockCMSMemoryUsage)
 	t5 := testutil.NewMockStatisticsTable(2, 2, true, false, false)
-	lfu.Put(int64(1), t5, false)
+	lfu.Put(int64(1), t5)
 	require.Equal(t, lfu.Cost(), 7*mockCMSMemoryUsage+7*mockCMSMemoryUsage)
 
 	t6 := testutil.NewMockStatisticsTable(1, 2, true, false, false)
-	lfu.Put(int64(1), t6, false)
+	lfu.Put(int64(1), t6)
 	require.Equal(t, lfu.Cost(), 7*mockCMSMemoryUsage+6*mockCMSMemoryUsage)
 
 	t7 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
-	lfu.Put(int64(1), t7, false)
+	lfu.Put(int64(1), t7)
 	require.Equal(t, lfu.Cost(), 6*mockCMSMemoryUsage+6*mockCMSMemoryUsage)
 	lfu.wait()
 	require.Equal(t, uint64(lfu.Cost()), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
@@ -78,7 +78,7 @@ func TestLFUPutTooBig(t *testing.T) {
 	require.NoError(t, err)
 	mockTable := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 	// put mockTable, the index should be evicted
-	lfu.Put(int64(1), mockTable, false)
+	lfu.Put(int64(1), mockTable)
 	_, ok := lfu.Get(int64(1), false)
 	require.False(t, ok)
 	lfu.wait()
@@ -91,17 +91,17 @@ func TestCacheLen(t *testing.T) {
 	require.NoError(t, err)
 	t1 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
 	require.Equal(t, int64(12), t1.MemoryUsage().TotalTrackingMemUsage())
-	lfu.Put(int64(1), t1, false)
+	lfu.Put(int64(1), t1)
 	t2 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 	// put t2, t1 should be evicted 2 items and still exists in the list
-	lfu.Put(int64(2), t2, false)
+	lfu.Put(int64(2), t2)
 	lfu.wait()
 	require.Equal(t, lfu.Len(), 1)
 	require.Equal(t, uint64(lfu.Cost()), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
 
 	// put t3, t1/t2 should be evicted all items and disappeared from the list
 	t3 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
-	lfu.Put(int64(3), t3, false)
+	lfu.Put(int64(3), t3)
 	lfu.wait()
 	require.Equal(t, lfu.Len(), 1)
 	require.Equal(t, uint64(lfu.Cost()), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
@@ -118,7 +118,7 @@ func TestLFUCachePutGetWithManyConcurrency(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
-			lfu.Put(int64(i), t1, true)
+			lfu.Put(int64(i), t1)
 		}(i)
 		go func(i int) {
 			defer wg.Done()
@@ -144,7 +144,7 @@ func TestLFUCachePutGetWithManyConcurrency2(t *testing.T) {
 			defer wg.Done()
 			for n := 0; n < 1000; n++ {
 				t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
-				lfu.Put(int64(n), t1, true)
+				lfu.Put(int64(n), t1)
 			}
 		}()
 	}

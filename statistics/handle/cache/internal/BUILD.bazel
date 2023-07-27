@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "cache",
@@ -14,18 +14,4 @@ go_library(
     importpath = "github.com/pingcap/tidb/statistics/handle/cache/internal",
     visibility = ["//statistics/handle/cache:__subpackages__"],
     deps = ["//statistics"],
-)
-
-go_test(
-    name = "internal_test",
-    timeout = "short",
-    srcs = ["bench_test.go"],
-    flaky = True,
-    deps = [
-        ":internal",
-        "//statistics/handle/cache/internal/lfu",
-        "//statistics/handle/cache/internal/mapcache",
-        "//statistics/handle/cache/internal/testutil",
-        "//util/benchdaily",
-    ],
 )
