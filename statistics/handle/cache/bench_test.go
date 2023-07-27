@@ -49,6 +49,7 @@ func benchPutGet(b *testing.B, c *StatsCachePointer) {
 		go func(i int) {
 			defer wg.Done()
 			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
+			t1.PhysicalID = rand.Int63()
 			c.UpdateStatsCache(c.Load(), []*statistics.Table{t1}, nil)
 		}(i)
 	}
