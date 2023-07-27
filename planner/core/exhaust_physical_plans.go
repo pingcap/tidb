@@ -1978,7 +1978,7 @@ func (p *LogicalJoin) preferAny(joinFlags ...uint) bool {
 	return false
 }
 
-func (*LogicalJoin) getIndexJoinSideAndMethod(join PhysicalPlan) (innerSide, joinMethod int) {
+func (*LogicalJoin) getIndexJoinSideAndMethod(join PhysicalPlan) (innerSide, joinMethod int, ok bool) {
 	const left, right = 0, 1
 	const indexJoin, indexHashJoin, indexMergeJoin = 0, 1, 2
 	var innerIdx int
@@ -1992,7 +1992,10 @@ func (*LogicalJoin) getIndexJoinSideAndMethod(join PhysicalPlan) (innerSide, joi
 	case *PhysicalIndexMergeJoin:
 		innerIdx = ij.getInnerChildIdx()
 		joinMethod = indexMergeJoin
+	default:
+		return 0, 0, false
 	}
+	ok = true
 	innerSide = left
 	if innerIdx == 1 {
 		innerSide = right
@@ -2041,7 +2044,10 @@ func (p *LogicalJoin) handleForceIndexJoinHints(prop *property.PhysicalProperty,
 	const indexJoin, indexHashJoin, indexMergeJoin = 0, 1, 2
 	forced := make([]PhysicalPlan, 0, len(candidates))
 	for _, candidate := range candidates {
-		innerSide, joinMethod := p.getIndexJoinSideAndMethod(candidate)
+		innerSide, joinMethod, ok := p.getIndexJoinSideAndMethod(candidate)
+		if !ok {
+			continue
+		}
 		if (p.preferAny(preferLeftAsINLJInner) && innerSide == left && joinMethod == indexJoin) ||
 			(p.preferAny(preferRightAsINLJInner) && innerSide == right && joinMethod == indexJoin) ||
 			(p.preferAny(preferLeftAsINLHJInner) && innerSide == left && joinMethod == indexHashJoin) ||
