@@ -1200,7 +1200,6 @@ func TestSetLabels(t *testing.T) {
 }
 
 func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
-	t.Skip("unstable")
 	ts := createBasicHTTPHandlerTestSuite()
 
 	ts.startServer(t)
