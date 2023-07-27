@@ -861,11 +861,6 @@ func (e *IndexMergeReaderExecutor) getResultTask(ctx context.Context) (*indexMer
 
 func handleWorkerPanic(ctx context.Context, finished <-chan struct{}, ch chan<- *indexMergeTableTask, extraNotifyCh chan bool, worker string) func(r interface{}) {
 	return func(r interface{}) {
-		failpoint.Inject("testChangeProcessWorkerType", func() {
-			// In order to reproduce the issue 45279 in the UT, we need to make worker != processWorkerType
-			// or the getResultTask function will exit in advance as the resultCh has been closed
-			worker = ""
-		})
 		if worker == processWorkerType {
 			// There is only one processWorker, so it's safe to close here.
 			// No need to worry about "close on closed channel" error.
@@ -1107,13 +1102,16 @@ func (w *indexMergeProcessWorker) fetchLoopUnionWithOrderByAndPushedLimit(ctx co
 			return
 		case <-finished:
 			return
-		case workCh <- task:
+		case resultCh <- task:
+			failpoint.Inject("testCancelContext", func() {
+				IndexMergeCancelFuncForTest()
+			})
 			select {
 			case <-ctx.Done():
 				return
 			case <-finished:
 				return
-			case resultCh <- task:
+			case workCh <- task:
 				continue
 			}
 		}
@@ -1205,16 +1203,16 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 			return
 		case <-finished:
 			return
-		case workCh <- task:
+		case resultCh <- task:
+			failpoint.Inject("testCancelContext", func() {
+				IndexMergeCancelFuncForTest()
+			})
 			select {
 			case <-ctx.Done():
 				return
 			case <-finished:
 				return
-			case resultCh <- task:
-				failpoint.Inject("testCancelContext", func() {
-					IndexMergeCancelFuncForTest()
-				})
+			case workCh <- task:
 			}
 		}
 	}
