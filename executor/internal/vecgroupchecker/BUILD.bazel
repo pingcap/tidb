@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "vecgroupchecker",
-    srcs = ["vecgroupchecker.go"],
+    srcs = ["vec_group_checker.go"],
     importpath = "github.com/pingcap/tidb/executor/internal/vecgroupchecker",
     visibility = ["//executor:__subpackages__"],
     deps = [
@@ -17,7 +17,7 @@ go_library(
 go_test(
     name = "vecgroupchecker_test",
     timeout = "short",
-    srcs = ["vecgroupchecker_test.go"],
+    srcs = ["vec_group_checker_test.go"],
     embed = [":vecgroupchecker"],
     flaky = True,
     shard_count = 3,
