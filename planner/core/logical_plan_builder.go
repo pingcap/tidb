@@ -213,10 +213,10 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 	// project: child's output and distinct GbyExprs in advance. (make every group-by item to be a column)
 	projSchema := p.Schema().Clone()
 	names := p.OutputNames()
-	var distinctGbyColNames types.NameSlice
 	for _, col := range projSchema.Columns {
 		proj.Exprs = append(proj.Exprs, col)
 	}
+	distinctGbyColNames := make(types.NameSlice, 0, len(distinctGbyExprs))
 	distinctGbyCols := make([]*expression.Column, 0, len(distinctGbyExprs))
 	for _, expr := range distinctGbyExprs {
 		// distinct group expr has been resolved in resolveGby.
@@ -4226,6 +4226,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		// table hints are only visible in the current SELECT statement.
 		b.popTableHints()
 	}()
+	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain format = 'brief' select count(a) from t group by a, b") {
+		fmt.Print(1)
+	}
 	if b.buildingRecursivePartForCTE {
 		if sel.Distinct || sel.OrderBy != nil || sel.Limit != nil {
 			return nil, ErrNotSupportedYet.GenWithStackByArgs("ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression")
