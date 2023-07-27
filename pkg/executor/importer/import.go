@@ -96,7 +96,10 @@ const (
 	recordErrorsOption          = "record_errors"
 	detachedOption              = "detached"
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
+<<<<<<< HEAD:pkg/executor/importer/import.go
 	cloudStorageURIOption       = "cloud_storage_uri"
+=======
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488)):executor/importer/import.go
 	// used for test
 	maxEngineSizeOption = "__max_engine_size"
 )
@@ -120,7 +123,10 @@ var (
 		detachedOption:              false,
 		disableTiKVImportModeOption: false,
 		maxEngineSizeOption:         true,
+<<<<<<< HEAD:pkg/executor/importer/import.go
 		cloudStorageURIOption:       true,
+=======
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488)):executor/importer/import.go
 	}
 
 	csvOnlyOptions = map[string]struct{}{
@@ -208,7 +214,10 @@ type Plan struct {
 	Detached              bool
 	DisableTiKVImportMode bool
 	MaxEngineSize         config.ByteSize
+<<<<<<< HEAD:pkg/executor/importer/import.go
 	CloudStorageURI       string
+=======
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488)):executor/importer/import.go
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
@@ -516,7 +525,10 @@ func (p *Plan) initDefaultOptions() {
 	p.Detached = false
 	p.DisableTiKVImportMode = false
 	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
+<<<<<<< HEAD:pkg/executor/importer/import.go
 	p.CloudStorageURI = variable.CloudStorageURI.Load()
+=======
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488)):executor/importer/import.go
 
 	v := "utf8mb4"
 	p.Charset = &v
@@ -673,6 +685,7 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 	if _, ok := specifiedOptions[disableTiKVImportModeOption]; ok {
 		p.DisableTiKVImportMode = true
 	}
+<<<<<<< HEAD:pkg/executor/importer/import.go
 	if opt, ok := specifiedOptions[cloudStorageURIOption]; ok {
 		v, err := optAsString(opt)
 		if err != nil {
@@ -692,6 +705,8 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		}
 		p.CloudStorageURI = v
 	}
+=======
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488)):executor/importer/import.go
 	if opt, ok := specifiedOptions[maxEngineSizeOption]; ok {
 		v, err := optAsString(opt)
 		if err != nil {
@@ -701,6 +716,7 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
+<<<<<<< HEAD:pkg/executor/importer/import.go
 
 	// when split-file is set, data file will be split into chunks of 256 MiB.
 	// skip_rows should be 0 or 1, we add this restriction to simplify skip_rows
@@ -710,6 +726,8 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 	if p.SplitFile && p.IgnoreLines > 1 {
 		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("skip_rows, should be <= 1 when split-file is enabled")
 	}
+=======
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488)):executor/importer/import.go
 
 	p.adjustOptions()
 	return nil

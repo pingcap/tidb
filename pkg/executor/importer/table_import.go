@@ -346,6 +346,31 @@ func (e *LoadDataController) SetExecuteNodeCnt(cnt int) {
 	e.ExecuteNodesCnt = cnt
 }
 
+func (e *LoadDataController) getAdjustedMaxEngineSize() int64 {
+	// we want to split data files into subtask of size close to MaxEngineSize to reduce range overlap,
+	// and evenly distribute them to subtasks.
+	// so we adjust MaxEngineSize to make sure each subtask has a similar amount of data to import.
+	// we calculate subtask count first by round(TotalFileSize / maxEngineSize), then adjust maxEngineSize
+	//
+	// AllocateEngineIDs is using ceil() to calculate subtask count, engine size might be too small in some case,
+	// such as 501G data, maxEngineSize will be about 250G, so we don't relay on it.
+	// see https://github.com/pingcap/tidb/blob/b4183e1dc9bb01fb81d3aa79ca4b5b74387c6c2a/br/pkg/lightning/mydump/region.go#L109
+	//
+	// for default e.MaxEngineSize = 500GiB, we have:
+	// data size range(G)   cnt    adjusted-engine-size range(G)
+	// [0, 750)               1    [0, 750)
+	// [750, 1250)            2    [375, 625)
+	// [1250, 1750)           3    [416, 583)
+	// [1750, 2250)           4    [437, 562)
+	maxEngineSize := int64(e.MaxEngineSize)
+	if e.TotalFileSize <= maxEngineSize {
+		return e.TotalFileSize
+	}
+	subtaskCount := math.Round(float64(e.TotalFileSize) / float64(maxEngineSize))
+	adjusted := math.Ceil(float64(e.TotalFileSize) / subtaskCount)
+	return int64(adjusted)
+}
+
 // PopulateChunks populates chunks from table regions.
 // in dist framework, this should be done in the tidb node which is responsible for splitting job into subtasks
 // then table-importer handles data belongs to the subtask.
@@ -371,12 +396,15 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 		IOWorkers:      nil,
 		Store:          e.dataStore,
 		TableMeta:      tableMeta,
+<<<<<<< HEAD:pkg/executor/importer/table_import.go
 
 		StrictFormat:           e.SplitFile,
 		DataCharacterSet:       *e.Charset,
 		DataInvalidCharReplace: string(utf8.RuneError),
 		ReadBlockSize:          LoadDataReadBlockSize,
 		CSV:                    *e.GenerateCSVConfig(),
+=======
+>>>>>>> f3ea1c1e064 (import into: enlarge subtask size to reduce range overlap (#45488)):executor/importer/table_import.go
 	}
 	tableRegions, err2 := mydump.MakeTableRegions(ctx, dataDivideCfg)
 
