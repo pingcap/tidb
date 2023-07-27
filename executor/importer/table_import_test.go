@@ -15,10 +15,12 @@
 package importer
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	tidb "github.com/pingcap/tidb/config"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -76,4 +78,33 @@ func TestPrepareSortDir(t *testing.T) {
 	info, err = os.Stat(sortDir)
 	require.True(t, os.IsNotExist(err))
 	require.Nil(t, info)
+}
+
+func TestLoadDataControllerGetAdjustedMaxEngineSize(t *testing.T) {
+	tests := []struct {
+		totalSize     int64
+		maxEngineSize config.ByteSize
+		want          int64
+	}{
+		{1, 500, 1},
+		{499, 500, 499},
+		{500, 500, 500},
+		{749, 500, 749},
+		{750, 500, 375},
+		{1249, 500, 625},
+		{1250, 500, 417},
+		// ceil(100/3)
+		{100, 30, 34},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%d/%d", tt.totalSize, tt.maxEngineSize), func(t *testing.T) {
+			e := &LoadDataController{
+				TotalFileSize: tt.totalSize,
+				Plan:          &Plan{MaxEngineSize: tt.maxEngineSize},
+			}
+			if got := e.getAdjustedMaxEngineSize(); got != tt.want {
+				t.Errorf("getAdjustedMaxEngineSize() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
