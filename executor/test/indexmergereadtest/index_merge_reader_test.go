@@ -1184,7 +1184,7 @@ func TestIndexMergeReaderIssue45279(t *testing.T) {
 
 	// This function should return successfully
 	var ctx context.Context
-	ctx, executor.TestContextCancelFunc = context.WithCancel(context.Background())
+	ctx, executor.IndexMergeCancelFuncForTest = context.WithCancel(context.Background())
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testCancelContext", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testChangeProcessWorkerType", "return()"))
 	rs, _ := tk.ExecWithContext(ctx, "select /*+ use_index_merge(reproduce) */ * from reproduce where (c1 < 10 or c2 < 10) and c3 < 10;")

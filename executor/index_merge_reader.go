@@ -56,8 +56,8 @@ import (
 )
 
 var (
-	_                     exec.Executor = &IndexMergeReaderExecutor{}
-	TestContextCancelFunc func()
+	_                           exec.Executor = &IndexMergeReaderExecutor{}
+	IndexMergeCancelFuncForTest func()
 )
 
 const (
@@ -862,6 +862,8 @@ func (e *IndexMergeReaderExecutor) getResultTask(ctx context.Context) (*indexMer
 func handleWorkerPanic(ctx context.Context, finished <-chan struct{}, ch chan<- *indexMergeTableTask, extraNotifyCh chan bool, worker string) func(r interface{}) {
 	return func(r interface{}) {
 		failpoint.Inject("testChangeProcessWorkerType", func() {
+			// In order to reproduce the issue 45279 in the UT, we need to make worker != processWorkerType
+			// or the getResultTask function will exit in advance as the resultCh has been closed
 			worker = ""
 		})
 		if worker == processWorkerType {
@@ -1211,7 +1213,7 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 				return
 			case resultCh <- task:
 				failpoint.Inject("testCancelContext", func() {
-					TestContextCancelFunc()
+					IndexMergeCancelFuncForTest()
 				})
 			}
 		}
