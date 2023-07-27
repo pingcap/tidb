@@ -4613,21 +4613,42 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		if err != nil {
 			return nil, err
 		}
+		// 1. get datasource, and get the column names of the datasource
+		// 1.1 then we the sql which insert data into flink would be:
+		// insert into demo_flink.t (colnames) (select colnames from (select * from demo_flink.t_file))
+
+		// 2
 		// schema := plan.Schema()
-		outputNames := plan.OutputNames()
-		for _, name := range outputNames {
-			v.OutputNames = append(v.OutputNames, name.ColNameString())
+		if len(v.DemoHudiTSchemaCols) == 0 {
+			outputNames := plan.OutputNames()
+			for _, name := range outputNames {
+				v.DemoHudiTSchemaCols = append(v.DemoHudiTSchemaCols, name.ColNameString())
+			}
 		}
 		for _, col := range plan.Schema().Columns {
-			v.OutputFieldTypes = append(v.OutputFieldTypes, col.RetType)
+			v.DemoHudiTSchemaColsFiledTypes = append(v.DemoHudiTSchemaColsFiledTypes, col.RetType)
 		}
 
-		dsNames := make(map[string]string)
-		dsNames = getDataSourceNames(dsNames, plan.(LogicalPlan))
-		for name := range dsNames {
-			v.DataSourceNames = append(v.DataSourceNames, name)
-			v.PKNames = append(v.PKNames, dsNames[name])
+		ds := make([]*DataSource, 0)
+		ds = getDataSource(ds, plan.(LogicalPlan))
+		for _, name := range ds[0].OutputNames() {
+			v.DemoFlinkTSchemaCols = append(v.DemoFlinkTSchemaCols, name.ColNameString())
 		}
+		for _, col := range ds[0].Schema().Columns {
+			v.DemoFlinkTSchemaColsFiledTypes = append(v.DemoFlinkTSchemaColsFiledTypes, col.RetType)
+		}
+
+		for _, col := range ds[0].tableInfo.Columns {
+			v.DemoFlinkTIncSchemaCols = append(v.DemoFlinkTIncSchemaCols, col.Name.L)
+			v.DemoFlinkTIncSchemaColsFiledTypes = append(v.DemoFlinkTIncSchemaColsFiledTypes, &col.FieldType)
+		}
+		logutil.BgLogger().Warn("DemoFlinkTIncSchemaCols", zap.Any("DemoFlinkTIncSchemaCols", v.DemoFlinkTIncSchemaCols), zap.Any("DemoFlinkT", v.DemoFlinkTSchemaCols), zap.Any("DemoHudiT", v.DemoHudiTSchemaCols))
+		// dsNames := make(map[string]string)
+		// dsNames = getDataSourceNames(dsNames, plan.(LogicalPlan))
+		// for name := range dsNames {
+		// 	v.DataSourceNames = append(v.DataSourceNames, name)
+		// 	v.PKNamesForFlinkTable = append(v.PKNamesForFlinkTable, dsNames[name])
+		// }
 	case *ast.CreateTableStmt:
 		if v.TemporaryKeyword != ast.TemporaryNone {
 			for _, cons := range v.Constraints {
@@ -4860,6 +4881,22 @@ func getDataSourceNames(dsNames map[string]string, plan LogicalPlan) map[string]
 		}
 	}
 	return dsNames
+}
+
+func getDataSource(ds []*DataSource, plan LogicalPlan) []*DataSource {
+	children := plan.Children()
+	if len(children) == 0 {
+		ds = append(ds, plan.(*DataSource))
+		return ds
+	}
+	for _, child := range children {
+		if d, ok := child.(*DataSource); ok {
+			ds = append(ds, d)
+		} else {
+			ds = getDataSource(ds, child)
+		}
+	}
+	return ds
 }
 
 const (

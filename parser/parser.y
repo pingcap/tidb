@@ -4048,16 +4048,21 @@ DatabaseOptionList:
 	}
 
 CreateETLStmt:
-	"CREATE" "ETL" IfNotExists TableName "AS" CreateViewSelectOpt
+	"CREATE" "ETL" IfNotExists TableName ViewFieldList "AS" CreateViewSelectOpt
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
-		selStmt := $6.(ast.StmtNode)
+		selStmt := $7.(ast.StmtNode)
 		selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))	
-		$$ = &ast.CreateETLStmt{
+		
+		x := &ast.CreateETLStmt{
 			IfNotExists: $3.(bool),
 			Table:       $4.(*ast.TableName),
 			ETLSelect:   selStmt,
 		}
+		if $5 != nil {
+			x.HudiTCols = $5.([]model.CIStr)
+		}
+		$$ = x
 	}
 
 CreateExternalTableStmt:

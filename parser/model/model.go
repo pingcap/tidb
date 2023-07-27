@@ -517,18 +517,25 @@ type TableInfo struct {
 
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 
-	TTLInfo        *TTLInfo    `json:"ttl_info"`
-	IsExternalTbl  bool        `json:"is_external_tbl"`
-	Properties     []*Property `json:"properties"`
-	IsETL          bool
-	ETLQuery string
-	ETLStoragePath string
-	ETLOutputNames []string
-	ETLOutputFieldTypes  []*types.FieldType 
-	ETLPKColNames []string
+	TTLInfo                       *TTLInfo    `json:"ttl_info"`
+	IsExternalTbl                 bool        `json:"is_external_tbl"`
+	Properties                    []*Property `json:"properties"`
+	IsETL                         bool
+	ETLQuery                      string
+	ETLStoragePath                string
+	// The first column of DemoHudiTSchemaCols must be the primary key column
+	// This is the schema for demo_hudi.t
+	DemoHudiTSchemaCols          []string
+	DemoHudiTSchemaColsFieldTypes []*types.FieldType
+	// This is schema for demo_flink.t
+	DemoFlinkTSchemaCols          []string
+	DemoFlinkTSchemaColsFieldTypes []*types.FieldType
+	// This is the schema for demo_flink.t_inc
+	DemoFlinkTIncSourceTableSchema []string
+	DemoFlinkTIncSourceTableSchemaFieldTypes []*types.FieldType
+
+	ETLPKColNames                 []string
 }
-
-
 
 func (t *TableInfo) GetProperty(propName string) (propValue []byte) {
 	for _, p := range t.Properties {

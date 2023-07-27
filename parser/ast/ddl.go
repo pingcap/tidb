@@ -135,13 +135,22 @@ type CreateETLStmt struct {
 	ddlNode
 
 	IfNotExists bool
-	Table 	 *TableName
-	ETLSelect StmtNode 
+	Table       *TableName
+	ETLSelect   StmtNode
+	HudiTCols []model.CIStr
 
-	OutputNames []string
-	OutputFieldTypes []*types.FieldType
-	DataSourceNames []string
-	PKNames []string
+	// demo_hudi.t
+	DemoHudiTSchemaCols []string
+	DemoHudiTSchemaColsFiledTypes []*types.FieldType
+	// demo_flink.t
+	DemoFlinkTSchemaCols           []string
+	DemoFlinkTSchemaColsFiledTypes []*types.FieldType
+	// demo_flink.t_inc, demo_flink.t_file
+	DemoFlinkTIncSchemaCols []string
+	DemoFlinkTIncSchemaColsFiledTypes []*types.FieldType
+	DataSourceNames                []string
+	PKNamesForFlinkTable           []string
+	PKNamesForHudiTable                        []string
 }
 
 func (n *CreateETLStmt) Restore(ctx *format.RestoreCtx) error {
@@ -151,6 +160,16 @@ func (n *CreateETLStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while splicing CreateETLStmt Table")
+	}
+	if len(n.HudiTCols) != 0{
+		ctx.WritePlain("(")
+		for i, col := range n.HudiTCols {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteName(col.L)
+		}
+		ctx.WritePlain(")")
 	}
 	ctx.WriteKeyWord(" AS ")
 	ctx.WritePlain(n.ETLSelect.Text())
