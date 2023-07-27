@@ -2009,15 +2009,35 @@ func (p *LogicalJoin) satisfyIndexJoinHint(join PhysicalPlan) bool {
 		(p.preferAny(preferRightAsINLMJInner) && innerSide == right && joinMethod == indexMergeJoin) {
 		return true
 	}
+
+	//// the priority of no_index_join_hints is lower than other prefer join hints
+	//if (p.preferAny(preferNoIndexJoin) && joinMethod == indexJoin) ||
+	//	(p.preferAny(preferNoIndexHashJoin) && joinMethod == indexHashJoin) ||
+	//	(p.preferAny(preferNoIndexMergeJoin) && joinMethod == indexMergeJoin) {
+	//	return false
+	//}
+
 	return false
 }
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
 func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, canForced bool) {
+	preferIndexJoin := p.preferAny(preferLeftAsINLJInner, preferRightAsINLJInner)
+	preferIndexHashJoin := p.preferAny(preferLeftAsINLHJInner, preferRightAsINLHJInner)
+	preferIndexMergeJoin := p.preferAny(preferLeftAsINLMJInner, preferRightAsINLMJInner)
 	forceLeftOuter := p.preferAny(preferRightAsINLJInner, preferRightAsINLHJInner, preferRightAsINLMJInner) // left as outer == right as inner
 	forceRightOuter := p.preferAny(preferLeftAsINLJInner, preferLeftAsINLHJInner, preferLeftAsINLMJInner)   // right as outer == left as inner
 	needForced := forceLeftOuter || forceRightOuter
+
+	// handle hint conflicts
+	if preferIndexJoin && p.preferAny(preferNoIndexJoin) {
+		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Some INL_JOIN and NO_INDEX_JOIN hints conflict, NO_INDEX_JOIN is ignored"))
+	} else if preferIndexHashJoin && p.preferAny(preferNoIndexHashJoin) {
+		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Some INL_HASH_JOIN and NO_INDEX_HASH_JOIN hints conflict, NO_INDEX_HASH_JOIN is ignored"))
+	} else if preferIndexMergeJoin && p.preferAny(preferNoIndexMergeJoin) {
+		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Some INL_MERGE_JOIN and NO_INDEX_MERGE_JOIN hints conflict, NO_INDEX_MERGE_JOIN is ignored"))
+	}
 
 	defer func() {
 		// Print warning message if any hints cannot work.
@@ -2032,11 +2052,11 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 			}
 			var errMsg string
 			switch {
-			case p.preferAny(preferLeftAsINLJInner, preferRightAsINLJInner): // prefer index join
+			case preferIndexJoin:
 				errMsg = fmt.Sprintf("Optimizer Hint %s or %s is inapplicable", restore2JoinHint(HintINLJ, indexJoinTables), restore2JoinHint(TiDBIndexNestedLoopJoin, indexJoinTables))
-			case p.preferAny(preferLeftAsINLHJInner, preferRightAsINLHJInner): // prefer index hash join
+			case preferIndexHashJoin:
 				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLHJ, indexHashJoinTables))
-			case p.preferAny(preferLeftAsINLMJInner, preferRightAsINLMJInner): // prefer index merge join
+			case preferIndexMergeJoin:
 				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLMJ, indexMergeJoinTables))
 			}
 			// Append inapplicable reason.
