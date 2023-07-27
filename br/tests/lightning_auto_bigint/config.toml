@@ -1,0 +1,8 @@
+[tikv-importer]
+backend = "local"
+
+[[routes]]
+schema-pattern = "lightning_auto_bigint1"
+table-pattern = "t*"
+target-schema = "lightning_auto_bigint"
+target-table = "u"
