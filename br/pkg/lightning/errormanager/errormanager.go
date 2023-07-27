@@ -46,7 +46,7 @@ const (
 	// ConflictErrorTableName is the table name for duplicate detection.
 	ConflictErrorTableName = "conflict_error_v1"
 	// DupRecordTable is the table name to record duplicate data that displayed to user.
-	DupRecordTable = "duplicate_records"
+	DupRecordTable = "conflict_records"
 
 	createSyntaxErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + syntaxErrorTableName + ` (
