@@ -1979,7 +1979,7 @@ func (p *LogicalJoin) preferAny(joinFlags ...uint) bool {
 }
 
 // satisfyIndexJoinHint returns whether this join plan can satisfy current index join hints.
-func (p *LogicalJoin) satisfyIndexJoinHint(join PhysicalPlan) bool {
+func (p *LogicalJoin) satisfyForceIndexJoinHint(join PhysicalPlan) bool {
 	const left, right = 0, 1
 	const indexJoin, indexHashJoin, indexMergeJoin = 0, 1, 2
 	var innerSide, innerIdx, joinMethod int
@@ -2065,7 +2065,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		allLeftOuterJoins = p.getIndexJoinByOuterIdx(prop, 0)
 		forcedLeftOuterJoins = make([]PhysicalPlan, 0, len(allLeftOuterJoins))
 		for _, j := range allLeftOuterJoins {
-			if p.satisfyIndexJoinHint(j) {
+			if p.satisfyForceIndexJoinHint(j) {
 				forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
 			}
 		}
@@ -2081,7 +2081,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		allRightOuterJoins = p.getIndexJoinByOuterIdx(prop, 1)
 		forcedRightOuterJoins = make([]PhysicalPlan, 0, len(allRightOuterJoins))
 		for _, j := range allRightOuterJoins {
-			if p.satisfyIndexJoinHint(j) {
+			if p.satisfyForceIndexJoinHint(j) {
 				forcedRightOuterJoins = append(forcedRightOuterJoins, j)
 			}
 		}
