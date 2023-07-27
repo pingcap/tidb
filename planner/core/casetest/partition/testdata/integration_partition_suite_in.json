@@ -203,5 +203,22 @@
       "explain format = 'brief' select * from t partition (P0,p1) where b = 1",
       "explain format = 'brief' select * from t partition (p1,P2) where b = 1 OR b = 2"
     ]
+  },
+  {
+    "name": "TestBatchPointGetTablePartition",
+    "cases": [
+      "select * from t1 where a in (1,2) and b = 1",
+      "select * from t1 where a = 1 and b in (1,2)",
+      "select * from t2 where a in (1,2) and b = 1",
+      "select * from t2 where a = 1 and b in (1,2)",
+      "select * from t3 where a in (1,2) and b = 1",
+      "select * from t3 where a = 1 and b in (1,2)",
+      "select * from t4 where a in (1,2) and b = 1",
+      "select * from t4 where a = 1 and b in (1,2)",
+      "select * from t5 where a in (1,2) and 1 = 1",
+      "select * from t5 where a in (1,3) and 1 = 1",
+      "select * from t6 where a in (1,2) and 1 = 1",
+      "select * from t6 where a in (1,3) and 1 = 1"
+    ]
   }
 ]
