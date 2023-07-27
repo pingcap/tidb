@@ -68,14 +68,14 @@ import (
 	"go.uber.org/zap"
 )
 
-func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
+func (cc *clientConn) HandleStmtPrepare(ctx context.Context, sql string) error {
 	stmt, columns, params, err := cc.ctx.Prepare(sql)
 	if err != nil {
 		return err
 	}
 	data := make([]byte, 4, 128)
 
-	// status ok
+	// Status ok
 	data = append(data, 0)
 	// stmt id
 	data = dump.Uint32(data, uint32(stmt.ID()))
@@ -246,7 +246,7 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}
 	}
 	_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
 	if allowTiFlashFallback && err != nil && errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) && retryable {
-		// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
+		// When the TiFlash server seems down, we append a warning to remind the user to check the Status of the TiFlash
 		// server and fallback to TiKV.
 		prevErr := err
 		delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)

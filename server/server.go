@@ -136,6 +136,43 @@ type Server struct {
 	printMDLLogTime     time.Time
 }
 
+// NewTestServer creates a new Server for test.
+func NewTestServer(cfg *config.Config) *Server {
+	return &Server{
+		cfg: cfg,
+	}
+}
+
+// Socket returns the server's socket file.
+func (s *Server) Socket() net.Listener {
+	return s.socket
+}
+
+// Listener returns the server's listener.
+func (s *Server) Listener() net.Listener {
+	return s.listener
+}
+
+// ListenAddr returns the server's listener's network address.
+func (s *Server) ListenAddr() net.Addr {
+	return s.listener.Addr()
+}
+
+// StatusListenerAddr returns the server's status listener's network address.
+func (s *Server) StatusListenerAddr() net.Addr {
+	return s.statusListener.Addr()
+}
+
+// BitwiseXorCapability gets the capability of the server.
+func (s *Server) BitwiseXorCapability(capability uint32) {
+	s.capability ^= capability
+}
+
+// BitwiseOrAssignCapability adds the capability to the server.
+func (s *Server) BitwiseOrAssignCapability(capability uint32) {
+	s.capability |= capability
+}
+
 // GetStatusServerAddr gets statusServer address for MppCoordinatorManager usage
 func (s *Server) GetStatusServerAddr() (on bool, addr string) {
 	if !s.cfg.Status.ReportStatus {
@@ -823,7 +860,7 @@ func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
 	}
 
 	if !query {
-		// Mark the client connection status as WaitShutdown, when clientConn.Run detect
+		// Mark the client connection Status as WaitShutdown, when clientConn.Run detect
 		// this, it will end the dispatch loop and exit.
 		conn.setStatus(connStatusWaitShutdown)
 	}
@@ -835,7 +872,7 @@ func (s *Server) UpdateTLSConfig(cfg *tls.Config) {
 	atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(cfg))
 }
 
-func (s *Server) getTLSConfig() *tls.Config {
+func (s *Server) GetTLSConfig() *tls.Config {
 	return (*tls.Config)(atomic.LoadPointer(&s.tlsConfig))
 }
 
