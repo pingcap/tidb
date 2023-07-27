@@ -1978,7 +1978,7 @@ func (p *LogicalJoin) preferAny(joinFlags ...uint) bool {
 	return false
 }
 
-func (p *LogicalJoin) getIndexJoinSideAndMethod(join PhysicalPlan) (innerSide, outerSide, joinMethod int) {
+func (_ *LogicalJoin) getIndexJoinSideAndMethod(join PhysicalPlan) (innerSide, outerSide, joinMethod int) {
 	const left, right = 0, 1
 	const indexJoin, indexHashJoin, indexMergeJoin = 0, 1, 2
 	var innerIdx int
