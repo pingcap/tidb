@@ -20,10 +20,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-const (
-	timerSysScope = "sys"
-)
-
 // Timer metrics
 var (
 	TimerEventCounter *prometheus.CounterVec
@@ -34,19 +30,20 @@ var (
 
 // InitTimerMetrics initializes timers metrics.
 func InitTimerMetrics() {
-	TimerEventCounter = NewCounterVec(
+	TimerEventCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "timer_event_count",
 			Help:      "Counter of timer event.",
-		}, []string{LblScope, LblType})
+		}, []string{"scope", "type"})
 
 	rtScope := "runtime"
 	TimerFullRefreshCounter = TimerEventCounter.WithLabelValues(rtScope, "full_refresh_timers")
 	TimerPartialRefreshCounter = TimerEventCounter.WithLabelValues(rtScope, "partial_refresh_timers")
 }
 
+// TimerHookWorkerCounter creates a counter for a hook's event
 func TimerHookWorkerCounter(hookClass string, event string) prometheus.Counter {
 	return TimerEventCounter.WithLabelValues(fmt.Sprintf("hook.%s", hookClass), event)
 }

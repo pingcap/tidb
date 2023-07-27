@@ -23,8 +23,8 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/timer/api"
+	"github.com/pingcap/tidb/timer/metrics"
 	mockutil "github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"

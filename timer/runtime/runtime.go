@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/timer/api"
+	"github.com/pingcap/tidb/timer/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"

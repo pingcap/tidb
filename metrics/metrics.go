@@ -17,6 +17,7 @@ package metrics
 import (
 	"sync"
 
+	timermetrics "github.com/pingcap/tidb/timer/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -91,7 +92,7 @@ func InitMetrics() {
 	InitTelemetryMetrics()
 	InitTopSQLMetrics()
 	InitTTLMetrics()
-	InitTimerMetrics()
+	timermetrics.InitTimerMetrics()
 
 	PanicCounter = NewCounterVec(
 		prometheus.CounterOpts{
@@ -258,7 +259,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TTLWatermarkDelay)
 	prometheus.MustRegister(TTLEventCounter)
 
-	prometheus.MustRegister(TimerEventCounter)
+	prometheus.MustRegister(timermetrics.TimerEventCounter)
 
 	prometheus.MustRegister(EMACPUUsageGauge)
 	prometheus.MustRegister(PoolConcurrencyCounter)
