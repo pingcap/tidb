@@ -271,6 +271,9 @@ type copTask struct {
 	redirect2Replica *uint64
 	busyThreshold    time.Duration
 	meetLockFallback bool
+
+	// timeout value for one kv readonly reqeust
+	tidbKvReadTimeout uint64
 }
 
 type batchedCopTask struct {
@@ -392,17 +395,18 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 				}
 			}
 			task := &copTask{
-				region:        loc.Location.Region,
-				bucketsVer:    loc.getBucketVersion(),
-				ranges:        loc.Ranges.Slice(i, nextI),
-				cmdType:       cmdType,
-				storeType:     req.StoreType,
-				eventCb:       eventCb,
-				paging:        req.Paging.Enable,
-				pagingSize:    pagingSize,
-				requestSource: req.RequestSource,
-				RowCountHint:  hint,
-				busyThreshold: req.StoreBusyThreshold,
+				region:            loc.Location.Region,
+				bucketsVer:        loc.getBucketVersion(),
+				ranges:            loc.Ranges.Slice(i, nextI),
+				cmdType:           cmdType,
+				storeType:         req.StoreType,
+				eventCb:           eventCb,
+				paging:            req.Paging.Enable,
+				pagingSize:        pagingSize,
+				requestSource:     req.RequestSource,
+				RowCountHint:      hint,
+				busyThreshold:     req.StoreBusyThreshold,
+				tidbKvReadTimeout: req.TidbKvReadTimeout,
 			}
 			// only keep-order need chan inside task.
 			// tasks by region error will reuse the channel of parent task.
@@ -1164,7 +1168,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		ResourceControlContext: &kvrpcpb.ResourceControlContext{
 			ResourceGroupName: worker.req.ResourceGroupName,
 		},
-		BusyThresholdMs: uint32(task.busyThreshold.Milliseconds()),
+		BusyThresholdMs:        uint32(task.busyThreshold.Milliseconds()),
+		MaxExecutionDurationMs: task.tidbKvReadTimeout,
 	})
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)

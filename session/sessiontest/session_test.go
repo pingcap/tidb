@@ -1026,6 +1026,42 @@ func TestMaxExecutionTime(t *testing.T) {
 	tk.MustExec("drop table if exists MaxExecTime;")
 }
 
+func TestTidbKvReadTimeout(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("use test")
+	tk.MustExec("create table TidbKvReadTimeout( id int,name varchar(128),age int);")
+	tk.MustExec("begin")
+	tk.MustExec("insert into TidbKvReadTimeout (id,name,age) values (1,'john',18),(2,'lary',19),(3,'lily',18);")
+
+	tk.MustQuery("select /*+ TIDB_KV_READ_TIMEOUT(1000) TIDB_KV_READ_TIMEOUT(500) */ * FROM TidbKvReadTimeout;")
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
+	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "TIDB_KV_READ_TIMEOUT() is defined more than once, only the last definition takes effect: TIDB_KV_READ_TIMEOUT(500)")
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.HasTidbKvReadTimeout)
+	require.Equal(t, uint64(500), tk.Session().GetSessionVars().StmtCtx.TidbKvReadTimeout)
+
+	tk.MustQuery("select @@TIDB_KV_READ_TIMEOUT;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.TIDB_KV_READ_TIMEOUT;").Check(testkit.Rows("0"))
+	tk.MustQuery("select /*+ TIDB_KV_READ_TIMEOUT(1000) */ * FROM TidbKvReadTimeout;")
+
+	tk.MustExec("set @@global.TIDB_KV_READ_TIMEOUT = 300;")
+	tk.MustQuery("select * FROM TidbKvReadTimeout;")
+
+	tk.MustExec("set @@TIDB_KV_READ_TIMEOUT = 150;")
+	tk.MustQuery("select * FROM TidbKvReadTimeout;")
+
+	tk.MustQuery("select @@global.TIDB_KV_READ_TIMEOUT;").Check(testkit.Rows("300"))
+	tk.MustQuery("select @@TIDB_KV_READ_TIMEOUT;").Check(testkit.Rows("150"))
+
+	tk.MustExec("set @@global.TIDB_KV_READ_TIMEOUT = 0;")
+	tk.MustExec("set @@TIDB_KV_READ_TIMEOUT = 0;")
+	tk.MustExec("commit")
+	tk.MustExec("drop table if exists TidbKvReadTimeout;")
+}
+
 func TestGrantViewRelated(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
