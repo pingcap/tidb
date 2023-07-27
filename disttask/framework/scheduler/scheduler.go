@@ -40,7 +40,6 @@ type InternalSchedulerImpl struct {
 	taskTable TaskTable
 	pool      Pool
 	wg        sync.WaitGroup
-	subtaskWg sync.WaitGroup
 	logCtx    context.Context
 
 	mu struct {
@@ -80,7 +79,6 @@ func (*InternalSchedulerImpl) Start() {
 // Stop stops the scheduler.
 func (s *InternalSchedulerImpl) Stop() {
 	s.cancel()
-	s.subtaskWg.Wait()
 	s.wg.Wait()
 }
 
@@ -144,11 +142,6 @@ func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error
 		return s.getError()
 	}
 
-	concurrentSubtask := false
-	key := getKey(task.Type, task.Step)
-	if opts, ok := schedulerOptions[key]; ok && opts.ConcurrentSubtask {
-		concurrentSubtask = true
-	}
 	for {
 		// check if any error occurs
 		if err := s.getError(); err != nil {
@@ -167,13 +160,8 @@ func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error
 		if err := s.getError(); err != nil {
 			break
 		}
-		s.subtaskWg.Add(1)
 		s.runSubtask(runCtx, scheduler, subtask, task.Step, minimalTaskCh)
-		if !concurrentSubtask {
-			s.subtaskWg.Wait()
-		}
 	}
-	s.subtaskWg.Wait()
 	return s.getError()
 }
 
@@ -187,36 +175,17 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError())
 		}
 		s.markErrorHandled()
-		s.subtaskWg.Done()
 		return
 	}
 	logutil.Logger(s.logCtx).Info("split subTask", zap.Int("cnt", len(minimalTasks)), zap.Int64("subtask-id", subtask.ID))
 
-	// fast path for ADD INDEX.
-	// ADD INDEX is a special case now, no minimal tasks will be generated.
-	// run it synchronously now.
-	if len(minimalTasks) == 0 {
-		s.onSubtaskFinished(ctx, scheduler, subtask)
-		s.subtaskWg.Done()
-		return
-	}
-
-	var mu sync.Mutex
-	var cnt int
+	var minimalTaskWg sync.WaitGroup
 	for _, minimalTask := range minimalTasks {
+		minimalTaskWg.Add(1)
 		j := minimalTask
 		minimalTaskCh <- func() {
-			defer func() {
-				mu.Lock()
-				defer mu.Unlock()
-				cnt++
-				// last minimal task should mark subtask as finished
-				if cnt == len(minimalTasks) {
-					s.onSubtaskFinished(ctx, scheduler, subtask)
-					s.subtaskWg.Done()
-				}
-			}()
 			s.runMinimalTask(ctx, j, subtask.Type, step)
+			minimalTaskWg.Done()
 		}
 	}
 	failpoint.Inject("waitUntilError", func() {
@@ -227,6 +196,8 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 			time.Sleep(500 * time.Millisecond)
 		}
 	})
+	minimalTaskWg.Wait()
+	s.onSubtaskFinished(ctx, scheduler, subtask)
 }
 
 func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask) {

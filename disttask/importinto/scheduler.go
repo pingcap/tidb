@@ -239,7 +239,6 @@ func init() {
 				logger:   logger,
 			}, nil
 		},
-		scheduler.WithConcurrentSubtask(),
 	)
 	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepPostProcess,
 		func(taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
