@@ -64,6 +64,31 @@ func benchPutGet(b *testing.B, c *StatsCachePointer) {
 	b.StopTimer()
 }
 
+func benchGet(b *testing.B, c *StatsCachePointer) {
+	var w sync.WaitGroup
+	for i := 0; i < b.N; i++ {
+		w.Add(1)
+		go func(i int) {
+			defer w.Done()
+			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
+			t1.PhysicalID = rand.Int63()
+			c.UpdateStatsCache(c.Load(), []*statistics.Table{t1}, nil)
+		}(i)
+	}
+	w.Done()
+	b.ResetTimer()
+	var wg sync.WaitGroup
+	for i := 0; i < b.N; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			c.Load().GetFromUser(int64(i))
+		}(i)
+	}
+	wg.Wait()
+	b.StopTimer()
+}
+
 func BenchmarkStatsCacheLFUCopyAndUpdate(b *testing.B) {
 	restore := config.RestoreFunc()
 	defer restore()
@@ -116,11 +141,39 @@ func BenchmarkMapCachePutGet(b *testing.B) {
 	benchPutGet(b, cache)
 }
 
+func BenchmarkLFUCacheGet(b *testing.B) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	cache, err := NewStatsCachePointer()
+	if err != nil {
+		b.Fail()
+	}
+	benchGet(b, cache)
+}
+
+func BenchmarkMapCacheGet(b *testing.B) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = false
+	})
+	cache, err := NewStatsCachePointer()
+	if err != nil {
+		b.Fail()
+	}
+	benchGet(b, cache)
+}
+
 func TestBenchDaily(*testing.T) {
 	benchdaily.Run(
 		BenchmarkStatsCacheLFUCopyAndUpdate,
 		BenchmarkStatsCacheMapCacheCopyAndUpdate,
 		BenchmarkLFUCachePutGet,
 		BenchmarkMapCachePutGet,
+		BenchmarkLFUCacheGet,
+		BenchmarkMapCacheGet,
 	)
 }
