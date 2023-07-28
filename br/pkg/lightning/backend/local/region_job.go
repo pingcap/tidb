@@ -566,6 +566,10 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			RegionId:    j.region.Region.GetId(),
 			RegionEpoch: j.region.Region.GetRegionEpoch(),
 			Peer:        leader,
+			ResourceControlContext: &kvrpcpb.ResourceControlContext{
+				ResourceGroupName: local.ResourceGroupName,
+			},
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
 		}
 
 		if supportMultiIngest {
