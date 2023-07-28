@@ -1899,6 +1899,7 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 	// After unlocked by the ALTER USER statement, the role can connect to server like a user
 	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`ALTER USER role1 ACCOUNT UNLOCK;`)
+		dbt.MustExec(`SET PASSWORD FOR role1 = ''`)
 		rows := dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user = 'role1';`)
 		cli.checkRows(t, rows, "role1 N")
 	})
