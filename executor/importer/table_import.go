@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/syncutil"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -109,7 +110,7 @@ func prepareSortDir(e *LoadDataController, taskID int64, tidbCfg *tidb.Config) (
 }
 
 // GetTiKVModeSwitcher creates a new TiKV mode switcher.
-func GetTiKVModeSwitcher(logger *zap.Logger) (local.TiKVModeSwitcher, error) {
+func GetTiKVModeSwitcher(ctx context.Context, logger *zap.Logger) (local.TiKVModeSwitcher, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
 	tls, err := common.NewTLS(
@@ -122,7 +123,13 @@ func GetTiKVModeSwitcher(logger *zap.Logger) (local.TiKVModeSwitcher, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewTiKVModeSwitcher(tls, tidbCfg.Path, logger), nil
+	tlsOpt := tls.ToPDSecurityOption()
+	pdCli, err := pd.NewClientWithContext(ctx, []string{tidbCfg.Path}, tlsOpt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return NewTiKVModeSwitcher(tls, pdCli, logger), nil
 }
 
 func getCachedKVStoreFrom(pdAddr string, tls *common.TLS) (tidbkv.Storage, error) {
