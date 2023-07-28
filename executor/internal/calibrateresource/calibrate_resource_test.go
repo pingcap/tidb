@@ -52,7 +52,7 @@ func TestCalibrateResource(t *testing.T) {
 	}()
 
 	mockPrivider := &mockResourceGroupProvider{
-		cfg: rmclient.ControllerConfig{
+		cfg: rmclient.Config{
 			RequestUnit: rmclient.RequestUnitConfig{
 				ReadBaseCost:     0.25,
 				ReadCostPerByte:  0.0000152587890625,
@@ -653,7 +653,7 @@ func TestCalibrateResource(t *testing.T) {
 
 type mockResourceGroupProvider struct {
 	rmclient.ResourceGroupProvider
-	cfg rmclient.ControllerConfig
+	cfg rmclient.Config
 }
 
 func (p *mockResourceGroupProvider) LoadGlobalConfig(ctx context.Context, names []string, configPath string) ([]pd.GlobalConfigItem, int64, error) {

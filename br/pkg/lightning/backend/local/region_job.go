@@ -36,8 +36,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -229,6 +231,12 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	req := &sst.WriteRequest{
 		Chunk: &sst.WriteRequest_Meta{
 			Meta: meta,
+		},
+		Context: &kvrpcpb.Context{
+			ResourceControlContext: &kvrpcpb.ResourceControlContext{
+				ResourceGroupName: local.ResourceGroupName,
+			},
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
 		},
 	}
 	for _, peer := range region.GetPeers() {
@@ -558,6 +566,10 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			RegionId:    j.region.Region.GetId(),
 			RegionEpoch: j.region.Region.GetRegionEpoch(),
 			Peer:        leader,
+			ResourceControlContext: &kvrpcpb.ResourceControlContext{
+				ResourceGroupName: local.ResourceGroupName,
+			},
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
 		}
 
 		if supportMultiIngest {
