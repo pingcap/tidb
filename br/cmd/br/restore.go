@@ -43,6 +43,27 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+// print workaround when we met not fresh or incompatible cluster error on full cluster restore
+func printWorkaroundOnFullRestoreError(command *cobra.Command, err error) {
+	if !errors.ErrorEqual(err, berrors.ErrRestoreNotFreshCluster) &&
+		!errors.ErrorEqual(err, berrors.ErrRestoreIncompatibleSys) {
+		return
+	}
+	fmt.Println("#######################################################################")
+	switch {
+	case errors.ErrorEqual(err, berrors.ErrRestoreNotFreshCluster):
+		fmt.Println("# the target cluster is not fresh, cannot restore.")
+		fmt.Println("# you can drop existing databases and tables and start restore again")
+	case errors.ErrorEqual(err, berrors.ErrRestoreIncompatibleSys):
+		fmt.Println("# the target cluster is not compatible with the backup data,")
+		fmt.Println("# you can remove 'with-sys-table' flag to skip restoring system tables")
+	}
+	fmt.Println("#######################################################################")
+}
+
+>>>>>>> 8c5ca7b2008 (restore: precheck cluster is empty when first time full restore (#45014))
 func runRestoreRawCommand(command *cobra.Command, cmdName string) error {
 	cfg := task.RestoreRawConfig{
 		RawKvConfig: task.RawKvConfig{Config: task.Config{LogProgress: HasLogFile()}},
