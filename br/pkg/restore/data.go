@@ -275,10 +275,10 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 }
 
 func (recovery *Recovery) SpawnTiKVShutDownWatchers(ctx context.Context) {
-	failedMark := map[uint64]struct{}{}
+	rebootStores := map[uint64]struct{}{}
 	cb := storewatch.MakeCallback(storewatch.WithOnReboot(func(s *metapb.Store) {
 		log.Info("Store reboot detected, will regenerate leaders.", zap.Uint64("id", s.GetId()))
-		failedMark[s.Id] = struct{}{}
+		rebootStores[s.Id] = struct{}{}
 	}), storewatch.WithOnDisconnect(func(s *metapb.Store) {
 		log.Warn("A store disconnected.", zap.Uint64("id", s.GetId()), zap.String("addr", s.GetAddress()))
 	}), storewatch.WithOnNewStoreRegistered(func(s *metapb.Store) {
@@ -296,7 +296,7 @@ func (recovery *Recovery) SpawnTiKVShutDownWatchers(ctx context.Context) {
 				if err != nil {
 					log.Warn("Failed to step watcher.", logutil.ShortError(err))
 				}
-				for id := range failedMark {
+				for id := range rebootStores {
 					plan, ok := recovery.RecoveryPlan[id]
 					if !ok {
 						log.Warn("Store reboot detected, but no recovery plan found.", zap.Uint64("id", id))
@@ -308,7 +308,7 @@ func (recovery *Recovery) SpawnTiKVShutDownWatchers(ctx context.Context) {
 						continue
 					}
 					log.Info("Succeed to reload the leader in store.", zap.Uint64("id", id))
-					delete(failedMark, id)
+					delete(rebootStores, id)
 				}
 			}
 		}
