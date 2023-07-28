@@ -74,4 +74,9 @@ ignore:
   - "metrics/.*"
   - "expression/generator/.*"
   - "br/pkg/mock/.*"
+  - "testkit/.*"
+  - "server/internal/testutil/.*"
+  - "statistics/handle/cache/internal/testutil/.*"
+  - "session/testutil.go"
+  - "store/mockstore/unistore/testutil.go"
 
