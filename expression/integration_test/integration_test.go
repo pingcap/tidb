@@ -7954,3 +7954,36 @@ func TestIfFunctionWithNull(t *testing.T) {
 	tk.MustQuery("select min(if(apply_to_now_days <= 30,loan,null)) as min, max(if(apply_to_now_days <= 720,loan,null)) as max from (select loan, datediff(from_unixtime(unix_timestamp('2023-05-18 18:43:43') + 18000), from_unixtime(apply_time/1000 + 18000)) as apply_to_now_days from orders) t1;").Sort().Check(
 		testkit.Rows("20000 35100"))
 }
+
+func TestIssue41733(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database testIssue41733")
+	defer tk.MustExec("drop database testIssue41733")
+	tk.MustExec("use testIssue41733")
+
+	tk.MustExec("create table t_tiny (c0 TINYINT UNSIGNED)")
+	tk.MustExec("INSERT IGNORE INTO t_tiny(c0) VALUES (1E9)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'c0' at row 1"))
+	tk.MustQuery("select * from t_tiny;").Check(testkit.Rows("255"))
+
+	tk.MustExec("create table t_small (c0 SMALLINT UNSIGNED)")
+	tk.MustExec("INSERT IGNORE INTO t_small(c0) VALUES (1E9)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'c0' at row 1"))
+	tk.MustQuery("select * from t_small;").Check(testkit.Rows("65535"))
+
+	tk.MustExec("create table t_medium (c0 MEDIUMINT UNSIGNED)")
+	tk.MustExec("INSERT IGNORE INTO t_medium(c0) VALUES (1E9)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'c0' at row 1"))
+	tk.MustQuery("select * from t_medium;").Check(testkit.Rows("16777215"))
+
+	tk.MustExec("create table t_int (c0 INT UNSIGNED)")
+	tk.MustExec("INSERT IGNORE INTO t_int(c0) VALUES (1E20)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'c0' at row 1"))
+	tk.MustQuery("select * from t_int;").Check(testkit.Rows("4294967295"))
+
+	tk.MustExec("create table t_big (c0 BIGINT UNSIGNED)")
+	tk.MustExec("INSERT IGNORE INTO t_big(c0) VALUES (1E20)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'c0' at row 1"))
+	tk.MustQuery("select * from t_big;").Check(testkit.Rows("18446744073709551615"))
+}
