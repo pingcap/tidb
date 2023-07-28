@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	timerapi "github.com/pingcap/tidb/timer/api"
 	"github.com/pingcap/tidb/ttl/cache"
@@ -160,6 +161,7 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 	g.lastSyncTime = g.nowFunc()
 	g.lastSyncVer = is.SchemaMetaVersion()
 	if time.Since(g.lastPullTimers) > fullRefreshTimersCacheInterval {
+		metrics.TTLFullRefreshTimersCounter.Inc()
 		newKey2Timers := make(map[string]*timerapi.TimerRecord, len(g.key2Timers))
 		timers, err := g.cli.GetTimers(ctx, timerapi.WithKeyPrefix(timerKeyPrefix))
 		if err != nil {
@@ -200,12 +202,14 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 		}
 
 		if time.Since(timer.CreateTime) > g.delayDelete {
+			metrics.TTLSyncTimerCounter.Inc()
 			if _, err = g.cli.DeleteTimer(ctx, timer.ID); err != nil {
 				logutil.BgLogger().Error("failed to delete timer", zap.Error(err), zap.String("timerID", timer.ID))
 			} else {
 				delete(g.key2Timers, key)
 			}
 		} else if timer.Enable {
+			metrics.TTLSyncTimerCounter.Inc()
 			if err = g.cli.UpdateTimer(ctx, timer.ID, timerapi.WithSetEnable(false)); err != nil {
 				logutil.BgLogger().Error("failed to disable timer", zap.Error(err), zap.String("timerID", timer.ID))
 			}
@@ -266,6 +270,7 @@ func (g *TTLTimersSyncer) syncOneTimer(ctx context.Context, se session.Session, 
 		}
 	}
 
+	metrics.TTLSyncTimerCounter.Inc()
 	timer, err := g.cli.GetTimerByKey(ctx, key)
 	if err != nil && !errors.ErrorEqual(err, timerapi.ErrTimerNotExist) {
 		return nil, err

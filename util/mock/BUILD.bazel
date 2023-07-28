@@ -6,6 +6,7 @@ go_library(
         "client.go",
         "context.go",
         "iter.go",
+        "metrics.go",
         "store.go",
     ],
     importpath = "github.com/pingcap/tidb/util/mock",
@@ -29,9 +30,11 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/deadlock",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_tipb//go-binlog",
+        "@com_github_prometheus_client_golang//prometheus",
         "@com_github_stretchr_testify//assert",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_atomic//:atomic",
     ],
 )
 

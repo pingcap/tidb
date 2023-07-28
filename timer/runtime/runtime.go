@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/timer/api"
+	"github.com/pingcap/tidb/timer/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
@@ -210,6 +211,7 @@ func (rt *TimerGroupRuntime) loop() {
 }
 
 func (rt *TimerGroupRuntime) fullRefreshTimers() {
+	metrics.TimerFullRefreshCounter.Inc()
 	timers, err := rt.store.List(rt.ctx, rt.cond)
 	if err != nil {
 		rt.logger.Error("error occurs when fullRefreshTimers", zap.Error(err))
@@ -354,6 +356,7 @@ func (rt *TimerGroupRuntime) partialRefreshTimers(timerIDs map[string]struct{}) 
 		return false
 	}
 
+	metrics.TimerPartialRefreshCounter.Inc()
 	cond := rt.buildTimerIDsCond(timerIDs)
 	timers, err := rt.store.List(rt.ctx, cond)
 	if err != nil {
