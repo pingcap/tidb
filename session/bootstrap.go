@@ -639,7 +639,7 @@ const (
 		resource_group_name varchar(32) not null,
 		start_time datetime(6) NOT NULL,
 		end_time datetime(6),
-		watch  bigint(10) NOT NULL,
+		watch bigint(10) NOT NULL,
 		watch_text TEXT NOT NULL,
 		source varchar(64) NOT NULL,
 		action bigint(10),
