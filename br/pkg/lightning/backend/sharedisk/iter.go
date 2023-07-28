@@ -292,24 +292,18 @@ func SeekPropsOffsets(ctx context.Context, start kv.Key, paths []string, exStora
 			logutil.BgLogger().Warn("failed to close merge prop iterator", zap.Error(err))
 		}
 	}()
-	var (
-		lastOffset  uint64
-		lastFileIdx int
-	)
 	offsets := make([]uint64, len(paths))
 	for iter.Next() {
 		if iter.Error() != nil {
 			return nil, iter.Error()
 		}
 		p := iter.Prop()
-		offsets[iter.currProp.fileOffset] = iter.currProp.p.offset
 		propKey := kv.Key(p.Key)
 		if propKey.Cmp(start) > 0 {
-			offsets[lastFileIdx] = lastOffset
 			return offsets, nil
+		} else {
+			offsets[iter.currProp.fileOffset] = iter.currProp.p.offset
 		}
-		lastFileIdx = iter.currProp.fileOffset
-		lastOffset = iter.currProp.p.offset
 	}
 	return offsets, nil
 }
