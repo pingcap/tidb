@@ -1084,6 +1084,8 @@ func (remote *Backend) fillJobKVs(j *regionJob, iter *sharedisk.MergeIter) {
 		}
 		if bytes.Compare(k, j.keyRange.start) >= 0 {
 			j.writeBatch = append(j.writeBatch, kvPair{key: key, val: val})
+		} else {
+			log.FromContext(context.Background()).Error("unexpected skip key", zap.ByteString("key", k), zap.ByteString("start", j.keyRange.start))
 		}
 		if !iter.Next() {
 			break
@@ -1186,6 +1188,9 @@ func (remote *Backend) generateAndSendJob(
 			case jobToWorkerCh <- job:
 			}
 		}
+	}
+	if iter.Valid() && bytes.Compare(iter.Key(), remote.endKey) <= 0 {
+		log.FromContext(ctx).Error("engine iterator is not finished", zap.ByteString("key", iter.Key()), zap.ByteString("endKey", remote.endKey))
 	}
 	return nil
 }
