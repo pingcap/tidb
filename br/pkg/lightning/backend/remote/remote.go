@@ -1064,19 +1064,22 @@ func (remote *Backend) createMergeIter(ctx context.Context, start kv.Key) (*shar
 func (remote *Backend) fillJobKVs(j *regionJob, iter *sharedisk.MergeIter) {
 	j.writeBatch = remote.kvPairSlicePool.get()
 	memBuf := remote.bufferPool.NewBuffer()
-	var prevKey kv.Key
+	//var prevKey kv.Key
 	for iter.Valid() {
 		k, v := iter.Key(), iter.Value()
-		kBuf := memBuf.AllocBytes(len(k))
-		key := append(kBuf[:0], k...)
-		val := memBuf.AddBytes(v)
-		if len(prevKey) != 0 && bytes.Compare(prevKey, k) >= 0 {
-			log.FromContext(context.Background()).Error("key is not in order", zap.ByteString("prevKey", prevKey), zap.ByteString("key", k))
-		}
-		prevKey = key
+		//kBuf := memBuf.AllocBytes(len(k))
+		//key := append(kBuf[:0], k...)
+		//val := memBuf.AddBytes(v)
+		//if len(prevKey) != 0 && bytes.Compare(prevKey, k) >= 0 {
+		//	log.FromContext(context.Background()).Error("key is not in order", zap.ByteString("prevKey", prevKey), zap.ByteString("key", k))
+		//}
+		//prevKey = key
 		if bytes.Compare(k, j.keyRange.end) >= 0 {
 			if bytes.Compare(k, j.keyRange.start) == 0 {
 				remote.cnt++
+				kBuf := memBuf.AllocBytes(len(k))
+				key := append(kBuf[:0], k...)
+				val := memBuf.AddBytes(v)
 				j.writeBatch = append(j.writeBatch, kvPair{key: key, val: val})
 			}
 			if len(j.writeBatch) > 0 {
@@ -1088,6 +1091,9 @@ func (remote *Backend) fillJobKVs(j *regionJob, iter *sharedisk.MergeIter) {
 		if bytes.Compare(k, j.keyRange.start) >= 0 {
 			remote.cnt++
 			remote.getFirst = true
+			kBuf := memBuf.AllocBytes(len(k))
+			key := append(kBuf[:0], k...)
+			val := memBuf.AddBytes(v)
 			j.writeBatch = append(j.writeBatch, kvPair{key: key, val: val})
 		} else {
 			if remote.getFirst {
