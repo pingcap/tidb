@@ -98,7 +98,7 @@ func (p *PumpStatus) createGrpcClient() error {
 			return net.DialTimeout("tcp", addr, timeout)
 		})
 	}
-	log.Debug("[pumps client] create grpc client", zap.String("address", p.Addr))
+	log.Debug("create grpc client", zap.String("category", "pumps client"), zap.String("address", p.Addr))
 	var clientConn *grpc.ClientConn
 	var err error
 	if p.security != nil {

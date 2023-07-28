@@ -17,6 +17,7 @@ package metrics
 import (
 	"sync"
 
+	timermetrics "github.com/pingcap/tidb/timer/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -91,6 +92,7 @@ func InitMetrics() {
 	InitTelemetryMetrics()
 	InitTopSQLMetrics()
 	InitTTLMetrics()
+	timermetrics.InitTimerMetrics()
 
 	PanicCounter = NewCounterVec(
 		prometheus.CounterOpts{
@@ -185,6 +187,9 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StmtNodeCounter)
 	prometheus.MustRegister(DbStmtNodeCounter)
 	prometheus.MustRegister(ExecPhaseDuration)
+	prometheus.MustRegister(OngoingTxnDurationHistogram)
+	prometheus.MustRegister(MppCoordinatorStats)
+	prometheus.MustRegister(MppCoordinatorLatency)
 	prometheus.MustRegister(StoreQueryFeedbackCounter)
 	prometheus.MustRegister(TimeJumpBackCounter)
 	prometheus.MustRegister(TransactionDuration)
@@ -204,6 +209,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TotalQueryProcHistogram)
 	prometheus.MustRegister(TotalCopProcHistogram)
 	prometheus.MustRegister(TotalCopWaitHistogram)
+	prometheus.MustRegister(CopMVCCRatioHistogram)
 	prometheus.MustRegister(HandleSchemaValidate)
 	prometheus.MustRegister(MaxProcs)
 	prometheus.MustRegister(GOGC)
@@ -228,8 +234,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PessimisticDMLDurationByAttempt)
 	prometheus.MustRegister(ResourceGroupQueryTotalCounter)
 	prometheus.MustRegister(MemoryUsage)
-	prometheus.MustRegister(StatsCacheLRUCounter)
-	prometheus.MustRegister(StatsCacheLRUGauge)
+	prometheus.MustRegister(StatsCacheCounter)
+	prometheus.MustRegister(StatsCacheGauge)
 	prometheus.MustRegister(StatsHealthyGauge)
 	prometheus.MustRegister(TxnStatusEnteringCounter)
 	prometheus.MustRegister(TxnDurationHistogram)
@@ -251,6 +257,9 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TTLPhaseTime)
 	prometheus.MustRegister(TTLInsertRowsCount)
 	prometheus.MustRegister(TTLWatermarkDelay)
+	prometheus.MustRegister(TTLEventCounter)
+
+	prometheus.MustRegister(timermetrics.TimerEventCounter)
 
 	prometheus.MustRegister(EMACPUUsageGauge)
 	prometheus.MustRegister(PoolConcurrencyCounter)

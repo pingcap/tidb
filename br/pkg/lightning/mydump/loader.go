@@ -125,11 +125,6 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 	return string(schema), nil
 }
 
-// FullTableName return FQDN of the table.
-func (m *MDTableMeta) FullTableName() string {
-	return common.UniqueTable(m.DB, m.Name)
-}
-
 // MDLoaderSetupConfig stores the configs when setting up a MDLoader.
 // This can control the behavior when constructing an MDLoader.
 type MDLoaderSetupConfig struct {
@@ -245,13 +240,7 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config,
 		}
 	}
 
-	// use the legacy black-white-list if defined. otherwise use the new filter.
-	var f filter.Filter
-	if cfg.HasLegacyBlackWhiteList() {
-		f, err = filter.ParseMySQLReplicationRules(&cfg.BWList)
-	} else {
-		f, err = filter.Parse(cfg.Mydumper.Filter)
-	}
+	f, err := filter.Parse(cfg.Mydumper.Filter)
 	if err != nil {
 		return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("parse filter failed")
 	}
@@ -356,11 +345,10 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		return errors.New("file iterator is not defined")
 	}
 	if err := fileIter.IterateFiles(ctx, s.constructFileInfo); err != nil {
-		if s.setupCfg.ReturnPartialResultOnError {
-			gerr = err
-		} else {
+		if !s.setupCfg.ReturnPartialResultOnError {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
 		}
+		gerr = err
 	}
 	if err := s.route(); err != nil {
 		return common.ErrTableRoute.Wrap(err).GenWithStackByArgs()
@@ -462,7 +450,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 		return errors.Annotatef(err, "apply file routing on file '%s' failed", path)
 	}
 	if res == nil {
-		logger.Info("[loader] file is filtered by file router")
+		logger.Info("file is filtered by file router", zap.String("category", "loader"))
 		return nil
 	}
 
@@ -472,7 +460,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 	}
 
 	if s.loader.shouldSkip(&info.TableName) {
-		logger.Debug("[filter] ignoring table file")
+		logger.Debug("ignoring table file", zap.String("category", "filter"))
 
 		return nil
 	}
@@ -488,7 +476,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 		if info.FileMeta.Compression != CompressionNone {
 			compressRatio, err2 := SampleFileCompressRatio(ctx, info.FileMeta, s.loader.GetStore())
 			if err2 != nil {
-				logger.Error("[loader] fail to calculate data file compress ratio",
+				logger.Error("fail to calculate data file compress ratio", zap.String("category", "loader"),
 					zap.String("schema", res.Schema), zap.String("table", res.Name), zap.Stringer("type", res.Type))
 			} else {
 				info.FileMeta.RealSize = int64(compressRatio * float64(info.FileMeta.FileSize))
@@ -529,12 +517,30 @@ func (s *mdLoaderSetup) route() error {
 		}
 	}
 	for _, info := range s.tableSchemas {
+		if _, ok := knownDBNames[info.TableName.Schema]; !ok {
+			knownDBNames[info.TableName.Schema] = &dbInfo{
+				fileMeta: info.FileMeta,
+				count:    1,
+			}
+		}
 		knownDBNames[info.TableName.Schema].count++
 	}
 	for _, info := range s.viewSchemas {
+		if _, ok := knownDBNames[info.TableName.Schema]; !ok {
+			knownDBNames[info.TableName.Schema] = &dbInfo{
+				fileMeta: info.FileMeta,
+				count:    1,
+			}
+		}
 		knownDBNames[info.TableName.Schema].count++
 	}
 	for _, info := range s.tableDatas {
+		if _, ok := knownDBNames[info.TableName.Schema]; !ok {
+			knownDBNames[info.TableName.Schema] = &dbInfo{
+				fileMeta: info.FileMeta,
+				count:    1,
+			}
+		}
 		knownDBNames[info.TableName.Schema].count++
 	}
 

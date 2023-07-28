@@ -38,6 +38,8 @@ type kvEncoder interface {
 	// GetLastInsertID returns the first auto-generated ID in the current encoder.
 	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
 	GetLastInsertID() uint64
+	// GetColumnSize returns the size of each column in the current encoder.
+	GetColumnSize() map[int64]int64
 	io.Closer
 }
 
@@ -79,6 +81,11 @@ func newTableKVEncoder(
 
 // Encode implements the kvEncoder interface.
 func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, error) {
+	// we ignore warnings when encoding rows now, but warnings uses the same memory as parser, since the input
+	// row []types.Datum share the same underlying buf, and when doing CastValue, we're using hack.String/hack.Slice.
+	// when generating error such as mysql.ErrDataOutOfRange, the data will be part of the error, causing the buf
+	// unable to release. So we truncate the warnings here.
+	defer en.TruncateWarns()
 	record, err := en.parserData2TableData(row, rowID)
 	if err != nil {
 		return nil, err
@@ -90,6 +97,13 @@ func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, err
 // GetLastInsertID implements the kvEncoder interface.
 func (en *tableKVEncoder) GetLastInsertID() uint64 {
 	return en.LastInsertID
+}
+
+func (en *tableKVEncoder) GetColumnSize() map[int64]int64 {
+	sessionVars := en.SessionCtx.GetSessionVars()
+	sessionVars.TxnCtxMu.Lock()
+	defer sessionVars.TxnCtxMu.Unlock()
+	return sessionVars.TxnCtx.TableDeltaMap[en.Table.Meta().ID].ColSize
 }
 
 // todo merge with code in load_data.go
@@ -176,7 +190,7 @@ func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 
 	record := en.GetOrCreateRecord()
 	for i, col := range en.Columns {
-		var theDatum *types.Datum = nil
+		var theDatum *types.Datum
 		if hasValue[i] {
 			theDatum = &row[i]
 		}

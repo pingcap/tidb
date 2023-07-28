@@ -36,6 +36,8 @@ var (
 	ErrResourceGroupExists = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupExists)
 	// ErrResourceGroupNotExists return for resource group not exists.
 	ErrResourceGroupNotExists = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupNotExists)
+	// ErrResourceGroupInvalidBackgroundTaskName return for unknown resource group background task name.
+	ErrResourceGroupInvalidBackgroundTaskName = dbterror.ClassExecutor.NewStd(mysql.ErrResourceGroupInvalidBackgroundTaskName)
 	// ErrReservedSyntax for internal syntax.
 	ErrReservedSyntax = dbterror.ClassSchema.NewStd(mysql.ErrReservedSyntax)
 	// ErrTableExists returns for table already exists.
@@ -102,4 +104,6 @@ var (
 	ErrForeignKeyColumnNotNull = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyColumnNotNull)
 	// ErrResourceGroupSupportDisabled returns for resource group feature is disabled
 	ErrResourceGroupSupportDisabled = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupSupportDisabled)
+	// ErrCheckConstraintDupName returns for duplicate constraint names.
+	ErrCheckConstraintDupName = dbterror.ClassSchema.NewStd(mysql.ErrCheckConstraintDupName)
 )

@@ -16,8 +16,10 @@ package ingest
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -29,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -57,6 +61,8 @@ const (
 	FlushModeAuto FlushMode = iota
 	// FlushModeForceLocal means flush all data to local storage.
 	FlushModeForceLocal
+	// FlushModeForceLocalAndCheckDiskQuota means flush all data to local storage and check disk quota.
+	FlushModeForceLocalAndCheckDiskQuota
 	// FlushModeForceGlobal means import all data in local storage to global storage.
 	FlushModeForceGlobal
 )
@@ -77,11 +83,12 @@ type litBackendCtx struct {
 	timeOfLastFlush atomicutil.Time
 	updateInterval  time.Duration
 	checkpointMgr   *CheckpointManager
+	etcdClient      *clientv3.Client
 }
 
 // CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
 func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
-	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.BgLogger()})
+	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
 	// backend must be a local backend.
 	// todo: when we can separate local backend completely from tidb backend, will remove this cast.
 	//nolint:forcetypeassert
@@ -92,11 +99,11 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 		IndexID: indexID,
 	})
 	if err != nil {
-		logutil.BgLogger().Error(LitInfoRemoteDupCheck, zap.Error(err),
+		logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
 			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
 		return err
 	} else if hasDupe {
-		logutil.BgLogger().Error(LitErrRemoteDupExistErr,
+		logutil.Logger(bc.ctx).Error(LitErrRemoteDupExistErr,
 			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
 		return tikv.ErrKeyExists
 	}
@@ -116,9 +123,13 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 		return err
 	}
 
+	failpoint.Inject("mockFinishImportErr", func() {
+		failpoint.Return(fmt.Errorf("mock finish import error"))
+	})
+
 	// Check remote duplicate value for the index.
 	if unique {
-		errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.BgLogger()})
+		errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
 		// backend must be a local backend.
 		// todo: when we can separate local backend completely from tidb backend, will remove this cast.
 		//nolint:forcetypeassert
@@ -129,11 +140,11 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 			IndexID: ei.indexID,
 		})
 		if err != nil {
-			logutil.BgLogger().Error(LitInfoRemoteDupCheck, zap.Error(err),
+			logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
 				zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
 			return err
 		} else if hasDupe {
-			logutil.BgLogger().Error(LitErrRemoteDupExistErr,
+			logutil.Logger(bc.ctx).Error(LitErrRemoteDupExistErr,
 				zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
 			return tikv.ErrKeyExists
 		}
@@ -141,11 +152,20 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 	return nil
 }
 
+func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*concurrency.Mutex, error) {
+	mu := concurrency.NewMutex(se, key)
+	err := mu.Lock(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return mu, nil
+}
+
 // Flush checks the disk quota and imports the current key-values in engine to the storage.
 func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error) {
 	ei, exist := bc.Load(indexID)
 	if !exist {
-		logutil.BgLogger().Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))
+		logutil.Logger(bc.ctx).Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))
 		return false, false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
@@ -169,19 +189,46 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 	if !shouldImport {
 		return true, false, nil
 	}
-	logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
+
+	// Use distributed lock if run in distributed mode).
+	if bc.etcdClient != nil {
+		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", bc.jobID, indexID)
+		se, _ := concurrency.NewSession(bc.etcdClient)
+		mu, err := acquireLock(bc.ctx, se, distLockKey)
+		if err != nil {
+			return true, false, err
+		}
+		logutil.Logger(bc.ctx).Info("acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
+		defer func() {
+			err = mu.Unlock(bc.ctx)
+			if err != nil {
+				logutil.Logger(bc.ctx).Warn("release distributed flush lock error", zap.Error(err), zap.Int64("jobID", bc.jobID))
+			} else {
+				logutil.Logger(bc.ctx).Info("release distributed flush lock success", zap.Int64("jobID", bc.jobID))
+			}
+			err = se.Close()
+			if err != nil {
+				logutil.Logger(bc.ctx).Warn("close session error", zap.Error(err))
+			}
+		}()
+	}
+
+	logutil.Logger(bc.ctx).Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
 		zap.String("usage info", bc.diskRoot.UsageInfo()))
 	err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
 	if err != nil {
-		logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
+		logutil.Logger(bc.ctx).Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
 			zap.String("usage info", bc.diskRoot.UsageInfo()))
 		return true, false, err
 	}
 	return true, true, nil
 }
 
+// ForceSyncFlagForTest is a flag to force sync only for test.
+var ForceSyncFlagForTest = false
+
 func (bc *litBackendCtx) ShouldSync(mode FlushMode) (shouldFlush bool, shouldImport bool) {
-	if mode == FlushModeForceGlobal {
+	if mode == FlushModeForceGlobal || ForceSyncFlagForTest {
 		return true, true
 	}
 	if mode == FlushModeForceLocal {
@@ -189,8 +236,12 @@ func (bc *litBackendCtx) ShouldSync(mode FlushMode) (shouldFlush bool, shouldImp
 	}
 	bc.diskRoot.UpdateUsage()
 	shouldImport = bc.diskRoot.ShouldImport()
-	shouldFlush = shouldImport ||
-		time.Since(bc.timeOfLastFlush.Load()) >= bc.updateInterval
+	if mode == FlushModeForceLocalAndCheckDiskQuota {
+		shouldFlush = true
+	} else {
+		shouldFlush = shouldImport ||
+			time.Since(bc.timeOfLastFlush.Load()) >= bc.updateInterval
+	}
 	return shouldFlush, shouldImport
 }
 

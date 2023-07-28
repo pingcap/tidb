@@ -152,10 +152,6 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.infoSchema
 }
 
-func (p *baseTxnContextProvider) SetTxnInfoSchema(is infoschema.InfoSchema) {
-	p.infoSchema = is
-}
-
 // GetTxnScope returns the current txn scope
 func (p *baseTxnContextProvider) GetTxnScope() string {
 	return p.sctx.GetSessionVars().TxnCtx.TxnScope
@@ -222,6 +218,7 @@ func (p *baseTxnContextProvider) OnPessimisticStmtEnd(_ context.Context, _ bool)
 // OnStmtRetry is the hook that should be called when a statement is retried internally.
 func (p *baseTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	p.ctx = ctx
+	p.sctx.GetSessionVars().TxnCtx.CurrentStmtPessimisticLockCache = nil
 	return nil
 }
 
@@ -549,6 +546,12 @@ func (p *basePessimisticTxnContextProvider) OnPessimisticStmtEnd(ctx context.Con
 				return err
 			}
 		}
+	}
+
+	if isSuccessful {
+		p.sctx.GetSessionVars().TxnCtx.FlushStmtPessimisticLockCache()
+	} else {
+		p.sctx.GetSessionVars().TxnCtx.CurrentStmtPessimisticLockCache = nil
 	}
 	return nil
 }

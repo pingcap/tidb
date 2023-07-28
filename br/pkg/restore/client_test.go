@@ -1169,6 +1169,7 @@ func TestApplyKVFilesWithSingelMethod(t *testing.T) {
 			Type:            backuppb.FileType_Put,
 		},
 	}
+	var applyWg sync.WaitGroup
 	applyFunc := func(
 		files []*restore.LogDataFileInfo,
 		kvCount int64,
@@ -1185,6 +1186,7 @@ func TestApplyKVFilesWithSingelMethod(t *testing.T) {
 		context.TODO(),
 		toLogDataFileInfoIter(iter.FromSlice(ds)),
 		applyFunc,
+		&applyWg,
 	)
 
 	require.Equal(t, totalKVCount, int64(15))
@@ -1239,6 +1241,7 @@ func TestApplyKVFilesWithBatchMethod1(t *testing.T) {
 			RegionId:        1,
 		},
 	}
+	var applyWg sync.WaitGroup
 	applyFunc := func(
 		files []*restore.LogDataFileInfo,
 		kvCount int64,
@@ -1259,6 +1262,7 @@ func TestApplyKVFilesWithBatchMethod1(t *testing.T) {
 		batchCount,
 		batchSize,
 		applyFunc,
+		&applyWg,
 	)
 
 	require.Equal(t, runCount, 3)
@@ -1327,6 +1331,7 @@ func TestApplyKVFilesWithBatchMethod2(t *testing.T) {
 			RegionId:        1,
 		},
 	}
+	var applyWg sync.WaitGroup
 	applyFunc := func(
 		files []*restore.LogDataFileInfo,
 		kvCount int64,
@@ -1347,6 +1352,7 @@ func TestApplyKVFilesWithBatchMethod2(t *testing.T) {
 		batchCount,
 		batchSize,
 		applyFunc,
+		&applyWg,
 	)
 
 	require.Equal(t, runCount, 4)
@@ -1409,6 +1415,7 @@ func TestApplyKVFilesWithBatchMethod3(t *testing.T) {
 			RegionId:        3,
 		},
 	}
+	var applyWg sync.WaitGroup
 	applyFunc := func(
 		files []*restore.LogDataFileInfo,
 		kvCount int64,
@@ -1429,6 +1436,7 @@ func TestApplyKVFilesWithBatchMethod3(t *testing.T) {
 		batchCount,
 		batchSize,
 		applyFunc,
+		&applyWg,
 	)
 
 	require.Equal(t, totalKVCount, int64(25))
@@ -1489,6 +1497,7 @@ func TestApplyKVFilesWithBatchMethod4(t *testing.T) {
 			TableId:         2,
 		},
 	}
+	var applyWg sync.WaitGroup
 	applyFunc := func(
 		files []*restore.LogDataFileInfo,
 		kvCount int64,
@@ -1509,6 +1518,7 @@ func TestApplyKVFilesWithBatchMethod4(t *testing.T) {
 		batchCount,
 		batchSize,
 		applyFunc,
+		&applyWg,
 	)
 
 	require.Equal(t, runCount, 4)
@@ -1522,6 +1532,92 @@ func TestApplyKVFilesWithBatchMethod4(t *testing.T) {
 			{"log1"},
 		},
 	)
+}
+
+func TestApplyKVFilesWithBatchMethod5(t *testing.T) {
+	var lock sync.Mutex
+	types := make([]backuppb.FileType, 0)
+	ds := []*backuppb.DataFileInfo{
+		{
+			Path:            "log1",
+			NumberOfEntries: 5,
+			Length:          2000,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Delete,
+			TableId:         1,
+		}, {
+			Path:            "log2",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			TableId:         1,
+		}, {
+			Path:            "log3",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			TableId:         2,
+		}, {
+			Path:            "log4",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			TableId:         1,
+		}, {
+			Path:            "log5",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.DefaultCF,
+			Type:            backuppb.FileType_Put,
+			TableId:         2,
+		},
+	}
+	var applyWg sync.WaitGroup
+	applyFunc := func(
+		files []*restore.LogDataFileInfo,
+		kvCount int64,
+		size uint64,
+	) {
+		if len(files) == 0 {
+			return
+		}
+		applyWg.Add(1)
+		go func() {
+			defer applyWg.Done()
+			if files[0].Type == backuppb.FileType_Put {
+				time.Sleep(time.Second)
+			}
+			lock.Lock()
+			types = append(types, files[0].Type)
+			lock.Unlock()
+		}()
+	}
+
+	restore.ApplyKVFilesWithBatchMethod(
+		context.TODO(),
+		toLogDataFileInfoIter(iter.FromSlice(ds)),
+		2,
+		1500,
+		applyFunc,
+		&applyWg,
+	)
+
+	applyWg.Wait()
+	require.Equal(t, backuppb.FileType_Delete, types[len(types)-1])
+
+	types = make([]backuppb.FileType, 0)
+	restore.ApplyKVFilesWithSingelMethod(
+		context.TODO(),
+		toLogDataFileInfoIter(iter.FromSlice(ds)),
+		applyFunc,
+		&applyWg,
+	)
+
+	applyWg.Wait()
+	require.Equal(t, backuppb.FileType_Delete, types[len(types)-1])
 }
 
 func TestCheckNewCollationEnable(t *testing.T) {

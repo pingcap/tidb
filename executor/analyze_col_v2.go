@@ -144,7 +144,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeRes
 	// stats for _tidb_rowid, it must be at the end of the column stats.
 	// Virtual column has no histogram yet. So we check nil here.
 	if hists[cLen-1] != nil && hists[cLen-1].ID == -1 {
-		cLen -= 1
+		cLen--
 	}
 	colResult := &statistics.AnalyzeResult{
 		Hist:  hists[:cLen],
@@ -817,7 +817,7 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 	for {
 		failpoint.Inject("mockKillRunningV2AnalyzeJob", func() {
 			dom := domain.GetDomain(ctx)
-			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
+			dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 		})
 		if atomic.LoadUint32(&ctx.GetSessionVars().Killed) == 1 {
 			return errors.Trace(exeerrors.ErrQueryInterrupted)

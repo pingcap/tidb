@@ -26,6 +26,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -40,12 +41,12 @@ import (
 	"go.uber.org/zap"
 )
 
-var _ Executor = &PlanReplayerExec{}
-var _ Executor = &PlanReplayerLoadExec{}
+var _ exec.Executor = &PlanReplayerExec{}
+var _ exec.Executor = &PlanReplayerLoadExec{}
 
 // PlanReplayerExec represents a plan replayer executor.
 type PlanReplayerExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	CaptureInfo *PlanReplayerCaptureInfo
 	DumpInfo    *PlanReplayerDumpInfo
 	endFlag     bool
@@ -60,17 +61,18 @@ type PlanReplayerCaptureInfo struct {
 
 // PlanReplayerDumpInfo indicates dump info
 type PlanReplayerDumpInfo struct {
-	ExecStmts []ast.StmtNode
-	Analyze   bool
-	Path      string
-	File      *os.File
-	FileName  string
-	ctx       sessionctx.Context
+	ExecStmts         []ast.StmtNode
+	Analyze           bool
+	HistoricalStatsTS uint64
+	Path              string
+	File              *os.File
+	FileName          string
+	ctx               sessionctx.Context
 }
 
 // Next implements the Executor Next interface.
 func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.GrowAndReset(e.maxChunkSize)
+	req.GrowAndReset(e.MaxChunkSize())
 	if e.endFlag {
 		return nil
 	}
@@ -108,7 +110,7 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *PlanReplayerExec) removeCaptureTask(ctx context.Context) error {
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
 	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("delete from mysql.plan_replayer_task where sql_digest = '%s' and plan_digest = '%s'",
 		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest))
 	if err != nil {
@@ -116,7 +118,7 @@ func (e *PlanReplayerExec) removeCaptureTask(ctx context.Context) error {
 			zap.Error(err))
 		return err
 	}
-	err = domain.GetDomain(e.ctx).GetPlanReplayerHandle().CollectPlanReplayerTask()
+	err = domain.GetDomain(e.Ctx()).GetPlanReplayerHandle().CollectPlanReplayerTask()
 	if err != nil {
 		logutil.BgLogger().Warn("collect task failed", zap.Error(err))
 	}
@@ -127,14 +129,14 @@ func (e *PlanReplayerExec) removeCaptureTask(ctx context.Context) error {
 
 func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	exists, err := domain.CheckPlanReplayerTaskExists(ctx1, e.ctx, e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest)
+	exists, err := domain.CheckPlanReplayerTaskExists(ctx1, e.Ctx(), e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest)
 	if err != nil {
 		return err
 	}
 	if exists {
 		return errors.New("plan replayer capture task already exists")
 	}
-	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
 	_, _, err = exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('%s','%s')",
 		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest))
 	if err != nil {
@@ -142,7 +144,7 @@ func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
 			zap.Error(err))
 		return err
 	}
-	err = domain.GetDomain(e.ctx).GetPlanReplayerHandle().CollectPlanReplayerTask()
+	err = domain.GetDomain(e.Ctx()).GetPlanReplayerHandle().CollectPlanReplayerTask()
 	if err != nil {
 		logutil.BgLogger().Warn("collect task failed", zap.Error(err))
 	}
@@ -168,13 +170,14 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 		return err
 	}
 	task := &domain.PlanReplayerDumpTask{
-		StartTS:     startTS,
-		FileName:    fileName,
-		Zf:          zf,
-		SessionVars: e.ctx.GetSessionVars(),
-		TblStats:    nil,
-		ExecStmts:   e.ExecStmts,
-		Analyze:     e.Analyze,
+		StartTS:           startTS,
+		FileName:          fileName,
+		Zf:                zf,
+		SessionVars:       e.ctx.GetSessionVars(),
+		TblStats:          nil,
+		ExecStmts:         e.ExecStmts,
+		Analyze:           e.Analyze,
+		HistoricalStatsTS: e.HistoricalStatsTS,
 	}
 	err = domain.DumpPlanReplayerInfo(ctx, e.ctx, task)
 	if err != nil {
@@ -185,12 +188,12 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 }
 
 func (e *PlanReplayerExec) prepare() error {
-	val := e.ctx.Value(PlanReplayerDumpVarKey)
+	val := e.Ctx().Value(PlanReplayerDumpVarKey)
 	if val != nil {
-		e.ctx.SetValue(PlanReplayerDumpVarKey, nil)
+		e.Ctx().SetValue(PlanReplayerDumpVarKey, nil)
 		return errors.New("plan replayer: previous plan replayer dump option isn't closed normally, please try again")
 	}
-	e.ctx.SetValue(PlanReplayerDumpVarKey, e.DumpInfo)
+	e.Ctx().SetValue(PlanReplayerDumpVarKey, e.DumpInfo)
 	return nil
 }
 
@@ -214,7 +217,7 @@ func (e *PlanReplayerDumpInfo) DumpSQLsFromFile(ctx context.Context, b []byte) e
 
 // PlanReplayerLoadExec represents a plan replayer load executor.
 type PlanReplayerLoadExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	info *PlanReplayerLoadInfo
 }
 
@@ -226,13 +229,13 @@ type PlanReplayerLoadInfo struct {
 
 type planReplayerDumpKeyType int
 
-func (k planReplayerDumpKeyType) String() string {
+func (planReplayerDumpKeyType) String() string {
 	return "plan_replayer_dump_var"
 }
 
 type planReplayerLoadKeyType int
 
-func (k planReplayerLoadKeyType) String() string {
+func (planReplayerLoadKeyType) String() string {
 	return "plan_replayer_load_var"
 }
 
@@ -243,17 +246,17 @@ const PlanReplayerLoadVarKey planReplayerLoadKeyType = 0
 const PlanReplayerDumpVarKey planReplayerDumpKeyType = 1
 
 // Next implements the Executor Next interface.
-func (e *PlanReplayerLoadExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.GrowAndReset(e.maxChunkSize)
+func (e *PlanReplayerLoadExec) Next(_ context.Context, req *chunk.Chunk) error {
+	req.GrowAndReset(e.MaxChunkSize())
 	if len(e.info.Path) == 0 {
 		return errors.New("plan replayer: file path is empty")
 	}
-	val := e.ctx.Value(PlanReplayerLoadVarKey)
+	val := e.Ctx().Value(PlanReplayerLoadVarKey)
 	if val != nil {
-		e.ctx.SetValue(PlanReplayerLoadVarKey, nil)
+		e.Ctx().SetValue(PlanReplayerLoadVarKey, nil)
 		return errors.New("plan replayer: previous plan replayer load option isn't closed normally, please try again")
 	}
-	e.ctx.SetValue(PlanReplayerLoadVarKey, e.info)
+	e.Ctx().SetValue(PlanReplayerLoadVarKey, e.info)
 	return nil
 }
 
@@ -264,7 +267,7 @@ func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 			if err != nil {
 				return errors.AddStack(err)
 			}
-			//nolint: errcheck,all_revive
+			//nolint: errcheck,all_revive,revive
 			defer v.Close()
 			buf := new(bytes.Buffer)
 			_, err = buf.ReadFrom(v)
@@ -362,9 +365,9 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 			if err != nil {
 				return errors.AddStack(err)
 			}
-			//nolint: errcheck,all_revive
+			//nolint: errcheck,all_revive,revive
 			defer v.Close()
-			_, err = toml.DecodeReader(v, &varMap)
+			_, err = toml.NewDecoder(v).Decode(&varMap)
 			if err != nil {
 				return errors.AddStack(err)
 			}

@@ -1176,7 +1176,7 @@ func TestRangeMultiColumnsPruning(t *testing.T) {
 	// WAS HERE, Why is the start return TRUE making this to work and FALSE disapear?
 	tk.MustQuery(`select a,b,c from t where a = 0 AND c = "Wow"`).Check(testkit.Rows("0 2020-01-01 00:00:00 Wow"))
 	tk.MustQuery(`explain format = 'brief' select a,b,c from t where a = 0 AND c = "Wow"`).Check(testkit.Rows(
-		`IndexReader 0.50 root partition:p3,p4,p5,p6,p7,p8 index:Selection`,
+		`IndexReader 0.50 root partition:p3,p4,p5,p6,p7 index:Selection`,
 		`└─Selection 0.50 cop[tikv]  eq(rcolumnsmulti.t.c, "Wow")`,
 		`  └─IndexRangeScan 1.00 cop[tikv] table:t, index:a(a, b, c) range:[0,0], keep order:false`))
 }
@@ -1284,11 +1284,11 @@ func TestRangeColumnsExpr(t *testing.T) {
 		"└─Selection 0.05 cop[tikv]  eq(rce.t.a, 5), eq(rce.t.c, 3)",
 		"  └─TableFullScan 21.00 cop[tikv] table:t keep order:false"))
 	tk.MustQuery(`explain format = 'brief' select * from t where a = 4 and c = 3`).Check(testkit.Rows(
-		"TableReader 0.43 root partition:p1,p2,p3,p4,p5,p6,p7,p8,p9 data:Selection",
+		"TableReader 0.43 root partition:p1,p2,p3,p4,p5,p6,p7,p8 data:Selection",
 		"└─Selection 0.43 cop[tikv]  eq(rce.t.a, 4), eq(rce.t.c, 3)",
 		"  └─TableFullScan 21.00 cop[tikv] table:t keep order:false"))
 	tk.MustQuery(`explain format = 'brief' select * from t where a in (4,14) and c = 3`).Check(testkit.Rows(
-		"TableReader 0.57 root partition:p1,p2,p3,p4,p5,p6,p7,p8,p9,p11,p12 data:Selection",
+		"TableReader 0.57 root partition:p1,p2,p3,p4,p5,p6,p7,p8,p11,p12 data:Selection",
 		"└─Selection 0.57 cop[tikv]  eq(rce.t.c, 3), in(rce.t.a, 4, 14)",
 		"  └─TableFullScan 21.00 cop[tikv] table:t keep order:false"))
 	tk.MustQuery(`explain format = 'brief' select * from t where a in (4,14) and b in (null,10)`).Check(testkit.Rows(
@@ -1491,4 +1491,22 @@ func TestPartitionProcessorWithUninitializedTable(t *testing.T) {
 		{"  └─TableFullScan"},
 	}
 	tk.MustQuery("explain format=brief select * from q1,q2").CheckAt([]int{0}, rows)
+}
+
+func TestIssue42323(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database issue42323")
+	defer tk.MustExec("drop database issue42323")
+
+	tk.MustExec("use issue42323")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec(`CREATE TABLE t(col1 int(11) NOT NULL DEFAULT '0' ) PARTITION BY RANGE (FLOOR(col1))(
+			PARTITION p2021 VALUES LESS THAN (202200),
+			PARTITION p2022 VALUES LESS THAN (202300),
+			PARTITION p2023 VALUES LESS THAN (202400))`)
+	tk.MustExec("insert into t values(202303)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery(`select * from t where col1 = 202303`).Check(testkit.Rows("202303"))
+	tk.MustQuery(`select * from t where col1 = floor(202303)`).Check(testkit.Rows("202303"))
 }

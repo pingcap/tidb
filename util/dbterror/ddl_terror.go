@@ -51,6 +51,8 @@ var (
 	ErrCantDropColWithIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "drop column with index"), nil))
 	// ErrCantDropColWithAutoInc means can't drop column with auto_increment
 	ErrCantDropColWithAutoInc = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "can't remove column with auto_increment when @@tidb_allow_remove_auto_inc disabled"), nil))
+	// ErrCantDropColWithCheckConstraint means can't drop column with check constraint
+	ErrCantDropColWithCheckConstraint = ClassDDL.NewStd(mysql.ErrDependentByCheckConstraint)
 	// ErrUnsupportedAddColumn means add columns is unsupported
 	ErrUnsupportedAddColumn = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add column"), nil))
 	// ErrUnsupportedModifyColumn means modify columns is unsupoorted
@@ -401,6 +403,8 @@ var (
 	ErrDDLSetting = ClassDDL.NewStd(mysql.ErrDDLSetting)
 	// ErrIngestFailed returns when the DDL ingest job is failed.
 	ErrIngestFailed = ClassDDL.NewStd(mysql.ErrIngestFailed)
+	// ErrIngestCheckEnvFailed returns when the DDL ingest env is failed to init.
+	ErrIngestCheckEnvFailed = ClassDDL.NewStd(mysql.ErrIngestCheckEnvFailed)
 
 	// ErrColumnInChange indicates there is modification on the column in parallel.
 	ErrColumnInChange = ClassDDL.NewStd(mysql.ErrColumnInChange)
@@ -442,4 +446,46 @@ var (
 
 	// ErrNotSupportedYet returns when tidb does not support this feature.
 	ErrNotSupportedYet = ClassDDL.NewStd(mysql.ErrNotSupportedYet)
+
+	// ErrColumnCheckConstraintReferOther is returned when create column check constraint referring other column.
+	ErrColumnCheckConstraintReferOther = ClassDDL.NewStd(mysql.ErrColumnCheckConstraintReferencesOtherColumn)
+	// ErrTableCheckConstraintReferUnknown is returned when create table check constraint referring non-existing column.
+	ErrTableCheckConstraintReferUnknown = ClassDDL.NewStd(mysql.ErrTableCheckConstraintReferUnknown)
+	// ErrConstraintNotFound is returned for dropping a non-existent constraint.
+	ErrConstraintNotFound = ClassDDL.NewStd(mysql.ErrConstraintNotFound)
+	// ErrCheckConstraintIsViolated is returned for violating an existent check constraint.
+	ErrCheckConstraintIsViolated = ClassDDL.NewStd(mysql.ErrCheckConstraintViolated)
+	// ErrCheckConstraintNamedFuncIsNotAllowed is returned for not allowed function with name.
+	ErrCheckConstraintNamedFuncIsNotAllowed = ClassDDL.NewStd(mysql.ErrCheckConstraintNamedFunctionIsNotAllowed)
+	// ErrCheckConstraintFuncIsNotAllowed is returned for not allowed function.
+	ErrCheckConstraintFuncIsNotAllowed = ClassDDL.NewStd(mysql.ErrCheckConstraintFunctionIsNotAllowed)
+	// ErrCheckConstraintVariables is returned for referring user or system variables.
+	ErrCheckConstraintVariables = ClassDDL.NewStd(mysql.ErrCheckConstraintVariables)
+	// ErrCheckConstraintRefersAutoIncrementColumn is returned for referring auto-increment columns.
+	ErrCheckConstraintRefersAutoIncrementColumn = ClassDDL.NewStd(mysql.ErrCheckConstraintRefersAutoIncrementColumn)
+	// ErrCheckConstraintUsingFKReferActionColumn is returned for referring foreign key columns.
+	ErrCheckConstraintUsingFKReferActionColumn = ClassDDL.NewStd(mysql.ErrCheckConstraintClauseUsingFKReferActionColumn)
+	// ErrNonBooleanExprForCheckConstraint is returned for non bool expression.
+	ErrNonBooleanExprForCheckConstraint = ClassDDL.NewStd(mysql.ErrNonBooleanExprForCheckConstraint)
 )
+
+// ReorgRetryableErrCodes is the error codes that are retryable for reorganization.
+var ReorgRetryableErrCodes = map[uint16]struct{}{
+	mysql.ErrPDServerTimeout:           {},
+	mysql.ErrTiKVServerTimeout:         {},
+	mysql.ErrTiKVServerBusy:            {},
+	mysql.ErrResolveLockTimeout:        {},
+	mysql.ErrRegionUnavailable:         {},
+	mysql.ErrGCTooEarly:                {},
+	mysql.ErrWriteConflict:             {},
+	mysql.ErrTiKVStoreLimit:            {},
+	mysql.ErrTiKVStaleCommand:          {},
+	mysql.ErrTiKVMaxTimestampNotSynced: {},
+	mysql.ErrTiFlashServerTimeout:      {},
+	mysql.ErrTiFlashServerBusy:         {},
+	mysql.ErrInfoSchemaExpired:         {},
+	mysql.ErrInfoSchemaChanged:         {},
+	mysql.ErrWriteConflictInTiDB:       {},
+	mysql.ErrTxnRetryable:              {},
+	mysql.ErrNotOwner:                  {},
+}

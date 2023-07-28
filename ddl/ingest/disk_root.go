@@ -16,11 +16,15 @@ package ingest
 
 import (
 	"fmt"
+	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	lcom "github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -44,6 +48,7 @@ type diskRootImpl struct {
 	bcUsed   uint64
 	bcCtx    *litBackendCtxMgr
 	mu       sync.RWMutex
+	updating atomic.Bool
 }
 
 // NewDiskRootImpl creates a new DiskRoot.
@@ -56,14 +61,19 @@ func NewDiskRootImpl(path string, bcCtx *litBackendCtxMgr) DiskRoot {
 
 // UpdateUsage implements DiskRoot interface.
 func (d *diskRootImpl) UpdateUsage() {
+	if !d.updating.CompareAndSwap(false, true) {
+		return
+	}
 	bcUsed := d.bcCtx.TotalDiskUsage()
 	var capacity, used uint64
 	sz, err := lcom.GetStorageSize(d.path)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrGetStorageQuota, zap.Error(err))
+		logutil.BgLogger().Error(LitErrGetStorageQuota,
+			zap.String("category", "ddl-ingest"), zap.Error(err))
 	} else {
 		capacity, used = sz.Capacity, sz.Capacity-sz.Available
 	}
+	d.updating.Store(false)
 	d.mu.Lock()
 	d.bcUsed = bcUsed
 	d.capacity = capacity
@@ -76,7 +86,7 @@ func (d *diskRootImpl) ShouldImport() bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	if d.bcUsed > variable.DDLDiskQuota.Load() {
-		logutil.BgLogger().Info("[ddl-ingest] disk usage is over quota",
+		logutil.BgLogger().Info("disk usage is over quota", zap.String("category", "ddl-ingest"),
 			zap.Uint64("quota", variable.DDLDiskQuota.Load()),
 			zap.String("usage", d.usageInfo()))
 		return true
@@ -85,10 +95,10 @@ func (d *diskRootImpl) ShouldImport() bool {
 		return false
 	}
 	if float64(d.used) >= float64(d.capacity)*capacityThreshold {
-		logutil.BgLogger().Warn("[ddl-ingest] available disk space is less than 10%, "+
+		logutil.BgLogger().Warn("available disk space is less than 10%, "+
 			"this may degrade the performance, "+
 			"please make sure the disk available space is larger than @@tidb_ddl_disk_quota before adding index",
-			zap.String("usage", d.usageInfo()))
+			zap.String("category", "ddl-ingest"), zap.String("usage", d.usageInfo()))
 		return true
 	}
 	return false
@@ -107,13 +117,21 @@ func (d *diskRootImpl) usageInfo() string {
 
 // PreCheckUsage implements DiskRoot interface.
 func (d *diskRootImpl) PreCheckUsage() error {
+	failpoint.Inject("mockIngestCheckEnvFailed", func(_ failpoint.Value) {
+		failpoint.Return(dbterror.ErrIngestCheckEnvFailed.FastGenByArgs("mock error"))
+	})
+	err := os.MkdirAll(d.path, 0700)
+	if err != nil {
+		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())
+	}
 	sz, err := lcom.GetStorageSize(d.path)
 	if err != nil {
-		return errors.Trace(err)
+		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())
 	}
 	if RiskOfDiskFull(sz.Available, sz.Capacity) {
 		sortPath := ConfigSortPath()
-		return errors.Errorf("sort path: %s, %s, please clean up the disk and retry", sortPath, d.UsageInfo())
+		msg := fmt.Sprintf("sort path: %s, %s, please clean up the disk and retry", sortPath, d.UsageInfo())
+		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(msg)
 	}
 	return nil
 }

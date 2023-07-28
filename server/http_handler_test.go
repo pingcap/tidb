@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -448,7 +450,7 @@ func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	require.NoError(t, err)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 
-	cfg := newTestConfig()
+	cfg := util.NewTestConfig()
 	cfg.Store = "tikv"
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
@@ -459,6 +461,7 @@ func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	ts.port = getPortFromTCPAddr(server.listener.Addr())
 	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
+	ts.server.SetDomain(ts.domain)
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
@@ -1195,5 +1198,50 @@ func TestSetLabels(t *testing.T) {
 	testUpdateLabels(updated, labels)
 
 	// reset the global variable
-	config.GetGlobalConfig().Labels = map[string]string{}
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels = map[string]string{}
+	})
+}
+
+func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	testUpdateLabels := func() {
+		labels := map[string]string{}
+		labels["zone"] = fmt.Sprintf("z-%v", rand.Intn(100000))
+		buffer := bytes.NewBuffer([]byte{})
+		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
+		resp, err := ts.postStatus("/labels", "application/json", buffer)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		defer func() {
+			require.NoError(t, resp.Body.Close())
+		}()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		newLabels := config.GetGlobalConfig().Labels
+		require.Equal(t, newLabels, labels)
+	}
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				config.GetGlobalConfig().GetTiKVConfig()
+			}
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		testUpdateLabels()
+	}
+	close(done)
+
+	// reset the global variable
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels = map[string]string{}
+	})
 }

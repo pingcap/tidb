@@ -18,7 +18,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"sync"
 
 	"github.com/go-ldap/ldap/v3"
@@ -32,10 +34,10 @@ import (
 type ldapAuthImpl struct {
 	sync.RWMutex
 	// the following attributes are used to search the users
-	bindBaseDN string
-	bindRootDN string
-	bindRootPW string
-	searchAttr string
+	bindBaseDN  string
+	bindRootDN  string
+	bindRootPWD string
+	searchAttr  string
 
 	// the following attributes are used to connect to LDAP server
 	ldapServerHost string
@@ -59,16 +61,10 @@ func (impl *ldapAuthImpl) searchUser(userName string) (dn string, err error) {
 	}
 	defer impl.putConnection(l)
 
-	err = l.Bind(impl.bindRootDN, impl.bindRootPW)
+	err = l.Bind(impl.bindRootDN, impl.bindRootPWD)
 	if err != nil {
 		return "", errors.Wrap(err, "bind root dn to search user")
 	}
-	defer func() {
-		// bind to anonymous user
-		_, err = l.SimpleBind(&ldap.SimpleBindRequest{
-			AllowEmptyPassword: true,
-		})
-	}()
 
 	result, err := l.Search(&ldap.SearchRequest{
 		BaseDN: impl.bindBaseDN,
@@ -119,7 +115,7 @@ func (impl *ldapAuthImpl) initializeCAPool() error {
 }
 
 func (impl *ldapAuthImpl) connectionFactory() (pools.Resource, error) {
-	address := fmt.Sprintf("%s:%d", impl.ldapServerHost, impl.ldapServerPort)
+	address := net.JoinHostPort(impl.ldapServerHost, strconv.FormatUint(uint64(impl.ldapServerPort), 10))
 
 	// It's fine to load these two TLS configurations one-by-one (but not guarded by a single lock), because there isn't
 	// a way to set two variables atomically.
@@ -156,14 +152,15 @@ func (impl *ldapAuthImpl) getConnection() (*ldap.Conn, error) {
 			return nil, err
 		}
 
-		// try to bind anonymous user. It has two meanings:
+		// try to bind root user. It has two meanings:
 		// 1. Clear the state of previous binding, to avoid security leaks. (Though it's not serious, because even the current
-		//   connection has binded to other users, the following authentication will still fail. But the ACL for anonymous
-		//   user and a valid user could be different, so it's better to bind back to anonymous user here.
+		//   connection has binded to other users, the following authentication will still fail. But the ACL for root
+		//   user and a valid user could be different, so it's better to bind back to root user here.
 		// 2. Detect whether this connection is still valid to use, in case the server has closed this connection.
 		ldapConnection := conn.(*ldap.Conn)
 		_, err = ldapConnection.SimpleBind(&ldap.SimpleBindRequest{
-			AllowEmptyPassword: true,
+			Username: impl.bindRootDN,
+			Password: impl.bindRootPWD,
 		})
 		if err != nil {
 			// fail to bind to anonymous user, just release this connection and try to get a new one
@@ -217,7 +214,7 @@ func (impl *ldapAuthImpl) SetBindRootPW(bindRootPW string) {
 	impl.Lock()
 	defer impl.Unlock()
 
-	impl.bindRootPW = bindRootPW
+	impl.bindRootPWD = bindRootPW
 }
 
 // SetSearchAttr updates the search attributes.
@@ -316,7 +313,7 @@ func (impl *ldapAuthImpl) GetBindRootPW() string {
 	impl.RLock()
 	defer impl.RUnlock()
 
-	return impl.bindRootPW
+	return impl.bindRootPWD
 }
 
 // GetSearchAttr returns the search attributes.

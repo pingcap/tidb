@@ -16,6 +16,7 @@ package checkpoint
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -44,6 +45,10 @@ func flushPositionForBackup() flushPosition {
 	}
 }
 
+func valueMarshalerForBackup(group *RangeGroup[BackupKeyType, BackupValueType]) ([]byte, error) {
+	return json.Marshal(group)
+}
+
 // only for test
 func StartCheckpointBackupRunnerForTest(
 	ctx context.Context,
@@ -52,7 +57,8 @@ func StartCheckpointBackupRunnerForTest(
 	tick time.Duration,
 	timer GlobalTimer,
 ) (*CheckpointRunner[BackupKeyType, BackupValueType], error) {
-	runner := newCheckpointRunner[BackupKeyType, BackupValueType](ctx, storage, cipher, timer, flushPositionForBackup())
+	runner := newCheckpointRunner[BackupKeyType, BackupValueType](
+		ctx, storage, cipher, timer, flushPositionForBackup(), valueMarshalerForBackup)
 
 	err := runner.initialLock(ctx)
 	if err != nil {
@@ -68,7 +74,8 @@ func StartCheckpointRunnerForBackup(
 	cipher *backuppb.CipherInfo,
 	timer GlobalTimer,
 ) (*CheckpointRunner[BackupKeyType, BackupValueType], error) {
-	runner := newCheckpointRunner[BackupKeyType, BackupValueType](ctx, storage, cipher, timer, flushPositionForBackup())
+	runner := newCheckpointRunner[BackupKeyType, BackupValueType](
+		ctx, storage, cipher, timer, flushPositionForBackup(), valueMarshalerForBackup)
 
 	err := runner.initialLock(ctx)
 	if err != nil {

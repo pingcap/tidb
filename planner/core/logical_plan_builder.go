@@ -45,11 +45,12 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/planner/util/debugtrace"
+	"github.com/pingcap/tidb/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
@@ -66,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 const (
@@ -73,6 +75,8 @@ const (
 	TiDBMergeJoin = "tidb_smj"
 	// HintSMJ is hint enforce merge join.
 	HintSMJ = "merge_join"
+	// HintNoMergeJoin is the hint to enforce the query not to use merge join.
+	HintNoMergeJoin = "no_merge_join"
 
 	// TiDBBroadCastJoin indicates applying broadcast join by force.
 	TiDBBroadCastJoin = "tidb_bcj"
@@ -96,6 +100,8 @@ const (
 	HintINLMJ = "inl_merge_join"
 	// TiDBHashJoin is hint enforce hash join.
 	TiDBHashJoin = "tidb_hj"
+	// HintNoHashJoin is the hint to enforce the query not to use hash join.
+	HintNoHashJoin = "no_hash_join"
 	// HintHJ is hint enforce hash join.
 	HintHJ = "hash_join"
 	// HintHashJoinBuild is hint enforce hash join's build side
@@ -197,6 +203,117 @@ func (a *aggOrderByResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, true
 }
 
+func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expression) (LogicalPlan, []expression.Expression, error) {
+	b.optFlag |= flagResolveExpand
+
+	// Rollup syntax require expand OP to do the data expansion, different data replica supply the different grouping layout.
+	distinctGbyExprs, gbyExprsRefPos := expression.DeduplicateGbyExpression(b.ctx, gbyItems)
+	// build another projection below.
+	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, p.Schema().Len()+len(distinctGbyExprs))}.Init(b.ctx, b.getSelectOffset())
+	// project: child's output and distinct GbyExprs in advance. (make every group-by item to be a column)
+	projSchema := p.Schema().Clone()
+	names := p.OutputNames()
+	for _, col := range projSchema.Columns {
+		proj.Exprs = append(proj.Exprs, col)
+	}
+	distinctGbyColNames := make(types.NameSlice, 0, len(distinctGbyExprs))
+	distinctGbyCols := make([]*expression.Column, 0, len(distinctGbyExprs))
+	for _, expr := range distinctGbyExprs {
+		// distinct group expr has been resolved in resolveGby.
+		proj.Exprs = append(proj.Exprs, expr)
+
+		// add the newly appended names.
+		var name *types.FieldName
+		if c, ok := expr.(*expression.Column); ok {
+			name = buildExpandFieldName(c, names[p.Schema().ColumnIndex(c)], "")
+		} else {
+			name = buildExpandFieldName(expr, nil, "")
+		}
+		names = append(names, name)
+		distinctGbyColNames = append(distinctGbyColNames, name)
+
+		// since we will change the nullability of source col, proj it with a new col id.
+		col := &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			// clone it rather than using it directly,
+			RetType: expr.GetType().Clone(),
+		}
+
+		projSchema.Append(col)
+		distinctGbyCols = append(distinctGbyCols, col)
+	}
+	proj.SetSchema(projSchema)
+	proj.SetChildren(p)
+	// since expand will ref original col and make some change, do the copy in executor rather than ref the same chunk.column.
+	proj.AvoidColumnEvaluator = true
+	proj.Proj4Expand = true
+	newGbyItems := expression.RestoreGbyExpression(distinctGbyCols, gbyExprsRefPos)
+
+	// build expand.
+	rollupGroupingSets := expression.RollupGroupingSets(newGbyItems)
+	// eg: <a,b,c> with rollup => {},{a},{a,b},{a,b,c}
+	// for every grouping set above, we should individually set those not-needed grouping-set col as null value.
+	// eg: let's say base schema is <a,b,c,d>, d is unrelated col, keep it real in every grouping set projection.
+	// 		for grouping set {a,b,c}, project it as: [a,    b,    c,    d,   gid]
+	//      for grouping set {a,b},   project it as: [a,    b,    null, d,   gid]
+	//      for grouping set {a},     project it as: [a,    null, null, d,   gid]
+	// 		for grouping set {},      project it as: [null, null, null, d,   gid]
+	expandSchema := proj.Schema().Clone()
+	expression.AdjustNullabilityFromGroupingSets(rollupGroupingSets, expandSchema)
+	expand := LogicalExpand{
+		rollupGroupingSets:  rollupGroupingSets,
+		distinctGroupByCol:  distinctGbyCols,
+		distinctGbyColNames: distinctGbyColNames,
+		// for resolving grouping function args.
+		distinctGbyExprs: distinctGbyExprs,
+		gbyExprsRefPos:   gbyExprsRefPos,
+
+		// fill the gen col names when building level projections.
+	}.Init(b.ctx, b.getSelectOffset())
+
+	// if we want to use bitAnd for the quick computation of grouping function, then the maximum capacity of num of grouping is about 64.
+	expand.GroupingMode = tipb.GroupingMode_ModeBitAnd
+	if len(expand.rollupGroupingSets) > 64 {
+		expand.GroupingMode = tipb.GroupingMode_ModeNumericSet
+	}
+
+	expand.distinctSize, expand.rollupGroupingIDs, expand.rollupID2GIDS = expand.rollupGroupingSets.DistinctSize()
+	hasDuplicateGroupingSet := len(expand.rollupGroupingSets) != expand.distinctSize
+	// append the generated column for logical Expand.
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.SetFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
+	gid := &expression.Column{
+		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  tp,
+		OrigName: "gid",
+	}
+	expand.GID = gid
+	expandSchema.Append(gid)
+	expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gid.OrigName)
+	names = append(names, buildExpandFieldName(gid, nil, "gid_"))
+	if hasDuplicateGroupingSet {
+		// the last two col of the schema should be gid & gpos
+		gpos := &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  tp.Clone(),
+			OrigName: "gpos",
+		}
+		expand.GPos = gpos
+		expandSchema.Append(gpos)
+		expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gpos.OrigName)
+		names = append(names, buildExpandFieldName(gpos, nil, "gpos_"))
+	}
+	expand.SetChildren(proj)
+	expand.SetSchema(expandSchema)
+	expand.SetOutputNames(names)
+
+	// register current rollup Expand operator in current select block.
+	b.currentBlockExpand = expand
+
+	// defer generating level-projection as last logical optimization rule.
+	return expand, newGbyItems, nil
+}
+
 func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression,
 	correlatedAggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, map[int]int, error) {
 	b.optFlag |= flagBuildKeyInfo
@@ -212,6 +329,10 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 
 	if b.ctx.GetSessionVars().EnableSkewDistinctAgg {
 		b.optFlag |= flagSkewDistinctAgg
+	}
+	var rollupExpand *LogicalExpand
+	if expand, ok := p.(*LogicalExpand); ok {
+		rollupExpand = expand
 	}
 
 	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx, b.getSelectOffset())
@@ -345,7 +466,15 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	}
 	plan4Agg.names = names
 	plan4Agg.SetChildren(p)
-	plan4Agg.GroupByItems = gbyItems
+	if rollupExpand != nil {
+		// append gid and gpos as the group keys if any.
+		plan4Agg.GroupByItems = append(gbyItems, rollupExpand.GID)
+		if rollupExpand.GPos != nil {
+			plan4Agg.GroupByItems = append(plan4Agg.GroupByItems, rollupExpand.GPos)
+		}
+	} else {
+		plan4Agg.GroupByItems = gbyItems
+	}
 	plan4Agg.SetSchema(schema4Agg)
 	return plan4Agg, aggIndexMap, nil
 }
@@ -591,8 +720,8 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 		return
 	}
 
-	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
-	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
+	lhsAlias := extractTableAlias(p.children[0], p.SelectBlockOffset())
+	rhsAlias := extractTableAlias(p.children[1], p.SelectBlockOffset())
 	if hintInfo.ifPreferMergeJoin(lhsAlias) {
 		p.preferJoinType |= preferMergeJoin
 		p.leftPreferJoinType |= preferMergeJoin
@@ -600,6 +729,14 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if hintInfo.ifPreferMergeJoin(rhsAlias) {
 		p.preferJoinType |= preferMergeJoin
 		p.rightPreferJoinType |= preferMergeJoin
+	}
+	if hintInfo.ifPreferNoMergeJoin(lhsAlias) {
+		p.preferJoinType |= preferNoMergeJoin
+		p.leftPreferJoinType |= preferNoMergeJoin
+	}
+	if hintInfo.ifPreferNoMergeJoin(rhsAlias) {
+		p.preferJoinType |= preferNoMergeJoin
+		p.rightPreferJoinType |= preferNoMergeJoin
 	}
 	if hintInfo.ifPreferBroadcastJoin(lhsAlias) {
 		p.preferJoinType |= preferBCJoin
@@ -624,6 +761,14 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if hintInfo.ifPreferHashJoin(rhsAlias) {
 		p.preferJoinType |= preferHashJoin
 		p.rightPreferJoinType |= preferHashJoin
+	}
+	if hintInfo.ifPreferNoHashJoin(lhsAlias) {
+		p.preferJoinType |= preferNoHashJoin
+		p.leftPreferJoinType |= preferNoHashJoin
+	}
+	if hintInfo.ifPreferNoHashJoin(rhsAlias) {
+		p.preferJoinType |= preferNoHashJoin
+		p.rightPreferJoinType |= preferNoHashJoin
 	}
 	if hintInfo.ifPreferINLJ(lhsAlias) {
 		p.preferJoinType |= preferLeftAsINLJInner
@@ -666,11 +811,11 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 		p.rightPreferJoinType |= preferHJProbe
 	}
 	hasConflict := false
-	if !p.ctx.GetSessionVars().EnableAdvancedJoinHint || p.ctx.GetSessionVars().StmtCtx.StraightJoinOrder {
+	if !p.SCtx().GetSessionVars().EnableAdvancedJoinHint || p.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
 		if containDifferentJoinTypes(p.preferJoinType) {
 			hasConflict = true
 		}
-	} else if p.ctx.GetSessionVars().EnableAdvancedJoinHint {
+	} else if p.SCtx().GetSessionVars().EnableAdvancedJoinHint {
 		if containDifferentJoinTypes(p.leftPreferJoinType) || containDifferentJoinTypes(p.rightPreferJoinType) {
 			hasConflict = true
 		}
@@ -678,7 +823,7 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if hasConflict {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
-		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
 		p.preferJoinType = 0
 	}
 	// set the join order
@@ -748,7 +893,7 @@ func (p *LogicalJoin) setPreferredJoinType() {
 	if containDifferentJoinTypes(p.preferJoinType) {
 		errMsg := "Join hints conflict after join reorder phase, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
-		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
 		p.preferJoinType = 0
 	}
 }
@@ -775,11 +920,11 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		if ds.preferStoreType&preferTiKV == 0 {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
-				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
+				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
 			warning := ErrInternal.GenWithStack(errMsg)
-			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
 		} else {
-			ds.ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have set a hint to read table `" + hintTbl.tblName.O + "` from TiKV.")
+			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have set a hint to read table `" + hintTbl.tblName.O + "` from TiKV.")
 		}
 	}
 	if hintTbl := hintInfo.ifPreferTiFlash(alias); hintTbl != nil {
@@ -789,7 +934,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			errMsg := fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s.%s",
 				alias.dbName.L, alias.tblName.L)
 			warning := ErrInternal.GenWithStack(errMsg)
-			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
 			ds.preferStoreType = 0
 			return
 		}
@@ -803,9 +948,9 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		if ds.preferStoreType&preferTiFlash == 0 {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
-				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
+				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
 			warning := ErrInternal.GenWithStack(errMsg)
-			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
 	}
 }
@@ -1160,7 +1305,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 	for _, expr := range expressions {
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
-			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
+			if con, ok := item.(*expression.Constant); ok && con.ConstItem(b.ctx.GetSessionVars().StmtCtx) {
 				ret, _, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -1276,6 +1421,31 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(_ context.Context,
 		fieldName = strings.TrimRight(fieldName, "\t\n )")
 		return model.NewCIStr(fieldName), nil
 	}
+}
+
+func buildExpandFieldName(expr expression.Expression, name *types.FieldName, genName string) *types.FieldName {
+	_, isCol := expr.(*expression.Column)
+	var origTblName, origColName, dbName, colName, tblName model.CIStr
+	if genName != "" {
+		// for case like: gid_, gpos_
+		colName = model.NewCIStr(expr.String())
+	} else if isCol {
+		// col ref to original col, while its nullability may be changed.
+		origTblName, origColName, dbName = name.OrigTblName, name.OrigColName, name.DBName
+		colName = model.NewCIStr("ex_" + name.ColName.O)
+		tblName = model.NewCIStr("ex_" + name.TblName.O)
+	} else {
+		// Other: complicated expression.
+		colName = model.NewCIStr("ex_" + expr.String())
+	}
+	newName := &types.FieldName{
+		TblName:     tblName,
+		OrigTblName: origTblName,
+		ColName:     colName,
+		OrigColName: origColName,
+		DBName:      dbName,
+	}
+	return newName
 }
 
 // buildProjectionField builds the field object according to SelectField in projection.
@@ -1403,6 +1573,76 @@ func findColFromNaturalUsingJoin(p LogicalPlan, col *expression.Column) (name *t
 	return nil
 }
 
+type resolveGroupingTraverseAction struct {
+	CurrentBlockExpand *LogicalExpand
+}
+
+func (r resolveGroupingTraverseAction) Transform(expr expression.Expression) (res expression.Expression) {
+	switch x := expr.(type) {
+	case *expression.Column:
+		// when meeting a column, judge whether it's a relate grouping set col.
+		// eg: select a, b from t group by a, c with rollup, here a is, while b is not.
+		// in underlying Expand schema (a,b,c,a',c'), a select list should be resolved to a'.
+		res, _ = r.CurrentBlockExpand.trySubstituteExprWithGroupingSetCol(x)
+	case *expression.CorrelatedColumn:
+		// select 1 in (select t2.a from t group by t2.a, b with rollup) from t2;
+		// in this case: group by item has correlated column t2.a, and it's select list contains t2.a as well.
+		res, _ = r.CurrentBlockExpand.trySubstituteExprWithGroupingSetCol(x)
+	case *expression.Constant:
+		// constant just keep it real: select 1 from t group by a, b with rollup.
+		res = x
+	case *expression.ScalarFunction:
+		// scalar function just try to resolve itself first, then if not changed, trying resolve its children.
+		var substituted bool
+		res, substituted = r.CurrentBlockExpand.trySubstituteExprWithGroupingSetCol(x)
+		if !substituted {
+			// if not changed, try to resolve it children.
+			// select a+1, grouping(b) from t group by a+1 (projected as c), b with rollup: in this case, a+1 is resolved as c as a whole.
+			// select a+1, grouping(b) from t group by a(projected as a'), b with rollup  : in this case, a+1 is resolved as a'+ 1.
+			newArgs := x.GetArgs()
+			for i, arg := range newArgs {
+				newArgs[i] = r.Transform(arg)
+			}
+			res = x
+		}
+	default:
+		res = expr
+	}
+	return res
+}
+
+func (b *PlanBuilder) replaceGroupingFunc(expr expression.Expression) expression.Expression {
+	// current block doesn't have an expand OP, just return it.
+	if b.currentBlockExpand == nil {
+		return expr
+	}
+	// curExpand can supply the distinctGbyExprs and gid col.
+	traverseAction := resolveGroupingTraverseAction{CurrentBlockExpand: b.currentBlockExpand}
+	return expr.Traverse(traverseAction)
+}
+
+func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Schema, projNames []*types.FieldName, projExprs []expression.Expression) (*expression.Schema, []*types.FieldName, []expression.Expression) {
+	if b.currentBlockExpand == nil {
+		return projSchema, projNames, projExprs
+	}
+	m := make(map[int64]struct{}, len(b.currentBlockExpand.distinctGroupByCol))
+	for _, col := range projSchema.Columns {
+		m[col.UniqueID] = struct{}{}
+	}
+	for idx, gCol := range b.currentBlockExpand.distinctGroupByCol {
+		if _, ok := m[gCol.UniqueID]; ok {
+			// grouping col has been explicitly projected, not need to reserve it here for later order-by item (a+1)
+			// like: select a+1, b from t group by a+1 order by a+1.
+			continue
+		}
+		// project the grouping col out implicitly here. If it's not used by later OP, it will be cleaned in column pruner.
+		projSchema.Append(gCol)
+		projExprs = append(projExprs, gCol)
+		projNames = append(projNames, b.currentBlockExpand.distinctGbyColNames[idx])
+	}
+	return projSchema, projNames, projExprs
+}
+
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
 	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (LogicalPlan, []expression.Expression, int, error) {
@@ -1449,6 +1689,11 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 			return nil, nil, 0, err
 		}
 
+		// for case: select a+1, b, sum(b), grouping(a) from t group by a, b with rollup.
+		// the column inside aggregate (only sum(b) here) should be resolved to original source column,
+		// while for others, just use expanded columns if exists: a'+ 1, b', group(gid)
+		newExpr = b.replaceGroupingFunc(newExpr)
+
 		// For window functions in the order by clause, we will append an field for it.
 		// We need rewrite the window mapper here so order by clause could find the added field.
 		if considerWindow && isWindowFuncField && field.Auxiliary {
@@ -1467,6 +1712,9 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		schema.Append(col)
 		newNames = append(newNames, name)
 	}
+	// implicitly project expand grouping set cols, if not used later, prune it out in logical column pruner.
+	schema, newNames, proj.Exprs = b.implicitProjectGroupingSetCols(schema, newNames, proj.Exprs)
+
 	proj.SetSchema(schema)
 	proj.names = newNames
 	if expandGenerateColumn {
@@ -1737,7 +1985,7 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 		defer func() {
 			b.outerCTEs = b.outerCTEs[:l]
 		}()
-		err := b.buildWith(ctx, setOpr.With)
+		_, err := b.buildWith(ctx, setOpr.With)
 		if err != nil {
 			return nil, err
 		}
@@ -2033,6 +2281,13 @@ func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byI
 		if err != nil {
 			return nil, err
 		}
+		// for case: select a+1, b, sum(b) from t group by a+1, b with rollup order by a+1.
+		// currently, we fail to resolve (a+1) in order-by to projection item (a+1), and adding
+		// another a' in the select fields instead, leading finally resolved expr is a'+1 here.
+		//
+		// Anyway, a and a' has the same column unique id, so we can do the replacement work like
+		// we did in build projection phase.
+		it = b.replaceGroupingFunc(it)
 
 		// check whether ORDER BY items show up in SELECT DISTINCT fields, see #12442
 		if hasDistinct && projExprs != nil {
@@ -2563,8 +2818,9 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 					if colName != nil {
 						columnNameExpr := &ast.ColumnNameExpr{Name: colName}
 						for _, field := range sel.Fields.Fields {
-							if c, ok := field.Expr.(*ast.ColumnNameExpr); ok && colMatch(c.Name, columnNameExpr.Name) {
+							if c, ok := field.Expr.(*ast.ColumnNameExpr); ok && colMatch(c.Name, columnNameExpr.Name) && field.AsName.L == "" {
 								// deduplicate select fields: don't append it once it already has one.
+								// TODO: we add the field if it has alias, but actually they are the same column. We should not have two duplicate one.
 								columnNameExpr = nil
 								break
 							}
@@ -2708,6 +2964,7 @@ func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
 			outerSchema := r.outerPlan.Schema()
 			r.b.outerSchemas = append(r.b.outerSchemas, outerSchema)
 			r.b.outerNames = append(r.b.outerNames, r.outerPlan.OutputNames())
+			r.b.outerBlockExpand = append(r.b.outerBlockExpand, r.b.currentBlockExpand)
 		}
 		r.err = r.resolveSelect(v)
 		return n, true
@@ -2727,7 +2984,7 @@ func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err er
 		defer func() {
 			r.b.outerCTEs = r.b.outerCTEs[:l]
 		}()
-		err := r.b.buildWith(r.ctx, sel.With)
+		_, err := r.b.buildWith(r.ctx, sel.With)
 		if err != nil {
 			return err
 		}
@@ -2861,6 +3118,8 @@ func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
 		if r.outerPlan != nil {
 			r.b.outerSchemas = r.b.outerSchemas[0 : len(r.b.outerSchemas)-1]
 			r.b.outerNames = r.b.outerNames[0 : len(r.b.outerNames)-1]
+			r.b.currentBlockExpand = r.b.outerBlockExpand[len(r.b.outerBlockExpand)-1]
+			r.b.outerBlockExpand = r.b.outerBlockExpand[0 : len(r.b.outerBlockExpand)-1]
 		}
 	}
 	return n, r.err == nil
@@ -3371,6 +3630,9 @@ func (*PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *ast.
 		}
 		switch errExprLoc.Loc {
 		case ErrExprInSelect:
+			if sel.GroupBy.Rollup {
+				return ErrFieldInGroupingNotGroupBy.GenWithStackByArgs(strconv.Itoa(errExprLoc.Offset + 1))
+			}
 			return ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, name.DBName.O+"."+name.TblName.O+"."+name.OrigColName.O)
 		case ErrExprInOrderBy:
 			return ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, sel.OrderBy.Items[errExprLoc.Offset].Expr.Text())
@@ -3536,7 +3798,7 @@ func allColFromExprNode(p LogicalPlan, n ast.Node, names map[*types.FieldName]st
 	n.Accept(extractor)
 }
 
-func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (LogicalPlan, []expression.Expression, error) {
+func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (LogicalPlan, []expression.Expression, bool, error) {
 	b.curClause = groupByClause
 	exprs := make([]expression.Expression, 0, len(gby.Items))
 	resolver := &gbyResolver{
@@ -3552,7 +3814,7 @@ func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p LogicalPlan, gby *a
 		resolver.isParam = false
 		retExpr, _ := item.Expr.Accept(resolver)
 		if resolver.err != nil {
-			return nil, nil, errors.Trace(resolver.err)
+			return nil, nil, false, errors.Trace(resolver.err)
 		}
 		if !resolver.isParam {
 			item.Expr = retExpr.(ast.ExprNode)
@@ -3561,13 +3823,13 @@ func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p LogicalPlan, gby *a
 		itemExpr := retExpr.(ast.ExprNode)
 		expr, np, err := b.rewrite(ctx, itemExpr, p, nil, true)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, false, err
 		}
 
 		exprs = append(exprs, expr)
 		p = np
 	}
-	return p, exprs, nil
+	return p, exprs, gby.Rollup, nil
 }
 
 func (*PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectField) (resultList []*ast.SelectField, err error) {
@@ -3709,6 +3971,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
 	var (
 		sortMergeTables, inljTables, inlhjTables, inlmjTables, hashJoinTables, bcTables []hintTableInfo
+		noHashJoinTables, noMergeJoinTables                                             []hintTableInfo
 		shuffleJoinTables                                                               []hintTableInfo
 		indexHintList, indexMergeHintList                                               []indexHintInfo
 		tiflashTables, tikvTables                                                       []hintTableInfo
@@ -3723,7 +3986,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
 		switch hint.HintName.L {
-		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
+		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ, HintNoHashJoin, HintNoMergeJoin,
 			TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge, HintLeading:
 			if len(hint.Tables) == 0 {
 				b.pushHintWithoutTableWarning(hint)
@@ -3746,6 +4009,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			inlmjTables = append(inlmjTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case TiDBHashJoin, HintHJ:
 			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+		case HintNoHashJoin:
+			noHashJoinTables = append(noHashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+		case HintNoMergeJoin:
+			noMergeJoinTables = append(noMergeJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case HintMPP1PhaseAgg:
 			aggHints.preferAggType |= preferMPP1PhaseAgg
 		case HintMPP2PhaseAgg:
@@ -3856,6 +4123,8 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		shuffleJoinTables:         shuffleJoinTables,
 		indexNestedLoopJoinTables: indexNestedLoopJoinTables{inljTables, inlhjTables, inlmjTables},
 		hashJoinTables:            hashJoinTables,
+		noHashJoinTables:          noHashJoinTables,
+		noMergeJoinTables:         noMergeJoinTables,
 		indexHintList:             indexHintList,
 		tiflashTables:             tiflashTables,
 		tikvTables:                tikvTables,
@@ -3987,6 +4256,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		correlatedAggMap              map[*ast.AggregateFuncExpr]int
 		gbyCols                       []expression.Expression
 		projExprs                     []expression.Expression
+		rollup                        bool
 	)
 
 	// set for update read to true before building result set node
@@ -4020,12 +4290,13 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
+	var currentLayerCTEs []*cteInfo
 	if sel.With != nil {
 		l := len(b.outerCTEs)
 		defer func() {
 			b.outerCTEs = b.outerCTEs[:l]
 		}()
-		err = b.buildWith(ctx, sel.With)
+		currentLayerCTEs, err = b.buildWith(ctx, sel.With)
 		if err != nil {
 			return nil, err
 		}
@@ -4051,7 +4322,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	if sel.GroupBy != nil {
-		p, gbyCols, err = b.resolveGbyExprs(ctx, p, sel.GroupBy, sel.Fields.Fields)
+		p, gbyCols, rollup, err = b.resolveGbyExprs(ctx, p, sel.GroupBy, sel.Fields.Fields)
 		if err != nil {
 			return nil, err
 		}
@@ -4147,6 +4418,13 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 	if needBuildAgg {
+		// if rollup syntax is specified, Expand OP is required to replicate the data to feed different grouping layout.
+		if rollup {
+			p, gbyCols, err = b.buildExpand(p, gbyCols)
+			if err != nil {
+				return nil, err
+			}
+		}
 		var aggIndexMap map[int]int
 		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
 		if err != nil {
@@ -4246,10 +4524,44 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 		proj.names = p.OutputNames()[:oldLen]
 		proj.SetSchema(schema)
-		return proj, nil
+		return b.tryToBuildSequence(currentLayerCTEs, proj), nil
 	}
 
-	return p, nil
+	return b.tryToBuildSequence(currentLayerCTEs, p), nil
+}
+
+func (b *PlanBuilder) tryToBuildSequence(ctes []*cteInfo, p LogicalPlan) LogicalPlan {
+	if !b.ctx.GetSessionVars().EnableMPPSharedCTEExecution {
+		return p
+	}
+	for i := len(ctes) - 1; i >= 0; i-- {
+		if !ctes[i].nonRecursive {
+			return p
+		}
+		if ctes[i].isInline || ctes[i].cteClass == nil {
+			ctes = append(ctes[:i], ctes[i+1:]...)
+		}
+	}
+	if len(ctes) == 0 {
+		return p
+	}
+	lctes := make([]LogicalPlan, 0, len(ctes)+1)
+	for _, cte := range ctes {
+		lcte := LogicalCTE{
+			cte:               cte.cteClass,
+			cteAsName:         cte.def.Name,
+			cteName:           cte.def.Name,
+			seedStat:          cte.seedStat,
+			onlyUsedAsStorage: true,
+		}.Init(b.ctx, b.getSelectOffset())
+		lcte.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
+		lctes = append(lctes, lcte)
+	}
+	b.optFlag |= flagPushDownSequence
+	seq := LogicalSequence{}.Init(b.ctx, b.getSelectOffset())
+	seq.SetChildren(append(lctes, p)...)
+	seq.SetOutputNames(p.OutputNames().Shallow())
+	return seq
 }
 
 func (b *PlanBuilder) buildTableDual() *LogicalTableDual {
@@ -4262,7 +4574,7 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	tp.SetFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
 	return &expression.Column{
 		RetType:  tp,
-		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
 		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraHandleName),
 	}
@@ -4282,7 +4594,7 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 	}
 	pidCol := &expression.Column{
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
-		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraPhysTblID,
 		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPhysTblIdName),
 	}
@@ -4331,10 +4643,10 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetTableStats(tblInfo, handle.WithTableStatsByQuery())
+		statsTbl = statsHandle.GetTableStats(tblInfo, cache.WithTableStatsByQuery())
 	} else {
 		usePartitionStats = true
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, handle.WithTableStatsByQuery())
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, cache.WithTableStatsByQuery())
 	}
 
 	// 2. table row count from statistics is zero.
@@ -4549,8 +4861,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				tblStats := h.GetTableStats(tableInfo)
 				isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
 				globalStatsReady := tblStats.IsInitialized()
+				allowDynamicWithoutStats := fixcontrol.GetBoolWithDefault(b.ctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44262, false)
+
 				// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
-				usePartitionProcessor := !isDynamicEnabled || !globalStatsReady
+				usePartitionProcessor := !isDynamicEnabled || (!globalStatsReady && !allowDynamicWithoutStats)
 
 				failpoint.Inject("forceDynamicPrune", func(val failpoint.Value) {
 					if val.(bool) {
@@ -4782,6 +5096,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 	ds.handleCols = handleCols
+	ds.unMutableHandleCols = handleCols
 	handleMap := make(map[int64][]HandleCols)
 	handleMap[tableInfo.ID] = []HandleCols{handleCols}
 	b.handleHelper.pushMap(handleMap)
@@ -4887,10 +5202,10 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 			changed       bool
 			err           error
 		)
-		check := ds.ctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.isForUpdateRead
-		check = check && ds.ctx.GetSessionVars().ConnectionID > 0
+		check := ds.SCtx().GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.isForUpdateRead
+		check = check && ds.SCtx().GetSessionVars().ConnectionID > 0
 		if check {
-			latestIndexes, changed, err = getLatestIndexInfo(ds.ctx, ds.table.Meta().ID, 0)
+			latestIndexes, changed, err = getLatestIndexInfo(ds.SCtx(), ds.table.Meta().ID, 0)
 			if err != nil {
 				ds.fdSet = fds
 				return fds
@@ -5328,7 +5643,7 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 
 	setIsInApplyForCTE(innerPlan, join.Schema())
 	ap := &LogicalApply{LogicalJoin: *join, NoDecorrelate: markNoDecorrelate}
-	ap.tp = plancodec.TypeApply
+	ap.SetTP(plancodec.TypeApply)
 	ap.self = ap
 	return ap, nil
 }
@@ -5508,7 +5823,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		defer func() {
 			b.outerCTEs = b.outerCTEs[:l]
 		}()
-		err := b.buildWith(ctx, update.With)
+		_, err := b.buildWith(ctx, update.With)
 		if err != nil {
 			return nil, err
 		}
@@ -5915,7 +6230,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 		defer func() {
 			b.outerCTEs = b.outerCTEs[:l]
 		}()
-		err := b.buildWith(ctx, ds.With)
+		_, err := b.buildWith(ctx, ds.With)
 		if err != nil {
 			return nil, err
 		}
@@ -7054,6 +7369,9 @@ func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 // containDifferentJoinTypes checks whether `preferJoinType` contains different
 // join types.
 func containDifferentJoinTypes(preferJoinType uint) bool {
+	preferJoinType &= ^preferNoHashJoin
+	preferJoinType &= ^preferNoMergeJoin
+
 	inlMask := preferRightAsINLJInner ^ preferLeftAsINLJInner
 	inlhjMask := preferRightAsINLHJInner ^ preferLeftAsINLHJInner
 	inlmjMask := preferRightAsINLMJInner ^ preferLeftAsINLMJInner
@@ -7150,7 +7468,7 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 				b.outerCTEs = b.outerCTEs[:l]
 				x.With = sw
 			}()
-			err := b.buildWith(ctx, x.With)
+			_, err := b.buildWith(ctx, x.With)
 			if err != nil {
 				return err
 			}
@@ -7348,15 +7666,16 @@ func (b *PlanBuilder) genCTETableNameForError() string {
 	return name
 }
 
-func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
+func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) ([]*cteInfo, error) {
 	// Check CTE name must be unique.
 	nameMap := make(map[string]struct{})
 	for _, cte := range w.CTEs {
 		if _, ok := nameMap[cte.Name.L]; ok {
-			return ErrNonUniqTable
+			return nil, ErrNonUniqTable
 		}
 		nameMap[cte.Name.L] = struct{}{}
 	}
+	ctes := make([]*cteInfo, 0, len(w.CTEs))
 	for _, cte := range w.CTEs {
 		b.outerCTEs = append(b.outerCTEs, &cteInfo{def: cte, nonRecursive: !w.IsRecursive, isBuilding: true, storageID: b.allocIDForCTEStorage, seedStat: &property.StatsInfo{}})
 		b.allocIDForCTEStorage++
@@ -7371,15 +7690,16 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
 		}
 		_, err := b.buildCte(ctx, cte, w.IsRecursive)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		b.outerCTEs[len(b.outerCTEs)-1].optFlag = b.optFlag
 		b.outerCTEs[len(b.outerCTEs)-1].isBuilding = false
 		b.optFlag = saveFlag
 		// each cte (select statement) will generate a handle map, pop it out here.
 		b.handleHelper.popMap()
+		ctes = append(ctes, b.outerCTEs[len(b.outerCTEs)-1])
 	}
-	return nil
+	return ctes, nil
 }
 
 func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed LogicalPlan, recur LogicalPlan) (LogicalPlan, error) {

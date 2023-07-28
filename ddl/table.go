@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"sync/atomic"
@@ -281,12 +282,11 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if infoschema.ErrDatabaseNotExists.Equal(err) {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
-		} else if infoschema.ErrTableExists.Equal(err) {
-			if !orReplace {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-		} else {
+		} else if !infoschema.ErrTableExists.Equal(err) {
+			return ver, errors.Trace(err)
+		}
+		if !orReplace {
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 	}
@@ -682,7 +682,7 @@ func getTableInfo(t *meta.Meta, tableID, schemaID int64) (*model.TableInfo, erro
 // onTruncateTable delete old table meta, and creates a new table identical to old table except for table ID.
 // As all the old data is encoded with old table ID, it can not be accessed anymore.
 // A background job will be created to delete old data.
-func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tableID := job.TableID
 	var newTableID int64
@@ -813,6 +813,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 			failpoint.Return(ver, errors.New("mock update version error"))
 		}
 	})
+
+	var partitions []model.PartitionDefinition
+	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		partitions = tblInfo.GetPartitionInfo().Definitions
+	}
+	preSplitAndScatter(w.sess.Context, d.store, tblInfo, partitions)
 
 	ver, err = updateSchemaVersion(d, t, job)
 	if err != nil {
@@ -1178,10 +1184,20 @@ func finishJobRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
+	// Before updating the schema version, we need to reset the old schema ID to new schema ID, so that
+	// the table info can be dropped normally in `ApplyDiff`. This is because renaming table requires two
+	// schema versions to complete.
+	oldRawArgs := job.RawArgs
+	job.Args[0] = job.SchemaID
+	job.RawArgs, err = json.Marshal(job.Args)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
 	ver, err := updateSchemaVersion(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	job.RawArgs = oldRawArgs
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }
@@ -1202,10 +1218,21 @@ func finishJobRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 		tblInfos = append(tblInfos, tblInfo)
 	}
+	// Before updating the schema version, we need to reset the old schema ID to new schema ID, so that
+	// the table info can be dropped normally in `ApplyDiff`. This is because renaming table requires two
+	// schema versions to complete.
+	var err error
+	oldRawArgs := job.RawArgs
+	job.Args[0] = newSchemaIDs
+	job.RawArgs, err = json.Marshal(job.Args)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
 	ver, err := updateSchemaVersion(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	job.RawArgs = oldRawArgs
 	job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, tblInfos)
 	return ver, nil
 }

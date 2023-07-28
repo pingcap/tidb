@@ -51,6 +51,10 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/server/internal"
+	"github.com/pingcap/tidb/server/internal/column"
+	"github.com/pingcap/tidb/server/internal/resultset"
+	util2 "github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -82,7 +86,7 @@ type tidbTestSuite struct {
 }
 
 func createTidbTestSuite(t *testing.T) *tidbTestSuite {
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = 0
@@ -109,7 +113,6 @@ func createTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *tidbTestSuite
 	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
 	ts.server.SetDomain(ts.domain)
-	ts.server.InitGlobalConnID(ts.domain.ServerID)
 	ts.domain.InfoSyncer().SetSessionManager(ts.server)
 	go func() {
 		err := ts.server.Run()
@@ -241,7 +244,7 @@ func TestStatusAPI(t *testing.T) {
 func TestStatusPort(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
@@ -268,7 +271,7 @@ func TestStatusAPIWithTLS(t *testing.T) {
 
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = fileName("ca-cert-2.pem")
@@ -324,7 +327,7 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = caPath
@@ -390,7 +393,7 @@ func TestSocketForwarding(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Socket = socketFile
 	cfg.Port = cli.port
 	os.Remove(cfg.Socket)
@@ -398,6 +401,7 @@ func TestSocketForwarding(t *testing.T) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -419,7 +423,7 @@ func TestSocket(t *testing.T) {
 	tempDir := t.TempDir()
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Socket = socketFile
 	cfg.Port = 0
 	os.Remove(cfg.Socket)
@@ -430,6 +434,7 @@ func TestSocket(t *testing.T) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
@@ -455,7 +460,7 @@ func TestSocketAndIp(t *testing.T) {
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Socket = socketFile
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
@@ -464,6 +469,7 @@ func TestSocketAndIp(t *testing.T) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -619,7 +625,7 @@ func TestOnlySocket(t *testing.T) {
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Socket = socketFile
 	cfg.Host = "" // No network interface listening for mysql traffic
 	cfg.Status.ReportStatus = false
@@ -628,6 +634,7 @@ func TestOnlySocket(t *testing.T) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
@@ -874,7 +881,7 @@ func TestSystemTimeZone(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
 	tk := testkit.NewTestKit(t, ts.store)
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
@@ -983,7 +990,7 @@ func TestCreateTableFlen(t *testing.T) {
 	rs.Close()
 }
 
-func Execute(ctx context.Context, qc *TiDBContext, sql string) (ResultSet, error) {
+func Execute(ctx context.Context, qc *TiDBContext, sql string) (resultset.ResultSet, error) {
 	stmts, err := qc.Parse(ctx, sql)
 	if err != nil {
 		return nil, err
@@ -1017,7 +1024,7 @@ func TestShowTablesFlen(t *testing.T) {
 	require.Equal(t, 26*tmysql.MaxBytesOfCharacter, int(cols[0].ColumnLength))
 }
 
-func checkColNames(t *testing.T, columns []*ColumnInfo, names ...string) {
+func checkColNames(t *testing.T, columns []*column.Info, names ...string) {
 	for i, name := range names {
 		require.Equal(t, name, columns[i].Name)
 		require.Equal(t, name, columns[i].OrgName)
@@ -1095,7 +1102,7 @@ func TestFieldList(t *testing.T) {
 	rs, err := Execute(ctx, qctx, "select "+tooLongColumnAsName)
 	require.NoError(t, err)
 	cols := rs.Columns()
-	require.Equal(t, tooLongColumnAsName, cols[0].OrgName)
+	require.Equal(t, "", cols[0].OrgName)
 	require.Equal(t, columnAsName, cols[0].Name)
 	rs.Close()
 
@@ -1136,7 +1143,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 
@@ -1147,7 +1154,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 
@@ -1162,7 +1169,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 
@@ -1172,7 +1179,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 	{
@@ -1181,7 +1188,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 	{
@@ -1190,7 +1197,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 }
@@ -1215,14 +1222,14 @@ func TestNO_DEFAULT_VALUEFlag(t *testing.T) {
 	cols := rs.Columns()
 	require.Len(t, cols, 1)
 	expectFlag := uint16(tmysql.NotNullFlag | tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
-	require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+	require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 }
 
 func TestGracefulShutdown(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.GracefulWaitBeforeShutdown = 2 // wait before shutdown
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
@@ -2422,8 +2429,8 @@ func TestTopSQLResourceTag(t *testing.T) {
 		// Test for other statements.
 		{"set @@global.tidb_enable_1pc = 1", false, nil},
 		{fmt.Sprintf("load data local infile %q into table t2", loadDataFile.Name()), false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
-		{"admin check table t", false, []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"admin check index t idx", false, []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"admin check table t", false, nil},
+		{"admin check index t idx", false, nil},
 		{"admin recover index t idx", false, []tikvrpc.CmdType{tikvrpc.CmdBatchGet}},
 		{"admin cleanup index t idx", false, []tikvrpc.CmdType{tikvrpc.CmdBatchGet}},
 	}
@@ -2433,6 +2440,10 @@ func TestTopSQLResourceTag(t *testing.T) {
 		reqs []tikvrpc.CmdType
 	}{
 		{"replace into mysql.global_variables (variable_name,variable_value) values ('tidb_enable_1pc', '1')", []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
+		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]) */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((crc32(md5(concat_ws(0x2, `_tidb_rowid`))) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where 0 = 0 group by ((crc32(md5(concat_ws(0x2, `_tidb_rowid`))) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((crc32(md5(concat_ws(0x2, `_tidb_rowid`))) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where 0 = 0 group by ((crc32(md5(concat_ws(0x2, `_tidb_rowid`))) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]) */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((crc32(md5(concat_ws(0x2, `_tidb_rowid`))) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where 0 = 0 group by ((crc32(md5(concat_ws(0x2, `_tidb_rowid`))) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((crc32(md5(concat_ws(0x2, `_tidb_rowid`))) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where 0 = 0 group by ((crc32(md5(concat_ws(0x2, `_tidb_rowid`))) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
 	}
 	executeCaseFn := func(execFn func(db *sql.DB)) {
 		dsn := ts.getDSN(func(config *mysql.Config) {
@@ -2495,7 +2506,7 @@ func TestLocalhostClientMapping(t *testing.T) {
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Socket = socketFile
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
@@ -2504,6 +2515,7 @@ func TestLocalhostClientMapping(t *testing.T) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -2597,9 +2609,7 @@ func TestRcReadCheckTSConflict(t *testing.T) {
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
+		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2648,9 +2658,7 @@ func TestRcReadCheckTSConflictExtra(t *testing.T) {
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
+		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3109,7 +3117,7 @@ func (p *mockProxyProtocolProxy) generateProxyProtocolHeaderV2(network, srcAddr,
 }
 
 func TestProxyProtocolWithIpFallbackable(t *testing.T) {
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 4999
 	cfg.Status.ReportStatus = false
 	// Setup proxy protocol config
@@ -3121,6 +3129,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	// Prepare Server
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
@@ -3173,8 +3182,8 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 }
 
 func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
-	cfg := newTestConfig()
-	cfg.Port = 4000
+	cfg := util2.NewTestConfig()
+	cfg.Port = 0
 	cfg.Status.ReportStatus = false
 	// Setup proxy protocol config
 	cfg.ProxyProtocol.Networks = "*"
@@ -3185,6 +3194,7 @@ func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 	// Prepare Server
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)

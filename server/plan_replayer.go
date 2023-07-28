@@ -191,7 +191,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 	// we can't find dump file in any tidb-server, return 404 directly
 	logutil.BgLogger().Info("can't find dump file in any remote server", zap.String("filename", name))
 	w.WriteHeader(http.StatusNotFound)
-	_, err = w.Write([]byte(fmt.Sprintf("can't find dump file %s in any remote server", name)))
+	_, err = fmt.Fprintf(w, "can't find dump file %s in any remote server", name)
 	writeError(w, err)
 }
 
@@ -241,7 +241,7 @@ func handlePlanReplayerCaptureFile(content []byte, path string, handler download
 		return nil, err
 	}
 	for _, tbl := range tbls {
-		jsonStats, err := handler.statsHandle.DumpHistoricalStatsBySnapshot(tbl.dbName, tbl.info, startTS)
+		jsonStats, _, err := handler.statsHandle.DumpHistoricalStatsBySnapshot(tbl.dbName, tbl.info, startTS)
 		if err != nil {
 			return nil, err
 		}

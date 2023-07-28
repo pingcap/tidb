@@ -37,7 +37,7 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	registerHook()
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 	}
@@ -105,8 +105,8 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	require.Equal(t, "expensive_query during bootstrap phase", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = -1
 
-	oom.SetTracker("")
 	oom.ClearMessageFilter()
+	oom.SetTracker("")
 
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec select * from t")
 	require.Equal(t, "", oom.GetTracker())
@@ -116,8 +116,8 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	require.Equal(t, "expensive_query during bootstrap phase", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = -1
 
-	oom.SetTracker("")
 	oom.ClearMessageFilter()
+	oom.SetTracker("")
 
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec select * from t")
 	require.Equal(t, "", oom.GetTracker())
@@ -130,8 +130,8 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	tk.Session().GetSessionVars().DMLBatchSize = 1
 	tk.Session().GetSessionVars().BatchInsert = true
 
-	oom.SetTracker("")
 	oom.ClearMessageFilter()
+	oom.SetTracker("")
 
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	require.Equal(t, "", oom.GetTracker())
@@ -141,8 +141,9 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	require.Equal(t, "expensive_query during bootstrap phase", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = -1
 
-	oom.SetTracker("")
 	oom.ClearMessageFilter()
+	oom.SetTracker("")
+
 	oom.AddMessageFilter("expensive_query during bootstrap phase")
 
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
@@ -222,6 +223,8 @@ type oomCapture struct {
 }
 
 func (h *oomCapture) AddMessageFilter(vals ...string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	for _, val := range vals {
 		h.messageFilter.Insert(val)
 	}

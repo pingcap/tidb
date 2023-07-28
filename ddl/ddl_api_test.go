@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
@@ -50,18 +49,17 @@ func TestGetDDLJobs(t *testing.T) {
 		err := addDDLJobs(sess, txn, jobs[i])
 		require.NoError(t, err)
 
-		currJobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
+		currJobs, err := ddl.GetAllDDLJobs(sess)
 		require.NoError(t, err)
 		require.Len(t, currJobs, i+1)
 
 		currJobs2 = currJobs2[:0]
 		err = ddl.IterAllDDLJobs(sess, txn, func(jobs []*model.Job) (b bool, e error) {
 			for _, job := range jobs {
-				if job.NotStarted() {
-					currJobs2 = append(currJobs2, job)
-				} else {
+				if !job.NotStarted() {
 					return true, nil
 				}
+				currJobs2 = append(currJobs2, job)
 			}
 			return false, nil
 		})
@@ -69,7 +67,7 @@ func TestGetDDLJobs(t *testing.T) {
 		require.Len(t, currJobs2, i+1)
 	}
 
-	currJobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
+	currJobs, err := ddl.GetAllDDLJobs(sess)
 	require.NoError(t, err)
 
 	for i, job := range jobs {
@@ -102,7 +100,7 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 	// insert add index jobs to AddIndexJobListKey queue
 	enQueueDDLJobs(t, sess, txn, model.ActionAddIndex, 5, 10)
 
-	currJobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
+	currJobs, err := ddl.GetAllDDLJobs(sess)
 	require.NoError(t, err)
 	require.Len(t, currJobs, 15)
 

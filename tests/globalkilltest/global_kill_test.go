@@ -61,9 +61,11 @@ const (
 	msgErrConnectPD = "connect PD err: %v. Establish a cluster with PD & TiKV, and provide PD client path by `--pd=<ip:port>[,<ip:port>]"
 )
 
-// GlobakKillSuite is used for automated test of "Global Kill" feature.
+// GlobalKillSuite is used for automated test of "Global Kill" feature.
 // See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
 type GlobalKillSuite struct {
+	enable32Bits bool
+
 	pdCli *clientv3.Client
 	pdErr error
 
@@ -72,8 +74,10 @@ type GlobalKillSuite struct {
 	tikvProc  *exec.Cmd
 }
 
-func createGloabalKillSuite(t *testing.T) *GlobalKillSuite {
+func createGlobalKillSuite(t *testing.T, enable32bits bool) *GlobalKillSuite {
 	s := new(GlobalKillSuite)
+	s.enable32Bits = enable32bits
+
 	err := logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: *logLevel}})
 	require.NoError(t, err)
 
@@ -130,12 +134,13 @@ func (s *GlobalKillSuite) connectPD() (cli *clientv3.Client, err error) {
 func (s *GlobalKillSuite) startTiKV(dataDir string) (err error) {
 	s.tikvProc = exec.Command(*tikvBinaryPath,
 		fmt.Sprintf("--pd=%s", *pdClientPath),
-		fmt.Sprintf("--data-dir=tikv-%s", dataDir),
-		"--addr=0.0.0.0:20160",
-		"--log-file=tikv.log",
+		fmt.Sprintf("--data-dir=%s/tikv-%s", *tmpPath, dataDir),
+		"--addr=127.0.0.1:20160",
+		fmt.Sprintf("--log-file=%s/tikv.log", *tmpPath),
 		"--advertise-addr=127.0.0.1:20160",
+		"--config=tikv.toml",
 	)
-	log.Info("starting tikv")
+	log.Info("starting tikv", zap.Any("cmd", s.tikvProc))
 	err = s.tikvProc.Start()
 	if err != nil {
 		return errors.Trace(err)
@@ -147,10 +152,10 @@ func (s *GlobalKillSuite) startTiKV(dataDir string) (err error) {
 func (s *GlobalKillSuite) startPD(dataDir string) (err error) {
 	s.pdProc = exec.Command(*pdBinaryPath,
 		"--name=pd",
-		"--log-file=pd.log",
+		fmt.Sprintf("--log-file=%s/pd.log", *tmpPath),
 		fmt.Sprintf("--client-urls=http://%s", *pdClientPath),
-		fmt.Sprintf("--data-dir=pd-%s", dataDir))
-	log.Info("starting pd")
+		fmt.Sprintf("--data-dir=%s/pd-%s", *tmpPath, dataDir))
+	log.Info("starting pd", zap.Any("cmd", s.pdProc))
 	err = s.pdProc.Start()
 	if err != nil {
 		return errors.Trace(err)
@@ -162,46 +167,53 @@ func (s *GlobalKillSuite) startPD(dataDir string) (err error) {
 func (s *GlobalKillSuite) startCluster() (err error) {
 	err = s.startPD(s.clusterID)
 	if err != nil {
-		return
+		return errors.Trace(err)
 	}
 
 	err = s.startTiKV(s.clusterID)
 	if err != nil {
-		return
+		return errors.Trace(err)
 	}
 	time.Sleep(10 * time.Second)
-	return
+	return nil
 }
 
 func (s *GlobalKillSuite) stopPD() (err error) {
 	if err = s.pdProc.Process.Kill(); err != nil {
-		return
+		return errors.Trace(err)
 	}
 	if err = s.pdProc.Wait(); err != nil && err.Error() != "signal: killed" {
-		return err
+		return errors.Trace(err)
 	}
 	return nil
 }
 
 func (s *GlobalKillSuite) stopTiKV() (err error) {
 	if err = s.tikvProc.Process.Kill(); err != nil {
-		return
+		return errors.Trace(err)
 	}
 	if err = s.tikvProc.Wait(); err != nil && err.Error() != "signal: killed" {
-		return err
+		return errors.Trace(err)
 	}
 	return nil
 }
 
 func (s *GlobalKillSuite) cleanCluster() (err error) {
 	if err = s.stopPD(); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	if err = s.stopTiKV(); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	log.Info("cluster cleaned")
 	return nil
+}
+
+func (s *GlobalKillSuite) getTiDBConfigPath() string {
+	if s.enable32Bits {
+		return "./config.toml"
+	}
+	return "./config-64.toml"
 }
 
 func (s *GlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd *exec.Cmd, err error) {
@@ -212,7 +224,8 @@ func (s *GlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd *exe
 		fmt.Sprintf("-P=%d", port),
 		fmt.Sprintf("--status=%d", statusPort),
 		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port),
-		fmt.Sprintf("--config=%s", "./config.toml"))
+		fmt.Sprintf("--log-slow-query=%s/tidb-slow%d.log", *tmpPath, port),
+		fmt.Sprintf("--config=%s", s.getTiDBConfigPath()))
 	log.Info("starting tidb", zap.Any("cmd", cmd))
 	err = cmd.Start()
 	if err != nil {
@@ -230,7 +243,8 @@ func (s *GlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath strin
 		fmt.Sprintf("-P=%d", port),
 		fmt.Sprintf("--status=%d", statusPort),
 		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port),
-		fmt.Sprintf("--config=%s", "./config.toml"))
+		fmt.Sprintf("--log-slow-query=%s/tidb-slow%d.log", *tmpPath, port),
+		fmt.Sprintf("--config=%s", s.getTiDBConfigPath()))
 	log.Info("starting tidb", zap.Any("cmd", cmd))
 	err = cmd.Start()
 	if err != nil {
@@ -279,9 +293,10 @@ func (s *GlobalKillSuite) connectTiDB(port int) (db *sql.DB, err error) {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	dsn := fmt.Sprintf("root@(%s)/test", addr)
 	sleepTime := 250 * time.Millisecond
+	sleepTimeLimit := 1 * time.Second
+	maxRetryDuration := 20 * time.Second
 	startTime := time.Now()
-	maxRetry := 10
-	for i := 0; i < maxRetry; i++ {
+	for i := 0; time.Since(startTime) < maxRetryDuration; i++ {
 		db, err = sql.Open("mysql", dsn)
 		if err != nil {
 			log.Warn("open addr failed",
@@ -300,16 +315,12 @@ func (s *GlobalKillSuite) connectTiDB(port int) (db *sql.DB, err error) {
 			zap.Int("retry count", i),
 			zap.Error(err),
 		)
-		if i == maxRetry-1 {
-			return
-		}
 
-		err = db.Close()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		db.Close()
 		time.Sleep(sleepTime)
-		sleepTime += sleepTime
+		if sleepTime < sleepTimeLimit {
+			sleepTime += sleepTime
+		}
 	}
 	if err != nil {
 		log.Error("connect to server addr failed",
@@ -330,7 +341,7 @@ type sleepResult struct {
 	err     error
 }
 
-func (s *GlobalKillSuite) killByCtrlC(t *testing.T, port int, sleepTime int) time.Duration {
+func (s *GlobalKillSuite) testKillByCtrlC(t *testing.T, port int, sleepTime int) time.Duration {
 	cli := exec.Command("mysql",
 		"-h127.0.0.1",
 		fmt.Sprintf("-P%d", port),
@@ -358,6 +369,11 @@ func (s *GlobalKillSuite) killByCtrlC(t *testing.T, port int, sleepTime int) tim
 
 	r := <-ch
 	require.NoError(t, err)
+	if s.enable32Bits {
+		require.Less(t, r.elapsed, time.Duration(sleepTime)*time.Second)
+	} else {
+		require.GreaterOrEqual(t, r.elapsed, time.Duration(sleepTime)*time.Second)
+	}
 	return r.elapsed
 }
 
@@ -429,7 +445,15 @@ func (s *GlobalKillSuite) killByKillStatement(t *testing.T, db1 *sql.DB, db2 *sq
 
 // [Test Scenario 1] A TiDB without PD, killed by Ctrl+C, and killed by KILL.
 func TestWithoutPD(t *testing.T) {
-	s := createGloabalKillSuite(t)
+	doTestWithoutPD(t, false)
+}
+
+func TestWithoutPD32(t *testing.T) {
+	doTestWithoutPD(t, true)
+}
+
+func doTestWithoutPD(t *testing.T, enable32Bits bool) {
+	s := createGlobalKillSuite(t, enable32Bits)
 	var err error
 	port := *tidbStartPort
 	tidb, err := s.startTiDBWithoutPD(port, *tidbStatusPort)
@@ -445,17 +469,24 @@ func TestWithoutPD(t *testing.T) {
 
 	// Test mysql client CTRL-C
 	// mysql client "CTRL-C" truncate connection id to 32bits, and is ignored by TiDB.
-	elapsed := s.killByCtrlC(t, port, 2)
-	require.GreaterOrEqual(t, elapsed, 2*time.Second)
+	s.testKillByCtrlC(t, port, 2)
 
 	// Test KILL statement
-	elapsed = s.killByKillStatement(t, db, db, 2)
+	elapsed := s.killByKillStatement(t, db, db, 2)
 	require.Less(t, elapsed, 2*time.Second)
 }
 
 // [Test Scenario 2] One TiDB with PD, killed by Ctrl+C, and killed by KILL.
 func TestOneTiDB(t *testing.T) {
-	s := createGloabalKillSuite(t)
+	doTestOneTiDB(t, false)
+}
+
+func TestOneTiDB32(t *testing.T) {
+	doTestOneTiDB(t, true)
+}
+
+func doTestOneTiDB(t *testing.T, enable32Bits bool) {
+	s := createGlobalKillSuite(t, enable32Bits)
 	port := *tidbStartPort + 1
 	tidb, err := s.startTiDBWithPD(port, *tidbStatusPort+1, *pdClientPath)
 	require.NoError(t, err)
@@ -473,17 +504,24 @@ func TestOneTiDB(t *testing.T) {
 	// Test mysql client CTRL-C
 	// mysql client "CTRL-C" truncate connection id to 32bits, and is ignored by TiDB.
 	// see TiDB's logging for the truncation warning.
-	elapsed := s.killByCtrlC(t, port, sleepTime)
-	require.GreaterOrEqual(t, elapsed, sleepTime*time.Second)
+	s.testKillByCtrlC(t, port, sleepTime)
 
 	// Test KILL statement
-	elapsed = s.killByKillStatement(t, db, db, sleepTime)
+	elapsed := s.killByKillStatement(t, db, db, sleepTime)
 	require.Less(t, elapsed, sleepTime*time.Second)
 }
 
 // [Test Scenario 3] Multiple TiDB nodes, killed {local,remote} by {Ctrl-C,KILL}.
 func TestMultipleTiDB(t *testing.T) {
-	s := createGloabalKillSuite(t)
+	doTestMultipleTiDB(t, false)
+}
+
+func TestMultipleTiDB32(t *testing.T) {
+	doTestMultipleTiDB(t, true)
+}
+
+func doTestMultipleTiDB(t *testing.T, enable32Bits bool) {
+	s := createGlobalKillSuite(t, enable32Bits)
 	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
 
 	// tidb1 & conn1a,conn1b
@@ -516,8 +554,7 @@ func TestMultipleTiDB(t *testing.T) {
 	// kill local by CTRL-C
 	// mysql client "CTRL-C" truncate connection id to 32bits, and is ignored by TiDB.
 	// see TiDB's logging for the truncation warning.
-	elapsed = s.killByCtrlC(t, port1, sleepTime)
-	require.GreaterOrEqual(t, elapsed, sleepTime*time.Second)
+	s.testKillByCtrlC(t, port1, sleepTime)
 
 	// kill local by KILL
 	elapsed = s.killByKillStatement(t, db1a, db1b, sleepTime)
@@ -529,7 +566,15 @@ func TestMultipleTiDB(t *testing.T) {
 }
 
 func TestLostConnection(t *testing.T) {
-	s := createGloabalKillSuite(t)
+	doTestLostConnection(t, false)
+}
+
+func TestLostConnection32(t *testing.T) {
+	doTestLostConnection(t, true)
+}
+
+func doTestLostConnection(t *testing.T, enable32Bits bool) {
+	s := createGlobalKillSuite(t, enable32Bits)
 	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
 
 	// tidb1
@@ -569,7 +614,7 @@ func TestLostConnection(t *testing.T) {
 	// disconnect to PD by shutting down PD process.
 	log.Info("shutdown PD to simulate lost connection to PD.")
 	err = s.stopPD()
-	log.Info(fmt.Sprintf("pd shutdown: %s", err))
+	log.Info(fmt.Sprintf("pd shutdown: %v", err))
 	require.NoError(t, err)
 
 	// wait for "lostConnectionToPDTimeout" elapsed.
@@ -630,3 +675,5 @@ func TestLostConnection(t *testing.T) {
 		require.Less(t, elapsed, 2*time.Second)
 	}
 }
+
+// TODO: test for upgrade 32 -> 64 & downgrade 64 -> 32

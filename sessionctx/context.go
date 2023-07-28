@@ -176,6 +176,8 @@ type Context interface {
 	ShowProcess() *util.ProcessInfo
 	// GetAdvisoryLock acquires an advisory lock (aka GET_LOCK()).
 	GetAdvisoryLock(string, int64) error
+	// IsUsedAdvisoryLock checks for existing locks (aka IS_USED_LOCK()).
+	IsUsedAdvisoryLock(string) uint64
 	// ReleaseAdvisoryLock releases an advisory lock (aka RELEASE_LOCK()).
 	ReleaseAdvisoryLock(string) bool
 	// ReleaseAllAdvisoryLocks releases all advisory locks that this session holds.
@@ -244,7 +246,10 @@ const allowedTimeFromNow = 100 * time.Millisecond
 
 // ValidateStaleReadTS validates that readTS does not exceed the current time not strictly.
 func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error {
-	currentTS, err := sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
+	currentTS, err := sctx.GetSessionVars().StmtCtx.GetStaleTSO()
+	if currentTS == 0 || err != nil {
+		currentTS, err = sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
+	}
 	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD
 	if err != nil {
 		metrics.ValidateReadTSFromPDCount.Inc()

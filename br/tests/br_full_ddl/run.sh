@@ -22,9 +22,10 @@ LOG=/$TEST_DIR/backup.log
 RESTORE_LOG=LOG=/$TEST_DIR/restore.log
 BACKUP_STAT=/$TEST_DIR/backup_stat
 RESOTRE_STAT=/$TEST_DIR/restore_stat
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 run_sql "CREATE DATABASE $DB;"
-go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
+go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
 
 row_count_ori=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE;" | awk '/COUNT/{print $2}')
 
@@ -135,6 +136,7 @@ fi
 
 # clear restore environment
 run_sql "DROP DATABASE $DB;"
+run_sql "DROP DATABASE __tidb_br_temporary_mysql;"
 # restore full
 echo "restore start..."
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/pdutil/PDEnabledPauseConfig=return(true)"

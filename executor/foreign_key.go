@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
@@ -161,6 +163,29 @@ func (fkc *FKCheckExec) insertRowNeedToCheck(sc *stmtctx.StatementContext, row [
 }
 
 func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRow, newRow []types.Datum) error {
+	newVals, err := fkc.fetchFKValues(newRow)
+	if err != nil {
+		return err
+	}
+	oldVals, err := fkc.fetchFKValues(oldRow)
+	if err != nil {
+		return err
+	}
+	if len(oldVals) == len(newVals) {
+		isSameValue := true
+		for i := range oldVals {
+			cmp, err := oldVals[i].Compare(sc, &newVals[i], collate.GetCollator(oldVals[i].Collation()))
+			if err != nil || cmp != 0 {
+				isSameValue = false
+				break
+			}
+		}
+		if isSameValue {
+			// If the old fk value and the new fk value are the same, no need to check.
+			return nil
+		}
+	}
+
 	if fkc.FK != nil {
 		return fkc.addRowNeedToCheck(sc, newRow)
 	} else if fkc.ReferredFK != nil {
@@ -291,7 +316,7 @@ func (fkc *FKCheckExec) checkKeys(ctx context.Context, txn kv.Transaction) error
 	return nil
 }
 
-func (fkc *FKCheckExec) prefetchKeys(ctx context.Context, txn kv.Transaction, keys []kv.Key) error {
+func (*FKCheckExec) prefetchKeys(ctx context.Context, txn kv.Transaction, keys []kv.Key) error {
 	// Fill cache using BatchGet
 	_, err := txn.BatchGet(ctx, keys)
 	if err != nil {
@@ -382,7 +407,7 @@ func (fkc *FKCheckExec) checkPrefixKeyExist(key kv.Key, value []byte) error {
 	return nil
 }
 
-func (fkc *FKCheckExec) getIndexKeyValueInTable(ctx context.Context, memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) (k []byte, v []byte, _ error) {
+func (*FKCheckExec) getIndexKeyValueInTable(ctx context.Context, memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) (k []byte, v []byte, _ error) {
 	select {
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
@@ -462,7 +487,7 @@ func (h *fkValueHelper) fetchFKValues(row []types.Datum) ([]types.Datum, error) 
 	return vals, nil
 }
 
-func (h *fkValueHelper) hasNullValue(vals []types.Datum) bool {
+func (*fkValueHelper) hasNullValue(vals []types.Datum) bool {
 	// If any foreign key column value is null, no need to check this row.
 	// test case:
 	// create table t1 (id int key,a int, b int, index(a, b));
@@ -677,7 +702,7 @@ func (fkc *FKCascadeExec) onUpdateRow(sc *stmtctx.StatementContext, oldRow, newR
 	return nil
 }
 
-func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
+func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (exec.Executor, error) {
 	p, err := fkc.buildFKCascadePlan(ctx)
 	if err != nil || p == nil {
 		return nil, err
@@ -908,7 +933,7 @@ func (s *FKCheckRuntimeStats) Merge(other execdetails.RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (s *FKCheckRuntimeStats) Tp() int {
+func (*FKCheckRuntimeStats) Tp() int {
 	return execdetails.TpFKCheckRuntimeStats
 }
 
@@ -944,6 +969,6 @@ func (s *FKCascadeRuntimeStats) Merge(other execdetails.RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (s *FKCascadeRuntimeStats) Tp() int {
+func (*FKCascadeRuntimeStats) Tp() int {
 	return execdetails.TpFKCascadeRuntimeStats
 }

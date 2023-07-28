@@ -370,11 +370,11 @@ func (pb *profileBuilder) init(total *metricNode, name string) error {
 	case metricValueCnt:
 		tp = "total_count"
 	}
-	pb.buf.WriteString(fmt.Sprintf(`digraph "%s" {`, "tidb_profile"))
+	fmt.Fprintf(pb.buf, `digraph "%s" {`, "tidb_profile")
 	pb.buf.WriteByte('\n')
 	pb.buf.WriteString(`node [style=filled fillcolor="#f8f8f8"]`)
 	pb.buf.WriteByte('\n')
-	pb.buf.WriteString(fmt.Sprintf(`subgraph %[1]s { "%[1]s" [shape=box fontsize=16 label="Type: %[1]s\lTime: %s\lDuration: %s\l"] }`, name+"_"+tp, pb.start.String(), pb.end.Sub(pb.start).String()))
+	fmt.Fprintf(pb.buf, `subgraph %[1]s { "%[1]s" [shape=box fontsize=16 label="Type: %[1]s\lTime: %s\lDuration: %s\l"] }`, name+"_"+tp, pb.start.String(), pb.end.Sub(pb.start).String())
 	pb.buf.WriteByte('\n')
 	v, err := pb.GetTotalValue(total)
 	if err != nil {
@@ -537,24 +537,24 @@ func (pb *profileBuilder) addNodeDef(name, labelValue, comment string, fontWeigh
 		fontSize = maxFontSize
 	}
 
-	pb.buf.WriteString(fmt.Sprintf(`N%d [label="%s" tooltip="%s" fontsize=%d shape=box color="%s" fillcolor="%s"]`,
+	fmt.Fprintf(pb.buf, `N%d [label="%s" tooltip="%s" fontsize=%d shape=box color="%s" fillcolor="%s"]`,
 		pb.getNameID(name), labelValue, comment, fontSize,
 		pb.dotColor(colorWeight/pb.totalValue, false),
-		pb.dotColor(colorWeight/pb.totalValue, true)))
+		pb.dotColor(colorWeight/pb.totalValue, true))
 	pb.buf.WriteByte('\n')
 }
 
 func (pb *profileBuilder) addEdge(from, to, label, style string, value float64) {
 	weight := 1 + int(math.Min(value*100/pb.totalValue, 100))
 	color := pb.dotColor(value/pb.totalValue, false)
-	pb.buf.WriteString(fmt.Sprintf(`N%d -> N%d [`, pb.getNameID(from), pb.getNameID(to)))
+	fmt.Fprintf(pb.buf, `N%d -> N%d [`, pb.getNameID(from), pb.getNameID(to))
 	if label != "" {
-		pb.buf.WriteString(fmt.Sprintf(` label="%s" `, label))
+		fmt.Fprintf(pb.buf, ` label="%s" `, label)
 	}
 	if style != "" {
-		pb.buf.WriteString(fmt.Sprintf(` style="%s" `, style))
+		fmt.Fprintf(pb.buf, ` style="%s" `, style)
 	}
-	pb.buf.WriteString(fmt.Sprintf(` weight=%d color="%s"]`, weight, color))
+	fmt.Fprintf(pb.buf, ` weight=%d color="%s"]`, weight, color)
 	pb.buf.WriteByte('\n')
 }
 
@@ -587,7 +587,7 @@ func (pb *profileBuilder) formatValueByTp(value float64) string {
 }
 
 // dotColor function is copy from https://github.com/google/pprof.
-func (pb *profileBuilder) dotColor(score float64, isBackground bool) string {
+func (*profileBuilder) dotColor(score float64, isBackground bool) string {
 	// A float between 0.0 and 1.0, indicating the extent to which
 	// colors should be shifted away from grey (to make positive and
 	// negative values easier to distinguish, and to make more use of
@@ -638,7 +638,7 @@ func (pb *profileBuilder) dotColor(score float64, isBackground bool) string {
 	return fmt.Sprintf("#%02x%02x%02x", uint8(r*255.0), uint8(g*255.0), uint8(b*255.0))
 }
 
-func (pb *profileBuilder) genTiDBGCTree() *metricNode {
+func (*profileBuilder) genTiDBGCTree() *metricNode {
 	tidbGC := &metricNode{
 		table:          "tidb_gc",
 		isPartOfParent: true,
@@ -653,7 +653,7 @@ func (pb *profileBuilder) genTiDBGCTree() *metricNode {
 	return tidbGC
 }
 
-func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
+func (*profileBuilder) genTiDBQueryTree() *metricNode {
 	tidbKVRequest := &metricNode{
 		table:          "tidb_kv_request",
 		isPartOfParent: true,

@@ -17,6 +17,7 @@ package isolation_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -561,4 +562,61 @@ func initializePessimisticRCProvider(t testing.TB, tk *testkit.TestKit) *isolati
 	assert := activeRCTxnAssert(t, tk.Session(), true)
 	tk.MustExec("begin pessimistic")
 	return assert.CheckAndGetProvider(t)
+}
+
+func TestFailedDMLConsistency1(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("CREATE TABLE t(id INT primary key, v int not null);")
+	tk1.MustExec("insert into t values (1, 1)")
+	tk1.MustExec("set @@tidb_txn_assertion_level = \"strict\";")
+	tk1.MustExec("set transaction isolation level read committed;")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("insert into t values (0, 0)")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("begin pessimistic")
+	tk1.Exec("update t set v = null where id in (1);")
+	tk2.MustExec("delete from t where id = 1;")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		println("@@ -- begin delete")
+		tk1.MustExec("delete from t where id in (1);")
+		println("@@ -- end delete")
+		wg.Done()
+	}()
+	time.Sleep(100 * time.Millisecond)
+	tk2.MustExec("commit")
+	wg.Wait()
+	tk1.MustExec("commit")
+}
+
+func TestFailedDMLConsistency2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("set @@tidb_txn_assertion_level=strict")
+	tk1.MustExec("use test")
+	tk1.MustExec("CREATE TABLE t(id INT primary key, v int not null, v2 int, index (id), unique index (v2));")
+	tk1.MustExec("INSERT INTO t VALUES (1, 1, 1);")
+	tk1.MustExec("set transaction isolation level read committed;")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("insert into t values (0, 0, 0)")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("begin pessimistic")
+	tk1.Exec("update t set v = null where id in (1);")
+	tk2.MustExec("update t set id = 10 where id = 1;")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		tk1.MustExec("delete from t where id in (1, 2);")
+		wg.Done()
+	}()
+	tk2.MustExec("commit")
+	wg.Wait()
+	tk1.MustExec("commit")
+	tk1.MustExec("admin check table t")
 }

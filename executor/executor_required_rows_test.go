@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/parser/ast"
@@ -41,7 +42,7 @@ import (
 )
 
 type requiredRowsDataSource struct {
-	baseExecutor
+	exec.BaseExecutor
 	totalRows int
 	count     int
 	ctx       sessionctx.Context
@@ -67,7 +68,7 @@ func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRo
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
 	}
 	schema := expression.NewSchema(cols...)
-	baseExec := newBaseExecutor(ctx, schema, 0)
+	baseExec := exec.NewBaseExecutor(ctx, schema, 0)
 	return &requiredRowsDataSource{baseExec, totalRows, 0, ctx, expectedRowsRet, 0, defaultGenerator}
 }
 
@@ -180,25 +181,25 @@ func TestLimitRequiredRows(t *testing.T) {
 		sctx := defaultCtx()
 		ctx := context.Background()
 		ds := newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
-		exec := buildLimitExec(sctx, ds, testCase.limitOffset, testCase.limitCount)
-		require.NoError(t, exec.Open(ctx))
-		chk := newFirstChunk(exec)
+		exe := buildLimitExec(sctx, ds, testCase.limitOffset, testCase.limitCount)
+		require.NoError(t, exe.Open(ctx))
+		chk := newFirstChunk(exe)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], sctx.GetSessionVars().MaxChunkSize)
-			require.NoError(t, exec.Next(ctx, chk))
+			require.NoError(t, exe.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.NoError(t, exec.Close())
+		require.NoError(t, exe.Close())
 		require.NoError(t, ds.checkNumNextCalled())
 	}
 }
 
-func buildLimitExec(ctx sessionctx.Context, src Executor, offset, count int) Executor {
+func buildLimitExec(ctx sessionctx.Context, src exec.Executor, offset, count int) exec.Executor {
 	n := mathutil.Min(count, ctx.GetSessionVars().MaxChunkSize)
-	base := newBaseExecutor(ctx, src.Schema(), 0, src)
-	base.initCap = n
+	base := exec.NewBaseExecutor(ctx, src.Schema(), 0, src)
+	base.SetInitCap(n)
 	limitExec := &LimitExec{
-		baseExecutor: base,
+		BaseExecutor: base,
 		begin:        uint64(offset),
 		end:          uint64(offset + count),
 	}
@@ -277,9 +278,9 @@ func TestSortRequiredRows(t *testing.T) {
 	}
 }
 
-func buildSortExec(sctx sessionctx.Context, byItems []*util.ByItems, src Executor) Executor {
+func buildSortExec(sctx sessionctx.Context, byItems []*util.ByItems, src exec.Executor) exec.Executor {
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(sctx, src.Schema(), 0, src),
+		BaseExecutor: exec.NewBaseExecutor(sctx, src.Schema(), 0, src),
 		ByItems:      byItems,
 		schema:       src.Schema(),
 	}
@@ -384,9 +385,9 @@ func TestTopNRequiredRows(t *testing.T) {
 	}
 }
 
-func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.ByItems, src Executor) Executor {
+func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.ByItems, src exec.Executor) exec.Executor {
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(ctx, src.Schema(), 0, src),
+		BaseExecutor: exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
 		ByItems:      byItems,
 		schema:       src.Schema(),
 	}
@@ -477,9 +478,9 @@ func TestSelectionRequiredRows(t *testing.T) {
 	}
 }
 
-func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression, src Executor) Executor {
+func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression, src exec.Executor) exec.Executor {
 	return &SelectionExec{
-		baseExecutor: newBaseExecutor(ctx, src.Schema(), 0, src),
+		BaseExecutor: exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
 		filters:      filters,
 	}
 }
@@ -595,9 +596,9 @@ func TestProjectionParallelRequiredRows(t *testing.T) {
 	}
 }
 
-func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src Executor, numWorkers int) Executor {
+func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src exec.Executor, numWorkers int) exec.Executor {
 	return &ProjectionExec{
-		baseExecutor:  newBaseExecutor(ctx, src.Schema(), 0, src),
+		BaseExecutor:  exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
 		numWorkers:    int64(numWorkers),
 		evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
 	}
@@ -715,119 +716,7 @@ func TestMergeJoinRequiredRows(t *testing.T) {
 	}
 }
 
-func genTestChunk4VecGroupChecker(chkRows []int, sameNum int) (expr []expression.Expression, inputs []*chunk.Chunk) {
-	chkNum := len(chkRows)
-	numRows := 0
-	inputs = make([]*chunk.Chunk, chkNum)
-	fts := make([]*types.FieldType, 1)
-	fts[0] = types.NewFieldType(mysql.TypeLonglong)
-	for i := 0; i < chkNum; i++ {
-		inputs[i] = chunk.New(fts, chkRows[i], chkRows[i])
-		numRows += chkRows[i]
-	}
-	var numGroups int
-	if numRows%sameNum == 0 {
-		numGroups = numRows / sameNum
-	} else {
-		numGroups = numRows/sameNum + 1
-	}
-
-	rand.Seed(time.Now().Unix())
-	nullPos := rand.Intn(numGroups)
-	cnt := 0
-	val := rand.Int63()
-	for i := 0; i < chkNum; i++ {
-		col := inputs[i].Column(0)
-		col.ResizeInt64(chkRows[i], false)
-		i64s := col.Int64s()
-		for j := 0; j < chkRows[i]; j++ {
-			if cnt == sameNum {
-				val = rand.Int63()
-				cnt = 0
-				nullPos--
-			}
-			if nullPos == 0 {
-				col.SetNull(j, true)
-			} else {
-				i64s[j] = val
-			}
-			cnt++
-		}
-	}
-
-	expr = make([]expression.Expression, 1)
-	expr[0] = &expression.Column{
-		RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlen(mysql.MaxIntWidth).BuildP(),
-		Index:   0,
-	}
-	return
-}
-
-func TestVecGroupChecker4GroupCount(t *testing.T) {
-	testCases := []struct {
-		chunkRows      []int
-		expectedGroups int
-		expectedFlag   []bool
-		sameNum        int
-	}{
-		{
-			chunkRows:      []int{1024, 1},
-			expectedGroups: 1025,
-			expectedFlag:   []bool{false, false},
-			sameNum:        1,
-		},
-		{
-			chunkRows:      []int{1024, 1},
-			expectedGroups: 1,
-			expectedFlag:   []bool{false, true},
-			sameNum:        1025,
-		},
-		{
-			chunkRows:      []int{1, 1},
-			expectedGroups: 1,
-			expectedFlag:   []bool{false, true},
-			sameNum:        2,
-		},
-		{
-			chunkRows:      []int{1, 1},
-			expectedGroups: 2,
-			expectedFlag:   []bool{false, false},
-			sameNum:        1,
-		},
-		{
-			chunkRows:      []int{2, 2},
-			expectedGroups: 2,
-			expectedFlag:   []bool{false, false},
-			sameNum:        2,
-		},
-		{
-			chunkRows:      []int{2, 2},
-			expectedGroups: 1,
-			expectedFlag:   []bool{false, true},
-			sameNum:        4,
-		},
-	}
-
-	ctx := mock.NewContext()
-	for _, testCase := range testCases {
-		expr, inputChks := genTestChunk4VecGroupChecker(testCase.chunkRows, testCase.sameNum)
-		groupChecker := newVecGroupChecker(ctx, expr)
-		groupNum := 0
-		for i, inputChk := range inputChks {
-			flag, err := groupChecker.splitIntoGroups(inputChk)
-			require.NoError(t, err)
-			require.Equal(t, testCase.expectedFlag[i], flag)
-			if flag {
-				groupNum += groupChecker.groupCount - 1
-			} else {
-				groupNum += groupChecker.groupCount
-			}
-		}
-		require.Equal(t, testCase.expectedGroups, groupNum)
-	}
-}
-
-func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, innerSrc, outerSrc Executor) Executor {
+func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, innerSrc, outerSrc exec.Executor) exec.Executor {
 	if joinType == plannercore.RightOuterJoin {
 		innerSrc, outerSrc = outerSrc, innerSrc
 	}
@@ -852,10 +741,10 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 
 type mockPlan struct {
 	MockPhysicalPlan
-	exec Executor
+	exec exec.Executor
 }
 
-func (mp *mockPlan) GetExecutor() Executor {
+func (mp *mockPlan) GetExecutor() exec.Executor {
 	return mp.exec
 }
 
@@ -866,68 +755,4 @@ func (mp *mockPlan) Schema() *expression.Schema {
 // MemoryUsage of mockPlan is only for testing
 func (mp *mockPlan) MemoryUsage() (sum int64) {
 	return
-}
-
-func TestVecGroupCheckerDATARACE(t *testing.T) {
-	ctx := mock.NewContext()
-
-	mTypes := []byte{mysql.TypeVarString, mysql.TypeNewDecimal, mysql.TypeJSON}
-	for _, mType := range mTypes {
-		exprs := make([]expression.Expression, 1)
-		exprs[0] = &expression.Column{
-			RetType: types.NewFieldTypeBuilder().SetType(mType).BuildP(),
-			Index:   0,
-		}
-		vgc := newVecGroupChecker(ctx, exprs)
-
-		fts := []*types.FieldType{types.NewFieldType(mType)}
-		chk := chunk.New(fts, 1, 1)
-		vgc.allocateBuffer = func(evalType types.EvalType, capacity int) (*chunk.Column, error) {
-			return chk.Column(0), nil
-		}
-		vgc.releaseBuffer = func(column *chunk.Column) {}
-
-		switch mType {
-		case mysql.TypeVarString:
-			chk.Column(0).ReserveString(1)
-			chk.Column(0).AppendString("abc")
-		case mysql.TypeNewDecimal:
-			chk.Column(0).ResizeDecimal(1, false)
-			chk.Column(0).Decimals()[0] = *types.NewDecFromInt(123)
-		case mysql.TypeJSON:
-			chk.Column(0).ReserveJSON(1)
-			j := new(types.BinaryJSON)
-			require.NoError(t, j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, 123, 123))))
-			chk.Column(0).AppendJSON(*j)
-		}
-
-		_, err := vgc.splitIntoGroups(chk)
-		require.NoError(t, err)
-
-		switch mType {
-		case mysql.TypeVarString:
-			require.Equal(t, "abc", vgc.firstRowDatums[0].GetString())
-			require.Equal(t, "abc", vgc.lastRowDatums[0].GetString())
-			chk.Column(0).ReserveString(1)
-			chk.Column(0).AppendString("edf")
-			require.Equal(t, "abc", vgc.firstRowDatums[0].GetString())
-			require.Equal(t, "abc", vgc.lastRowDatums[0].GetString())
-		case mysql.TypeNewDecimal:
-			require.Equal(t, "123", vgc.firstRowDatums[0].GetMysqlDecimal().String())
-			require.Equal(t, "123", vgc.lastRowDatums[0].GetMysqlDecimal().String())
-			chk.Column(0).ResizeDecimal(1, false)
-			chk.Column(0).Decimals()[0] = *types.NewDecFromInt(456)
-			require.Equal(t, "123", vgc.firstRowDatums[0].GetMysqlDecimal().String())
-			require.Equal(t, "123", vgc.lastRowDatums[0].GetMysqlDecimal().String())
-		case mysql.TypeJSON:
-			require.Equal(t, `{"123": 123}`, vgc.firstRowDatums[0].GetMysqlJSON().String())
-			require.Equal(t, `{"123": 123}`, vgc.lastRowDatums[0].GetMysqlJSON().String())
-			chk.Column(0).ReserveJSON(1)
-			j := new(types.BinaryJSON)
-			require.NoError(t, j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, 456, 456))))
-			chk.Column(0).AppendJSON(*j)
-			require.Equal(t, `{"123": 123}`, vgc.firstRowDatums[0].GetMysqlJSON().String())
-			require.Equal(t, `{"123": 123}`, vgc.lastRowDatums[0].GetMysqlJSON().String())
-		}
-	}
 }

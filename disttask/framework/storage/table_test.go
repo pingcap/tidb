@@ -32,7 +32,7 @@ import (
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 	}
@@ -81,7 +81,7 @@ func TestGlobalTaskTable(t *testing.T) {
 	require.Equal(t, task, task4[0])
 
 	task.State = proto.TaskStateRunning
-	err = gm.UpdateGlobalTaskAndAddSubTasks(task, nil, false)
+	err = gm.UpdateGlobalTaskAndAddSubTasks(task, nil)
 	require.NoError(t, err)
 
 	task5, err := gm.GetGlobalTasksInStates(proto.TaskStateRunning)
@@ -125,7 +125,7 @@ func TestSubTaskTable(t *testing.T) {
 	sm, err := storage.GetTaskManager()
 	require.NoError(t, err)
 
-	err = sm.AddNewSubTask(1, "tidb1", []byte("test"), proto.TaskTypeExample, false)
+	err = sm.AddNewSubTask(1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false)
 	require.NoError(t, err)
 
 	nilTask, err := sm.GetSubtaskInStates("tidb2", 1, proto.TaskStatePending)
@@ -168,7 +168,7 @@ func TestSubTaskTable(t *testing.T) {
 	err = sm.UpdateSubtaskHeartbeat("tidb1", 1, time.Now())
 	require.NoError(t, err)
 
-	err = sm.UpdateSubtaskStateAndError(1, proto.TaskStateRunning, "")
+	err = sm.UpdateSubtaskStateAndError(1, proto.TaskStateRunning, nil)
 	require.NoError(t, err)
 
 	task, err = sm.GetSubtaskInStates("tidb1", 1, proto.TaskStatePending)
@@ -198,12 +198,21 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	err = sm.AddNewSubTask(2, "tidb1", []byte("test"), proto.TaskTypeExample, true)
+	err = sm.AddNewSubTask(2, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, true)
 	require.NoError(t, err)
 
 	cnt, err = sm.GetSubtaskInStatesCnt(2, proto.TaskStateRevertPending)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), cnt)
+
+	subtasks, err := sm.GetSucceedSubtasksByStep(2, proto.StepInit)
+	require.NoError(t, err)
+	require.Len(t, subtasks, 0)
+	err = sm.FinishSubtask(2, []byte{})
+	require.NoError(t, err)
+	subtasks, err = sm.GetSucceedSubtasksByStep(2, proto.StepInit)
+	require.NoError(t, err)
+	require.Len(t, subtasks, 1)
 }
 
 func TestBothGlobalAndSubTaskTable(t *testing.T) {
@@ -242,7 +251,7 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 			Meta:        []byte("m2"),
 		},
 	}
-	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks, false)
+	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks)
 	require.NoError(t, err)
 
 	task, err = sm.GetGlobalTaskByID(1)
@@ -279,7 +288,7 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 			Meta:        []byte("m4"),
 		},
 	}
-	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks, true)
+	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks)
 	require.NoError(t, err)
 
 	task, err = sm.GetGlobalTaskByID(1)
@@ -309,7 +318,7 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr"))
 	}()
 	task.State = proto.TaskStateFailed
-	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks, true)
+	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks)
 	require.EqualError(t, err, "updateTaskErr")
 
 	task, err = sm.GetGlobalTaskByID(1)

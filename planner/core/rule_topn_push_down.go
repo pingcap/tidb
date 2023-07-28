@@ -28,7 +28,7 @@ import (
 type pushDownTopNOptimizer struct {
 }
 
-func (s *pushDownTopNOptimizer) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (*pushDownTopNOptimizer) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	return p.pushDownTopN(nil, opt), nil
 }
 
@@ -37,6 +37,13 @@ func (s *baseLogicalPlan) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp
 	for i, child := range p.Children() {
 		p.Children()[i] = child.pushDownTopN(nil, opt)
 	}
+	if topN != nil {
+		return topN.setChild(p, opt)
+	}
+	return p
+}
+
+func (p *LogicalCTE) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan {
 	if topN != nil {
 		return topN.setChild(p, opt)
 	}
@@ -63,7 +70,7 @@ func (lt *LogicalTopN) setChild(p LogicalPlan, opt *logicalOptimizeOp) LogicalPl
 			Offset:      lt.Offset,
 			limitHints:  lt.limitHints,
 			PartitionBy: lt.GetPartitionBy(),
-		}.Init(lt.ctx, lt.blockOffset)
+		}.Init(lt.SCtx(), lt.SelectBlockOffset())
 		limit.SetChildren(p)
 		appendTopNPushDownTraceStep(limit, p, opt)
 		return limit
@@ -87,7 +94,7 @@ func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) L
 }
 
 func (p *LogicalLimit) convertToTopN(opt *logicalOptimizeOp) *LogicalTopN {
-	topn := LogicalTopN{Offset: p.Offset, Count: p.Count, limitHints: p.limitHints}.Init(p.ctx, p.blockOffset)
+	topn := LogicalTopN{Offset: p.Offset, Count: p.Count, limitHints: p.limitHints}.Init(p.SCtx(), p.SelectBlockOffset())
 	appendConvertTopNTraceStep(p, topn, opt)
 	return topn
 }
@@ -104,7 +111,7 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp
 	for i, child := range p.children {
 		var newTopN *LogicalTopN
 		if topN != nil {
-			newTopN = LogicalTopN{Count: topN.Count + topN.Offset, limitHints: topN.limitHints}.Init(p.ctx, topN.blockOffset)
+			newTopN = LogicalTopN{Count: topN.Count + topN.Offset, limitHints: topN.limitHints}.Init(p.SCtx(), topN.SelectBlockOffset())
 			for _, by := range topN.ByItems {
 				newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{Expr: by.Expr, Desc: by.Desc})
 			}
@@ -182,7 +189,7 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *logic
 		Count:      topN.Count + topN.Offset,
 		ByItems:    make([]*util.ByItems, len(topN.ByItems)),
 		limitHints: topN.limitHints,
-	}.Init(topN.ctx, topN.blockOffset)
+	}.Init(topN.SCtx(), topN.SelectBlockOffset())
 	for i := range topN.ByItems {
 		newTopN.ByItems[i] = topN.ByItems[i].Clone()
 	}
@@ -264,7 +271,7 @@ func appendSortPassByItemsTraceStep(sort *LogicalSort, topN *LogicalTopN, opt *l
 			}
 			buffer.WriteString(item.String())
 		}
-		buffer.WriteString(fmt.Sprintf("] to %v_%v", topN.TP(), topN.ID()))
+		fmt.Fprintf(buffer, "] to %v_%v", topN.TP(), topN.ID())
 		return buffer.String()
 	}
 	reason := func() string {

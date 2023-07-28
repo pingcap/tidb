@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"go.uber.org/atomic"
 )
@@ -69,6 +70,8 @@ const (
 
 	// TiDBOptEnable3StageMultiDistinctAgg is used to indicate whether to plan and execute the multi distinct agg in 3 stages
 	TiDBOptEnable3StageMultiDistinctAgg = "tidb_opt_enable_three_stage_multi_distinct_agg"
+
+	TiDBOptExplainNoEvaledSubQuery = "tidb_opt_enable_non_eval_scalar_subquery"
 
 	// TiDBBCJThresholdSize is used to limit the size of small table for mpp broadcast join.
 	// Its unit is bytes, if the size of small table is larger than it, we will not use bcj.
@@ -274,6 +277,10 @@ const (
 
 	// TiDBUseAlloc indicates whether the last statement used chunk alloc
 	TiDBUseAlloc = "last_sql_use_alloc"
+
+	// TiDBExplicitRequestSourceType indicates the source of the request, it's a complement of RequestSourceType.
+	// The value maybe "lightning", "br", "dumpling" etc.
+	TiDBExplicitRequestSourceType = "tidb_request_source_type"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -373,6 +380,11 @@ const (
 	// Value set to `false` means never use mpp.
 	TiDBAllowMPPExecution = "tidb_allow_mpp"
 
+	// TiDBAllowTiFlashCop means we only use MPP mode to query data.
+	// Default value is `true`, means to be determined by the optimizer.
+	// Value set to `false` means we may fall back to TiFlash cop plan if possible.
+	TiDBAllowTiFlashCop = "tidb_allow_tiflash_cop"
+
 	// TiDBHashExchangeWithNewCollation means if hash exchange is supported when new collation is on.
 	// Default value is `true`, means support hash exchange when new collation is on.
 	// Value set to `false` means not support hash exchange when new collation is on.
@@ -397,6 +409,11 @@ const (
 
 	// TiDBMaxBytesBeforeTiFlashExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
 	TiDBMaxBytesBeforeTiFlashExternalSort = "tidb_max_bytes_before_tiflash_external_sort"
+
+	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
+	// Default value is `false`, means never use pipeline model in tiflash.
+	// Value set to `true` means try to execute query with pipeline model in tiflash.
+	TiDBEnableTiFlashPipelineMode = "tidb_enable_tiflash_pipeline_model"
 
 	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
 	// TiFlash even though the failed TiFlash node has been recovered.
@@ -540,6 +557,9 @@ const (
 
 	// TiDBExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	TiDBExpensiveQueryTimeThreshold = "tidb_expensive_query_time_threshold"
+
+	// TiDBExpensiveTxnTimeThreshold indicates the time threshold of expensive transaction.
+	TiDBExpensiveTxnTimeThreshold = "tidb_expensive_txn_time_threshold"
 
 	// TiDBEnableIndexMerge indicates to generate IndexMergePath.
 	TiDBEnableIndexMerge = "tidb_enable_index_merge"
@@ -864,8 +884,26 @@ const (
 	// TiDBOptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
 	TiDBOptOrderingIdxSelThresh = "tidb_opt_ordering_index_selectivity_threshold"
 
+	// TiDBOptEnableMPPSharedCTEExecution indicates whehter the optimizer try to build shared CTE scan during MPP execution.
+	TiDBOptEnableMPPSharedCTEExecution = "tidb_opt_enable_mpp_shared_cte_execution"
 	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
 	TiDBOptFixControl = "tidb_opt_fix_control"
+
+	// TiFlashReplicaRead is used to set the policy of TiFlash replica read when the query needs the TiFlash engine.
+	TiFlashReplicaRead = "tiflash_replica_read"
+
+	// TiDBLockUnchangedKeys indicates whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
+	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
+	TiDBLockUnchangedKeys = "tidb_lock_unchanged_keys"
+
+	// TiDBFastCheckTable enables fast check table.
+	TiDBFastCheckTable = "tidb_enable_fast_table_check"
+
+	// TiDBAnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
+	TiDBAnalyzeSkipColumnTypes = "tidb_analyze_skip_column_types"
+
+	// TiDBEnableCheckConstraint indicates whether to enable check constraint feature.
+	TiDBEnableCheckConstraint = "tidb_enable_check_constraint"
 )
 
 // TiDB vars that have only global scope
@@ -1007,8 +1045,8 @@ const (
 	AuthenticationLDAPSASLBindBaseDN = "authentication_ldap_sasl_bind_base_dn"
 	// AuthenticationLDAPSASLBindRootDN defines the `dn` of the user to login the LDAP server and perform search.
 	AuthenticationLDAPSASLBindRootDN = "authentication_ldap_sasl_bind_root_dn"
-	// AuthenticationLDAPSASLBindRootPW defines the password of the user to login the LDAP server and perform search.
-	AuthenticationLDAPSASLBindRootPW = "authentication_ldap_sasl_bind_root_pw"
+	// AuthenticationLDAPSASLBindRootPWD defines the password of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSASLBindRootPWD = "authentication_ldap_sasl_bind_root_pwd"
 	// AuthenticationLDAPSASLInitPoolSize defines the init size of connection pool to LDAP server for SASL plugin.
 	AuthenticationLDAPSASLInitPoolSize = "authentication_ldap_sasl_init_pool_size"
 	// AuthenticationLDAPSASLMaxPoolSize defines the max size of connection pool to LDAP server for SASL plugin.
@@ -1031,12 +1069,20 @@ const (
 	AuthenticationLDAPSimpleBindBaseDN = "authentication_ldap_simple_bind_base_dn"
 	// AuthenticationLDAPSimpleBindRootDN defines the `dn` of the user to login the LDAP server and perform search.
 	AuthenticationLDAPSimpleBindRootDN = "authentication_ldap_simple_bind_root_dn"
-	// AuthenticationLDAPSimpleBindRootPW defines the password of the user to login the LDAP server and perform search.
-	AuthenticationLDAPSimpleBindRootPW = "authentication_ldap_simple_bind_root_pw"
+	// AuthenticationLDAPSimpleBindRootPWD defines the password of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSimpleBindRootPWD = "authentication_ldap_simple_bind_root_pwd"
 	// AuthenticationLDAPSimpleInitPoolSize defines the init size of connection pool to LDAP server for SASL plugin.
 	AuthenticationLDAPSimpleInitPoolSize = "authentication_ldap_simple_init_pool_size"
 	// AuthenticationLDAPSimpleMaxPoolSize defines the max size of connection pool to LDAP server for SASL plugin.
 	AuthenticationLDAPSimpleMaxPoolSize = "authentication_ldap_simple_max_pool_size"
+	// TiDBRuntimeFilterTypeName the value of is string, a runtime filter type list split by ",", such as: "IN,MIN_MAX"
+	TiDBRuntimeFilterTypeName = "tidb_runtime_filter_type"
+	// TiDBRuntimeFilterModeName the mode of runtime filter, such as "OFF", "LOCAL"
+	TiDBRuntimeFilterModeName = "tidb_runtime_filter_mode"
+	// TiDBSkipMissingPartitionStats controls how to handle missing partition stats when merging partition stats to global stats.
+	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
+	// When set to false, give up merging partition stats to global stats.
+	TiDBSkipMissingPartitionStats = "tidb_skip_missing_partition_stats"
 )
 
 // TiDB intentional limits
@@ -1117,12 +1163,14 @@ const (
 	DefTiDBEnableNAAJ                              = true
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
+	DefTiDBAllowTiFlashCop                         = false
 	DefTiDBHashExchangeWithNewCollation            = true
 	DefTiDBEnforceMPPExecution                     = false
 	DefTiFlashMaxThreads                           = -1
 	DefTiFlashMaxBytesBeforeExternalJoin           = -1
 	DefTiFlashMaxBytesBeforeExternalGroupBy        = -1
 	DefTiFlashMaxBytesBeforeExternalSort           = -1
+	DefTiDBEnableTiFlashPipelineMode               = false
 	DefTiDBMPPStoreFailTTL                         = "60s"
 	DefTiDBTxnMode                                 = ""
 	DefTiDBRowFormatV1                             = 1
@@ -1148,7 +1196,8 @@ const (
 	DefTiDBDDLSlowOprThreshold                     = 300
 	DefTiDBUseFastAnalyze                          = false
 	DefTiDBSkipIsolationLevelCheck                 = false
-	DefTiDBExpensiveQueryTimeThreshold             = 60 // 60s
+	DefTiDBExpensiveQueryTimeThreshold             = 60      // 60s
+	DefTiDBExpensiveTxnTimeThreshold               = 60 * 10 // 10 minutes
 	DefTiDBScatterRegion                           = false
 	DefTiDBWaitSplitRegionFinish                   = true
 	DefWaitSplitRegionTimeout                      = 300 // 300s
@@ -1215,10 +1264,11 @@ const (
 	DefTiDBIgnorePreparedCacheCloseStmt            = false
 	DefTiDBBatchPendingTiFlashCount                = 4000
 	DefRCReadCheckTS                               = false
-	DefTiDBRemoveOrderbyInSubquery                 = false
+	DefTiDBRemoveOrderbyInSubquery                 = true
 	DefTiDBSkewDistinctAgg                         = false
 	DefTiDB3StageDistinctAgg                       = true
 	DefTiDB3StageMultiDistinctAgg                  = false
+	DefTiDBOptExplainEvaledSubquery                = false
 	DefTiDBReadStaleness                           = 0
 	DefTiDBGCMaxWaitTime                           = 24 * 60 * 60
 	DefMaxAllowedPacket                     uint64 = 67108864
@@ -1258,7 +1308,7 @@ const (
 	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
-	DefTiDBEnableNonPreparedPlanCache              = false
+	DefTiDBEnableNonPreparedPlanCache              = true
 	DefTiDBEnableNonPreparedPlanCacheForDML        = false
 	DefTiDBNonPreparedPlanCacheSize                = 100
 	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
@@ -1266,6 +1316,7 @@ const (
 	MaxDDLReorgBatchSize                  int32  = 10240
 	MinDDLReorgBatchSize                  int32  = 32
 	MinExpensiveQueryTimeThreshold        uint64 = 10 // 10s
+	MinExpensiveTxnTimeThreshold          uint64 = 60 // 60s
 	DefTiDBAutoBuildStatsConcurrency             = 1
 	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
@@ -1285,7 +1336,7 @@ const (
 	DefTiDBEnableExternalTSRead                       = false
 	DefTiDBEnableReusechunk                           = true
 	DefTiDBUseAlloc                                   = false
-	DefTiDBEnablePlanReplayerCapture                  = false
+	DefTiDBEnablePlanReplayerCapture                  = true
 	DefTiDBIndexMergeIntersectionConcurrency          = ConcurrencyUnset
 	DefTiDBTTLJobEnable                               = true
 	DefTiDBTTLScanBatchSize                           = 500
@@ -1314,6 +1365,7 @@ const (
 	DefTiDBLoadBasedReplicaReadThreshold              = time.Second
 	DefTiDBOptEnableLateMaterialization               = true
 	DefTiDBOptOrderingIdxSelThresh                    = 0.0
+	DefTiDBOptEnableMPPSharedCTEExecution             = false
 	DefTiDBPlanCacheInvalidationOnFreshStats          = true
 	DefTiDBEnableRowLevelChecksum                     = false
 	DefAuthenticationLDAPSASLAuthMethodName           = "SCRAM-SHA-1"
@@ -1328,6 +1380,13 @@ const (
 	DefAuthenticationLDAPSimpleUserSearchAttr         = "uid"
 	DefAuthenticationLDAPSimpleInitPoolSize           = 10
 	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
+	DefTiFlashReplicaRead                             = tiflash.AllReplicaStr
+	DefTiDBEnableFastCheckTable                       = true
+	DefRuntimeFilterType                              = "IN"
+	DefRuntimeFilterMode                              = "OFF"
+	DefTiDBLockUnchangedKeys                          = true
+	DefTiDBEnableCheckConstraint                      = false
+	DefTiDBSkipMissingPartitionStats                  = true
 )
 
 // Process global variables.
@@ -1350,6 +1409,7 @@ var (
 	ForcePriority                        = int32(DefTiDBForcePriority)
 	MaxOfMaxAllowedPacket         uint64 = 1073741824
 	ExpensiveQueryTimeThreshold   uint64 = DefTiDBExpensiveQueryTimeThreshold
+	ExpensiveTxnTimeThreshold     uint64 = DefTiDBExpensiveTxnTimeThreshold
 	MemoryUsageAlarmRatio                = atomic.NewFloat64(DefMemoryUsageAlarmRatio)
 	MemoryUsageAlarmKeepRecordNum        = atomic.NewInt64(DefMemoryUsageAlarmKeepRecordNum)
 	EnableLocalTxn                       = atomic.NewBool(DefTiDBEnableLocalTxn)
@@ -1396,20 +1456,32 @@ var (
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
-	TTLJobScheduleWindowStartTime      = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowStartTime))
-	TTLJobScheduleWindowEndTime        = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowEndTime))
-	TTLScanWorkerCount                 = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
-	TTLDeleteWorkerCount               = atomic.NewInt32(DefTiDBTTLDeleteWorkerCount)
-	PasswordHistory                    = atomic.NewInt64(DefPasswordReuseHistory)
-	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
-	IsSandBoxModeEnabled               = atomic.NewBool(false)
-	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
-	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
-	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
-	TTLRunningTasks                    = atomic.NewInt32(DefTiDBTTLRunningTasks)
+	TTLJobScheduleWindowStartTime      = atomic.NewTime(
+		mustParseTime(
+			FullDayTimeFormat,
+			DefTiDBTTLJobScheduleWindowStartTime,
+		),
+	)
+	TTLJobScheduleWindowEndTime = atomic.NewTime(
+		mustParseTime(
+			FullDayTimeFormat,
+			DefTiDBTTLJobScheduleWindowEndTime,
+		),
+	)
+	TTLScanWorkerCount              = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
+	TTLDeleteWorkerCount            = atomic.NewInt32(DefTiDBTTLDeleteWorkerCount)
+	PasswordHistory                 = atomic.NewInt64(DefPasswordReuseHistory)
+	PasswordReuseInterval           = atomic.NewInt64(DefPasswordReuseTime)
+	IsSandBoxModeEnabled            = atomic.NewBool(false)
+	MaxPreparedStmtCountValue       = atomic.NewInt64(DefMaxPreparedStmtCount)
+	HistoricalStatsDuration         = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
+	EnableHistoricalStatsForCapture = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
+	TTLRunningTasks                 = atomic.NewInt32(DefTiDBTTLRunningTasks)
 	// always set the default value to false because the resource control in kv-client is not inited
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
-	EnableResourceControl = atomic.NewBool(false)
+	EnableResourceControl     = atomic.NewBool(false)
+	EnableCheckConstraint     = atomic.NewBool(DefTiDBEnableCheckConstraint)
+	SkipMissingPartitionStats = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 )
 
 var (
@@ -1418,7 +1490,7 @@ var (
 	// GetMemQuotaAnalyze is the func registered by global/subglobal tracker to get memory quota.
 	GetMemQuotaAnalyze func() int64 = nil
 	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
-	SetStatsCacheCapacity atomic.Value
+	SetStatsCacheCapacity atomic.Pointer[func(int64)]
 	// SetPDClientDynamicOption is the func registered by domain
 	SetPDClientDynamicOption atomic.Pointer[func(string, string)]
 	// SwitchMDL is the func registered by DDL to switch MDL.

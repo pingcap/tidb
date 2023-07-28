@@ -133,6 +133,12 @@ const (
 	TypeForeignKeyCheck = "Foreign_Key_Check"
 	// TypeForeignKeyCascade is the type of FKCascade
 	TypeForeignKeyCascade = "Foreign_Key_Cascade"
+	// TypeImportInto is the type of ImportInto.
+	TypeImportInto = "ImportInto"
+	// TypeSequence is the type of Sequence
+	TypeSequence = "Sequence"
+	// TypeScalarSubQuery is the type of ScalarQuery
+	TypeScalarSubQuery = "ScalarSubQuery"
 )
 
 // plan id.
@@ -196,6 +202,8 @@ const (
 	typeForeignKeyCheck       int = 56
 	typeForeignKeyCascade     int = 57
 	typeExpandID              int = 58
+	typeImportIntoID          int = 59
+	TypeScalarSubQueryID      int = 60
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -317,6 +325,10 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeForeignKeyCascade
 	case TypeExpand:
 		return typeExpandID
+	case TypeImportInto:
+		return typeImportIntoID
+	case TypeScalarSubQuery:
+		return TypeScalarSubQueryID
 	}
 	// Should never reach here.
 	return 0
@@ -441,6 +453,10 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeForeignKeyCascade
 	case typeExpandID:
 		return TypeExpand
+	case typeImportIntoID:
+		return TypeImportInto
+	case TypeScalarSubQueryID:
+		return TypeScalarSubQuery
 	}
 
 	// Should never reach here.

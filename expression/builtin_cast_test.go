@@ -1395,6 +1395,31 @@ func TestWrapWithCastAsString(t *testing.T) {
 			false,
 			"a",
 		},
+		{
+			&Constant{RetType: types.NewFieldTypeWithCollation(mysql.TypeLong, charset.CollationBin, 1), Value: types.NewIntDatum(-1)},
+			false,
+			"-1",
+		},
+		{
+			&Constant{RetType: types.NewFieldTypeWithCollation(mysql.TypeLong, charset.CollationBin, 1), Value: types.NewIntDatum(-127)},
+			false,
+			"-127",
+		},
+		{
+			&Constant{RetType: types.NewFieldTypeWithCollation(mysql.TypeTiny, charset.CollationBin, 1), Value: types.NewIntDatum(-127)},
+			false,
+			"-127",
+		},
+		{
+			&Constant{RetType: types.NewFieldTypeWithCollation(mysql.TypeShort, charset.CollationBin, 1), Value: types.NewIntDatum(-127)},
+			false,
+			"-127",
+		},
+		{
+			&Constant{RetType: types.NewFieldTypeWithCollation(mysql.TypeInt24, charset.CollationBin, 1), Value: types.NewIntDatum(-127)},
+			false,
+			"-127",
+		},
 	}
 	for _, c := range cases {
 		expr := BuildCastFunction(ctx, c.expr, types.NewFieldType(mysql.TypeVarString))
@@ -1653,12 +1678,11 @@ func TestCastArrayFunc(t *testing.T) {
 	}
 	for _, tt := range tbl {
 		f, err := BuildCastFunctionWithCheck(ctx, datumsToConstants(types.MakeDatums(types.CreateBinaryJSON(tt.input)))[0], tt.tp)
-		if tt.buildFuncSuccess {
-			require.NoError(t, err, tt.input)
-		} else {
+		if !tt.buildFuncSuccess {
 			require.Error(t, err, tt.input)
 			continue
 		}
+		require.NoError(t, err, tt.input)
 
 		val, isNull, err := f.EvalJSON(ctx, chunk.Row{})
 		if tt.success {

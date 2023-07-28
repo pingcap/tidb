@@ -41,7 +41,8 @@ func TestAutoIncPool(t *testing.T) {
 		i    uint64
 	)
 
-	pool.InitExt(SizeInBits, true, TryCnt)
+	pool.InitExt(Size, true, TryCnt)
+	assert.Equal(int(Size), pool.Cap())
 	assert.Equal(0, pool.Len())
 
 	// get all.
@@ -89,7 +90,8 @@ func TestLockFreePoolBasic(t *testing.T) {
 		i    uint64
 	)
 
-	pool.InitExt(SizeInBits, math.MaxUint32)
+	pool.InitExt(uint32(1<<SizeInBits), math.MaxUint32)
+	assert.Equal(int(Size), pool.Cap())
 	assert.Equal(int(Size), pool.Len())
 
 	// get all.
@@ -135,7 +137,8 @@ func TestLockFreePoolInitEmpty(t *testing.T) {
 		i    uint64
 	)
 
-	pool.InitExt(SizeInBits, 0)
+	pool.InitExt(uint32(1<<SizeInBits), 0)
+	assert.Equal(int(Size), pool.Cap())
 	assert.Equal(0, pool.Len())
 
 	// put to full.
@@ -174,14 +177,14 @@ type LockBasedCircularPool struct {
 	slots []uint32
 }
 
-func (p *LockBasedCircularPool) Init(sizeInBits uint32) {
-	p.InitExt(sizeInBits, 0)
+func (p *LockBasedCircularPool) Init(size uint64) {
+	p.InitExt(uint32(size), 0)
 }
 
-func (p *LockBasedCircularPool) InitExt(sizeInBits uint32, fillCount uint32) {
+func (p *LockBasedCircularPool) InitExt(size uint32, fillCount uint32) {
 	p.mu = &sync.Mutex{}
 
-	p.cap = 1 << sizeInBits
+	p.cap = size
 	p.slots = make([]uint32, p.cap)
 
 	fillCount = mathutil.MinUint32(p.cap-1, fillCount)
@@ -201,6 +204,10 @@ func (p *LockBasedCircularPool) Len() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return int(p.tail - p.head)
+}
+
+func (p *LockBasedCircularPool) Cap() int {
+	return int(p.cap - 1)
 }
 
 func (p LockBasedCircularPool) String() string {
@@ -241,13 +248,13 @@ func (p *LockBasedCircularPool) Get() (val uint64, ok bool) {
 
 func prepareLockBasedPool(sizeInBits uint32, fillCount uint32) globalconn.IDPool {
 	var pool LockBasedCircularPool
-	pool.InitExt(sizeInBits, fillCount)
+	pool.InitExt(1<<sizeInBits, fillCount)
 	return &pool
 }
 
 func prepareLockFreePool(sizeInBits uint32, fillCount uint32, headPos uint32) globalconn.IDPool {
 	var pool globalconn.LockFreeCircularPool
-	pool.InitExt(sizeInBits, fillCount)
+	pool.InitExt(1<<sizeInBits, fillCount)
 	if headPos > 0 {
 		pool.InitForTest(headPos, fillCount)
 	}

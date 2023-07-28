@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -69,7 +70,7 @@ type memTableRetriever interface {
 
 // MemTableReaderExec executes memTable information retrieving from the MemTable components
 type MemTableReaderExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	table     *model.TableInfo
 	retriever memTableRetriever
 	// cacheRetrieved is used to indicate whether has the parent executor retrieved
@@ -77,7 +78,7 @@ type MemTableReaderExec struct {
 	cacheRetrieved bool
 }
 
-func (e *MemTableReaderExec) isInspectionCacheableTable(tblName string) bool {
+func (*MemTableReaderExec) isInspectionCacheableTable(tblName string) bool {
 	switch tblName {
 	case strings.ToLower(infoschema.TableClusterConfig),
 		strings.ToLower(infoschema.TableClusterInfo),
@@ -99,14 +100,14 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	// The `InspectionTableCache` will be assigned in the begin of retrieving` and be
 	// cleaned at the end of retrieving, so nil represents currently in non-inspection mode.
-	if cache, tbl := e.ctx.GetSessionVars().InspectionTableCache, e.table.Name.L; cache != nil &&
+	if cache, tbl := e.Ctx().GetSessionVars().InspectionTableCache, e.table.Name.L; cache != nil &&
 		e.isInspectionCacheableTable(tbl) {
 		// TODO: cached rows will be returned fully, we should refactor this part.
 		if !e.cacheRetrieved {
 			// Obtain data from cache first.
 			cached, found := cache[tbl]
 			if !found {
-				rows, err := e.retriever.retrieve(ctx, e.ctx)
+				rows, err := e.retriever.retrieve(ctx, e.Ctx())
 				cached = variable.TableSnapshot{Rows: rows, Err: err}
 				cache[tbl] = cached
 			}
@@ -114,7 +115,7 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			rows, err = cached.Rows, cached.Err
 		}
 	} else {
-		rows, err = e.retriever.retrieve(ctx, e.ctx)
+		rows, err = e.retriever.retrieve(ctx, e.Ctx())
 	}
 	if err != nil {
 		return err
@@ -136,8 +137,8 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *MemTableReaderExec) Close() error {
-	if stats := e.retriever.getRuntimeStats(); stats != nil && e.runtimeStats != nil {
-		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, stats)
+	if stats := e.retriever.getRuntimeStats(); stats != nil && e.RuntimeStats() != nil {
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), stats)
 	}
 	return e.retriever.close()
 }
@@ -578,7 +579,7 @@ func (e *clusterLogRetriever) close() error {
 	return nil
 }
 
-func (e *clusterLogRetriever) getRuntimeStats() execdetails.RuntimeStats {
+func (*clusterLogRetriever) getRuntimeStats() execdetails.RuntimeStats {
 	return nil
 }
 
@@ -662,7 +663,7 @@ type HistoryHotRegion struct {
 	EndKey        string  `json:"end_key"`
 }
 
-func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan hotRegionsResult, error) {
+func (e *hotRegionsHistoryRetriver) initialize(_ context.Context, sctx sessionctx.Context) ([]chan hotRegionsResult, error) {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
 		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
@@ -689,12 +690,10 @@ func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx session
 		IsLeaders:  e.extractor.IsLeaders,
 	}
 
-	return e.startRetrieving(ctx, sctx, pdServers, historyHotRegionsRequest)
+	return e.startRetrieving(pdServers, historyHotRegionsRequest)
 }
 
 func (e *hotRegionsHistoryRetriver) startRetrieving(
-	ctx context.Context,
-	sctx sessionctx.Context,
 	pdServers []infoschema.ServerInfo,
 	req *HistoryHotRegionsRequest,
 ) ([]chan hotRegionsResult, error) {
@@ -804,7 +803,7 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 	return finalRows, nil
 }
 
-func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
+func (*hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 	hisHotRegion *HistoryHotRegion,
 	tikvHelper *helper.Helper,
 	tables []helper.TableInfoWithKeyRange,
@@ -870,7 +869,7 @@ type tikvRegionPeersRetriever struct {
 	retrieved bool
 }
 
-func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *tikvRegionPeersRetriever) retrieve(_ context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}

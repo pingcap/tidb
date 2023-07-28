@@ -92,6 +92,8 @@ const (
 	RequestSourceInternal
 	// RequestSourceType set request source type of the current statement.
 	RequestSourceType
+	// ExplicitRequestSourceType is a complement of RequestSourceType, it may specified by the client or users.
+	ExplicitRequestSourceType
 	// ReplicaReadAdjuster set the adjust function of cop requsts.
 	ReplicaReadAdjuster
 	// ScanBatchSize set the iter scan batch size.
@@ -188,15 +190,19 @@ const (
 	// Do not classify different tools by now.
 	InternalTxnTools = "tools"
 	// InternalTxnBR is the type of BR usage.
-	InternalTxnBR = InternalTxnTools
+	InternalTxnBR = "br"
 	// InternalTxnTrace handles the trace statement.
 	InternalTxnTrace = "Trace"
 	// InternalTxnTTL is the type of TTL usage
 	InternalTxnTTL = "TTL"
 	// InternalLoadData is the type of LOAD DATA usage
 	InternalLoadData = "LoadData"
+	// InternalImportInto is the type of IMPORT INTO usage
+	InternalImportInto = "ImportInto"
 	// InternalDistTask is the type of distributed task.
 	InternalDistTask = "DistTask"
+	// InternalTimer is the type of internal timer
+	InternalTimer = "Timer"
 )
 
 // The bitmap:
