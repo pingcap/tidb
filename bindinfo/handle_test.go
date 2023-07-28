@@ -20,28 +20,14 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/bindinfo/internal"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/testkit"
-	utilparser "github.com/pingcap/tidb/util/parser"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
-
-func utilCleanBindingEnv(tk *testkit.TestKit, dom *domain.Domain) {
-	tk.MustExec("delete from mysql.bind_info where source != 'builtin'")
-	dom.BindHandle().Clear()
-}
-
-func utilNormalizeWithDefaultDB(t *testing.T, sql, db string) (string, string) {
-	testParser := parser.New()
-	stmt, err := testParser.ParseOneStmt(sql, "", "")
-	require.NoError(t, err)
-	normalized, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, "test", ""))
-	return normalized, digest.String()
-}
 
 func TestBindingCache(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -317,7 +303,7 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, index idx_a(a))")
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 
 	// Simulate creating bindings on other machines
@@ -333,7 +319,7 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 	require.Equal(t, bindinfo.Disabled, rows[0][3])
 
 	// clear the mysql.bind_info
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 
 	// Simulate creating bindings on other machines
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
@@ -347,7 +333,7 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, bindinfo.Enabled, rows[0][3])
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 }
 
 var testSQLs = []struct {
@@ -475,7 +461,7 @@ func TestGlobalBinding(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	for _, testSQL := range testSQLs {
-		utilCleanBindingEnv(tk, dom)
+		internal.UtilCleanBindingEnv(tk, dom)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("drop table if exists t1")
@@ -502,7 +488,7 @@ func TestGlobalBinding(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
 
-		sql, hash := utilNormalizeWithDefaultDB(t, testSQL.querySQL, "test")
+		sql, hash := internal.UtilNormalizeWithDefaultDB(t, testSQL.querySQL)
 
 		bindData := dom.BindHandle().GetBindRecord(hash, sql, "test")
 		require.NotNil(t, bindData)
@@ -593,7 +579,7 @@ func TestOutdatedInfoSchema(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
 	require.Nil(t, dom.BindHandle().Update(false))
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
 }
 

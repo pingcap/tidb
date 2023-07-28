@@ -66,7 +66,7 @@ type splitRegionResult struct {
 }
 
 // Open implements the Executor Open interface.
-func (e *SplitIndexRegionExec) Open(ctx context.Context) (err error) {
+func (e *SplitIndexRegionExec) Open(context.Context) (err error) {
 	e.splitIdxKeys, err = e.getSplitIdxKeys()
 	return err
 }
@@ -338,7 +338,7 @@ type SplitTableRegionExec struct {
 }
 
 // Open implements the Executor Open interface.
-func (e *SplitTableRegionExec) Open(ctx context.Context) (err error) {
+func (e *SplitTableRegionExec) Open(context.Context) (err error) {
 	e.splitKeys, err = e.getSplitTableKeys()
 	return err
 }

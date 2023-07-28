@@ -30,7 +30,7 @@ type AdminShowTelemetryExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *AdminShowTelemetryExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *AdminShowTelemetryExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.done {
 		return nil
@@ -62,7 +62,7 @@ type AdminResetTelemetryIDExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *AdminResetTelemetryIDExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+func (e *AdminResetTelemetryIDExec) Next(context.Context, *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}

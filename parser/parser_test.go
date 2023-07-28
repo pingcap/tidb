@@ -1091,20 +1091,50 @@ AAAAAAAAAAAA5gm5Mg==
 
 		// for calibrate resource
 		{"calibrate resource", true, "CALIBRATE RESOURCE"},
-		{"calibrate resource START_TIME '2023-04-01 13:00:00'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00'"},
-		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00'"},
-		{"calibrate resource START_TIME '2023-04-01 13:00:00' DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' DURATION '20m'"},
-		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00' DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00' DURATION '20m'"},
-		{"calibrate resource START_TIME '2023-04-01 13:00:00',END_TIME='2023-04-01 16:00:00'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00'"},
-		{"calibrate resource START_TIME '2023-04-01 13:00:00',DURATION='20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' DURATION '20m'"},
-		{"calibrate resource DURATION='20m' START_TIME '2023-04-01 13:00:00'", true, "CALIBRATE RESOURCE DURATION '20m' START_TIME '2023-04-01 13:00:00'"},
-		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME='2023-04-01 16:00:00',DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00' DURATION '20m'"},
+		{"calibrate resource START_TIME '2021-04-15 00:00:00'", true, "CALIBRATE RESOURCE START_TIME _UTF8MB4'2021-04-15 00:00:00'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00'", true, "CALIBRATE RESOURCE START_TIME _UTF8MB4'2023-04-01 13:00:00' END_TIME _UTF8MB4'2023-04-01 16:00:00'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00' DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME _UTF8MB4'2023-04-01 13:00:00' DURATION '20m'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00' DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME _UTF8MB4'2023-04-01 13:00:00' END_TIME _UTF8MB4'2023-04-01 16:00:00' DURATION '20m'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00',END_TIME='2023-04-01 16:00:00'", true, "CALIBRATE RESOURCE START_TIME _UTF8MB4'2023-04-01 13:00:00' END_TIME _UTF8MB4'2023-04-01 16:00:00'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00',DURATION='20m'", true, "CALIBRATE RESOURCE START_TIME _UTF8MB4'2023-04-01 13:00:00' DURATION '20m'"},
+		{"calibrate resource DURATION='20m' START_TIME '2023-04-01 13:00:00'", true, "CALIBRATE RESOURCE DURATION '20m' START_TIME _UTF8MB4'2023-04-01 13:00:00'"},
+		{"calibrate resource   START_TIME '2023-04-01 13:00:00' END_TIME='2023-04-01 16:00:00',DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME _UTF8MB4'2023-04-01 13:00:00' END_TIME _UTF8MB4'2023-04-01 16:00:00' DURATION '20m'"},
+		{"calibrate resource START_TIME CURRENT_TIMESTAMP() END_TIME current_timestamp()", true, "CALIBRATE RESOURCE START_TIME CURRENT_TIMESTAMP() END_TIME CURRENT_TIMESTAMP()"},
+		{"calibrate resource END_TIME now()", true, "CALIBRATE RESOURCE END_TIME NOW()"},
+		{"calibrate resource START_TIME now()", true, "CALIBRATE RESOURCE START_TIME NOW()"},
+		{"calibrate resource START_TIME NOW() END_TIME now()", true, "CALIBRATE RESOURCE START_TIME NOW() END_TIME NOW()"},
+		{"calibrate resource START_TIME CURRENT_TIMESTAMP() - interval 10 minute END_TIME now()", true, "CALIBRATE RESOURCE START_TIME DATE_SUB(CURRENT_TIMESTAMP(), INTERVAL 10 MINUTE) END_TIME NOW()"},
+		{"calibrate resource START_TIME now() - 1000 END_TIME current_timestamp()", true, "CALIBRATE RESOURCE START_TIME NOW()-1000 END_TIME CURRENT_TIMESTAMP()"},
+		{"calibrate resource START_TIME CURRENT_TIMESTAMP() - interval 20 minute DURATION interval 15 minute", true, "CALIBRATE RESOURCE START_TIME DATE_SUB(CURRENT_TIMESTAMP(), INTERVAL 20 MINUTE) DURATION INTERVAL 15 MINUTE"},
+		{"calibrate resource START_TIME CURRENT_TIMESTAMP() - interval 20 minute DURATION '15m'", true, "CALIBRATE RESOURCE START_TIME DATE_SUB(CURRENT_TIMESTAMP(), INTERVAL 20 MINUTE) DURATION '15m'"},
+		{"calibrate resource END_TIME now() START_TIME CURRENT_TIMESTAMP() - interval 20 minute", true, "CALIBRATE RESOURCE END_TIME NOW() START_TIME DATE_SUB(CURRENT_TIMESTAMP(), INTERVAL 20 MINUTE)"},
 		{"calibrate resource workload", false, ""},
 		{"calibrate resource workload tpcc", true, "CALIBRATE RESOURCE WORKLOAD TPCC"},
 		{"calibrate resource workload oltp_read_write", true, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_WRITE"},
 		{"calibrate resource workload oltp_read_only", true, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_ONLY"},
 		{"calibrate resource workload oltp_write_only", true, "CALIBRATE RESOURCE WORKLOAD OLTP_WRITE_ONLY"},
 		{"calibrate resource workload = oltp_read_write START_TIME '2023-04-01 13:00:00'", false, ""},
+
+		// for query watch
+		{"query watch add SQL DIGEST b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377 ", true, "QUERY WATCH ADD SQL DIGEST `b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377`"},
+		{"query watch add SQL DIGEST b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377 ", true, "QUERY WATCH ADD SQL DIGEST `b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377`"},
+		{"query watch add SQL DIGEST 'b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377' ", true, "QUERY WATCH ADD SQL DIGEST _UTF8MB4'b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377'"},
+		{"query watch add PLAN DIGEST `5e3ddd388f6012e328233dbcdda5d48f404e0536c6c54d9618233210f3d5762a` ", true, "QUERY WATCH ADD PLAN DIGEST `5e3ddd388f6012e328233dbcdda5d48f404e0536c6c54d9618233210f3d5762a`"},
+		{"query watch add PLAN DIGEST @digest1 ", true, "QUERY WATCH ADD PLAN DIGEST @`digest1`"},
+		{"query watch add SQL TEXT SIMILAR to 'select 1'", true, "QUERY WATCH ADD SQL TEXT SIMILAR TO _UTF8MB4'select 1'"},
+		{"query watch add SQL TEXT EXACT to 'select 1'", true, "QUERY WATCH ADD SQL TEXT EXACT TO _UTF8MB4'select 1'"},
+		{"query watch add SQL TEXT PLAN to 'select 1'", true, "QUERY WATCH ADD SQL TEXT PLAN TO _UTF8MB4'select 1'"},
+		{"query watch add resource group `default` SQL TEXT SIMILAR to 'select 1'", true, "QUERY WATCH ADD RESOURCE GROUP `default` SQL TEXT SIMILAR TO _UTF8MB4'select 1'"},
+		{"query watch add resource group @rg SQL TEXT SIMILAR to @sql1", true, "QUERY WATCH ADD RESOURCE GROUP @`rg` SQL TEXT SIMILAR TO @`sql1`"},
+		{"query watch add resource group rg1 SQL TEXT SIMILAR to 'select 1'", true, "QUERY WATCH ADD RESOURCE GROUP `rg1` SQL TEXT SIMILAR TO _UTF8MB4'select 1'"},
+		{"query watch add SQL TEXT SIMILAR to 'select 1' resource group rg1", true, "QUERY WATCH ADD SQL TEXT SIMILAR TO _UTF8MB4'select 1' RESOURCE GROUP `rg1`"},
+		{"query watch add ACTION = KILL SQL TEXT SIMILAR to 'select 1'", true, "QUERY WATCH ADD ACTION = KILL SQL TEXT SIMILAR TO _UTF8MB4'select 1'"},
+		{"query watch add ACTION COOLDOWN resource group rg1 SQL TEXT SIMILAR to 'select 1'", true, "QUERY WATCH ADD ACTION = COOLDOWN RESOURCE GROUP `rg1` SQL TEXT SIMILAR TO _UTF8MB4'select 1'"},
+		{"query watch add resource group `default` resource group `rg1` SQL TEXT SIMILAR to 'select 1'", false, ""},
+		{"query watch add SQL SIMILAR to 'select 1'", false, ""},
+		{"query watch add SQL TEXT SIMILAR 'select 1'", false, ""},
+		{"query watch remove 1", true, "QUERY WATCH REMOVE 1"},
+		{"query watch remove", false, ""},
 	}
 	RunTest(t, table, false)
 }
@@ -3722,6 +3752,14 @@ func TestDDL(t *testing.T) {
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(ACTION KILL EXEC_ELAPSED='10m')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (ACTION = KILL EXEC_ELAPSED = '10m')"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10s' WATCH=SIMILAR DURATION '10m' ACTION COOLDOWN)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' WATCH = SIMILAR DURATION = '10m' ACTION = COOLDOWN)"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED \"10s\" ACTION COOLDOWN WATCH EXACT DURATION='10m')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = EXACT DURATION = '10m')"},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED '9s' ACTION COOLDOWN WATCH EXACT)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '9s' ACTION = COOLDOWN WATCH = EXACT DURATION = UNLIMITED)"},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED '8s' ACTION COOLDOWN WATCH EXACT DURATION = UNLIMITED)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '8s' ACTION = COOLDOWN WATCH = EXACT DURATION = UNLIMITED)"},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED '7s' ACTION COOLDOWN WATCH EXACT DURATION UNLIMITED)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '7s' ACTION = COOLDOWN WATCH = EXACT DURATION = UNLIMITED)"},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED '7s' ACTION COOLDOWN WATCH EXACT DURATION 'UNLIMITED')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '7s' ACTION = COOLDOWN WATCH = EXACT DURATION = UNLIMITED)"},
+		{"create resource group x ru_per_sec=1000 background = (task_types='')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BACKGROUND = (TASK_TYPES = '')"},
+		{"create resource group x ru_per_sec=1000 background (task_types='br,lightning')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BACKGROUND = (TASK_TYPES = 'br,lightning')"},
+		{`create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH EXACT DURATION='10m')  background (task_types 'br,lightning')`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = EXACT DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning')"},
+		{`create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH PLAN DURATION='10m')  background (task_types 'br,lightning')`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = PLAN DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning')"},
 		// This case is expected in parser test but not in actual ddl job.
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s')"},
 		{"create resource group x ru_per_sec=1000 QUERY=(EXEC_ELAPSED '10s')", false, ""},
@@ -3729,7 +3767,6 @@ func TestDDL(t *testing.T) {
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s'", false, ""},
 		{"create resource group x ru_per_sec=1000 LIMIT=(EXEC_ELAPSED '10s')", false, ""},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION DRYRUN ACTION KILL)", false, ""},
-		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION COOLDOWN WATCH EXACT)", false, ""},
 
 		{"alter resource group x cpu ='8c'", false, ""},
 		{"alter resource group x region ='us, 3'", false, ""},
@@ -3759,8 +3796,11 @@ func TestDDL(t *testing.T) {
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s')"},
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT EXEC_ELAPSED '10s'", false, ""},
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION DRYRUN ACTION KILL)", false, ""},
-		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION COOLDOWN WATCH EXACT)", false, ""},
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION DRYRUN WATCH SIMILAR DURATION '10m' ACTION COOLDOWN)", false, ""},
+		{"alter resource group x background=()", true, "ALTER RESOURCE GROUP `x` BACKGROUND = NULL"},
+		{"alter resource group x background NULL", true, "ALTER RESOURCE GROUP `x` BACKGROUND = NULL"},
+		{"alter resource group default priority=low background = ( task_types \"ttl\" )", true, "ALTER RESOURCE GROUP `default` PRIORITY = LOW, BACKGROUND = (TASK_TYPES = 'ttl')"},
+		{"alter resource group default burstable background ( task_types = 'a,b,c' )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = TRUE, BACKGROUND = (TASK_TYPES = 'a,b,c')"},
 
 		{"drop resource group x;", true, "DROP RESOURCE GROUP `x`"},
 		{"drop resource group DEFAULT;", true, "DROP RESOURCE GROUP `DEFAULT`"},
@@ -4539,6 +4579,111 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t4", hints[2].Tables[0].TableName.L)
 	require.Equal(t, "t5", hints[2].Tables[1].TableName.L)
 	require.Equal(t, "t6", hints[2].Tables[2].TableName.L)
+
+	// Test NO_HASH_JOIN
+	stmt, _, err = p.Parse("select /*+ NO_HASH_JOIN(t1, t2), NO_HASH_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "no_hash_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+	require.Equal(t, hints[0].Tables[1].TableName.L, "t2")
+
+	require.Equal(t, "no_hash_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test NO_MERGE_JOIN
+	stmt, _, err = p.Parse("select /*+ NO_MERGE_JOIN(t1), NO_MERGE_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "no_merge_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "no_merge_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test INDEX_JOIN
+	stmt, _, err = p.Parse("select /*+ INDEX_JOIN(t1), INDEX_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "index_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "index_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test NO_INDEX_JOIN
+	stmt, _, err = p.Parse("select /*+ NO_INDEX_JOIN(t1), NO_INDEX_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "no_index_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "no_index_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test INDEX_HASH_JOIN
+	stmt, _, err = p.Parse("select /*+ INDEX_HASH_JOIN(t1), INDEX_HASH_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "index_hash_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "index_hash_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test NO_INDEX_HASH_JOIN
+	stmt, _, err = p.Parse("select /*+ NO_INDEX_HASH_JOIN(t1), NO_INDEX_HASH_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "no_index_hash_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "no_index_hash_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test INDEX_MERGE_JOIN
+	stmt, _, err = p.Parse("select /*+ INDEX_MERGE_JOIN(t1), INDEX_MERGE_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "index_merge_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "index_merge_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test NO_INDEX_MERGE_JOIN
+	stmt, _, err = p.Parse("select /*+ NO_INDEX_MERGE_JOIN(t1), NO_INDEX_MERGE_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "no_index_merge_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "no_index_merge_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
 }
 
 func TestType(t *testing.T) {

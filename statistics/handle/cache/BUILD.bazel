@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "cache",
@@ -16,12 +16,28 @@ go_library(
         "//sessionctx/variable",
         "//statistics",
         "//statistics/handle/cache/internal",
-        "//statistics/handle/cache/internal/lru",
+        "//statistics/handle/cache/internal/lfu",
         "//statistics/handle/cache/internal/mapcache",
+        "//statistics/handle/cache/internal/metrics",
         "//types",
         "//util/chunk",
-        "//util/memory",
+        "//util/logutil",
         "//util/sqlexec",
         "//util/syncutil",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "cache_test",
+    timeout = "short",
+    srcs = ["bench_test.go"],
+    embed = [":cache"],
+    flaky = True,
+    deps = [
+        "//config",
+        "//statistics",
+        "//statistics/handle/cache/internal/testutil",
+        "//util/benchdaily",
     ],
 )

@@ -6,7 +6,7 @@ diff -uprN old/io_etcd_go_etcd_api_v3/etcdserverpb/BUILD.bazel new/io_etcd_go_et
          "@com_github_gogo_protobuf//gogoproto",
          "@com_github_golang_protobuf//proto:go_default_library",
 -        "@go_googleapis//google/api:annotations_go_proto",
-+        "@org_golang_google_genproto_googleapis_api//annotations:annotations",
++        "@org_golang_google_genproto//googleapis/api/annotations:annotations",
          "@org_golang_google_grpc//:go_default_library",
          "@org_golang_google_grpc//codes",
          "@org_golang_google_grpc//status",

@@ -14,9 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# TODO(lance6716): enable it after we turn on pre-deduplication
-exit 0
-
 set -eux
 
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -43,14 +40,14 @@ if [ "$expected_rows" != "$actual_rows" ] || [ "$expected_pks" != "$actual_pks" 
   echo "local backend replace strategy result is not equal to tidb backend"
   exit 1
 fi
-run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2"
+run_sql "SELECT count(*) FROM lightning_task_info.conflict_records"
 check_contains "count(*): 227"
-run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2 WHERE error = ''"
+run_sql "SELECT count(*) FROM lightning_task_info.conflict_records WHERE error = ''"
 check_contains "count(*): 0"
-run_sql "SELECT * FROM lightning_task_info.conflict_error_v2 WHERE row_id = 12"
+run_sql "SELECT * FROM lightning_task_info.conflict_records WHERE row_id = 12"
 check_contains "(171,'yRxZE',9201592769833450947,'xs3d',5,4,283270321)"
 check_contains "[kv:1062]Duplicate entry '171' for key 'dup_detect.PRIMARY'"
-run_sql "SELECT * FROM lightning_task_info.conflict_error_v2 WHERE row_id = 1"
+run_sql "SELECT * FROM lightning_task_info.conflict_records WHERE row_id = 1"
 check_contains "(87,'nEoKu',7836621565948506759,'y6',48,0,177543185)"
 check_contains "[kv:1062]Duplicate entry '0-177543185' for key 'dup_detect.uniq_col6_col7'"
 
@@ -68,13 +65,19 @@ if [ "$expected_rows" != "$actual_rows" ] || [ "$expected_pks" != "$actual_pks" 
   echo "local backend ignore strategy result is not equal to tidb backend"
   exit 1
 fi
-run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2"
+run_sql "SELECT count(*) FROM lightning_task_info.conflict_records"
 check_contains "count(*): 228"
 
 # 3. Test error strategy.
 cleanup
-run_lightning --backend local --config "$CUR/local-error.toml" --log-file "$LOG_FILE" 2>&1 | grep -q "duplicate key in table \`test\`.\`dup_detect\` caused by index .*, you can turn on checkpoint and re-run to see the conflicting rows"
+run_lightning --backend local --config "$CUR/local-error.toml" --log-file "$LOG_FILE" 2>&1 | grep -q "duplicate key in table \`test\`.\`dup_detect\` caused by index .*, but because checkpoint is off we can't have more details"
+grep -q "duplicate key in table \`test\`.\`dup_detect\` caused by index .*, but because checkpoint is off we can't have more details" "$LOG_FILE"
+run_sql "SELECT * FROM lightning_task_info.conflict_records"
+check_contains "error: duplicate key in table \`test\`.\`dup_detect\`"
 run_lightning --backend local --config "$CUR/local-error.toml" --log-file "$LOG_FILE" --enable-checkpoint=1 2>&1 | grep -q "duplicate entry for key 'uniq_col6_col7', a pair of conflicting rows are (row 1 counting from offset 0 in file test.dup_detect.1.sql, row 101 counting from offset 0 in file test.dup_detect.4.sql)"
+grep -q "duplicate entry for key 'uniq_col6_col7', a pair of conflicting rows are (row 1 counting from offset 0 in file test.dup_detect.1.sql, row 101 counting from offset 0 in file test.dup_detect.4.sql)" "$LOG_FILE"
+run_sql "SELECT * FROM lightning_task_info.conflict_records"
+check_contains "error: duplicate entry for key 'uniq_col6_col7', a pair of conflicting rows are"
 check_contains "restore table \`test\`.\`dup_detect\` failed: duplicate entry for key 'uniq_col6_col7', a pair of conflicting rows are (row 1 counting from offset 0 in file test.dup_detect.1.sql, row 101 counting from offset 0 in file test.dup_detect.4.sql)" "$LOG_FILE"
 run_lightning_ctl --enable-checkpoint=1 --backend local --config "$CUR/local-error.toml" --checkpoint-error-destroy="\`test\`.\`dup_detect\`"
 files_left=$(ls "$TEST_DIR/$TEST_NAME.sorted" | wc -l)
@@ -90,11 +93,11 @@ cleanup
 run_lightning --backend local --config "$CUR/local-limit-error-records.toml" --log-file "$LOG_FILE"
 run_sql "SELECT count(*) FROM test.dup_detect"
 check_contains "count(*): 174"
-run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2"
+run_sql "SELECT count(*) FROM lightning_task_info.conflict_records"
 check_contains "count(*): 50"
-run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2 WHERE error LIKE '%PRIMARY%'"
+run_sql "SELECT count(*) FROM lightning_task_info.conflict_records WHERE error LIKE '%PRIMARY%'"
 check_contains "count(*): 49"
-run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2 WHERE error LIKE '%uniq_col6_col7%'"
+run_sql "SELECT count(*) FROM lightning_task_info.conflict_records WHERE error LIKE '%uniq_col6_col7%'"
 check_contains "count(*): 1"
 
 # 5. Test fail after duplicate detection.
@@ -109,6 +112,6 @@ run_lightning_ctl --enable-checkpoint=1 --backend local --config "$CUR/local-rep
 run_lightning --enable-checkpoint=1 --backend local --config "$CUR/local-replace.toml" --log-file "$LOG_FILE"
 run_sql "SELECT count(*) FROM test.dup_detect"
 check_contains "count(*): 174"
-run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2"
+run_sql "SELECT count(*) FROM lightning_task_info.conflict_records"
 check_contains "count(*): 227"
 check_not_contains "duplicate detection start" "$LOG_FILE"

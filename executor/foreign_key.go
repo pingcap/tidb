@@ -316,7 +316,7 @@ func (fkc *FKCheckExec) checkKeys(ctx context.Context, txn kv.Transaction) error
 	return nil
 }
 
-func (fkc *FKCheckExec) prefetchKeys(ctx context.Context, txn kv.Transaction, keys []kv.Key) error {
+func (*FKCheckExec) prefetchKeys(ctx context.Context, txn kv.Transaction, keys []kv.Key) error {
 	// Fill cache using BatchGet
 	_, err := txn.BatchGet(ctx, keys)
 	if err != nil {
@@ -407,7 +407,7 @@ func (fkc *FKCheckExec) checkPrefixKeyExist(key kv.Key, value []byte) error {
 	return nil
 }
 
-func (fkc *FKCheckExec) getIndexKeyValueInTable(ctx context.Context, memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) (k []byte, v []byte, _ error) {
+func (*FKCheckExec) getIndexKeyValueInTable(ctx context.Context, memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) (k []byte, v []byte, _ error) {
 	select {
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
@@ -487,7 +487,7 @@ func (h *fkValueHelper) fetchFKValues(row []types.Datum) ([]types.Datum, error) 
 	return vals, nil
 }
 
-func (h *fkValueHelper) hasNullValue(vals []types.Datum) bool {
+func (*fkValueHelper) hasNullValue(vals []types.Datum) bool {
 	// If any foreign key column value is null, no need to check this row.
 	// test case:
 	// create table t1 (id int key,a int, b int, index(a, b));
@@ -933,7 +933,7 @@ func (s *FKCheckRuntimeStats) Merge(other execdetails.RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (s *FKCheckRuntimeStats) Tp() int {
+func (*FKCheckRuntimeStats) Tp() int {
 	return execdetails.TpFKCheckRuntimeStats
 }
 
@@ -969,6 +969,6 @@ func (s *FKCascadeRuntimeStats) Merge(other execdetails.RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (s *FKCascadeRuntimeStats) Tp() int {
+func (*FKCascadeRuntimeStats) Tp() int {
 	return execdetails.TpFKCascadeRuntimeStats
 }

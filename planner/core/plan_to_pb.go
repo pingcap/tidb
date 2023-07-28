@@ -30,11 +30,14 @@ import (
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *basePhysicalPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
-	return nil, errors.Errorf("plan %s fails converts to PB", p.basePlan.ExplainID())
+	return nil, errors.Errorf("plan %s fails converts to PB", p.Plan.ExplainID())
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalExpand) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	if len(p.LevelExprs) > 0 {
+		return p.toPBV2(ctx, storeType)
+	}
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
 	groupingSetsPB, err := p.GroupingSets.ToPB(sc, client)
@@ -54,6 +57,33 @@ func (p *PhysicalExpand) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*
 		executorID = p.ExplainID().String()
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeExpand, Expand: expand, ExecutorId: &executorID}, nil
+}
+
+func (p *PhysicalExpand) toPBV2(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	client := ctx.GetClient()
+	projExprsPB := make([]*tipb.ExprSlice, 0, len(p.LevelExprs))
+	for _, exprs := range p.LevelExprs {
+		expressionsPB, err := expression.ExpressionsToPBList(sc, exprs, client)
+		if err != nil {
+			return nil, err
+		}
+		projExprsPB = append(projExprsPB, &tipb.ExprSlice{Exprs: expressionsPB})
+	}
+	expand2 := &tipb.Expand2{
+		ProjExprs:            projExprsPB,
+		GeneratedOutputNames: p.ExtraGroupingColNames,
+	}
+	executorID := ""
+	if storeType == kv.TiFlash {
+		var err error
+		expand2.Child, err = p.children[0].ToPB(ctx, storeType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		executorID = p.ExplainID().String()
+	}
+	return &tipb.Executor{Tp: tipb.ExecType_TypeExpand2, Expand2: expand2, ExecutorId: &executorID}, nil
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -217,7 +247,7 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*t
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
-	if storeType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if storeType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return p.partitionTableScanToPBForFlash(ctx)
 	}
 	tsExec := tables.BuildTableScanFromInfos(p.Table, p.Columns)
@@ -697,7 +727,7 @@ func (p *PhysicalWindow) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalSort) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	if !p.IsPartialSort {
-		return nil, errors.Errorf("sort %s can't convert to pb, because it isn't a partial sort", p.basePlan.ExplainID())
+		return nil, errors.Errorf("sort %s can't convert to pb, because it isn't a partial sort", p.Plan.ExplainID())
 	}
 
 	sc := ctx.GetSessionVars().StmtCtx
