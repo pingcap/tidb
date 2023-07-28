@@ -787,7 +787,7 @@ func (w *Writer) IsSynced() bool {
 
 type TableAutoIDInfo struct {
 	Column string
-	NextID string
+	NextID uint64
 	Type   string
 }
 
@@ -823,9 +823,11 @@ func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableN
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		var nextIDUint uint64
+		nextIDUint, err = strconv.ParseUint(nextID, 0, 64)
 		autoIDInfos = append(autoIDInfos, &TableAutoIDInfo{
 			Column: columnName,
-			NextID: nextID,
+			NextID: nextIDUint,
 			Type:   idType,
 		})
 	}
