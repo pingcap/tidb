@@ -63,7 +63,9 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	// test default resource group.
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default UNLIMITED MEDIUM YES <nil> <nil>"))
-	tk.MustExec("alter resource group `default` RU_PER_SEC=1000 PRIORITY=LOW")
+	tk.MustExec("alter resource group `default` PRIORITY=LOW")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default UNLIMITED LOW YES <nil> <nil>"))
+	tk.MustExec("alter resource group `default` ru_per_sec=1000")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW YES <nil> <nil>"))
 	tk.MustContainErrMsg("drop resource group `default`", "can't drop reserved resource group")
 
