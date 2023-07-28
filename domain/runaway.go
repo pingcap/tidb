@@ -166,7 +166,11 @@ func (do *Domain) runawayWatchSyncLoop() {
 			err := updateFn()
 			do.runawaySyncer.doneChan <- err
 		case <-runawayWatchSyncTicker.C:
-			updateFn()
+			err := updateFn()
+			if err != nil {
+				logutil.BgLogger().Warn("get runaway watch record failed", zap.Error(err))
+			}
+
 		}
 	}
 }

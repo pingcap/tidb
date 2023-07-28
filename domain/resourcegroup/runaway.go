@@ -318,9 +318,7 @@ func (rm *RunawayManager) AddWatch(record *QuarantineRecord) {
 	}
 
 	force := false
-	if record.Source == ManualSource || record.Source == rm.serverID {
-		force = true
-	}
+	force = record.Source == ManualSource || record.Source == rm.serverID
 	rm.addWatchList(record, ttl, force)
 }
 
@@ -447,9 +445,7 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 	}
 	marked := r.marked.Load()
 	if !marked {
-		// if err := r.BeforeExecutor(); err != nil {
-		// 	return err
-		// }
+		// note: now we don't check whether query is in watch list again.
 		until := time.Until(r.deadline)
 		if until > 0 {
 			if r.setting.Action == rmpb.RunawayAction_Kill {

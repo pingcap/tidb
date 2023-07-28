@@ -961,8 +961,16 @@ const (
 	// version 167 add column `step` to `mysql.tidb_background_subtask`
 	version167 = 167
 	version168 = 168
+	// version 169
+	// 	 create table `mysql.tidb_runaway_quarantined_watch` and table `mysql.tidb_runaway_queries`
+	//   to save runaway query records and persist runaway watch at 7.2 version.
+	//   but due to ver171 recreate `mysql.tidb_runaway_watch`,
+	//   no need to create table `mysql.tidb_runaway_quarantined_watch`, so delete it.
 	version169 = 169
 	version170 = 170
+	// version 171
+	//   create table `mysql.tidb_runaway_watch` and table `mysql.tidb_runaway_watch_done`
+	//   to persist runaway watch and deletion of runaway watch at 7.3.
 	version171 = 171
 )
 
@@ -2751,7 +2759,6 @@ func upgradeToVer169(s Session, ver int64) {
 	if ver >= version169 {
 		return
 	}
-	mustExecute(s, CreateRunawayWatchTable)
 	mustExecute(s, CreateRunawayTable)
 }
 
