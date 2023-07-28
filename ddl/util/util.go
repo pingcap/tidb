@@ -328,7 +328,7 @@ func WrapKey2String(key []byte) string {
 }
 
 const (
-	getRaftKvVersionSQL = "show config where type = 'tikv' && name = 'storage.engine'"
+	getRaftKvVersionSQL = "show config where type = 'tikv' and name = 'storage.engine'"
 	raftKv2             = "raft-kv2"
 )
 
@@ -342,25 +342,23 @@ func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	})
 
 	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, getRaftKvVersionSQL)
-	if rs != nil {
-		defer terror.Call(rs.Close)
-	}
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
-	req := rs.NewChunk(nil)
-	it := chunk.NewIterator4Chunk(req)
-	err = rs.Next(context.TODO(), req)
-	if err != nil {
-		return false, errors.Trace(err)
+	if rs == nil {
+		return false, nil
 	}
-	row := it.Begin()
 
-	if row.IsEmpty() {
+	defer terror.Call(rs.Close)
+	rows, err := sqlexec.DrainRecordSet(ctx, rs, sctx.GetSessionVars().MaxChunkSize)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if len(rows) == 0 {
 		return false, nil
 	}
 
 	// All nodes should have the same type of engine
-	raftVersion := row.GetString(3)
+	raftVersion := rows[0].GetString(3)
 	return raftVersion == raftKv2, nil
 }

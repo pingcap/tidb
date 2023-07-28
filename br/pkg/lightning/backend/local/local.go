@@ -421,33 +421,33 @@ type BackendConfig struct {
 	MaxOpenFiles int
 	KeyspaceName string
 	// the scope when pause PD schedulers.
-	PausePDSchedulerScope    config.PausePDSchedulerScope
-	RaftKV2SwithModeDuration time.Duration
+	PausePDSchedulerScope     config.PausePDSchedulerScope
+	RaftKV2SwitchModeDuration time.Duration
 }
 
 // NewBackendConfig creates a new BackendConfig.
-func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string, raftKV2SwithModeDuration time.Duration) BackendConfig {
+func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string, raftKV2SwitchModeDuration time.Duration) BackendConfig {
 	return BackendConfig{
-		PDAddr:                   cfg.TiDB.PdAddr,
-		LocalStoreDir:            cfg.TikvImporter.SortedKVDir,
-		MaxConnPerStore:          cfg.TikvImporter.RangeConcurrency,
-		ConnCompressType:         cfg.TikvImporter.CompressKVPairs,
-		WorkerConcurrency:        cfg.TikvImporter.RangeConcurrency * 2,
-		KVWriteBatchSize:         int64(cfg.TikvImporter.SendKVSize),
-		RegionSplitBatchSize:     cfg.TikvImporter.RegionSplitBatchSize,
-		RegionSplitConcurrency:   cfg.TikvImporter.RegionSplitConcurrency,
-		CheckpointEnabled:        cfg.Checkpoint.Enable,
-		MemTableSize:             int(cfg.TikvImporter.EngineMemCacheSize),
-		LocalWriterMemCacheSize:  int64(cfg.TikvImporter.LocalWriterMemCacheSize),
-		ShouldCheckTiKV:          cfg.App.CheckRequirements,
-		DupeDetectEnabled:        cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
-		DuplicateDetectOpt:       DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
-		StoreWriteBWLimit:        int(cfg.TikvImporter.StoreWriteBWLimit),
-		ShouldCheckWriteStall:    cfg.Cron.SwitchMode.Duration == 0,
-		MaxOpenFiles:             maxOpenFiles,
-		KeyspaceName:             keyspaceName,
-		PausePDSchedulerScope:    cfg.TikvImporter.PausePDSchedulerScope,
-		RaftKV2SwithModeDuration: raftKV2SwithModeDuration,
+		PDAddr:                    cfg.TiDB.PdAddr,
+		LocalStoreDir:             cfg.TikvImporter.SortedKVDir,
+		MaxConnPerStore:           cfg.TikvImporter.RangeConcurrency,
+		ConnCompressType:          cfg.TikvImporter.CompressKVPairs,
+		WorkerConcurrency:         cfg.TikvImporter.RangeConcurrency * 2,
+		KVWriteBatchSize:          int64(cfg.TikvImporter.SendKVSize),
+		RegionSplitBatchSize:      cfg.TikvImporter.RegionSplitBatchSize,
+		RegionSplitConcurrency:    cfg.TikvImporter.RegionSplitConcurrency,
+		CheckpointEnabled:         cfg.Checkpoint.Enable,
+		MemTableSize:              int(cfg.TikvImporter.EngineMemCacheSize),
+		LocalWriterMemCacheSize:   int64(cfg.TikvImporter.LocalWriterMemCacheSize),
+		ShouldCheckTiKV:           cfg.App.CheckRequirements,
+		DupeDetectEnabled:         cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
+		DuplicateDetectOpt:        DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
+		StoreWriteBWLimit:         int(cfg.TikvImporter.StoreWriteBWLimit),
+		ShouldCheckWriteStall:     cfg.Cron.SwitchMode.Duration == 0,
+		MaxOpenFiles:              maxOpenFiles,
+		KeyspaceName:              keyspaceName,
+		PausePDSchedulerScope:     cfg.TikvImporter.PausePDSchedulerScope,
+		RaftKV2SwitchModeDuration: raftKV2SwitchModeDuration,
 	}
 }
 
@@ -477,8 +477,6 @@ type Backend struct {
 	metrics      *metric.Metrics
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
-
-	switchModeDuration time.Duration
 }
 
 var _ DiskUsage = (*Backend)(nil)
@@ -597,8 +595,6 @@ func NewBackend(
 		bufferPool:          membuf.NewPool(membuf.WithAllocator(alloc)),
 		writeLimiter:        writeLimiter,
 		logger:              log.FromContext(ctx),
-
-		switchModeDuration: config.RaftKV2SwithModeDuration,
 	}
 	if m, ok := metric.FromContext(ctx); ok {
 		local.metrics = m
@@ -1459,7 +1455,7 @@ func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, re
 		}()
 	}
 
-	if len(regionRanges) > 0 && local.switchModeDuration > 0 {
+	if len(regionRanges) > 0 && local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
 		log.FromContext(ctx).Info("switch import mode of ranges",
 			zap.String("startKey", hex.EncodeToString(regionRanges[0].start)),
 			zap.String("endKey", hex.EncodeToString(regionRanges[len(regionRanges)-1].end)))
@@ -1742,7 +1738,7 @@ func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []Range)
 
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(local.switchModeDuration)
+		ticker := time.NewTicker(local.BackendConfig.RaftKV2SwitchModeDuration)
 		defer ticker.Stop()
 		switcher.ToImportMode(ctx, keyRanges...)
 	loop:
