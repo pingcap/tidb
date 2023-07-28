@@ -111,28 +111,3 @@ func TestOnReboot(t *testing.T) {
 	require.True(t, callBackCalled)
 }
 
-func TestOnRealStore(t *testing.T) {
-	t.SkipNow()
-
-	req := require.New(t)
-	pdAddr := []string{"http://upd-1:2379"}
-	cli, err := pd.NewClient(pdAddr, pd.SecurityOption{})
-	req.NoError(err)
-	cb := storewatch.MakeCallback(
-		storewatch.WithOnDisconnect(func(s *metapb.Store) {
-			fmt.Printf("Store %d at %s Disconnected\n", s.Id, s.Address)
-		}),
-		storewatch.WithOnNewStoreRegistered(func(s *metapb.Store) {
-			fmt.Printf("Store %d at %s Registered (ts = %d)\n", s.Id, s.Address, s.GetStartTimestamp())
-		}),
-		storewatch.WithOnReboot(func(s *metapb.Store) {
-			fmt.Printf("Store %d at %s Rebooted (ts = %d)\n", s.Id, s.Address, s.StartTimestamp)
-		}),
-	)
-
-	watcher := storewatch.New(cli, cb)
-	for {
-		req.NoError(watcher.Step(context.Background()))
-		time.Sleep(5 * time.Second)
-	}
-}
