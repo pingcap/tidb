@@ -220,7 +220,6 @@ func (s *mockGCSSuite) TestBasicImportInto() {
 		if c.querySQL != "" {
 			querySQL = c.querySQL
 		}
-
 		s.tk.MustQuery(querySQL).Check(testkit.Rows(c.res...))
 	}
 }
