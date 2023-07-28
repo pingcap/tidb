@@ -825,6 +825,9 @@ func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableN
 		}
 		var nextIDUint uint64
 		nextIDUint, err = strconv.ParseUint(nextID, 0, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		autoIDInfos = append(autoIDInfos, &TableAutoIDInfo{
 			Column: columnName,
 			NextID: nextIDUint,
