@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -220,6 +221,8 @@ func (s *mockGCSSuite) TestBasicImportInto() {
 		if c.querySQL != "" {
 			querySQL = c.querySQL
 		}
+		logutil.BgLogger().Info("ywq test")
+
 		s.tk.MustQuery(querySQL).Check(testkit.Rows(c.res...))
 	}
 }
