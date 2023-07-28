@@ -1116,18 +1116,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				}
 			}
 		}
-		var hashPartColName *model.CIStr
 		if tblInfo := ds.table.Meta(); canConvertPointGet && tblInfo.GetPartitionInfo() != nil {
-			if canConvertPointGet && len(path.Ranges) > 1 {
-				// We can only build batch point get for hash partitions on a simple column now. This is
-				// decided by the current implementation of `BatchPointGetExec::initialize()`, specifically,
-				// the `getPhysID()` function. Once we optimize that part, we can come back and enable
-				// BatchPointGet plan for more cases.
-				hashPartColName = getHashOrKeyPartitionColumnName(ds.SCtx(), tblInfo)
-				if hashPartColName == nil {
-					canConvertPointGet = false
-				}
-			}
 			if canConvertPointGet {
 				// If the schema contains ExtraPidColID, do not convert to point get.
 				// Because the point get executor can not handle the extra partition ID column now.
@@ -1153,7 +1142,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				if len(path.Ranges) == 1 {
 					pointGetTask = ds.convertToPointGet(prop, candidate)
 				} else {
-					pointGetTask = ds.convertToBatchPointGet(prop, candidate, hashPartColName)
+					pointGetTask = ds.convertToBatchPointGet(prop, candidate)
 				}
 
 				// Batch/PointGet plans may be over-optimized, like `a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1).
@@ -2430,7 +2419,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	return rTsk
 }
 
-func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath, hashPartColName *model.CIStr) (task task) {
+func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath) (task task) {
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
@@ -2452,6 +2441,10 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		PartitionExpr:    getPartitionExpr(ds.SCtx(), ds.TableInfo()),
 	}
 	if batchPointGetPlan.KeepOrder {
+		// TODO: support keepOrder for partition table with dynamic pruning
+		if ds.TableInfo().GetPartitionInfo() != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
+			return invalidTask
+		}
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
 	}
 	rTsk := &rootTask{}
@@ -2473,7 +2466,11 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		batchPointGetPlan.IndexInfo = candidate.path.Index
 		batchPointGetPlan.IdxCols = candidate.path.IdxCols
 		batchPointGetPlan.IdxColLens = candidate.path.IdxColLens
-		batchPointGetPlan.PartitionColPos = getColumnPosInIndex(candidate.path.Index, hashPartColName)
+		pos, err := getPartitionColumnPos(candidate.path.Index, getPartitionExpr(ds.SCtx(), ds.TableInfo()), ds.TableInfo())
+		if err != nil {
+			return invalidTask
+		}
+		batchPointGetPlan.PartitionColPos = pos
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
 		}

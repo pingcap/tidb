@@ -1957,36 +1957,6 @@ func getPartitionExpr(ctx sessionctx.Context, tbl *model.TableInfo) *tables.Part
 	return partTable.PartitionExpr()
 }
 
-func getHashOrKeyPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *model.CIStr {
-	pi := tbl.GetPartitionInfo()
-	if pi == nil {
-		return nil
-	}
-	if pi.Type != model.PartitionTypeHash && pi.Type != model.PartitionTypeKey {
-		return nil
-	}
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	table, ok := is.TableByID(tbl.ID)
-	if !ok {
-		return nil
-	}
-	// PartitionExpr don't need columns and names for hash partition.
-	partitionExpr := table.(partitionTable).PartitionExpr()
-	if pi.Type == model.PartitionTypeKey {
-		// used to judge whether the key partition contains only one field
-		if len(pi.Columns) != 1 {
-			return nil
-		}
-		return &pi.Columns[0]
-	}
-	expr := partitionExpr.OrigExpr
-	col, ok := expr.(*ast.ColumnNameExpr)
-	if !ok {
-		return nil
-	}
-	return &col.Name.Name
-}
-
 func findColNameByColID(cols []*model.ColumnInfo, col *expression.Column) *model.ColumnInfo {
 	for _, c := range cols {
 		if c.ID == col.ID {
