@@ -7,17 +7,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	pd "github.com/tikv/pd/client"
+	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/conn/util"
 )
-
-// StoreMeta is the required interface for a watcher.
-// It is striped from pd.Client.
-type StoreMeta interface {
-	// GetAllStores gets all stores from pd.
-	// The store may expire later. Caller is responsible for caching and taking care
-	// of store change.
-	GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error)
-}
 
 // Callback will be called the supported event triggered.
 type Callback interface {
@@ -91,13 +83,13 @@ func MakeCallback(opts ...DynCallbackOpt) Callback {
 // Watcher watches the lifetime of stores.
 // generally it should be advanced by calling the `Step` call.
 type Watcher struct {
-	cli StoreMeta
+	cli util.StoreMeta
 	cb  Callback
 
 	lastStores map[uint64]*metapb.Store
 }
 
-func New(cli StoreMeta, cb Callback) *Watcher {
+func New(cli util.StoreMeta, cb Callback) *Watcher {
 	return &Watcher{
 		cli:        cli,
 		cb:         cb,
@@ -106,7 +98,7 @@ func New(cli StoreMeta, cb Callback) *Watcher {
 }
 
 func (w *Watcher) Step(ctx context.Context) error {
-	liveStores, err := w.cli.GetAllStores(ctx, pd.WithExcludeTombstone())
+	liveStores, err := conn.GetAllTiKVStoresWithRetry(ctx, w.cli, util.SkipTiFlash)
 	if err != nil {
 		return errors.Annotate(err, "failed to update store list")
 	}
@@ -130,7 +122,7 @@ func (w *Watcher) updateStore(newStore *metapb.Store) {
 	if lastStore.GetState() == metapb.StoreState_Up && newStore.GetState() == metapb.StoreState_Offline {
 		w.cb.OnDisconnect(newStore)
 	}
-	if lastStore.StartTimestamp != newStore.StartTimestamp && newStore.GetState() == metapb.StoreState_Up {
+	if lastStore.StartTimestamp != newStore.StartTimestamp {
 		w.cb.OnReboot(newStore)
 	}
 }
