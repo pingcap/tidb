@@ -112,18 +112,13 @@ func (sc *StatsCache) GetFromInternal(id int64) (*statistics.Table, bool) {
 	return sc.getCache(id, false)
 }
 
-// PutFromUser puts the table statistics to the cache from query.
-func (sc *StatsCache) PutFromUser(id int64, t *statistics.Table) {
-	sc.put(id, t, false)
+// Put puts the table statistics to the cache from query.
+func (sc *StatsCache) Put(id int64, t *statistics.Table) {
+	sc.put(id, t)
 }
 
-// PutFromInternal puts the table statistics to the cache from internal.
-func (sc *StatsCache) PutFromInternal(id int64, t *statistics.Table) {
-	sc.put(id, t, false)
-}
-
-func (sc *StatsCache) putCache(id int64, t *statistics.Table, moveLRUFront bool) bool {
-	ok := sc.c.Put(id, t, moveLRUFront)
+func (sc *StatsCache) putCache(id int64, t *statistics.Table) bool {
+	ok := sc.c.Put(id, t)
 	if ok {
 		return ok
 	}
@@ -133,8 +128,8 @@ func (sc *StatsCache) putCache(id int64, t *statistics.Table, moveLRUFront bool)
 }
 
 // Put puts the table statistics to the cache.
-func (sc *StatsCache) put(id int64, t *statistics.Table, moveLRUFront bool) {
-	ok := sc.putCache(id, t, moveLRUFront)
+func (sc *StatsCache) put(id int64, t *statistics.Table) {
+	ok := sc.putCache(id, t)
 	if !ok {
 		logutil.BgLogger().Warn("fail to put the stats cache", zap.Int64("id", id))
 		return
@@ -189,11 +184,7 @@ func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int
 	newCache.maxTblStatsVer.Store(sc.maxTblStatsVer.Load())
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
-		if option.byQuery {
-			newCache.c.Put(id, tbl, true)
-		} else {
-			newCache.c.Put(id, tbl, false)
-		}
+		newCache.c.Put(id, tbl)
 	}
 	for _, id := range deletedIDs {
 		newCache.c.Del(id)
@@ -216,11 +207,7 @@ func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, opt
 	}
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
-		if option.byQuery {
-			sc.c.Put(id, tbl, true)
-		} else {
-			sc.c.Put(id, tbl, false)
-		}
+		sc.c.Put(id, tbl)
 	}
 	for _, id := range deletedIDs {
 		sc.c.Del(id)

@@ -216,17 +216,21 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 	for _, col := range projSchema.Columns {
 		proj.Exprs = append(proj.Exprs, col)
 	}
+	distinctGbyColNames := make(types.NameSlice, 0, len(distinctGbyExprs))
 	distinctGbyCols := make([]*expression.Column, 0, len(distinctGbyExprs))
 	for _, expr := range distinctGbyExprs {
 		// distinct group expr has been resolved in resolveGby.
 		proj.Exprs = append(proj.Exprs, expr)
 
 		// add the newly appended names.
+		var name *types.FieldName
 		if c, ok := expr.(*expression.Column); ok {
-			names = append(names, buildExpandFieldName(c, names[p.Schema().ColumnIndex(c)], ""))
+			name = buildExpandFieldName(c, names[p.Schema().ColumnIndex(c)], "")
 		} else {
-			names = append(names, buildExpandFieldName(expr, nil, ""))
+			name = buildExpandFieldName(expr, nil, "")
 		}
+		names = append(names, name)
+		distinctGbyColNames = append(distinctGbyColNames, name)
 
 		// since we will change the nullability of source col, proj it with a new col id.
 		col := &expression.Column{
@@ -257,8 +261,9 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 	expandSchema := proj.Schema().Clone()
 	expression.AdjustNullabilityFromGroupingSets(rollupGroupingSets, expandSchema)
 	expand := LogicalExpand{
-		rollupGroupingSets: rollupGroupingSets,
-		distinctGroupByCol: distinctGbyCols,
+		rollupGroupingSets:  rollupGroupingSets,
+		distinctGroupByCol:  distinctGbyCols,
+		distinctGbyColNames: distinctGbyColNames,
 		// for resolving grouping function args.
 		distinctGbyExprs: distinctGbyExprs,
 		gbyExprsRefPos:   gbyExprsRefPos,
@@ -1616,6 +1621,28 @@ func (b *PlanBuilder) replaceGroupingFunc(expr expression.Expression) expression
 	return expr.Traverse(traverseAction)
 }
 
+func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Schema, projNames []*types.FieldName, projExprs []expression.Expression) (*expression.Schema, []*types.FieldName, []expression.Expression) {
+	if b.currentBlockExpand == nil {
+		return projSchema, projNames, projExprs
+	}
+	m := make(map[int64]struct{}, len(b.currentBlockExpand.distinctGroupByCol))
+	for _, col := range projSchema.Columns {
+		m[col.UniqueID] = struct{}{}
+	}
+	for idx, gCol := range b.currentBlockExpand.distinctGroupByCol {
+		if _, ok := m[gCol.UniqueID]; ok {
+			// grouping col has been explicitly projected, not need to reserve it here for later order-by item (a+1)
+			// like: select a+1, b from t group by a+1 order by a+1.
+			continue
+		}
+		// project the grouping col out implicitly here. If it's not used by later OP, it will be cleaned in column pruner.
+		projSchema.Append(gCol)
+		projExprs = append(projExprs, gCol)
+		projNames = append(projNames, b.currentBlockExpand.distinctGbyColNames[idx])
+	}
+	return projSchema, projNames, projExprs
+}
+
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
 	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (LogicalPlan, []expression.Expression, int, error) {
@@ -1685,6 +1712,9 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		schema.Append(col)
 		newNames = append(newNames, name)
 	}
+	// implicitly project expand grouping set cols, if not used later, prune it out in logical column pruner.
+	schema, newNames, proj.Exprs = b.implicitProjectGroupingSetCols(schema, newNames, proj.Exprs)
+
 	proj.SetSchema(schema)
 	proj.names = newNames
 	if expandGenerateColumn {
@@ -2251,6 +2281,13 @@ func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byI
 		if err != nil {
 			return nil, err
 		}
+		// for case: select a+1, b, sum(b) from t group by a+1, b with rollup order by a+1.
+		// currently, we fail to resolve (a+1) in order-by to projection item (a+1), and adding
+		// another a' in the select fields instead, leading finally resolved expr is a'+1 here.
+		//
+		// Anyway, a and a' has the same column unique id, so we can do the replacement work like
+		// we did in build projection phase.
+		it = b.replaceGroupingFunc(it)
 
 		// check whether ORDER BY items show up in SELECT DISTINCT fields, see #12442
 		if hasDistinct && projExprs != nil {
