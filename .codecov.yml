@@ -78,4 +78,5 @@ ignore:
   - "server/internal/testutil/.*"
   - "statistics/handle/cache/internal/testutil/.*"
   - "session/testutil.go"
+  - "store/mockstore/unistore/testutil.go"
 
