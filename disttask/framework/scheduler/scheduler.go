@@ -359,7 +359,8 @@ func (s *InternalSchedulerImpl) onError(err error) {
 	if err == nil {
 		return
 	}
-
+	err = errors.WithStack(err)
+	logutil.Logger(s.logCtx).Error("onError", zap.Error(err))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
