@@ -50,6 +50,12 @@
     ]
   },
   {
+    "name": "TestNoIndexJoinHint",
+    "cases": [
+      
+    ]
+  },
+  {
     "name": "TestNoMergeJoinHint",
     "cases": [
       "select /*+ no_merge_join() */ * from t1, t2 where t1.a=t2.a",
