@@ -1088,7 +1088,8 @@ var defaultSysVars = []*SysVar{
 			oldv := StatsCacheMemQuota.Load()
 			if v != oldv {
 				StatsCacheMemQuota.Store(v)
-				SetStatsCacheCapacity.Load().(func(int64))(v)
+				SetStatsCacheCapacityFunc := SetStatsCacheCapacity.Load()
+				(*SetStatsCacheCapacityFunc)(v)
 			}
 			return nil
 		},
@@ -2569,6 +2570,10 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBFastCheckTable, Value: BoolToOnOff(DefTiDBEnableFastCheckTable), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.FastCheckTable = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSkipMissingPartitionStats, Value: BoolToOnOff(DefTiDBSkipMissingPartitionStats), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.SkipMissingPartitionStats = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLAuthMethodName, Value: DefAuthenticationLDAPSASLAuthMethodName, Type: TypeEnum, PossibleValues: []string{ldap.SASLAuthMethodSCRAMSHA1, ldap.SASLAuthMethodSCRAMSHA256, ldap.SASLAuthMethodGSSAPI}, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {

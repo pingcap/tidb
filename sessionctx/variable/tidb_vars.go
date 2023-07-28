@@ -1084,6 +1084,10 @@ const (
 	TiDBRuntimeFilterTypeName = "tidb_runtime_filter_type"
 	// TiDBRuntimeFilterModeName the mode of runtime filter, such as "OFF", "LOCAL"
 	TiDBRuntimeFilterModeName = "tidb_runtime_filter_mode"
+	// TiDBSkipMissingPartitionStats controls how to handle missing partition stats when merging partition stats to global stats.
+	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
+	// When set to false, give up merging partition stats to global stats.
+	TiDBSkipMissingPartitionStats = "tidb_skip_missing_partition_stats"
 )
 
 // TiDB intentional limits
@@ -1388,6 +1392,7 @@ const (
 	DefTiDBLockUnchangedKeys                          = true
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBEnableDefaultListPartition                 = false
+	DefTiDBSkipMissingPartitionStats                  = true
 )
 
 // Process global variables.
@@ -1480,8 +1485,9 @@ var (
 	TTLRunningTasks                 = atomic.NewInt32(DefTiDBTTLRunningTasks)
 	// always set the default value to false because the resource control in kv-client is not inited
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
-	EnableResourceControl = atomic.NewBool(false)
-	EnableCheckConstraint = atomic.NewBool(DefTiDBEnableCheckConstraint)
+	EnableResourceControl     = atomic.NewBool(false)
+	EnableCheckConstraint     = atomic.NewBool(DefTiDBEnableCheckConstraint)
+	SkipMissingPartitionStats = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 )
 
 var (
@@ -1490,7 +1496,7 @@ var (
 	// GetMemQuotaAnalyze is the func registered by global/subglobal tracker to get memory quota.
 	GetMemQuotaAnalyze func() int64 = nil
 	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
-	SetStatsCacheCapacity atomic.Value
+	SetStatsCacheCapacity atomic.Pointer[func(int64)]
 	// SetPDClientDynamicOption is the func registered by domain
 	SetPDClientDynamicOption atomic.Pointer[func(string, string)]
 	// SwitchMDL is the func registered by DDL to switch MDL.

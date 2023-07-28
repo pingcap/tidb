@@ -3241,11 +3241,15 @@ func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGr
 		settings.Action = model.RunawayActionType(intVal)
 	case ast.RunawayWatch:
 		settings.WatchType = model.RunawayWatchType(intVal)
-		dur, err := time.ParseDuration(stringVal)
-		if err != nil {
-			return err
+		if len(stringVal) > 0 {
+			dur, err := time.ParseDuration(stringVal)
+			if err != nil {
+				return err
+			}
+			settings.WatchDurationMs = dur.Milliseconds()
+		} else {
+			settings.WatchDurationMs = 0
 		}
-		settings.WatchDurationMs = uint64(dur.Milliseconds())
 	default:
 		return errors.Trace(errors.New("unknown runaway option type"))
 	}

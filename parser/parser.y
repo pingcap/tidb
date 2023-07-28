@@ -790,6 +790,7 @@ import (
 	similar               "SIMILAR"
 	queryLimit            "QUERY_LIMIT"
 	background            "BACKGROUND"
+	unlimited             "UNLIMITED"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -950,9 +951,10 @@ import (
 	CreateRoleStmt             "CREATE Role statement"
 	CreateDatabaseStmt         "Create Database Statement"
 	CreateIndexStmt            "CREATE INDEX statement"
-	CreateBindingStmt          "CREATE BINDING  statement"
+	CreateBindingStmt          "CREATE BINDING statement"
 	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
 	CreateProcedureStmt        "CREATE PROCEDURE statement"
+	AddQueryWatchStmt          "ADD QUERY WATCH statement"
 	CreateResourceGroupStmt    "CREATE RESOURCE GROUP statement"
 	CreateSequenceStmt         "CREATE SEQUENCE statement"
 	CreateStatisticsStmt       "CREATE STATISTICS statement"
@@ -960,6 +962,7 @@ import (
 	DropDatabaseStmt           "DROP DATABASE statement"
 	DropIndexStmt              "DROP INDEX statement"
 	DropProcedureStmt          "DROP PROCEDURE statement"
+	DropQueryWatchStmt         "DROP QUERY WATCH statement"
 	DropResourceGroupStmt      "DROP RESOURCE GROUP statement"
 	DropStatisticsStmt         "DROP STATISTICS statement"
 	DropStatsStmt              "DROP STATS statement"
@@ -1459,6 +1462,7 @@ import (
 	ResourceGroupRunawayActionOption       "Resource group runaway action option"
 	ResourceGroupRunawayWatchOption        "Resource group runaway watch option"
 	ResourceGroupRunawayOptionList         "Anomymous or direct resource group runaway option list"
+	WatchDurationOption                    "Runaway watch duration option"
 	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	ResourceGroupPriorityOption            "Resource group priority option"
@@ -1466,6 +1470,9 @@ import (
 	CalibrateOption                        "Dynamic or static calibrate option"
 	DynamicCalibrateOptionList             "Anomymous or direct dynamic resource calibrate option list"
 	CalibrateResourceWorkloadOption        "Calibrate Resource workload option"
+	QueryWatchOptionList                   "Query watch option list"
+	QueryWatchOption                       "Query watch option"
+	QueryWatchTextOption                   "Query watch text option"
 	AttributesOpt                          "Attributes options"
 	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
@@ -1772,6 +1779,10 @@ ResourceGroupRunawayWatchOption:
 	{
 		$$ = int32(model.WatchSimilar)
 	}
+|	"PLAN"
+	{
+		$$ = int32(model.WatchPlan)
+	}
 
 ResourceGroupRunawayActionOption:
 	"DRYRUN"
@@ -1801,14 +1812,33 @@ DirectResourceGroupRunawayOption:
 	{
 		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayAction, IntValue: $3.(int32)}
 	}
-|	"WATCH" EqOpt ResourceGroupRunawayWatchOption "DURATION" EqOpt stringLit
+|	"WATCH" EqOpt ResourceGroupRunawayWatchOption WatchDurationOption
 	{
-		_, err := time.ParseDuration($6)
-		if err != nil {
-			yylex.AppendError(yylex.Errorf("The WATCH DURATION option is not a valid duration: %s", err.Error()))
-			return 1
+		dur := strings.ToLower($4.(string))
+		if dur == "unlimited" {
+			dur = ""
+		} 
+		if len(dur) > 0 {
+			_, err := time.ParseDuration(dur)
+			if err != nil {
+				yylex.AppendError(yylex.Errorf("The WATCH DURATION option is not a valid duration: %s", err.Error()))
+				return 1
+			}
 		}
-		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayWatch, StrValue: $6, IntValue: $3.(int32)}
+		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayWatch, StrValue: dur, IntValue: $3.(int32)}
+	}
+
+WatchDurationOption:
+	{
+		$$ = ""
+	}
+|	"DURATION" EqOpt stringLit
+	{
+		$$ = $3
+	}
+|	"DURATION" EqOpt "UNLIMITED"
+	{
+		$$ = ""
 	}
 
 DirectResourceGroupOption:
@@ -7002,6 +7032,7 @@ NotKeywordToken:
 |	"QUERY_LIMIT"
 |	"BACKGROUND"
 |	"TASK_TYPES"
+|	"UNLIMITED"
 
 /************************************************************************************
  *
@@ -11870,6 +11901,7 @@ Statement:
 |	CreatePolicyStmt
 |	CreateProcedureStmt
 |	CreateResourceGroupStmt
+|	AddQueryWatchStmt
 |	CreateSequenceStmt
 |	CreateStatisticsStmt
 |	DoStmt
@@ -11882,6 +11914,7 @@ Statement:
 |	DropViewStmt
 |	DropUserStmt
 |	DropResourceGroupStmt
+|	DropQueryWatchStmt
 |	DropRoleStmt
 |	DropStatisticsStmt
 |	DropStatsStmt
@@ -15845,4 +15878,81 @@ CalibrateResourceWorkloadOption:
 	{
 		$$ = ast.OLTPWRITEONLY
 	}
+
+/********************************************************************
+ *
+ * Query Watch Statement
+ *
+ * Query Watch
+ *******************************************************************/
+AddQueryWatchStmt:
+	"QUERY" "WATCH" "ADD" QueryWatchOptionList
+	{
+		$$ = &ast.AddQueryWatchStmt{
+			QueryWatchOptionList: $4.([]*ast.QueryWatchOption),
+		}
+	}
+
+QueryWatchOptionList:
+	QueryWatchOption
+	{
+		$$ = []*ast.QueryWatchOption{$1.(*ast.QueryWatchOption)}
+	}
+|	QueryWatchOptionList QueryWatchOption
+	{
+		if !ast.CheckQueryWatchAppend($1.([]*ast.QueryWatchOption), $2.(*ast.QueryWatchOption)) {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+			return 1
+		}
+		$$ = append($1.([]*ast.QueryWatchOption), $2.(*ast.QueryWatchOption))
+	}
+|	QueryWatchOptionList ',' QueryWatchOption
+	{
+		if !ast.CheckQueryWatchAppend($1.([]*ast.QueryWatchOption), $3.(*ast.QueryWatchOption)) {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+			return 1
+		}
+		$$ = append($1.([]*ast.QueryWatchOption), $3.(*ast.QueryWatchOption))
+	}
+
+QueryWatchOption:
+	"RESOURCE" "GROUP" ResourceGroupName
+	{
+		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchResourceGroup, StrValue: model.NewCIStr($3)}
+	}
+|	"RESOURCE" "GROUP" UserVariable
+	{
+		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchResourceGroup, ExprValue: $3}
+	}
+|	"ACTION" EqOpt ResourceGroupRunawayActionOption
+	{
+		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchAction, IntValue: $3.(int32)}
+	}
+|	QueryWatchTextOption
+	{
+		$$ = $1.(*ast.QueryWatchOption)
+	}
+
+QueryWatchTextOption:
+	"SQL" "DIGEST" SimpleExpr
+	{
+		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchType, IntValue: int32(model.WatchSimilar), ExprValue: $3}
+	}
+|	"PLAN" "DIGEST" SimpleExpr
+	{
+		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchType, IntValue: int32(model.WatchPlan), ExprValue: $3}
+	}
+|	"SQL" "TEXT" ResourceGroupRunawayWatchOption "TO" SimpleExpr
+	{
+		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchType, IntValue: $3.(int32), ExprValue: $5, BoolValue: true}
+	}
+
+DropQueryWatchStmt:
+	"QUERY" "WATCH" "REMOVE" NUM
+	{
+		$$ = &ast.DropQueryWatchStmt{
+			IntValue: $4.(int64),
+		}
+	}
+
 %%

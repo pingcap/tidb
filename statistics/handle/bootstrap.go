@@ -58,7 +58,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *cache.Stat
 			Version:  row.GetUint64(0),
 			Name:     getFullTableName(is, tableInfo),
 		}
-		cache.PutFromInternal(physicalID, tbl) // put this table again since it is updated
+		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
 }
 
@@ -156,7 +156,7 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache *
 			}
 			table.Columns[hist.ID] = col
 		}
-		cache.PutFromInternal(tblID, table) // put this table again since it is updated
+		cache.Put(tblID, table) // put this table again since it is updated
 	}
 }
 
@@ -225,7 +225,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *cach
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.Columns[hist.ID] = col
 		}
-		cache.PutFromInternal(tblID, table) // put this table again since it is updated
+		cache.Put(tblID, table) // put this table again since it is updated
 	}
 }
 
@@ -293,7 +293,7 @@ func (*Handle) initStatsTopN4Chunk(cache *cache.StatsCache, iter *chunk.Iterator
 		data := make([]byte, len(row.GetBytes(2)))
 		copy(data, row.GetBytes(2))
 		idx.TopN.AppendTopN(data, row.GetUint64(3))
-		cache.PutFromInternal(table.PhysicalID, table) // put this table again since it is updated
+		cache.Put(table.PhysicalID, table) // put this table again since it is updated
 	}
 	for idx := range affectedIndexes {
 		idx.TopN.Sort()
@@ -346,7 +346,7 @@ func (*Handle) initStatsFMSketch4Chunk(cache *cache.StatsCache, iter *chunk.Iter
 				colStats.FMSketch = fms
 			}
 		}
-		cache.PutFromInternal(table.PhysicalID, table) // put this table again since it is updated
+		cache.Put(table.PhysicalID, table) // put this table again since it is updated
 	}
 }
 
@@ -418,7 +418,7 @@ func (*Handle) initStatsBuckets4Chunk(cache *cache.StatsCache, iter *chunk.Itera
 			}
 		}
 		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(3), row.GetInt64(4), row.GetInt64(7))
-		cache.PutFromInternal(tableID, table) // put this table again since it is updated
+		cache.Put(tableID, table) // put this table again since it is updated
 	}
 }
 
@@ -456,7 +456,7 @@ func (h *Handle) initStatsBuckets(cache *cache.StatsCache) error {
 			}
 			col.PreCalculateScalar()
 		}
-		cache.PutFromInternal(table.PhysicalID, table) // put this table again since it is updated
+		cache.Put(table.PhysicalID, table) // put this table again since it is updated
 	}
 	return nil
 }

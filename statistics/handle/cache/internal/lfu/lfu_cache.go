@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 	"github.com/pingcap/tidb/util/intest"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -47,8 +48,9 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 	if intest.InTest {
 		bufferItems = 1
 	}
+
 	cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters:        1024 * 1024 * 1024, // TODO(hawkingrei): make it configurable for NumCounters and MaxCost
+		NumCounters:        mathutil.Max(totalMemCost/128*2, 10), // assume the cost per table stats is 128
 		MaxCost:            totalMemCost,
 		BufferItems:        bufferItems,
 		OnEvict:            result.onEvict,
@@ -71,12 +73,7 @@ func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
 }
 
 // Put implements statsCacheInner
-func (s *LFU) Put(tblID int64, tbl *statistics.Table, _ bool) bool {
-	return s.put(tblID, tbl)
-}
-
-// Put implements statsCacheInner
-func (s *LFU) put(tblID int64, tbl *statistics.Table) bool {
+func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
 	ok := s.cache.Set(tblID, tbl, tbl.MemoryUsage().TotalTrackingMemUsage())
 	if ok { // NOTE: `s.cache` and `s.resultKeySet` may be inconsistent since the update operation is not atomic, but it's acceptable for our scenario
 		s.resultKeySet.Add(tblID)

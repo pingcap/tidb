@@ -2248,7 +2248,11 @@ func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(" ")
 		ctx.WriteKeyWord("DURATION ")
 		ctx.WritePlain("= ")
-		ctx.WriteString(n.StrValue)
+		if len(n.StrValue) > 0 {
+			ctx.WriteString(n.StrValue)
+		} else {
+			ctx.WriteKeyWord("UNLIMITED")
+		}
 	default:
 		return errors.Errorf("invalid ResourceGroupRunawayOption: %d", n.Tp)
 	}

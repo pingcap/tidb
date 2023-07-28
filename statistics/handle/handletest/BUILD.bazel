@@ -9,7 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 50,
+    shard_count = 45,
     deps = [
         "//config",
         "//domain",
@@ -24,7 +24,6 @@ go_test(
         "//testkit/testsetup",
         "//types",
         "//util/collate",
-        "//util/israce",
         "//util/mock",
         "//util/ranger",
         "@com_github_pingcap_failpoint//:failpoint",
