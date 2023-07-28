@@ -217,7 +217,7 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	selectedColumnCount := 0
 	selectedSelectivity := 1.0
 	totalColumnCount := len(physicalTableScan.Columns)
-	tableRowCount := physicalTableScan.stats.RowCount
+	tableRowCount := physicalTableScan.StatsInfo().RowCount
 
 	for _, exprGroup := range sortedConds {
 		mergedConds := append(selectedConds, exprGroup.exprs...)
@@ -251,5 +251,5 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	// add the pushed down conditions to table scan
 	physicalTableScan.lateMaterializationFilterCondition = selectedConds
 	// Update the row count of table scan after pushing down the conditions.
-	physicalTableScan.stats.RowCount *= selectedSelectivity
+	physicalTableScan.StatsInfo().RowCount *= selectedSelectivity
 }

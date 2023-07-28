@@ -169,7 +169,7 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 	return nil
 }
 
-func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, newData []types.Datum) error {
+func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newData []types.Datum) error {
 	defer trace.StartRegion(ctx, "UpdateExec").End()
 	bAssignFlag := make([]bool, len(e.assignFlag))
 	for i, flag := range e.assignFlag {
@@ -326,7 +326,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	return totalNumRows, nil
 }
 
-func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error {
+func (*UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -535,7 +535,7 @@ func (e *updateRuntimeStats) Merge(other execdetails.RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *updateRuntimeStats) Tp() int {
+func (*updateRuntimeStats) Tp() int {
 	return execdetails.TpUpdateRuntimeStats
 }
 

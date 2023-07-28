@@ -71,7 +71,7 @@ func (d *dupDetector) run(
 		return errors.Trace(err)
 	}
 
-	handlerConstructor := makeDupHandlerConstructor(ignoreRows, d.rc.cfg.TikvImporter.OnDuplicate)
+	handlerConstructor := makeDupHandlerConstructor(ignoreRows, d.rc.cfg.Conflict.Strategy)
 	numDups, err = detector.Detect(ctx, &duplicate.DetectOptions{
 		Concurrency:        d.rc.cfg.App.RegionConcurrency,
 		HandlerConstructor: handlerConstructor,
