@@ -119,6 +119,13 @@ const (
 	preferHashJoin
 	preferNoHashJoin
 	preferMergeJoin
+<<<<<<< HEAD
+=======
+	preferNoMergeJoin
+	preferNoIndexJoin
+	preferNoIndexHashJoin
+	preferNoIndexMergeJoin
+>>>>>>> c266a9791c5 (planner: support `no_index_join`, `no_index_hash_join`, `no_index_merge_join` hints (#45633))
 	preferBCJoin
 	preferShuffleJoin
 	preferRewriteSemiJoin

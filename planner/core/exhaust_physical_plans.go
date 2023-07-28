@@ -1953,6 +1953,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		}
 	}
 	if supportRightOuter {
+<<<<<<< HEAD
 		allRightOuterJoins = p.getIndexJoinByOuterIdx(prop, 1)
 		forcedRightOuterJoins = make([]PhysicalPlan, 0, len(allRightOuterJoins))
 		for _, j := range allRightOuterJoins {
@@ -1970,6 +1971,64 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 					forcedRightOuterJoins = append(forcedRightOuterJoins, j)
 				}
 			}
+=======
+		candidates = append(candidates, p.getIndexJoinByOuterIdx(prop, 1)...)
+	}
+
+	// Handle hints and variables about index join.
+	// The priority is: force hints like TIDB_INLJ > filter hints like NO_INDEX_JOIN > variables.
+	// Handle hints conflict first.
+	stmtCtx := p.SCtx().GetSessionVars().StmtCtx
+	if p.preferAny(preferLeftAsINLJInner, preferRightAsINLJInner) && p.preferAny(preferNoIndexJoin) {
+		stmtCtx.AppendWarning(ErrInternal.GenWithStack("Some INL_JOIN and NO_INDEX_JOIN hints conflict, NO_INDEX_JOIN may be ignored"))
+	}
+	if p.preferAny(preferLeftAsINLHJInner, preferRightAsINLHJInner) && p.preferAny(preferNoIndexHashJoin) {
+		stmtCtx.AppendWarning(ErrInternal.GenWithStack("Some INL_HASH_JOIN and NO_INDEX_HASH_JOIN hints conflict, NO_INDEX_HASH_JOIN may be ignored"))
+	}
+	if p.preferAny(preferLeftAsINLMJInner, preferRightAsINLMJInner) && p.preferAny(preferNoIndexMergeJoin) {
+		stmtCtx.AppendWarning(ErrInternal.GenWithStack("Some INL_MERGE_JOIN and NO_INDEX_MERGE_JOIN hints conflict, NO_INDEX_MERGE_JOIN may be ignored"))
+	}
+
+	candidates, canForced = p.handleForceIndexJoinHints(prop, candidates)
+	if canForced {
+		return candidates, canForced
+	}
+	candidates = p.handleFilterIndexJoinHints(candidates)
+	return filterIndexJoinBySessionVars(p.SCtx(), candidates), false
+}
+
+func (p *LogicalJoin) handleFilterIndexJoinHints(candidates []PhysicalPlan) []PhysicalPlan {
+	if !p.preferAny(preferNoIndexJoin, preferNoIndexHashJoin, preferNoIndexMergeJoin) {
+		return candidates // no filter index join hints
+	}
+	filtered := make([]PhysicalPlan, 0, len(candidates))
+	for _, candidate := range candidates {
+		_, joinMethod, ok := p.getIndexJoinSideAndMethod(candidate)
+		if !ok {
+			continue
+		}
+		if (p.preferAny(preferNoIndexJoin) && joinMethod == indexJoinMethod) ||
+			(p.preferAny(preferNoIndexHashJoin) && joinMethod == indexHashJoinMethod) ||
+			(p.preferAny(preferNoIndexMergeJoin) && joinMethod == indexMergeJoinMethod) {
+			continue
+		}
+		filtered = append(filtered, candidate)
+	}
+	return filtered
+}
+
+// handleForceIndexJoinHints handles the force index join hints and returns all plans that can satisfy the hints.
+func (p *LogicalJoin) handleForceIndexJoinHints(prop *property.PhysicalProperty, candidates []PhysicalPlan) (indexJoins []PhysicalPlan, canForced bool) {
+	if !p.preferAny(preferRightAsINLJInner, preferRightAsINLHJInner, preferRightAsINLMJInner,
+		preferLeftAsINLJInner, preferLeftAsINLHJInner, preferLeftAsINLMJInner) {
+		return candidates, false // no force index join hints
+	}
+	forced := make([]PhysicalPlan, 0, len(candidates))
+	for _, candidate := range candidates {
+		innerSide, joinMethod, ok := p.getIndexJoinSideAndMethod(candidate)
+		if !ok {
+			continue
+>>>>>>> c266a9791c5 (planner: support `no_index_join`, `no_index_hash_join`, `no_index_merge_join` hints (#45633))
 		}
 		switch {
 		case len(forcedRightOuterJoins) == 0 && !supportLeftOuter:
