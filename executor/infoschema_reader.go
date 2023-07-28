@@ -192,6 +192,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClusterMemoryUsageOpsHistory(sctx)
 		case infoschema.TableResourceGroups:
 			err = e.setDataFromResourceGroups()
+		case infoschema.TableRunawayWatches:
+			err = e.setDataFromRunawayWatches(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -3232,6 +3234,31 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 			followerCnt,
 			policy.PlacementSettings.Learners,
 		)
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) error {
+	do := domain.GetDomain(sctx)
+	do.TryToUpdateRunawayWatch()
+	watches := do.GetRunawayWatchList()
+	rows := make([][]types.Datum, 0, len(watches))
+	for _, watch := range watches {
+		row := types.MakeDatums(
+			watch.ID,
+			watch.ResourceGroupName,
+			watch.StartTime.Format(time.DateTime),
+			watch.EndTime.Format(time.DateTime),
+			rmpb.RunawayWatchType_name[int32(watch.Watch)],
+			watch.WatchText,
+			watch.Source,
+			rmpb.RunawayAction_name[int32(watch.Action)],
+		)
+		if watch.EndTime.Equal(resourcegroup.NullTime) {
+			row[3].SetString("UNLIMITED", mysql.DefaultCollationName)
+		}
 		rows = append(rows, row)
 	}
 	e.rows = rows

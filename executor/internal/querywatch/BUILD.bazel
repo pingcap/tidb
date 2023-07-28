@@ -28,6 +28,8 @@ go_test(
     srcs = ["query_watch_test.go"],
     flaky = True,
     deps = [
+        "//errno",
+        "//kv",
         "//testkit",
         "@com_github_stretchr_testify//require",
     ],

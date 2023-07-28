@@ -72,7 +72,6 @@ go_library(
         "//util/globalconn",
         "//util/intest",
         "//util/logutil",
-        "//util/mathutil",
         "//util/memory",
         "//util/memoryusagealarm",
         "//util/printer",

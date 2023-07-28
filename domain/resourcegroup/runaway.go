@@ -16,7 +16,6 @@ package resourcegroup
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,20 +35,22 @@ const (
 	// DefaultResourceGroupName is the default resource group name.
 	DefaultResourceGroupName = "default"
 	ManualSource             = "manual"
+
+	RunawayWatchTableName     = "mysql.tidb_runaway_watch"
+	RunawayWatchDoneTableName = "mysql.tidb_runaway_watch_done"
+
 	// MaxWaitDuration is the max duration to wait for acquiring token buckets.
 	MaxWaitDuration           = time.Second * 30
 	maxWatchListCap           = 10000
 	maxWatchRecordChannelSize = 1024
 )
 
-var LongestTime time.Time
+var NullTime time.Time
+
+const RecallBufferDuration = time.Second
 
 // RunawayMatchType is used to indicates whether qurey was interrupted by runaway identification or quarantine watch.
 type RunawayMatchType uint
-
-func init() {
-	LongestTime, _ = time.Parse(time.DateOnly, fmt.Sprintf("%04d-%02d-%02d", 2038, 1, 1))
-}
 
 const (
 	// RunawayMatchTypeWatch shows quarantine watch.
@@ -117,14 +118,24 @@ func (r *QuarantineRecord) GetRecordKey() string {
 	return r.ResourceGroupName + "/" + r.WatchText
 }
 
+func writeInsert(builder *strings.Builder, tableName string) {
+	builder.WriteString("insert into ")
+	builder.WriteString(tableName)
+	builder.WriteString(" VALUES ")
+}
+
 func (r *QuarantineRecord) GenInsertionStmt() (string, []interface{}) {
 	var builder strings.Builder
 	params := make([]interface{}, 0, 6)
-	builder.WriteString("insert into mysql.tidb_runaway_watch VALUES ")
+	writeInsert(&builder, RunawayWatchTableName)
 	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ResourceGroupName)
 	params = append(params, r.StartTime)
-	params = append(params, r.EndTime)
+	if r.EndTime.Equal(NullTime) {
+		params = append(params, nil)
+	} else {
+		params = append(params, r.EndTime)
+	}
 	params = append(params, r.Watch)
 	params = append(params, r.WatchText)
 	params = append(params, r.Source)
@@ -134,25 +145,31 @@ func (r *QuarantineRecord) GenInsertionStmt() (string, []interface{}) {
 
 func (r *QuarantineRecord) GenInsertionDoneStmt() (string, []interface{}) {
 	var builder strings.Builder
-	params := make([]interface{}, 0, 8)
-	builder.WriteString("insert into mysql.tidb_runaway_watch_done VALUES ")
-	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, null)")
+	params := make([]interface{}, 0, 9)
+	writeInsert(&builder, RunawayWatchDoneTableName)
+	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ID)
 	params = append(params, r.ResourceGroupName)
 	params = append(params, r.StartTime)
-	params = append(params, r.EndTime)
+	if r.EndTime.Equal(NullTime) {
+		params = append(params, nil)
+	} else {
+		params = append(params, r.EndTime)
+	}
 	params = append(params, r.Watch)
 	params = append(params, r.WatchText)
 	params = append(params, r.Source)
 	params = append(params, r.Action)
+	params = append(params, time.Now())
 	return builder.String(), params
 }
 
 func (r *QuarantineRecord) GenDeletionStmt() (string, []interface{}) {
 	var builder strings.Builder
 	params := make([]interface{}, 0, 1)
-	builder.WriteString("delete from mysql.tidb_runaway_watch ")
-	builder.WriteString("where id = %?")
+	builder.WriteString("delete from ")
+	builder.WriteString(RunawayWatchTableName)
+	builder.WriteString(" where id = %?")
 	params = append(params, r.ID)
 	return builder.String(), params
 }
@@ -225,9 +242,7 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDiges
 
 func (rm *RunawayManager) markQuarantine(resourceGroupName, convict string, watchType rmpb.RunawayWatchType, action rmpb.RunawayAction, ttl time.Duration, now *time.Time) {
 	var endTime time.Time
-	if ttl == 0 {
-		endTime = LongestTime
-	} else {
+	if ttl > 0 {
 		endTime = now.Add(ttl)
 	}
 	record := &QuarantineRecord{
@@ -249,15 +264,19 @@ func (rm *RunawayManager) markQuarantine(resourceGroupName, convict string, watc
 
 func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Duration, force bool) {
 	key := record.GetRecordKey()
+	item := rm.watchList.Get(key)
 	if force {
 		rm.queryLock.Lock()
-		if rm.watchList.Get(key) != nil {
+		defer rm.queryLock.Unlock()
+		if item != nil {
+			if item.Value().ID == record.ID {
+				return
+			}
 			rm.watchList.Delete(key)
 		}
 		rm.watchList.Set(key, record, ttl)
-		rm.queryLock.Unlock()
 	} else {
-		if rm.watchList.Get(key) == nil {
+		if item == nil {
 			rm.queryLock.Lock()
 			if rm.watchList.Get(key) == nil {
 				rm.watchList.Set(key, record, ttl)
@@ -265,7 +284,7 @@ func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Durati
 				rm.staleQuarantineRecord <- record
 			}
 			rm.queryLock.Unlock()
-		} else {
+		} else if item.Value().ID != record.ID {
 			rm.staleQuarantineRecord <- record
 		}
 	}
@@ -273,23 +292,33 @@ func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Durati
 
 func (rm *RunawayManager) GetWatchInWatchList(key string) *QuarantineRecord {
 	item := rm.watchList.Get(key)
+	rm.watchList.Items()
 	if item == nil {
 		return nil
 	}
 	return item.Value()
 }
 
+func (rm *RunawayManager) GetWatchList() []*QuarantineRecord {
+	items := rm.watchList.Items()
+	ret := make([]*QuarantineRecord, 0, len(items))
+	for _, item := range items {
+		ret = append(ret, item.Value())
+	}
+	return ret
+}
+
 func (rm *RunawayManager) AddWatch(record *QuarantineRecord) {
 	ttl := time.Until(record.EndTime)
-	if ttl <= 0 {
+	if record.EndTime.Equal(NullTime) {
+		ttl = 0
+	} else if ttl <= 0 {
 		rm.staleQuarantineRecord <- record
 		return
 	}
-	if !record.EndTime.Before(LongestTime) {
-		ttl = 0
-	}
+
 	force := false
-	if record.Source == "manual" {
+	if record.Source == ManualSource || record.Source == rm.serverID {
 		force = true
 	}
 	rm.addWatchList(record, ttl, force)

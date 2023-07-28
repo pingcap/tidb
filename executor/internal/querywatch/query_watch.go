@@ -116,7 +116,7 @@ func FromQueryWatchOptionList(ctx context.Context, sctx, newSctx sessionctx.Cont
 	record := &resourcegroup.QuarantineRecord{
 		Source:    resourcegroup.ManualSource,
 		StartTime: time.Now(),
-		EndTime:   resourcegroup.LongestTime,
+		EndTime:   resourcegroup.NullTime,
 	}
 	for _, op := range optionList {
 		if err := SetWatchOption(ctx, sctx, newSctx, record, op); err != nil {
@@ -136,9 +136,6 @@ func validateWatchRecord(record *resourcegroup.QuarantineRecord, client *rmclien
 	}
 	if rg == nil || rg.RunawaySettings == nil {
 		return errors.Errorf("must set runaway config for resource group `%s`", record.ResourceGroupName)
-	}
-	if record.Action == rmpb.RunawayAction_NoneAction {
-		record.Action = rg.RunawaySettings.GetAction()
 	}
 	if record.Watch == rmpb.RunawayWatchType_NoneWatch {
 		return errors.Errorf("must specify watch type")
