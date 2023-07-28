@@ -744,41 +744,6 @@
           "  └─TableRowIDScan(Probe) 12487.50 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": null
-      },
-      {
-        "SQL": "select /*+ leading(t4, t3, t2, t1), no_hash_join(t2, t3) */ * from t1, t2, t3, t4",
-        "Plan": [
-          "Projection 10000000000000000.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
-          "└─HashJoin 10000000000000000.00 root  CARTESIAN inner join",
-          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─MergeJoin(Probe) 1000000000000.00 root  inner join",
-          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "    └─MergeJoin(Probe) 100000000.00 root  inner join",
-          "      ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "      │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "        └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
-        ],
-        "Warning": null
-      },
-      {
-        "SQL": "select /*+ leading(t1, t2, t3, t4), hash_join(t1, t2), no_hash_join(t3), hash_join(t4) */ * from t1, t2, t3, t4",
-        "Plan": [
-          "HashJoin 10000000000000000.00 root  CARTESIAN inner join",
-          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
-          "└─MergeJoin(Probe) 1000000000000.00 root  inner join",
-          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) 100000000.00 root  CARTESIAN inner join",
-          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ],
-        "Warning": null
       }
     ]
   },
