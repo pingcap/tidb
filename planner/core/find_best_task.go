@@ -2427,6 +2427,10 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		prop.TaskTp == property.CopSingleReadTaskType && !candidate.path.IsSingleScan {
 		return invalidTask
 	}
+	pos, err := getPartitionColumnPos(candidate.path.Index, getPartitionExpr(ds.SCtx(), ds.TableInfo()), ds.TableInfo())
+	if err != nil {
+		return invalidTask
+	}
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(len(candidate.path.Ranges)))
 	batchPointGetPlan := &BatchPointGetPlan{
@@ -2466,10 +2470,6 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		batchPointGetPlan.IndexInfo = candidate.path.Index
 		batchPointGetPlan.IdxCols = candidate.path.IdxCols
 		batchPointGetPlan.IdxColLens = candidate.path.IdxColLens
-		pos, err := getPartitionColumnPos(candidate.path.Index, getPartitionExpr(ds.SCtx(), ds.TableInfo()), ds.TableInfo())
-		if err != nil {
-			return invalidTask
-		}
 		batchPointGetPlan.PartitionColPos = pos
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
