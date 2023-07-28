@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/utils/storewatch"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
@@ -16,7 +17,7 @@ type SequentialReturningStoreMeta struct {
 	sequence [][]*metapb.Store
 }
 
-func NewSequentialReturningStoreMeta(sequence [][]*metapb.Store) storewatch.StoreMeta {
+func NewSequentialReturningStoreMeta(sequence [][]*metapb.Store) util.StoreMeta {
 	return &SequentialReturningStoreMeta{sequence: sequence}
 }
 
