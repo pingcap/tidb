@@ -2030,13 +2030,46 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		candidates = append(candidates, p.getIndexJoinByOuterIdx(prop, 1)...)
 	}
 
-	// handle hints and variables about index join.
-	// the priority is: force hints like TIDB_INLJ > filter hints like NO_INDEX_JOIN > variables.
+	// Handle hints and variables about index join.
+	// The priority is: force hints like TIDB_INLJ > filter hints like NO_INDEX_JOIN > variables.
+	// Handle hints conflict first.
+	stmtCtx := p.SCtx().GetSessionVars().StmtCtx
+	if p.preferAny(preferLeftAsINLJInner, preferRightAsINLJInner) && p.preferAny(preferNoIndexJoin) {
+		stmtCtx.AppendWarning(ErrInternal.GenWithStack("Some INL_JOIN and NO_INDEX_JOIN hints conflict, NO_INDEX_JOIN may be ignored"))
+	}
+	if p.preferAny(preferLeftAsINLHJInner, preferRightAsINLHJInner) && p.preferAny(preferNoIndexHashJoin) {
+		stmtCtx.AppendWarning(ErrInternal.GenWithStack("Some INL_HASH_JOIN and NO_INDEX_HASH_JOIN hints conflict, NO_INDEX_HASH_JOIN may be ignored"))
+	}
+	if p.preferAny(preferLeftAsINLMJInner, preferRightAsINLMJInner) && p.preferAny(preferNoIndexMergeJoin) {
+		stmtCtx.AppendWarning(ErrInternal.GenWithStack("Some INL_MERGE_JOIN and NO_INDEX_MERGE_JOIN hints conflict, NO_INDEX_MERGE_JOIN may be ignored"))
+	}
+
 	candidates, canForced = p.handleForceIndexJoinHints(prop, candidates)
 	if canForced {
 		return candidates, canForced
 	}
+	candidates = p.handleFilterIndexJoinHints(candidates)
 	return filterIndexJoinBySessionVars(p.SCtx(), candidates), false
+}
+
+func (p *LogicalJoin) handleFilterIndexJoinHints(candidates []PhysicalPlan) []PhysicalPlan {
+	if !p.preferAny(preferNoIndexJoin, preferNoIndexHashJoin, preferNoIndexMergeJoin) {
+		return candidates // no filter index join hints
+	}
+	filtered := make([]PhysicalPlan, 0, len(candidates))
+	for _, candidate := range candidates {
+		_, joinMethod, ok := p.getIndexJoinSideAndMethod(candidate)
+		if !ok {
+			continue
+		}
+		if (p.preferAny(preferNoIndexJoin) && joinMethod == indexJoinMethod) ||
+			(p.preferAny(preferNoIndexHashJoin) && joinMethod == indexHashJoinMethod) ||
+			(p.preferAny(preferNoIndexMergeJoin) && joinMethod == indexMergeJoinMethod) {
+			continue
+		}
+		filtered = append(filtered, candidate)
+	}
+	return filtered
 }
 
 // handleForceIndexJoinHints handles the force index join hints and returns all plans that can satisfy the hints.
