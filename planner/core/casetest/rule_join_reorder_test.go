@@ -72,6 +72,32 @@ func TestNoHashJoinHint(t *testing.T) {
 	runJoinReorderTestData(t, tk, "TestNoHashJoinHint")
 }
 
+<<<<<<< HEAD:planner/core/casetest/rule_join_reorder_test.go
+=======
+func TestNoMergeJoinHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, key(a));")
+	tk.MustExec("create table t2(a int, key(a));")
+	tk.MustExec("create table t3(a int, key(a));")
+	tk.MustExec("create table t4(a int, key(a));")
+	runJoinReorderTestData(t, tk, "TestNoMergeJoinHint")
+}
+
+func TestNoIndexJoinHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_index_merge_join=true`)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, key(a));")
+	tk.MustExec("create table t2(a int, key(a));")
+	tk.MustExec("create table t3(a int, key(a));")
+	tk.MustExec("create table t4(a int, key(a));")
+	runJoinReorderTestData(t, tk, "TestNoIndexJoinHint")
+}
+
+>>>>>>> c266a9791c5 (planner: support `no_index_join`, `no_index_hash_join`, `no_index_merge_join` hints (#45633)):planner/core/casetest/rule/rule_join_reorder_test.go
 func TestLeadingJoinHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
