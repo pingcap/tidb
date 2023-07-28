@@ -201,6 +201,8 @@ type Backend struct {
 	regionKeys          [][]byte
 	phase               string
 	imported            bool
+	cnt                 int
+	getFirst            bool
 }
 
 const (
@@ -1074,6 +1076,7 @@ func (remote *Backend) fillJobKVs(j *regionJob, iter *sharedisk.MergeIter) {
 		prevKey = key
 		if bytes.Compare(k, j.keyRange.end) >= 0 {
 			if bytes.Compare(k, j.keyRange.start) == 0 {
+				remote.cnt++
 				j.writeBatch = append(j.writeBatch, kvPair{key: key, val: val})
 			}
 			if len(j.writeBatch) > 0 {
@@ -1083,9 +1086,13 @@ func (remote *Backend) fillJobKVs(j *regionJob, iter *sharedisk.MergeIter) {
 			break
 		}
 		if bytes.Compare(k, j.keyRange.start) >= 0 {
+			remote.cnt++
+			remote.getFirst = true
 			j.writeBatch = append(j.writeBatch, kvPair{key: key, val: val})
 		} else {
-			log.FromContext(context.Background()).Error("unexpected skip key", zap.ByteString("key", k), zap.ByteString("start", j.keyRange.start))
+			if remote.getFirst {
+				log.FromContext(context.Background()).Error("unexpected skip key", zap.ByteString("key", k), zap.ByteString("start", j.keyRange.start))
+			}
 		}
 		if !iter.Next() {
 			break
@@ -1189,8 +1196,8 @@ func (remote *Backend) generateAndSendJob(
 			}
 		}
 	}
-	if iter.Valid() && bytes.Compare(iter.Key(), remote.endKey) <= 0 {
-		log.FromContext(ctx).Error("engine iterator is not finished", zap.ByteString("key", iter.Key()), zap.ByteString("endKey", remote.endKey))
+	if iter.Valid() {
+		log.FromContext(ctx).Error("engine iterator", zap.ByteString("key", iter.Key()), zap.ByteString("endKey", remote.endKey), zap.Any("cnt", remote.cnt))
 	}
 	return nil
 }
