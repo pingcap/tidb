@@ -1133,12 +1133,8 @@ const (
 	DefTiDBAutoBuildStatsConcurrency             = 1
 	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
-<<<<<<< HEAD
 	DefTiDBForeignKeyChecks                      = false
-=======
-	DefTiDBForeignKeyChecks                      = true
 	DefTiDBOptAdvancedJoinHint                   = false
->>>>>>> fca20d64da1 (planner: distinguish the source of join hint information (#41440))
 	DefTiDBAnalyzePartitionConcurrency           = 1
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
 	DefTiDBCostModelVer                          = 2
