@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/internal/applycache"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/terror"
@@ -79,7 +80,7 @@ type ParallelNestedLoopApplyExec struct {
 	notifyWg    sync.WaitGroup
 
 	// fields about cache
-	cache              *applyCache
+	cache              *applycache.ApplyCache
 	useCache           bool
 	cacheHitCounter    int64
 	cacheAccessCounter int64
@@ -123,7 +124,7 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	}
 
 	if e.useCache {
-		if e.cache, err = newApplyCache(e.Ctx()); err != nil {
+		if e.cache, err = applycache.NewApplyCache(e.Ctx()); err != nil {
 			return err
 		}
 		e.cache.GetMemTracker().AttachTo(e.memTracker)
