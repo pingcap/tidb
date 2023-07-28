@@ -454,6 +454,31 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) (ret []expression.Expression, retPlan LogicalPlan) {
+	canBePushed := make([]expression.Expression, 0, len(predicates))
+	canNotBePushed := make([]expression.Expression, 0, len(predicates))
+	// Note that, grouping column related predicates can't be pushed down, since grouping column has nullability change after Expand OP itself.
+	// condition related with grouping column shouldn't be pushed down through it.
+	m := make(map[int64]struct{}, len(p.distinctGroupByCol))
+	for _, gCol := range p.distinctGroupByCol {
+		m[gCol.UniqueID] = struct{}{}
+	}
+	for _, predicate := range predicates {
+		cols := expression.ExtractColumns(predicate)
+		for _, anyCol := range cols {
+			if _, ok := m[anyCol.UniqueID]; ok {
+				// this predicate is related to grouping col after Expand action, it can't be pushed down.
+				canNotBePushed = append(canNotBePushed, predicate)
+			} else {
+				canBePushed = append(canBePushed, predicate)
+			}
+		}
+	}
+	remained, child := p.baseLogicalPlan.PredicatePushDown(canBePushed, opt)
+	return append(remained, canNotBePushed...), child
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) (ret []expression.Expression, retPlan LogicalPlan) {
 	canBePushed := make([]expression.Expression, 0, len(predicates))
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
