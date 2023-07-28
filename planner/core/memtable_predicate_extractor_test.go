@@ -1760,14 +1760,14 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 
 	var cases = []struct {
 		prepared string
-		userVars []interface{}
-		params   []interface{}
+		userVars []any
+		params   []any
 		checker  func(extractor plannercore.MemTablePredicateExtractor)
 	}{
 		{
 			prepared: "select * from information_schema.TIKV_REGION_STATUS where table_id = ?",
-			userVars: []interface{}{1},
-			params:   []interface{}{1},
+			userVars: []any{1},
+			params:   []any{1},
 			checker: func(extractor plannercore.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.TiKVRegionStatusExtractor)
 				tableids := rse.GetTablesID()
@@ -1777,8 +1777,8 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		},
 		{
 			prepared: "select * from information_schema.TIKV_REGION_STATUS where table_id = ? or table_id = ?",
-			userVars: []interface{}{1, 2},
-			params:   []interface{}{1, 2},
+			userVars: []any{1, 2},
+			params:   []any{1, 2},
 			checker: func(extractor plannercore.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.TiKVRegionStatusExtractor)
 				tableids := rse.GetTablesID()
@@ -1788,8 +1788,8 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		},
 		{
 			prepared: "select * from information_schema.TIKV_REGION_STATUS where table_id in (?,?)",
-			userVars: []interface{}{1, 2},
-			params:   []interface{}{1, 2},
+			userVars: []any{1, 2},
+			params:   []any{1, 2},
 			checker: func(extractor plannercore.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.TiKVRegionStatusExtractor)
 				tableids := rse.GetTablesID()
@@ -1799,8 +1799,8 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		},
 		{
 			prepared: "select * from information_schema.COLUMNS where table_name like ?",
-			userVars: []interface{}{`"a%"`},
-			params:   []interface{}{"a%"},
+			userVars: []any{`"a%"`},
+			params:   []any{"a%"},
 			checker: func(extractor plannercore.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.ColumnsTableExtractor)
 				require.EqualValues(t, []string{"a%"}, rse.TableNamePatterns)
@@ -1808,8 +1808,8 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		},
 		{
 			prepared: "select * from information_schema.tidb_hot_regions_history where update_time>=?",
-			userVars: []interface{}{"cast('2019-10-10 10:10:10' as datetime)"},
-			params: []interface{}{func() types.Time {
+			userVars: []any{"cast('2019-10-10 10:10:10' as datetime)"},
+			params: []any{func() types.Time {
 				tt, err := types.ParseTimestamp(tk.Session().GetSessionVars().StmtCtx, "2019-10-10 10:10:10")
 				require.NoError(t, err)
 				return tt

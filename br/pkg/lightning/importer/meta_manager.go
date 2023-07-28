@@ -494,10 +494,10 @@ func RemoveTableMetaByTableName(ctx context.Context, db *sql.DB, metaTable, tabl
 		Logger: log.FromContext(ctx),
 	}
 	query := fmt.Sprintf("DELETE FROM %s", metaTable)
-	var args []interface{}
+	var args []any
 	if tableName != "" {
 		query += " where table_name = ?"
-		args = []interface{}{tableName}
+		args = []any{tableName}
 	}
 
 	return exec.Exec(ctx, "clean up metas", query, args...)

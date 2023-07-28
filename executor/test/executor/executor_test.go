@@ -807,7 +807,7 @@ func TestTablePKisHandleScan(t *testing.T) {
 
 	tests := []struct {
 		sql    string
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			"select * from t",
@@ -2529,7 +2529,7 @@ func TestTiDBLastQueryInfo(t *testing.T) {
 	tk.MustExec("create table t (a int primary key, v int)")
 	tk.MustQuery("select json_extract(@@tidb_last_query_info, '$.start_ts'), json_extract(@@tidb_last_query_info, '$.start_ts')").Check(testkit.Rows("0 0"))
 
-	toUint64 := func(str interface{}) uint64 {
+	toUint64 := func(str any) uint64 {
 		res, err := strconv.ParseUint(str.(string), 10, 64)
 		require.NoError(t, err)
 		return res
@@ -3251,7 +3251,7 @@ func TestExprBlackListForEnum(t *testing.T) {
 	tk.MustExec("create table t(a enum('a','b','c'), b enum('a','b','c'), c int, index idx(b,a));")
 	tk.MustExec("insert into t values(1,1,1),(2,2,2),(3,3,3);")
 
-	checkFuncPushDown := func(rows [][]interface{}, keyWord string) bool {
+	checkFuncPushDown := func(rows [][]any, keyWord string) bool {
 		for _, line := range rows {
 			// Agg/Expr push down
 			if line[2].(string) == "cop[tikv]" && strings.Contains(line[4].(string), keyWord) {
@@ -5788,7 +5788,7 @@ func TestUnsignedDecimalOverflow(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tests := []struct {
-		input  interface{}
+		input  any
 		hasErr bool
 		err    string
 	}{{

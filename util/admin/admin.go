@@ -44,7 +44,7 @@ type RecordData struct {
 	Values []types.Datum
 }
 
-func getCount(exec sqlexec.RestrictedSQLExecutor, snapshot uint64, sql string, args ...interface{}) (int64, error) {
+func getCount(exec sqlexec.RestrictedSQLExecutor, snapshot uint64, sql string, args ...any) (int64, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnAdmin)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(snapshot)}, sql, args...)
 	if err != nil {

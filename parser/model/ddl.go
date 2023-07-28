@@ -284,7 +284,7 @@ func NewMultiSchemaInfo() *MultiSchemaInfo {
 // SubJob is a representation of one DDL schema change. A Job may contain zero(when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
 	Type        ActionType      `json:"type"`
-	Args        []interface{}   `json:"-"`
+	Args        []any           `json:"-"`
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
 	SnapshotVer uint64          `json:"snapshot_ver"`
@@ -293,7 +293,7 @@ type SubJob struct {
 	State       JobState        `json:"state"`
 	RowCount    int64           `json:"row_count"`
 	Warning     *terror.Error   `json:"warning"`
-	CtxVars     []interface{}   `json:"-"`
+	CtxVars     []any           `json:"-"`
 	SchemaVer   int64           `json:"schema_version"`
 	ReorgTp     ReorgType       `json:"reorg_tp"`
 }
@@ -395,8 +395,8 @@ type Job struct {
 	Mu       sync.Mutex `json:"-"`
 	// CtxVars are variables attached to the job. It is for internal usage.
 	// E.g. passing arguments between functions by one single *Job pointer.
-	CtxVars []interface{} `json:"-"`
-	Args    []interface{} `json:"-"`
+	CtxVars []any `json:"-"`
+	Args    []any `json:"-"`
 	// RawArgs : We must use json raw message to delay parsing special args.
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
@@ -485,12 +485,12 @@ func (job *Job) Clone() *Job {
 		return nil
 	}
 	if len(job.Args) > 0 {
-		clone.Args = make([]interface{}, len(job.Args))
+		clone.Args = make([]any, len(job.Args))
 		copy(clone.Args, job.Args)
 	}
 	if job.MultiSchemaInfo != nil {
 		for i, sub := range job.MultiSchemaInfo.SubJobs {
-			clone.MultiSchemaInfo.SubJobs[i].Args = make([]interface{}, len(sub.Args))
+			clone.MultiSchemaInfo.SubJobs[i].Args = make([]any, len(sub.Args))
 			copy(clone.MultiSchemaInfo.SubJobs[i].Args, sub.Args)
 		}
 	}
@@ -574,7 +574,7 @@ func (job *Job) Decode(b []byte) error {
 }
 
 // DecodeArgs decodes job args.
-func (job *Job) DecodeArgs(args ...interface{}) error {
+func (job *Job) DecodeArgs(args ...any) error {
 	var rawArgs []json.RawMessage
 	if err := json.Unmarshal(job.RawArgs, &rawArgs); err != nil {
 		return errors.Trace(err)

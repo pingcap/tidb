@@ -989,7 +989,7 @@ var yyhintDebug = 0
 
 type yyhintLexer interface {
 	Lex(lval *yyhintSymType) int
-	Errorf(format string, a ...interface{}) error
+	Errorf(format string, a ...any) error
 	AppendError(err error)
 	AppendWarn(err error)
 	Errors() (warns []error, errs []error)

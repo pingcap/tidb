@@ -102,13 +102,13 @@ type ChangeStateInfo struct {
 
 // ColumnInfo provides meta data describing of a table column.
 type ColumnInfo struct {
-	ID                    int64       `json:"id"`
-	Name                  CIStr       `json:"name"`
-	Offset                int         `json:"offset"`
-	OriginDefaultValue    interface{} `json:"origin_default"`
-	OriginDefaultValueBit []byte      `json:"origin_default_bit"`
-	DefaultValue          interface{} `json:"default"`
-	DefaultValueBit       []byte      `json:"default_bit"`
+	ID                    int64  `json:"id"`
+	Name                  CIStr  `json:"name"`
+	Offset                int    `json:"offset"`
+	OriginDefaultValue    any    `json:"origin_default"`
+	OriginDefaultValueBit []byte `json:"origin_default_bit"`
+	DefaultValue          any    `json:"default"`
+	DefaultValueBit       []byte `json:"default_bit"`
 	// DefaultIsExpr is indicates the default value string is expr.
 	DefaultIsExpr       bool                `json:"default_is_expr"`
 	GeneratedExprString string              `json:"generated_expr_string"`
@@ -236,7 +236,7 @@ func (c *ColumnInfo) IsGenerated() bool {
 // For mysql.TypeBit type, the default value storage format must be a string.
 // Other value such as int must convert to string format first.
 // The mysql.TypeBit type supports the null default value.
-func (c *ColumnInfo) SetOriginDefaultValue(value interface{}) error {
+func (c *ColumnInfo) SetOriginDefaultValue(value any) error {
 	c.OriginDefaultValue = value
 	if c.GetType() == mysql.TypeBit {
 		if value == nil {
@@ -252,7 +252,7 @@ func (c *ColumnInfo) SetOriginDefaultValue(value interface{}) error {
 }
 
 // GetOriginDefaultValue gets the origin default value.
-func (c *ColumnInfo) GetOriginDefaultValue() interface{} {
+func (c *ColumnInfo) GetOriginDefaultValue() any {
 	if c.GetType() == mysql.TypeBit && c.OriginDefaultValueBit != nil {
 		// If the column type is BIT, both `OriginDefaultValue` and `DefaultValue` of ColumnInfo are corrupted,
 		// because the content before json.Marshal is INCONSISTENT with the content after json.Unmarshal.
@@ -262,7 +262,7 @@ func (c *ColumnInfo) GetOriginDefaultValue() interface{} {
 }
 
 // SetDefaultValue sets the default value.
-func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
+func (c *ColumnInfo) SetDefaultValue(value any) error {
 	c.DefaultValue = value
 	if c.GetType() == mysql.TypeBit {
 		// For mysql.TypeBit type, the default value storage format must be a string.
@@ -283,7 +283,7 @@ func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 // GetDefaultValue gets the default value of the column.
 // Default value use to stored in DefaultValue field, but now,
 // bit type default value will store in DefaultValueBit for fix bit default value decode/encode bug.
-func (c *ColumnInfo) GetDefaultValue() interface{} {
+func (c *ColumnInfo) GetDefaultValue() any {
 	if c.GetType() == mysql.TypeBit && c.DefaultValueBit != nil {
 		return string(c.DefaultValueBit)
 	}

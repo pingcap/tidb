@@ -47,7 +47,7 @@ func (m *MockExternalStorage) Create(arg0 context.Context, arg1 string) (storage
 }
 
 // Create indicates an expected call of Create.
-func (mr *MockExternalStorageMockRecorder) Create(arg0, arg1 interface{}) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) Create(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockExternalStorage)(nil).Create), arg0, arg1)
 }
@@ -61,7 +61,7 @@ func (m *MockExternalStorage) DeleteFile(arg0 context.Context, arg1 string) erro
 }
 
 // DeleteFile indicates an expected call of DeleteFile.
-func (mr *MockExternalStorageMockRecorder) DeleteFile(arg0, arg1 interface{}) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) DeleteFile(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteFile", reflect.TypeOf((*MockExternalStorage)(nil).DeleteFile), arg0, arg1)
 }
@@ -76,7 +76,7 @@ func (m *MockExternalStorage) FileExists(arg0 context.Context, arg1 string) (boo
 }
 
 // FileExists indicates an expected call of FileExists.
-func (mr *MockExternalStorageMockRecorder) FileExists(arg0, arg1 interface{}) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) FileExists(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FileExists", reflect.TypeOf((*MockExternalStorage)(nil).FileExists), arg0, arg1)
 }
@@ -91,7 +91,7 @@ func (m *MockExternalStorage) Open(arg0 context.Context, arg1 string) (storage.E
 }
 
 // Open indicates an expected call of Open.
-func (mr *MockExternalStorageMockRecorder) Open(arg0, arg1 interface{}) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) Open(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Open", reflect.TypeOf((*MockExternalStorage)(nil).Open), arg0, arg1)
 }
@@ -106,7 +106,7 @@ func (m *MockExternalStorage) ReadFile(arg0 context.Context, arg1 string) ([]byt
 }
 
 // ReadFile indicates an expected call of ReadFile.
-func (mr *MockExternalStorageMockRecorder) ReadFile(arg0, arg1 interface{}) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) ReadFile(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReadFile", reflect.TypeOf((*MockExternalStorage)(nil).ReadFile), arg0, arg1)
 }
@@ -120,7 +120,7 @@ func (m *MockExternalStorage) Rename(arg0 context.Context, arg1, arg2 string) er
 }
 
 // Rename indicates an expected call of Rename.
-func (mr *MockExternalStorageMockRecorder) Rename(arg0, arg1, arg2 interface{}) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) Rename(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Rename", reflect.TypeOf((*MockExternalStorage)(nil).Rename), arg0, arg1, arg2)
 }
@@ -148,7 +148,7 @@ func (m *MockExternalStorage) WalkDir(arg0 context.Context, arg1 *storage.WalkOp
 }
 
 // WalkDir indicates an expected call of WalkDir.
-func (mr *MockExternalStorageMockRecorder) WalkDir(arg0, arg1, arg2 interface{}) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) WalkDir(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WalkDir", reflect.TypeOf((*MockExternalStorage)(nil).WalkDir), arg0, arg1, arg2)
 }
@@ -162,7 +162,7 @@ func (m *MockExternalStorage) WriteFile(arg0 context.Context, arg1 string, arg2 
 }
 
 // WriteFile indicates an expected call of WriteFile.
-func (mr *MockExternalStorageMockRecorder) WriteFile(arg0, arg1, arg2 interface{}) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) WriteFile(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WriteFile", reflect.TypeOf((*MockExternalStorage)(nil).WriteFile), arg0, arg1, arg2)
 }

@@ -339,7 +339,7 @@ func (em *ErrorManager) RecordDataConflictError(
 	if err := exec.Transact(ctx, "insert data conflict error record", func(c context.Context, txn *sql.Tx) error {
 		sb := &strings.Builder{}
 		fmt.Fprintf(sb, insertIntoConflictErrorData, em.schemaEscaped)
-		var sqlArgs []interface{}
+		var sqlArgs []any
 		for i, conflictInfo := range conflictInfos {
 			if i > 0 {
 				sb.WriteByte(',')
@@ -397,7 +397,7 @@ func (em *ErrorManager) RecordIndexConflictError(
 	if err := exec.Transact(ctx, "insert index conflict error record", func(c context.Context, txn *sql.Tx) error {
 		sb := &strings.Builder{}
 		fmt.Fprintf(sb, insertIntoConflictErrorIndex, em.schemaEscaped)
-		var sqlArgs []interface{}
+		var sqlArgs []any
 		for i, conflictInfo := range conflictInfos {
 			if i > 0 {
 				sb.WriteByte(',')

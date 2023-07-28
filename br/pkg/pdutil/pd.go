@@ -59,29 +59,29 @@ const (
 )
 
 // pauseConfigGenerator generate a config value according to store count and current value.
-type pauseConfigGenerator func(int, interface{}) interface{}
+type pauseConfigGenerator func(int, any) any
 
 // zeroPauseConfig sets the config to 0.
-func zeroPauseConfig(int, interface{}) interface{} {
+func zeroPauseConfig(int, any) any {
 	return 0
 }
 
 // pauseConfigMulStores multiplies the existing value by
 // number of stores. The value is limited to 40, as larger value
 // may make the cluster unstable.
-func pauseConfigMulStores(stores int, raw interface{}) interface{} {
+func pauseConfigMulStores(stores int, raw any) any {
 	rawCfg := raw.(float64)
 	return math.Min(40, rawCfg*float64(stores))
 }
 
 // pauseConfigFalse sets the config to "false".
-func pauseConfigFalse(int, interface{}) interface{} {
+func pauseConfigFalse(int, any) any {
 	return "false"
 }
 
 // constConfigGeneratorBuilder build a pauseConfigGenerator based on a given const value.
-func constConfigGeneratorBuilder(val interface{}) pauseConfigGenerator {
-	return func(int, interface{}) interface{} {
+func constConfigGeneratorBuilder(val any) pauseConfigGenerator {
+	return func(int, any) any {
 		return val
 	}
 }
@@ -92,7 +92,7 @@ type ClusterConfig struct {
 	// Enable PD schedulers before restore
 	Schedulers []string `json:"schedulers"`
 	// Original scheudle configuration
-	ScheduleCfg map[string]interface{} `json:"schedule_cfg"`
+	ScheduleCfg map[string]any `json:"schedule_cfg"`
 }
 
 type pauseSchedulerBody struct {
@@ -133,7 +133,7 @@ var (
 
 	// defaultPDCfg find by https://github.com/tikv/pd/blob/master/conf/config.toml.
 	// only use for debug command.
-	defaultPDCfg = map[string]interface{}{
+	defaultPDCfg = map[string]any{
 		"max-merge-region-keys":       200000,
 		"max-merge-region-size":       20,
 		"leader-schedule-limit":       4,
@@ -392,7 +392,7 @@ func (p *PdController) getRegionCountWith(
 			err = e
 			continue
 		}
-		regionsMap := make(map[string]interface{})
+		regionsMap := make(map[string]any)
 		err = json.Unmarshal(v, &regionsMap)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -456,7 +456,7 @@ func (p *PdController) doPauseSchedulers(ctx context.Context,
 
 func (p *PdController) pauseSchedulersAndConfigWith(
 	ctx context.Context, schedulers []string,
-	schedulerCfg map[string]interface{}, post pdHTTPRequest,
+	schedulerCfg map[string]any, post pdHTTPRequest,
 ) ([]string, error) {
 	// first pause this scheduler, if the first time failed. we should return the error
 	// so put first time out of for loop. and in for loop we could ignore other failed pause.
@@ -567,7 +567,7 @@ func (p *PdController) listSchedulersWith(ctx context.Context, get pdHTTPRequest
 // It returns nil if there is no such config item.
 func (p *PdController) GetPDScheduleConfig(
 	ctx context.Context,
-) (map[string]interface{}, error) {
+) (map[string]any, error) {
 	var err error
 	for _, addr := range p.addrs {
 		v, e := pdRequest(
@@ -576,7 +576,7 @@ func (p *PdController) GetPDScheduleConfig(
 			err = e
 			continue
 		}
-		cfg := make(map[string]interface{})
+		cfg := make(map[string]any)
 		err = json.Unmarshal(v, &cfg)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -593,13 +593,13 @@ func (p *PdController) UpdatePDScheduleConfig(ctx context.Context) error {
 }
 
 func (p *PdController) doUpdatePDScheduleConfig(
-	ctx context.Context, cfg map[string]interface{}, post pdHTTPRequest, prefixs ...string,
+	ctx context.Context, cfg map[string]any, post pdHTTPRequest, prefixs ...string,
 ) error {
 	prefix := configPrefix
 	if len(prefixs) != 0 {
 		prefix = prefixs[0]
 	}
-	newCfg := make(map[string]interface{})
+	newCfg := make(map[string]any)
 	for k, v := range cfg {
 		// if we want use ttl, we need use config prefix first.
 		// which means cfg should transfer from "max-merge-region-keys" to "schedule.max-merge-region-keys".
@@ -622,7 +622,7 @@ func (p *PdController) doUpdatePDScheduleConfig(
 	return errors.Annotate(berrors.ErrPDUpdateFailed, "failed to update PD schedule config")
 }
 
-func (p *PdController) doPauseConfigs(ctx context.Context, cfg map[string]interface{}, post pdHTTPRequest) error {
+func (p *PdController) doPauseConfigs(ctx context.Context, cfg map[string]any, post pdHTTPRequest) error {
 	// pause this scheduler with 300 seconds
 	prefix := fmt.Sprintf("%s?ttlSecond=%.0f", configPrefix, pauseTimeout.Seconds())
 	return p.doUpdatePDScheduleConfig(ctx, cfg, post, prefix)
@@ -634,7 +634,7 @@ func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg Cluster
 		return errors.Annotate(err, "fail to add PD schedulers")
 	}
 	log.Info("restoring config", zap.Any("config", clusterCfg.ScheduleCfg))
-	mergeCfg := make(map[string]interface{})
+	mergeCfg := make(map[string]any)
 	for cfgKey := range configsNeedRestore {
 		value := clusterCfg.ScheduleCfg[cfgKey]
 		if value == nil {
@@ -722,9 +722,9 @@ func (p *PdController) RemoveAllPDSchedulers(ctx context.Context) (undo UndoFunc
 	pdConfigGenerators := DefaultExpectPDCfgGenerators()
 	for _, param := range scheduleLimitParams {
 		if param == enableTiKVSplitRegion {
-			pdConfigGenerators[param] = func(int, interface{}) interface{} { return false }
+			pdConfigGenerators[param] = func(int, any) any { return false }
 		} else {
-			pdConfigGenerators[param] = func(int, interface{}) interface{} { return 0 }
+			pdConfigGenerators[param] = func(int, any) any { return 0 }
 		}
 	}
 
@@ -765,8 +765,8 @@ func (p *PdController) RemoveSchedulersWithConfigGenerator(ctx context.Context,
 	if err != nil {
 		return originCfg, removedCfg, err
 	}
-	disablePDCfg := make(map[string]interface{}, len(pdConfigGenerators))
-	originPDCfg := make(map[string]interface{}, len(pdConfigGenerators))
+	disablePDCfg := make(map[string]any, len(pdConfigGenerators))
+	originPDCfg := make(map[string]any, len(pdConfigGenerators))
 	for cfgKey, cfgValFunc := range pdConfigGenerators {
 		value, ok := scheduleCfg[cfgKey]
 		if !ok {
@@ -813,7 +813,7 @@ func (p *PdController) RemoveSchedulersWithCfg(ctx context.Context, removeCfg Cl
 func (p *PdController) doRemoveSchedulersWith(
 	ctx context.Context,
 	needRemoveSchedulers []string,
-	disablePDCfg map[string]interface{},
+	disablePDCfg map[string]any,
 ) ([]string, error) {
 	var removedSchedulers []string
 	var err error
@@ -951,7 +951,7 @@ type LabelRule struct {
 	ID       string        `json:"id"`
 	Labels   []RegionLabel `json:"labels"`
 	RuleType string        `json:"rule_type"`
-	Data     interface{}   `json:"data"`
+	Data     any           `json:"data"`
 }
 
 // KeyRangeRule contains the start key and end key of the LabelRule. This struct is partially copied from

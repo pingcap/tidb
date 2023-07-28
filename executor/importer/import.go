@@ -684,7 +684,7 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 		}
 		setClause = sb.String()
 	}
-	optionMap := make(map[string]interface{}, len(plan.Options))
+	optionMap := make(map[string]any, len(plan.Options))
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
 			optionMap[opt.Name] = opt.Value.String()

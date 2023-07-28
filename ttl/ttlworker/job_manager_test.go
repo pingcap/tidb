@@ -370,21 +370,21 @@ func TestLockTable(t *testing.T) {
 
 	type executeInfo struct {
 		sql  string
-		args []interface{}
+		args []any
 	}
-	getExecuteInfo := func(sql string, args []interface{}) executeInfo {
+	getExecuteInfo := func(sql string, args []any) executeInfo {
 		return executeInfo{
 			sql,
 			args,
 		}
 	}
-	getExecuteInfoForUpdate := func(sql string, args []interface{}) executeInfo {
+	getExecuteInfoForUpdate := func(sql string, args []any) executeInfo {
 		return executeInfo{
 			sql + " FOR UPDATE NOWAIT",
 			args,
 		}
 	}
-	getExecuteInfoWithErr := func(sql string, args []interface{}, err error) executeInfo {
+	getExecuteInfoWithErr := func(sql string, args []any, err error) executeInfo {
 		require.NoError(t, err)
 		return executeInfo{
 			sql,
@@ -590,7 +590,7 @@ func TestLockTable(t *testing.T) {
 			m.infoSchemaCache.Tables[c.table.ID] = c.table
 			sqlCounter := 0
 			se := newMockSession(t)
-			se.executeSQL = func(ctx context.Context, sql string, args ...interface{}) (rows []chunk.Row, err error) {
+			se.executeSQL = func(ctx context.Context, sql string, args ...any) (rows []chunk.Row, err error) {
 				assert.Less(t, sqlCounter, len(c.sqls))
 				assert.Equal(t, c.sqls[sqlCounter].sql, sql)
 				assert.Equal(t, c.sqls[sqlCounter].args, args)

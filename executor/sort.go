@@ -294,11 +294,11 @@ func (h *multiWayMerge) Len() int {
 	return len(h.elements)
 }
 
-func (*multiWayMerge) Push(interface{}) {
+func (*multiWayMerge) Push(any) {
 	// Should never be called.
 }
 
-func (h *multiWayMerge) Pop() interface{} {
+func (h *multiWayMerge) Pop() any {
 	h.elements = h.elements[:len(h.elements)-1]
 	return nil
 }
@@ -355,11 +355,11 @@ func (h *topNChunkHeap) Len() int {
 	return len(h.rowPtrs)
 }
 
-func (*topNChunkHeap) Push(interface{}) {
+func (*topNChunkHeap) Push(any) {
 	// Should never be called.
 }
 
-func (h *topNChunkHeap) Pop() interface{} {
+func (h *topNChunkHeap) Pop() any {
 	h.rowPtrs = h.rowPtrs[:len(h.rowPtrs)-1]
 	// We don't need the popped value, return nil to avoid memory allocation.
 	return nil

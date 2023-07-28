@@ -177,7 +177,7 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 			return errors.Trace(err)
 		}
 		data := make([]sql.NullString, len(cols))
-		args := make([]interface{}, 0, len(cols))
+		args := make([]any, 0, len(cols))
 		for i := range data {
 			args = append(args, &data[i])
 		}

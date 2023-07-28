@@ -508,7 +508,7 @@ func (y *OutputFormatter) Teardown() error {
 	return nil
 }
 
-func (y *OutputFormatter) Format(format string, args ...interface{}) (int, error) {
+func (y *OutputFormatter) Format(format string, args ...any) (int, error) {
 	return y.formatter.Format(format, args...)
 }
 
@@ -521,7 +521,7 @@ type NotNilAssert struct {
 	err error
 }
 
-func (n *NotNilAssert) and(target interface{}) *NotNilAssert {
+func (n *NotNilAssert) and(target any) *NotNilAssert {
 	if n.err != nil {
 		return n
 	}
@@ -536,7 +536,7 @@ func (n *NotNilAssert) NotNil() error {
 	return n.err
 }
 
-func Ensure(target interface{}) *NotNilAssert {
+func Ensure(target any) *NotNilAssert {
 	return (&NotNilAssert{}).and(target)
 }
 

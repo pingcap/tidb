@@ -67,7 +67,7 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
-func mustExec(t *testing.T, se Session, sql string, args ...interface{}) {
+func mustExec(t *testing.T, se Session, sql string, args ...any) {
 	rs, err := exec(se, sql, args...)
 	require.NoError(t, err)
 	if rs != nil {
@@ -75,13 +75,13 @@ func mustExec(t *testing.T, se Session, sql string, args ...interface{}) {
 	}
 }
 
-func mustExecToRecodeSet(t *testing.T, se Session, sql string, args ...interface{}) sqlexec.RecordSet {
+func mustExecToRecodeSet(t *testing.T, se Session, sql string, args ...any) sqlexec.RecordSet {
 	rs, err := exec(se, sql, args...)
 	require.NoError(t, err)
 	return rs
 }
 
-func match(t *testing.T, row []types.Datum, expected ...interface{}) {
+func match(t *testing.T, row []types.Datum, expected ...any) {
 	require.Len(t, row, len(expected))
 	for i := range row {
 		if _, ok := expected[i].(time.Time); ok {

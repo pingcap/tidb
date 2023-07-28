@@ -54,7 +54,7 @@ func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) 
 	cc.extensions.OnConnectionEvent(tp, info)
 }
 
-func (cc *clientConn) onExtensionStmtEnd(node interface{}, stmtCtxValid bool, err error, args ...expression.Expression) {
+func (cc *clientConn) onExtensionStmtEnd(node any, stmtCtxValid bool, err error, args ...expression.Expression) {
 	if !cc.extensions.HasStmtEventListeners() {
 		return
 	}

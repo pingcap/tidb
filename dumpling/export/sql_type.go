@@ -197,7 +197,7 @@ type RowReceiverArr struct {
 }
 
 // BindAddress implements RowReceiver.BindAddress
-func (r RowReceiverArr) BindAddress(args []interface{}) {
+func (r RowReceiverArr) BindAddress(args []any) {
 	if r.bound {
 		return
 	}
@@ -258,7 +258,7 @@ type SQLTypeString struct {
 }
 
 // BindAddress implements RowReceiver.BindAddress
-func (s *SQLTypeString) BindAddress(arg []interface{}) {
+func (s *SQLTypeString) BindAddress(arg []any) {
 	arg[0] = &s.RawBytes
 }
 
@@ -290,7 +290,7 @@ type SQLTypeBytes struct {
 }
 
 // BindAddress implements RowReceiver.BindAddress
-func (s *SQLTypeBytes) BindAddress(arg []interface{}) {
+func (s *SQLTypeBytes) BindAddress(arg []any) {
 	arg[0] = &s.RawBytes
 }
 

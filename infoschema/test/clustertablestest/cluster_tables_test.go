@@ -777,7 +777,7 @@ func (s *clusterTablesSuite) setUpMockPDHTTPServer() (*httptest.Server, string) 
 		}, nil
 	}))
 	// mock PD API
-	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
+	router.Handle(pdapi.Status, fn.Wrap(func() (any, error) {
 		return struct {
 			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`
@@ -788,14 +788,14 @@ func (s *clusterTablesSuite) setUpMockPDHTTPServer() (*httptest.Server, string) 
 			StartTimestamp: s.startTime.Unix(),
 		}, nil
 	}))
-	var mockConfig = func() (map[string]interface{}, error) {
-		configuration := map[string]interface{}{
+	var mockConfig = func() (map[string]any, error) {
+		configuration := map[string]any{
 			"key1": "value1",
 			"key2": map[string]string{
 				"nest1": "n-value1",
 				"nest2": "n-value2",
 			},
-			"key3": map[string]interface{}{
+			"key3": map[string]any{
 				"nest1": "n-value1",
 				"nest2": "n-value2",
 				"key4": map[string]string{

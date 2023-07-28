@@ -614,7 +614,7 @@ func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
 }
 
 func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte, error) {
-	e.idxValues.Range(func(h kv.Handle, _ interface{}) bool {
+	e.idxValues.Range(func(h kv.Handle, _ any) bool {
 		e.batchKeys = append(e.batchKeys, tablecodec.EncodeRecordKey(e.table.RecordPrefix(), h))
 		return true
 	})
@@ -779,7 +779,7 @@ func (e *CleanupIndexExec) cleanTableIndex(ctx context.Context) error {
 		}
 		e.scanRowCnt = 0
 		e.batchKeys = e.batchKeys[:0]
-		e.idxValues.Range(func(h kv.Handle, val interface{}) bool {
+		e.idxValues.Range(func(h kv.Handle, val any) bool {
 			e.idxValues.Delete(h)
 			return true
 		})

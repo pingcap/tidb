@@ -45,8 +45,8 @@ func (*ddl) GetScope(_ string) variable.ScopeFlag {
 }
 
 // Stats returns the DDL statistics.
-func (d *ddl) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
-	m := make(map[string]interface{})
+func (d *ddl) Stats(_ *variable.SessionVars) (map[string]any, error) {
+	m := make(map[string]any)
 	m[serverID] = d.uuid
 	var ddlInfo *Info
 

@@ -63,7 +63,7 @@ func convertAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblIn
 	}
 
 	// the second and the third args will be used in onDropIndex.
-	job.Args = []interface{}{indexInfo.Name, false /* ifExists */, getPartitionIDs(tblInfo)}
+	job.Args = []any{indexInfo.Name, false /* ifExists */, getPartitionIDs(tblInfo)}
 	// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
 	// Its work is the same as drop index job do.
 	// The write reorganization state in add index job that likes write only state in drop index job.
@@ -175,7 +175,7 @@ func rollingbackAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, e
 	columnInfo.State = model.StateDeleteOnly
 	job.SchemaState = model.StateDeleteOnly
 
-	job.Args = []interface{}{col.Name}
+	job.Args = []any{col.Name}
 	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != columnInfo.State)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -269,7 +269,7 @@ func convertAddTablePartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model
 	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
 	}
-	job.Args = []interface{}{partNames}
+	job.Args = []any{partNames}
 	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -496,7 +496,7 @@ func rollingBackAddConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 	constrInfoInMeta.State = model.StateWriteOnly
 	job.SchemaState = model.StateWriteOnly
 
-	job.Args = []interface{}{constrInfoInMeta.Name}
+	job.Args = []any{constrInfoInMeta.Name}
 	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != constrInfoInMeta.State)
 	if err != nil {
 		return ver, errors.Trace(err)

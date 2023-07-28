@@ -1111,7 +1111,7 @@ func TestDataCharacterSet(t *testing.T) {
 }
 
 func TestCheckpointKeepStrategy(t *testing.T) {
-	tomlCases := map[interface{}]CheckpointKeepStrategy{
+	tomlCases := map[any]CheckpointKeepStrategy{
 		true:     CheckpointRename,
 		false:    CheckpointRemove,
 		"remove": CheckpointRemove,

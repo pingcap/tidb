@@ -6335,44 +6335,44 @@ func TestBuiltinFuncJSONMergePatch_InColumn(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tests := []struct {
-		input    [2]interface{}
-		expected interface{}
+		input    [2]any
+		expected any
 		success  bool
 		errCode  int
 	}{
 		// RFC 7396 document: https://datatracker.ietf.org/doc/html/rfc7396
 		// RFC 7396 Example Test Cases
-		{[2]interface{}{`{"a":"b"}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
-		{[2]interface{}{`{"a":"b"}`, `{"b":"c"}`}, `{"a": "b", "b": "c"}`, true, 0},
-		{[2]interface{}{`{"a":"b"}`, `{"a":null}`}, `{}`, true, 0},
-		{[2]interface{}{`{"a":"b", "b":"c"}`, `{"a":null}`}, `{"b": "c"}`, true, 0},
-		{[2]interface{}{`{"a":["b"]}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
-		{[2]interface{}{`{"a":"c"}`, `{"a":["b"]}`}, `{"a": ["b"]}`, true, 0},
-		{[2]interface{}{`{"a":{"b":"c"}}`, `{"a":{"b":"d","c":null}}`}, `{"a": {"b": "d"}}`, true, 0},
-		{[2]interface{}{`{"a":[{"b":"c"}]}`, `{"a": [1]}`}, `{"a": [1]}`, true, 0},
-		{[2]interface{}{`["a","b"]`, `["c","d"]`}, `["c", "d"]`, true, 0},
-		{[2]interface{}{`{"a":"b"}`, `["c"]`}, `["c"]`, true, 0},
-		{[2]interface{}{`{"a":"foo"}`, `null`}, `null`, true, 0},
-		{[2]interface{}{`{"a":"foo"}`, `"bar"`}, `"bar"`, true, 0},
-		{[2]interface{}{`{"e":null}`, `{"a":1}`}, `{"e": null, "a": 1}`, true, 0},
-		{[2]interface{}{`[1,2]`, `{"a":"b","c":null}`}, `{"a": "b"}`, true, 0},
-		{[2]interface{}{`{}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a": {"bb": {}}}`, true, 0},
+		{[2]any{`{"a":"b"}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
+		{[2]any{`{"a":"b"}`, `{"b":"c"}`}, `{"a": "b", "b": "c"}`, true, 0},
+		{[2]any{`{"a":"b"}`, `{"a":null}`}, `{}`, true, 0},
+		{[2]any{`{"a":"b", "b":"c"}`, `{"a":null}`}, `{"b": "c"}`, true, 0},
+		{[2]any{`{"a":["b"]}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
+		{[2]any{`{"a":"c"}`, `{"a":["b"]}`}, `{"a": ["b"]}`, true, 0},
+		{[2]any{`{"a":{"b":"c"}}`, `{"a":{"b":"d","c":null}}`}, `{"a": {"b": "d"}}`, true, 0},
+		{[2]any{`{"a":[{"b":"c"}]}`, `{"a": [1]}`}, `{"a": [1]}`, true, 0},
+		{[2]any{`["a","b"]`, `["c","d"]`}, `["c", "d"]`, true, 0},
+		{[2]any{`{"a":"b"}`, `["c"]`}, `["c"]`, true, 0},
+		{[2]any{`{"a":"foo"}`, `null`}, `null`, true, 0},
+		{[2]any{`{"a":"foo"}`, `"bar"`}, `"bar"`, true, 0},
+		{[2]any{`{"e":null}`, `{"a":1}`}, `{"e": null, "a": 1}`, true, 0},
+		{[2]any{`[1,2]`, `{"a":"b","c":null}`}, `{"a": "b"}`, true, 0},
+		{[2]any{`{}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a": {"bb": {}}}`, true, 0},
 		// RFC 7396 Example Document
-		{[2]interface{}{`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`, `{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`}, `{"title":"Hello!","author":{"givenName":"John"},"tags":["example"],"content":"This will be unchanged","phoneNumber":"+01-123-456-7890"}`, true, 0},
+		{[2]any{`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`, `{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`}, `{"title":"Hello!","author":{"givenName":"John"},"tags":["example"],"content":"This will be unchanged","phoneNumber":"+01-123-456-7890"}`, true, 0},
 
 		// From mysql Example Test Cases
-		{[2]interface{}{nil, `{"a":1}`}, nil, true, 0},
-		{[2]interface{}{`{"a":1}`, nil}, nil, true, 0},
-		{[2]interface{}{`{"a":"foo"}`, `true`}, `true`, true, 0},
-		{[2]interface{}{`{"a":"foo"}`, `false`}, `false`, true, 0},
-		{[2]interface{}{`{"a":"foo"}`, `123`}, `123`, true, 0},
-		{[2]interface{}{`{"a":"foo"}`, `123.1`}, `123.1`, true, 0},
-		{[2]interface{}{`{"a":"foo"}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
-		{[2]interface{}{"null", `{"a":1}`}, `{"a":1}`, true, 0},
-		{[2]interface{}{`{"a":1}`, "null"}, `null`, true, 0},
+		{[2]any{nil, `{"a":1}`}, nil, true, 0},
+		{[2]any{`{"a":1}`, nil}, nil, true, 0},
+		{[2]any{`{"a":"foo"}`, `true`}, `true`, true, 0},
+		{[2]any{`{"a":"foo"}`, `false`}, `false`, true, 0},
+		{[2]any{`{"a":"foo"}`, `123`}, `123`, true, 0},
+		{[2]any{`{"a":"foo"}`, `123.1`}, `123.1`, true, 0},
+		{[2]any{`{"a":"foo"}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[2]any{"null", `{"a":1}`}, `{"a":1}`, true, 0},
+		{[2]any{`{"a":1}`, "null"}, `null`, true, 0},
 
 		// Invalid json text
-		{[2]interface{}{`{"a":1}`, `[1]}`}, nil, false, mysql.ErrInvalidJSONText},
+		{[2]any{`{"a":1}`, `[1]}`}, nil, false, mysql.ErrInvalidJSONText},
 	}
 
 	tk.MustExec(`use test;`)
@@ -6405,93 +6405,93 @@ func TestBuiltinFuncJSONMergePatch_InExpression(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tests := []struct {
-		input    []interface{}
-		expected interface{}
+		input    []any
+		expected any
 		success  bool
 		errCode  int
 	}{
 		// RFC 7396 document: https://datatracker.ietf.org/doc/html/rfc7396
 		// RFC 7396 Example Test Cases
-		{[]interface{}{`{"a":"b"}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
-		{[]interface{}{`{"a":"b"}`, `{"b":"c"}`}, `{"a": "b","b": "c"}`, true, 0},
-		{[]interface{}{`{"a":"b"}`, `{"a":null}`}, `{}`, true, 0},
-		{[]interface{}{`{"a":"b", "b":"c"}`, `{"a":null}`}, `{"b": "c"}`, true, 0},
-		{[]interface{}{`{"a":["b"]}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
-		{[]interface{}{`{"a":"c"}`, `{"a":["b"]}`}, `{"a": ["b"]}`, true, 0},
-		{[]interface{}{`{"a":{"b":"c"}}`, `{"a":{"b":"d","c":null}}`}, `{"a": {"b": "d"}}`, true, 0},
-		{[]interface{}{`{"a":[{"b":"c"}]}`, `{"a": [1]}`}, `{"a": [1]}`, true, 0},
-		{[]interface{}{`["a","b"]`, `["c","d"]`}, `["c", "d"]`, true, 0},
-		{[]interface{}{`{"a":"b"}`, `["c"]`}, `["c"]`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `null`}, `null`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `"bar"`}, `"bar"`, true, 0},
-		{[]interface{}{`{"e":null}`, `{"a":1}`}, `{"e": null,"a": 1}`, true, 0},
-		{[]interface{}{`[1,2]`, `{"a":"b","c":null}`}, `{"a":"b"}`, true, 0},
-		{[]interface{}{`{}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb": {}}}`, true, 0},
+		{[]any{`{"a":"b"}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
+		{[]any{`{"a":"b"}`, `{"b":"c"}`}, `{"a": "b","b": "c"}`, true, 0},
+		{[]any{`{"a":"b"}`, `{"a":null}`}, `{}`, true, 0},
+		{[]any{`{"a":"b", "b":"c"}`, `{"a":null}`}, `{"b": "c"}`, true, 0},
+		{[]any{`{"a":["b"]}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
+		{[]any{`{"a":"c"}`, `{"a":["b"]}`}, `{"a": ["b"]}`, true, 0},
+		{[]any{`{"a":{"b":"c"}}`, `{"a":{"b":"d","c":null}}`}, `{"a": {"b": "d"}}`, true, 0},
+		{[]any{`{"a":[{"b":"c"}]}`, `{"a": [1]}`}, `{"a": [1]}`, true, 0},
+		{[]any{`["a","b"]`, `["c","d"]`}, `["c", "d"]`, true, 0},
+		{[]any{`{"a":"b"}`, `["c"]`}, `["c"]`, true, 0},
+		{[]any{`{"a":"foo"}`, `null`}, `null`, true, 0},
+		{[]any{`{"a":"foo"}`, `"bar"`}, `"bar"`, true, 0},
+		{[]any{`{"e":null}`, `{"a":1}`}, `{"e": null,"a": 1}`, true, 0},
+		{[]any{`[1,2]`, `{"a":"b","c":null}`}, `{"a":"b"}`, true, 0},
+		{[]any{`{}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb": {}}}`, true, 0},
 		// RFC 7396 Example Document
-		{[]interface{}{`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`, `{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`}, `{"title":"Hello!","author":{"givenName":"John"},"tags":["example"],"content":"This will be unchanged","phoneNumber":"+01-123-456-7890"}`, true, 0},
+		{[]any{`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`, `{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`}, `{"title":"Hello!","author":{"givenName":"John"},"tags":["example"],"content":"This will be unchanged","phoneNumber":"+01-123-456-7890"}`, true, 0},
 
 		// test cases
-		{[]interface{}{nil, `1`}, `1`, true, 0},
-		{[]interface{}{`1`, nil}, nil, true, 0},
-		{[]interface{}{nil, `null`}, `null`, true, 0},
-		{[]interface{}{`null`, nil}, nil, true, 0},
-		{[]interface{}{nil, `true`}, `true`, true, 0},
-		{[]interface{}{`true`, nil}, nil, true, 0},
-		{[]interface{}{nil, `false`}, `false`, true, 0},
-		{[]interface{}{`false`, nil}, nil, true, 0},
-		{[]interface{}{nil, `[1,2,3]`}, `[1,2,3]`, true, 0},
-		{[]interface{}{`[1,2,3]`, nil}, nil, true, 0},
-		{[]interface{}{nil, `{"a":"foo"}`}, nil, true, 0},
-		{[]interface{}{`{"a":"foo"}`, nil}, nil, true, 0},
+		{[]any{nil, `1`}, `1`, true, 0},
+		{[]any{`1`, nil}, nil, true, 0},
+		{[]any{nil, `null`}, `null`, true, 0},
+		{[]any{`null`, nil}, nil, true, 0},
+		{[]any{nil, `true`}, `true`, true, 0},
+		{[]any{`true`, nil}, nil, true, 0},
+		{[]any{nil, `false`}, `false`, true, 0},
+		{[]any{`false`, nil}, nil, true, 0},
+		{[]any{nil, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[]any{`[1,2,3]`, nil}, nil, true, 0},
+		{[]any{nil, `{"a":"foo"}`}, nil, true, 0},
+		{[]any{`{"a":"foo"}`, nil}, nil, true, 0},
 
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"b":"123"}`, `{"c":1}`}, `{"b":"123","c":1}`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"c":1}`}, `{"c":1}`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `true`}, `true`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `{"d":1}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb":{}},"d":1}`, true, 0},
-		{[]interface{}{`null`, `true`, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[]any{`{"a":"foo"}`, `{"a":null}`, `{"b":"123"}`, `{"c":1}`}, `{"b":"123","c":1}`, true, 0},
+		{[]any{`{"a":"foo"}`, `{"a":null}`, `{"c":1}`}, `{"c":1}`, true, 0},
+		{[]any{`{"a":"foo"}`, `{"a":null}`, `true`}, `true`, true, 0},
+		{[]any{`{"a":"foo"}`, `{"d":1}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb":{}},"d":1}`, true, 0},
+		{[]any{`null`, `true`, `[1,2,3]`}, `[1,2,3]`, true, 0},
 
 		// From mysql Example Test Cases
-		{[]interface{}{nil, `null`, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true, 0},
-		{[]interface{}{`null`, nil, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true, 0},
-		{[]interface{}{`null`, `[1,2,3]`, nil, `{"a":1}`}, nil, true, 0},
-		{[]interface{}{`null`, `[1,2,3]`, `{"a":1}`, nil}, nil, true, 0},
+		{[]any{nil, `null`, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true, 0},
+		{[]any{`null`, nil, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true, 0},
+		{[]any{`null`, `[1,2,3]`, nil, `{"a":1}`}, nil, true, 0},
+		{[]any{`null`, `[1,2,3]`, `{"a":1}`, nil}, nil, true, 0},
 
-		{[]interface{}{nil, `null`, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
-		{[]interface{}{`null`, nil, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
-		{[]interface{}{`null`, `{"a":1}`, nil, `[1,2,3]`}, `[1,2,3]`, true, 0},
-		{[]interface{}{`null`, `{"a":1}`, `[1,2,3]`, nil}, nil, true, 0},
+		{[]any{nil, `null`, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[]any{`null`, nil, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[]any{`null`, `{"a":1}`, nil, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[]any{`null`, `{"a":1}`, `[1,2,3]`, nil}, nil, true, 0},
 
-		{[]interface{}{nil, `null`, `{"a":1}`, `true`}, `true`, true, 0},
-		{[]interface{}{`null`, nil, `{"a":1}`, `true`}, `true`, true, 0},
-		{[]interface{}{`null`, `{"a":1}`, nil, `true`}, `true`, true, 0},
-		{[]interface{}{`null`, `{"a":1}`, `true`, nil}, nil, true, 0},
+		{[]any{nil, `null`, `{"a":1}`, `true`}, `true`, true, 0},
+		{[]any{`null`, nil, `{"a":1}`, `true`}, `true`, true, 0},
+		{[]any{`null`, `{"a":1}`, nil, `true`}, `true`, true, 0},
+		{[]any{`null`, `{"a":1}`, `true`, nil}, nil, true, 0},
 
 		// non-object last item
-		{[]interface{}{"true", "false", "[]", "{}", "null"}, "null", true, 0},
-		{[]interface{}{"false", "[]", "{}", "null", "true"}, "true", true, 0},
-		{[]interface{}{"true", "[]", "{}", "null", "false"}, "false", true, 0},
-		{[]interface{}{"true", "false", "{}", "null", "[]"}, "[]", true, 0},
-		{[]interface{}{"true", "false", "{}", "null", "1"}, "1", true, 0},
-		{[]interface{}{"true", "false", "{}", "null", "1.8"}, "1.8", true, 0},
-		{[]interface{}{"true", "false", "{}", "null", `"112"`}, `"112"`, true, 0},
+		{[]any{"true", "false", "[]", "{}", "null"}, "null", true, 0},
+		{[]any{"false", "[]", "{}", "null", "true"}, "true", true, 0},
+		{[]any{"true", "[]", "{}", "null", "false"}, "false", true, 0},
+		{[]any{"true", "false", "{}", "null", "[]"}, "[]", true, 0},
+		{[]any{"true", "false", "{}", "null", "1"}, "1", true, 0},
+		{[]any{"true", "false", "{}", "null", "1.8"}, "1.8", true, 0},
+		{[]any{"true", "false", "{}", "null", `"112"`}, `"112"`, true, 0},
 
-		{[]interface{}{`{"a":"foo"}`, nil}, nil, true, 0},
-		{[]interface{}{nil, `{"a":"foo"}`}, nil, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `false`}, `false`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `123`}, `123`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `123.1`}, `123.1`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
-		{[]interface{}{`null`, `{"a":1}`}, `{"a":1}`, true, 0},
-		{[]interface{}{`{"a":1}`, `null`}, `null`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"b":"123"}`, `{"c":1}`}, `{"b":"123","c":1}`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"c":1}`}, `{"c":1}`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `true`}, `true`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `{"d":1}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb":{}},"d":1}`, true, 0},
+		{[]any{`{"a":"foo"}`, nil}, nil, true, 0},
+		{[]any{nil, `{"a":"foo"}`}, nil, true, 0},
+		{[]any{`{"a":"foo"}`, `false`}, `false`, true, 0},
+		{[]any{`{"a":"foo"}`, `123`}, `123`, true, 0},
+		{[]any{`{"a":"foo"}`, `123.1`}, `123.1`, true, 0},
+		{[]any{`{"a":"foo"}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[]any{`null`, `{"a":1}`}, `{"a":1}`, true, 0},
+		{[]any{`{"a":1}`, `null`}, `null`, true, 0},
+		{[]any{`{"a":"foo"}`, `{"a":null}`, `{"b":"123"}`, `{"c":1}`}, `{"b":"123","c":1}`, true, 0},
+		{[]any{`{"a":"foo"}`, `{"a":null}`, `{"c":1}`}, `{"c":1}`, true, 0},
+		{[]any{`{"a":"foo"}`, `{"a":null}`, `true`}, `true`, true, 0},
+		{[]any{`{"a":"foo"}`, `{"d":1}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb":{}},"d":1}`, true, 0},
 
 		// Invalid json text
-		{[]interface{}{`{"a":1}`, `[1]}`}, nil, false, mysql.ErrInvalidJSONText},
-		{[]interface{}{`{{"a":1}`, `[1]`, `null`}, nil, false, mysql.ErrInvalidJSONText},
-		{[]interface{}{`{"a":1}`, `jjj`, `null`}, nil, false, mysql.ErrInvalidJSONText},
+		{[]any{`{"a":1}`, `[1]}`}, nil, false, mysql.ErrInvalidJSONText},
+		{[]any{`{{"a":1}`, `[1]`, `null`}, nil, false, mysql.ErrInvalidJSONText},
+		{[]any{`{"a":1}`, `jjj`, `null`}, nil, false, mysql.ErrInvalidJSONText},
 	}
 
 	for _, tt := range tests {
@@ -7167,21 +7167,21 @@ func TestIssue29708(t *testing.T) {
 	// test vectorized build-in function
 	tk.MustExec("insert into t1 (a) values ('a'),('b');")
 	tk.MustExecToErr("insert into t1 select REPEAT(a,200000000) from t1;")
-	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+	tk.MustQuery("select a from t1 order by a;").Check([][]any{
 		{"a"},
 		{"b"},
 	})
 
 	// test cast
 	tk.MustExecToErr(`insert into t1 values  (cast("a" as binary(4294967295)));`)
-	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+	tk.MustQuery("select a from t1 order by a;").Check([][]any{
 		{"a"},
 		{"b"},
 	})
 
 	tk.MustExec("INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));")
 	tk.MustQuery("show warnings;").CheckContain("Result of repeat() was larger than max_allowed_packet (67108864) - truncated")
-	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+	tk.MustQuery("select a from t1 order by a;").Check([][]any{
 		{nil},
 		{"a"},
 		{"b"},
@@ -7213,11 +7213,11 @@ func TestIssue32488(t *testing.T) {
 	tk.MustExec("create table t(a varchar(32)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;")
 	tk.MustExec("insert into t values('ʞ'), ('İ');")
 	tk.MustExec("set @@tidb_enable_vectorized_expression = false;")
-	tk.MustQuery("select binary upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
-	tk.MustQuery("select distinct upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
+	tk.MustQuery("select binary upper(a), lower(a) from t order by upper(a);").Check([][]any{{"İ i"}, {"Ʞ ʞ"}})
+	tk.MustQuery("select distinct upper(a), lower(a) from t order by upper(a);").Check([][]any{{"İ i"}, {"Ʞ ʞ"}})
 	tk.MustExec("set @@tidb_enable_vectorized_expression = true;")
-	tk.MustQuery("select binary upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
-	tk.MustQuery("select distinct upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
+	tk.MustQuery("select binary upper(a), lower(a) from t order by upper(a);").Check([][]any{{"İ i"}, {"Ʞ ʞ"}})
+	tk.MustQuery("select distinct upper(a), lower(a) from t order by upper(a);").Check([][]any{{"İ i"}, {"Ʞ ʞ"}})
 }
 
 func TestIssue33397(t *testing.T) {
@@ -7229,7 +7229,7 @@ func TestIssue33397(t *testing.T) {
 	tk.MustExec("insert into t values(''), ('');")
 	tk.MustExec("set @@tidb_enable_vectorized_expression = true;")
 	result := tk.MustQuery("select compress(a) from t").Rows()
-	require.Equal(t, [][]interface{}{{""}, {""}}, result)
+	require.Equal(t, [][]any{{""}, {""}}, result)
 }
 
 func TestIssue34659(t *testing.T) {
@@ -7240,61 +7240,61 @@ func TestIssue34659(t *testing.T) {
 	tk.MustExec("create table t(a varchar(32))")
 	tk.MustExec("insert into t values(date_add(cast('00:00:00' as time), interval 1.1 second))")
 	result := tk.MustQuery("select * from t").Rows()
-	require.Equal(t, [][]interface{}{{"00:00:01.1"}}, result)
+	require.Equal(t, [][]any{{"00:00:01.1"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 second) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"00:00:01.1"}}, result)
+	require.Equal(t, [][]any{{"00:00:01.1"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 microsecond) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"00:00:00.000001"}}, result)
+	require.Equal(t, [][]any{{"00:00:00.000001"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1000000 microsecond) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"00:00:01.000000"}}, result)
+	require.Equal(t, [][]any{{"00:00:01.000000"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1111119 second) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"00:00:01.111111"}}, result)
+	require.Equal(t, [][]any{{"00:00:01.111111"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.0 second) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"00:00:01.0"}}, result)
+	require.Equal(t, [][]any{{"00:00:01.0"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 second_microsecond) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"00:00:01.100000"}}, result)
+	require.Equal(t, [][]any{{"00:00:01.100000"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 second_microsecond) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"00:00:01.111111"}}, result)
+	require.Equal(t, [][]any{{"00:00:01.111111"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 minute_microsecond) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"00:00:01.100000"}}, result)
+	require.Equal(t, [][]any{{"00:00:01.100000"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 minute_microsecond) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"00:00:01.111111"}}, result)
+	require.Equal(t, [][]any{{"00:00:01.111111"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 minute_second) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"00:01:01"}}, result)
+	require.Equal(t, [][]any{{"00:01:01"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 minute_second) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"308:38:31"}}, result)
+	require.Equal(t, [][]any{{"308:38:31"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 hour_microsecond) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"00:00:01.100000"}}, result)
+	require.Equal(t, [][]any{{"00:00:01.100000"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 hour_microsecond) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"00:00:01.111111"}}, result)
+	require.Equal(t, [][]any{{"00:00:01.111111"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 hour_second) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"00:01:01"}}, result)
+	require.Equal(t, [][]any{{"00:01:01"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 hour_second) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"308:38:31"}}, result)
+	require.Equal(t, [][]any{{"308:38:31"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 hour_minute) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"01:01:00"}}, result)
+	require.Equal(t, [][]any{{"01:01:00"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 day_microsecond) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"00:00:01.100000"}}, result)
+	require.Equal(t, [][]any{{"00:00:01.100000"}}, result)
 
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 day_microsecond) as char)").Rows()
-	require.Equal(t, [][]interface{}{{"00:00:01.111111"}}, result)
+	require.Equal(t, [][]any{{"00:00:01.111111"}}, result)
 }
 
 func TestIssue31799(t *testing.T) {
@@ -7309,7 +7309,7 @@ func TestIssue31799(t *testing.T) {
 	tk.MustExec("insert into t values(3, date_add(cast('2001-01-01 00:00:00' as datetime), interval 1.1 second))")
 	tk.MustExec("insert into t values(4, date_add(cast('2001-01-01 00:00:00' as datetime(6)), interval 1.1 second))")
 	tk.MustExec("insert into t values(5, date_add(cast('00:00:00' as time), interval 1.1 second))")
-	tk.MustQuery("select c from t order by i").Check([][]interface{}{{"2001-01-01 00:00:01"}, {"2001-01-01 00:00:01.000000"}, {"2001-01-01 00:00:01.1"}, {"2001-01-01 00:00:01.100000"}, {"00:00:01.1"}})
+	tk.MustQuery("select c from t order by i").Check([][]any{{"2001-01-01 00:00:01"}, {"2001-01-01 00:00:01.000000"}, {"2001-01-01 00:00:01.1"}, {"2001-01-01 00:00:01.100000"}, {"00:00:01.1"}})
 	tk.MustExec("drop table t")
 }
 
@@ -7329,7 +7329,7 @@ func TestIssue31867(t *testing.T) {
 	tk.MustExec("insert into t values('2001-01-01 00:00:00.000001')")
 	tk.MustExec("insert into t values('2001-01-01 01:00:00.000000')")
 	tk.MustExec("insert into t values('2001-01-01 01:00:00.000001')")
-	tk.MustQuery("select date_add(ts, interval 1 minute) from t order by ts").Check([][]interface{}{
+	tk.MustQuery("select date_add(ts, interval 1 minute) from t order by ts").Check([][]any{
 		{"1970-01-01 01:01:01.000000"},
 		{"1970-01-01 01:01:01.000001"},
 		{"1971-01-01 01:01:00.000000"},
@@ -7339,7 +7339,7 @@ func TestIssue31867(t *testing.T) {
 		{"2001-01-01 01:01:00.000000"},
 		{"2001-01-01 01:01:00.000001"},
 	})
-	tk.MustQuery("select date_sub(ts, interval 1 minute) from t order by ts").Check([][]interface{}{
+	tk.MustQuery("select date_sub(ts, interval 1 minute) from t order by ts").Check([][]any{
 		{"1970-01-01 00:59:01.000000"},
 		{"1970-01-01 00:59:01.000001"},
 		{"1971-01-01 00:59:00.000000"},
@@ -7364,57 +7364,57 @@ func TestIssue31600(t *testing.T) {
 	tk.MustExec("insert into t values('12:12:00', null, '12:12:02.123', '12:12:03.123456', '20221212', '2020/12/10 12:12:10', null, '2020/12/12 12:12:12.123', '2020/12/13 12:12:13.123456')")
 	tk.MustExec("insert into t values('12:12:00', '12:12:01.1', null, '12:12:03.123456', '20221212', '2020/12/10 12:12:10', '2020/12/11 12:12:11.1', null, '2020/12/13 12:12:13.123456')")
 	tk.MustExec("insert into t values('12:12:00', '12:12:01.1', '12:12:02.123', null, '20221212', '2020/12/10 12:12:10', '2020/12/11 12:12:11.1', '2020/12/12 12:12:12.123', null)")
-	tk.MustQuery("select coalesce(null, tm_fsp0, tm_fsp1, tm_fsp3, tm_fsp6) from t").Check([][]interface{}{
+	tk.MustQuery("select coalesce(null, tm_fsp0, tm_fsp1, tm_fsp3, tm_fsp6) from t").Check([][]any{
 		{"12:12:01.100000"},
 		{"12:12:00.000000"},
 		{"12:12:00.000000"},
 		{"12:12:00.000000"},
 	})
-	tk.MustQuery("select coalesce(tm_fsp1, tm_fsp0, tm_fsp3) from t").Check([][]interface{}{
+	tk.MustQuery("select coalesce(tm_fsp1, tm_fsp0, tm_fsp3) from t").Check([][]any{
 		{"12:12:01.100"},
 		{"12:12:00.000"},
 		{"12:12:01.100"},
 		{"12:12:01.100"},
 	})
-	tk.MustQuery("select coalesce(tm_fsp3, tm_fsp0) from t").Check([][]interface{}{
+	tk.MustQuery("select coalesce(tm_fsp3, tm_fsp0) from t").Check([][]any{
 		{"12:12:02.123"},
 		{"12:12:02.123"},
 		{"12:12:00.000"},
 		{"12:12:02.123"},
 	})
-	tk.MustQuery("select coalesce(tm_fsp6) from t").Check([][]interface{}{
+	tk.MustQuery("select coalesce(tm_fsp6) from t").Check([][]any{
 		{"12:12:03.123456"},
 		{"12:12:03.123456"},
 		{"12:12:03.123456"},
 		{"<nil>"},
 	})
 
-	tk.MustQuery("select coalesce(null, dt_fsp0, dt_fsp1, dt_fsp3, dt_fsp6) from t").Check([][]interface{}{
+	tk.MustQuery("select coalesce(null, dt_fsp0, dt_fsp1, dt_fsp3, dt_fsp6) from t").Check([][]any{
 		{"2020-12-11 12:12:11.100000"},
 		{"2020-12-10 12:12:10.000000"},
 		{"2020-12-10 12:12:10.000000"},
 		{"2020-12-10 12:12:10.000000"},
 	})
-	tk.MustQuery("select coalesce(dt_fsp0, dt_fsp1, dt_fsp3) from t").Check([][]interface{}{
+	tk.MustQuery("select coalesce(dt_fsp0, dt_fsp1, dt_fsp3) from t").Check([][]any{
 		{"2020-12-11 12:12:11.100"},
 		{"2020-12-10 12:12:10.000"},
 		{"2020-12-10 12:12:10.000"},
 		{"2020-12-10 12:12:10.000"},
 	})
-	tk.MustQuery("select coalesce(dt_fsp3, dt_fsp0) from t").Check([][]interface{}{
+	tk.MustQuery("select coalesce(dt_fsp3, dt_fsp0) from t").Check([][]any{
 		{"2020-12-12 12:12:12.123"},
 		{"2020-12-12 12:12:12.123"},
 		{"2020-12-10 12:12:10.000"},
 		{"2020-12-12 12:12:12.123"},
 	})
-	tk.MustQuery("select coalesce(dt_fsp6) from t").Check([][]interface{}{
+	tk.MustQuery("select coalesce(dt_fsp6) from t").Check([][]any{
 		{"2020-12-13 12:12:13.123456"},
 		{"2020-12-13 12:12:13.123456"},
 		{"2020-12-13 12:12:13.123456"},
 		{"<nil>"},
 	})
 
-	tk.MustQuery("select coalesce(null, d) from t").Check([][]interface{}{
+	tk.MustQuery("select coalesce(null, d) from t").Check([][]any{
 		{"2022-12-12"},
 		{"2022-12-12"},
 		{"2022-12-12"},
@@ -7436,12 +7436,12 @@ func TestIssue31569(t *testing.T) {
 	tk.MustExec("insert into t values(4, 'a')")
 	tk.MustExec("insert into t values(4, 0) on duplicate key update c=values(c), c2=values(c2)")
 	// tidb produces two warnings here (when eval (4, 0) & values(c2)), which is slightly incompatible with mysql
-	tk.MustQuery("show warnings").Check([][]interface{}{
+	tk.MustQuery("show warnings").Check([][]any{
 		{"Warning", "1265", "Data truncated for column 'c2' at row 1"},
 		{"Warning", "1265", "Data truncated for column 'c2' at row 1"},
 	})
 	tk.MustExec("insert into t values(4, 'a') on duplicate key update c=values(c), c2=values(c2)")
-	tk.MustQuery("show warnings").Check([][]interface{}{})
+	tk.MustQuery("show warnings").Check([][]any{})
 	tk.MustExec("drop table t")
 }
 
@@ -7483,7 +7483,7 @@ func TestDateAddForNonExistingTimestamp(t *testing.T) {
 	tk.MustExec("set time_zone = 'Europe/Amsterdam'")
 	// Non-existing CET timestamp.
 	tk.MustGetErrCode("insert into t values('2022-03-27 02:30:00')", errno.ErrTruncatedWrongValue)
-	tk.MustQuery("select date_add(ts, interval 1 hour) from t order by ts").Check([][]interface{}{
+	tk.MustQuery("select date_add(ts, interval 1 hour) from t order by ts").Check([][]any{
 		{"2022-03-27 02:30:00"},
 		{"2022-10-30 03:30:00"},
 		{"2022-10-30 03:30:00"},

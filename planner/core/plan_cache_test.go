@@ -844,7 +844,7 @@ func TestNonPreparedPlanCacheWithExplain(t *testing.T) {
 		`  └─TableFullScan_5 10000.00 2035000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
-	tk.MustQuery("explain analyze select * from t where a=2").CheckAt([]int{0, 1, 2, 3}, [][]interface{}{
+	tk.MustQuery("explain analyze select * from t where a=2").CheckAt([]int{0, 1, 2, 3}, [][]any{
 		{"TableReader_7", "10.00", "0", "root"},
 		{"└─Selection_6", "10.00", "0", "cop[tikv]"},
 		{"  └─TableFullScan_5", "10000.00", "0", "cop[tikv]"},
@@ -1185,7 +1185,7 @@ func TestInvalidRange(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]interface{}{{"TableDual_5"}}) // use TableDual directly instead of TableFullScan
+		[][]any{{"TableDual_5"}}) // use TableDual directly instead of TableFullScan
 
 	tk.MustExec("execute st using @l, @r")
 	tk.MustExec("execute st using @l, @r")
@@ -1207,7 +1207,7 @@ func TestIssue40093(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]interface{}{
+		[][]any{
 			{"Projection_9"},
 			{"└─HashJoin_21"},
 			{"  ├─IndexReader_26(Build)"},
@@ -1239,7 +1239,7 @@ func TestIssue38205(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]interface{}{
+		[][]any{
 			{"IndexJoin_10"},
 			{"├─TableReader_19(Build)"},
 			{"│ └─Selection_18"},
@@ -1378,7 +1378,7 @@ func TestIssue40224(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]interface{}{
+		[][]any{
 			{"IndexReader_6"},
 			{"└─IndexRangeScan_5"}, // range scan not full scan
 		})
@@ -1390,7 +1390,7 @@ func TestIssue40224(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // cacheable for INT
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]interface{}{
+		[][]any{
 			{"IndexReader_6"},
 			{"└─IndexRangeScan_5"}, // range scan not full scan
 		})

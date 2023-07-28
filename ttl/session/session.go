@@ -46,7 +46,7 @@ type Session interface {
 	// SessionInfoSchema returns information schema of current session
 	SessionInfoSchema() infoschema.InfoSchema
 	// ExecuteSQL executes the sql
-	ExecuteSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error)
+	ExecuteSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, error)
 	// RunInTxn executes the specified function in a txn
 	RunInTxn(ctx context.Context, fn func() error, mode TxnMode) (err error)
 	// ResetWithGlobalTimeZone resets the session time zone to global time zone
@@ -81,7 +81,7 @@ func (s *session) SessionInfoSchema() infoschema.InfoSchema {
 }
 
 // ExecuteSQL executes the sql
-func (s *session) ExecuteSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
+func (s *session) ExecuteSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
 	if s.sqlExec == nil {
 		return nil, errors.New("session is closed")
 	}

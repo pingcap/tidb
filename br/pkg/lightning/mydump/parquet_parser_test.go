@@ -145,7 +145,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		DecimalRef *int32 `parquet:"name=decimal2, type=DECIMAL, scale=3, precision=5, basetype=INT32"`
 	}
 
-	cases := [][]interface{}{
+	cases := [][]any{
 		{int32(0), "0.000"},
 		{int32(1000), "1.000"},
 		{int32(-1000), "-1.000"},
@@ -244,7 +244,7 @@ func TestParquetAurora(t *testing.T) {
 
 	require.Equal(t, []string{"id", "val1", "val2", "d1", "d2", "d3", "d4", "d5", "d6"}, parser.Columns())
 
-	expectedRes := [][]interface{}{
+	expectedRes := [][]any{
 		{int64(1), int64(1), "0", int64(123), "1.23", "0.00000001", "1234567890", "123", "1.23000000"},
 		{
 			int64(2), int64(123456), "0", int64(123456), "9999.99", "0.12345678", "99999999999999999999",

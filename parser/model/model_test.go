@@ -235,7 +235,7 @@ func TestJobCodec(t *testing.T) {
 		TableID:    2,
 		SchemaID:   1,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []interface{}{NewCIStr("a"), A{Name: "abc"}},
+		Args:       []any{NewCIStr("a"), A{Name: "abc"}},
 		ReorgMeta: &DDLReorgMeta{
 			Location: &TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
@@ -253,7 +253,7 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   1,
 		Type:       ActionRenameTable,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []interface{}{int64(3), NewCIStr("new_table_name")},
+		Args:       []any{int64(3), NewCIStr("new_table_name")},
 	}
 	job1.RawArgs, err = json.Marshal(job1.Args)
 	require.NoError(t, err)
@@ -281,7 +281,7 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   4,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []interface{}{int64(6), int64(3), int64(5), "pt", true},
+		Args:       []any{int64(6), int64(3), int64(5), "pt", true},
 	}
 	job3.RawArgs, err = json.Marshal(job3.Args)
 	require.NoError(t, err)
@@ -296,7 +296,7 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   3,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []interface{}{6, 4, 2, "pt", true},
+		Args:       []any{6, 4, 2, "pt", true},
 	}
 	job4.RawArgs, err = json.Marshal(job4.Args)
 	require.NoError(t, err)
@@ -311,7 +311,7 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   6,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []interface{}{2, 6, 5, "pt", true},
+		Args:       []any{2, 6, 5, "pt", true},
 	}
 	job5.RawArgs, err = json.Marshal(job5.Args)
 	require.NoError(t, err)
@@ -325,7 +325,7 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   7,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []interface{}{6, 4, 2, "pt", true},
+		Args:       []any{6, 4, 2, "pt", true},
 	}
 	job6.RawArgs, err = json.Marshal(job6.Args)
 	require.NoError(t, err)
@@ -339,7 +339,7 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   8,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []interface{}{8, 4, 6, "pt", true},
+		Args:       []any{8, 4, 6, "pt", true},
 	}
 	job7.RawArgs, err = json.Marshal(job7.Args)
 	require.NoError(t, err)
@@ -353,7 +353,7 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   9,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []interface{}{8, 9, 9, "pt", true},
+		Args:       []any{8, 9, 9, "pt", true},
 	}
 	job8.RawArgs, err = json.Marshal(job8.Args)
 	require.NoError(t, err)
@@ -367,7 +367,7 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   10,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []interface{}{10, 10, 8, "pt", true},
+		Args:       []any{10, 10, 8, "pt", true},
 	}
 	job9.RawArgs, err = json.Marshal(job9.Args)
 	require.NoError(t, err)
@@ -392,7 +392,7 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   11,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []interface{}{10, 10, 8, "pt", true},
+		Args:       []any{10, 10, 8, "pt", true},
 	}
 	job11.RawArgs, err = json.Marshal(job11.Args)
 	require.NoError(t, err)
@@ -434,7 +434,7 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   15,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []interface{}{16, 17, 12, "pt", true},
+		Args:       []any{16, 17, 12, "pt", true},
 	}
 	job14.RawArgs, err = json.Marshal(job14.Args)
 	require.NoError(t, err)
@@ -447,7 +447,7 @@ func TestJobCodec(t *testing.T) {
 		ID:         16,
 		Type:       ActionFlashbackCluster,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []interface{}{0, map[string]interface{}{}, "ON", true},
+		Args:       []any{0, map[string]any{}, "ON", true},
 	}
 	job15.RawArgs, err = json.Marshal(job15.Args)
 	require.NoError(t, err)

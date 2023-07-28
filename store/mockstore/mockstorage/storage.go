@@ -80,7 +80,7 @@ func (s *mockStorage) Begin(opts ...tikv.TxnOption) (kv.Transaction, error) {
 }
 
 // ShowStatus returns the specified status of the storage
-func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+func (s *mockStorage) ShowStatus(ctx context.Context, key string) (any, error) {
 	return nil, kv.ErrNotImplemented
 }
 

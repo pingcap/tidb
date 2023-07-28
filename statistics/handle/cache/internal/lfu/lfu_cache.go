@@ -112,7 +112,7 @@ func (s *LFU) onEvict(item *ristretto.Item) {
 	metrics.EvictCounter.Inc()
 }
 
-func (s *LFU) onExit(val interface{}) {
+func (s *LFU) onExit(val any) {
 	s.cost.Add(-1 * val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
 	metrics.CostGauge.Set(float64(s.cost.Load()))
 }

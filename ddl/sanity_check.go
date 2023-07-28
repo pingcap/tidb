@@ -124,7 +124,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return mathutil.Max(len(partitionIDs)*idxIDNumFactor, idxIDNumFactor), nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		var indexName interface{}
+		var indexName any
 		var ifNotExists bool
 		var indexID int64
 		var partitionIDs []int64

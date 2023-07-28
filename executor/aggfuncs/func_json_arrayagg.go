@@ -33,12 +33,12 @@ type jsonArrayagg struct {
 }
 
 type partialResult4JsonArrayagg struct {
-	entries []interface{}
+	entries []any
 }
 
 func (*jsonArrayagg) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := partialResult4JsonArrayagg{}
-	p.entries = make([]interface{}, 0)
+	p.entries = make([]any, 0)
 	return PartialResult(&p), DefPartialResult4JsonArrayagg + DefSliceSize
 }
 

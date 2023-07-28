@@ -111,7 +111,7 @@ func NormalizeDigest(sql string) (normalized string, digest *Digest) {
 }
 
 var digesterPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return &sqlDigester{
 			lexer:  NewScanner(""),
 			hasher: sha256.New(),

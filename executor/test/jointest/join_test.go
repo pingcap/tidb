@@ -97,7 +97,7 @@ func TestJoin2(t *testing.T) {
 	tk.MustExec("insert t values (1)")
 	tests := []struct {
 		sql    string
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			"select 1 from t as a left join t as b on 0",
@@ -1272,7 +1272,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results := []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows(),
@@ -1323,7 +1323,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert into t values(1, null, 0), (2, 1, 0)")
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows(),
@@ -1367,7 +1367,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert into t values(1, null, 0), (2, 1, 0), (null, 2, 0)")
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows(),
@@ -1418,7 +1418,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows(),
@@ -1451,7 +1451,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows(
@@ -1510,7 +1510,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows("0"),
@@ -1542,7 +1542,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows("0"),
@@ -1583,7 +1583,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows("0"),

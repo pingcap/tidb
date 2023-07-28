@@ -277,9 +277,9 @@ type StatementContext struct {
 	binaryPlan     string
 	// To avoid cycle import, we use interface{} for the following two fields.
 	// flatPlan should be a *plannercore.FlatPhysicalPlan if it's not nil
-	flatPlan interface{}
+	flatPlan any
 	// plan should be a plannercore.Plan if it's not nil
-	plan interface{}
+	plan any
 
 	Tables                []TableEntry
 	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
@@ -297,12 +297,12 @@ type StatementContext struct {
 	// https://github.com/pingcap/tidb/issues/36159
 	stmtCache struct {
 		mu   sync.Mutex
-		data map[StmtCacheKey]interface{}
+		data map[StmtCacheKey]any
 	}
 
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
-	CTEStorageMap interface{}
+	CTEStorageMap any
 
 	// If the statement read from table cache, this flag is set.
 	ReadFromTableCache bool
@@ -329,7 +329,7 @@ type StatementContext struct {
 	OptimizerCETrace       []*tracing.CETraceRecord
 
 	EnableOptimizerDebugTrace bool
-	OptimizerDebugTrace       interface{}
+	OptimizerDebugTrace       any
 
 	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
 	WaitLockLeaseTime time.Duration
@@ -402,7 +402,7 @@ type StatementContext struct {
 	}
 
 	// TableStats stores the visited runtime table stats by table id during query
-	TableStats map[int64]interface{}
+	TableStats map[int64]any
 	// useChunkAlloc indicates whether statement use chunk alloc
 	useChunkAlloc bool
 	// Check if TiFlash read engine is removed due to strict sql mode.
@@ -465,11 +465,11 @@ const (
 )
 
 // GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.
-func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value interface{}) interface{} {
+func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value any) any {
 	sc.stmtCache.mu.Lock()
 	defer sc.stmtCache.mu.Unlock()
 	if sc.stmtCache.data == nil {
-		sc.stmtCache.data = make(map[StmtCacheKey]interface{})
+		sc.stmtCache.data = make(map[StmtCacheKey]any)
 	}
 	if _, ok := sc.stmtCache.data[key]; !ok {
 		sc.stmtCache.data[key] = value
@@ -478,11 +478,11 @@ func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value interfac
 }
 
 // GetOrEvaluateStmtCache gets the cached value of the given key if it exists, otherwise calculate the value.
-func (sc *StatementContext) GetOrEvaluateStmtCache(key StmtCacheKey, valueEvaluator func() (interface{}, error)) (interface{}, error) {
+func (sc *StatementContext) GetOrEvaluateStmtCache(key StmtCacheKey, valueEvaluator func() (any, error)) (any, error) {
 	sc.stmtCache.mu.Lock()
 	defer sc.stmtCache.mu.Unlock()
 	if sc.stmtCache.data == nil {
-		sc.stmtCache.data = make(map[StmtCacheKey]interface{})
+		sc.stmtCache.data = make(map[StmtCacheKey]any)
 	}
 	if _, ok := sc.stmtCache.data[key]; !ok {
 		value, err := valueEvaluator()
@@ -505,7 +505,7 @@ func (sc *StatementContext) ResetInStmtCache(key StmtCacheKey) {
 func (sc *StatementContext) ResetStmtCache() {
 	sc.stmtCache.mu.Lock()
 	defer sc.stmtCache.mu.Unlock()
-	sc.stmtCache.data = make(map[StmtCacheKey]interface{})
+	sc.stmtCache.data = make(map[StmtCacheKey]any)
 }
 
 // SQLDigest gets normalized and digest for provided sql.
@@ -535,22 +535,22 @@ func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *pars
 }
 
 // GetPlan gets the plan field of stmtctx
-func (sc *StatementContext) GetPlan() interface{} {
+func (sc *StatementContext) GetPlan() any {
 	return sc.plan
 }
 
 // SetPlan sets the plan field of stmtctx
-func (sc *StatementContext) SetPlan(plan interface{}) {
+func (sc *StatementContext) SetPlan(plan any) {
 	sc.plan = plan
 }
 
 // GetFlatPlan gets the flatPlan field of stmtctx
-func (sc *StatementContext) GetFlatPlan() interface{} {
+func (sc *StatementContext) GetFlatPlan() any {
 	return sc.flatPlan
 }
 
 // SetFlatPlan sets the flatPlan field of stmtctx
-func (sc *StatementContext) SetFlatPlan(flat interface{}) {
+func (sc *StatementContext) SetFlatPlan(flat any) {
 	sc.flatPlan = flat
 }
 

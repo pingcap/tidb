@@ -111,5 +111,5 @@ func (*stmtLogEncoder) AddUint32(string, uint32)                        {}
 func (*stmtLogEncoder) AddUint16(string, uint16)                        {}
 func (*stmtLogEncoder) AddUint8(string, uint8)                          {}
 func (*stmtLogEncoder) AddUintptr(string, uintptr)                      {}
-func (*stmtLogEncoder) AddReflected(string, interface{}) error          { return nil }
+func (*stmtLogEncoder) AddReflected(string, any) error                  { return nil }
 func (*stmtLogEncoder) OpenNamespace(string)                            {}

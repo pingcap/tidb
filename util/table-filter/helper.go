@@ -17,7 +17,7 @@ package filter
 import "reflect"
 
 // reverse replace the contents of a slice with the same elements but in reverse order.
-func reverse(items interface{}) {
+func reverse(items any) {
 	n := reflect.ValueOf(items).Len()
 	swap := reflect.Swapper(items)
 	for i := n/2 - 1; i >= 0; i-- {

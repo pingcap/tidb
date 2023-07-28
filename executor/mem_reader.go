@@ -984,7 +984,7 @@ func (m *memIndexMergeReader) intersectionHandles(kvRanges [][]kv.KeyRange) (fin
 			}
 		}
 	}
-	hMap.Range(func(h kv.Handle, val interface{}) bool {
+	hMap.Range(func(h kv.Handle, val any) bool {
 		if *(val.(*int)) == len(m.memReaders) {
 			finalHandles = append(finalHandles, h)
 		}

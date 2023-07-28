@@ -45,7 +45,7 @@ type expectedRecord struct {
 	resultMessage  string
 }
 
-func (r *expectedRecord) checkIgnoreTimes(t *testing.T, row []interface{}) {
+func (r *expectedRecord) checkIgnoreTimes(t *testing.T, row []any) {
 	require.Equal(t, r.jobID, row[0])
 	require.Equal(t, r.dataSource, row[4])
 	require.Equal(t, r.targetTable, row[5])
@@ -59,7 +59,7 @@ func (r *expectedRecord) checkIgnoreTimes(t *testing.T, row []interface{}) {
 	require.Equal(t, r.resultMessage, row[13])
 }
 
-func (r *expectedRecord) check(t *testing.T, row []interface{}) {
+func (r *expectedRecord) check(t *testing.T, row []any) {
 	r.checkIgnoreTimes(t, row)
 	require.NotEmpty(t, row[1])
 	require.NotEmpty(t, row[2])

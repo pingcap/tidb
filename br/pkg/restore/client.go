@@ -758,7 +758,7 @@ func (rc *Client) GetTableSchema(
 // CreatePolicies creates all policies in full restore.
 func (rc *Client) CreatePolicies(ctx context.Context, policyMap *sync.Map) error {
 	var err error
-	policyMap.Range(func(key, value interface{}) bool {
+	policyMap.Range(func(key, value any) bool {
 		e := rc.db.CreatePlacementPolicy(ctx, value.(*model.PolicyInfo))
 		if e != nil {
 			err = e
@@ -3261,7 +3261,7 @@ func (rc *Client) generateRepairIngestIndexSQLs(
 	if err := ingestRecorder.Iterate(func(_, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		var (
 			addSQL  strings.Builder
-			addArgs []interface{} = make([]interface{}, 0, 5+len(info.ColumnArgs))
+			addArgs []any = make([]any, 0, 5+len(info.ColumnArgs))
 		)
 		if info.IsPrimary {
 			addSQL.WriteString(fmt.Sprintf(alterTableAddPrimaryFormat, info.ColumnList))

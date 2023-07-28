@@ -791,9 +791,9 @@ func buildDryRunResults(dryRunOption int, results []string, maxChunkSize int) (s
 		},
 		ColumnAsName: model.NewCIStr(fieldName),
 	}}
-	rows := make([][]interface{}, 0, len(results))
+	rows := make([][]any, 0, len(results))
 	for _, result := range results {
-		row := make([]interface{}, 1)
+		row := make([]any, 1)
 		row[0] = result
 		rows = append(rows, row)
 	}
@@ -826,8 +826,8 @@ func buildExecuteResults(ctx context.Context, jobs []job, maxChunkSize int, reda
 				ColumnAsName: model.NewCIStr("job status"),
 			},
 		}
-		rows := make([][]interface{}, 1)
-		row := make([]interface{}, 2)
+		rows := make([][]any, 1)
+		row := make([]any, 2)
 		row[0] = len(jobs)
 		row[1] = "all succeeded"
 		rows[0] = row

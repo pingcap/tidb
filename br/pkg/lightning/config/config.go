@@ -342,7 +342,7 @@ const (
 )
 
 // UnmarshalTOML implements toml.Unmarshaler interface.
-func (t *PostOpLevel) UnmarshalTOML(v interface{}) error {
+func (t *PostOpLevel) UnmarshalTOML(v any) error {
 	switch val := v.(type) {
 	case bool:
 		if val {
@@ -416,7 +416,7 @@ const (
 )
 
 // UnmarshalTOML implements toml.Unmarshaler interface.
-func (t *CheckpointKeepStrategy) UnmarshalTOML(v interface{}) error {
+func (t *CheckpointKeepStrategy) UnmarshalTOML(v any) error {
 	switch val := v.(type) {
 	case bool:
 		if val {
@@ -512,7 +512,7 @@ type MaxError struct {
 }
 
 // UnmarshalTOML implements toml.Unmarshaler interface.
-func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
+func (cfg *MaxError) UnmarshalTOML(v any) error {
 	defaultValMap := map[string]int64{
 		"syntax":  0,
 		"charset": math.MaxInt64,
@@ -530,9 +530,9 @@ func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 			cfg.Type.Store(val)
 		}
 		return nil
-	case map[string]interface{}:
+	case map[string]any:
 		// support stuff like `max-error = { charset = 1000, type = 1000 }`.
-		getVal := func(k string, v interface{}) int64 {
+		getVal := func(k string, v any) int64 {
 			defaultVal, ok := defaultValMap[k]
 			if !ok {
 				return 0
@@ -601,7 +601,7 @@ const (
 )
 
 // UnmarshalTOML implements the toml.Unmarshaler interface.
-func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v interface{}) error {
+func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v any) error {
 	if val, ok := v.(string); ok {
 		return dra.FromStringValue(val)
 	}
@@ -663,7 +663,7 @@ const (
 )
 
 // UnmarshalTOML implements toml.Unmarshaler.
-func (t *CompressionType) UnmarshalTOML(v interface{}) error {
+func (t *CompressionType) UnmarshalTOML(v any) error {
 	if val, ok := v.(string); ok {
 		return t.FromStringValue(val)
 	}
@@ -736,11 +736,11 @@ func (p *PostRestore) adjust(i *TikvImporter) {
 type StringOrStringSlice []string
 
 // UnmarshalTOML implements the toml.Unmarshaler interface.
-func (s *StringOrStringSlice) UnmarshalTOML(in interface{}) error {
+func (s *StringOrStringSlice) UnmarshalTOML(in any) error {
 	switch v := in.(type) {
 	case string:
 		*s = []string{v}
-	case []interface{}:
+	case []any:
 		*s = make([]string, 0, len(v))
 		for _, vv := range v {
 			vs, ok := vv.(string)

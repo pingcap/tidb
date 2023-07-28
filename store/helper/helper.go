@@ -65,7 +65,7 @@ type Storage interface {
 	SupportDeleteRange() (supported bool)
 	Name() string
 	Describe() string
-	ShowStatus(ctx context.Context, key string) (interface{}, error)
+	ShowStatus(ctx context.Context, key string) (any, error)
 	GetMemCache() kv.MemManager
 	GetRegionCache() *tikv.RegionCache
 	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
@@ -802,7 +802,7 @@ func (h *Helper) GetRegionByKey(k []byte) (*RegionInfo, error) {
 }
 
 // request PD API, decode the response body into res
-func (h *Helper) requestPD(apiName, method, uri string, body io.Reader, res interface{}) error {
+func (h *Helper) requestPD(apiName, method, uri string, body io.Reader, res any) error {
 	etcd, ok := h.Store.(kv.EtcdBackend)
 	if !ok {
 		return errors.WithStack(errors.New("not implemented"))
@@ -824,7 +824,7 @@ func (h *Helper) requestPD(apiName, method, uri string, body io.Reader, res inte
 	return err
 }
 
-func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res interface{}) error {
+func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res any) error {
 	urlVar := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), host, uri)
 	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", urlVar))
 	req, err := http.NewRequest(method, urlVar, body)

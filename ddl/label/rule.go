@@ -54,11 +54,11 @@ var (
 
 // Rule is used to establish the relationship between labels and a key range.
 type Rule struct {
-	ID       string        `json:"id"`
-	Index    int           `json:"index"`
-	Labels   Labels        `json:"labels"`
-	RuleType string        `json:"rule_type"`
-	Data     []interface{} `json:"data"`
+	ID       string `json:"id"`
+	Index    int    `json:"index"`
+	Labels   Labels `json:"labels"`
+	RuleType string `json:"rule_type"`
+	Data     []any  `json:"data"`
 }
 
 // NewRule creates a rule.
@@ -140,7 +140,7 @@ func (r *Rule) Reset(dbName, tableName, partName string, ids ...int64) *Rule {
 		r.Labels = append(r.Labels, Label{Key: partitionKey, Value: partName})
 	}
 	r.RuleType = ruleType
-	r.Data = []interface{}{}
+	r.Data = []any{}
 	slices.Sort(ids)
 	for i := 0; i < len(ids); i++ {
 		data := map[string]string{

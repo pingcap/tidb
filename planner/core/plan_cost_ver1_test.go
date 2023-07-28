@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func skipPostOptimizedProjection(plan [][]interface{}) int {
+func skipPostOptimizedProjection(plan [][]any) int {
 	for i, r := range plan {
 		cost := r[2].(string)
 		if cost == "0.00" && strings.Contains(r[0].(string), "Projection") {

@@ -402,7 +402,7 @@ func (e *HashJoinExec) fetchAndProbeHashTable(ctx context.Context) {
 	e.waiterWg.RunWithRecover(e.waitJoinWorkersAndCloseResultChan, nil)
 }
 
-func (fetcher *probeSideTupleFetcher) handleProbeSideFetcherPanic(r interface{}) {
+func (fetcher *probeSideTupleFetcher) handleProbeSideFetcherPanic(r any) {
 	for i := range fetcher.probeResultChs {
 		close(fetcher.probeResultChs[i])
 	}
@@ -411,13 +411,13 @@ func (fetcher *probeSideTupleFetcher) handleProbeSideFetcherPanic(r interface{})
 	}
 }
 
-func (w *probeWorker) handleProbeWorkerPanic(r interface{}) {
+func (w *probeWorker) handleProbeWorkerPanic(r any) {
 	if r != nil {
 		w.hashJoinCtx.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("probeWorker[%d] meets error: %v", w.workerID, r)}
 	}
 }
 
-func (e *HashJoinExec) handleJoinWorkerPanic(r interface{}) {
+func (e *HashJoinExec) handleJoinWorkerPanic(r any) {
 	if r != nil {
 		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
 	}
@@ -1156,7 +1156,7 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	return nil
 }
 
-func (e *HashJoinExec) handleFetchAndBuildHashTablePanic(r interface{}) {
+func (e *HashJoinExec) handleFetchAndBuildHashTablePanic(r any) {
 	if r != nil {
 		e.buildFinished <- errors.Errorf("%v", r)
 	}
@@ -1179,7 +1179,7 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
 			e.buildWorker.fetchBuildSideRows(ctx, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
 		},
-		func(r interface{}) {
+		func(r any) {
 			if r != nil {
 				fetchBuildSideRowsOk <- errors.Errorf("%v", r)
 			}

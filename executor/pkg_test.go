@@ -41,7 +41,7 @@ func TestNestedLoopApply(t *testing.T) {
 		schema: outerSchema,
 		rows:   6,
 		ctx:    sctx,
-		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldType) any {
 			return int64(row + 1)
 		},
 	})
@@ -52,7 +52,7 @@ func TestNestedLoopApply(t *testing.T) {
 		schema: innerSchema,
 		rows:   6,
 		ctx:    sctx,
-		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldType) any {
 			return int64(row + 1)
 		},
 	})

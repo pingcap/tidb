@@ -2695,7 +2695,7 @@ func TestTimeBuiltin(t *testing.T) {
 	// Customized check for the cases of adddate(time, ...) - it returns datetime with current date padded.
 	// 1. Check if the result contains space, that is, it must contain YMD part.
 	// 2. Check if the result's suffix matches expected, that is, the HMS part is an exact match.
-	checkHmsMatch := func(actual []string, expected []interface{}) bool {
+	checkHmsMatch := func(actual []string, expected []any) bool {
 		return strings.Contains(actual[0], " ") && strings.HasSuffix(actual[0], expected[0].(string))
 	}
 
@@ -4425,7 +4425,7 @@ func TestPartitionPruningRelaxOP(t *testing.T) {
 func TestTiDBRowChecksumBuiltin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	checksum := func(cols ...interface{}) uint32 {
+	checksum := func(cols ...any) uint32 {
 		buf := make([]byte, 0, 64)
 		for _, col := range cols {
 			switch x := col.(type) {

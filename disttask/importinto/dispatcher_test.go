@@ -44,7 +44,7 @@ func (s *importIntoSuite) enableFailPoint(path, term string) {
 }
 
 func (s *importIntoSuite) TestFlowHandleGetEligibleInstances() {
-	makeFailpointRes := func(v interface{}) string {
+	makeFailpointRes := func(v any) string {
 		bytes, err := json.Marshal(v)
 		s.NoError(err)
 		return fmt.Sprintf("return(`%s`)", string(bytes))

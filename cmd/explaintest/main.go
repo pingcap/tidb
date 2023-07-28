@@ -511,7 +511,7 @@ func (t *tester) executeStmt(query string) error {
 		t.buf.WriteString("\n")
 
 		values := make([][]byte, len(cols))
-		scanArgs := make([]interface{}, len(values))
+		scanArgs := make([]any, len(values))
 		for i := range values {
 			scanArgs[i] = &values[i]
 		}

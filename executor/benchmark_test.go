@@ -56,7 +56,7 @@ var (
 
 type mockDataSourceParameters struct {
 	schema      *expression.Schema
-	genDataFunc func(row int, typ *types.FieldType) interface{}
+	genDataFunc func(row int, typ *types.FieldType) any
 	ndvs        []int  // number of distinct values on columns[i] and zero represents no limit
 	orders      []bool // columns[i] should be ordered if orders[i] is true
 	rows        int    // number of rows the DataSource should output
@@ -115,7 +115,7 @@ func buildMockDataPhysicalPlan(ctx sessionctx.Context, srcExec exec.Executor) *m
 	}
 }
 
-func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
+func (mds *mockDataSource) genColDatums(col int) (results []any) {
 	typ := mds.RetFieldTypes()[col]
 	order := false
 	if col < len(mds.p.orders) {
@@ -126,7 +126,7 @@ func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
 	if col < len(mds.p.ndvs) {
 		NDV = mds.p.ndvs[col]
 	}
-	results = make([]interface{}, 0, rows)
+	results = make([]any, 0, rows)
 	if NDV == 0 {
 		if mds.p.genDataFunc == nil {
 			for i := 0; i < rows; i++ {
@@ -139,7 +139,7 @@ func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
 		}
 	} else {
 		datumSet := make(map[string]bool, NDV)
-		datums := make([]interface{}, 0, NDV)
+		datums := make([]any, 0, NDV)
 		for len(datums) < NDV {
 			d := mds.randDatum(typ)
 			str := fmt.Sprintf("%v", d)
@@ -173,7 +173,7 @@ func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
 	return
 }
 
-func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
+func (mds *mockDataSource) randDatum(typ *types.FieldType) any {
 	switch typ.GetType() {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
@@ -216,7 +216,7 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 	baseExec := exec.NewBaseExecutor(opt.ctx, opt.schema, 0)
 	m := &mockDataSource{baseExec, opt, nil, nil, 0}
 	rTypes := retTypes(m)
-	colData := make([][]interface{}, len(rTypes))
+	colData := make([][]any, len(rTypes))
 	for i := 0; i < len(rTypes); i++ {
 		colData[i] = m.genColDatums(i)
 	}
@@ -988,7 +988,7 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 	opt1 := mockDataSourceParameters{
 		rows: casTest.rows,
 		ctx:  casTest.ctx,
-		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldType) any {
 			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1189,7 +1189,7 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 		schema: expression.NewSchema(casTest.columns()...),
 		rows:   casTest.rows,
 		ctx:    casTest.ctx,
-		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldType) any {
 			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1326,7 +1326,7 @@ func (tc indexJoinTestCase) getMockDataSourceOptByRows(rows int) mockDataSourceP
 		schema: expression.NewSchema(tc.columns()...),
 		rows:   rows,
 		ctx:    tc.ctx,
-		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldType) any {
 			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1740,7 +1740,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		schema: expression.NewSchema(tc.columns()...),
 		rows:   numOuterRows,
 		ctx:    tc.ctx,
-		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldType) any {
 			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1758,7 +1758,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		schema: expression.NewSchema(tc.columns()...),
 		rows:   numInnerRows,
 		ctx:    tc.ctx,
-		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldType) any {
 			row = row / numInnerDup
 			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:

@@ -176,7 +176,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 	t4 := newMockTTLTbl(t, "t4")
 	s := newMockSession(t)
 	invokes := 0
-	s.executeSQL = func(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
+	s.executeSQL = func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
 		invokes++
 		s.sessionInfoSchema = newMockInfoSchema(t1.TableInfo, t2.TableInfo, t3.TableInfo, t4.TableInfo)
 		if strings.Contains(sql, "`t1`") {
@@ -322,7 +322,7 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 	pool.se = s
 
 	sqlMap := make(map[string]struct{})
-	s.executeSQL = func(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
+	s.executeSQL = func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
 		pool.lastSession.sessionInfoSchema = newMockInfoSchema(t1.TableInfo, t2.TableInfo, t3.TableInfo)
 		if strings.Contains(sql, "`t1`") {
 			return nil, nil

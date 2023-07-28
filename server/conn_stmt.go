@@ -227,7 +227,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	return err
 }
 
-func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}, args []expression.Expression, useCursor bool) (err error) {
+func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args []expression.Expression, useCursor bool) (err error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)

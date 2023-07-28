@@ -194,7 +194,7 @@ func getRandomTime(r *rand.Rand) types.CoreTime {
 
 // dataGenerator is used to generate data for test.
 type dataGenerator interface {
-	gen() interface{}
+	gen() any
 }
 
 type defaultRandGen struct {
@@ -237,7 +237,7 @@ func newDefaultGener(nullRation float64, eType types.EvalType) *defaultGener {
 	}
 }
 
-func (g *defaultGener) gen() interface{} {
+func (g *defaultGener) gen() any {
 	if g.randGen.Float64() < g.nullRation {
 		return nil
 	}
@@ -296,7 +296,7 @@ func (g *defaultGener) gen() interface{} {
 // charInt64Gener is used to generate int which is equal to char's ascii
 type charInt64Gener struct{}
 
-func (g *charInt64Gener) gen() interface{} {
+func (g *charInt64Gener) gen() any {
 	nanosecond := time.Now().Nanosecond()
 	nanosecond = nanosecond % 1024
 	return int64(nanosecond)
@@ -312,7 +312,7 @@ func newSelectStringGener(candidates []string) *selectStringGener {
 	return &selectStringGener{candidates, newDefaultRandGen()}
 }
 
-func (g *selectStringGener) gen() interface{} {
+func (g *selectStringGener) gen() any {
 	if len(g.candidates) == 0 {
 		return nil
 	}
@@ -329,7 +329,7 @@ func newSelectRealGener(candidates []float64) *selectRealGener {
 	return &selectRealGener{candidates, newDefaultRandGen()}
 }
 
-func (g *selectRealGener) gen() interface{} {
+func (g *selectRealGener) gen() any {
 	if len(g.candidates) == 0 {
 		return nil
 	}
@@ -340,7 +340,7 @@ type constJSONGener struct {
 	jsonStr string
 }
 
-func (g *constJSONGener) gen() interface{} {
+func (g *constJSONGener) gen() any {
 	j := new(types.BinaryJSON)
 	if err := j.UnmarshalJSON([]byte(g.jsonStr)); err != nil {
 		panic(err)
@@ -357,7 +357,7 @@ func newDecimalJSONGener(nullRation float64) *decimalJSONGener {
 	return &decimalJSONGener{nullRation, newDefaultRandGen()}
 }
 
-func (g *decimalJSONGener) gen() interface{} {
+func (g *decimalJSONGener) gen() any {
 	if g.randGen.Float64() < g.nullRation {
 		return nil
 	}
@@ -382,7 +382,7 @@ func newJSONStringGener() *jsonStringGener {
 	return &jsonStringGener{newDefaultRandGen()}
 }
 
-func (g *jsonStringGener) gen() interface{} {
+func (g *jsonStringGener) gen() any {
 	j := new(types.BinaryJSON)
 	if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, g.randGen.Int()))); err != nil {
 		panic(err)
@@ -398,7 +398,7 @@ func newDecimalStringGener() *decimalStringGener {
 	return &decimalStringGener{newDefaultRandGen()}
 }
 
-func (g *decimalStringGener) gen() interface{} {
+func (g *decimalStringGener) gen() any {
 	tempDecimal := new(types.MyDecimal)
 	if err := tempDecimal.FromFloat64(g.randGen.Float64()); err != nil {
 		panic(err)
@@ -414,7 +414,7 @@ func newRealStringGener() *realStringGener {
 	return &realStringGener{newDefaultRandGen()}
 }
 
-func (g *realStringGener) gen() interface{} {
+func (g *realStringGener) gen() any {
 	return fmt.Sprintf("%f", g.randGen.Float64())
 }
 
@@ -426,7 +426,7 @@ func newJSONTimeGener() *jsonTimeGener {
 	return &jsonTimeGener{newDefaultRandGen()}
 }
 
-func (g *jsonTimeGener) gen() interface{} {
+func (g *jsonTimeGener) gen() any {
 	tm := types.NewTime(getRandomTime(g.randGen.Rand), mysql.TypeDatetime, types.DefaultFsp)
 	return types.CreateBinaryJSON(tm)
 }
@@ -440,7 +440,7 @@ func newRangeDurationGener(nullRation float64) *rangeDurationGener {
 	return &rangeDurationGener{nullRation, newDefaultRandGen()}
 }
 
-func (g *rangeDurationGener) gen() interface{} {
+func (g *rangeDurationGener) gen() any {
 	if g.randGen.Float64() < g.nullRation {
 		return nil
 	}
@@ -459,7 +459,7 @@ func newTimeFormatGener(nullRation float64) *timeFormatGener {
 	return &timeFormatGener{nullRation, newDefaultRandGen()}
 }
 
-func (g *timeFormatGener) gen() interface{} {
+func (g *timeFormatGener) gen() any {
 	if g.randGen.Float64() < g.nullRation {
 		return nil
 	}
@@ -492,7 +492,7 @@ func newRangeRealGener(begin, end, nullRation float64) *rangeRealGener {
 	return &rangeRealGener{begin, end, nullRation, newDefaultRandGen()}
 }
 
-func (g *rangeRealGener) gen() interface{} {
+func (g *rangeRealGener) gen() any {
 	if g.randGen.Float64() < g.nullRation {
 		return nil
 	}
@@ -516,7 +516,7 @@ func newRangeDecimalGener(begin, end, nullRation float64) *rangeDecimalGener {
 	return &rangeDecimalGener{begin, end, nullRation, newDefaultRandGen()}
 }
 
-func (g *rangeDecimalGener) gen() interface{} {
+func (g *rangeDecimalGener) gen() any {
 	if g.randGen.Float64() < g.nullRation {
 		return nil
 	}
@@ -543,7 +543,7 @@ func newRangeInt64Gener(begin, end int) *rangeInt64Gener {
 	return &rangeInt64Gener{begin, end, newDefaultRandGen()}
 }
 
-func (rig *rangeInt64Gener) gen() interface{} {
+func (rig *rangeInt64Gener) gen() any {
 	return int64(rig.randGen.Intn(rig.end-rig.begin) + rig.begin)
 }
 
@@ -552,7 +552,7 @@ type numStrGener struct {
 	rangeInt64Gener
 }
 
-func (g *numStrGener) gen() interface{} {
+func (g *numStrGener) gen() any {
 	return fmt.Sprintf("%v", g.rangeInt64Gener.gen())
 }
 
@@ -561,7 +561,7 @@ type ipv6StrGener struct {
 	randGen *defaultRandGen
 }
 
-func (g *ipv6StrGener) gen() interface{} {
+func (g *ipv6StrGener) gen() any {
 	var ip net.IP = make([]byte, net.IPv6len)
 	for i := range ip {
 		ip[i] = uint8(g.randGen.Intn(256))
@@ -574,7 +574,7 @@ type ipv4StrGener struct {
 	randGen *defaultRandGen
 }
 
-func (g *ipv4StrGener) gen() interface{} {
+func (g *ipv4StrGener) gen() any {
 	var ip net.IP = make([]byte, net.IPv4len)
 	for i := range ip {
 		ip[i] = uint8(g.randGen.Intn(256))
@@ -587,7 +587,7 @@ type ipv6ByteGener struct {
 	randGen *defaultRandGen
 }
 
-func (g *ipv6ByteGener) gen() interface{} {
+func (g *ipv6ByteGener) gen() any {
 	var ip = make([]byte, net.IPv6len)
 	for i := range ip {
 		ip[i] = uint8(g.randGen.Intn(256))
@@ -600,7 +600,7 @@ type ipv4ByteGener struct {
 	randGen *defaultRandGen
 }
 
-func (g *ipv4ByteGener) gen() interface{} {
+func (g *ipv4ByteGener) gen() any {
 	var ip = make([]byte, net.IPv4len)
 	for i := range ip {
 		ip[i] = uint8(g.randGen.Intn(256))
@@ -613,7 +613,7 @@ type ipv4CompatByteGener struct {
 	randGen *defaultRandGen
 }
 
-func (g *ipv4CompatByteGener) gen() interface{} {
+func (g *ipv4CompatByteGener) gen() any {
 	var ip = make([]byte, net.IPv6len)
 	for i := range ip {
 		if i < 12 {
@@ -630,7 +630,7 @@ type ipv4MappedByteGener struct {
 	randGen *defaultRandGen
 }
 
-func (g *ipv4MappedByteGener) gen() interface{} {
+func (g *ipv4MappedByteGener) gen() any {
 	var ip = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0, 0}
 	for i := 12; i < 16; i++ {
 		ip[i] = uint8(g.randGen.Intn(256)) // reset the last 4 bytes
@@ -643,7 +643,7 @@ type uuidStrGener struct {
 	randGen *defaultRandGen
 }
 
-func (g *uuidStrGener) gen() interface{} {
+func (g *uuidStrGener) gen() any {
 	u, _ := uuid.NewUUID()
 	return u.String()
 }
@@ -653,7 +653,7 @@ type uuidBinGener struct {
 	randGen *defaultRandGen
 }
 
-func (g *uuidBinGener) gen() interface{} {
+func (g *uuidBinGener) gen() any {
 	u, _ := uuid.NewUUID()
 	bin, _ := u.MarshalBinary()
 	return string(bin)
@@ -670,7 +670,7 @@ func newRandLenStrGener(lenBegin, lenEnd int) *randLenStrGener {
 	return &randLenStrGener{lenBegin, lenEnd, newDefaultRandGen()}
 }
 
-func (g *randLenStrGener) gen() interface{} {
+func (g *randLenStrGener) gen() any {
 	n := g.randGen.Intn(g.lenEnd-g.lenBegin) + g.lenBegin
 	buf := make([]byte, n)
 	for i := range buf {
@@ -696,7 +696,7 @@ func newRandHexStrGener(lenBegin, lenEnd int) *randHexStrGener {
 	return &randHexStrGener{lenBegin, lenEnd, newDefaultRandGen()}
 }
 
-func (g *randHexStrGener) gen() interface{} {
+func (g *randHexStrGener) gen() any {
 	n := g.randGen.Intn(g.lenEnd-g.lenBegin) + g.lenBegin
 	buf := make([]byte, n)
 	for i := range buf {
@@ -719,7 +719,7 @@ type dateGener struct {
 	randGen *defaultRandGen
 }
 
-func (g dateGener) gen() interface{} {
+func (g dateGener) gen() any {
 	year := 1970 + g.randGen.Intn(100)
 	month := g.randGen.Intn(10) + 1
 	day := g.randGen.Intn(20) + 1
@@ -737,7 +737,7 @@ type dateTimeGener struct {
 	randGen *defaultRandGen
 }
 
-func (g *dateTimeGener) gen() interface{} {
+func (g *dateTimeGener) gen() any {
 	if g.Year == 0 {
 		g.Year = 1970 + g.randGen.Intn(100)
 	}
@@ -768,7 +768,7 @@ type dateTimeStrGener struct {
 	randGen *defaultRandGen
 }
 
-func (g *dateTimeStrGener) gen() interface{} {
+func (g *dateTimeStrGener) gen() any {
 	if g.Year == 0 {
 		g.Year = 1970 + g.randGen.Intn(100)
 	}
@@ -803,7 +803,7 @@ type dateStrGener struct {
 	randGen    *defaultRandGen
 }
 
-func (g *dateStrGener) gen() interface{} {
+func (g *dateStrGener) gen() any {
 	if g.NullRation > 1e-6 && g.randGen.Float64() < g.NullRation {
 		return nil
 	}
@@ -828,7 +828,7 @@ type dateOrDatetimeStrGener struct {
 	dateTimeStrGener
 }
 
-func (g dateOrDatetimeStrGener) gen() interface{} {
+func (g dateOrDatetimeStrGener) gen() any {
 	if g.dateRatio > 1e-6 && g.dateStrGener.randGen.Float64() < g.dateRatio {
 		return g.dateStrGener.gen()
 	}
@@ -842,7 +842,7 @@ type timeStrGener struct {
 	randGen    *defaultRandGen
 }
 
-func (g *timeStrGener) gen() interface{} {
+func (g *timeStrGener) gen() any {
 	if g.nullRation > 1e-6 && g.randGen.Float64() < g.nullRation {
 		return nil
 	}
@@ -858,7 +858,7 @@ type dateIntGener struct {
 	dateGener
 }
 
-func (g dateIntGener) gen() interface{} {
+func (g dateIntGener) gen() any {
 	t := g.dateGener.gen().(types.Time)
 	num, err := t.ToNumber().ToInt()
 	if err != nil {
@@ -872,7 +872,7 @@ type dateTimeIntGener struct {
 	dateTimeGener
 }
 
-func (g dateTimeIntGener) gen() interface{} {
+func (g dateTimeIntGener) gen() any {
 	t := g.dateTimeGener.gen().(types.Time)
 	num, err := t.ToNumber().ToInt()
 	if err != nil {
@@ -888,7 +888,7 @@ type dateOrDatetimeIntGener struct {
 	dateTimeIntGener
 }
 
-func (g dateOrDatetimeIntGener) gen() interface{} {
+func (g dateOrDatetimeIntGener) gen() any {
 	if g.dateRatio > 1e-6 && g.dateGener.randGen.Float64() < g.dateRatio {
 		return g.dateIntGener.gen()
 	}
@@ -903,7 +903,7 @@ type dateRealGener struct {
 	dateGener
 }
 
-func (g dateRealGener) gen() interface{} {
+func (g dateRealGener) gen() any {
 	t := g.dateGener.gen().(types.Time)
 	num, err := t.ToNumber().ToFloat64()
 	if err != nil {
@@ -925,7 +925,7 @@ type dateTimeRealGener struct {
 	dateTimeGener
 }
 
-func (g dateTimeRealGener) gen() interface{} {
+func (g dateTimeRealGener) gen() any {
 	t := g.dateTimeGener.gen().(types.Time)
 	tmp, err := t.ToNumber().ToInt()
 	if err != nil {
@@ -951,7 +951,7 @@ type dateOrDatetimeRealGener struct {
 	dateTimeRealGener
 }
 
-func (g dateOrDatetimeRealGener) gen() interface{} {
+func (g dateOrDatetimeRealGener) gen() any {
 	if g.dateRatio > 1e-6 && g.dateGener.randGen.Float64() < g.dateRatio {
 		return g.dateRealGener.gen()
 	}
@@ -966,7 +966,7 @@ type dateDecimalGener struct {
 	dateGener
 }
 
-func (g dateDecimalGener) gen() interface{} {
+func (g dateDecimalGener) gen() any {
 	t := g.dateGener.gen().(types.Time)
 	intPart := t.ToNumber()
 
@@ -995,7 +995,7 @@ type dateTimeDecimalGener struct {
 	dateTimeGener
 }
 
-func (g dateTimeDecimalGener) gen() interface{} {
+func (g dateTimeDecimalGener) gen() any {
 	t := g.dateTimeGener.gen().(types.Time)
 	num := t.ToNumber()
 	// Not using `num`'s fractional part so that we can:
@@ -1033,7 +1033,7 @@ type dateOrDatetimeDecimalGener struct {
 	dateTimeDecimalGener
 }
 
-func (g dateOrDatetimeDecimalGener) gen() interface{} {
+func (g dateOrDatetimeDecimalGener) gen() any {
 	if g.dateRatio > 1e-6 && g.dateGener.randGen.Float64() < g.dateRatio {
 		return g.dateDecimalGener.gen()
 	}
@@ -1046,7 +1046,7 @@ type constStrGener struct {
 	s string
 }
 
-func (g *constStrGener) gen() interface{} {
+func (g *constStrGener) gen() any {
 	return g.s
 }
 
@@ -1058,7 +1058,7 @@ func newRandDurInt() *randDurInt {
 	return &randDurInt{newDefaultRandGen()}
 }
 
-func (g *randDurInt) gen() interface{} {
+func (g *randDurInt) gen() any {
 	return int64(g.randGen.Intn(types.TimeMaxHour)*10000 + g.randGen.Intn(60)*100 + g.randGen.Intn(60))
 }
 
@@ -1070,7 +1070,7 @@ func newRandDurReal() *randDurReal {
 	return &randDurReal{newDefaultRandGen()}
 }
 
-func (g *randDurReal) gen() interface{} {
+func (g *randDurReal) gen() any {
 	return float64(g.randGen.Intn(types.TimeMaxHour)*10000 + g.randGen.Intn(60)*100 + g.randGen.Intn(60))
 }
 
@@ -1082,7 +1082,7 @@ func newRandDurDecimal() *randDurDecimal {
 	return &randDurDecimal{newDefaultRandGen()}
 }
 
-func (g *randDurDecimal) gen() interface{} {
+func (g *randDurDecimal) gen() any {
 	d := new(types.MyDecimal)
 	return d.FromFloat64(float64(g.randGen.Intn(types.TimeMaxHour)*10000 + g.randGen.Intn(60)*100 + g.randGen.Intn(60)))
 }
@@ -1097,7 +1097,7 @@ func newLocationGener(nullRation float64) *locationGener {
 	return &locationGener{nullRation, newDefaultRandGen()}
 }
 
-func (g *locationGener) gen() interface{} {
+func (g *locationGener) gen() any {
 	if g.randGen.Float64() < g.nullRation {
 		return nil
 	}
@@ -1127,7 +1127,7 @@ func newFormatGener(nullRation float64) *formatGener {
 	return &formatGener{nullRation, newDefaultRandGen()}
 }
 
-func (g *formatGener) gen() interface{} {
+func (g *formatGener) gen() any {
 	if g.randGen.Float64() < g.nullRation {
 		return nil
 	}
@@ -1155,7 +1155,7 @@ func newNullWrappedGener(nullRation float64, inner dataGenerator) *nullWrappedGe
 	return &nullWrappedGener{nullRation, inner, newDefaultRandGen()}
 }
 
-func (g *nullWrappedGener) gen() interface{} {
+func (g *nullWrappedGener) gen() any {
 	if g.randGen.Float64() < g.nullRation {
 		return nil
 	}

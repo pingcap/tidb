@@ -89,7 +89,7 @@ func datumsToConstants(datums []types.Datum) []Expression {
 	return constants
 }
 
-func primitiveValsToConstants(ctx sessionctx.Context, args []interface{}) []Expression {
+func primitiveValsToConstants(ctx sessionctx.Context, args []any) []Expression {
 	cons := datumsToConstants(types.MakeDatums(args...))
 	char, col := ctx.GetSessionVars().GetCharsetInfo()
 	for i, arg := range args {
@@ -165,9 +165,9 @@ func TestSleep(t *testing.T) {
 
 func TestBinopComparison(t *testing.T) {
 	tbl := []struct {
-		lhs    interface{}
+		lhs    any
 		op     string
-		rhs    interface{}
+		rhs    any
 		result int64 // 0 for false, 1 for true
 	}{
 		// test EQ
@@ -213,9 +213,9 @@ func TestBinopComparison(t *testing.T) {
 
 	// test nil
 	nilTbl := []struct {
-		lhs interface{}
+		lhs any
 		op  string
-		rhs interface{}
+		rhs any
 	}{
 		{nil, ast.EQ, nil},
 		{nil, ast.EQ, 1},
@@ -243,10 +243,10 @@ func TestBinopComparison(t *testing.T) {
 
 func TestBinopLogic(t *testing.T) {
 	tbl := []struct {
-		lhs interface{}
+		lhs any
 		op  string
-		rhs interface{}
-		ret interface{}
+		rhs any
+		ret any
 	}{
 		{nil, ast.LogicAnd, 1, nil},
 		{nil, ast.LogicAnd, 0, 0},
@@ -282,10 +282,10 @@ func TestBinopLogic(t *testing.T) {
 
 func TestBinopBitop(t *testing.T) {
 	tbl := []struct {
-		lhs interface{}
+		lhs any
 		op  string
-		rhs interface{}
-		ret interface{}
+		rhs any
+		ret any
 	}{
 		{1, ast.And, 1, 1},
 		{1, ast.Or, 1, 1},
@@ -319,10 +319,10 @@ func TestBinopBitop(t *testing.T) {
 
 func TestBinopNumeric(t *testing.T) {
 	tbl := []struct {
-		lhs interface{}
+		lhs any
 		op  string
-		rhs interface{}
-		ret interface{}
+		rhs any
+		ret any
 	}{
 		// plus
 		{1, ast.Plus, 1, 2},
@@ -417,9 +417,9 @@ func TestBinopNumeric(t *testing.T) {
 	}
 
 	testcases := []struct {
-		lhs interface{}
+		lhs any
 		op  string
-		rhs interface{}
+		rhs any
 	}{
 		// div
 		{1, ast.Div, float64(0)},
@@ -509,9 +509,9 @@ func TestExtract(t *testing.T) {
 func TestUnaryOp(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		arg    interface{}
+		arg    any
 		op     string
-		result interface{}
+		result any
 	}{
 		// test NOT.
 		{1, ast.UnaryNot, int64(0)},
@@ -550,9 +550,9 @@ func TestUnaryOp(t *testing.T) {
 	}
 
 	tbl = []struct {
-		arg    interface{}
+		arg    any
 		op     string
-		result interface{}
+		result any
 	}{
 		{types.NewDecFromInt(1), ast.UnaryMinus, types.NewDecFromInt(-1)},
 		{types.ZeroDuration, ast.UnaryMinus, new(types.MyDecimal)},

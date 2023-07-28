@@ -608,7 +608,7 @@ func NewBackend(
 // TotalMemoryConsume returns the total memory usage of the local backend.
 func (local *Backend) TotalMemoryConsume() int64 {
 	var memConsume int64
-	local.engines.Range(func(k, v interface{}) bool {
+	local.engines.Range(func(k, v any) bool {
 		e := v.(*Engine)
 		if e != nil {
 			memConsume += e.TotalMemorySize()
@@ -706,7 +706,7 @@ func (local *Backend) lockEngine(engineID uuid.UUID, state importMutexState) *En
 // tryRLockAllEngines tries to read lock all engines, return all `Engine`s that are successfully locked.
 func (local *Backend) tryRLockAllEngines() []*Engine {
 	var allEngines []*Engine
-	local.engines.Range(func(k, v interface{}) bool {
+	local.engines.Range(func(k, v any) bool {
 		engine := v.(*Engine)
 		// skip closed engine
 		if engine.tryRLock() {
@@ -725,7 +725,7 @@ func (local *Backend) tryRLockAllEngines() []*Engine {
 // state given by ignoreStateMask. Returns the list of locked engines.
 func (local *Backend) lockAllEnginesUnless(newState, ignoreStateMask importMutexState) []*Engine {
 	var allEngines []*Engine
-	local.engines.Range(func(k, v interface{}) bool {
+	local.engines.Range(func(k, v any) bool {
 		engine := v.(*Engine)
 		if engine.lockUnless(newState, ignoreStateMask) {
 			allEngines = append(allEngines, engine)
@@ -1742,7 +1742,7 @@ func nextKey(key []byte) []byte {
 
 // EngineFileSizes implements DiskUsage interface.
 func (local *Backend) EngineFileSizes() (res []backend.EngineFileSize) {
-	local.engines.Range(func(k, v interface{}) bool {
+	local.engines.Range(func(k, v any) bool {
 		engine := v.(*Engine)
 		res = append(res, engine.getEngineFileSize())
 		return true

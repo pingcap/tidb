@@ -48,7 +48,7 @@ func ExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boun
 	nullBitmap, paramTypes, paramValues []byte, enc *util2.InputDecoder) (err error) {
 	pos := 0
 	var (
-		tmp    interface{}
+		tmp    any
 		v      []byte
 		n      int
 		isNull bool

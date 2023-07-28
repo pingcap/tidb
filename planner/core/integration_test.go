@@ -1294,7 +1294,7 @@ func TestTimeToSecPushDownToTiFlash(t *testing.T) {
 		}
 	}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "10000.00", "root", " MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "10000.00", "mpp[tiflash]", " ExchangeType: PassThrough"},
 		{"  └─Projection_4", "10000.00", "mpp[tiflash]", " time_to_sec(test.t.a)->Column#3"},
@@ -1328,7 +1328,7 @@ func TestRightShiftPushDownToTiFlash(t *testing.T) {
 		}
 	}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "rightshift(test.t.a, test.t.b)->Column#4"},
@@ -1348,7 +1348,7 @@ func TestBitColumnPushDown(t *testing.T) {
 	tk.MustExec("insert into t2 values ('1', 1), ('2', 2), ('3', 3), ('4', 4), ('1', 1), ('2', 2), ('3', 3), ('4', 4)")
 	sql := "select b from t1 where t1.b > (select min(t2.b) from t2 where t2.a < t1.a)"
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("2", "2", "3", "3", "4", "4"))
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"Projection_15", "root", "test.t1.b"},
 		{"└─Apply_17", "root", "CARTESIAN inner join, other cond:gt(test.t1.b, Column#7)"},
 		{"  ├─TableReader_20(Build)", "root", "data:Selection_19"},
@@ -1366,7 +1366,7 @@ func TestBitColumnPushDown(t *testing.T) {
 	tk.MustExec("insert t1 values ('A', 1);")
 	sql = "select a from t1 where ascii(a)=65"
 	tk.MustQuery(sql).Check(testkit.Rows("A"))
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"TableReader_7", "root", "data:Selection_6"},
 		{"└─Selection_6", "cop[tikv]", "eq(ascii(cast(test.t1.a, var_string(1))), 65)"},
 		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
@@ -1390,7 +1390,7 @@ func TestBitColumnPushDown(t *testing.T) {
 
 	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('bit', 'tikv','');")
 	tk.MustExec("admin reload expr_pushdown_blacklist;")
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"Selection_5", "root", `eq(cast(test.t1.a, var_string(1)), "A")`},
 		{"└─TableReader_7", "root", "data:TableFullScan_6"},
 		{"  └─TableFullScan_6", "cop[tikv]", "keep order:false, stats:pseudo"},
@@ -1403,7 +1403,7 @@ func TestBitColumnPushDown(t *testing.T) {
 	tk.MustExec("admin reload expr_pushdown_blacklist;")
 	sql = "select a from t1 where ascii(a)=65"
 	tk.MustQuery(sql).Check(testkit.Rows("A"))
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"TableReader_7", "root", "data:Selection_6"},
 		{"└─Selection_6", "cop[tikv]", "eq(ascii(cast(test.t1.a, var_string(1))), 65)"},
 		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
@@ -1428,7 +1428,7 @@ func TestSysdatePushDown(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int signed, id2 int unsigned, c varchar(11), d datetime, b double, e bit(10))")
 	tk.MustExec("insert into t(id, id2, c, d) values (-1, 1, 'abc', '2021-12-12')")
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_7", "root", "data:Selection_6"},
 		{"└─Selection_6", "cop[tikv]", "gt(test.t.d, sysdate())"},
 		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
@@ -1622,7 +1622,7 @@ func TestScalarFunctionPushDown(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int signed, id2 int unsigned, c varchar(11), d datetime, b double, e bit(10))")
 	tk.MustExec("insert into t(id, id2, c, d) values (-1, 1, '{\"a\":1}', '2021-12-12')")
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_7", "root", "data:Selection_6"},
 		{"└─Selection_6", "cop[tikv]", "right(test.t.c, 1)"},
 		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
@@ -1780,7 +1780,7 @@ func TestReverseUTF8PushDownToTiFlash(t *testing.T) {
 		}
 	}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "reverse(test.t.a)->Column#3"},
@@ -1814,7 +1814,7 @@ func TestReversePushDownToTiFlash(t *testing.T) {
 		}
 	}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "reverse(test.t.a)->Column#3"},
@@ -1848,7 +1848,7 @@ func TestSpacePushDownToTiFlash(t *testing.T) {
 		}
 	}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "space(test.t.a)->Column#3"},
@@ -2077,7 +2077,7 @@ func Test19942(t *testing.T) {
 	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (5, ' A  ', ' A   ', ' A  ');")
 	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (6, ' E', 'é        ', ' E');")
 
-	mkr := func() [][]interface{} {
+	mkr := func() [][]any {
 		return testkit.RowsWithSep("|",
 			"3|  3 |  3 |  3",
 			"2| 2  0| 2",
@@ -3831,7 +3831,7 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 
 	sql := "explain select row_number() over w1 from t1 window w1 as (partition by c1);"
 
-	getStreamCountFromExplain := func(rows [][]interface{}) (res []uint64) {
+	getStreamCountFromExplain := func(rows [][]any) (res []uint64) {
 		re := regexp.MustCompile("stream_count: ([0-9]+)")
 		for _, row := range rows {
 			buf := bytes.NewBufferString("")
@@ -4105,7 +4105,7 @@ func TestRepeatPushDownToTiFlash(t *testing.T) {
 		}
 	}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "repeat(cast(test.t.a, var_string(20)), test.t.b)->Column#4"},
@@ -4190,7 +4190,7 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 		}
 	}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"HashAgg_6", "root", "funcs:avg(Column#4)->Column#3"},
 		{"└─Projection_19", "root", "cast(test.t.a, double BINARY)->Column#4"},
 		{"  └─TableReader_12", "root", "data:TableFullScan_11"},
@@ -4198,7 +4198,7 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 	}
 	tk.MustQuery("explain select avg(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"HashAgg_6", "root", "funcs:sum(Column#4)->Column#3"},
 		{"└─Projection_19", "root", "cast(test.t.a, double BINARY)->Column#4"},
 		{"  └─TableReader_12", "root", "data:TableFullScan_11"},
@@ -4206,7 +4206,7 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 	}
 	tk.MustQuery("explain select sum(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"HashAgg_6", "root", "funcs:group_concat(Column#4 separator \",\")->Column#3"},
 		{"└─Projection_13", "root", "cast(test.t.a, var_string(4294967295))->Column#4"},
 		{"  └─TableReader_10", "root", "data:TableFullScan_9"},
@@ -4239,7 +4239,7 @@ func TestLeftShiftPushDownToTiFlash(t *testing.T) {
 		}
 	}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "leftshift(test.t.a, test.t.b)->Column#4"},
@@ -4278,7 +4278,7 @@ func TestHexIntOrStrPushDownToTiFlash(t *testing.T) {
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "hex(test.t.a)->Column#4"},
@@ -4286,7 +4286,7 @@ func TestHexIntOrStrPushDownToTiFlash(t *testing.T) {
 	}
 	tk.MustQuery("explain select hex(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "hex(test.t.b)->Column#4"},
@@ -4311,7 +4311,7 @@ func TestBinPushDownToTiFlash(t *testing.T) {
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "bin(test.t.a)->Column#3"},
@@ -4345,7 +4345,7 @@ func TestEltPushDownToTiFlash(t *testing.T) {
 		}
 	}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "elt(test.t.a, test.t.b)->Column#4"},
@@ -4378,7 +4378,7 @@ func TestRegexpInstrPushDownToTiFlash(t *testing.T) {
 		}
 	}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "regexp_instr(test.t.expr, test.t.pattern, 1, 1, 0, test.t.match_type)->Column#8"},
@@ -4411,7 +4411,7 @@ func TestRegexpSubstrPushDownToTiFlash(t *testing.T) {
 		}
 	}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "regexp_substr(test.t.expr, test.t.pattern, 1, 1, test.t.match_type)->Column#7"},
@@ -4444,7 +4444,7 @@ func TestRegexpReplacePushDownToTiFlash(t *testing.T) {
 		}
 	}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "regexp_replace(test.t.expr, test.t.pattern, test.t.repl, 1, 1, test.t.match_type)->Column#8"},
@@ -4481,7 +4481,7 @@ func TestCastTimeAsDurationToTiFlash(t *testing.T) {
 		}
 	}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "cast(test.t.a, time BINARY)->Column#4, cast(test.t.b, time BINARY)->Column#5"},
@@ -4506,7 +4506,7 @@ func TestUnhexPushDownToTiFlash(t *testing.T) {
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "unhex(cast(test.t.a, var_string(20)))->Column#4"},
@@ -4514,7 +4514,7 @@ func TestUnhexPushDownToTiFlash(t *testing.T) {
 	}
 	tk.MustQuery("explain select unhex(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "unhex(test.t.b)->Column#4"},
@@ -4539,7 +4539,7 @@ func TestLeastGretestStringPushDownToTiFlash(t *testing.T) {
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "least(test.t.a, test.t.b)->Column#4"},
@@ -4547,7 +4547,7 @@ func TestLeastGretestStringPushDownToTiFlash(t *testing.T) {
 	}
 	tk.MustQuery("explain select least(a, b) from t;").CheckAt([]int{0, 2, 4}, rows)
 
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "greatest(test.t.a, test.t.b)->Column#4"},
@@ -4566,7 +4566,7 @@ func TestPartitionTableFallBackStatic(t *testing.T) {
 	tk.MustExec("analyze table t")
 
 	// use static plan in static mode
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"PartitionUnion", "", ""},
 		{"├─TableReader", "", "data:TableFullScan"},
 		{"│ └─TableFullScan", "table:t, partition:p0", "keep order:false"},
@@ -4585,13 +4585,13 @@ func TestPartitionTableFallBackStatic(t *testing.T) {
 	tk.MustExec("analyze table t")
 
 	// use dynamic plan in dynamic mode with global stats
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"TableReader", "partition:all", "data:TableFullScan"},
 		{"└─TableFullScan", "table:t", "keep order:false"},
 	}
 	tk.MustQuery("explain format='brief' select * from t").CheckAt([]int{0, 3, 4}, rows)
 
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"Union", "", ""},
 		{"├─PartitionUnion", "", ""},
 		{"│ ├─TableReader", "", "data:TableFullScan"},
@@ -4641,7 +4641,7 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 	// Set the hacked TiFlash replica for explain tests.
 	tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-	checkRes := func(r [][]interface{}, pos int, expected string) {
+	checkRes := func(r [][]any, pos int, expected string) {
 		check := false
 		for i := range r {
 			if r[i][pos] == expected {
@@ -5127,7 +5127,7 @@ func TestIsIPv4ToTiFlash(t *testing.T) {
 		}
 	}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "is_ipv4(test.t.v4)->Column#4"},
@@ -5162,7 +5162,7 @@ func TestIsIPv6ToTiFlash(t *testing.T) {
 		}
 	}
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "is_ipv6(test.t.v6)->Column#4"},
@@ -5185,7 +5185,7 @@ func TestVirtualExprPushDown(t *testing.T) {
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// TopN to tikv.
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
 		{"└─TableReader_13", "root", "data:TableFullScan_12"},
 		{"  └─TableFullScan_12", "cop[tikv]", "keep order:false, stats:pseudo"},
@@ -5193,7 +5193,7 @@ func TestVirtualExprPushDown(t *testing.T) {
 	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
 
 	// Projection to tikv.
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"Projection_3", "root", "plus(test.t.c1, test.t.c2)->Column#4"},
 		{"└─TableReader_5", "root", "data:TableFullScan_4"},
 		{"  └─TableFullScan_4", "cop[tikv]", "keep order:false, stats:pseudo"},
@@ -5203,7 +5203,7 @@ func TestVirtualExprPushDown(t *testing.T) {
 	tk.MustExec("set session tidb_opt_projection_push_down='OFF';")
 
 	// Selection to tikv.
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"Selection_7", "root", "gt(test.t.c2, 1)"},
 		{"└─TableReader_6", "root", "data:TableFullScan_5"},
 		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
@@ -5225,7 +5225,7 @@ func TestVirtualExprPushDown(t *testing.T) {
 	}
 
 	// TopN to tiflash.
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
 		{"└─TableReader_15", "root", "data:TableFullScan_14"},
 		{"  └─TableFullScan_14", "cop[tiflash]", "keep order:false, stats:pseudo"},
@@ -5233,7 +5233,7 @@ func TestVirtualExprPushDown(t *testing.T) {
 	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
 
 	// Projection to tiflash.
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"Projection_3", "root", "plus(test.t.c1, test.t.c2)->Column#4"},
 		{"└─TableReader_6", "root", "data:TableFullScan_5"},
 		{"  └─TableFullScan_5", "cop[tiflash]", "keep order:false, stats:pseudo"},
@@ -5243,7 +5243,7 @@ func TestVirtualExprPushDown(t *testing.T) {
 	tk.MustExec("set session tidb_opt_projection_push_down='OFF';")
 
 	// Selection to tiflash.
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"Selection_8", "root", "gt(test.t.c2, 1)"},
 		{"└─TableReader_7", "root", "data:TableFullScan_6"},
 		{"  └─TableFullScan_6", "cop[tiflash]", "keep order:false, stats:pseudo"},

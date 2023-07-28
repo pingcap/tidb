@@ -89,7 +89,7 @@ func SetTaskManager(is *TaskManager) {
 
 // ExecSQL executes the sql and returns the result.
 // TODO: consider retry.
-func ExecSQL(ctx context.Context, se sessionctx.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
+func ExecSQL(ctx context.Context, se sessionctx.Context, sql string, args ...any) ([]chunk.Row, error) {
 	rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, err
@@ -170,7 +170,7 @@ func (stm *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Co
 	})
 }
 
-func (stm *TaskManager) executeSQLWithNewSession(ctx context.Context, sql string, args ...interface{}) (rs []chunk.Row, err error) {
+func (stm *TaskManager) executeSQLWithNewSession(ctx context.Context, sql string, args ...any) (rs []chunk.Row, err error) {
 	err = stm.WithNewSession(func(se sessionctx.Context) error {
 		rs, err = ExecSQL(ctx, se, sql, args...)
 		return err
@@ -229,7 +229,7 @@ func (stm *TaskManager) GetNewGlobalTask() (task *proto.Task, err error) {
 }
 
 // GetGlobalTasksInStates gets the tasks in the states.
-func (stm *TaskManager) GetGlobalTasksInStates(states ...interface{}) (task []*proto.Task, err error) {
+func (stm *TaskManager) GetGlobalTasksInStates(states ...any) (task []*proto.Task, err error) {
 	if len(states) == 0 {
 		return task, nil
 	}
@@ -306,8 +306,8 @@ func (stm *TaskManager) AddNewSubTask(globalTaskID int64, step int64, designated
 }
 
 // GetSubtaskInStates gets the subtask in the states.
-func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, states ...interface{}) (*proto.Subtask, error) {
-	args := []interface{}{tidbID, taskID}
+func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, states ...any) (*proto.Subtask, error) {
+	args := []any{tidbID, taskID}
 	args = append(args, states...)
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select * from mysql.tidb_background_subtask where exec_id = %? and task_key = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
 	if err != nil {
@@ -368,8 +368,8 @@ func (stm *TaskManager) GetSucceedSubtasksByStep(taskID int64, step int64) ([]*p
 }
 
 // GetSubtaskInStatesCnt gets the subtask count in the states.
-func (stm *TaskManager) GetSubtaskInStatesCnt(taskID int64, states ...interface{}) (int64, error) {
-	args := []interface{}{taskID}
+func (stm *TaskManager) GetSubtaskInStatesCnt(taskID int64, states ...any) (int64, error) {
+	args := []any{taskID}
 	args = append(args, states...)
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select count(*) from mysql.tidb_background_subtask where task_key = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
 	if err != nil {
@@ -409,8 +409,8 @@ func (stm *TaskManager) CollectSubTaskError(taskID int64) ([]error, error) {
 }
 
 // HasSubtasksInStates checks if there are subtasks in the states.
-func (stm *TaskManager) HasSubtasksInStates(tidbID string, taskID int64, states ...interface{}) (bool, error) {
-	args := []interface{}{tidbID, taskID}
+func (stm *TaskManager) HasSubtasksInStates(tidbID string, taskID int64, states ...any) (bool, error) {
+	args := []any{tidbID, taskID}
 	args = append(args, states...)
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select 1 from mysql.tidb_background_subtask where exec_id = %? and task_key = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
 	if err != nil {

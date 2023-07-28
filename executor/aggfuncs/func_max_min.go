@@ -27,7 +27,7 @@ import (
 )
 
 // NewDeque inits a new MinMaxDeque
-func NewDeque(isMax bool, cmpFunc func(i, j interface{}) int) *MinMaxDeque {
+func NewDeque(isMax bool, cmpFunc func(i, j any) int) *MinMaxDeque {
 	return &MinMaxDeque{[]Pair{}, isMax, cmpFunc}
 }
 
@@ -35,11 +35,11 @@ func NewDeque(isMax bool, cmpFunc func(i, j interface{}) int) *MinMaxDeque {
 type MinMaxDeque struct {
 	Items   []Pair
 	IsMax   bool
-	cmpFunc func(i, j interface{}) int
+	cmpFunc func(i, j any) int
 }
 
 // PushBack pushes Idx and Item(wrapped in Pair) to the end of MinMaxDeque
-func (d *MinMaxDeque) PushBack(idx uint64, item interface{}) {
+func (d *MinMaxDeque) PushBack(idx uint64, item any) {
 	d.Items = append(d.Items, Pair{item, idx})
 }
 
@@ -86,7 +86,7 @@ func (d *MinMaxDeque) IsEmpty() bool {
 
 // Pair pairs items and their indices in MinMaxDeque
 type Pair struct {
-	Item interface{}
+	Item any
 	Idx  uint64
 }
 
@@ -115,7 +115,7 @@ func (d *MinMaxDeque) Dequeue(boundary uint64) error {
 }
 
 // Enqueue put Item at the back of queue, while popping any element that is lesser element in queue
-func (d *MinMaxDeque) Enqueue(idx uint64, item interface{}) error {
+func (d *MinMaxDeque) Enqueue(idx uint64, item any) error {
 	for !d.IsEmpty() {
 		pair, isEnd := d.Back()
 		if isEnd {
@@ -312,7 +312,7 @@ func (e *maxMin4IntSliding) ResetPartialResult(pr PartialResult) {
 
 func (e *maxMin4IntSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Int.AllocPartialResult()
-	(*partialResult4MaxMinInt)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
+	(*partialResult4MaxMinInt)(p).deque = NewDeque(e.isMax, func(i, j any) int {
 		return types.CompareInt64(i.(int64), j.(int64))
 	})
 	return p, memDelta + DefMaxMinDequeSize
@@ -449,7 +449,7 @@ type maxMin4UintSliding struct {
 
 func (e *maxMin4UintSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Uint.AllocPartialResult()
-	(*partialResult4MaxMinUint)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
+	(*partialResult4MaxMinUint)(p).deque = NewDeque(e.isMax, func(i, j any) int {
 		return types.CompareUint64(i.(uint64), j.(uint64))
 	})
 	return p, memDelta + DefMaxMinDequeSize
@@ -588,7 +588,7 @@ type maxMin4Float32Sliding struct {
 
 func (e *maxMin4Float32Sliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Float32.AllocPartialResult()
-	(*partialResult4MaxMinFloat32)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
+	(*partialResult4MaxMinFloat32)(p).deque = NewDeque(e.isMax, func(i, j any) int {
 		return types.CompareFloat64(float64(i.(float32)), float64(j.(float32)))
 	})
 	return p, memDelta + DefMaxMinDequeSize
@@ -725,7 +725,7 @@ type maxMin4Float64Sliding struct {
 
 func (e *maxMin4Float64Sliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Float64.AllocPartialResult()
-	(*partialResult4MaxMinFloat64)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
+	(*partialResult4MaxMinFloat64)(p).deque = NewDeque(e.isMax, func(i, j any) int {
 		return types.CompareFloat64(i.(float64), j.(float64))
 	})
 	return p, memDelta + DefMaxMinDequeSize
@@ -884,7 +884,7 @@ func (w *windowInfo) SetWindowStart(start uint64) {
 
 func (e *maxMin4DecimalSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Decimal.AllocPartialResult()
-	(*partialResult4MaxMinDecimal)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
+	(*partialResult4MaxMinDecimal)(p).deque = NewDeque(e.isMax, func(i, j any) int {
 		src := i.(types.MyDecimal)
 		dst := j.(types.MyDecimal)
 		return src.Compare(&dst)
@@ -1036,7 +1036,7 @@ type maxMin4StringSliding struct {
 func (e *maxMin4StringSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4String.AllocPartialResult()
 	tp := e.args[0].GetType()
-	(*partialResult4MaxMinString)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
+	(*partialResult4MaxMinString)(p).deque = NewDeque(e.isMax, func(i, j any) int {
 		return types.CompareString(i.(string), j.(string), tp.GetCollate())
 	})
 	return p, memDelta + DefMaxMinDequeSize
@@ -1174,7 +1174,7 @@ type maxMin4TimeSliding struct {
 
 func (e *maxMin4TimeSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Time.AllocPartialResult()
-	(*partialResult4MaxMinTime)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
+	(*partialResult4MaxMinTime)(p).deque = NewDeque(e.isMax, func(i, j any) int {
 		src := i.(types.Time)
 		dst := j.(types.Time)
 		return src.Compare(dst)
@@ -1314,7 +1314,7 @@ type maxMin4DurationSliding struct {
 
 func (e *maxMin4DurationSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Duration.AllocPartialResult()
-	(*partialResult4MaxMinDuration)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
+	(*partialResult4MaxMinDuration)(p).deque = NewDeque(e.isMax, func(i, j any) int {
 		src := i.(types.Duration)
 		dst := j.(types.Duration)
 		return src.Compare(dst)

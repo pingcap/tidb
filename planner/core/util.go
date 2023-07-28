@@ -310,7 +310,7 @@ func GetStatsInfoFromFlatPlan(flat *FlatPhysicalPlan) map[string]uint64 {
 
 // GetStatsInfo gets the statistics info from a physical plan tree.
 // Deprecated: FlattenPhysicalPlan() + GetStatsInfoFromFlatPlan() is preferred.
-func GetStatsInfo(i interface{}) map[string]uint64 {
+func GetStatsInfo(i any) map[string]uint64 {
 	if i == nil {
 		// it's a workaround for https://github.com/pingcap/tidb/issues/17419
 		// To entirely fix this, uncomment the assertion in TestPreparedIssue17419

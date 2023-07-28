@@ -94,7 +94,7 @@ func escapeStringBackslash(buf []byte, v string) []byte {
 }
 
 // escapeSQL is the internal impl of EscapeSQL and FormatSQL.
-func escapeSQL(sql string, args ...interface{}) ([]byte, error) {
+func escapeSQL(sql string, args ...any) ([]byte, error) {
 	buf := make([]byte, 0, len(sql))
 	argPos := 0
 	for i := 0; i < len(sql); i++ {
@@ -265,13 +265,13 @@ func appendSQLArgString(buf []byte, s string) []byte {
 	EscapeSQL("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
 */
 // It is still your responsibility to write safe SQL.
-func EscapeSQL(sql string, args ...interface{}) (string, error) {
+func EscapeSQL(sql string, args ...any) (string, error) {
 	str, err := escapeSQL(sql, args...)
 	return string(str), err
 }
 
 // MustEscapeSQL is a helper around EscapeSQL. The error returned from escapeSQL can be avoided statically if you do not pass interface{}.
-func MustEscapeSQL(sql string, args ...interface{}) string {
+func MustEscapeSQL(sql string, args ...any) string {
 	r, err := EscapeSQL(sql, args...)
 	if err != nil {
 		panic(err)
@@ -280,7 +280,7 @@ func MustEscapeSQL(sql string, args ...interface{}) string {
 }
 
 // FormatSQL is the io.Writer version of EscapeSQL. Please refer to EscapeSQL for details.
-func FormatSQL(w io.Writer, sql string, args ...interface{}) error {
+func FormatSQL(w io.Writer, sql string, args ...any) error {
 	buf, err := escapeSQL(sql, args...)
 	if err != nil {
 		return err
@@ -291,7 +291,7 @@ func FormatSQL(w io.Writer, sql string, args ...interface{}) error {
 
 // MustFormatSQL is a helper around FormatSQL, like MustEscapeSQL. But it asks that the writer must be strings.Builder,
 // which will not return error when w.Write(...).
-func MustFormatSQL(w *strings.Builder, sql string, args ...interface{}) {
+func MustFormatSQL(w *strings.Builder, sql string, args ...any) {
 	err := FormatSQL(w, sql, args...)
 	if err != nil {
 		panic(err)

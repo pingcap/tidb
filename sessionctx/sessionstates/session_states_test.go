@@ -301,7 +301,7 @@ func TestSessionCtx(t *testing.T) {
 				return rows
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery("select @@tidb_last_txn_info").Check(param.([][]interface{}))
+				tk.MustQuery("select @@tidb_last_txn_info").Check(param.([][]any))
 			},
 		},
 		{
@@ -312,7 +312,7 @@ func TestSessionCtx(t *testing.T) {
 				return rows
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery("select @@tidb_last_query_info").Check(param.([][]interface{}))
+				tk.MustQuery("select @@tidb_last_query_info").Check(param.([][]any))
 			},
 		},
 		{
@@ -336,7 +336,7 @@ func TestSessionCtx(t *testing.T) {
 				return rows
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery("select @@tidb_last_ddl_info").Check(param.([][]interface{}))
+				tk.MustQuery("select @@tidb_last_ddl_info").Check(param.([][]any))
 			},
 		},
 		{
@@ -348,7 +348,7 @@ func TestSessionCtx(t *testing.T) {
 				return rows
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery("select @@tidb_last_ddl_info").Check(param.([][]interface{}))
+				tk.MustQuery("select @@tidb_last_ddl_info").Check(param.([][]any))
 			},
 		},
 		{

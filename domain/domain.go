@@ -1440,7 +1440,7 @@ func (do *Domain) runawayRecordFlushLoop() {
 	}
 }
 
-func (do *Domain) execRestrictedSQL(sql string, params []interface{}) ([]chunk.Row, error) {
+func (do *Domain) execRestrictedSQL(sql string, params []any) ([]chunk.Row, error) {
 	se, err := do.sysSessionPool.Get()
 	defer func() {
 		do.sysSessionPool.Put(se)
@@ -1456,9 +1456,9 @@ func (do *Domain) execRestrictedSQL(sql string, params []interface{}) ([]chunk.R
 	return r, err
 }
 
-func genRunawayQueriesStmt(records []*resourcegroup.RunawayRecord) (string, []interface{}) {
+func genRunawayQueriesStmt(records []*resourcegroup.RunawayRecord) (string, []any) {
 	var builder strings.Builder
-	params := make([]interface{}, 0, len(records)*7)
+	params := make([]any, 0, len(records)*7)
 	builder.WriteString("insert into mysql.tidb_runaway_queries VALUES ")
 	for count, r := range records {
 		if count > 0 {
@@ -1476,9 +1476,9 @@ func genRunawayQueriesStmt(records []*resourcegroup.RunawayRecord) (string, []in
 	return builder.String(), params
 }
 
-func genQuarantineQueriesStmt(records []*resourcegroup.QuarantineRecord) (string, []interface{}) {
+func genQuarantineQueriesStmt(records []*resourcegroup.QuarantineRecord) (string, []any) {
 	var builder strings.Builder
-	params := make([]interface{}, 0, len(records)*7)
+	params := make([]any, 0, len(records)*7)
 	builder.WriteString("insert into mysql.tidb_runaway_quarantined_watch VALUES ")
 	for count, r := range records {
 		if count > 0 {

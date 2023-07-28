@@ -1455,8 +1455,8 @@ func TestMergeLockScanner(t *testing.T) {
 	// Shortcuts to make the following test code simpler
 
 	// Get stores by index, and get their store IDs.
-	makeIDSet := func(storeIDs []uint64, indices ...uint64) map[uint64]interface{} {
-		res := make(map[uint64]interface{})
+	makeIDSet := func(storeIDs []uint64, indices ...uint64) map[uint64]any {
+		res := make(map[uint64]any)
 		for _, i := range indices {
 			res[storeIDs[i]] = nil
 		}
@@ -1829,7 +1829,7 @@ func TestPhysicalScanLockDeadlock(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/resolveLocksAcrossRegionsErr"))
 	}()
 
-	done := make(chan interface{})
+	done := make(chan any)
 	go func() {
 		defer close(done)
 		storesMap := map[uint64]*metapb.Store{stores[0].Id: stores[0]}
@@ -1852,7 +1852,7 @@ func TestGCPlacementRules(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC"))
 	}()
 
-	gcPlacementRuleCache := make(map[int64]interface{})
+	gcPlacementRuleCache := make(map[int64]any)
 	deletePlacementRuleCounter := 0
 	require.NoError(t, failpoint.EnableWith("github.com/pingcap/tidb/store/gcworker/gcDeletePlacementRuleCounter", "return", func() error {
 		deletePlacementRuleCounter++
@@ -1881,7 +1881,7 @@ func TestGCPlacementRules(t *testing.T) {
 	dr := util.DelRangeTask{JobID: 1, ElementID: 10}
 	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
 	require.NoError(t, err)
-	require.Equal(t, map[int64]interface{}{10: struct{}{}}, gcPlacementRuleCache)
+	require.Equal(t, map[int64]any{10: struct{}{}}, gcPlacementRuleCache)
 	require.Equal(t, 1, deletePlacementRuleCounter)
 
 	// check bundle deleted after gc
@@ -1893,7 +1893,7 @@ func TestGCPlacementRules(t *testing.T) {
 	// gc the same table id repeatedly
 	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
 	require.NoError(t, err)
-	require.Equal(t, map[int64]interface{}{10: struct{}{}}, gcPlacementRuleCache)
+	require.Equal(t, map[int64]any{10: struct{}{}}, gcPlacementRuleCache)
 	require.Equal(t, 1, deletePlacementRuleCounter)
 }
 

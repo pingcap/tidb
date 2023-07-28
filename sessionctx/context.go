@@ -85,10 +85,10 @@ type Context interface {
 	GetMPPClient() kv.MPPClient
 
 	// SetValue saves a value associated with this context for key.
-	SetValue(key fmt.Stringer, value interface{})
+	SetValue(key fmt.Stringer, value any)
 
 	// Value returns the value associated with this context for key.
-	Value(key fmt.Stringer) interface{}
+	Value(key fmt.Stringer) any
 
 	// ClearValue clears the value associated with this context for key.
 	ClearValue(key fmt.Stringer)
@@ -123,7 +123,7 @@ type Context interface {
 	GetSessionPlanCache() PlanCache
 
 	// StoreQueryFeedback stores the query feedback.
-	StoreQueryFeedback(feedback interface{})
+	StoreQueryFeedback(feedback any)
 
 	// UpdateColStatsUsage updates the column stats usage.
 	// TODO: maybe we can use a method called GetSessionStatsCollector to replace both StoreQueryFeedback and UpdateColStatsUsage but we need to deal with import circle if we do so.

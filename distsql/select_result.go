@@ -97,11 +97,11 @@ func (h chunkRowHeap) Swap(i, j int) {
 	h.rowPtrs[i], h.rowPtrs[j] = h.rowPtrs[j], h.rowPtrs[i]
 }
 
-func (h *chunkRowHeap) Push(x interface{}) {
+func (h *chunkRowHeap) Push(x any) {
 	h.rowPtrs = append(h.rowPtrs, x.(chunk.RowPtr))
 }
 
-func (h *chunkRowHeap) Pop() interface{} {
+func (h *chunkRowHeap) Pop() any {
 	ret := h.rowPtrs[len(h.rowPtrs)-1]
 	h.rowPtrs = h.rowPtrs[0 : len(h.rowPtrs)-1]
 	return ret

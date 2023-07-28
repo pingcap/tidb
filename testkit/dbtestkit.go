@@ -50,7 +50,7 @@ func (tk *DBTestKit) MustPrepare(query string) *sql.Stmt {
 
 // MustExecPrepared executes a prepared statement with the given arguments and
 // returns a Result summarizing the effect of the statement.
-func (tk *DBTestKit) MustExecPrepared(stmt *sql.Stmt, args ...interface{}) sql.Result {
+func (tk *DBTestKit) MustExecPrepared(stmt *sql.Stmt, args ...any) sql.Result {
 	res, err := stmt.Exec(args...)
 	tk.require.NoErrorf(err, "Execute prepared with args: %s", args)
 	return res
@@ -58,14 +58,14 @@ func (tk *DBTestKit) MustExecPrepared(stmt *sql.Stmt, args ...interface{}) sql.R
 
 // MustQueryPrepared executes a prepared query statement with the given arguments
 // and returns the query results as a *Rows.
-func (tk *DBTestKit) MustQueryPrepared(stmt *sql.Stmt, args ...interface{}) *sql.Rows {
+func (tk *DBTestKit) MustQueryPrepared(stmt *sql.Stmt, args ...any) *sql.Rows {
 	rows, err := stmt.Query(args...)
 	tk.require.NoErrorf(err, "Query prepared with args: %s", args)
 	return rows
 }
 
 // MustExec query the statements and returns the result.
-func (tk *DBTestKit) MustExec(sql string, args ...interface{}) sql.Result {
+func (tk *DBTestKit) MustExec(sql string, args ...any) sql.Result {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
 	rs, err := tk.db.Exec(sql, args...)
 	tk.require.NoError(err, comment)
@@ -74,7 +74,7 @@ func (tk *DBTestKit) MustExec(sql string, args ...interface{}) sql.Result {
 }
 
 // MustQuery query the statements and returns result rows.
-func (tk *DBTestKit) MustQuery(sql string, args ...interface{}) *sql.Rows {
+func (tk *DBTestKit) MustQuery(sql string, args ...any) *sql.Rows {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
 	rows, err := tk.db.Query(sql, args...)
 	tk.require.NoError(err, comment)
@@ -83,7 +83,7 @@ func (tk *DBTestKit) MustQuery(sql string, args ...interface{}) *sql.Rows {
 }
 
 // MustQueryRows query the statements
-func (tk *DBTestKit) MustQueryRows(query string, args ...interface{}) {
+func (tk *DBTestKit) MustQueryRows(query string, args ...any) {
 	rows := tk.MustQuery(query, args...)
 	tk.require.True(rows.Next())
 	tk.require.NoError(rows.Err())

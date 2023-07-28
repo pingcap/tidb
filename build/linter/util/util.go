@@ -86,7 +86,7 @@ func ParseDirectives(files []*ast.File, fset *token.FileSet) []Directive {
 	return dirs
 }
 
-func doDirectives(pass *analysis.Pass) (interface{}, error) {
+func doDirectives(pass *analysis.Pass) (any, error) {
 	return ParseDirectives(pass.Files, pass.Fset), nil
 }
 
@@ -104,7 +104,7 @@ var Directives = &analysis.Analyzer{
 func SkipAnalyzer(analyzer *analysis.Analyzer) {
 	analyzer.Requires = append(analyzer.Requires, Directives)
 	oldRun := analyzer.Run
-	analyzer.Run = func(p *analysis.Pass) (interface{}, error) {
+	analyzer.Run = func(p *analysis.Pass) (any, error) {
 		pass := *p
 		oldReport := p.Report
 		pass.Report = func(diag analysis.Diagnostic) {

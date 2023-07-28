@@ -294,7 +294,7 @@ func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLock
 // 2. An INSERT statement without "SELECT" subquery.
 // 3. A UPDATE statement whose sub execution plan is "PointGet".
 // 4. A DELETE statement whose sub execution plan is "PointGet".
-func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
+func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val any) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
 	}

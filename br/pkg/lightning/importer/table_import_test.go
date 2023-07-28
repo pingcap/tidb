@@ -1296,7 +1296,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 		},
 	}
 
-	mustMarshal := func(v interface{}) []byte {
+	mustMarshal := func(v any) []byte {
 		data, err := json.Marshal(v)
 		require.NoError(s.T(), err)
 		return data

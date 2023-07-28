@@ -517,7 +517,7 @@ func FinishAnalyzeMergeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, 
 	}
 	job.EndTime = time.Now()
 	var sql string
-	var args []interface{}
+	var args []any
 	if analyzeErr != nil {
 		failReason := analyzeErr.Error()
 		const textMaxLength = 65535
@@ -525,10 +525,10 @@ func FinishAnalyzeMergeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, 
 			failReason = failReason[:textMaxLength]
 		}
 		sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?"
-		args = []interface{}{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
+		args = []any{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
 	} else {
 		sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
-		args = []interface{}{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
+		args = []any{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
 	}
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
@@ -551,7 +551,7 @@ func FinishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 	}
 	job.EndTime = time.Now()
 	var sql string
-	var args []interface{}
+	var args []any
 	// process_id is used to see which process is running the analyze job and kill the analyze job. After the analyze job
 	// is finished(or failed), process_id is useless and we set it to NULL to avoid `kill tidb process_id` wrongly.
 	if analyzeErr != nil {
@@ -561,10 +561,10 @@ func FinishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 			failReason = failReason[:textMaxLength]
 		}
 		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?"
-		args = []interface{}{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
+		args = []any{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
 	} else {
 		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
-		args = []interface{}{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
+		args = []any{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
 	}
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)

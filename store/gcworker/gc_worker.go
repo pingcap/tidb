@@ -265,8 +265,8 @@ func (w *GCWorker) GetScope(status string) variable.ScopeFlag {
 }
 
 // Stats returns the server statistics.
-func (w *GCWorker) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
-	m := make(map[string]interface{})
+func (w *GCWorker) Stats(vars *variable.SessionVars) (map[string]any, error) {
+	m := make(map[string]any)
 	if v, err := w.loadValueFromSysTable(gcLeaderUUIDKey); err == nil {
 		m[tidbGCLeaderUUID] = v
 	}
@@ -886,7 +886,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		return errors.Trace(err)
 	}
 	// Cache table ids on which placement rules have been GC-ed, to avoid redundantly GC the same table id multiple times.
-	gcPlacementRuleCache := make(map[int64]interface{}, len(ranges))
+	gcPlacementRuleCache := make(map[int64]any, len(ranges))
 
 	logutil.Logger(ctx).Info("start delete ranges", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
@@ -1594,7 +1594,7 @@ func (w *GCWorker) registerLockObservers(ctx context.Context, safePoint uint64, 
 
 // checkLockObservers checks the state of each store's lock observer. If any lock collected by the observers, resolve
 // them. Returns ids of clean stores.
-func (w *GCWorker) checkLockObservers(ctx context.Context, safePoint uint64, stores map[uint64]*metapb.Store) (map[uint64]interface{}, error) {
+func (w *GCWorker) checkLockObservers(ctx context.Context, safePoint uint64, stores map[uint64]*metapb.Store) (map[uint64]any, error) {
 	logutil.Logger(ctx).Info("checking lock observers", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint))
@@ -1602,7 +1602,7 @@ func (w *GCWorker) checkLockObservers(ctx context.Context, safePoint uint64, sto
 	req := tikvrpc.NewRequest(tikvrpc.CmdCheckLockObserver, &kvrpcpb.CheckLockObserverRequest{
 		MaxTs: safePoint,
 	})
-	cleanStores := make(map[uint64]interface{}, len(stores))
+	cleanStores := make(map[uint64]any, len(stores))
 
 	logError := func(store *metapb.Store, err error) {
 		logutil.Logger(ctx).Error("failed to check lock observer for store", zap.String("category", "gc worker"),
@@ -1700,7 +1700,7 @@ func (w *GCWorker) removeLockObservers(ctx context.Context, safePoint uint64, st
 }
 
 // physicalScanAndResolveLocks performs physical scan lock and resolves these locks. Returns successful stores
-func (w *GCWorker) physicalScanAndResolveLocks(ctx context.Context, safePoint uint64, stores map[uint64]*metapb.Store) (map[uint64]interface{}, error) {
+func (w *GCWorker) physicalScanAndResolveLocks(ctx context.Context, safePoint uint64, stores map[uint64]*metapb.Store) (map[uint64]any, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	// Cancel all spawned goroutines for lock scanning and resolving.
 	defer cancel()
@@ -2148,11 +2148,11 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 // GC placement rules when the partitions are removed by the GC worker.
 // Placement rules cannot be removed immediately after drop table / truncate table,
 // because the tables can be flashed back or recovered.
-func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]interface{}) (err error) {
+func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]any) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
-		args, err1 := json.Marshal([]interface{}{kv.Key{}, []int64{int64(v.(int))}})
+		args, err1 := json.Marshal([]any{kv.Key{}, []int64{int64(v.(int))}})
 		if err1 != nil {
 			return
 		}
@@ -2236,7 +2236,7 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJob", func(v failpoint.Value) {
-		args, err1 := json.Marshal([]interface{}{kv.Key{}, []int64{}, []string{v.(string)}})
+		args, err1 := json.Marshal([]any{kv.Key{}, []int64{}, []string{v.(string)}})
 		if err1 != nil {
 			return
 		}
@@ -2294,7 +2294,7 @@ func getGCRules(ids []int64, rules map[string]*label.Rule) []string {
 	for _, rule := range rules {
 		find := false
 		for _, d := range rule.Data {
-			if r, ok := d.(map[string]interface{}); ok {
+			if r, ok := d.(map[string]any); ok {
 				nowRange := fmt.Sprintf("%s%s", r["start_key"], r["end_key"])
 				if _, ok := oldRange[nowRange]; ok {
 					find = true
@@ -2490,11 +2490,11 @@ func (r mergeReceiver) Swap(i, j int) {
 	r[i], r[j] = r[j], r[i]
 }
 
-func (r *mergeReceiver) Push(x interface{}) {
+func (r *mergeReceiver) Push(x any) {
 	*r = append(*r, x.(*receiver))
 }
 
-func (r *mergeReceiver) Pop() interface{} {
+func (r *mergeReceiver) Pop() any {
 	receivers := *r
 	res := receivers[len(receivers)-1]
 	*r = receivers[:len(receivers)-1]
@@ -2584,8 +2584,8 @@ func (s *mergeLockScanner) NextBatch(batchSize int) []*txnlock.Lock {
 }
 
 // GetSucceededStores gets a set of successfully scanned stores. Only call this after finishing scanning all locks.
-func (s *mergeLockScanner) GetSucceededStores() map[uint64]interface{} {
-	stores := make(map[uint64]interface{}, len(s.receivers))
+func (s *mergeLockScanner) GetSucceededStores() map[uint64]any {
+	stores := make(map[uint64]any, len(s.receivers))
 	for _, receiver := range s.receivers {
 		if receiver.Err == nil {
 			stores[receiver.StoreID] = nil

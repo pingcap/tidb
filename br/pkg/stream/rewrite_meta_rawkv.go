@@ -857,7 +857,7 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 			return nil
 		}
 
-		var indexName interface{}
+		var indexName any
 		var ifExists bool
 		var indexID int64
 		var partitionIDs []int64

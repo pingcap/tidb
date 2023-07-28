@@ -3012,7 +3012,7 @@ func doDMLWorks(s Session) {
 	}
 }
 
-func mustExecute(s Session, sql string, args ...interface{}) {
+func mustExecute(s Session, sql string, args ...any) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, sql, args...)

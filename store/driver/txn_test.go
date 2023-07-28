@@ -52,7 +52,7 @@ func TestTxnGet(t *testing.T) {
 	}()
 	clearStoreData(t, store)
 
-	prepareSnapshot(t, store, [][]interface{}{{"k1", "v1"}})
+	prepareSnapshot(t, store, [][]any{{"k1", "v1"}})
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	require.NotNil(t, txn)
@@ -121,7 +121,7 @@ func TestTxnBatchGet(t *testing.T) {
 	}()
 	clearStoreData(t, store)
 
-	prepareSnapshot(t, store, [][]interface{}{{"k1", "v1"}, {"k2", "v2"}, {"k3", "v3"}, {"k4", "v4"}})
+	prepareSnapshot(t, store, [][]any{{"k1", "v1"}, {"k2", "v2"}, {"k3", "v3"}, {"k4", "v4"}})
 	txn, err := store.Begin()
 	require.NoError(t, err)
 
@@ -178,21 +178,21 @@ func TestTxnScan(t *testing.T) {
 	}()
 	clearStoreData(t, store)
 
-	prepareSnapshot(t, store, [][]interface{}{{"k1", "v1"}, {"k3", "v3"}, {"k5", "v5"}, {"k7", "v7"}, {"k9", "v9"}})
+	prepareSnapshot(t, store, [][]any{{"k1", "v1"}, {"k3", "v3"}, {"k5", "v5"}, {"k7", "v7"}, {"k9", "v9"}})
 	txn, err := store.Begin()
 	require.NoError(t, err)
 
 	iter, err := txn.Iter(kv.Key("k3"), kv.Key("k9"))
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{{"k3", "v3"}, {"k5", "v5"}, {"k7", "v7"}})
+	checkIter(t, iter, [][]any{{"k3", "v3"}, {"k5", "v5"}, {"k7", "v7"}})
 
 	iter, err = txn.IterReverse(kv.Key("k9"), nil)
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{{"k7", "v7"}, {"k5", "v5"}, {"k3", "v3"}, {"k1", "v1"}})
+	checkIter(t, iter, [][]any{{"k7", "v7"}, {"k5", "v5"}, {"k3", "v3"}, {"k1", "v1"}})
 
 	iter, err = txn.IterReverse(kv.Key("k9"), kv.Key("k3"))
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{{"k7", "v7"}, {"k5", "v5"}, {"k3", "v3"}})
+	checkIter(t, iter, [][]any{{"k7", "v7"}, {"k5", "v5"}, {"k3", "v3"}})
 
 	// make some dirty data
 	err = txn.Set(kv.Key("k1"), []byte("v1+"))
@@ -206,11 +206,11 @@ func TestTxnScan(t *testing.T) {
 
 	iter, err = txn.Iter(kv.Key("k3"), kv.Key("k9"))
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{{"k3", "v3+"}, {"k31", "v31+"}, {"k7", "v7"}})
+	checkIter(t, iter, [][]any{{"k3", "v3+"}, {"k31", "v31+"}, {"k7", "v7"}})
 
 	iter, err = txn.IterReverse(kv.Key("k9"), nil)
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{{"k7", "v7"}, {"k31", "v31+"}, {"k3", "v3+"}, {"k1", "v1+"}})
+	checkIter(t, iter, [][]any{{"k7", "v7"}, {"k31", "v31+"}, {"k3", "v3+"}, {"k1", "v1+"}})
 
 	// make snapshot returns error
 	errInterceptor := &mockErrInterceptor{err: errors.New("error")}

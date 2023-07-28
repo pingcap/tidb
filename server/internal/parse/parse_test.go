@@ -37,7 +37,7 @@ func TestParseExecArgs(t *testing.T) {
 	tests := []struct {
 		args   args
 		err    error
-		expect interface{}
+		expect any
 	}{
 		// Tests for int overflow
 		{

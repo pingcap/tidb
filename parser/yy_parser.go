@@ -329,7 +329,7 @@ func toBit(l yyLexer, lval *yySymType, str string) int {
 	return bitLit
 }
 
-func getUint64FromNUM(num interface{}) uint64 {
+func getUint64FromNUM(num any) uint64 {
 	switch v := num.(type) {
 	case int64:
 		return uint64(v)
@@ -339,7 +339,7 @@ func getUint64FromNUM(num interface{}) uint64 {
 	return 0
 }
 
-func getInt64FromNUM(num interface{}) (val int64, errMsg string) {
+func getInt64FromNUM(num any) (val int64, errMsg string) {
 	switch v := num.(type) {
 	case int64:
 		return v, ""

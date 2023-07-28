@@ -137,7 +137,7 @@ type Config struct {
 	TiDBMemQuotaQuery   uint64
 	FileSize            uint64
 	StatementSize       uint64
-	SessionParams       map[string]interface{}
+	SessionParams       map[string]any
 	Tables              DatabaseTables
 	CollationCompatible string
 
@@ -191,7 +191,7 @@ func DefaultConfig() *Config {
 		DumpEmptyDatabase:        true,
 		CsvDelimiter:             "\"",
 		CsvSeparator:             ",",
-		SessionParams:            make(map[string]interface{}),
+		SessionParams:            make(map[string]any),
 		OutputFileTemplate:       DefaultOutputFileTemplate,
 		PosAfterConnect:          false,
 		CollationCompatible:      LooseCollationCompatible,
@@ -472,7 +472,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	if conf.SessionParams == nil {
-		conf.SessionParams = make(map[string]interface{})
+		conf.SessionParams = make(map[string]any)
 	}
 
 	tablesList, err := flags.GetStringSlice(flagTablesList)

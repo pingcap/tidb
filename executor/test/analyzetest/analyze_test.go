@@ -941,14 +941,14 @@ create table small_table_inject_pd_with_partition(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p1",
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p2",
 	))
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"global", "a"},
 		{"p0", "a"},
 		{"p1", "a"},
 		{"p2", "a"},
 	}
 	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 'small_table_inject_pd_with_partition' and last_analyzed_at is not null").Sort().CheckAt([]int{2, 3}, rows)
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"global", "0", "3"},
 		{"p0", "0", "1"},
 		{"p1", "0", "1"},
@@ -1661,24 +1661,24 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
 				require.Equal(t, 1, len(rows))
-				require.Equal(t, []interface{}{"test", "t", "global", "a"}, rows[0][:4])
+				require.Equal(t, []any{"test", "t", "global", "a"}, rows[0][:4])
 				tk.MustExec("analyze table t predicate columns with 2 topn, 2 buckets")
 			}
 
 			rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
 			require.Equal(t, 6, len(rows))
-			require.Equal(t, []interface{}{"test", "t", "global", "a"}, rows[0][:4])
-			require.Equal(t, []interface{}{"test", "t", "global", "c"}, rows[1][:4])
-			require.Equal(t, []interface{}{"test", "t", "p0", "a"}, rows[2][:4])
-			require.Equal(t, []interface{}{"test", "t", "p0", "c"}, rows[3][:4])
-			require.Equal(t, []interface{}{"test", "t", "p1", "a"}, rows[4][:4])
-			require.Equal(t, []interface{}{"test", "t", "p1", "c"}, rows[5][:4])
+			require.Equal(t, []any{"test", "t", "global", "a"}, rows[0][:4])
+			require.Equal(t, []any{"test", "t", "global", "c"}, rows[1][:4])
+			require.Equal(t, []any{"test", "t", "p0", "a"}, rows[2][:4])
+			require.Equal(t, []any{"test", "t", "p0", "c"}, rows[3][:4])
+			require.Equal(t, []any{"test", "t", "p1", "a"}, rows[4][:4])
+			require.Equal(t, []any{"test", "t", "p1", "c"}, rows[5][:4])
 
 			rows = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Sort().Rows()
 			require.Equal(t, 3, len(rows))
-			require.Equal(t, []interface{}{"test", "t", "global", "0", "20"}, append(rows[0][:3], rows[0][4:]...))
-			require.Equal(t, []interface{}{"test", "t", "p0", "0", "9"}, append(rows[1][:3], rows[1][4:]...))
-			require.Equal(t, []interface{}{"test", "t", "p1", "0", "11"}, append(rows[2][:3], rows[2][4:]...))
+			require.Equal(t, []any{"test", "t", "global", "0", "20"}, append(rows[0][:3], rows[0][4:]...))
+			require.Equal(t, []any{"test", "t", "p0", "0", "9"}, append(rows[1][:3], rows[1][4:]...))
+			require.Equal(t, []any{"test", "t", "p1", "0", "11"}, append(rows[2][:3], rows[2][4:]...))
 
 			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't' and is_index = 0").Sort().Check(
 				// db, tbl, part, col, is_idx, value, count
@@ -1813,21 +1813,21 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
 				require.Equal(t, 1, len(rows))
-				require.Equal(t, []interface{}{"test", "t", "global", "a"}, rows[0][:4])
+				require.Equal(t, []any{"test", "t", "global", "a"}, rows[0][:4])
 				tk.MustExec("analyze table t predicate columns with 2 topn, 2 buckets")
 			}
 
 			rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
 			require.Equal(t, 4, len(rows))
-			require.Equal(t, []interface{}{"test", "t", "p0", "a"}, rows[0][:4])
-			require.Equal(t, []interface{}{"test", "t", "p0", "c"}, rows[1][:4])
-			require.Equal(t, []interface{}{"test", "t", "p1", "a"}, rows[2][:4])
-			require.Equal(t, []interface{}{"test", "t", "p1", "c"}, rows[3][:4])
+			require.Equal(t, []any{"test", "t", "p0", "a"}, rows[0][:4])
+			require.Equal(t, []any{"test", "t", "p0", "c"}, rows[1][:4])
+			require.Equal(t, []any{"test", "t", "p1", "a"}, rows[2][:4])
+			require.Equal(t, []any{"test", "t", "p1", "c"}, rows[3][:4])
 
 			rows = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Sort().Rows()
 			require.Equal(t, 2, len(rows))
-			require.Equal(t, []interface{}{"test", "t", "p0", "0", "9"}, append(rows[0][:3], rows[0][4:]...))
-			require.Equal(t, []interface{}{"test", "t", "p1", "0", "11"}, append(rows[1][:3], rows[1][4:]...))
+			require.Equal(t, []any{"test", "t", "p0", "0", "9"}, append(rows[0][:3], rows[0][4:]...))
+			require.Equal(t, []any{"test", "t", "p1", "0", "11"}, append(rows[1][:3], rows[1][4:]...))
 
 			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't' and is_index = 0").Sort().Check(
 				// db, tbl, part, col, is_idx, value, count
@@ -1946,7 +1946,7 @@ func TestAnalyzeColumnsWithExtendedStats(t *testing.T) {
 					"test t  c 0 1 3 1 5 5 0"))
 			rows = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'").Rows()
 			require.Equal(t, 1, len(rows))
-			require.Equal(t, []interface{}{"test", "t", "s1", "[b,c]", "correlation", "1.000000"}, rows[0][:len(rows[0])-1])
+			require.Equal(t, []any{"test", "t", "s1", "[b,c]", "correlation", "1.000000"}, rows[0][:len(rows[0])-1])
 		}(val)
 	}
 }
@@ -2353,7 +2353,7 @@ func TestAnalyzeJob(t *testing.T) {
 		executor.StartAnalyzeJob(se, job)
 		ctx := context.WithValue(context.Background(), executor.AnalyzeProgressTest, 100)
 		rows = tk.MustQueryWithContext(ctx, "show analyze status").Rows()
-		checkTime := func(val interface{}) {
+		checkTime := func(val any) {
 			str, ok := val.(string)
 			require.True(t, ok)
 			_, err := time.Parse(time.DateTime, str)

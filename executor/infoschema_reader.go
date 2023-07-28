@@ -325,7 +325,7 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas 
 		if len(schema.Collate) > 0 {
 			collation = schema.Collate // Overwrite default
 		}
-		var policyName interface{}
+		var policyName any
 		if schema.PlacementPolicyRef != nil {
 			policyName = schema.PlacementPolicyRef.Name.O
 		}
@@ -409,7 +409,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 			}
 
 			colName := col.Name.O
-			var expression interface{}
+			var expression any
 			expression = nil
 			tblCol := table.Columns[col.Offset]
 			if tblCol.Hidden {
@@ -517,7 +517,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 				} else if table.TableCacheStatusType == model.TableCacheStatusEnable {
 					createOptions = "cached=on"
 				}
-				var autoIncID interface{}
+				var autoIncID any
 				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
 				if hasAutoIncID {
 					autoIncID, err = getAutoIncrementID(sctx, schema, table)
@@ -557,7 +557,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					pkType = "CLUSTERED"
 				}
 				shardingInfo := infoschema.GetShardingInfo(schema, table)
-				var policyName interface{}
+				var policyName any
 				if table.PlacementPolicyRef != nil {
 					policyName = table.PlacementPolicyRef.Name.O
 				}
@@ -759,7 +759,7 @@ ForColumnsTag:
 			}
 		}
 
-		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
+		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision any
 		colLen, decimal := ft.GetFlen(), ft.GetDecimal()
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(ft.GetType())
 		if decimal == types.UnspecifiedLength {
@@ -810,7 +810,7 @@ ForColumnsTag:
 		}
 		columnType := ft.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
-		var columnDefault interface{}
+		var columnDefault any
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
 			switch col.GetDefaultValue() {
@@ -983,7 +983,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 						partitionExpr = buf.String()
 					}
 
-					var policyName interface{}
+					var policyName any
 					if pi.PlacementPolicyRef != nil {
 						policyName = pi.PlacementPolicyRef.Name.O
 					}
@@ -1071,12 +1071,12 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 					if idxInfo.Unique {
 						nonUniq = 0
 					}
-					var subPart interface{}
+					var subPart any
 					if col.Length != types.UnspecifiedLength {
 						subPart = col.Length
 					}
 					colName := col.Name.O
-					var expression interface{}
+					var expression any
 					expression = nil
 					tblCol := tb.Columns[col.Offset]
 					if tblCol.Hidden {
@@ -1997,7 +1997,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 		partitionName := chunkRow.GetString(2)
 		jobInfo := chunkRow.GetString(3)
 		processedRows := chunkRow.GetInt64(4)
-		var startTime, endTime interface{}
+		var startTime, endTime any
 		if !chunkRow.IsNull(5) {
 			t, err := chunkRow.GetTime(5).GoTime(time.UTC)
 			if err != nil {
@@ -2014,17 +2014,17 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 		}
 
 		state := chunkRow.GetEnum(7).String()
-		var failReason interface{}
+		var failReason any
 		if !chunkRow.IsNull(8) {
 			failReason = chunkRow.GetString(8)
 		}
 		instance := chunkRow.GetString(9)
-		var procID interface{}
+		var procID any
 		if !chunkRow.IsNull(10) {
 			procID = chunkRow.GetUint64(10)
 		}
 
-		var remainDurationStr, progressDouble, estimatedRowCntStr interface{}
+		var remainDurationStr, progressDouble, estimatedRowCntStr any
 		if state == statistics.AnalyzeRunning {
 			startTime, ok := startTime.(types.Time)
 			if !ok {
@@ -2643,7 +2643,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 					row = append(row, types.NewDatum(strings.ToUpper(hex.EncodeToString(lockWait.Key))))
 				case infoschema.DataLockWaitsColumnKeyInfo:
 					infoSchema := sctx.GetInfoSchema().(infoschema.InfoSchema)
-					var decodedKeyStr interface{}
+					var decodedKeyStr any
 					decodedKey, err := keydecoder.DecodeKey(lockWait.Key, infoSchema)
 					if err == nil {
 						decodedKeyBytes, err := json.Marshal(decodedKey)
@@ -2690,7 +2690,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 					row = append(row, types.NewDatum(strings.ToUpper(hex.EncodeToString(resolving.Key))))
 				case infoschema.DataLockWaitsColumnKeyInfo:
 					infoSchema := domain.GetDomain(sctx).InfoSchema()
-					var decodedKeyStr interface{}
+					var decodedKeyStr any
 					decodedKey, err := keydecoder.DecodeKey(resolving.Key, infoSchema)
 					if err == nil {
 						decodedKeyBytes, err := json.Marshal(decodedKey)
@@ -3010,7 +3010,7 @@ type tiFlashSQLExecuteResponseMetaColumn struct {
 
 type tiFlashSQLExecuteResponse struct {
 	Meta []tiFlashSQLExecuteResponseMetaColumn `json:"meta"`
-	Data [][]interface{}                       `json:"data"`
+	Data [][]any                               `json:"data"`
 }
 
 func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Context, sctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
@@ -3120,15 +3120,15 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 	rules, err := infosync.GetAllLabelRules(context.TODO())
 	skipValidateTable := false
 	failpoint.Inject("mockOutputOfAttributes", func() {
-		convert := func(i interface{}) []interface{} {
-			return []interface{}{i}
+		convert := func(i any) []any {
+			return []any{i}
 		}
 		rules = []*label.Rule{
 			{
 				ID:       "schema/test/test_label",
 				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
 				RuleType: "key-range",
-				Data: convert(map[string]interface{}{
+				Data: convert(map[string]any{
 					"start_key": "7480000000000000ff395f720000000000fa",
 					"end_key":   "7480000000000000ff3a5f720000000000fa",
 				}),
@@ -3137,7 +3137,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 				ID:       "invalidIDtest",
 				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
 				RuleType: "key-range",
-				Data: convert(map[string]interface{}{
+				Data: convert(map[string]any{
 					"start_key": "7480000000000000ff395f720000000000fa",
 					"end_key":   "7480000000000000ff3a5f720000000000fa",
 				}),
@@ -3146,7 +3146,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 				ID:       "schema/test/test_label",
 				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
 				RuleType: "key-range",
-				Data: convert(map[string]interface{}{
+				Data: convert(map[string]any{
 					"start_key": "aaaaa",
 					"end_key":   "bbbbb",
 				}),
@@ -3188,7 +3188,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 		labels := rule.Labels.Restore()
 		var ranges []string
 		for _, data := range rule.Data {
-			if kv, ok := data.(map[string]interface{}); ok {
+			if kv, ok := data.(map[string]any); ok {
 				startKey := kv["start_key"]
 				endKey := kv["end_key"]
 				ranges = append(ranges, fmt.Sprintf("[%s, %s]", startKey, endKey))
@@ -3364,7 +3364,7 @@ func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
 		return
 	}
 	data := rule.Data[0]
-	dataMap, ok := data.(map[string]interface{})
+	dataMap, ok := data.(map[string]any)
 	if !ok {
 		err = fmt.Errorf("get the label rules %s failed", rule.ID)
 		return

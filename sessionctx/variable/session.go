@@ -190,7 +190,7 @@ type TxnCtxNeedToRestore struct {
 	pessimisticLockCache map[string][]byte
 
 	// CachedTables is not nil if the transaction write on cached table.
-	CachedTables map[int64]interface{}
+	CachedTables map[int64]any
 
 	// InsertTTLRowsCount counts how many rows are inserted in this statement
 	InsertTTLRowsCount int
@@ -199,9 +199,9 @@ type TxnCtxNeedToRestore struct {
 // TxnCtxNoNeedToRestore stores transaction variables which do not need to restored when rolling back to a savepoint.
 type TxnCtxNoNeedToRestore struct {
 	forUpdateTS uint64
-	Binlog      interface{}
-	InfoSchema  interface{}
-	History     interface{}
+	Binlog      any
+	InfoSchema  any
+	History     any
 	StartTS     uint64
 
 	// ShardStep indicates the max size of continuous rowid shard in one transaction.
@@ -405,7 +405,7 @@ func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 	maps.Copy(pessimisticLockCache, tc.pessimisticLockCache)
 	CurrentStmtPessimisticLockCache := make(map[string][]byte, len(tc.CurrentStmtPessimisticLockCache))
 	maps.Copy(CurrentStmtPessimisticLockCache, tc.CurrentStmtPessimisticLockCache)
-	cachedTables := make(map[int64]interface{}, len(tc.CachedTables))
+	cachedTables := make(map[int64]any, len(tc.CachedTables))
 	maps.Copy(cachedTables, tc.CachedTables)
 	return TxnCtxNeedToRestore{
 		TableDeltaMap:        tableDeltaMap,
@@ -697,7 +697,7 @@ type SessionVars struct {
 	// nonPreparedPlanCacheStmts stores PlanCacheStmts for non-prepared plan cache.
 	nonPreparedPlanCacheStmts *kvcache.SimpleLRUCache
 	// PreparedStmts stores prepared statement.
-	PreparedStmts        map[uint32]interface{}
+	PreparedStmts        map[uint32]any
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
@@ -715,7 +715,7 @@ type SessionVars struct {
 	TxnCtxMu sync.Mutex
 
 	// TxnManager is used to manage txn context in session
-	TxnManager interface{}
+	TxnManager any
 
 	// KVVars is the variables for KV storage.
 	KVVars *tikvstore.Variables
@@ -745,7 +745,7 @@ type SessionVars struct {
 	PlanColumnID atomic.Int64
 
 	// MapScalarSubQ maps the scalar sub queries from its ID to its struct.
-	MapScalarSubQ []interface{}
+	MapScalarSubQ []any
 
 	// MapHashCode2UniqueID4ExtendedCol map the expr's hash code to specified unique ID.
 	MapHashCode2UniqueID4ExtendedCol map[string]int
@@ -780,7 +780,7 @@ type SessionVars struct {
 
 	// SnapshotInfoschema is used with SnapshotTS, when the schema version at snapshotTS less than current schema
 	// version, we load an old version schema for query.
-	SnapshotInfoschema interface{}
+	SnapshotInfoschema any
 
 	// BinlogClient is used to write binlog.
 	BinlogClient *pumpcli.PumpsClient
@@ -1265,7 +1265,7 @@ type SessionVars struct {
 
 	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
 	// It's nil if there is no local temporary table.
-	LocalTemporaryTables interface{}
+	LocalTemporaryTables any
 
 	// TemporaryTableData stores committed kv values for temporary table for current session.
 	TemporaryTableData TemporaryTableData
@@ -1628,7 +1628,7 @@ func (s *SessionVars) ClearAlloc(alloc *chunk.Allocator, b bool) {
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
-func (s *SessionVars) GetPreparedStmtByName(stmtName string) (interface{}, error) {
+func (s *SessionVars) GetPreparedStmtByName(stmtName string) (any, error) {
 	stmtID, ok := s.PreparedStmtNameToID[stmtName]
 	if !ok {
 		return nil, ErrStmtNotFound
@@ -1637,7 +1637,7 @@ func (s *SessionVars) GetPreparedStmtByName(stmtName string) (interface{}, error
 }
 
 // GetPreparedStmtByID returns the prepared statement specified by stmtID.
-func (s *SessionVars) GetPreparedStmtByID(stmtID uint32) (interface{}, error) {
+func (s *SessionVars) GetPreparedStmtByID(stmtID uint32) (any, error) {
 	stmt, ok := s.PreparedStmts[stmtID]
 	if !ok {
 		return nil, ErrStmtNotFound
@@ -1895,7 +1895,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		},
 		systems:                       make(map[string]string),
 		stmtVars:                      make(map[string]string),
-		PreparedStmts:                 make(map[uint32]interface{}),
+		PreparedStmts:                 make(map[uint32]any),
 		PreparedStmtNameToID:          make(map[string]uint32),
 		PlanCacheParams:               NewPlanCacheParamList(),
 		TxnCtx:                        &TransactionContext{},
@@ -2160,7 +2160,7 @@ func (s *SessionVars) AllocPlanColumnID() int64 {
 }
 
 // RegisterScalarSubQ register a scalar sub query into the map. This will be used for EXPLAIN.
-func (s *SessionVars) RegisterScalarSubQ(scalarSubQ interface{}) {
+func (s *SessionVars) RegisterScalarSubQ(scalarSubQ any) {
 	s.MapScalarSubQ = append(s.MapScalarSubQ, scalarSubQ)
 }
 
@@ -2360,7 +2360,7 @@ func (k planCacheStmtKey) Hash() []byte {
 }
 
 // AddNonPreparedPlanCacheStmt adds this PlanCacheStmt into non-preapred plan-cache stmt cache
-func (s *SessionVars) AddNonPreparedPlanCacheStmt(sql string, stmt interface{}) {
+func (s *SessionVars) AddNonPreparedPlanCacheStmt(sql string, stmt any) {
 	if s.nonPreparedPlanCacheStmts == nil {
 		s.nonPreparedPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.SessionPlanCacheSize), 0, 0)
 	}
@@ -2368,7 +2368,7 @@ func (s *SessionVars) AddNonPreparedPlanCacheStmt(sql string, stmt interface{}) 
 }
 
 // GetNonPreparedPlanCacheStmt gets the PlanCacheStmt.
-func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) interface{} {
+func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) any {
 	if s.nonPreparedPlanCacheStmts == nil {
 		return nil
 	}
@@ -2377,7 +2377,7 @@ func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) interface{} {
 }
 
 // AddPreparedStmt adds prepareStmt to current session and count in global.
-func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt interface{}) error {
+func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt any) error {
 	if _, exists := s.PreparedStmts[stmtID]; !exists {
 		maxPreparedStmtCount := MaxPreparedStmtCountValue.Load()
 		newPreparedStmtCount := atomic.AddInt64(&PreparedStmtCount, 1)

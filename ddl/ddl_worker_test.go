@@ -49,7 +49,7 @@ func TestInvalidDDLJob(t *testing.T) {
 		TableID:    0,
 		Type:       model.ActionNone,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{},
+		Args:       []any{},
 	}
 	ctx := testNewContext(store)
 	ctx.SetValue(sessionctx.QueryString, "skip")

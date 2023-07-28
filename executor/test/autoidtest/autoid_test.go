@@ -104,7 +104,7 @@ func TestAutoIncrementInsertMinMax(t *testing.T) {
 		t      string
 		s      string
 		vals   []int64
-		expect [][]interface{}
+		expect [][]any
 	}{
 		{"tinyint", "signed", []int64{-128, 0, 127}, testkit.Rows("-128", "1", "2", "3", "127")},
 		{"tinyint", "unsigned", []int64{0, 127, 255}, testkit.Rows("1", "2", "127", "128", "255")},
@@ -179,7 +179,7 @@ func testInsertWithAutoidSchema(t *testing.T, tk *testkit.TestKit) {
 	tests := []struct {
 		insert string
 		query  string
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			`insert into t1(id, n) values(1, 1)`,

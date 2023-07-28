@@ -204,7 +204,7 @@ var (
 )
 
 // StoreQueryFeedback merges the feedback into stats collector. Deprecated.
-func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle, enablePseudoForOutdatedStats bool) error {
+func (s *SessionStatsCollector) StoreQueryFeedback(feedback any, h *Handle, enablePseudoForOutdatedStats bool) error {
 	q := feedback.(*statistics.QueryFeedback)
 	if !q.Valid.Load() || q.Hist == nil {
 		return nil
@@ -1178,7 +1178,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	return false
 }
 
-func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, ratio float64, analyzeSnapshot bool, sql string, params ...interface{}) bool {
+func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, ratio float64, analyzeSnapshot bool, sql string, params ...any) bool {
 	if statsTbl.Pseudo || statsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 		return false
 	}
@@ -1216,7 +1216,7 @@ func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo
 	tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
 	h.mu.RUnlock()
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
-	partitionNames := make([]interface{}, 0, len(pi.Definitions))
+	partitionNames := make([]any, 0, len(pi.Definitions))
 	for _, def := range pi.Definitions {
 		partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
 		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
@@ -1253,7 +1253,7 @@ func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo
 				end = len(partitionNames)
 			}
 			sql := getSQL("analyze table %n.%n partition", "", end-start)
-			params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
+			params := append([]any{db, tblInfo.Name.O}, partitionNames[start:end]...)
 			logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"),
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", partitionNames[start:end]))
@@ -1282,7 +1282,7 @@ func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo
 					end = len(partitionNames)
 				}
 				sql := getSQL("analyze table %n.%n partition", " index %n", end-start)
-				params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
+				params := append([]any{db, tblInfo.Name.O}, partitionNames[start:end]...)
 				params = append(params, idx.Name.O)
 				logutil.BgLogger().Info("auto analyze for unanalyzed", zap.String("category", "stats"),
 					zap.String("table", tblInfo.Name.String()),
@@ -1302,7 +1302,7 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 	statistics.Version2: sqlexec.ExecOptionAnalyzeVer2,
 }
 
-func (h *Handle) execAutoAnalyze(statsVer int, analyzeSnapshot bool, sql string, params ...interface{}) {
+func (h *Handle) execAutoAnalyze(statsVer int, analyzeSnapshot bool, sql string, params ...any) {
 	startTime := time.Now()
 	autoAnalyzeProcID := h.autoAnalyzeProcIDGetter()
 	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, autoAnalyzeProcID, analyzeSnapshot, sql, params...)

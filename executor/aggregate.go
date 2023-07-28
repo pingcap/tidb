@@ -454,7 +454,7 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 	return true
 }
 
-func recoveryHashAgg(output chan *AfFinalResult, r interface{}) {
+func recoveryHashAgg(output chan *AfFinalResult, r any) {
 	err := errors.Errorf("%v", r)
 	output <- &AfFinalResult{err: errors.Errorf("%v", r)}
 	logutil.BgLogger().Error("parallel hash aggregation panicked", zap.Error(err), zap.Stack("stack"))

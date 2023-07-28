@@ -84,7 +84,7 @@ func TestMergeConfigItems(t *testing.T) {
 }
 
 func TestFlattenConfig(t *testing.T) {
-	toJSONStr := func(v interface{}) string {
+	toJSONStr := func(v any) string {
 		str, err := json.Marshal(v)
 		require.NoError(t, err)
 		return string(str)
@@ -100,7 +100,7 @@ func TestFlattenConfig(t *testing.T) {
 		"k4-2": [5, 6, 7, 8],
 		"k4-3": [666]
 	}}`
-	nested := make(map[string]interface{})
+	nested := make(map[string]any)
 	require.NoError(t, json.Unmarshal([]byte(jsonConf), &nested))
 	flatMap := FlattenConfigItems(nested)
 	require.Equal(t, 7, len(flatMap))
@@ -120,7 +120,7 @@ format='text'
 [isolation-read]
 engines = ["tikv", "tiflash", "tidb"]
 `
-	nested = make(map[string]interface{})
+	nested = make(map[string]any)
 	require.NoError(t, toml.Unmarshal([]byte(tomlConf), &nested))
 	flatMap = FlattenConfigItems(nested)
 	require.Equal(t, 4, len(flatMap))

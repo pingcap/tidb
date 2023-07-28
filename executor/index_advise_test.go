@@ -98,7 +98,7 @@ set b.yn_frz = '1'
 where b.txn_dt = str_to_date('20221201', '%Y%m%d')
 and b.pnbrn_cnaps = a.pnbrn_cnaps
 and b.txn_accno = a.new_accno;`
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"Update_8"},
 		{"└─IndexJoin_14"},
 		{"  ├─TableReader_25(Build)"},
@@ -110,7 +110,7 @@ and b.txn_accno = a.new_accno;`
 	}
 	tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern='ON'")
 	tk.MustQuery("explain "+sql).CheckAt([]int{0}, rows)
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"Update_8"},
 		{"└─HashJoin_10"},
 		{"  ├─IndexReader_17(Build)"},
@@ -169,7 +169,7 @@ txn_dt date default null
                  instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4, length(concat_ws('',src.expd_inf,'~~'))),'~~') -1)
      end
  ) != '01';`
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"HashJoin_9"},
 		{"├─TableReader_12(Build)"},
 		{"│ └─Selection_11"},
@@ -181,7 +181,7 @@ txn_dt date default null
 	}
 	tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern='OFF'")
 	tk.MustQuery("explain "+sql).CheckAt([]int{0}, rows)
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"IndexJoin_13"},
 		{"├─TableReader_25(Build)"},
 		{"│ └─Selection_24"},

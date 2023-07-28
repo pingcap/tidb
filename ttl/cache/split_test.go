@@ -514,7 +514,7 @@ func TestGetNextBytesHandleDatum(t *testing.T) {
 
 	binaryDataStartPos := len(tablecodec.GenTableRecordPrefix(tblID)) + 1
 	cases := []struct {
-		key    interface{}
+		key    any
 		result []byte
 		isNull bool
 	}{
@@ -722,7 +722,7 @@ func TestGetNextBytesHandleDatum(t *testing.T) {
 func TestGetNextIntHandle(t *testing.T) {
 	tblID := int64(7)
 	cases := []struct {
-		key    interface{}
+		key    any
 		result int64
 		isNull bool
 	}{

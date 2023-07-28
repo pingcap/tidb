@@ -73,7 +73,7 @@ func GetStatsReader(snapshot uint64, exec sqlexec.RestrictedSQLExecutor) (reader
 }
 
 // Read is a thin wrapper reading statistics from storage by sql command.
-func (sr *StatsReader) Read(sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+func (sr *StatsReader) Read(sql string, args ...any) (rows []chunk.Row, fields []*ast.ResultField, err error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	if sr.snapshot > 0 {
 		return sr.ctx.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool, sqlexec.ExecOptionWithSnapshot(sr.snapshot)}, sql, args...)

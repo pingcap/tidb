@@ -28,8 +28,8 @@ import (
 
 // ScheduleManager manages schedule configs
 type ScheduleManager interface {
-	GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error)
-	SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) error
+	GetPDScheduleConfig(ctx context.Context) (map[string]any, error)
+	SetPDScheduleConfig(ctx context.Context, config map[string]any) error
 }
 
 // PDScheduleManager manages schedule with pd
@@ -38,13 +38,13 @@ type PDScheduleManager struct {
 }
 
 // GetPDScheduleConfig get schedule config from pd
-func (sm *PDScheduleManager) GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
+func (sm *PDScheduleManager) GetPDScheduleConfig(ctx context.Context) (map[string]any, error) {
 	ret, err := doRequest(ctx, "GetPDSchedule", sm.etcdCli.Endpoints(), path.Join(pdapi.Config, "schedule"), "GET", nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	var schedule map[string]interface{}
+	var schedule map[string]any
 	if err = json.Unmarshal(ret, &schedule); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -53,7 +53,7 @@ func (sm *PDScheduleManager) GetPDScheduleConfig(ctx context.Context) (map[strin
 }
 
 // SetPDScheduleConfig set schedule config to pd
-func (sm *PDScheduleManager) SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) error {
+func (sm *PDScheduleManager) SetPDScheduleConfig(ctx context.Context, config map[string]any) error {
 	configJSON, err := json.Marshal(config)
 	if err != nil {
 		return err
@@ -69,14 +69,14 @@ func (sm *PDScheduleManager) SetPDScheduleConfig(ctx context.Context, config map
 
 type mockScheduleManager struct {
 	sync.RWMutex
-	schedules map[string]interface{}
+	schedules map[string]any
 }
 
 // GetPDScheduleConfig get schedule config from schedules map
-func (mm *mockScheduleManager) GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
+func (mm *mockScheduleManager) GetPDScheduleConfig(ctx context.Context) (map[string]any, error) {
 	mm.Lock()
 
-	schedules := make(map[string]interface{})
+	schedules := make(map[string]any)
 	for key, values := range mm.schedules {
 		schedules[key] = values
 	}
@@ -86,11 +86,11 @@ func (mm *mockScheduleManager) GetPDScheduleConfig(ctx context.Context) (map[str
 }
 
 // SetPDScheduleConfig set schedule config to schedules map
-func (mm *mockScheduleManager) SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) error {
+func (mm *mockScheduleManager) SetPDScheduleConfig(ctx context.Context, config map[string]any) error {
 	mm.Lock()
 
 	if mm.schedules == nil {
-		mm.schedules = make(map[string]interface{})
+		mm.schedules = make(map[string]any)
 	}
 	for key, value := range config {
 		mm.schedules[key] = value

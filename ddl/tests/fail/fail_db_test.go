@@ -552,7 +552,7 @@ func TestIssue38699(t *testing.T) {
 	tk.MustExec("alter table t modify a tinyint")
 	result := tk.MustQuery("show warnings")
 	require.Len(t, result.Rows(), 1)
-	result.CheckWithFunc(testkit.Rows("Warning 1690 2 warnings with this error code"), func(actual []string, expected []interface{}) bool {
+	result.CheckWithFunc(testkit.Rows("Warning 1690 2 warnings with this error code"), func(actual []string, expected []any) bool {
 		//Check if it starts with x warning(s)
 		return strings.EqualFold(actual[0], expected[0].(string)) && strings.EqualFold(actual[1], expected[1].(string)) && strings.HasPrefix(actual[2], expected[2].(string))
 	})

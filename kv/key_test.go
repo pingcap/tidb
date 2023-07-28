@@ -196,7 +196,7 @@ func TestHandleMap(t *testing.T) {
 	assert.Equal(t, 3, m.Len())
 
 	cnt := 0
-	m.Range(func(h Handle, val interface{}) bool {
+	m.Range(func(h Handle, val any) bool {
 		cnt++
 		if h.Equal(ch) {
 			assert.Equal(t, "a", val)

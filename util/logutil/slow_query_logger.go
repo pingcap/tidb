@@ -91,5 +91,5 @@ func (*slowLogEncoder) AddUint32(string, uint32)                        {}
 func (*slowLogEncoder) AddUint16(string, uint16)                        {}
 func (*slowLogEncoder) AddUint8(string, uint8)                          {}
 func (*slowLogEncoder) AddUintptr(string, uintptr)                      {}
-func (*slowLogEncoder) AddReflected(string, interface{}) error          { return nil }
+func (*slowLogEncoder) AddReflected(string, any) error                  { return nil }
 func (*slowLogEncoder) OpenNamespace(string)                            {}

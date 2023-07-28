@@ -47,7 +47,7 @@ func TestScheduler(t *testing.T) {
 	err = pdController.resumeSchedulerWith(ctx, []string{scheduler}, mock)
 	require.NoError(t, err)
 
-	cfg := map[string]interface{}{
+	cfg := map[string]any{
 		"max-merge-region-keys":       0,
 		"max-snapshot":                1,
 		"enable-location-replacement": false,

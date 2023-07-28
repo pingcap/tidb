@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 )
 
-func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row []interface{}) {
+func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row []any) {
 	s.Equal(strconv.Itoa(int(jobInfo.ID)), row[0])
 
 	urlExpected, err := url.Parse(jobInfo.Parameters.FileLocation)
@@ -147,7 +147,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.Equal(result2, rows)
 
 	// show import jobs with root
-	checkJobsMatch := func(rows [][]interface{}) {
+	checkJobsMatch := func(rows [][]any) {
 		s.GreaterOrEqual(len(rows), 2) // other cases may create import jobs
 		var matched int
 		for _, r := range rows {

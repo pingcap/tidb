@@ -381,7 +381,7 @@ func generateDotGo(fileName string, compares []CompareContext, types []TypeConte
 	w.WriteString(newLine)
 	w.WriteString(builtinCompareImports)
 
-	var ctx = make(map[string]interface{})
+	var ctx = make(map[string]any)
 	for _, compareCtx := range compares {
 		for _, typeCtx := range types {
 			ctx["compare"] = compareCtx

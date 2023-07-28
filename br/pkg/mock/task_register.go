@@ -43,7 +43,7 @@ func (m *MockTaskRegister) Close(arg0 context.Context) error {
 }
 
 // Close indicates an expected call of Close.
-func (mr *MockTaskRegisterMockRecorder) Close(arg0 interface{}) *gomock.Call {
+func (mr *MockTaskRegisterMockRecorder) Close(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockTaskRegister)(nil).Close), arg0)
 }
@@ -57,7 +57,7 @@ func (m *MockTaskRegister) RegisterTask(arg0 context.Context) error {
 }
 
 // RegisterTask indicates an expected call of RegisterTask.
-func (mr *MockTaskRegisterMockRecorder) RegisterTask(arg0 interface{}) *gomock.Call {
+func (mr *MockTaskRegisterMockRecorder) RegisterTask(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RegisterTask", reflect.TypeOf((*MockTaskRegister)(nil).RegisterTask), arg0)
 }
@@ -71,7 +71,7 @@ func (m *MockTaskRegister) RegisterTaskOnce(arg0 context.Context) error {
 }
 
 // RegisterTaskOnce indicates an expected call of RegisterTaskOnce.
-func (mr *MockTaskRegisterMockRecorder) RegisterTaskOnce(arg0 interface{}) *gomock.Call {
+func (mr *MockTaskRegisterMockRecorder) RegisterTaskOnce(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RegisterTaskOnce", reflect.TypeOf((*MockTaskRegister)(nil).RegisterTaskOnce), arg0)
 }

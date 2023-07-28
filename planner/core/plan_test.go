@@ -555,7 +555,7 @@ func TestIssue35090(t *testing.T) {
 	tk.MustExec("insert into p values (3,3), (4,4), (6,6), (9,9);")
 	tk.MustExec("insert into t values (4), (9);")
 	tk.MustExec("select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;")
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"IndexJoin"},
 		{"├─TableReader(Build)"},
 		{"│ └─Selection"},
@@ -911,7 +911,7 @@ func TestNullEQConditionPlan(t *testing.T) {
 	tk.MustQuery("SELECT * FROM t0 WHERE NOT (('4')AND(t0.c0<=>FALSE));").Check(testkit.Rows())
 
 	tk.MustQuery("explain SELECT * FROM t0 WHERE NOT (('4')AND(t0.c0<=>FALSE))").CheckAt(
-		[]int{0, 2, 4}, [][]interface{}{
+		[]int{0, 2, 4}, [][]any{
 			{"TableReader_7", "root", "data:Selection_6"},
 			{"└─Selection_6", "cop[tikv]", "or(0, not(nulleq(test.t0.c0, 0)))"},
 			{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
@@ -919,7 +919,7 @@ func TestNullEQConditionPlan(t *testing.T) {
 
 	tk.MustQuery("SELECT * FROM t0 WHERE (('4')AND(t0.c0<=>FALSE));").Check(testkit.Rows("0"))
 	tk.MustQuery("explain SELECT * FROM t0 WHERE (('4')AND(t0.c0<=>FALSE))").CheckAt(
-		[]int{0, 2, 4}, [][]interface{}{
+		[]int{0, 2, 4}, [][]any{
 			{"Point_Get_5", "root", "handle:0"},
 		})
 }

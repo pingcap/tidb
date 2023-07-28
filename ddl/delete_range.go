@@ -363,7 +363,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		}
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID
-		var indexName interface{}
+		var indexName any
 		var ifExists bool
 		var indexID int64
 		var partitionIDs []int64
@@ -432,7 +432,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 
 func doBatchDeleteIndiceRange(ctx context.Context, s sqlexec.SQLExecutor, jobID, tableID int64, indexIDs []int64, ts uint64, ea *elementIDAlloc) error {
 	logutil.BgLogger().Info("batch insert into delete-range indices", zap.String("category", "ddl"), zap.Int64("jobID", jobID), zap.Int64("tableID", tableID), zap.Int64s("indexIDs", indexIDs))
-	paramsList := make([]interface{}, 0, len(indexIDs)*5)
+	paramsList := make([]any, 0, len(indexIDs)*5)
 	var buf strings.Builder
 	buf.WriteString(insertDeleteRangeSQLPrefix)
 	for i, indexID := range indexIDs {
@@ -468,7 +468,7 @@ func doBatchInsert(ctx context.Context, s sqlexec.SQLExecutor, jobID int64, tabl
 	logutil.BgLogger().Info("batch insert into delete-range table", zap.String("category", "ddl"), zap.Int64("jobID", jobID), zap.Int64s("tableIDs", tableIDs))
 	var buf strings.Builder
 	buf.WriteString(insertDeleteRangeSQLPrefix)
-	paramsList := make([]interface{}, 0, len(tableIDs)*5)
+	paramsList := make([]any, 0, len(tableIDs)*5)
 	for i, tableID := range tableIDs {
 		startKey := tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)

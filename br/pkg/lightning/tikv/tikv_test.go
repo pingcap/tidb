@@ -232,16 +232,16 @@ func TestCheckTiKVVersion(t *testing.T) {
 		require.Equal(t, "/pd/api/v1/stores", req.URL.Path)
 		w.WriteHeader(http.StatusOK)
 
-		stores := make([]map[string]interface{}, 0, len(versions))
+		stores := make([]map[string]any, 0, len(versions))
 		for i, v := range versions {
-			stores = append(stores, map[string]interface{}{
-				"store": map[string]interface{}{
+			stores = append(stores, map[string]any{
+				"store": map[string]any{
 					"address": fmt.Sprintf("tikv%d.test:20160", i),
 					"version": v,
 				},
 			})
 		}
-		err := json.NewEncoder(w).Encode(map[string]interface{}{
+		err := json.NewEncoder(w).Encode(map[string]any{
 			"count":  len(versions),
 			"stores": stores,
 		})

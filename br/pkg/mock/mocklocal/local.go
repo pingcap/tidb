@@ -79,7 +79,7 @@ func (m *MockTiKVModeSwitcher) ToImportMode(arg0 context.Context) {
 }
 
 // ToImportMode indicates an expected call of ToImportMode.
-func (mr *MockTiKVModeSwitcherMockRecorder) ToImportMode(arg0 interface{}) *gomock.Call {
+func (mr *MockTiKVModeSwitcherMockRecorder) ToImportMode(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ToImportMode", reflect.TypeOf((*MockTiKVModeSwitcher)(nil).ToImportMode), arg0)
 }
@@ -91,7 +91,7 @@ func (m *MockTiKVModeSwitcher) ToNormalMode(arg0 context.Context) {
 }
 
 // ToNormalMode indicates an expected call of ToNormalMode.
-func (mr *MockTiKVModeSwitcherMockRecorder) ToNormalMode(arg0 interface{}) *gomock.Call {
+func (mr *MockTiKVModeSwitcherMockRecorder) ToNormalMode(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ToNormalMode", reflect.TypeOf((*MockTiKVModeSwitcher)(nil).ToNormalMode), arg0)
 }

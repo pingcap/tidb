@@ -610,7 +610,7 @@ func TestGetTableMVCC(t *testing.T) {
 	resp, err = ts.fetchStatus("/mvcc/key/tidb/test/1?decode=true")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
-	var data3 map[string]interface{}
+	var data3 map[string]any
 	err = decoder.Decode(&data3)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
@@ -622,7 +622,7 @@ func TestGetTableMVCC(t *testing.T) {
 	resp, err = ts.fetchStatus("/mvcc/key/tidb/pt(p0)/42?decode=true")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
-	var data4 map[string]interface{}
+	var data4 map[string]any
 	err = decoder.Decode(&data4)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
@@ -643,7 +643,7 @@ func TestGetTableMVCC(t *testing.T) {
 	resp, err = ts.fetchStatus("/mvcc/key/tidb/t?a=1.1&b=111&decode=1")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
-	var data5 map[string]interface{}
+	var data5 map[string]any
 	err = decoder.Decode(&data5)
 	require.NoError(t, err)
 	require.NotNil(t, data4["key"])
@@ -710,7 +710,7 @@ func TestDecodeColumnValue(t *testing.T) {
 		resp, err := ts.fetchStatus(path)
 		require.NoErrorf(t, err, "url: %v", ts.statusURL(path))
 		decoder := json.NewDecoder(resp.Body)
-		var data interface{}
+		var data any
 		err = decoder.Decode(&data)
 		require.NoErrorf(t, err, "url: %v\ndata: %v", ts.statusURL(path), data)
 		require.NoError(t, resp.Body.Close())

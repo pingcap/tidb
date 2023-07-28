@@ -745,8 +745,8 @@ func (m mockWriteClient) CloseAndRecv() (*sst.WriteResponse, error) {
 }
 
 type baseCodec interface {
-	Marshal(v interface{}) ([]byte, error)
-	Unmarshal(data []byte, v interface{}) error
+	Marshal(v any) ([]byte, error)
+	Unmarshal(data []byte, v any) error
 }
 
 //go:linkname newContextWithRPCInfo google.golang.org/grpc.newContextWithRPCInfo
@@ -754,11 +754,11 @@ func newContextWithRPCInfo(ctx context.Context, failfast bool, codec baseCodec, 
 
 type mockCodec struct{}
 
-func (m mockCodec) Marshal(v interface{}) ([]byte, error) {
+func (m mockCodec) Marshal(v any) ([]byte, error) {
 	return nil, nil
 }
 
-func (m mockCodec) Unmarshal(data []byte, v interface{}) error {
+func (m mockCodec) Unmarshal(data []byte, v any) error {
 	return nil
 }
 
@@ -767,7 +767,7 @@ func (m mockWriteClient) Context() context.Context {
 	return newContextWithRPCInfo(ctx, false, mockCodec{}, nil, nil)
 }
 
-func (m mockWriteClient) SendMsg(_ interface{}) error {
+func (m mockWriteClient) SendMsg(_ any) error {
 	return nil
 }
 

@@ -134,11 +134,11 @@ func (p *matcherParser) wrapErrorFormat(format string) string {
 	return fmt.Sprintf("at %s:%d: %s", strings.ReplaceAll(p.fileName, "%", "%%"), p.lineNum, format)
 }
 
-func (p *matcherParser) errorf(format string, args ...interface{}) error {
+func (p *matcherParser) errorf(format string, args ...any) error {
 	return errors.Errorf(p.wrapErrorFormat(format), args...)
 }
 
-func (p *matcherParser) annotatef(err error, format string, args ...interface{}) error {
+func (p *matcherParser) annotatef(err error, format string, args ...any) error {
 	return errors.Annotatef(err, p.wrapErrorFormat(format), args...)
 }
 

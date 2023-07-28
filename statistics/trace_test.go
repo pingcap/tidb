@@ -196,8 +196,8 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	var (
 		in  []string
 		out []struct {
-			ResultForV1 interface{}
-			ResultForV2 interface{}
+			ResultForV1 any
+			ResultForV2 any
 		}
 	)
 	traceSuiteData := statistics.GetTraceSuiteData()
@@ -253,7 +253,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 		traceInfo := stmtCtx.OptimizerDebugTrace
 		buf.Reset()
 		require.NoError(t, encoder.Encode(traceInfo), sql, "For ver2")
-		var res interface{}
+		var res any
 		require.NoError(t, json.Unmarshal(buf.Bytes(), &res), sql, "For ver2")
 		testdata.OnRecord(func() {
 			out[i].ResultForV2 = res
@@ -277,7 +277,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 		traceInfo := stmtCtx.OptimizerDebugTrace
 		buf.Reset()
 		require.NoError(t, encoder.Encode(traceInfo), sql, "For ver1")
-		var res interface{}
+		var res any
 		require.NoError(t, json.Unmarshal(buf.Bytes(), &res), sql, "For ver1")
 		testdata.OnRecord(func() {
 			out[i].ResultForV1 = res

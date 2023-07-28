@@ -53,22 +53,22 @@ func (p *policyGetter) GetPolicy(policyID int64) (*model.PolicyInfo, error) {
 type bundleInfoBuilder struct {
 	deltaUpdate bool
 	// tables or partitions that need to update placement bundle
-	updateTables map[int64]interface{}
+	updateTables map[int64]any
 	// all tables or partitions referring these policies should update placement bundle
-	updatePolicies map[int64]interface{}
+	updatePolicies map[int64]any
 	// partitions that need to update placement bundle
-	updatePartitions map[int64]interface{}
+	updatePartitions map[int64]any
 }
 
 func (b *bundleInfoBuilder) ensureMap() {
 	if b.updateTables == nil {
-		b.updateTables = make(map[int64]interface{})
+		b.updateTables = make(map[int64]any)
 	}
 	if b.updatePartitions == nil {
-		b.updatePartitions = make(map[int64]interface{})
+		b.updatePartitions = make(map[int64]any)
 	}
 	if b.updatePolicies == nil {
-		b.updatePolicies = make(map[int64]interface{})
+		b.updatePolicies = make(map[int64]any)
 	}
 }
 

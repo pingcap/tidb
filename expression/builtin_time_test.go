@@ -43,8 +43,8 @@ import (
 func TestDate(t *testing.T) {
 	ctx := createContext(t)
 	tblDate := []struct {
-		Input  interface{}
-		Expect interface{}
+		Input  any
+		Expect any
 	}{
 		{nil, nil},
 		// standard format
@@ -214,18 +214,18 @@ func TestDate(t *testing.T) {
 
 	// test nil
 	tblNil := []struct {
-		Input      interface{}
-		Year       interface{}
-		Month      interface{}
-		MonthName  interface{}
-		DayOfMonth interface{}
-		DayOfWeek  interface{}
-		DayOfYear  interface{}
-		WeekDay    interface{}
-		DayName    interface{}
-		Week       interface{}
-		WeekOfYear interface{}
-		YearWeek   interface{}
+		Input      any
+		Year       any
+		Month      any
+		MonthName  any
+		DayOfMonth any
+		DayOfWeek  any
+		DayOfYear  any
+		WeekDay    any
+		DayName    any
+		Week       any
+		WeekOfYear any
+		YearWeek   any
 	}{
 		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
 		{"0000-00-00 00:00:00", 0, 0, nil, 0, nil, nil, nil, nil, nil, nil, nil},
@@ -315,18 +315,18 @@ func TestDate(t *testing.T) {
 
 	// test nil with 'NO_ZERO_DATE' set in sql_mode
 	tblNil = []struct {
-		Input      interface{}
-		Year       interface{}
-		Month      interface{}
-		MonthName  interface{}
-		DayOfMonth interface{}
-		DayOfWeek  interface{}
-		DayOfYear  interface{}
-		WeekDay    interface{}
-		DayName    interface{}
-		Week       interface{}
-		WeekOfYear interface{}
-		YearWeek   interface{}
+		Input      any
+		Year       any
+		Month      any
+		MonthName  any
+		DayOfMonth any
+		DayOfWeek  any
+		DayOfYear  any
+		WeekDay    any
+		DayName    any
+		Week       any
+		WeekOfYear any
+		YearWeek   any
 	}{
 		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
 		{"0000-00-00 00:00:00", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
@@ -422,7 +422,7 @@ func TestMonthName(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	cases := []struct {
-		args     interface{}
+		args     any
 		expected string
 		isNil    bool
 		getErr   bool
@@ -434,7 +434,7 @@ func TestMonthName(t *testing.T) {
 		{"0000-00-00 00:00:11.000000", "", true, false},
 	}
 	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.MonthName, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		f, err := newFunctionForTest(ctx, ast.MonthName, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
 		if c.getErr {
@@ -458,7 +458,7 @@ func TestDayName(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	cases := []struct {
-		args     interface{}
+		args     any
 		expected string
 		isNil    bool
 		getErr   bool
@@ -472,7 +472,7 @@ func TestDayName(t *testing.T) {
 		{"0000-00-00 00:00:11.000000", "", true, false},
 	}
 	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.DayName, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		f, err := newFunctionForTest(ctx, ast.DayName, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
 		if c.getErr {
@@ -496,7 +496,7 @@ func TestDayOfWeek(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	cases := []struct {
-		args     interface{}
+		args     any
 		expected int64
 		isNil    bool
 		getErr   bool
@@ -508,7 +508,7 @@ func TestDayOfWeek(t *testing.T) {
 		{"0000-00-00 12:12:12", 1, true, false},
 	}
 	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.DayOfWeek, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		f, err := newFunctionForTest(ctx, ast.DayOfWeek, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
 		if c.getErr {
@@ -532,7 +532,7 @@ func TestDayOfMonth(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	cases := []struct {
-		args     interface{}
+		args     any
 		expected int64
 		isNil    bool
 		getErr   bool
@@ -544,7 +544,7 @@ func TestDayOfMonth(t *testing.T) {
 		{"0000-00-00 12:12:12", 0, false, false},
 	}
 	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.DayOfMonth, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		f, err := newFunctionForTest(ctx, ast.DayOfMonth, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
 		if c.getErr {
@@ -568,7 +568,7 @@ func TestDayOfYear(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	cases := []struct {
-		args     interface{}
+		args     any
 		expected int64
 		isNil    bool
 		getErr   bool
@@ -580,7 +580,7 @@ func TestDayOfYear(t *testing.T) {
 		{"0000-00-00 12:12:12", 0, true, false},
 	}
 	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.DayOfYear, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		f, err := newFunctionForTest(ctx, ast.DayOfYear, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
 		if c.getErr {
@@ -613,7 +613,7 @@ func TestDateFormat(t *testing.T) {
 
 	tblDate := []struct {
 		Input  []string
-		Expect interface{}
+		Expect any
 	}{
 		{[]string{"2010-01-07 23:12:34.12345",
 			`%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y %%`},
@@ -780,7 +780,7 @@ func TestClock(t *testing.T) {
 func TestTime(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args     interface{}
+		args     any
 		expected string
 		isNil    bool
 		getErr   bool
@@ -794,7 +794,7 @@ func TestTime(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.Time, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		f, err := newFunctionForTest(ctx, ast.Time, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 		tp := f.GetType()
 		require.Equal(t, mysql.TypeDuration, tp.GetType())
@@ -995,8 +995,8 @@ func TestAddTimeSig(t *testing.T) {
 	}
 
 	tblWarning := []struct {
-		Input         interface{}
-		InputDuration interface{}
+		Input         any
+		InputDuration any
 		warning       *terror.Error
 	}{
 		{"0", "-32073", types.ErrTruncatedWrongVal},
@@ -1095,8 +1095,8 @@ func TestSubTimeSig(t *testing.T) {
 	}
 
 	tblWarning := []struct {
-		Input         interface{}
-		InputDuration interface{}
+		Input         any
+		InputDuration any
 		warning       *terror.Error
 	}{
 		{"0", "-32073", types.ErrTruncatedWrongVal},
@@ -1366,7 +1366,7 @@ func TestUTCTime(t *testing.T) {
 	fc := funcs[ast.UTCTime]
 
 	tests := []struct {
-		param  interface{}
+		param  any
 		expect int
 		error  bool
 	}{{0, 8, false}, {3, 12, false}, {6, 15, false}, {-1, 0, true}, {7, 0, true}}
@@ -1611,20 +1611,20 @@ func TestTimeDiff(t *testing.T) {
 	sc.IgnoreZeroInDate = true
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 	tests := []struct {
-		args       []interface{}
+		args       []any
 		expectStr  string
 		isNil      bool
 		fsp        int
 		flen       int
 		getWarning bool
 	}{
-		{[]interface{}{"2000:01:01 00:00:00", "2000:01:01 00:00:00.000001"}, "-00:00:00.000001", false, 6, 17, false},
-		{[]interface{}{"2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002"}, "46:58:57.999999", false, 6, 17, false},
-		{[]interface{}{"2016-12-00 12:00:00", "2016-12-01 12:00:00"}, "-24:00:00", false, 0, 10, false},
-		{[]interface{}{"10:10:10", "10:9:0"}, "00:01:10", false, 0, 10, false},
-		{[]interface{}{"2016-12-00 12:00:00", "10:9:0"}, "", true, 0, 10, false},
-		{[]interface{}{"2016-12-00 12:00:00", ""}, "", true, 0, 10, true},
-		{[]interface{}{"00:00:00.000000", "00:00:00.000001"}, "-00:00:00.000001", false, 6, 17, false},
+		{[]any{"2000:01:01 00:00:00", "2000:01:01 00:00:00.000001"}, "-00:00:00.000001", false, 6, 17, false},
+		{[]any{"2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002"}, "46:58:57.999999", false, 6, 17, false},
+		{[]any{"2016-12-00 12:00:00", "2016-12-01 12:00:00"}, "-24:00:00", false, 0, 10, false},
+		{[]any{"10:10:10", "10:9:0"}, "00:01:10", false, 0, 10, false},
+		{[]any{"2016-12-00 12:00:00", "10:9:0"}, "", true, 0, 10, false},
+		{[]any{"2016-12-00 12:00:00", ""}, "", true, 0, 10, true},
+		{[]any{"00:00:00.000000", "00:00:00.000001"}, "-00:00:00.000001", false, 6, 17, false},
 	}
 
 	for _, c := range tests {
@@ -2008,7 +2008,7 @@ func TestDateArithFuncs(t *testing.T) {
 		dur          string
 		fsp          int
 		unit         string
-		format       interface{}
+		format       any
 		expected     string
 		checkHmsOnly bool // Duration + day returns datetime with current date padded, only check HMS part for them.
 	}{
@@ -2185,29 +2185,29 @@ func TestTimestamp(t *testing.T) {
 func TestMakeDate(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args     []interface{}
+		args     []any
 		expected string
 		isNil    bool
 		getErr   bool
 	}{
-		{[]interface{}{71, 1}, "1971-01-01", false, false},
-		{[]interface{}{71.1, 1.89}, "1971-01-02", false, false},
-		{[]interface{}{99, 1}, "1999-01-01", false, false},
-		{[]interface{}{100, 1}, "0100-01-01", false, false},
-		{[]interface{}{69, 1}, "2069-01-01", false, false},
-		{[]interface{}{70, 1}, "1970-01-01", false, false},
-		{[]interface{}{1000, 1}, "1000-01-01", false, false},
-		{[]interface{}{-1, 3660}, "", true, false},
-		{[]interface{}{10000, 3660}, "", true, false},
-		{[]interface{}{2060, 2900025}, "9999-12-31", false, false},
-		{[]interface{}{2060, 2900026}, "", true, false},
-		{[]interface{}{"71", 1}, "1971-01-01", false, false},
-		{[]interface{}{71, "1"}, "1971-01-01", false, false},
-		{[]interface{}{"71", "1"}, "1971-01-01", false, false},
-		{[]interface{}{nil, 2900025}, "", true, false},
-		{[]interface{}{2060, nil}, "", true, false},
-		{[]interface{}{nil, nil}, "", true, false},
-		{[]interface{}{errors.New("must error"), errors.New("must error")}, "", false, true},
+		{[]any{71, 1}, "1971-01-01", false, false},
+		{[]any{71.1, 1.89}, "1971-01-02", false, false},
+		{[]any{99, 1}, "1999-01-01", false, false},
+		{[]any{100, 1}, "0100-01-01", false, false},
+		{[]any{69, 1}, "2069-01-01", false, false},
+		{[]any{70, 1}, "1970-01-01", false, false},
+		{[]any{1000, 1}, "1000-01-01", false, false},
+		{[]any{-1, 3660}, "", true, false},
+		{[]any{10000, 3660}, "", true, false},
+		{[]any{2060, 2900025}, "9999-12-31", false, false},
+		{[]any{2060, 2900026}, "", true, false},
+		{[]any{"71", 1}, "1971-01-01", false, false},
+		{[]any{71, "1"}, "1971-01-01", false, false},
+		{[]any{"71", "1"}, "1971-01-01", false, false},
+		{[]any{nil, 2900025}, "", true, false},
+		{[]any{2060, nil}, "", true, false},
+		{[]any{nil, nil}, "", true, false},
+		{[]any{errors.New("must error"), errors.New("must error")}, "", false, true},
 	}
 
 	for _, c := range cases {
@@ -2239,58 +2239,58 @@ func TestMakeDate(t *testing.T) {
 func TestMakeTime(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		Args []interface{}
-		Want interface{}
+		Args []any
+		Want any
 	}{
-		{[]interface{}{12, 15, 30}, "12:15:30"},
-		{[]interface{}{25, 15, 30}, "25:15:30"},
-		{[]interface{}{-25, 15, 30}, "-25:15:30"},
-		{[]interface{}{12, -15, 30}, nil},
-		{[]interface{}{12, 15, -30}, nil},
+		{[]any{12, 15, 30}, "12:15:30"},
+		{[]any{25, 15, 30}, "25:15:30"},
+		{[]any{-25, 15, 30}, "-25:15:30"},
+		{[]any{12, -15, 30}, nil},
+		{[]any{12, 15, -30}, nil},
 
-		{[]interface{}{12, 15, "30.10"}, "12:15:30.100000"},
-		{[]interface{}{12, 15, "30.20"}, "12:15:30.200000"},
-		{[]interface{}{12, 15, 30.3000001}, "12:15:30.300000"},
-		{[]interface{}{12, 15, 30.0000005}, "12:15:30.000001"},
-		{[]interface{}{"12", "15", 30.1}, "12:15:30.100000"},
+		{[]any{12, 15, "30.10"}, "12:15:30.100000"},
+		{[]any{12, 15, "30.20"}, "12:15:30.200000"},
+		{[]any{12, 15, 30.3000001}, "12:15:30.300000"},
+		{[]any{12, 15, 30.0000005}, "12:15:30.000001"},
+		{[]any{"12", "15", 30.1}, "12:15:30.100000"},
 
-		{[]interface{}{0, 58.4, 0}, "00:58:00"},
-		{[]interface{}{0, "58.4", 0}, "00:58:00"},
-		{[]interface{}{0, 58.5, 1}, "00:58:01"},
-		{[]interface{}{0, "58.5", 1}, "00:58:01"},
-		{[]interface{}{0, 59.5, 1}, nil},
-		{[]interface{}{0, "59.5", 1}, "00:59:01"},
-		{[]interface{}{0, 1, 59.1}, "00:01:59.100000"},
-		{[]interface{}{0, 1, "59.1"}, "00:01:59.100000"},
-		{[]interface{}{0, 1, 59.5}, "00:01:59.500000"},
-		{[]interface{}{0, 1, "59.5"}, "00:01:59.500000"},
-		{[]interface{}{23.5, 1, 10}, "24:01:10"},
-		{[]interface{}{"23.5", 1, 10}, "23:01:10"},
+		{[]any{0, 58.4, 0}, "00:58:00"},
+		{[]any{0, "58.4", 0}, "00:58:00"},
+		{[]any{0, 58.5, 1}, "00:58:01"},
+		{[]any{0, "58.5", 1}, "00:58:01"},
+		{[]any{0, 59.5, 1}, nil},
+		{[]any{0, "59.5", 1}, "00:59:01"},
+		{[]any{0, 1, 59.1}, "00:01:59.100000"},
+		{[]any{0, 1, "59.1"}, "00:01:59.100000"},
+		{[]any{0, 1, 59.5}, "00:01:59.500000"},
+		{[]any{0, 1, "59.5"}, "00:01:59.500000"},
+		{[]any{23.5, 1, 10}, "24:01:10"},
+		{[]any{"23.5", 1, 10}, "23:01:10"},
 
-		{[]interface{}{0, 0, 0}, "00:00:00"},
+		{[]any{0, 0, 0}, "00:00:00"},
 
-		{[]interface{}{837, 59, 59.1}, "837:59:59.100000"},
-		{[]interface{}{838, 0, 59.1}, "838:00:59.100000"},
-		{[]interface{}{838, 50, 59.999}, "838:50:59.999000"},
-		{[]interface{}{838, 58, 59.1}, "838:58:59.100000"},
-		{[]interface{}{838, 58, 59.999}, "838:58:59.999000"}, {[]interface{}{838, 59, 59.1}, "838:59:59.000000"},
-		{[]interface{}{-838, 59, 59.1}, "-838:59:59.000000"},
-		{[]interface{}{1000, 1, 1}, "838:59:59"},
-		{[]interface{}{-1000, 1, 1.23}, "-838:59:59.000000"},
-		{[]interface{}{1000, 59.1, 1}, "838:59:59"},
-		{[]interface{}{1000, 59.5, 1}, nil},
-		{[]interface{}{1000, 1, 59.1}, "838:59:59.000000"},
-		{[]interface{}{1000, 1, 59.5}, "838:59:59.000000"},
+		{[]any{837, 59, 59.1}, "837:59:59.100000"},
+		{[]any{838, 0, 59.1}, "838:00:59.100000"},
+		{[]any{838, 50, 59.999}, "838:50:59.999000"},
+		{[]any{838, 58, 59.1}, "838:58:59.100000"},
+		{[]any{838, 58, 59.999}, "838:58:59.999000"}, {[]any{838, 59, 59.1}, "838:59:59.000000"},
+		{[]any{-838, 59, 59.1}, "-838:59:59.000000"},
+		{[]any{1000, 1, 1}, "838:59:59"},
+		{[]any{-1000, 1, 1.23}, "-838:59:59.000000"},
+		{[]any{1000, 59.1, 1}, "838:59:59"},
+		{[]any{1000, 59.5, 1}, nil},
+		{[]any{1000, 1, 59.1}, "838:59:59.000000"},
+		{[]any{1000, 1, 59.5}, "838:59:59.000000"},
 
-		{[]interface{}{12, 15, 60}, nil},
-		{[]interface{}{12, 15, "60"}, nil},
-		{[]interface{}{12, 60, 0}, nil},
-		{[]interface{}{12, "60", 0}, nil},
+		{[]any{12, 15, 60}, nil},
+		{[]any{12, 15, "60"}, nil},
+		{[]any{12, 60, 0}, nil},
+		{[]any{12, "60", 0}, nil},
 
-		{[]interface{}{12, 15, nil}, nil},
-		{[]interface{}{12, nil, 0}, nil},
-		{[]interface{}{nil, 15, 0}, nil},
-		{[]interface{}{nil, nil, nil}, nil},
+		{[]any{12, 15, nil}, nil},
+		{[]any{12, nil, 0}, nil},
+		{[]any{nil, 15, 0}, nil},
+		{[]any{nil, nil, nil}, nil},
 	}
 
 	Dtbl := tblToDtbl(tbl)
@@ -2321,11 +2321,11 @@ func TestMakeTime(t *testing.T) {
 	require.Equal(t, "838:59:59", got.GetMysqlDuration().String())
 
 	tbl = []struct {
-		Args []interface{}
-		Want interface{}
+		Args []any
+		Want any
 	}{
-		{[]interface{}{"", "", ""}, "00:00:00.000000"},
-		{[]interface{}{"h", "m", "s"}, "00:00:00.000000"},
+		{[]any{"", "", ""}, "00:00:00.000000"},
+		{[]any{"h", "m", "s"}, "00:00:00.000000"},
 	}
 	Dtbl = tblToDtbl(tbl)
 	maketime = funcs[ast.MakeTime]
@@ -2424,7 +2424,7 @@ func TestToSeconds(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	tests := []struct {
-		param  interface{}
+		param  any
 		expect int64
 	}{
 		{950501, 62966505600},
@@ -2444,7 +2444,7 @@ func TestToSeconds(t *testing.T) {
 		require.Equal(t, test.expect, d.GetInt64())
 	}
 
-	testsNull := []interface{}{
+	testsNull := []any{
 		"0000-00-00",
 		"1992-13-00",
 		"2007-10-07 23:59:61",
@@ -2465,7 +2465,7 @@ func TestToDays(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	tests := []struct {
-		param  interface{}
+		param  any
 		expect int64
 	}{
 		{950501, 728779},
@@ -2486,7 +2486,7 @@ func TestToDays(t *testing.T) {
 		require.Equal(t, test.expect, d.GetInt64())
 	}
 
-	testsNull := []interface{}{
+	testsNull := []any{
 		"0000-00-00",
 		"1992-13-00",
 		"2007-10-07 23:59:61",
@@ -2507,7 +2507,7 @@ func TestTimestampAdd(t *testing.T) {
 	tests := []struct {
 		unit     string
 		interval float64
-		date     interface{}
+		date     any
 		expect   string
 	}{
 		{"MINUTE", 1, "2003-01-02", "2003-01-02 00:01:00"},
@@ -2588,7 +2588,7 @@ func TestTimeFormat(t *testing.T) {
 
 	tblDate := []struct {
 		Input  []string
-		Expect interface{}
+		Expect any
 	}{
 		{[]string{"23:00:00", `%H %k %h %I %l`},
 			"23 23 11 11 11"},
@@ -2714,9 +2714,9 @@ func TestConvertTz(t *testing.T) {
 	t1, _ := time.ParseInLocation("2006-01-02 15:04:00", "2021-10-22 10:00:00", loc1)
 	t2, _ := time.ParseInLocation("2006-01-02 15:04:00", "2021-10-22 10:00:00", loc2)
 	tests := []struct {
-		t       interface{}
-		fromTz  interface{}
-		toTz    interface{}
+		t       any
+		fromTz  any
+		toTz    any
 		Success bool
 		expect  string
 	}{
@@ -2858,7 +2858,7 @@ func TestPeriodDiff(t *testing.T) {
 func TestLastDay(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
-		param  interface{}
+		param  any
 		expect string
 	}{
 		{"2003-02-05", "2003-02-28"},
@@ -2881,7 +2881,7 @@ func TestLastDay(t *testing.T) {
 	var timeData types.Time
 	timeData.StrToDate(ctx.GetSessionVars().StmtCtx, "202010", "%Y%m")
 	testsNull := []struct {
-		param           interface{}
+		param           any
 		isNilNoZeroDate bool
 		isNil           bool
 	}{
@@ -2958,7 +2958,7 @@ func TestTidbParseTso(t *testing.T) {
 	ctx := createContext(t)
 	ctx.GetSessionVars().TimeZone = time.UTC
 	tests := []struct {
-		param  interface{}
+		param  any
 		expect string
 	}{
 		{404411537129996288, "2018-11-20 09:53:04.877000"},
@@ -2977,7 +2977,7 @@ func TestTidbParseTso(t *testing.T) {
 		require.Equal(t, test.expect, result)
 	}
 
-	testsNull := []interface{}{
+	testsNull := []any{
 		0,
 		-1,
 		"-1"}
@@ -3004,8 +3004,8 @@ func TestTiDBBoundedStaleness(t *testing.T) {
 	timeZone := time.Local
 	ctx.GetSessionVars().TimeZone = timeZone
 	tests := []struct {
-		leftTime     interface{}
-		rightTime    interface{}
+		leftTime     any
+		rightTime    any
 		injectSafeTS uint64
 		isNull       bool
 		expect       time.Time

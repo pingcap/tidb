@@ -494,7 +494,7 @@ func BenchmarkExprFromSchema(b *testing.B) {
 type MockExpr struct {
 	err error
 	t   *types.FieldType
-	i   interface{}
+	i   any
 }
 
 func (m *MockExpr) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {

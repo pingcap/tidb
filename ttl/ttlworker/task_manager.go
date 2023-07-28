@@ -40,8 +40,8 @@ const setTTLTaskOwnerTemplate = `UPDATE mysql.tidb_ttl_task
 		status_update_time = %?
 	WHERE job_id = %? AND scan_id = %?`
 
-func setTTLTaskOwnerSQL(jobID string, scanID int64, id string, now time.Time) (string, []interface{}) {
-	return setTTLTaskOwnerTemplate, []interface{}{id, now.Format(timeFormat), now.Format(timeFormat), jobID, scanID}
+func setTTLTaskOwnerSQL(jobID string, scanID int64, id string, now time.Time) (string, []any) {
+	return setTTLTaskOwnerTemplate, []any{id, now.Format(timeFormat), now.Format(timeFormat), jobID, scanID}
 }
 
 const setTTLTaskFinishedTemplate = `UPDATE mysql.tidb_ttl_task
@@ -50,12 +50,12 @@ const setTTLTaskFinishedTemplate = `UPDATE mysql.tidb_ttl_task
 		state = %?
 	WHERE job_id = %? AND scan_id = %?`
 
-func setTTLTaskFinishedSQL(jobID string, scanID int64, state *cache.TTLTaskState, now time.Time) (string, []interface{}, error) {
+func setTTLTaskFinishedSQL(jobID string, scanID int64, state *cache.TTLTaskState, now time.Time) (string, []any, error) {
 	stateStr, err := json.Marshal(state)
 	if err != nil {
 		return "", nil, err
 	}
-	return setTTLTaskFinishedTemplate, []interface{}{now.Format(timeFormat), string(stateStr), jobID, scanID}, nil
+	return setTTLTaskFinishedTemplate, []any{now.Format(timeFormat), string(stateStr), jobID, scanID}, nil
 }
 
 const updateTTLTaskHeartBeatTempalte = `UPDATE mysql.tidb_ttl_task
@@ -63,12 +63,12 @@ const updateTTLTaskHeartBeatTempalte = `UPDATE mysql.tidb_ttl_task
 		owner_hb_time = %?
     WHERE job_id = %? AND scan_id = %?`
 
-func updateTTLTaskHeartBeatSQL(jobID string, scanID int64, now time.Time, state *cache.TTLTaskState) (string, []interface{}, error) {
+func updateTTLTaskHeartBeatSQL(jobID string, scanID int64, now time.Time, state *cache.TTLTaskState) (string, []any, error) {
 	stateStr, err := json.Marshal(state)
 	if err != nil {
 		return "", nil, err
 	}
-	return updateTTLTaskHeartBeatTempalte, []interface{}{string(stateStr), now.Format(timeFormat), jobID, scanID}, nil
+	return updateTTLTaskHeartBeatTempalte, []any{string(stateStr), now.Format(timeFormat), jobID, scanID}, nil
 }
 
 const countRunningTasks = "SELECT count(1) FROM mysql.tidb_ttl_task WHERE status = 'running'"
@@ -92,7 +92,7 @@ type taskManager struct {
 	runningTasks    []*runningScanTask
 
 	delCh         chan *ttlDeleteTask
-	notifyStateCh chan interface{}
+	notifyStateCh chan any
 }
 
 func newTaskManager(ctx context.Context, sessPool sessionPool, infoSchemaCache *cache.InfoSchemaCache, id string, store kv.Storage) *taskManager {
@@ -111,7 +111,7 @@ func newTaskManager(ctx context.Context, sessPool sessionPool, infoSchemaCache *
 		runningTasks:    []*runningScanTask{},
 
 		delCh:         make(chan *ttlDeleteTask),
-		notifyStateCh: make(chan interface{}, 1),
+		notifyStateCh: make(chan any, 1),
 	}
 }
 

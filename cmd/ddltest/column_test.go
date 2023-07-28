@@ -34,7 +34,7 @@ import (
 )
 
 // After add column finished, check the records in the table.
-func (s *ddlSuite) checkAddColumn(t *testing.T, rowID int64, defaultVal interface{}, updatedVal interface{}) {
+func (s *ddlSuite) checkAddColumn(t *testing.T, rowID int64, defaultVal any, updatedVal any) {
 	ctx := s.ctx
 	err := sessiontxn.NewTxn(goctx.Background(), ctx)
 	require.NoError(t, err)
@@ -84,7 +84,7 @@ func (s *ddlSuite) checkAddColumn(t *testing.T, rowID int64, defaultVal interfac
 	require.Greater(t, deleteCount, int64(0))
 }
 
-func (s *ddlSuite) checkDropColumn(t *testing.T, rowID int64, alterColumn *table.Column, updateDefault interface{}) {
+func (s *ddlSuite) checkDropColumn(t *testing.T, rowID int64, alterColumn *table.Column, updateDefault any) {
 	ctx := s.ctx
 	err := sessiontxn.NewTxn(goctx.Background(), ctx)
 	require.NoError(t, err)
@@ -140,7 +140,7 @@ func TestColumn(t *testing.T) {
 		Query      string
 		ColumnName string
 		Add        bool
-		Default    interface{}
+		Default    any
 	}{
 		{"alter table test_column add column c3 int default -1", "c3", true, int64(-1)},
 		{"alter table test_column drop column c3", "c3", false, nil},

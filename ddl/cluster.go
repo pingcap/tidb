@@ -72,7 +72,7 @@ const (
 )
 
 func closePDSchedule() error {
-	closeMap := make(map[string]interface{})
+	closeMap := make(map[string]any)
 	for _, key := range pdScheduleKey {
 		closeMap[key] = 0
 	}
@@ -84,7 +84,7 @@ func savePDSchedule(job *model.Job) error {
 	if err != nil {
 		return err
 	}
-	saveValue := make(map[string]interface{})
+	saveValue := make(map[string]any)
 	for _, key := range pdScheduleKey {
 		saveValue[key] = retValue[key]
 	}
@@ -92,7 +92,7 @@ func savePDSchedule(job *model.Job) error {
 	return nil
 }
 
-func recoverPDSchedule(pdScheduleParam map[string]interface{}) error {
+func recoverPDSchedule(pdScheduleParam map[string]any) error {
 	if pdScheduleParam == nil {
 		return nil
 	}
@@ -640,7 +640,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	}
 
 	var flashbackTS, lockedRegions, startTS, commitTS uint64
-	var pdScheduleValue map[string]interface{}
+	var pdScheduleValue map[string]any
 	var autoAnalyzeValue, readOnlyValue, ttlJobEnableValue string
 	var gcEnabledValue bool
 	var keyRanges []kv.KeyRange
@@ -785,7 +785,7 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 	}
 
 	var flashbackTS, lockedRegions, startTS, commitTS uint64
-	var pdScheduleValue map[string]interface{}
+	var pdScheduleValue map[string]any
 	var autoAnalyzeValue, readOnlyValue, ttlJobEnableValue string
 	var gcEnabled bool
 

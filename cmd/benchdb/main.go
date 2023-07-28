@@ -108,7 +108,7 @@ func newBenchDB() *benchDB {
 	}
 }
 
-func (ut *benchDB) mustExec(sql string, args ...interface{}) {
+func (ut *benchDB) mustExec(sql string, args ...any) {
 	// executeInternal only return one resultSet for this.
 	rs, err := ut.session.ExecuteInternal(context.Background(), sql, args...)
 	defer func() {
@@ -293,12 +293,12 @@ func (ut *benchDB) query(spec string) {
 	})
 }
 
-func cLogf(format string, args ...interface{}) {
+func cLogf(format string, args ...any) {
 	str := fmt.Sprintf(format, args...)
 	fmt.Println("\033[0;32m" + str + "\033[0m\n")
 }
 
-func cLog(args ...interface{}) {
+func cLog(args ...any) {
 	str := fmt.Sprint(args...)
 	fmt.Println("\033[0;32m" + str + "\033[0m\n")
 }

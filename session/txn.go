@@ -256,7 +256,7 @@ func (txn *LazyTxn) GoString() string {
 }
 
 // GetOption implements the GetOption
-func (txn *LazyTxn) GetOption(opt int) interface{} {
+func (txn *LazyTxn) GetOption(opt int) any {
 	if txn.Transaction == nil {
 		if opt == kv.TxnScope {
 			return ""

@@ -1259,7 +1259,7 @@ func TestHashAggRuntimeStat(t *testing.T) {
 	require.Equal(t, expect, stats.String())
 }
 
-func reconstructParallelGroupConcatResult(rows [][]interface{}) []string {
+func reconstructParallelGroupConcatResult(rows [][]any) []string {
 	data := make([]string, 0, len(rows))
 	for _, row := range rows {
 		if str, ok := row[0].(string); ok {
@@ -1357,7 +1357,7 @@ func TestIssue20658(t *testing.T) {
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL.String()))
 
-	mustParseAndSort := func(rows [][]interface{}, cmt string) []float64 {
+	mustParseAndSort := func(rows [][]any, cmt string) []float64 {
 		ret := make([]float64, len(rows))
 		for i := 0; i < len(rows); i++ {
 			rowStr := rows[i][0].(string)

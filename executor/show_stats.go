@@ -90,7 +90,7 @@ func (e *ShowExec) appendTableForStatsExtended(dbName string, tbl *model.TableIn
 			statsType = "cardinality"
 			statsVal = item.StringVals
 		}
-		e.appendRow([]interface{}{
+		e.appendRow([]any{
 			dbName,
 			tbl.Name.L,
 			statsName,
@@ -135,7 +135,7 @@ func (e *ShowExec) appendTableForStatsMeta(dbName, tblName, partitionName string
 	if statsTbl.Pseudo {
 		return
 	}
-	e.appendRow([]interface{}{
+	e.appendRow([]any{
 		dbName,
 		tblName,
 		partitionName,
@@ -146,7 +146,7 @@ func (e *ShowExec) appendTableForStatsMeta(dbName, tblName, partitionName string
 }
 
 func (e *ShowExec) appendTableForStatsLocked(dbName, tblName, partitionName string) {
-	e.appendRow([]interface{}{
+	e.appendRow([]any{
 		dbName,
 		tblName,
 		partitionName,
@@ -238,7 +238,7 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 
 func (e *ShowExec) histogramToRow(dbName, tblName, partitionName, colName string, isIndex int, hist statistics.Histogram,
 	avgColSize float64, loadStatus string, memUsage statistics.CacheItemMemoryUsage) {
-	e.appendRow([]interface{}{
+	e.appendRow([]any{
 		dbName,
 		tblName,
 		partitionName,
@@ -407,7 +407,7 @@ func (e *ShowExec) topNToRows(dbName, tblName, partitionName, colName string, nu
 		if err != nil {
 			return err
 		}
-		e.appendRow([]interface{}{
+		e.appendRow([]any{
 			dbName,
 			tblName,
 			partitionName,
@@ -436,7 +436,7 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string,
 		if err != nil {
 			return errors.Trace(err)
 		}
-		e.appendRow([]interface{}{
+		e.appendRow([]any{
 			dbName,
 			tblName,
 			partitionName,
@@ -498,7 +498,7 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 	if !ok {
 		return
 	}
-	e.appendRow([]interface{}{
+	e.appendRow([]any{
 		dbName,
 		tblName,
 		partitionName,
@@ -507,7 +507,7 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 }
 
 func (e *ShowExec) fetchShowHistogramsInFlight() {
-	e.appendRow([]interface{}{statistics.HistogramNeededItems.Length()})
+	e.appendRow([]any{statistics.HistogramNeededItems.Length()})
 }
 
 func (e *ShowExec) fetchShowAnalyzeStatus(ctx context.Context) error {
@@ -549,7 +549,7 @@ func (e *ShowExec) fetchShowColumnStatsUsage() error {
 			if !ok {
 				continue
 			}
-			row := []interface{}{dbName, tbl.Name.O, partitionName, col.Name.O}
+			row := []any{dbName, tbl.Name.O, partitionName, col.Name.O}
 			if colStatsUsage.LastUsedAt != nil {
 				row = append(row, *colStatsUsage.LastUsedAt)
 			} else {

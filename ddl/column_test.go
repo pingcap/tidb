@@ -40,7 +40,7 @@ import (
 )
 
 func testCreateColumn(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64,
-	colName string, pos string, defaultValue interface{}, dom *domain.Domain) int64 {
+	colName string, pos string, defaultValue any, dom *domain.Domain) int64 {
 	sql := fmt.Sprintf("alter table t1 add column %s int ", colName)
 	if defaultValue != nil {
 		sql += fmt.Sprintf("default %v ", defaultValue)
@@ -58,7 +58,7 @@ func testCreateColumn(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context,
 }
 
 func testCreateColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64,
-	colNames []string, positions []string, defaultValue interface{}, dom *domain.Domain) int64 {
+	colNames []string, positions []string, defaultValue any, dom *domain.Domain) int64 {
 	sql := "alter table t1 add column "
 	for i, colName := range colNames {
 		if i != 0 {
@@ -310,7 +310,7 @@ func TestColumnBasic(t *testing.T) {
 	testDropTable(tk, t, "test", "t1", dom)
 }
 
-func checkColumnKVExist(ctx sessionctx.Context, t table.Table, handle kv.Handle, col *table.Column, columnValue interface{}, isExist bool) error {
+func checkColumnKVExist(ctx sessionctx.Context, t table.Table, handle kv.Handle, col *table.Column, columnValue any, isExist bool) error {
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -356,7 +356,7 @@ func checkColumnKVExist(ctx sessionctx.Context, t table.Table, handle kv.Handle,
 	return nil
 }
 
-func checkNoneColumn(t *testing.T, ctx sessionctx.Context, tableID int64, handle kv.Handle, col *table.Column, columnValue interface{}, dom *domain.Domain) {
+func checkNoneColumn(t *testing.T, ctx sessionctx.Context, tableID int64, handle kv.Handle, col *table.Column, columnValue any, dom *domain.Domain) {
 	tbl := testGetTable(t, dom, tableID)
 	err := checkColumnKVExist(ctx, tbl, handle, col, columnValue, false)
 	require.NoError(t, err)
@@ -364,7 +364,7 @@ func checkNoneColumn(t *testing.T, ctx sessionctx.Context, tableID int64, handle
 	require.NoError(t, err)
 }
 
-func checkDeleteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, handle kv.Handle, col *table.Column, row []types.Datum, columnValue interface{}, dom *domain.Domain) {
+func checkDeleteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, handle kv.Handle, col *table.Column, row []types.Datum, columnValue any, dom *domain.Domain) {
 	tbl := testGetTable(t, dom, tableID)
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
@@ -423,7 +423,7 @@ func checkDeleteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, 
 	require.NoError(t, err)
 }
 
-func checkWriteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, handle kv.Handle, col *table.Column, row []types.Datum, columnValue interface{}, dom *domain.Domain) {
+func checkWriteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, handle kv.Handle, col *table.Column, row []types.Datum, columnValue any, dom *domain.Domain) {
 	tbl := testGetTable(t, dom, tableID)
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
@@ -486,7 +486,7 @@ func checkWriteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, h
 	require.NoError(t, err)
 }
 
-func checkReorganizationColumn(t *testing.T, ctx sessionctx.Context, tableID int64, col *table.Column, row []types.Datum, columnValue interface{}, dom *domain.Domain) {
+func checkReorganizationColumn(t *testing.T, ctx sessionctx.Context, tableID int64, col *table.Column, row []types.Datum, columnValue any, dom *domain.Domain) {
 	tbl := testGetTable(t, dom, tableID)
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
@@ -544,7 +544,7 @@ func checkReorganizationColumn(t *testing.T, ctx sessionctx.Context, tableID int
 	require.NoError(t, err)
 }
 
-func checkPublicColumn(t *testing.T, ctx sessionctx.Context, tableID int64, newCol *table.Column, oldRow []types.Datum, columnValue interface{}, dom *domain.Domain, columnCnt int) {
+func checkPublicColumn(t *testing.T, ctx sessionctx.Context, tableID int64, newCol *table.Column, oldRow []types.Datum, columnValue any, dom *domain.Domain, columnCnt int) {
 	tbl := testGetTable(t, dom, tableID)
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
@@ -610,7 +610,7 @@ func checkPublicColumn(t *testing.T, ctx sessionctx.Context, tableID int64, newC
 	require.NoError(t, err)
 }
 
-func checkAddColumn(t *testing.T, state model.SchemaState, tableID int64, handle kv.Handle, newCol *table.Column, oldRow []types.Datum, columnValue interface{}, dom *domain.Domain, store kv.Storage, columnCnt int) {
+func checkAddColumn(t *testing.T, state model.SchemaState, tableID int64, handle kv.Handle, newCol *table.Column, oldRow []types.Datum, columnValue any, dom *domain.Domain, store kv.Storage, columnCnt int) {
 	ctx := testNewContext(store)
 	switch state {
 	case model.StateNone:

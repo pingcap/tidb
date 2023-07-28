@@ -1464,7 +1464,7 @@ func TestPartitionProcessorWithUninitializedTable(t *testing.T) {
 	tk.MustExec(" create table q1(a int, b int, key (a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));")
 	tk.MustExec(" create table q2(a int, b int, key (a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));")
 
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"HashJoin"},
 		{"├─PartitionUnion(Build)"},
 		{"│ ├─TableReader"},
@@ -1483,7 +1483,7 @@ func TestPartitionProcessorWithUninitializedTable(t *testing.T) {
 	tk.MustQuery("explain format=brief select * from q1,q2").CheckAt([]int{0}, rows)
 
 	tk.MustExec("analyze table q2")
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"HashJoin"},
 		{"├─TableReader(Build)"},
 		{"│ └─TableFullScan"},

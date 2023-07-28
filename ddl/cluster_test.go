@@ -74,7 +74,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 		fmt.Sprintf("return(%v)", injectSafeTS)))
 
-	oldValue := map[string]interface{}{
+	oldValue := map[string]any{
 		"merge-schedule-limit": 1,
 	}
 	require.NoError(t, infosync.SetPDScheduleConfig(context.Background(), oldValue))
