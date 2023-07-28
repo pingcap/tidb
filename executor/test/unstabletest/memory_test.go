@@ -22,10 +22,12 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/skip"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPBMemoryLeak(t *testing.T) {
+	skip.UnderShort(t)
 	debug.SetGCPercent(1000)
 	defer debug.SetGCPercent(100)
 	store := testkit.CreateMockStore(t)

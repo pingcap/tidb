@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -749,18 +748,11 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 6,test6,66`),
 	})
 
-	// populate into 2 engines
-	backup := config.DefaultBatchSize
-	config.DefaultBatchSize = 1
-	s.T().Cleanup(func() {
-		config.DefaultBatchSize = backup
-	})
-
 	s.prepareAndUseDB("load_data")
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), c int);")
 	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
-		with thread=1`, gcsEndpoint)
+		with thread=1, __max_engine_size='1'`, gcsEndpoint)
 	err := s.tk.QueryToErr(loadDataSQL)
 	require.ErrorContains(s.T(), err, "ErrChecksumMismatch")
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
@@ -769,7 +761,7 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 
 	s.tk.MustExec("truncate table t;")
 	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
-		with thread=1, checksum_table='off'`, gcsEndpoint)
+		with thread=1, checksum_table='off', __max_engine_size='1'`, gcsEndpoint)
 	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
@@ -777,7 +769,7 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 
 	s.tk.MustExec("truncate table t;")
 	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
-		with thread=1, checksum_table='optional'`, gcsEndpoint)
+		with thread=1, checksum_table='optional', __max_engine_size='1'`, gcsEndpoint)
 	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
@@ -1058,17 +1050,12 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 	))
 
 	// encode error, rollback
-	backup := config.DefaultBatchSize
-	config.DefaultBatchSize = 1
-	s.T().Cleanup(func() {
-		config.DefaultBatchSize = backup
-	})
 	s.tk.MustExec("truncate table load_data.add_index")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-3.tsv"},
 		Content:     []byte("8,8|8,888\n"),
 	})
-	err := s.tk.QueryToErr(sql)
+	err := s.tk.QueryToErr(sql + " WITH __max_engine_size='1'")
 	require.ErrorContains(s.T(), err, "Truncated incorrect DOUBLE value")
 	s.tk.MustQuery("SHOW CREATE TABLE load_data.add_index;").Check(testkit.Rows(
 		"add_index CREATE TABLE `add_index` (\n" +
@@ -1083,7 +1070,6 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 	s.tk.MustQuery("SELECT COUNT(1) FROM load_data.add_index;").Sort().Check(testkit.Rows(
 		"0",
 	))
-	config.DefaultBatchSize = backup
 
 	// checksum error
 	s.server.CreateObject(fakestorage.Object{

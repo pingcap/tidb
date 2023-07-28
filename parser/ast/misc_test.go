@@ -373,6 +373,25 @@ func TestCompactTableStmtRestore(t *testing.T) {
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
+func TestPlanReplayerStmtRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{"plan replayer dump with stats as of timestamp '2023-06-28 12:34:00' explain select * from t where a > 10",
+			"PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP _UTF8MB4'2023-06-28 12:34:00' EXPLAIN SELECT * FROM `t` WHERE `a`>10"},
+		{"plan replayer dump explain analyze select * from t where a > 10",
+			"PLAN REPLAYER DUMP EXPLAIN ANALYZE SELECT * FROM `t` WHERE `a`>10"},
+		{"plan replayer dump with stats as of timestamp 12345 explain analyze select * from t where a > 10",
+			"PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP 12345 EXPLAIN ANALYZE SELECT * FROM `t` WHERE `a`>10"},
+		{"plan replayer dump explain analyze 'test'",
+			"PLAN REPLAYER DUMP EXPLAIN ANALYZE 'test'"},
+		{"plan replayer dump with stats as of timestamp '12345' explain analyze 'test2'",
+			"PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP _UTF8MB4'12345' EXPLAIN ANALYZE 'test2'"},
+	}
+	extractNodeFunc := func(node ast.Node) ast.Node {
+		return node.(*ast.PlanReplayerStmt)
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
 func TestRedactURL(t *testing.T) {
 	type args struct {
 		str string
