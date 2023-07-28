@@ -1174,6 +1174,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
 	}
+	if worker.req.TidbKvReadTimeout > 0 {
+		req.FirstReqTimeout = time.Duration(worker.req.TidbKvReadTimeout) * time.Millisecond
+		fmt.Printf("set req first timeout %v %v ----------------\n\n\n", req.FirstReqTimeout, req.Context.MaxExecutionDurationMs)
+	}
 	failpoint.Inject("sleepCoprRequest", func(v failpoint.Value) {
 		//nolint:durationcheck
 		time.Sleep(time.Millisecond * time.Duration(v.(int)))

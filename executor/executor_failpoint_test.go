@@ -555,3 +555,22 @@ func TestDeadlocksTable(t *testing.T) {
 			id2+"/2022-06-11 02:03:04.987654/1/203/<nil>/<nil>/<nil>/<nil>/201",
 		))
 }
+
+func TestTidbKvReadTimeout(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1)")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCTimeout", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCTimeout"))
+	}()
+	rows := tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where a = 1").Rows()
+	require.Len(t, rows, 1)
+	explain := fmt.Sprintf("%v", rows[0])
+	fmt.Printf("explain: %v \n\n\n", explain)
+	require.Regexp(t, ".*num_rpcxxxx.*", explain)
+}

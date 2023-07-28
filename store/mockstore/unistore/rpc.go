@@ -16,6 +16,7 @@ package unistore
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"math"
 	"os"
@@ -80,6 +81,12 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 					failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{DiskFull: &errorpb.DiskFull{StoreId: []uint64{1}, Reason: "disk full"}}))
 				}
 			}
+		}
+	})
+	failpoint.Inject("unistoreRPCTimeout", func(val failpoint.Value) {
+		if val.(bool) && timeout < time.Second {
+			fmt.Printf("unistoreRPCTimeout %v ------------------------------\n\n", timeout)
+			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{Message: "execution timeout"}))
 		}
 	})
 
