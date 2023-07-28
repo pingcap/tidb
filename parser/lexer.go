@@ -120,7 +120,7 @@ func (s *Scanner) stmtText() string {
 
 // Errorf tells scanner something is wrong.
 // Scanner satisfies yyLexer interface which need this function.
-func (s *Scanner) Errorf(format string, a ...any) (err error) {
+func (s *Scanner) Errorf(format string, a ...interface{}) (err error) {
 	str := fmt.Sprintf(format, a...)
 	val := s.r.s[s.lastScanOffset:]
 	var lenStr = ""
@@ -320,7 +320,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 }
 
 // LexLiteral returns the value of the converted literal
-func (s *Scanner) LexLiteral() any {
+func (s *Scanner) LexLiteral() interface{} {
 	symType := &yySymType{}
 	s.Lex(symType)
 	if symType.item == nil {
