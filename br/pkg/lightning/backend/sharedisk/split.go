@@ -16,6 +16,7 @@ package sharedisk
 
 import (
 	"github.com/pingcap/tidb/kv"
+	"golang.org/x/exp/slices"
 )
 
 type RangeSplitter struct {
@@ -26,8 +27,8 @@ type RangeSplitter struct {
 	dataFileHandle FilePathHandle
 	exhausted      bool
 
-	activeDataFiles map[string]struct{}
-	activeStatFiles map[string]struct{}
+	activeDataFiles map[string]int
+	activeStatFiles map[string]int
 
 	maxSplitRegionSize int64
 	maxSplitRegionKey  int64
@@ -43,8 +44,8 @@ func NewRangeSplitter(maxSize, maxKeys, maxWays uint64, propIter *MergePropIter,
 		maxWays:         maxWays,
 		propIter:        propIter,
 		dataFileHandle:  data,
-		activeDataFiles: make(map[string]struct{}),
-		activeStatFiles: make(map[string]struct{}),
+		activeDataFiles: make(map[string]int),
+		activeStatFiles: make(map[string]int),
 
 		maxSplitRegionSize: maxSplitRegionSize,
 		maxSplitRegionKey:  maxSplitRegionKey,
@@ -82,10 +83,10 @@ func (r *RangeSplitter) SplitOne() (kv.Key, []string, []string, [][]byte, error)
 		}
 
 		dataFilePath := r.dataFileHandle.Get(prop.WriterID, prop.DataSeq)
-		r.activeDataFiles[dataFilePath] = struct{}{}
 		fileIdx := r.propIter.currProp.fileOffset
 		statFilePath := r.propIter.statFilePaths[fileIdx]
-		r.activeStatFiles[statFilePath] = struct{}{}
+		r.activeDataFiles[dataFilePath] = fileIdx
+		r.activeStatFiles[statFilePath] = fileIdx
 
 		if curRegionSize >= r.maxSplitRegionSize || curRegionKeys >= r.maxSplitRegionKey {
 			r.regionSplitKeys = append(r.regionSplitKeys, kv.Key(prop.Key).Clone())
@@ -116,10 +117,16 @@ func (r *RangeSplitter) collectFiles() (data []string, stats []string) {
 	for path := range r.activeDataFiles {
 		dataFiles = append(dataFiles, path)
 	}
+	slices.SortFunc(dataFiles, func(i, j string) bool {
+		return r.activeDataFiles[i] < r.activeDataFiles[j]
+	})
 	statsFiles := make([]string, 0, len(r.activeStatFiles))
 	for path := range r.activeStatFiles {
 		statsFiles = append(statsFiles, path)
 	}
+	slices.SortFunc(statsFiles, func(i, j string) bool {
+		return r.activeStatFiles[i] < r.activeStatFiles[j]
+	})
 	return dataFiles, statsFiles
 }
 
