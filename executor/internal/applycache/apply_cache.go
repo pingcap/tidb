@@ -42,6 +42,7 @@ func applyCacheKVMem(key applyCacheKey, value *chunk.List) int64 {
 	return int64(len(key)) + value.GetMemTracker().BytesConsumed()
 }
 
+// NewApplyCache creates a new ApplyCache.
 func NewApplyCache(ctx sessionctx.Context) (*ApplyCache, error) {
 	// since ApplyCache controls the memory usage by itself, set the capacity of
 	// the underlying LRUCache to max to close its memory control
