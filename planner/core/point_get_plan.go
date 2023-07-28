@@ -1892,17 +1892,31 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 		return 0, nil
 	}
 
+	partitionColName := getPartitionColumnName(partitionExpr, tbl)
+	if partitionColName == nil {
+		return 0, errors.Errorf("unsupported partition type in BatchGet")
+	}
+
+	return getColumnPosInIndex(idx, partitionColName), nil
+}
+
+func getPartitionColumnName(partitionExpr *tables.PartitionExpr, tbl *model.TableInfo) *model.CIStr {
+	if partitionExpr == nil {
+		return nil
+	}
+
+	pi := tbl.GetPartitionInfo()
 	var partitionColName model.CIStr
 	switch pi.Type {
 	case model.PartitionTypeHash:
 		col, ok := partitionExpr.OrigExpr.(*ast.ColumnNameExpr)
 		if !ok {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
+			return nil
 		}
 		partitionColName = col.Name.Name
 	case model.PartitionTypeKey:
 		if len(partitionExpr.KeyPartCols) != 1 {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
+			return nil
 		}
 		colInfo := findColNameByColID(tbl.Columns, partitionExpr.KeyPartCols[0])
 		partitionColName = colInfo.Name
@@ -1910,7 +1924,7 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 		// left range columns partition for future development
 		col, ok := partitionExpr.Expr.(*expression.Column)
 		if !(ok && len(pi.Columns) == 0) {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
+			return nil
 		}
 		colInfo := findColNameByColID(tbl.Columns, col)
 		partitionColName = colInfo.Name
@@ -1918,13 +1932,13 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 		// left list columns partition for future development
 		locateExpr, ok := partitionExpr.ForListPruning.LocateExpr.(*expression.Column)
 		if !(ok && partitionExpr.ForListPruning.ColPrunes == nil) {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
+			return nil
 		}
 		colInfo := findColNameByColID(tbl.Columns, locateExpr)
 		partitionColName = colInfo.Name
 	}
 
-	return getColumnPosInIndex(idx, &partitionColName), nil
+	return &partitionColName
 }
 
 // getColumnPosInIndex gets the column's position in the index.

@@ -1116,7 +1116,15 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				}
 			}
 		}
+		var partColName *model.CIStr
 		if tblInfo := ds.table.Meta(); canConvertPointGet && tblInfo.GetPartitionInfo() != nil {
+			if canConvertPointGet && len(path.Ranges) > 1 {
+				// not support some complex situation, like `by HASH( col DIV 80 )` etc.
+				partColName = getPartitionColumnName(getPartitionExpr(ds.SCtx(), tblInfo), tblInfo)
+				if partColName == nil {
+					canConvertPointGet = false
+				}
+			}
 			if canConvertPointGet {
 				// If the schema contains ExtraPidColID, do not convert to point get.
 				// Because the point get executor can not handle the extra partition ID column now.
@@ -1142,7 +1150,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				if len(path.Ranges) == 1 {
 					pointGetTask = ds.convertToPointGet(prop, candidate)
 				} else {
-					pointGetTask = ds.convertToBatchPointGet(prop, candidate)
+					pointGetTask = ds.convertToBatchPointGet(prop, candidate, partColName)
 				}
 
 				// Batch/PointGet plans may be over-optimized, like `a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1).
@@ -2419,16 +2427,12 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	return rTsk
 }
 
-func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath) (task task) {
+func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath, partColName *model.CIStr) (task task) {
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
 	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IsSingleScan ||
 		prop.TaskTp == property.CopSingleReadTaskType && !candidate.path.IsSingleScan {
-		return invalidTask
-	}
-	pos, err := getPartitionColumnPos(candidate.path.Index, getPartitionExpr(ds.SCtx(), ds.TableInfo()), ds.TableInfo())
-	if err != nil {
 		return invalidTask
 	}
 
@@ -2470,7 +2474,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		batchPointGetPlan.IndexInfo = candidate.path.Index
 		batchPointGetPlan.IdxCols = candidate.path.IdxCols
 		batchPointGetPlan.IdxColLens = candidate.path.IdxColLens
-		batchPointGetPlan.PartitionColPos = pos
+		batchPointGetPlan.PartitionColPos = getColumnPosInIndex(candidate.path.Index, partColName)
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
 		}
