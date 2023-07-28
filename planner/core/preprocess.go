@@ -1566,13 +1566,9 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		p.err = err
 		return
 	}
-	currentDB := p.sctx.GetSessionVars().CurrentDB
-	if tn.Schema.String() != "" {
-		currentDB = tn.Schema.L
-	}
 
 	if !p.skipLockMDL() {
-		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
+		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
 		if err != nil {
 			p.err = err
 			return
