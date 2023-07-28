@@ -48,7 +48,7 @@ type testCaseItem struct {
 
 type testLiteralValue struct {
 	str string
-	val any
+	val interface{}
 }
 
 func TestSingleCharOther(t *testing.T) {
