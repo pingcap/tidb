@@ -782,7 +782,7 @@ func (*Writer) IsSynced() bool {
 // TableAutoIDInfo is the auto id information of a table.
 type TableAutoIDInfo struct {
 	Column string
-	NextID int64
+	NextID string
 	Type   string
 }
 
@@ -795,8 +795,7 @@ func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableN
 	var autoIDInfos []*TableAutoIDInfo
 	for rows.Next() {
 		var (
-			dbName, tblName, columnName, idType string
-			nextID                              int64
+			dbName, tblName, columnName, nextID, idType string
 		)
 		columns, err := rows.Columns()
 		if err != nil {
