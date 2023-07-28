@@ -17,7 +17,7 @@
 set -eux
 
 br.test -test.coverprofile="$TEST_DIR/cov.$TEST_NAME.$$.out.log" DEVEL "$@" \
-    -L "debug" \
+    -L "info" \
     --ca "$TEST_DIR/certs/ca.pem" \
     --cert "$TEST_DIR/certs/br.pem" \
     --key "$TEST_DIR/certs/br.key"
