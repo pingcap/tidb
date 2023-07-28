@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/executor/internal/exec"
+	"github.com/pingcap/tidb/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
@@ -32,7 +33,7 @@ import (
 type WindowExec struct {
 	exec.BaseExecutor
 
-	groupChecker *vecGroupChecker
+	groupChecker *vecgroupchecker.VecGroupChecker
 	// childResult stores the child chunk
 	childResult *chunk.Chunk
 	// executed indicates the child executor is drained or something unexpected happened.
@@ -76,7 +77,7 @@ func (e *WindowExec) preparedChunkAvailable() bool {
 
 func (e *WindowExec) consumeOneGroup(ctx context.Context) error {
 	var groupRows []chunk.Row
-	if e.groupChecker.isExhausted() {
+	if e.groupChecker.IsExhausted() {
 		eof, err := e.fetchChild(ctx)
 		if err != nil {
 			return errors.Trace(err)
@@ -85,12 +86,12 @@ func (e *WindowExec) consumeOneGroup(ctx context.Context) error {
 			e.executed = true
 			return e.consumeGroupRows(groupRows)
 		}
-		_, err = e.groupChecker.splitIntoGroups(e.childResult)
+		_, err = e.groupChecker.SplitIntoGroups(e.childResult)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	begin, end := e.groupChecker.getNextGroup()
+	begin, end := e.groupChecker.GetNextGroup()
 	for i := begin; i < end; i++ {
 		groupRows = append(groupRows, e.childResult.GetRow(i))
 	}
@@ -106,13 +107,13 @@ func (e *WindowExec) consumeOneGroup(ctx context.Context) error {
 			return e.consumeGroupRows(groupRows)
 		}
 
-		isFirstGroupSameAsPrev, err := e.groupChecker.splitIntoGroups(e.childResult)
+		isFirstGroupSameAsPrev, err := e.groupChecker.SplitIntoGroups(e.childResult)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		if isFirstGroupSameAsPrev {
-			begin, end = e.groupChecker.getNextGroup()
+			begin, end = e.groupChecker.GetNextGroup()
 			for i := begin; i < end; i++ {
 				groupRows = append(groupRows, e.childResult.GetRow(i))
 			}

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor/internal/exec"
+	"github.com/pingcap/tidb/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/channel"
@@ -444,7 +445,7 @@ func buildPartitionHashSplitter(concurrency int, byItems []expression.Expression
 type partitionRangeSplitter struct {
 	byItems      []expression.Expression
 	numWorkers   int
-	groupChecker *vecGroupChecker
+	groupChecker *vecgroupchecker.VecGroupChecker
 	idx          int
 }
 
@@ -452,7 +453,7 @@ func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItem
 	return &partitionRangeSplitter{
 		byItems:      byItems,
 		numWorkers:   concurrency,
-		groupChecker: newVecGroupChecker(ctx, byItems),
+		groupChecker: vecgroupchecker.NewVecGroupChecker(ctx, byItems),
 		idx:          0,
 	}
 }
@@ -461,14 +462,14 @@ func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItem
 // the caller of this method should guarantee that `input` is grouped,
 // which means that rows with the same byItems should be continuous, the order does not matter.
 func (s *partitionRangeSplitter) split(_ sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
-	_, err := s.groupChecker.splitIntoGroups(input)
+	_, err := s.groupChecker.SplitIntoGroups(input)
 	if err != nil {
 		return workerIndices, err
 	}
 
 	workerIndices = workerIndices[:0]
-	for !s.groupChecker.isExhausted() {
-		begin, end := s.groupChecker.getNextGroup()
+	for !s.groupChecker.IsExhausted() {
+		begin, end := s.groupChecker.GetNextGroup()
 		for i := begin; i < end; i++ {
 			workerIndices = append(workerIndices, s.idx)
 		}
