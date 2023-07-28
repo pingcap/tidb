@@ -208,7 +208,9 @@
       "util/watcher/": "util/watcher/ code",
       "util/gctuner": "util/gctuner",
       "store/mockstore/unistore/util": "store/mockstore/unistore/util code",
-      "ddl/util/": "ddl/util code"
+      "ddl/util/": "ddl/util code",
+      "planner/core/internal": "planner/core/internal code",
+      "executor/internal": "executor/internal code"
     }
   },
   "findcall": {
@@ -627,7 +629,6 @@
       "executor/test/unstabletest": "executor/test/unstabletest",
       "ddl/tests": "ddl/tests code",
       "disttask/": "disttask code",
-      "executor/test/tiflashtest": "executor/test/tiflashtest code",
       "timer/": "timer code",
       "util/": "util code",
       "br/pkg/lightning/config/": "br/pkg/lightning/config code",
@@ -636,7 +637,8 @@
       "planner/cascades": "planner/cascades code",
       "store/": "store code",
       "ttl/": "ttl code",
-      "bindinfo/": "bindinfo code"
+      "bindinfo/": "bindinfo code",
+      "domain/": "domain code"
     }
   },
   "unconvert": {
