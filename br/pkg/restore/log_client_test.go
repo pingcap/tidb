@@ -230,6 +230,8 @@ func testReadMetaBetweenTSWithVersion(t *testing.T, m metaMaker) {
 			StartTS:   c.startTS,
 			RestoreTS: c.endTS,
 			Storage:   loc,
+
+			MetadataDownloadBatchSize: 32,
 		}
 		cli, err := CreateLogFileManager(ctx, init)
 		req.Equal(cli.ShiftTS(), c.expectedShiftTS)
@@ -460,6 +462,8 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 			StartTS:   start,
 			RestoreTS: end,
 			Storage:   loc,
+
+			MetadataDownloadBatchSize: 32,
 		})
 		req.NoError(err)
 

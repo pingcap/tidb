@@ -1301,7 +1301,7 @@ func restoreStream(
 		}()
 	}
 
-	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS)
+	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS, cfg.MetadataDownloadBatchSize)
 	if err != nil {
 		return err
 	}
