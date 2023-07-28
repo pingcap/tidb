@@ -1036,7 +1036,7 @@ func (remote *Backend) generateJobForRange(
 
 func (remote *Backend) createMergeIter(ctx context.Context, start kv.Key) (*sharedisk.MergeIter, error) {
 	var offsets []uint64
-	if len(remote.statsFiles) != 0 {
+	if len(remote.statsFiles) == 0 {
 		offsets = make([]uint64, len(remote.dataFiles))
 		log.FromContext(ctx).Info("no stats files",
 			zap.String("startKey", hex.EncodeToString(start)))
