@@ -155,16 +155,13 @@ func (s *importStepScheduler) OnSubtaskFinished(ctx context.Context, subtaskMeta
 	}
 	dataKVCount, err := s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
 	if err != nil {
-		s.logger.Info("ywq test log import....", zap.Int32("engine-id", subtaskMeta.ID))
 		return nil, err
 	}
 
 	s.logger.Info("import index engine", zap.Int32("engine-id", subtaskMeta.ID))
 	if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
-		s.logger.Info("log1", zap.Int32("engine-id", subtaskMeta.ID), zap.Error(err))
 		return nil, err
 	} else if _, err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
-		s.logger.Info("log2", zap.Int32("engine-id", subtaskMeta.ID), zap.Error(err))
 		return nil, err
 	}
 

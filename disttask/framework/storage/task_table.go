@@ -383,8 +383,8 @@ func (stm *TaskManager) GetSubtaskInStatesCnt(taskID int64, states ...interface{
 func (stm *TaskManager) CollectSubTaskError(taskID int64) ([]error, error) {
 	rs, err := stm.executeSQLWithNewSession(
 		stm.ctx,
-		"select error from mysql.tidb_background_subtask where task_key = %? AND state = %?",
-		taskID, proto.TaskStateFailed)
+		"select error from mysql.tidb_background_subtask where task_key = %? AND state in (%?, %?)",
+		taskID, proto.TaskStateFailed, proto.TaskStateCanceled)
 	if err != nil {
 		return nil, err
 	}

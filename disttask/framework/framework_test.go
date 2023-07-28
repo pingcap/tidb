@@ -322,9 +322,8 @@ func TestFrameworkRunSubtaskCancel(t *testing.T) {
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	err := failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockRunSubtaskCancel", "1*return(true)")
 	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockRunSubtaskCancel"))
-	}()
 	DispatchTaskAndCheckFail("key1", t, &v)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockRunSubtaskCancel"))
+	DispatchTaskAndCheckSuccess("key2", t, &v)
 	distContext.Close()
 }
