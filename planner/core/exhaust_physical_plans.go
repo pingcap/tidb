@@ -1978,27 +1978,33 @@ func (p *LogicalJoin) preferAny(joinFlags ...uint) bool {
 	return false
 }
 
+const (
+	joinLeft             = 0
+	joinRight            = 1
+	indexJoinMethod      = 0
+	indexHashJoinMethod  = 1
+	indexMergeJoinMethod = 2
+)
+
 func (*LogicalJoin) getIndexJoinSideAndMethod(join PhysicalPlan) (innerSide, joinMethod int, ok bool) {
-	const left, right = 0, 1
-	const indexJoin, indexHashJoin, indexMergeJoin = 0, 1, 2
 	var innerIdx int
 	switch ij := join.(type) {
 	case *PhysicalIndexJoin:
 		innerIdx = ij.getInnerChildIdx()
-		joinMethod = indexJoin
+		joinMethod = indexJoinMethod
 	case *PhysicalIndexHashJoin:
 		innerIdx = ij.getInnerChildIdx()
-		joinMethod = indexHashJoin
+		joinMethod = indexHashJoinMethod
 	case *PhysicalIndexMergeJoin:
 		innerIdx = ij.getInnerChildIdx()
-		joinMethod = indexMergeJoin
+		joinMethod = indexMergeJoinMethod
 	default:
 		return 0, 0, false
 	}
 	ok = true
-	innerSide = left
+	innerSide = joinLeft
 	if innerIdx == 1 {
-		innerSide = right
+		innerSide = joinRight
 	}
 	return
 }
@@ -2039,21 +2045,18 @@ func (p *LogicalJoin) handleForceIndexJoinHints(prop *property.PhysicalProperty,
 		preferLeftAsINLJInner, preferLeftAsINLHJInner, preferLeftAsINLMJInner) {
 		return candidates, false // no force index join hints
 	}
-
-	const left, right = 0, 1
-	const indexJoin, indexHashJoin, indexMergeJoin = 0, 1, 2
 	forced := make([]PhysicalPlan, 0, len(candidates))
 	for _, candidate := range candidates {
 		innerSide, joinMethod, ok := p.getIndexJoinSideAndMethod(candidate)
 		if !ok {
 			continue
 		}
-		if (p.preferAny(preferLeftAsINLJInner) && innerSide == left && joinMethod == indexJoin) ||
-			(p.preferAny(preferRightAsINLJInner) && innerSide == right && joinMethod == indexJoin) ||
-			(p.preferAny(preferLeftAsINLHJInner) && innerSide == left && joinMethod == indexHashJoin) ||
-			(p.preferAny(preferRightAsINLHJInner) && innerSide == right && joinMethod == indexHashJoin) ||
-			(p.preferAny(preferLeftAsINLMJInner) && innerSide == left && joinMethod == indexMergeJoin) ||
-			(p.preferAny(preferRightAsINLMJInner) && innerSide == right && joinMethod == indexMergeJoin) {
+		if (p.preferAny(preferLeftAsINLJInner) && innerSide == joinLeft && joinMethod == indexJoinMethod) ||
+			(p.preferAny(preferRightAsINLJInner) && innerSide == joinRight && joinMethod == indexJoinMethod) ||
+			(p.preferAny(preferLeftAsINLHJInner) && innerSide == joinLeft && joinMethod == indexHashJoinMethod) ||
+			(p.preferAny(preferRightAsINLHJInner) && innerSide == joinRight && joinMethod == indexHashJoinMethod) ||
+			(p.preferAny(preferLeftAsINLMJInner) && innerSide == joinLeft && joinMethod == indexMergeJoinMethod) ||
+			(p.preferAny(preferRightAsINLMJInner) && innerSide == joinRight && joinMethod == indexMergeJoinMethod) {
 			forced = append(forced, candidate)
 		}
 	}
