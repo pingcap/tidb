@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 type jobStageTp string
@@ -227,7 +228,17 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	leaderID := j.region.Leader.GetId()
 	clients := make([]sst.ImportSST_WriteClient, 0, len(region.GetPeers()))
 	allPeers := make([]*metapb.Peer, 0, len(region.GetPeers()))
-	requests := make([]*sst.WriteRequest, 0, len(region.GetPeers()))
+	req := &sst.WriteRequest{
+		Chunk: &sst.WriteRequest_Meta{
+			Meta: meta,
+		},
+		Context: &kvrpcpb.Context{
+			ResourceControlContext: &kvrpcpb.ResourceControlContext{
+				ResourceGroupName: local.ResourceGroupName,
+			},
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
+		},
+	}
 	for _, peer := range region.GetPeers() {
 		cli, err := clientFactory.Create(ctx, peer.StoreId)
 		if err != nil {
@@ -240,28 +251,16 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		}
 
 		// Bind uuid for this write request
-		req := &sst.WriteRequest{
-			Chunk: &sst.WriteRequest_Meta{
-				Meta: meta,
-			},
-			Context: &kvrpcpb.Context{
-				ResourceControlContext: &kvrpcpb.ResourceControlContext{
-					ResourceGroupName: local.ResourceGroupName,
-				},
-				RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
-			},
-		}
 		if err = wstream.Send(req); err != nil {
 			return annotateErr(err, peer)
 		}
-		req.Chunk = &sst.WriteRequest_Batch{
-			Batch: &sst.WriteBatch{
-				CommitTs: j.engine.TS,
-			},
-		}
 		clients = append(clients, wstream)
-		requests = append(requests, req)
 		allPeers = append(allPeers, peer)
+	}
+	req.Chunk = &sst.WriteRequest_Batch{
+		Batch: &sst.WriteBatch{
+			CommitTs: j.engine.TS,
+		},
 	}
 
 	bytesBuf := bufferPool.NewBuffer()
@@ -279,12 +278,19 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	}
 
 	flushKVs := func() error {
+		req.Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
+		preparedMsg := &grpc.PreparedMsg{}
+		// by reading the source code, Encode need to find codec and compression from the stream
+		// because all stream has the same codec and compression, we can use any one of them
+		if err := preparedMsg.Encode(clients[0], req); err != nil {
+			return err
+		}
+
 		for i := range clients {
 			if err := writeLimiter.WaitN(ctx, allPeers[i].StoreId, int(size)); err != nil {
 				return errors.Trace(err)
 			}
-			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
-			if err := clients[i].Send(requests[i]); err != nil {
+			if err := clients[i].SendMsg(preparedMsg); err != nil {
 				return annotateErr(err, allPeers[i])
 			}
 		}
@@ -560,10 +566,6 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			RegionId:    j.region.Region.GetId(),
 			RegionEpoch: j.region.Region.GetRegionEpoch(),
 			Peer:        leader,
-			ResourceControlContext: &kvrpcpb.ResourceControlContext{
-				ResourceGroupName: local.ResourceGroupName,
-			},
-			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
 		}
 
 		if supportMultiIngest {

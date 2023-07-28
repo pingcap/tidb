@@ -91,6 +91,8 @@ const (
 	recordErrorsOption          = "record_errors"
 	detachedOption              = "detached"
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
+	// used for test
+	maxEngineSizeOption = "__max_engine_size"
 )
 
 var (
@@ -111,6 +113,7 @@ var (
 		recordErrorsOption:          true,
 		detachedOption:              false,
 		disableTiKVImportModeOption: false,
+		maxEngineSizeOption:         true,
 	}
 
 	csvOnlyOptions = map[string]struct{}{
@@ -183,6 +186,7 @@ type Plan struct {
 	MaxRecordedErrors     int64
 	Detached              bool
 	DisableTiKVImportMode bool
+	MaxEngineSize         config.ByteSize
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
@@ -473,6 +477,7 @@ func (p *Plan) initDefaultOptions() {
 	p.MaxRecordedErrors = 100
 	p.Detached = false
 	p.DisableTiKVImportMode = false
+	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
 
 	v := "utf8mb4"
 	p.Charset = &v
@@ -629,6 +634,15 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 	}
 	if _, ok := specifiedOptions[disableTiKVImportModeOption]; ok {
 		p.DisableTiKVImportMode = true
+	}
+	if opt, ok := specifiedOptions[maxEngineSizeOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if err = p.MaxEngineSize.UnmarshalText([]byte(v)); err != nil || p.MaxEngineSize < 0 {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
 	}
 
 	p.adjustOptions()
