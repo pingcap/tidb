@@ -10,6 +10,7 @@ go_library(
         "//domain/resourcegroup",
         "//executor/internal/exec",
         "//expression",
+        "//infoschema",
         "//parser",
         "//parser/ast",
         "//parser/model",
@@ -25,12 +26,21 @@ go_library(
 go_test(
     name = "querywatch_test",
     timeout = "short",
-    srcs = ["query_watch_test.go"],
+    srcs = [
+        "main_test.go",
+        "query_watch_test.go",
+    ],
+    embed = [":querywatch"],
     flaky = True,
     deps = [
+        "//config",
         "//errno",
         "//kv",
+        "//meta/autoid",
         "//testkit",
+        "//testkit/testsetup",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

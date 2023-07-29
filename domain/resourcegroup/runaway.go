@@ -49,7 +49,7 @@ const (
 // NullTime is a zero time.Time.
 var NullTime time.Time
 
-// RunawayMatchType is used to indicates whether qurey was interrupted by runaway identification or quarantine watch.
+// RunawayMatchType is used to indicate whether query was interrupted by runaway identification or quarantine watch.
 type RunawayMatchType uint
 
 const (
