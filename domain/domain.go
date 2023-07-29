@@ -3013,9 +3013,11 @@ func (do *Domain) releaseServerID(ctx context.Context) error {
 	if serverID == 0 {
 		return nil
 	}
-
 	atomic.StoreUint64(&do.serverID, 0)
 
+	if do.etcdClient == nil {
+		return nil
+	}
 	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, serverID)
 	err := ddlutil.DeleteKeyFromEtcd(key, do.etcdClient, refreshServerIDRetryCnt, acquireServerIDTimeout)
 	if err != nil {
