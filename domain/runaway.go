@@ -175,6 +175,7 @@ func (do *Domain) runawayWatchSyncLoop() {
 	}
 }
 
+// AddRunawayWatch is used to add runaway watch item manually.
 func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) (int64, error) {
 	if err := do.handleRunawayWatch(record); err != nil {
 		return 0, err
@@ -191,7 +192,7 @@ func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) (int64
 		case <-timer.C:
 			return 0, errors.Errorf("add runaway watch timeout")
 		case <-ticker.C:
-			r := do.runawayManager.GetWatchInWatchList(record.GetRecordKey())
+			r := do.runawayManager.GetWatchByKey(record.GetRecordKey())
 			if r.ID > 0 {
 				return r.ID, nil
 			}
@@ -199,7 +200,7 @@ func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) (int64
 			if err != nil {
 				continue
 			}
-			r := do.runawayManager.GetWatchInWatchList(record.GetRecordKey())
+			r := do.runawayManager.GetWatchByKey(record.GetRecordKey())
 			if r.ID > 0 {
 				return r.ID, nil
 			}
@@ -207,10 +208,13 @@ func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) (int64
 	}
 }
 
+// GetRunawayWatchList is used to get all items from runaway watch list.
 func (do *Domain) GetRunawayWatchList() []*resourcegroup.QuarantineRecord {
 	return do.runawayManager.GetWatchList()
 }
 
+// TryToUpdateRunawayWatch is used to notify runawaySyncer to update watch list including
+// creation and deletion. It will wait for finishing the updation.
 func (do *Domain) TryToUpdateRunawayWatch() error {
 	do.runawaySyncer.notifyChan <- struct{}{}
 	timer := time.NewTimer(3 * time.Second)
@@ -225,6 +229,7 @@ func (do *Domain) TryToUpdateRunawayWatch() error {
 	}
 }
 
+// RemoveRunawayWatch is used to remove runaway watch item manually.
 func (do *Domain) RemoveRunawayWatch(recordID int64) error {
 	records, err := do.runawaySyncer.getWatchRecordByID(recordID)
 	if err != nil {
@@ -447,11 +452,16 @@ type runawaySyncer struct {
 
 func newRunawaySyncer(sysSessionPool *sessionPool) *runawaySyncer {
 	return &runawaySyncer{
-		sysSessionPool:      sysSessionPool,
-		newWatchReader:      &SystemTableReader{resourcegroup.RunawayWatchTableName, "start_time"},
-		deletionWatchReader: &SystemTableReader{resourcegroup.RunawayWatchDoneTableName, "done_time"},
-		notifyChan:          make(chan struct{}, 64),
-		doneChan:            make(chan error, 64),
+		sysSessionPool: sysSessionPool,
+		newWatchReader: &SystemTableReader{
+			resourcegroup.RunawayWatchTableName,
+			"start_time",
+			resourcegroup.NullTime},
+		deletionWatchReader: &SystemTableReader{resourcegroup.RunawayWatchDoneTableName,
+			"done_time",
+			resourcegroup.NullTime},
+		notifyChan: make(chan struct{}, 64),
+		doneChan:   make(chan error, 64),
 	}
 }
 
@@ -476,7 +486,7 @@ func (s *runawaySyncer) getWatchRecord(reader *SystemTableReader, sqlGenFn func(
 		return nil, errors.Annotate(err, "get session failed")
 	}
 	exec := se.(sqlexec.RestrictedSQLExecutor)
-	return GetRunawayWatchRecord(exec, reader, sqlGenFn)
+	return getRunawayWatchRecord(exec, reader, sqlGenFn)
 }
 
 func (s *runawaySyncer) getWatchDoneRecord(reader *SystemTableReader, sqlGenFn func() (string, []interface{})) ([]*resourcegroup.QuarantineRecord, error) {
@@ -488,10 +498,10 @@ func (s *runawaySyncer) getWatchDoneRecord(reader *SystemTableReader, sqlGenFn f
 		return nil, errors.Annotate(err, "get session failed")
 	}
 	exec := se.(sqlexec.RestrictedSQLExecutor)
-	return GetRunawayWatchDoneRecord(exec, reader, sqlGenFn)
+	return getRunawayWatchDoneRecord(exec, reader, sqlGenFn)
 }
 
-func GetRunawayWatchRecord(exec sqlexec.RestrictedSQLExecutor, reader *SystemTableReader, sqlGenFn func() (string, []interface{})) ([]*resourcegroup.QuarantineRecord, error) {
+func getRunawayWatchRecord(exec sqlexec.RestrictedSQLExecutor, reader *SystemTableReader, sqlGenFn func() (string, []interface{})) ([]*resourcegroup.QuarantineRecord, error) {
 	rs, err := reader.Read(exec, sqlGenFn)
 	if err != nil {
 		return nil, err
@@ -519,12 +529,13 @@ func GetRunawayWatchRecord(exec sqlexec.RestrictedSQLExecutor, reader *SystemTab
 			Source:            r.GetString(6),
 			Action:            rmpb.RunawayAction(r.GetInt64(7)),
 		}
+		reader.CheckPoint = startTime
 		ret = append(ret, qr)
 	}
 	return ret, nil
 }
 
-func GetRunawayWatchDoneRecord(exec sqlexec.RestrictedSQLExecutor, reader *SystemTableReader, sqlGenFn func() (string, []interface{})) ([]*resourcegroup.QuarantineRecord, error) {
+func getRunawayWatchDoneRecord(exec sqlexec.RestrictedSQLExecutor, reader *SystemTableReader, sqlGenFn func() (string, []interface{})) ([]*resourcegroup.QuarantineRecord, error) {
 	rs, err := reader.Read(exec, sqlGenFn)
 	if err != nil {
 		return nil, err
@@ -543,10 +554,10 @@ func GetRunawayWatchDoneRecord(exec sqlexec.RestrictedSQLExecutor, reader *Syste
 				continue
 			}
 		}
-		// updateTime, err := r.GetTime(9).GoTime(time.Local)
-		// if err != nil {
-		// 	continue
-		// }
+		updateTime, err := r.GetTime(9).GoTime(time.Local)
+		if err != nil {
+			continue
+		}
 		qr := &resourcegroup.QuarantineRecord{
 			ID:                r.GetInt64(1),
 			ResourceGroupName: r.GetString(2),
@@ -557,14 +568,17 @@ func GetRunawayWatchDoneRecord(exec sqlexec.RestrictedSQLExecutor, reader *Syste
 			Source:            r.GetString(7),
 			Action:            rmpb.RunawayAction(r.GetInt64(8)),
 		}
+		reader.CheckPoint = updateTime.Add(-3 * runawayWatchSyncInterval)
 		ret = append(ret, qr)
 	}
 	return ret, nil
 }
 
+// SystemTableReader is used to read table `runaway_watch` and `runaway_watch_done`.
 type SystemTableReader struct {
-	TableName string
-	KeyCol    string
+	TableName  string
+	KeyCol     string
+	CheckPoint time.Time
 }
 
 func (r *SystemTableReader) genSelectByIDStmt(id int64) func() (string, []interface{}) {
@@ -588,7 +602,7 @@ func (r *SystemTableReader) genSelectStmt() (string, []interface{}) {
 	builder.WriteString(r.KeyCol)
 	builder.WriteString(" > %? order by ")
 	builder.WriteString(r.KeyCol)
-	params = append(params, time.Now().Add(-3*runawayWatchSyncInterval))
+	params = append(params, r.CheckPoint)
 	return builder.String(), params
 }
 

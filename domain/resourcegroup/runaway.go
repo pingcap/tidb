@@ -34,7 +34,8 @@ import (
 const (
 	// DefaultResourceGroupName is the default resource group name.
 	DefaultResourceGroupName = "default"
-	ManualSource             = "manual"
+	// ManualSource shows the item added manually.
+	ManualSource = "manual"
 
 	RunawayWatchTableName     = "mysql.tidb_runaway_watch"
 	RunawayWatchDoneTableName = "mysql.tidb_runaway_watch_done"
@@ -45,9 +46,8 @@ const (
 	maxWatchRecordChannelSize = 1024
 )
 
+// NullTime is a zero time.Time.
 var NullTime time.Time
-
-const RecallBufferDuration = time.Second
 
 // RunawayMatchType is used to indicates whether qurey was interrupted by runaway identification or quarantine watch.
 type RunawayMatchType uint
@@ -114,6 +114,7 @@ type QuarantineRecord struct {
 	Action            rmpb.RunawayAction
 }
 
+// GetRecordKey is used to get the key in ttl cache.
 func (r *QuarantineRecord) GetRecordKey() string {
 	return r.ResourceGroupName + "/" + r.WatchText
 }
@@ -124,6 +125,7 @@ func writeInsert(builder *strings.Builder, tableName string) {
 	builder.WriteString(" VALUES ")
 }
 
+// GenInsertionStmt is used to generate insertion sql.
 func (r *QuarantineRecord) GenInsertionStmt() (string, []interface{}) {
 	var builder strings.Builder
 	params := make([]interface{}, 0, 6)
@@ -143,6 +145,7 @@ func (r *QuarantineRecord) GenInsertionStmt() (string, []interface{}) {
 	return builder.String(), params
 }
 
+// GenInsertionStmt is used to generate insertion sql for runaway watch done record.
 func (r *QuarantineRecord) GenInsertionDoneStmt() (string, []interface{}) {
 	var builder strings.Builder
 	params := make([]interface{}, 0, 9)
@@ -164,6 +167,7 @@ func (r *QuarantineRecord) GenInsertionDoneStmt() (string, []interface{}) {
 	return builder.String(), params
 }
 
+// GenDeletionStmt is used to generate deletion sql.
 func (r *QuarantineRecord) GenDeletionStmt() (string, []interface{}) {
 	var builder strings.Builder
 	params := make([]interface{}, 0, 1)
@@ -290,7 +294,8 @@ func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Durati
 	}
 }
 
-func (rm *RunawayManager) GetWatchInWatchList(key string) *QuarantineRecord {
+// GetWatchByKey is used to get a watch item by given key.
+func (rm *RunawayManager) GetWatchByKey(key string) *QuarantineRecord {
 	item := rm.watchList.Get(key)
 	rm.watchList.Items()
 	if item == nil {
@@ -299,6 +304,7 @@ func (rm *RunawayManager) GetWatchInWatchList(key string) *QuarantineRecord {
 	return item.Value()
 }
 
+// GetWatchByKey is used to get all watch items.
 func (rm *RunawayManager) GetWatchList() []*QuarantineRecord {
 	items := rm.watchList.Items()
 	ret := make([]*QuarantineRecord, 0, len(items))
@@ -308,6 +314,7 @@ func (rm *RunawayManager) GetWatchList() []*QuarantineRecord {
 	return ret
 }
 
+// AddWatch is used to add watch items from system table.
 func (rm *RunawayManager) AddWatch(record *QuarantineRecord) {
 	ttl := time.Until(record.EndTime)
 	if record.EndTime.Equal(NullTime) {
@@ -322,6 +329,7 @@ func (rm *RunawayManager) AddWatch(record *QuarantineRecord) {
 	rm.addWatchList(record, ttl, force)
 }
 
+// RemoveWatch is used to remove watch items from system table.
 func (rm *RunawayManager) RemoveWatch(record *QuarantineRecord) {
 	rm.watchList.Delete(record.GetRecordKey())
 }

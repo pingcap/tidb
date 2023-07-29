@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -34,7 +35,8 @@ import (
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
-func SetWatchOption(ctx context.Context,
+// setWatchOption is used to set the QuarantineRecord with specific QueryWatchOption ast node.
+func setWatchOption(ctx context.Context,
 	sctx, newSctx sessionctx.Context,
 	record *resourcegroup.QuarantineRecord,
 	op *ast.QueryWatchOption,
@@ -112,20 +114,24 @@ func SetWatchOption(ctx context.Context,
 	return nil
 }
 
-func FromQueryWatchOptionList(ctx context.Context, sctx, newSctx sessionctx.Context, optionList []*ast.QueryWatchOption) (*resourcegroup.QuarantineRecord, error) {
+// fromQueryWatchOptionList is used to create a QuarantineRecord with some QueryWatchOption ast nodes.
+func fromQueryWatchOptionList(ctx context.Context, sctx, newSctx sessionctx.Context, optionList []*ast.QueryWatchOption) (*resourcegroup.QuarantineRecord, error) {
 	record := &resourcegroup.QuarantineRecord{
 		Source:    resourcegroup.ManualSource,
 		StartTime: time.Now(),
 		EndTime:   resourcegroup.NullTime,
 	}
 	for _, op := range optionList {
-		if err := SetWatchOption(ctx, sctx, newSctx, record, op); err != nil {
+		if err := setWatchOption(ctx, sctx, newSctx, record, op); err != nil {
 			return nil, err
 		}
 	}
 	return record, nil
 }
 
+// validateWatchRecord follows several designs:
+//  1. If no resource group is set, the default resource group is used
+//  2. If no action is specified, the action of the resource group is used. If no, an error message is displayed.
 func validateWatchRecord(record *resourcegroup.QuarantineRecord, client *rmclient.ResourceGroupsController) error {
 	if len(record.ResourceGroupName) == 0 {
 		record.ResourceGroupName = resourcegroup.DefaultResourceGroupName
@@ -134,8 +140,13 @@ func validateWatchRecord(record *resourcegroup.QuarantineRecord, client *rmclien
 	if err != nil {
 		return err
 	}
-	if rg == nil || rg.RunawaySettings == nil {
-		return errors.Errorf("must set runaway config for resource group `%s`", record.ResourceGroupName)
+	if rg == nil {
+		return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(record.ResourceGroupName)
+	}
+	if record.Action == rmpb.RunawayAction_NoneAction {
+		if rg.RunawaySettings == nil {
+			return errors.Errorf("must set runaway config for resource group `%s`", record.ResourceGroupName)
+		}
 	}
 	if record.Watch == rmpb.RunawayWatchType_NoneWatch {
 		return errors.Errorf("must specify watch type")
@@ -161,7 +172,7 @@ func (e *AddExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	record, err := FromQueryWatchOptionList(ctx, e.Ctx(), newSctx, e.QueryWatchOptionList)
+	record, err := fromQueryWatchOptionList(ctx, e.Ctx(), newSctx, e.QueryWatchOptionList)
 	if err != nil {
 		return err
 	}
