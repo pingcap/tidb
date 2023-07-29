@@ -29,17 +29,26 @@ go_library(
 go_test(
     name = "calibrateresource_test",
     timeout = "short",
-    srcs = ["calibrate_resource_test.go"],
+    srcs = [
+        "calibrate_resource_test.go",
+        "main_test.go",
+    ],
+    embed = [":calibrateresource"],
     flaky = True,
     deps = [
+        "//config",
         "//domain",
+        "//meta/autoid",
         "//parser/mysql",
         "//testkit",
+        "//testkit/testsetup",
         "//types",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//resource_group/controller",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

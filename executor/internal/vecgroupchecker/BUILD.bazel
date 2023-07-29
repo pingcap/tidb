@@ -17,16 +17,24 @@ go_library(
 go_test(
     name = "vecgroupchecker_test",
     timeout = "short",
-    srcs = ["vec_group_checker_test.go"],
+    srcs = [
+        "main_test.go",
+        "vec_group_checker_test.go",
+    ],
     embed = [":vecgroupchecker"],
     flaky = True,
     shard_count = 3,
     deps = [
+        "//config",
         "//expression",
+        "//meta/autoid",
         "//parser/mysql",
+        "//testkit/testsetup",
         "//types",
         "//util/chunk",
         "//util/mock",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
     ],
 )
