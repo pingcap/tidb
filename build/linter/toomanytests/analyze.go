@@ -44,7 +44,7 @@ var Analyzer = &analysis.Analyzer{
 			}
 			if cnt > 50 {
 				pos := pass.Fset.PositionFor(f.Pos(), false)
-				pass.Reportf(f.Pos(), "%s: Too many test cases in one package 50 %s", pass.Pkg.Name(), pos.Filename)
+				pass.Reportf(f.Pos(), "%s: Too many test cases in one package %s", pass.Pkg.Name(), pos.Filename)
 				return nil, nil
 			}
 		}
