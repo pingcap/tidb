@@ -384,7 +384,7 @@ func (w *extractWorker) dumpExtractPlanPackage(task *ExtractTask, p *extractPlan
 	}
 	// Dump stats
 	if !task.SkipStats {
-		if err = dumpStats(zw, p.tables, GetDomain(w.sctx)); err != nil {
+		if _, err = dumpStats(zw, p.tables, GetDomain(w.sctx), 0); err != nil {
 			return "", err
 		}
 	}

@@ -49,12 +49,18 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 		}
 		// because RunawayActionNone is only defined in tidb, sub 1.
 		runaway.Action = rmpb.RunawayAction(options.Runaway.Action - 1)
-		if options.Runaway.WatchDurationMs > 0 {
+		if options.Runaway.WatchType != model.WatchNone {
 			runaway.Watch = &rmpb.RunawayWatch{}
 			runaway.Watch.Type = rmpb.RunawayWatchType(options.Runaway.WatchType)
 			runaway.Watch.LastingDurationMs = options.Runaway.WatchDurationMs
 		}
 		group.RunawaySettings = runaway
+	}
+
+	if options.Background != nil {
+		group.BackgroundSettings = &rmpb.BackgroundSettings{
+			JobTypes: options.Background.JobTypes,
+		}
 	}
 
 	if options.RURate > 0 {
@@ -72,6 +78,7 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 		}
 		return group, nil
 	}
+
 	// Only support RU mode now
 	return nil, ErrUnknownResourceGroupMode
 }

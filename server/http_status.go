@@ -44,6 +44,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/server/handler/ttlhandler"
+	util2 "github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
@@ -419,7 +421,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/test/ddl/hook", &ddlHookHandler{tikvHandlerTool.Store.(kv.Storage)})
 
 	// ttlJobTriggerHandler is enabled only for tests, so we can accelerate the schedule of TTL job
-	router.Handle("/test/ttl/trigger/{db}/{table}", &ttlJobTriggerHandler{tikvHandlerTool.Store.(kv.Storage)})
+	router.Handle("/test/ttl/trigger/{db}/{table}", ttlhandler.NewTTLJobTriggerHandler(tikvHandlerTool.Store.(kv.Storage)))
 
 	var (
 		httpRouterPage bytes.Buffer
@@ -461,7 +463,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	httpL := m.Match(cmux.HTTP1Fast())
 	grpcL := m.Match(cmux.Any())
 
-	statusServer := &http.Server{Addr: s.statusAddr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
+	statusServer := &http.Server{Addr: s.statusAddr, Handler: util2.NewCorsHandler(serverMux, s.cfg)}
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
 	if s.cfg.Store == "tikv" {

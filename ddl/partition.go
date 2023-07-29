@@ -215,6 +215,8 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
 		updatePartitionInfo(tblInfo)
 
+		preSplitAndScatter(w.sess.Context, d.store, tblInfo, addingDefinitions)
+
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -422,11 +424,11 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 				continue
 			}
 			needWait = true
-			logutil.BgLogger().Info("[ddl] partition replicas check failed in replica-only DDL state", zap.Int64("pID", pd.ID), zap.Uint64("wait region ID", region.Meta.Id), zap.Bool("tiflash peer at least one", tiflashPeerAtLeastOne), zap.Time("check time", time.Now()))
+			logutil.BgLogger().Info("partition replicas check failed in replica-only DDL state", zap.String("category", "ddl"), zap.Int64("pID", pd.ID), zap.Uint64("wait region ID", region.Meta.Id), zap.Bool("tiflash peer at least one", tiflashPeerAtLeastOne), zap.Time("check time", time.Now()))
 			return needWait, nil
 		}
 	}
-	logutil.BgLogger().Info("[ddl] partition replicas check ok in replica-only DDL state")
+	logutil.BgLogger().Info("partition replicas check ok in replica-only DDL state", zap.String("category", "ddl"))
 	return needWait, nil
 }
 
@@ -2043,6 +2045,8 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			return ver, err
 		}
 
+		preSplitAndScatter(w.sess.Context, d.store, tblInfo, newPartitions)
+
 		job.CtxVars = []interface{}{oldIDs, newIDs}
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
@@ -2173,6 +2177,8 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		// Step4: clear DroppingDefinitions and finish job.
 		tblInfo.Partition.DroppingDefinitions = nil
 		tblInfo.Partition.NewPartitionIDs = nil
+
+		preSplitAndScatter(w.sess.Context, d.store, tblInfo, newPartitions)
 
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []interface{}{oldIDs, newIDs}
@@ -2652,7 +2658,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// and we will soon start writing to the new partitions.
 		if s, ok := d.store.(kv.SplittableStore); ok && s != nil {
 			// partInfo only contains the AddingPartitions
-			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo, true)
+			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo.Definitions, true)
 		}
 
 		// Assume we cannot have more than MaxUint64 rows, set the progress to 1/10 of that.
@@ -2845,10 +2851,10 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 			return false, ver, errors.Trace(err)
 		}
 		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
-			logutil.BgLogger().Warn("[ddl] reorg partition job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
+			logutil.BgLogger().Warn("reorg partition job failed, RemoveDDLReorgHandle failed, can't convert job to rollback", zap.String("category", "ddl"),
 				zap.String("job", job.String()), zap.Error(err1))
 		}
-		logutil.BgLogger().Warn("[ddl] reorg partition job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+		logutil.BgLogger().Warn("reorg partition job failed, convert job to rollback", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Error(err))
 		ver, err = convertAddTablePartitionJob2RollbackJob(d, t, job, err, tbl.Meta())
 		return false, ver, errors.Trace(err)
 	}
@@ -3021,7 +3027,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 		taskDone = true
 	}
 
-	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()), zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
+	logutil.BgLogger().Debug("txn fetches handle info", zap.String("category", "ddl"), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
 	return w.rowRecords, getNextHandleKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
 }
 
@@ -3118,7 +3124,7 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 		reorgInfo.currElement = reorgInfo.elements[i+1]
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
 		err = reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
-		logutil.BgLogger().Info("[ddl] update column and indexes",
+		logutil.BgLogger().Info("update column and indexes", zap.String("category", "ddl"),
 			zap.Int64("jobID", reorgInfo.Job.ID),
 			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
 			zap.Int64("elementID", reorgInfo.currElement.ID),

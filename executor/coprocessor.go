@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
@@ -60,7 +61,7 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 	}
 
 	chk := tryNewCacheChunk(e)
-	tps := e.base().retFieldTypes
+	tps := e.Base().RetFieldTypes()
 	var totalChunks, partChunks []tipb.Chunk
 	memTracker := h.sctx.GetSessionVars().StmtCtx.MemTracker
 	for {
@@ -100,7 +101,7 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 	}
 
 	chk := tryNewCacheChunk(e)
-	tps := e.base().retFieldTypes
+	tps := e.Base().RetFieldTypes()
 	for {
 		chk.Reset()
 		if err = Next(ctx, e, chk); err != nil {
@@ -130,7 +131,7 @@ func (h *CoprocessorDAGHandler) buildResponseAndSendToStream(chk *chunk.Chunk, t
 	return nil
 }
 
-func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Executor, error) {
+func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (exec.Executor, error) {
 	if req.GetTp() != kv.ReqTypeDAG {
 		return nil, errors.Errorf("unsupported request type %d", req.GetTp())
 	}
@@ -227,7 +228,7 @@ func (h *CoprocessorDAGHandler) buildStreamResponse(chunk *tipb.Chunk) *coproces
 	return resp
 }
 
-func (h *CoprocessorDAGHandler) buildErrorResponse(err error) *coprocessor.Response {
+func (*CoprocessorDAGHandler) buildErrorResponse(err error) *coprocessor.Response {
 	return &coprocessor.Response{
 		OtherError: err.Error(),
 	}
@@ -267,7 +268,7 @@ func (h *CoprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.Fie
 
 const rowsPerChunk = 64
 
-func (h *CoprocessorDAGHandler) appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) []tipb.Chunk {
+func (*CoprocessorDAGHandler) appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) []tipb.Chunk {
 	if rowCnt%rowsPerChunk == 0 {
 		chunks = append(chunks, tipb.Chunk{})
 	}

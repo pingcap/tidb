@@ -17,7 +17,7 @@ package node
 import (
 	"fmt"
 
-	"github.com/pingcap/tidb/util"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 var (
@@ -90,6 +90,6 @@ type Status struct {
 }
 
 func (s *Status) String() string {
-	updateTime := util.TSOToRoughTime(s.UpdateTS)
+	updateTime := oracle.GetTimeFromTS(uint64(s.UpdateTS))
 	return fmt.Sprintf("{NodeID: %s, Addr: %s, State: %s, MaxCommitTS: %d, UpdateTime: %v}", s.NodeID, s.Addr, s.State, s.MaxCommitTS, updateTime)
 }

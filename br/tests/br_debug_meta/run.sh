@@ -17,9 +17,10 @@
 set -eu
 DB="$TEST_NAME"
 TABLE="usertable"
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 run_sql "CREATE DATABASE $DB;"
-go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
+go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
 
 table_region_sql="SELECT COUNT(*) FROM information_schema.tikv_region_status WHERE db_name = '$DB' AND table_name = '$TABLE';"
 for i in $(seq 10); do

@@ -186,7 +186,6 @@ type Domain struct {
 
 	mdlCheckCh      chan struct{}
 	stopAutoAnalyze atomicutil.Bool
-	resourcePool    *pools.ResourcePool
 }
 
 type mdlCheckTableInfo struct {
@@ -1024,6 +1023,9 @@ func (do *Domain) Close() {
 	if intest.InTest {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 	}
+	if handle := do.statsHandle.Load(); handle != nil {
+		handle.Close()
+	}
 
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
@@ -1130,7 +1132,6 @@ func (do *Domain) Init(
 		return sysExecutorFactory(do)
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 128, 128, resourceIdleTimeout)
-	do.resourcePool = sysCtxPool
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancel = cancelFunc
 	var callback ddl.Callback
@@ -1205,6 +1206,7 @@ func (do *Domain) Init(
 		do.connIDAllocator = globalconn.NewSimpleAllocator()
 	}
 
+	startReloadTime := time.Now()
 	// step 3: domain reload the infoSchema.
 	err = do.Reload()
 	if err != nil {
@@ -1220,6 +1222,17 @@ func (do *Domain) Init(
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop.
 	if ddlLease > 0 {
+		sub := time.Since(startReloadTime)
+		// The reload(in step 2) operation takes more than ddlLease and a new reload operation was not performed,
+		// the next query will respond by ErrInfoSchemaExpired error. So we do a new reload to update schemaValidator.latestSchemaExpire.
+		if sub > (ddlLease / 2) {
+			logutil.BgLogger().Warn("loading schema takes a long time, we do a new reload", zap.Duration("take time", sub))
+			err = do.Reload()
+			if err != nil {
+				return err
+			}
+		}
+
 		// Local store needs to get the change information for every DDL state in each session.
 		do.wg.Run(func() {
 			do.loadSchemaInLoop(ctx, ddlLease)
@@ -1478,7 +1491,7 @@ func genQuarantineQueriesStmt(records []*resourcegroup.QuarantineRecord) (string
 		params = append(params, r.EndTime)
 		params = append(params, r.Watch)
 		params = append(params, r.WatchText)
-		params = append(params, r.From)
+		params = append(params, r.Source)
 	}
 	return builder.String(), params
 }
@@ -1661,7 +1674,7 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		}
 	})
 
-	taskManager := storage.NewTaskManager(ctx, do.resourcePool)
+	taskManager := storage.NewTaskManager(ctx, do.sysSessionPool)
 	var serverID string
 	if intest.InTest {
 		do.InitInfo4Test()
@@ -2581,7 +2594,7 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 				continue
 			}
 			if err := handle.GCIndexUsage(); err != nil {
-				logutil.BgLogger().Error("[stats] gc index usage failed", zap.Error(err))
+				logutil.BgLogger().Error("gc index usage failed", zap.String("category", "stats"), zap.Error(err))
 			}
 		}
 	}
@@ -3156,7 +3169,7 @@ func (do *Domain) StartTTLJobManager() {
 			logutil.BgLogger().Info("ttlJobManager exited.")
 		}()
 
-		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient)
+		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
 		do.ttlJobManager.Store(ttlJobManager)
 		ttlJobManager.Start()
 

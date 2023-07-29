@@ -240,7 +240,7 @@ func TestTimerUpdate(t *testing.T) {
 	require.True(t, errors.ErrorEqual(err, ErrEventIDNotMatch))
 	require.Equal(t, tpl, *tm)
 
-	// test apply without check
+	// test apply without check for some common fields
 	now := time.Now()
 	update = &TimerUpdate{
 		Enable:          NewOptionalVal(true),
@@ -253,6 +253,17 @@ func TestTimerUpdate(t *testing.T) {
 		EventData:       NewOptionalVal([]byte("eventdata1")),
 		EventStart:      NewOptionalVal(now.Add(time.Second)),
 		Tags:            NewOptionalVal([]string{"l1", "l2"}),
+		ManualRequest: NewOptionalVal(ManualRequest{
+			ManualRequestID:   "req1",
+			ManualRequestTime: time.Unix(123, 0),
+			ManualTimeout:     time.Minute,
+			ManualProcessed:   true,
+			ManualEventID:     "event1",
+		}),
+		EventExtra: NewOptionalVal(EventExtra{
+			EventManualRequestID: "req",
+			EventWatermark:       time.Unix(456, 0),
+		}),
 	}
 
 	require.Equal(t, reflect.ValueOf(update).Elem().NumField()-2, len(update.FieldsSet()))
@@ -268,6 +279,58 @@ func TestTimerUpdate(t *testing.T) {
 	require.Equal(t, []byte("eventdata1"), record.EventData)
 	require.Equal(t, now.Add(time.Second), record.EventStart)
 	require.Equal(t, []string{"l1", "l2"}, record.Tags)
+	require.Equal(t, ManualRequest{
+		ManualRequestID:   "req1",
+		ManualRequestTime: time.Unix(123, 0),
+		ManualTimeout:     time.Minute,
+		ManualProcessed:   true,
+		ManualEventID:     "event1",
+	}, record.ManualRequest)
+	require.False(t, record.IsManualRequesting())
+	require.Equal(t, EventExtra{
+		EventManualRequestID: "req",
+		EventWatermark:       time.Unix(456, 0),
+	}, record.EventExtra)
+	require.Equal(t, tpl, *tm)
+
+	// test apply without check for ManualRequest and EventExtra
+	tpl = *record.Clone()
+	tm = tpl.Clone()
+	update = &TimerUpdate{
+		ManualRequest: NewOptionalVal(ManualRequest{
+			ManualRequestID:   "req2",
+			ManualRequestTime: time.Unix(789, 0),
+			ManualTimeout:     time.Minute,
+		}),
+		EventExtra: NewOptionalVal(EventExtra{
+			EventManualRequestID: "req2",
+		}),
+	}
+	record, err = update.Apply(tm)
+	require.NoError(t, err)
+	require.Equal(t, ManualRequest{
+		ManualRequestID:   "req2",
+		ManualRequestTime: time.Unix(789, 0),
+		ManualTimeout:     time.Minute,
+	}, record.ManualRequest)
+	require.True(t, record.IsManualRequesting())
+	require.Equal(t, EventExtra{
+		EventManualRequestID: "req2",
+	}, record.EventExtra)
+	require.Equal(t, tpl, *tm)
+
+	// test apply without check for empty ManualRequest and EventExtra
+	tpl = *record.Clone()
+	tm = tpl.Clone()
+	update = &TimerUpdate{
+		ManualRequest: NewOptionalVal(ManualRequest{}),
+		EventExtra:    NewOptionalVal(EventExtra{}),
+	}
+	record, err = update.Apply(tm)
+	require.NoError(t, err)
+	require.Equal(t, ManualRequest{}, record.ManualRequest)
+	require.False(t, record.IsManualRequesting())
+	require.Equal(t, EventExtra{}, record.EventExtra)
 	require.Equal(t, tpl, *tm)
 
 	emptyUpdate := &TimerUpdate{}

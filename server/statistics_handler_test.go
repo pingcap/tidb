@@ -26,6 +26,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
@@ -37,7 +38,7 @@ func TestDumpStatsAPI(t *testing.T) {
 
 	driver := NewTiDBDriver(store)
 	client := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util.NewTestConfig()
 	cfg.Port = client.port
 	cfg.Status.StatusPort = client.statusPort
 	cfg.Status.ReportStatus = true
