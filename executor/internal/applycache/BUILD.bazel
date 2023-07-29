@@ -1,36 +1,37 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "pdhelper",
-    srcs = ["pd.go"],
-    importpath = "github.com/pingcap/tidb/executor/internal/pdhelper",
+    name = "applycache",
+    srcs = ["apply_cache.go"],
+    importpath = "github.com/pingcap/tidb/executor/internal/applycache",
     visibility = ["//executor:__subpackages__"],
     deps = [
-        "//kv",
         "//sessionctx",
-        "//store/helper",
-        "//util",
-        "//util/sqlexec",
-        "@com_github_jellydator_ttlcache_v3//:ttlcache",
-        "@com_github_pingcap_failpoint//:failpoint",
+        "//util/chunk",
+        "//util/kvcache",
+        "//util/mathutil",
+        "//util/memory",
+        "//util/syncutil",
     ],
 )
 
 go_test(
-    name = "pdhelper_test",
+    name = "applycache_test",
     timeout = "short",
     srcs = [
+        "apply_cache_test.go",
         "main_test.go",
-        "pd_test.go",
     ],
-    embed = [":pdhelper"],
+    embed = [":applycache"],
     flaky = True,
     deps = [
         "//config",
         "//meta/autoid",
-        "//sessionctx",
+        "//parser/mysql",
         "//testkit/testsetup",
-        "@com_github_jellydator_ttlcache_v3//:ttlcache",
+        "//types",
+        "//util/chunk",
+        "//util/mock",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",
