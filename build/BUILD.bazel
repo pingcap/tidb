@@ -162,6 +162,7 @@ nogo(
                "//build/linter/unconvert",
                "//build/linter/rowserrcheck",
                "//build/linter/toomanytests",
+               "//build/linter/toomanyfiles",
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
            select({
                "//build:with_nogo": [
