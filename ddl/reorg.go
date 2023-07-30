@@ -666,7 +666,7 @@ func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshot
 		return startHandleKey, nil, errors.Trace(err)
 	}
 	if maxHandle != nil {
-		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle)
+		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle).Next()
 	}
 	if isEmptyTable || endHandleKey.Cmp(startHandleKey) < 0 {
 		logutil.BgLogger().Info("get noop table range", zap.String("category", "ddl"),

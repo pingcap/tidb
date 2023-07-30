@@ -190,36 +190,24 @@ type reorgBackfillTask struct {
 	physicalTable table.PhysicalTable
 
 	// TODO: Remove the following fields after remove the function of run.
-	id         int
-	startKey   kv.Key
-	endKey     kv.Key
-	endInclude bool
-	jobID      int64
-	sqlQuery   string
-	priority   int
+	id       int
+	startKey kv.Key
+	endKey   kv.Key
+	jobID    int64
+	sqlQuery string
+	priority int
 }
 
 func (r *reorgBackfillTask) getJobID() int64 {
 	return r.jobID
 }
 
-func (r *reorgBackfillTask) excludedEndKey() kv.Key {
-	if r.endInclude {
-		return r.endKey.Next()
-	}
-	return r.endKey
-}
-
 func (r *reorgBackfillTask) String() string {
 	pID := r.physicalTable.GetPhysicalID()
 	start := hex.EncodeToString(r.startKey)
 	end := hex.EncodeToString(r.endKey)
-	inclusion := ")"
 	jobID := r.getJobID()
-	if r.endInclude {
-		inclusion = "]"
-	}
-	return fmt.Sprintf("taskID: %d, physicalTableID: %d, range: [%s, %s%s, jobID: %d", r.id, pID, start, end, inclusion, jobID)
+	return fmt.Sprintf("taskID: %d, physicalTableID: %d, range: [%s, %s), jobID: %d", r.id, pID, start, end, jobID)
 }
 
 // mergeBackfillCtxToResult merge partial result in taskCtx into result.
@@ -550,24 +538,12 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 	} else {
 		prefix = t.RecordPrefix()
 	}
-	// Build reorg tasks.
-	job := reorgInfo.Job
 	//nolint:forcetypeassert
 	phyTbl := t.(table.PhysicalTable)
-	jobCtx := reorgInfo.d.jobContext(job.ID)
-	for i, keyRange := range kvRanges {
+	for _, keyRange := range kvRanges {
 		taskID := taskIDAlloc.alloc()
 		startKey := keyRange.StartKey
 		endKey := keyRange.EndKey
-		endK, err := getRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, prefix, keyRange.StartKey, endKey)
-		if err != nil {
-			logutil.BgLogger().Info("get backfill range task, get reverse key failed", zap.String("category", "ddl"), zap.Error(err))
-		} else {
-			logutil.BgLogger().Info("get backfill range task, change end key", zap.String("category", "ddl"),
-				zap.Int("id", taskID), zap.Int64("pTbl", phyTbl.GetPhysicalID()),
-				zap.String("end key", hex.EncodeToString(endKey)), zap.String("current end key", hex.EncodeToString(endK)))
-			endKey = endK
-		}
 		if len(startKey) == 0 {
 			startKey = prefix
 		}
@@ -582,8 +558,7 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 			priority:      reorgInfo.Priority,
 			startKey:      startKey,
 			endKey:        endKey,
-			// If the boundaries overlap, we should ignore the preceding endKey.
-			endInclude: endK.Cmp(keyRange.EndKey) != 0 || i == len(kvRanges)-1}
+		}
 		batchTasks = append(batchTasks, task)
 	}
 	return batchTasks
@@ -732,8 +707,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.Physical
 		if consumer.shouldAbort() {
 			break
 		}
-		rangeEndKey := kvRanges[len(kvRanges)-1].EndKey
-		startKey = rangeEndKey.Next()
+		startKey = kvRanges[len(kvRanges)-1].EndKey
 		if startKey.Cmp(endKey) >= 0 {
 			break
 		}
