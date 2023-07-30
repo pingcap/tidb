@@ -428,16 +428,19 @@ type RunawayChecker struct {
 }
 
 func newRunawayChecker(manager *RunawayManager, resourceGroupName string, setting *rmpb.RunawaySettings, originalSQL, sqlDigest, planDigest string) *RunawayChecker {
-	return &RunawayChecker{
+	c := &RunawayChecker{
 		manager:           manager,
 		resourceGroupName: resourceGroupName,
 		originalSQL:       originalSQL,
 		sqlDigest:         sqlDigest,
 		planDigest:        planDigest,
-		deadline:          time.Now().Add(time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond),
 		setting:           setting,
 		marked:            atomic.Bool{},
 	}
+	if setting != nil {
+		c.deadline = time.Now().Add(time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond)
+	}
+	return c
 }
 
 // BeforeExecutor checks whether query is in watch list before executing and after compiling.

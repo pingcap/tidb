@@ -37,8 +37,8 @@ func TestQueryWatch(t *testing.T) {
 	tk.MustExec("insert into t3 values(1)")
 	err := tk.QueryToErr("query watch add sql text exact to 'select * from test.t1'")
 	require.ErrorContains(t, err, "must set runaway config for resource group `default`")
-	err = tk.QueryToErr("query watch add action DRYRUN sql text exact to 'select * from test.t1'")
-	require.ErrorContains(t, err, "must set runaway config for resource group `default`")
+	err = tk.QueryToErr("query watch add resource group rg2 action DRYRUN sql text exact to 'select * from test.t1'")
+	require.ErrorContains(t, err, "the group rg2 does not exist")
 
 	tk.MustExec("alter resource group default QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=DRYRUN)")
 	tk.MustQuery("query watch add sql text exact to 'select * from test.t1'").Check(testkit.Rows("1"))
@@ -57,7 +57,7 @@ func TestQueryWatch(t *testing.T) {
 	tk.MustQuery("query watch add action KILL PLAN DIGEST 'd08bc323a934c39dc41948b0a073725be3398479b6fa4f6dd1db2a9b115f7f57'").Check(testkit.Rows("7"))
 	tk.MustQuery("query watch add action KILL sql text similar to 'select * from test.t1'").Check(testkit.Rows("8"))
 
-	tk.MustQuery("select SQL_NO_CACHE resource_group_name, watch_text, action, watch from mysql.tidb_runaway_watch").
+	tk.MustQuery("select SQL_NO_CACHE resource_group_name, watch_text, action, watch from mysql.tidb_runaway_watch order by id").
 		Check(testkit.Rows("default select * from test.t1 0 1",
 			"default select * from test.t2 2 1",
 			"rg1 select * from test.t1 0 1",

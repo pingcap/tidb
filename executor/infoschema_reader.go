@@ -3250,7 +3250,10 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 
 func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) error {
 	do := domain.GetDomain(sctx)
-	do.TryToUpdateRunawayWatch()
+	err := do.TryToUpdateRunawayWatch()
+	if err != nil {
+		logutil.BgLogger().Warn("read runaway watch list", zap.Error(err))
+	}
 	watches := do.GetRunawayWatchList()
 	rows := make([][]types.Datum, 0, len(watches))
 	for _, watch := range watches {
@@ -3303,7 +3306,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			}
 			dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
 			fmt.Fprintf(limitBuilder, "EXEC_ELAPSED='%s'", dur.String())
-			fmt.Fprintf(limitBuilder, ", ACTION=%s", model.RunawayActionType(setting.Action+1).String())
+			fmt.Fprintf(limitBuilder, ", ACTION=%s", model.RunawayActionType(setting.Action).String())
 			if setting.Watch != nil {
 				if setting.Watch.LastingDurationMs > 0 {
 					dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond
