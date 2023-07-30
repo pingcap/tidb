@@ -190,10 +190,16 @@ type RunawayManager struct {
 	activeGroup map[string]int64
 	activeLock  sync.RWMutex
 
-	resourceGroupCtl      *rmclient.ResourceGroupsController
-	serverID              string
-	runawayQueriesChan    chan *RunawayRecord
-	quarantineChan        chan *QuarantineRecord
+	resourceGroupCtl   *rmclient.ResourceGroupsController
+	serverID           string
+	runawayQueriesChan chan *RunawayRecord
+	quarantineChan     chan *QuarantineRecord
+	// staleQuarantineRecord is used to clean outdated record. There are three scenarios:
+	// 1. Record is expired in watch list.
+	// 2. The record that will be added is itself out of date.
+	// 	  Like that tidb cluster is paused, and record is expired when restarting.
+	// 3. Duplicate added records.
+	// It replaces clean up loop.
 	staleQuarantineRecord chan *QuarantineRecord
 	evictionCancel        func()
 	insertionCancel       func()
@@ -288,6 +294,7 @@ func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Durati
 	} else {
 		if item == nil {
 			rm.queryLock.Lock()
+			// When watchlist get record, it will check whether the record is stale, so add new record if returns nil.
 			if rm.watchList.Get(key) == nil {
 				rm.watchList.Set(key, record, ttl)
 			} else {
@@ -326,6 +333,7 @@ func (rm *RunawayManager) AddWatch(record *QuarantineRecord) {
 	}
 
 	force := false
+	// The manual record replaces the old record.
 	force = record.Source == ManualSource || record.Source == rm.serverID
 	rm.addWatchList(record, ttl, force)
 }

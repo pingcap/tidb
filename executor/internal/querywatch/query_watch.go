@@ -109,7 +109,6 @@ func setWatchOption(ctx context.Context,
 			}
 			record.WatchText = strval
 		}
-
 	}
 	return nil
 }
