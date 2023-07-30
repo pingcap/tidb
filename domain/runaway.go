@@ -170,7 +170,6 @@ func (do *Domain) runawayWatchSyncLoop() {
 			if err != nil {
 				logutil.BgLogger().Warn("get runaway watch record failed", zap.Error(err))
 			}
-
 		}
 	}
 }

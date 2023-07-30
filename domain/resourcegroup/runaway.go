@@ -36,8 +36,9 @@ const (
 	DefaultResourceGroupName = "default"
 	// ManualSource shows the item added manually.
 	ManualSource = "manual"
-
-	RunawayWatchTableName     = "mysql.tidb_runaway_watch"
+	// RunawayWatchTableName is the name of system table which save runaway watch items.
+	RunawayWatchTableName = "mysql.tidb_runaway_watch"
+	// RunawayWatchDoneTableName is the name of system table which save done runaway watch items.
 	RunawayWatchDoneTableName = "mysql.tidb_runaway_watch_done"
 
 	// MaxWaitDuration is the max duration to wait for acquiring token buckets.
@@ -145,7 +146,7 @@ func (r *QuarantineRecord) GenInsertionStmt() (string, []interface{}) {
 	return builder.String(), params
 }
 
-// GenInsertionStmt is used to generate insertion sql for runaway watch done record.
+// GenInsertionDoneStmt is used to generate insertion sql for runaway watch done record.
 func (r *QuarantineRecord) GenInsertionDoneStmt() (string, []interface{}) {
 	var builder strings.Builder
 	params := make([]interface{}, 0, 9)
@@ -180,12 +181,16 @@ func (r *QuarantineRecord) GenDeletionStmt() (string, []interface{}) {
 
 // RunawayManager is used to detect and record runaway queries.
 type RunawayManager struct {
-	queryLock        sync.Mutex
-	resourceGroupCtl *rmclient.ResourceGroupsController
-	watchList        *ttlcache.Cache[string, *QuarantineRecord]
+	// queryLock is used to avoid repeated additions. Since we will add new items to the system table,
+	// in order to avoid repeated additions, we need a lock to ensure that
+	// action "judging whether there is this record in the current watch list and adding records" have atomicity.
+	queryLock sync.Mutex
+	watchList *ttlcache.Cache[string, *QuarantineRecord]
 	// activeGroup is used to manage the active runaway watches of resource group
-	activeGroup           map[string]int64
-	activeLock            sync.RWMutex
+	activeGroup map[string]int64
+	activeLock  sync.RWMutex
+
+	resourceGroupCtl      *rmclient.ResourceGroupsController
 	serverID              string
 	runawayQueriesChan    chan *RunawayRecord
 	quarantineChan        chan *QuarantineRecord
@@ -268,12 +273,13 @@ func (rm *RunawayManager) markQuarantine(resourceGroupName, convict string, watc
 
 func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Duration, force bool) {
 	key := record.GetRecordKey()
-	item := rm.watchList.Get(key)
+	// This is a pre-check, because we generally believe that in most cases, we will not add a watch list to a key repeatedly.
+	item := rm.getWatchFromWatchList(key)
 	if force {
 		rm.queryLock.Lock()
 		defer rm.queryLock.Unlock()
 		if item != nil {
-			if item.Value().ID == record.ID {
+			if item.ID == record.ID {
 				return
 			}
 			rm.watchList.Delete(key)
@@ -288,7 +294,7 @@ func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Durati
 				rm.staleQuarantineRecord <- record
 			}
 			rm.queryLock.Unlock()
-		} else if item.Value().ID != record.ID {
+		} else if item.ID != record.ID {
 			rm.staleQuarantineRecord <- record
 		}
 	}
@@ -296,15 +302,10 @@ func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Durati
 
 // GetWatchByKey is used to get a watch item by given key.
 func (rm *RunawayManager) GetWatchByKey(key string) *QuarantineRecord {
-	item := rm.watchList.Get(key)
-	rm.watchList.Items()
-	if item == nil {
-		return nil
-	}
-	return item.Value()
+	return rm.getWatchFromWatchList(key)
 }
 
-// GetWatchByKey is used to get all watch items.
+// GetWatchList is used to get all watch items.
 func (rm *RunawayManager) GetWatchList() []*QuarantineRecord {
 	items := rm.watchList.Items()
 	ret := make([]*QuarantineRecord, 0, len(items))
@@ -331,7 +332,21 @@ func (rm *RunawayManager) AddWatch(record *QuarantineRecord) {
 
 // RemoveWatch is used to remove watch items from system table.
 func (rm *RunawayManager) RemoveWatch(record *QuarantineRecord) {
-	rm.watchList.Delete(record.GetRecordKey())
+	// we should check whether the cached record is not the same as the removing record.
+	rm.queryLock.Lock()
+	item := rm.getWatchFromWatchList(record.GetRecordKey())
+	if item.ID == record.ID {
+		rm.watchList.Delete(record.GetRecordKey())
+	}
+	rm.queryLock.Unlock()
+}
+
+func (rm *RunawayManager) getWatchFromWatchList(key string) *QuarantineRecord {
+	item := rm.watchList.Get(key)
+	if item != nil {
+		return item.Value()
+	}
+	return nil
 }
 
 func (rm *RunawayManager) markRunaway(resourceGroupName, originalSQL, planDigest string, action string, matchType RunawayMatchType, now *time.Time) {
@@ -376,11 +391,11 @@ func (rm *RunawayManager) StaleQuarantineRecordChan() <-chan *QuarantineRecord {
 
 // examineWatchList check whether the query is in watch list.
 func (rm *RunawayManager) examineWatchList(resourceGroupName string, convict string) (bool, rmpb.RunawayAction) {
-	item := rm.watchList.Get(resourceGroupName + "/" + convict)
+	item := rm.getWatchFromWatchList(resourceGroupName + "/" + convict)
 	if item == nil {
 		return false, 0
 	}
-	return true, item.Value().Action
+	return true, item.Action
 }
 
 // Stop stops the watchList which is a ttlcache.
