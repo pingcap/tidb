@@ -27,13 +27,12 @@ var Analyzer = &analysis.Analyzer{
 	Run:  run,
 }
 
-var blacklist = map[string]int{
-	"executor":     166,
-	"planner/core": 122,
-	"expression":   118,
-}
-
 func run(pass *analysis.Pass) (any, error) {
+	var blacklist = map[string]int{
+		"executor":     166,
+		"planner/core": 122,
+		"expression":   118,
+	}
 	checkCnt := 50
 	pos := pass.Fset.PositionFor(pass.Files[0].Pos(), false)
 	if len(pass.Files) > checkCnt {
@@ -42,10 +41,12 @@ func run(pass *analysis.Pass) (any, error) {
 		if ok {
 			checkCnt = cnt
 		}
-		pass.Reportf(
-			pass.Files[0].Pos(),
-			"%s: Too many files in one package, more than %d at %s %t",
-			pass.Pkg.Name(), checkCnt, pkg, ok)
+		if len(pass.Files) > checkCnt {
+			pass.Reportf(
+				pass.Files[0].Pos(),
+				"%s: Too many files in one package, more than %d at %s %t",
+				pass.Pkg.Name(), checkCnt, pkg, ok)
+		}
 	}
 	return nil, nil
 }
