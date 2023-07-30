@@ -37,14 +37,15 @@ func run(pass *analysis.Pass) (any, error) {
 	pos := pass.Fset.PositionFor(pass.Files[0].Pos(), false)
 	checkCnt := 50
 	pkg := filepath.Dir(pos.Filename)
-	if cnt, ok := blacklist[pkg]; ok {
+	cnt, ok := blacklist[pkg]
+	if ok {
 		checkCnt = cnt
 	}
 	if len(pass.Files) > checkCnt {
 		pass.Reportf(
 			pass.Files[0].Pos(),
-			"%s: Too many files in one package, more than %d at %s",
-			pass.Pkg.Name(), checkCnt, pkg)
+			"%s: Too many files in one package, more than %d at %s %b",
+			pass.Pkg.Name(), checkCnt, pkg, ok)
 	}
 	return nil, nil
 }
