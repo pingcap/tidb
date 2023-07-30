@@ -30,7 +30,7 @@ var Analyzer = &analysis.Analyzer{
 var blacklist = map[string]int{
 	"executor":     166,
 	"planner/core": 122,
-	"expression":   118,
+	"expression/":  118,
 }
 
 func run(pass *analysis.Pass) (any, error) {
