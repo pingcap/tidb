@@ -17,6 +17,7 @@ package toomanyfiles
 import (
 	"path/filepath"
 
+	"github.com/pingcap/log"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -38,6 +39,7 @@ func run(pass *analysis.Pass) (any, error) {
 	if len(pass.Files) > checkCnt {
 		pkg := filepath.Dir(pos.Filename)
 		cnt, ok := blacklist[pkg]
+		log.Info("pkg")
 		if ok {
 			checkCnt = cnt
 		}
