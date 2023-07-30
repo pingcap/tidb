@@ -26,7 +26,7 @@ GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/store.ldflagGetEt
 
 GLOBAL_KILL_TEST_SERVER_LDFLAGS +=  -X "github.com/pingcap/tidb/util/globalconn.ldflagIsGlobalKillTest=1"
 GLOBAL_KILL_TEST_SERVER_LDFLAGS +=  -X "github.com/pingcap/tidb/util/globalconn.ldflagServerIDBits32=2"
-GLOBAL_KILL_TEST_SERVER_LDFLAGS +=  -X "github.com/pingcap/tidb/util/globalconn.ldflagLocalConnIDBits32=3"
+GLOBAL_KILL_TEST_SERVER_LDFLAGS +=  -X "github.com/pingcap/tidb/util/globalconn.ldflagLocalConnIDBits32=4"
 
 .PHONY: server buildsucc
 

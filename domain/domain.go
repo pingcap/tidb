@@ -993,7 +993,7 @@ func (do *Domain) Close() {
 			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
 		}
 	}
-	do.releaseServerID(context.Background()) // Have nothing to do with error.
+	do.releaseServerID(context.Background())
 	close(do.exit)
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
@@ -3008,15 +3008,15 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 	}
 }
 
-func (do *Domain) releaseServerID(ctx context.Context) error {
+func (do *Domain) releaseServerID(ctx context.Context) {
 	serverID := do.ServerID()
 	if serverID == 0 {
-		return nil
+		return
 	}
 	atomic.StoreUint64(&do.serverID, 0)
 
 	if do.etcdClient == nil {
-		return nil
+		return
 	}
 	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, serverID)
 	err := ddlutil.DeleteKeyFromEtcd(key, do.etcdClient, refreshServerIDRetryCnt, acquireServerIDTimeout)
@@ -3025,7 +3025,6 @@ func (do *Domain) releaseServerID(ctx context.Context) error {
 	} else {
 		logutil.BgLogger().Info("releaseServerID succeed", zap.Uint64("serverID", serverID))
 	}
-	return err
 }
 
 // propose server ID by random.
