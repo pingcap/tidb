@@ -763,8 +763,8 @@ func TestServerIDUpgradeAndDowngrade(t *testing.T) {
 		}
 		for i := 0; i < MAX_TIDB_32; i++ {
 			conn := connect(i)
-			defer conn.Close()
 			conn.mustBe32(t)
+			conn.Close()
 		}
 	}
 
@@ -775,8 +775,8 @@ func TestServerIDUpgradeAndDowngrade(t *testing.T) {
 		}
 		for i := MAX_TIDB_32; i < MAX_TIDB_32+MAX_TIDB_64; i++ {
 			conn := connect(i)
-			defer conn.Close()
 			conn.mustBe64(t)
+			conn.Close()
 		}
 	}
 
@@ -791,8 +791,8 @@ func TestServerIDUpgradeAndDowngrade(t *testing.T) {
 		tidb := s.mustStartTiDBWithPD(t, *tidbStartPort+dbIdx, *tidbStatusPort+dbIdx, *pdClientPath)
 		defer s.stopService(fmt.Sprintf("tidb%v", dbIdx), tidb, true)
 		conn := connect(dbIdx)
-		defer conn.Close()
 		conn.mustBe32(t)
+		conn.Close()
 	}
 }
 
@@ -827,20 +827,21 @@ func TestConnIDUpgradeAndDowngrade(t *testing.T) {
 	// 32bits pool is full, should upgrade to 64 bits
 	for i := MAX_CONN_32; i < MAX_CONN_32*2; i++ {
 		conn := connect()
-		defer conn.Close()
 		conn.mustBe64(t)
+		conn.Close()
 	}
 
 	// Release more than half of 32 bits connections, should downgrade to 32 bits
 	count := MAX_CONN_32/2 + 1
-	for _, conn := range conns32 {
+	for connID, conn := range conns32 {
 		conn.Close()
+		delete(conns32, connID)
 		count--
 		if count == 0 {
 			break
 		}
 	}
 	conn := connect()
-	defer conn.Close()
 	conn.mustBe32(t)
+	conn.Close()
 }
