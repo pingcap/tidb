@@ -34,14 +34,14 @@ var blacklist = map[string]int{
 }
 
 func run(pass *analysis.Pass) (any, error) {
-	pos := pass.Fset.PositionFor(pass.Files[0].Pos(), false)
 	checkCnt := 50
-	pkg := filepath.Dir(pos.Filename)
-	cnt, ok := blacklist[pkg]
-	if ok {
-		checkCnt = cnt
-	}
+	pos := pass.Fset.PositionFor(pass.Files[0].Pos(), false)
 	if len(pass.Files) > checkCnt {
+		pkg := filepath.Dir(pos.Filename)
+		cnt, ok := blacklist[pkg]
+		if ok {
+			checkCnt = cnt
+		}
 		pass.Reportf(
 			pass.Files[0].Pos(),
 			"%s: Too many files in one package, more than %d at %s %t",
