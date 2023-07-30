@@ -188,7 +188,7 @@ func (e *AddExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 // ExecDropQueryWatch is use to exec DropQueryWatchStmt.
-func ExecDropQueryWatch(ctx context.Context, sctx sessionctx.Context, id int64) error {
+func ExecDropQueryWatch(sctx sessionctx.Context, id int64) error {
 	do := domain.GetDomain(sctx)
 	err := do.RemoveRunawayWatch(id)
 	return err
