@@ -17,7 +17,6 @@ package toomanyfiles
 import (
 	"path/filepath"
 
-	"github.com/pingcap/log"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -36,19 +35,17 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 	checkCnt := 50
 	pos := pass.Fset.PositionFor(pass.Files[0].Pos(), false)
+
+	pkg := filepath.Dir(pos.Filename)
+	cnt, ok := blacklist[pkg]
+	if ok {
+		checkCnt = cnt
+	}
 	if len(pass.Files) > checkCnt {
-		pkg := filepath.Dir(pos.Filename)
-		cnt, ok := blacklist[pkg]
-		log.Info("pkg")
-		if ok {
-			checkCnt = cnt
-		}
-		if len(pass.Files) > checkCnt {
-			pass.Reportf(
-				pass.Files[0].Pos(),
-				"%s: Too many files in one package, more than %d at %s %t %v",
-				pass.Pkg.Name(), checkCnt, pkg, ok, blacklist)
-		}
+		pass.Reportf(
+			pass.Files[0].Pos(),
+			"%s: Too many files in one package, more than %d at %s %t %v",
+			pass.Pkg.Name(), checkCnt, pkg, ok, blacklist)
 	}
 	return nil, nil
 }
