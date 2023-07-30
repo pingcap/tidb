@@ -14,7 +14,11 @@
 
 package toomanyfiles
 
-import "golang.org/x/tools/go/analysis"
+import (
+	"path/filepath"
+
+	"golang.org/x/tools/go/analysis"
+)
 
 // Analyzer is the analyzer struct of toomanyfiles.
 var Analyzer = &analysis.Analyzer{
@@ -26,7 +30,7 @@ var Analyzer = &analysis.Analyzer{
 func run(pass *analysis.Pass) (any, error) {
 	if len(pass.Files) > 10 {
 		pos := pass.Fset.PositionFor(pass.Files[0].Pos(), false)
-		pass.Reportf(pass.Files[0].Pos(), "%s: Too many files in one package %s", pass.Pkg.Name(), pos.Filename)
+		pass.Reportf(pass.Files[0].Pos(), "%s: Too many files in one package %s", pass.Pkg.Name(), filepath.Dir(pos.Filename))
 	}
 	return nil, nil
 }
