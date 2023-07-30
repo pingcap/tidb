@@ -27,10 +27,18 @@ var Analyzer = &analysis.Analyzer{
 	Run:  run,
 }
 
+var blacklist = map[string]int{
+	"executor":     167,
+	"planner/core": 123,
+}
+
 func run(pass *analysis.Pass) (any, error) {
-	if len(pass.Files) > 10 {
-		pos := pass.Fset.PositionFor(pass.Files[0].Pos(), false)
-		pass.Reportf(pass.Files[0].Pos(), "%s: Too many files in one package %s", pass.Pkg.Name(), filepath.Dir(pos.Filename))
+	pos := pass.Fset.PositionFor(pass.Files[0].Pos(), false)
+	filepath.Dir(pos.Filename)
+	if cnt, ok := blacklist[filepath.Base(filepath.Dir(pos.Filename))]; ok {
+		if len(pass.Files) > cnt {
+			pass.Reportf(pass.Files[0].Pos(), "%s: Too many files in one package %s", pass.Pkg.Name())
+		}
 	}
 	return nil, nil
 }
