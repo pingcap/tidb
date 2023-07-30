@@ -40,7 +40,7 @@ func run(pass *analysis.Pass) (any, error) {
 		checkCnt = cnt
 	}
 	if len(pass.Files) > checkCnt {
-		pass.Reportf(pass.Files[0].Pos(), "%s: Too many files in one package %s", pass.Pkg.Name())
+		pass.Reportf(pass.Files[0].Pos(), "%s: Too many files in one package", pass.Pkg.Name())
 	}
 	return nil, nil
 }
