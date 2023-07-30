@@ -742,14 +742,14 @@ func TestServerIDUpgradeAndDowngrade(t *testing.T) {
 		return s.mustConnectTiDB(t, *tidbStartPort+idx)
 	}
 
-	// MAX_TIDB_32 is determined by `github.com/pingcap/tidb/util/globalconn.ldflagServerIDBits32`
+	// MaxTiDB32 is determined by `github.com/pingcap/tidb/util/globalconn.ldflagServerIDBits32`
 	// See the ldflags in `Makefile`.
 	// Also see `Domain.proposeServerID`.
-	const MAX_TIDB_32 = 2 // (3^2 -1) x 0.9
-	const MAX_TIDB_64 = 2
+	const MaxTiDB32 = 2 // (3^2 -1) x 0.9
+	const MaxTiDB64 = 2
 
 	// Startup MAX_TIDB_32 number of TiDBs.
-	tidbs := make([]*exec.Cmd, MAX_TIDB_32*2)
+	tidbs := make([]*exec.Cmd, MaxTiDB32*2)
 	defer func() {
 		for i := range tidbs {
 			if tidbs[i] != nil {
@@ -758,10 +758,10 @@ func TestServerIDUpgradeAndDowngrade(t *testing.T) {
 		}
 	}()
 	{
-		for i := 0; i < MAX_TIDB_32; i++ {
+		for i := 0; i < MaxTiDB32; i++ {
 			tidbs[i] = s.mustStartTiDBWithPD(t, *tidbStartPort+i, *tidbStatusPort+i, *pdClientPath)
 		}
-		for i := 0; i < MAX_TIDB_32; i++ {
+		for i := 0; i < MaxTiDB32; i++ {
 			conn := connect(i)
 			conn.mustBe32(t)
 			conn.Close()
@@ -770,10 +770,10 @@ func TestServerIDUpgradeAndDowngrade(t *testing.T) {
 
 	// Upgrade to 64 bits due to ServerID used up.
 	{
-		for i := MAX_TIDB_32; i < MAX_TIDB_32+MAX_TIDB_64; i++ {
+		for i := MaxTiDB32; i < MaxTiDB32+MaxTiDB64; i++ {
 			tidbs[i] = s.mustStartTiDBWithPD(t, *tidbStartPort+i, *tidbStatusPort+i, *pdClientPath)
 		}
-		for i := MAX_TIDB_32; i < MAX_TIDB_32+MAX_TIDB_64; i++ {
+		for i := MaxTiDB32; i < MaxTiDB32+MaxTiDB64; i++ {
 			conn := connect(i)
 			conn.mustBe64(t)
 			conn.Close()
@@ -782,12 +782,12 @@ func TestServerIDUpgradeAndDowngrade(t *testing.T) {
 
 	// Close TiDBs to downgrade to 32 bits.
 	{
-		for i := MAX_TIDB_32 / 2; i < MAX_TIDB_32+MAX_TIDB_64; i++ {
+		for i := MaxTiDB32 / 2; i < MaxTiDB32+MaxTiDB64; i++ {
 			s.stopService(fmt.Sprintf("tidb%v", i), tidbs[i], true)
 			tidbs[i] = nil
 		}
 
-		dbIdx := MAX_TIDB_32 + MAX_TIDB_64
+		dbIdx := MaxTiDB32 + MaxTiDB64
 		tidb := s.mustStartTiDBWithPD(t, *tidbStartPort+dbIdx, *tidbStatusPort+dbIdx, *pdClientPath)
 		defer s.stopService(fmt.Sprintf("tidb%v", dbIdx), tidb, true)
 		conn := connect(dbIdx)
@@ -807,10 +807,10 @@ func TestConnIDUpgradeAndDowngrade(t *testing.T) {
 	tidb := s.mustStartTiDBWithPD(t, *tidbStartPort, *tidbStatusPort, *pdClientPath)
 	defer s.stopService("tidb0", tidb, true)
 
-	// MAX_CONN_32 is determined by `github.com/pingcap/tidb/util/globalconn.ldflagLocalConnIDBits32`
+	// MaxConn32 is determined by `github.com/pingcap/tidb/util/globalconn.ldflagLocalConnIDBits32`
 	// See the ldflags in `Makefile`.
 	// Also see `LockFreeCircularPool.Cap`.
-	const MAX_CONN_32 = 1<<4 - 1
+	const MaxConn32 = 1<<4 - 1
 
 	conns32 := make(map[uint64]Conn)
 	defer func() {
@@ -819,20 +819,20 @@ func TestConnIDUpgradeAndDowngrade(t *testing.T) {
 		}
 	}()
 	// 32 bits connection ID
-	for i := 0; i < MAX_CONN_32; i++ {
+	for i := 0; i < MaxConn32; i++ {
 		conn := connect()
 		require.Lessf(t, conn.connID, uint64(1<<32), "connID %x", conn.connID)
 		conns32[conn.connID] = conn
 	}
 	// 32bits pool is full, should upgrade to 64 bits
-	for i := MAX_CONN_32; i < MAX_CONN_32*2; i++ {
+	for i := MaxConn32; i < MaxConn32*2; i++ {
 		conn := connect()
 		conn.mustBe64(t)
 		conn.Close()
 	}
 
 	// Release more than half of 32 bits connections, should downgrade to 32 bits
-	count := MAX_CONN_32/2 + 1
+	count := MaxConn32/2 + 1
 	for connID, conn := range conns32 {
 		conn.Close()
 		delete(conns32, connID)
