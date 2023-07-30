@@ -15,7 +15,6 @@
 package toomanytests
 
 import (
-	"fmt"
 	"go/ast"
 	"go/token"
 	"strings"
@@ -44,9 +43,7 @@ var Analyzer = &analysis.Analyzer{
 				}
 			}
 			if cnt > 50 {
-				pos := pass.Fset.PositionFor(f.Pos(), false)
-
-				pass.Reportf(f.Pos(), fmt.Sprintf("%s: Too many test cases in one package %s", pass.Pkg.Name(), pos.Filename))
+				pass.Reportf(f.Pos(), "%s: Too many test cases in one package", pass.Pkg.Name())
 				return nil, nil
 			}
 		}

@@ -25,7 +25,8 @@ var Analyzer = &analysis.Analyzer{
 
 func run(pass *analysis.Pass) (any, error) {
 	if len(pass.Files) > 10 {
-		pass.Reportf(pass.Files[0].Pos(), "%s: Too many files in one package", pass.Pkg.Name())
+		pos := pass.Fset.PositionFor(pass.Files[0].Pos(), false)
+		pass.Reportf(pass.Files[0].Pos(), "%s: Too many files in one package %s", pass.Pkg.Name(), pos.Filename)
 	}
 	return nil, nil
 }
