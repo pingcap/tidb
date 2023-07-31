@@ -458,7 +458,7 @@ func (r *RunawayChecker) BeforeExecutor() error {
 	for _, convict := range r.getConvictIdentifiers() {
 		watched, action := r.manager.examineWatchList(r.resourceGroupName, convict)
 		if watched {
-			if action == rmpb.RunawayAction_NoneAction {
+			if action == rmpb.RunawayAction_NoneAction && r.setting != nil {
 				action = r.setting.Action
 			}
 			if r.marked.CompareAndSwap(false, true) {
