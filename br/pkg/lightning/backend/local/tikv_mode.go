@@ -27,9 +27,9 @@ import (
 // TiKVModeSwitcher is used to switch TiKV nodes between Import and Normal mode.
 type TiKVModeSwitcher interface {
 	// ToImportMode switches all TiKV nodes to Import mode.
-	ToImportMode(ctx context.Context)
+	ToImportMode(ctx context.Context, ranges ...*sstpb.Range)
 	// ToNormalMode switches all TiKV nodes to Normal mode.
-	ToNormalMode(ctx context.Context)
+	ToNormalMode(ctx context.Context, ranges ...*sstpb.Range)
 	// Close closes the switcher's pd client.
 	Close()
 }
@@ -50,12 +50,12 @@ func NewTiKVModeSwitcher(tls *common.TLS, pdCli pd.Client, logger *zap.Logger) T
 	}
 }
 
-func (rc *switcher) ToImportMode(ctx context.Context) {
-	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Import)
+func (rc *switcher) ToImportMode(ctx context.Context, ranges ...*sstpb.Range) {
+	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Import, ranges...)
 }
 
-func (rc *switcher) ToNormalMode(ctx context.Context) {
-	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal)
+func (rc *switcher) ToNormalMode(ctx context.Context, ranges ...*sstpb.Range) {
+	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal, ranges...)
 }
 
 func (rc *switcher) Close() {
@@ -65,7 +65,7 @@ func (rc *switcher) Close() {
 	}
 }
 
-func (rc *switcher) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
+func (rc *switcher) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode, ranges ...*sstpb.Range) {
 	rc.logger.Info("switch tikv mode", zap.Stringer("mode", mode))
 
 	// It is fine if we miss some stores which did not switch to Import mode,
@@ -86,7 +86,7 @@ func (rc *switcher) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
 		tls,
 		minState,
 		func(c context.Context, store *tikv.Store) error {
-			return tikv.SwitchMode(c, tls, store.Address, mode)
+			return tikv.SwitchMode(c, tls, store.Address, mode, ranges...)
 		},
 	)
 }
