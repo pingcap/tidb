@@ -757,7 +757,7 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	lnConfig := config.NewConfig()
 	lnConfig.TikvImporter.Backend = config.BackendLocal
-	targetGetter, err := NewTargetInfoGetterImpl(lnConfig, db)
+	targetGetter, err := NewTargetInfoGetterImpl(ctx, lnConfig, db)
 	require.NoError(t, err)
 	require.Equal(t, lnConfig, targetGetter.cfg)
 
