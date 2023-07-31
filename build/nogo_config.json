@@ -627,7 +627,6 @@
       "executor/test/unstabletest": "executor/test/unstabletest",
       "ddl/tests": "ddl/tests code",
       "disttask/": "disttask code",
-      "executor/test/tiflashtest": "executor/test/tiflashtest code",
       "timer/": "timer code",
       "util/": "util code",
       "br/pkg/lightning/config/": "br/pkg/lightning/config code",
@@ -636,7 +635,8 @@
       "planner/cascades": "planner/cascades code",
       "store/": "store code",
       "ttl/": "ttl code",
-      "bindinfo/": "bindinfo code"
+      "bindinfo/": "bindinfo code",
+      "domain/": "domain code"
     }
   },
   "unconvert": {
