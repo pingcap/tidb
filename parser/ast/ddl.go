@@ -3923,6 +3923,12 @@ func (n *PartitionDefinitionClauseIn) restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" DEFAULT")
 		return nil
 	}
+	if len(n.Values) == 1 && len(n.Values[0]) == 1 {
+		if _, ok := n.Values[0][0].(*DefaultExpr); ok {
+			ctx.WriteKeyWord(" DEFAULT")
+			return nil
+		}
+	}
 
 	ctx.WriteKeyWord(" VALUES IN ")
 	ctx.WritePlain("(")
@@ -3975,9 +3981,23 @@ func (n *PartitionDefinitionClauseIn) Validate(pt model.PartitionType, columns i
 		return nil
 	}
 
+	nextIdx := 1
 	expectedColCount := len(n.Values[0])
-	for _, val := range n.Values[1:] {
+	// OK if one of the n.Values is DefaultExpr as only value
+	if expectedColCount == 1 {
+		if _, ok := n.Values[0][0].(*DefaultExpr); ok {
+			// Only DEFAULT in the partition definition, OK
+			if len(n.Values) > 1 {
+				expectedColCount = len(n.Values[1])
+				nextIdx++
+			}
+		}
+	}
+	for _, val := range n.Values[nextIdx:] {
 		if len(val) != expectedColCount {
+			if _, ok := val[0].(*DefaultExpr); ok && len(val) == 1 {
+				continue
+			}
 			return ErrPartitionColumnList
 		}
 	}
@@ -3986,6 +4006,12 @@ func (n *PartitionDefinitionClauseIn) Validate(pt model.PartitionType, columns i
 	case columns == 0 && expectedColCount != 1:
 		return ErrRowSinglePartitionField
 	case columns > 0 && expectedColCount != columns:
+		if len(n.Values) == 1 && expectedColCount == 1 {
+			if _, ok := n.Values[0][0].(*DefaultExpr); ok {
+				// Only one value, which is DEFAULT, which is OK
+				return nil
+			}
+		}
 		return ErrPartitionColumnList
 	}
 	return nil

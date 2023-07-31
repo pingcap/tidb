@@ -899,6 +899,7 @@ import (
 %type	<expr>
 	Expression                      "expression"
 	MaxValueOrExpression            "maxvalue or expression"
+	DefaultOrExpression             "default or expression"
 	BoolPri                         "boolean primary expression"
 	ExprOrDefault                   "expression or default"
 	PredicateExpr                   "Predicate expression factor"
@@ -1132,6 +1133,7 @@ import (
 	ExpressionList                         "expression list"
 	ExtendedPriv                           "Extended privileges like LOAD FROM S3 or dynamic privileges"
 	MaxValueOrExpressionList               "maxvalue or expression list"
+	DefaultOrExpressionList                "default or expression list"
 	ExpressionListOpt                      "expression list opt"
 	FetchFirstOpt                          "Fetch First/Next Option"
 	FuncDatetimePrecListOpt                "Function datetime precision list opt"
@@ -4736,9 +4738,11 @@ PartDefValuesOpt:
 	}
 |	"DEFAULT"
 	{
-		$$ = &ast.PartitionDefinitionClauseIn{}
+		$$ = &ast.PartitionDefinitionClauseIn{
+			Values: [][]ast.ExprNode{{&ast.DefaultExpr{}}},
+		}
 	}
-|	"VALUES" "IN" '(' MaxValueOrExpressionList ')'
+|	"VALUES" "IN" '(' DefaultOrExpressionList ')'
 	{
 		exprs := $4.([]ast.ExprNode)
 		values := make([][]ast.ExprNode, 0, len(exprs))
@@ -5893,6 +5897,13 @@ Expression:
 	}
 |	BoolPri
 
+DefaultOrExpression:
+	"DEFAULT"
+	{
+		$$ = &ast.DefaultExpr{}
+	}
+|	BitExpr
+
 MaxValueOrExpression:
 	"MAXVALUE"
 	{
@@ -5946,6 +5957,16 @@ MaxValueOrExpressionList:
 		$$ = []ast.ExprNode{$1}
 	}
 |	MaxValueOrExpressionList ',' MaxValueOrExpression
+	{
+		$$ = append($1.([]ast.ExprNode), $3)
+	}
+
+DefaultOrExpressionList:
+	DefaultOrExpression
+	{
+		$$ = []ast.ExprNode{$1}
+	}
+|	DefaultOrExpressionList ',' DefaultOrExpression
 	{
 		$$ = append($1.([]ast.ExprNode), $3)
 	}

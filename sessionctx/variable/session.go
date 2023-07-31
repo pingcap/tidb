@@ -1494,6 +1494,9 @@ type SessionVars struct {
 	// use the ExpectedCnt to adjust the estimated row count for index scan.
 	OptOrderingIdxSelThresh float64
 
+	// EnableDefaultListPartition enables DEFAULT list partition
+	EnableDefaultListPartition bool
+
 	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
 	EnableMPPSharedCTEExecution bool
 

@@ -910,6 +910,7 @@ func TestCreateTableWithListPartition(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec("set @@session.tidb_enable_default_list_partition = ON")
 	tk.MustExec("drop table if exists t")
 	type errorCase struct {
 		sql string
@@ -1005,6 +1006,14 @@ func TestCreateTableWithListPartition(t *testing.T) {
 			generatePartitionTableByNum(mysql.PartitionCountLimit + 1),
 			dbterror.ErrTooManyPartitions,
 		},
+		{
+			"create table t (a int) partition by list (a) (partition p0 values in (null), partition p1 values in (null))",
+			dbterror.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t (a int) partition by list (a) (partition p0 values in (default), partition p1 values in (default))",
+			dbterror.ErrMultipleDefConstInListPart,
+		},
 	}
 	for i, tt := range cases {
 		_, err := tk.Exec(tt.sql)
@@ -1033,6 +1042,7 @@ func TestCreateTableWithListPartition(t *testing.T) {
 		"create table t (a datetime) partition by list (to_seconds(a)) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
 		"create table t (a int, b int generated always as (a+1) virtual) partition by list (b + 1) (partition p0 values in (1));",
 		"create table t(a binary) partition by list columns (a) (partition p0 values in (X'0C'));",
+		"create table t (a bigint) partition by list (a) (partition p0 values in (1, default),partition p1 values in (0, 22,3))",
 		generatePartitionTableByNum(mysql.PartitionCountLimit),
 	}
 
@@ -1057,6 +1067,7 @@ func TestCreateTableWithListColumnsPartition(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec("set @@session.tidb_enable_default_list_partition = ON")
 	tk.MustExec("drop table if exists t")
 	type errorCase struct {
 		sql string
@@ -1212,6 +1223,10 @@ func TestCreateTableWithListColumnsPartition(t *testing.T) {
 			"create table t(b int) partition by hash ( b ) partitions 3 (partition p1, partition p2, partition p2);",
 			dbterror.ErrSameNamePartition,
 		},
+		{
+			"create table t (a int) partition by list (a) (partition p1 values in (1), partition p2 values in (2, default), partition p3 values in (3, default));",
+			dbterror.ErrMultipleDefConstInListPart,
+		},
 	}
 	for i, tt := range cases {
 		_, err := tk.Exec(tt.sql)
@@ -1264,6 +1279,7 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustContainErrMsg(`create table t (a int) partition by list (a) (partition p1 values in (null, 6), partition p2 values in (7,null))`, "[ddl:1495]Multiple definition of same constant in list partitioning")
 	tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),
 	    partition p1 values in (3,4),
@@ -1273,6 +1289,14 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 		partition p4 values in (7),
 		partition p5 values in (8,9));`)
 
+	tk.MustContainErrMsg(`alter table t add partition (partition p6 values in (null, 6))`,
+		"[ddl:1495]Multiple definition of same constant in list partitioning")
+	tk.MustContainErrMsg(`alter table t add partition (partition pDef values in (default, 6))`,
+		"[ddl:8200]VALUES IN (DEFAULT) is not supported, please use 'tidb_enable_default_list_partition'")
+	tk.MustExec("set @@session.tidb_enable_default_list_partition = ON")
+	tk.MustExec(`alter table t add partition (partition pDef values in (default, 6))`)
+	tk.MustContainErrMsg(`alter table t add partition (partition pDef2 values in (10, default))`, `[ddl:8200]Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead`)
+	tk.MustContainErrMsg(`alter table t add partition (partition pDef2 values in (10))`, `[ddl:8200]Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead`)
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1282,7 +1306,7 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 	require.True(t, part.Type == model.PartitionTypeList)
 
 	require.Equal(t, "`id`", part.Expr)
-	require.Len(t, part.Definitions, 5)
+	require.Len(t, part.Definitions, 6)
 	require.Equal(t, [][]string{{"1"}, {"2"}}, part.Definitions[0].InValues)
 	require.Equal(t, model.NewCIStr("p0"), part.Definitions[0].Name)
 	require.Equal(t, [][]string{{"3"}, {"4"}}, part.Definitions[1].InValues)
@@ -1293,7 +1317,18 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 	require.Equal(t, model.NewCIStr("p4"), part.Definitions[3].Name)
 	require.Equal(t, [][]string{{"8"}, {"9"}}, part.Definitions[4].InValues)
 	require.Equal(t, model.NewCIStr("p5"), part.Definitions[4].Name)
+	require.Equal(t, [][]string{{"DEFAULT"}, {"6"}}, part.Definitions[5].InValues)
+	require.Equal(t, model.NewCIStr("pDef"), part.Definitions[5].Name)
 
+	tk.MustQuery(`select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema ='test'`).Sort().Check(testkit.Rows(""+
+		"p0 1 LIST `id` 1,2  <nil>",
+		"p1 2 LIST `id` 3,4  <nil>",
+		"p3 3 LIST `id` 5,NULL  <nil>",
+		"p4 4 LIST `id` 7  <nil>",
+		"p5 5 LIST `id` 8,9  <nil>",
+		"pDef 6 LIST `id` DEFAULT,6  <nil>"))
+
+	tk.MustExec(`alter table t reorganize partition pDef into (partition p_6 values in (6))`)
 	errorCases := []struct {
 		sql string
 		err *terror.Error
@@ -1384,10 +1419,83 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),
 	    partition p3 values in ((5,null))
-	);`)
+	)`)
+	tk.MustGetErrCode(`create table t (a int) partition by list (a) (partition p0 values in (default), partition p1 values in (maxvalue))`,
+		errno.ErrParse)
 	tk.MustExec(`alter table t add partition (
-		partition p4 values in ((7,'a')),
-		partition p5 values in ((8,'a')));`)
+				partition p4 values in ((7,'a')),
+				partition p5 values in ((8,'a')));`)
+	// We only support a single DEFAULT (catch-all),
+	// Not a DEFAULT per column in LIST COLUMNS!
+	tk.MustGetErrMsg(`alter table t add partition (
+				partition pDef values in (10, default))`,
+		"[ddl:8200]VALUES IN (DEFAULT) is not supported, please use 'tidb_enable_default_list_partition'")
+	tk.MustExec(`set tidb_enable_default_list_partition = ON`)
+	tk.MustGetErrMsg(`alter table t add partition (
+				partition pDef values in (10, default))`, `[ddl:1653]Inconsistency in usage of column lists for partitioning`)
+	tk.MustGetErrCode(`alter table t add partition (
+				partition pDef values in ((10, default)))`, errno.ErrParse)
+	tk.MustGetErrMsg(`alter table t add partition (
+				partition pDef values in (default, 10))`, `[ddl:1653]Inconsistency in usage of column lists for partitioning`)
+	tk.MustGetErrCode(`alter table t add partition (
+				partition pDef values in ((default, 10)))`, errno.ErrParse)
+	tk.MustGetErrCode(`alter table t add partition (
+				partition pDef values in ((9,'a'), (default, 10, 'q'))`, errno.ErrParse)
+	tk.MustGetErrCode(`alter table t add partition (
+				partition pDef values in ((9,'a'), (10, default, 'q'))`, errno.ErrParse)
+	tk.MustExec(`alter table t add partition (
+		partition pDef values in (default))`)
+	tk.MustGetErrMsg(`alter table t add partition (
+		partition pDef2 values in (default))`,
+		"[ddl:8200]Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead")
+	tk.MustGetErrMsg("alter table t add partition (partition p6 values in ((9,'d')))",
+		"[ddl:8200]Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead")
+	tk.MustGetErrMsg("alter table t add partition (partition p6 values in (default))",
+		"[ddl:8200]Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead")
+	tk.MustExec(`alter table t drop partition pDef`)
+	tk.MustExec(`alter table t add partition (partition pDef default)`)
+	tk.MustExec(`alter table t drop partition pDef`)
+	tk.MustExec(`alter table t add partition (
+		partition pDef values in ((9, 'c'), default))`)
+	// DEFAULT cannot be within parentheses (i.e. like a list).
+	tk.MustGetErrCode(`alter table t add partition (
+		partition pDef values in ((9, 'c'), (default)))`, errno.ErrParse)
+	tk.MustExec(`alter table t drop partition pDef`)
+	tk.MustExec(`alter table t add partition (
+		partition pDef values in (default, (9,'c')))`)
+	tk.MustExec(`alter table t drop partition pDef`)
+	tk.MustExec(`alter table t add partition (
+		partition pDef values in ((9,'d'), default))`)
+	tk.MustExec(`alter table t drop partition pDef`)
+	tk.MustExec(`alter table t add partition (
+		partition pDef values in (default, (9,'c'), (10, 'd')))`)
+	tk.MustExec(`alter table t drop partition pDef`)
+	tk.MustExec(`alter table t add partition (
+		partition pDef values in ((9,'d'), default, (10, 'd')))`)
+	// After a default value is included in a partition,
+	// it can no longer support ADD PARTITION, but should do REORGANIZE instead.
+	tk.MustGetErrCode(`alter table t add partition (
+		partition pDef values in ((9,'a'), (10, default, 'q'))`, errno.ErrParse)
+
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `name` varchar(10) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(`id`,`name`)\n" +
+		"(PARTITION `p0` VALUES IN ((1,'a'),(2,'b')),\n" +
+		" PARTITION `p1` VALUES IN ((3,'a'),(4,'b')),\n" +
+		" PARTITION `p3` VALUES IN ((5,NULL)),\n" +
+		" PARTITION `p4` VALUES IN ((7,'a')),\n" +
+		" PARTITION `p5` VALUES IN ((8,'a')),\n" +
+		" PARTITION `pDef` VALUES IN ((9,'d'),DEFAULT,(10,'d')))"))
+	tk.MustQuery(`select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema ='test'`).Sort().Check(testkit.Rows(""+
+		"p0 1 LIST COLUMNS `id`,`name` (1,'a'),(2,'b')  <nil>",
+		"p1 2 LIST COLUMNS `id`,`name` (3,'a'),(4,'b')  <nil>",
+		"p3 3 LIST COLUMNS `id`,`name` (5,NULL)  <nil>",
+		"p4 4 LIST COLUMNS `id`,`name` (7,'a')  <nil>",
+		"p5 5 LIST COLUMNS `id`,`name` (8,'a')  <nil>",
+		"pDef 6 LIST COLUMNS `id`,`name` (9,'d'),DEFAULT,(10,'d')  <nil>"))
 
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
@@ -1400,7 +1508,7 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 	require.Equal(t, "", part.Expr)
 	require.Equal(t, "id", part.Columns[0].O)
 	require.Equal(t, "name", part.Columns[1].O)
-	require.Len(t, part.Definitions, 5)
+	require.Len(t, part.Definitions, 6)
 	require.Equal(t, [][]string{{"1", `'a'`}, {"2", `'b'`}}, part.Definitions[0].InValues)
 	require.Equal(t, model.NewCIStr("p0"), part.Definitions[0].Name)
 	require.Equal(t, [][]string{{"3", `'a'`}, {"4", `'b'`}}, part.Definitions[1].InValues)
@@ -1411,7 +1519,10 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 	require.Equal(t, model.NewCIStr("p4"), part.Definitions[3].Name)
 	require.Equal(t, [][]string{{"8", `'a'`}}, part.Definitions[4].InValues)
 	require.Equal(t, model.NewCIStr("p5"), part.Definitions[4].Name)
+	require.Equal(t, [][]string{{"9", `'d'`}, {`DEFAULT`}, {`10`, `'d'`}}, part.Definitions[5].InValues)
+	require.Equal(t, model.NewCIStr("pDef"), part.Definitions[5].Name)
 
+	tk.MustExec(`alter table t reorganize partition pDef into (partition pd VALUES IN ((9,'d'),(10,'d')))`)
 	errorCases := []struct {
 		sql string
 		err *terror.Error
@@ -1423,9 +1534,6 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 			ast.ErrPartitionWrongValues,
 		},
 		{"alter table t add partition (partition p6 values in ((5,null)))",
-			dbterror.ErrMultipleDefConstInListPart,
-		},
-		{"alter table t add partition (partition p6 values in ((7,'a')))",
 			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{"alter table t add partition (partition p6 values in (('a','a')))",
@@ -1440,6 +1548,245 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 			i, tt.sql, tt.err, err,
 		)
 	}
+	tk.MustExec(`drop table t`)
+	tk.MustExec(
+		"CREATE TABLE `t` (\n" +
+			"  `id` int(11) DEFAULT NULL,\n" +
+			"  `name` varchar(10) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY LIST COLUMNS(`id`,`name`)\n" +
+			"(PARTITION `p0` VALUES IN ((1,'a'),(2,'b')),\n" +
+			" PARTITION `p1` VALUES IN ((3,'a'),(4,'b')),\n" +
+			" PARTITION `p3` VALUES IN ((5,NULL)),\n" +
+			" PARTITION `p4` VALUES IN ((7,'a')),\n" +
+			" PARTITION `p5` VALUES IN ((8,'a')),\n" +
+			" PARTITION `pDef` VALUES IN ((9,'d'),DEFAULT,(10,'d')))")
+	tk.MustQuery(`select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema ='test'`).Sort().Check(testkit.Rows(""+
+		"p0 1 LIST COLUMNS `id`,`name` (1,'a'),(2,'b')  <nil>",
+		"p1 2 LIST COLUMNS `id`,`name` (3,'a'),(4,'b')  <nil>",
+		"p3 3 LIST COLUMNS `id`,`name` (5,NULL)  <nil>",
+		"p4 4 LIST COLUMNS `id`,`name` (7,'a')  <nil>",
+		"p5 5 LIST COLUMNS `id`,`name` (8,'a')  <nil>",
+		"pDef 6 LIST COLUMNS `id`,`name` (9,'d'),DEFAULT,(10,'d')  <nil>"))
+	tk.MustExec("set @@session.tidb_enable_list_partition = OFF")
+	tk.MustExec(`alter table t drop partition pDef`)
+	tk.MustContainErrMsg(`alter table t add partition (partition pDef)`,
+		"[ddl:1479]Syntax : LIST PARTITIONING requires definition of VALUES IN for each partition")
+	tk.MustExec(`alter table t add partition (partition pDef default)`)
+	tk.MustQuery(`select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema ='test'`).Sort().Check(testkit.Rows(""+
+		"p0 1 LIST COLUMNS `id`,`name` (1,'a'),(2,'b')  <nil>",
+		"p1 2 LIST COLUMNS `id`,`name` (3,'a'),(4,'b')  <nil>",
+		"p3 3 LIST COLUMNS `id`,`name` (5,NULL)  <nil>",
+		"p4 4 LIST COLUMNS `id`,`name` (7,'a')  <nil>",
+		"p5 5 LIST COLUMNS `id`,`name` (8,'a')  <nil>",
+		"pDef 6 LIST COLUMNS `id`,`name` DEFAULT  <nil>"))
+	tk.MustExec(`alter table t reorganize partition pDef into (partition pDef VALUES IN (DEFAULT,(9,'c')))`)
+	tk.MustQuery(`select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema ='test'`).Sort().Check(testkit.Rows(""+
+		"p0 1 LIST COLUMNS `id`,`name` (1,'a'),(2,'b')  <nil>",
+		"p1 2 LIST COLUMNS `id`,`name` (3,'a'),(4,'b')  <nil>",
+		"p3 3 LIST COLUMNS `id`,`name` (5,NULL)  <nil>",
+		"p4 4 LIST COLUMNS `id`,`name` (7,'a')  <nil>",
+		"p5 5 LIST COLUMNS `id`,`name` (8,'a')  <nil>",
+		"pDef 6 LIST COLUMNS `id`,`name` DEFAULT,(9,'c')  <nil>"))
+}
+
+func TestDefaultListPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database defaultPartition")
+	tk.MustExec("use defaultPartition")
+	tk.MustExec(`set @@session.tidb_enable_default_list_partition=ON`)
+
+	tk.MustExec(`create table t (a int, b varchar(255), unique key (a), key (b)) partition by list (a) (partition p0 values in (0,4), partition p1 values in (1, null, default), partition p2 values in (2,7,10))`)
+	tk.MustExec(`insert into t values (1, "1"), (2, "2"), (3,'3'), (null, "null"), (4, "4"), (11, "11")`)
+	tk.MustExec(`analyze table t`)
+
+	tk.MustQuery(`select partition_name, partition_method, partition_expression, partition_description, table_rows from information_schema.partitions where table_schema = 'defaultPartition'`).Sort().Check(testkit.Rows(""+
+		"p0 LIST `a` 0,4 1",
+		"p1 LIST `a` 1,NULL,DEFAULT 4",
+		"p2 LIST `a` 2,7,10 1"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  UNIQUE KEY `a` (`a`),\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (`a`)\n" +
+		"(PARTITION `p0` VALUES IN (0,4),\n" +
+		" PARTITION `p1` VALUES IN (1,NULL,DEFAULT),\n" +
+		" PARTITION `p2` VALUES IN (2,7,10))"))
+	tk.MustExec(`set @@tidb_partition_prune_mode = 'dynamic'`)
+	tk.MustQuery(`select * from t where a = 4`).Check(testkit.Rows("4 4"))
+	tk.MustQuery(`select * from t where a is null`).Check(testkit.Rows("<nil> null"))
+	tk.MustQuery(`select * from t where a = 3`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 4`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p0, index:a(a) "))
+	tk.MustQuery(`explain format = 'brief' select * from t where a is null`).Check(testkit.Rows(""+
+		"TableReader 1.00 root partition:p1 data:Selection",
+		"└─Selection 1.00 cop[tikv]  isnull(defaultpartition.t.a)",
+		"  └─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 3`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p1, index:a(a) "))
+	tk.MustExec(`set @@tidb_partition_prune_mode = 'static'`)
+	tk.MustQuery(`select * from t where a = 4`).Check(testkit.Rows("4 4"))
+	tk.MustQuery(`select * from t where a is null`).Check(testkit.Rows("<nil> null"))
+	tk.MustQuery(`select * from t where a = 3`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 4`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p0, index:a(a) "))
+	tk.MustQuery(`explain format = 'brief' select * from t where a is null`).Check(testkit.Rows(""+
+		"TableReader 1.00 root  data:Selection",
+		"└─Selection 1.00 cop[tikv]  isnull(defaultpartition.t.a)",
+		"  └─TableFullScan 4.00 cop[tikv] table:t, partition:p1 keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 3`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p1, index:a(a) "))
+
+	// TODO: check ranges with 1,2 and 3 matching values, including 'holes' matching DEFAULT
+	// DEFAULT partition will not be used in reorganize partition if not included in the source/destination
+	tk.MustExecToErr(`alter table t reorganize partition p0 into (partition p0 values in (0))`, "[table:1526]Table has no partition for value 4")
+
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`CREATE TABLE t (a VARCHAR(100),b INT) PARTITION BY LIST COLUMNS (a) (PARTITION p1 VALUES IN ('a', 'b', 'DEFAULT'),PARTITION pDef DEFAULT)`)
+}
+
+func TestDefaultListColumnPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database defaultPartition")
+	tk.MustExec("use defaultPartition")
+	tk.MustExec(`set @@session.tidb_enable_default_list_partition=ON`)
+
+	tk.MustExec(`create table t (b int, a varchar(255)) partition by list columns (a) (partition p0 values in (0,4), partition p1 values in (1, null, default), partition p2 values in (2,7,10))`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  `a` varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(`a`)\n" +
+		"(PARTITION `p0` VALUES IN (0,4),\n" +
+		" PARTITION `p1` VALUES IN (1,NULL,DEFAULT),\n" +
+		" PARTITION `p2` VALUES IN (2,7,10))"))
+	tk.MustExec(`insert into t values (1, "1"), (2, "2"), (3,'3'), (null, null), (4, "4"), (11, "11")`)
+	tk.MustExec(`analyze table t`)
+
+	tk.MustQuery(`select * from t partition(p0)`).Sort().Check(testkit.Rows("4 4"))
+	tk.MustQuery(`select * from t partition(p1)`).Sort().Check(testkit.Rows("1 1", "11 11", "3 3", "<nil> <nil>"))
+	tk.MustQuery(`select partition_name, partition_method, partition_expression, partition_description, table_rows from information_schema.partitions where table_schema = 'defaultPartition'`).Sort().Check(testkit.Rows(""+
+		"p0 LIST COLUMNS `a` 0,4 1",
+		"p1 LIST COLUMNS `a` 1,NULL,DEFAULT 4",
+		"p2 LIST COLUMNS `a` 2,7,10 1"))
+	tk.MustExec(`set @@tidb_partition_prune_mode = 'dynamic'`)
+	tk.MustQuery(`explain format = 'brief' select * from t where a is null`).Check(testkit.Rows(""+
+		"TableReader 1.00 root partition:p1 data:Selection",
+		"└─Selection 1.00 cop[tikv]  isnull(defaultpartition.t.a)",
+		"  └─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`select * from t where a is null`).Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery(`select * from t where a = 4`).Check(testkit.Rows("4 4"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 4`).Check(testkit.Rows(
+		"TableReader 4.80 root partition:p0,p1,p2 data:Selection",
+		"└─Selection 4.80 cop[tikv]  eq(cast(defaultpartition.t.a, double BINARY), 4)",
+		"  └─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`select * from t where a = 3`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 3`).Check(testkit.Rows(
+		"TableReader 4.80 root partition:p0,p1,p2 data:Selection",
+		"└─Selection 4.80 cop[tikv]  eq(cast(defaultpartition.t.a, double BINARY), 3)",
+		"  └─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = "3"`).Check(testkit.Rows(
+		"TableReader 1.00 root partition:p1 data:Selection",
+		`└─Selection 1.00 cop[tikv]  eq(defaultpartition.t.a, "3")`,
+		"  └─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`select * from t where a = "3"`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`select * from t where a = "4"`).Check(testkit.Rows("4 4"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = "4"`).Check(testkit.Rows(
+		"TableReader 1.00 root partition:p0 data:Selection",
+		`└─Selection 1.00 cop[tikv]  eq(defaultpartition.t.a, "4")`,
+		"  └─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
+
+	// Notice in string context that "35" is between "3" and "4"
+	tk.MustQuery(`explain format = 'brief' select * from t where a between "3" and "4"`).Check(testkit.Rows(""+
+		`TableReader 2.00 root partition:p0,p1 data:Selection`,
+		`└─Selection 2.00 cop[tikv]  ge(defaultpartition.t.a, "3"), le(defaultpartition.t.a, "4")`,
+		`  └─TableFullScan 6.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`select * from t where a between "3" and "4"`).Sort().Check(testkit.Rows("3 3", "4 4"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a >= "3" and a <= "4"`).Check(testkit.Rows(""+
+		`TableReader 2.00 root partition:p0,p1 data:Selection`,
+		`└─Selection 2.00 cop[tikv]  ge(defaultpartition.t.a, "3"), le(defaultpartition.t.a, "4")`,
+		`  └─TableFullScan 6.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`select * from t where a >= "3" and a <= "4"`).Sort().Check(testkit.Rows("3 3", "4 4"))
+
+	tk.MustExec(`set @@tidb_partition_prune_mode = 'static'`)
+	tk.MustQuery(`select * from t where a is null`).Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a is null`).Check(testkit.Rows(""+
+		`TableReader 1.00 root  data:Selection`,
+		`└─Selection 1.00 cop[tikv]  isnull(defaultpartition.t.a)`,
+		`  └─TableFullScan 4.00 cop[tikv] table:t, partition:p1 keep order:false`))
+	tk.MustQuery(`select * from t where a = 4`).Check(testkit.Rows("4 4"))
+	tk.MustQuery(`select * from t where a = "4"`).Check(testkit.Rows("4 4"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = "4"`).Check(testkit.Rows(""+
+		`TableReader 1.00 root  data:Selection`,
+		`└─Selection 1.00 cop[tikv]  eq(defaultpartition.t.a, "4")`,
+		`  └─TableFullScan 1.00 cop[tikv] table:t, partition:p0 keep order:false`))
+	tk.MustQuery(`select * from t where a = 3`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`select * from t where a = "3"`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = "3"`).Check(testkit.Rows(""+
+		`TableReader 1.00 root  data:Selection`,
+		`└─Selection 1.00 cop[tikv]  eq(defaultpartition.t.a, "3")`,
+		`  └─TableFullScan 4.00 cop[tikv] table:t, partition:p1 keep order:false`))
+	tk.MustQuery(`explain format = 'brief' select * from t where a between "3" and "4"`).Check(testkit.Rows(""+
+		`PartitionUnion 2.00 root  `,
+		`├─TableReader 1.00 root  data:Selection`,
+		`│ └─Selection 1.00 cop[tikv]  ge(defaultpartition.t.a, "3"), le(defaultpartition.t.a, "4")`,
+		`│   └─TableFullScan 1.00 cop[tikv] table:t, partition:p0 keep order:false`,
+		`└─TableReader 1.00 root  data:Selection`,
+		`  └─Selection 1.00 cop[tikv]  ge(defaultpartition.t.a, "3"), le(defaultpartition.t.a, "4")`,
+		`    └─TableFullScan 4.00 cop[tikv] table:t, partition:p1 keep order:false`))
+	tk.MustQuery(`select * from t where a between "3" and "4"`).Sort().Check(testkit.Rows("3 3", "4 4"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a >= "3" and a <= "4"`).Check(testkit.Rows(""+
+		`PartitionUnion 2.00 root  `,
+		`├─TableReader 1.00 root  data:Selection`,
+		`│ └─Selection 1.00 cop[tikv]  ge(defaultpartition.t.a, "3"), le(defaultpartition.t.a, "4")`,
+		`│   └─TableFullScan 1.00 cop[tikv] table:t, partition:p0 keep order:false`,
+		`└─TableReader 1.00 root  data:Selection`,
+		`  └─Selection 1.00 cop[tikv]  ge(defaultpartition.t.a, "3"), le(defaultpartition.t.a, "4")`,
+		`    └─TableFullScan 4.00 cop[tikv] table:t, partition:p1 keep order:false`))
+	tk.MustQuery(`select * from t where a >= "3" and a <= "4"`).Sort().Check(testkit.Rows("3 3", "4 4"))
+
+	// DEFAULT partition will not be used in reorganize partition if not included in the source/destination
+	tk.MustExecToErr(`alter table t reorganize partition p0 into (partition p0 values in (0))`, "[table:1526]Table has no partition for value 4")
+}
+
+func TestDefaultListErrors(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create schema defaultListErrors")
+	tk.MustExec("use defaultListErrors")
+	tk.MustExec(`set tidb_enable_default_list_partition=ON`)
+	tk.MustContainErrMsg(`create table t (a int) partition by range (a) (partition p0 values less than (default))`,
+		"[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 86 near ")
+	tk.MustContainErrMsg(`create table t (a int) partition by range (a) (partition p0 values less than ("default"))`,
+		"[ddl:1697]VALUES value for partition 'p0' must have type INT")
+	tk.MustExec(`create table t (a varchar(55)) partition by range columns (a) (partition p0 values less than ("default"))`)
+	tk.MustExec(`drop table t`)
+	tk.MustContainErrMsg(`create table t (a varchar(55)) partition by range columns (a) (partition p0 values less than (default))`,
+		"[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 102 near ")
+	tk.MustContainErrMsg(`create table t (a varchar(55)) partition by range columns (a) (partition p0 default)`,
+		"[ddl:1480]Only LIST PARTITIONING can use VALUES IN in partition definition")
+	tk.MustExec(`create table t (a varchar(55)) partition by list columns (a) (partition p0 default)`)
+	tk.MustExec(`insert into t values ('Hi')`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` varchar(55) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(`a`)\n" +
+		"(PARTITION `p0` DEFAULT)"))
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int) partition by list (a) (partition p0 default)`)
+	tk.MustExec(`insert into t values (2)`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (`a`)\n" +
+		"(PARTITION `p0` DEFAULT)"))
+	tk.MustExec(`drop table t`)
+	tk.MustContainErrMsg(`create table t (a int) partition by list (a) (partition p0 values in ())`,
+		"[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 71 near ")
 }
 
 func TestAlterTableDropPartitionByList(t *testing.T) {
@@ -1453,6 +1800,7 @@ func TestAlterTableDropPartitionByList(t *testing.T) {
 	    partition p1 values in (3,4),
 	    partition p3 values in (5,null)
 	);`)
+	// TODO: Add cases for dropping DEFAULT partition
 	tk.MustExec(`insert into t values (1),(3),(5),(null)`)
 	tk.MustExec(`alter table t drop partition p1`)
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("<nil>", "1", "5"))
@@ -1484,13 +1832,16 @@ func TestAlterTableDropPartitionByListColumns(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec("set @@session.tidb_enable_default_list_partition = ON")
 	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id,name) (
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),
-	    partition p3 values in ((5,'a'),(null,null))
-	);`)
-	tk.MustExec(`insert into t values (1,'a'),(3,'a'),(5,'a'),(null,null)`)
+	    partition p3 values in ((5,'a'),(null,null)),
+	    partition pDef values in (default)
+	)`)
+	tk.MustExec(`insert into t values (1,'a'),(3,'a'),(5,'a'),(null,null),(9,9)`)
 	tk.MustExec(`alter table t drop partition p1`)
+	tk.MustExec(`alter table t drop partition pDef`)
 	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 a", "5 a", "<nil> <nil>"))
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
@@ -5547,4 +5898,16 @@ partition p1 values less than maxvalue)`)
 		"PARTITION BY RANGE (`colint`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (1998),\n" +
 		" PARTITION `p1` VALUES LESS THAN (MAXVALUE))"))
+}
+
+func TestListDefinitionError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database ListRange")
+	tk.MustExec("use ListRange")
+	tk.MustContainErrMsg(`create table t (a int) partition by list (a) (partition p2 values less than (2))`, "[ddl:1480]Only RANGE PARTITIONING can use VALUES LESS THAN in partition definition")
+	tk.MustContainErrMsg(`create table t (a int) partition by list (a) (partition p2)`, "[ddl:1479]Syntax : LIST PARTITIONING requires definition of VALUES IN for each partition")
+	tk.MustExec(`create table t (a int) partition by list (a) (partition p1 values in (1))`)
+	tk.MustContainErrMsg(`alter table t add partition (partition p2 values less than (2))`, "[ddl:1480]Only RANGE PARTITIONING can use VALUES LESS THAN in partition definition")
+	tk.MustContainErrMsg(`alter table t add partition (partition p2)`, "[ddl:1479]Syntax : LIST PARTITIONING requires definition of VALUES IN for each partition")
 }

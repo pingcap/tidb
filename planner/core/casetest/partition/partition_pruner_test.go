@@ -66,8 +66,6 @@ func TestHashPartitionPruner(t *testing.T) {
 }
 
 func TestListPartitionPruner(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_partition;")
@@ -75,7 +73,6 @@ func TestListPartitionPruner(t *testing.T) {
 	tk.MustExec("use test_partition")
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`set @@session.tidb_regard_null_as_point=false`)
 	tk.MustExec("create table t1 (id int, a int, b int                 ) partition by list (    a    ) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
 	tk.MustExec("create table t2 (a int, id int, b int) partition by list (a*3 + b - 2*a - b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
@@ -91,6 +88,7 @@ func TestListPartitionPruner(t *testing.T) {
 	tk.MustExec("insert into t6 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
 	tk.MustExec(`create table t7 (a int unsigned) partition by list (a)(partition p0 values in (0),partition p1 values in (1),partition pnull values in (null),partition p2 values in (2));`)
 	tk.MustExec("insert into t7 values (null),(0),(1),(2);")
+	tk.MustExec(`analyze table t1,t2,t3,t4,t5,t6,t7`)
 
 	// tk2 use to compare the result with normal table.
 	tk2 := testkit.NewTestKit(t, store)
@@ -111,6 +109,7 @@ func TestListPartitionPruner(t *testing.T) {
 	tk2.MustExec("insert into t6 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
 	tk2.MustExec(`create table t7 (a int unsigned);`)
 	tk2.MustExec("insert into t7 values (null),(0),(1),(2);")
+	tk.MustExec(`analyze table t1,t2,t3,t4,t5,t6,t7`)
 
 	var input []string
 	var output []struct {
@@ -120,7 +119,6 @@ func TestListPartitionPruner(t *testing.T) {
 	}
 	partitionPrunerData := getPartitionPrunerData()
 	partitionPrunerData.LoadTestCases(t, &input, &output)
-	valid := false
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -130,12 +128,102 @@ func TestListPartitionPruner(t *testing.T) {
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		result := tk.MustQuery(tt).Sort()
 		result.Check(testkit.Rows(output[i].Result...))
-		// If the query doesn't specified the partition, compare the result with normal table
+		// If the query doesn't specify the partition, compare the result with normal table
 		if !strings.Contains(tt, "partition(") {
-			result.Check(tk.MustQuery(tt).Sort().Rows())
-			valid = true
+			result.Check(tk2.MustQuery(tt).Sort().Rows())
 		}
-		require.True(t, valid)
+	}
+}
+
+func TestListDefaultPartitionPruner(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database default_partition")
+	tk.MustExec("use default_partition")
+	tk.MustExec(`set tidb_enable_default_list_partition=1`)
+	tk.MustExec("" +
+		`create table t (a int, b varchar(255), key (b)) partition by list (a)` +
+		`(partition p0 values in (0, 10),` +
+		` partition p1 values in (1,2,4,8,9),` +
+		` partition p2 values in (3,5,default))`)
+	tk.MustExec(`insert into t values (-22, "-22"), (0, "0"), (2, "2"), (3,"3"), (7,"7")`)
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`select * from t where a = 1`).Sort().Check(testkit.Rows())
+	tk.MustQuery(`select * from t where a = 2`).Sort().Check(testkit.Rows("2 2"))
+	tk.MustQuery(`select * from t where a <= 2`).Sort().Check(testkit.Rows("-22 -22", "0 0", "2 2"))
+	tk.MustQuery(`select * from t where a = 7`).Sort().Check(testkit.Rows("7 7"))
+	tk.MustQuery(`select * from t where a > 2`).Sort().Check(testkit.Rows("3 3", "7 7"))
+	tk.MustQuery(`select * from t where b = 7`).Sort().Check(testkit.Rows("7 7"))
+	tk.MustQuery(`select * from t where a >= 6`).Sort().Check(testkit.Rows("7 7"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a >= 6`).Check(testkit.Rows(""+
+		"TableReader 1.00 root partition:all data:Selection",
+		"└─Selection 1.00 cop[tikv]  ge(default_partition.t.a, 6)",
+		"  └─TableFullScan 5.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 7`).Check(testkit.Rows(""+
+		"TableReader 1.00 root partition:p2 data:Selection",
+		"└─Selection 1.00 cop[tikv]  eq(default_partition.t.a, 7)",
+		"  └─TableFullScan 5.00 cop[tikv] table:t keep order:false"))
+
+	tk.MustExec(`set @@session.tidb_regard_null_as_point=false`)
+	tk.MustExec("create table t1 (id int, a int, b int) partition by list (a) (partition p0 values in (1,2,3,5), partition p1 values in (6,7,8,9,10,null), partition pDef DEFAULT)")
+	tk.MustExec("create table t2 (a int, id int, b int) partition by list (a*3 + b - 2*a - b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10), partition pDef DEFAULT)")
+	tk.MustExec("create table t3 (b int, id int, a int) partition by list columns (a) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,default,8,9,10,null));")
+	tk.MustExec("create table t4 (id int, a int, b int, primary key (a)) partition by list (a) (partition p0 values in (default,2,3,4,5), partition p1 values in (6,7,8,9,10));")
+	tk.MustExec("create table t5 (a int, id int, b int, unique key (a,b)) partition by list (a*3 + b - 2*a - b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,default,null))")
+	tk.MustExec("create table t6 (b int, id int, a int, unique key (a,b)) partition by list columns (a) (partition p0 values in (2,3,4,5), partition p1 values in (6,7,8,9,null), partition pDef VALUES IN (default))")
+	tk.MustExec(`create table t7 (a int unsigned) partition by list (a) (partition p0 values in (0),partition pDef default,partition p1 values in (1),partition pnull values in (null),partition p2 values in (2))`)
+	inserts := []string{
+		"insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null),(0,0,0),(11,11,11)",
+		"insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null),(0,0,0),(11,11,11)",
+		"insert into t3 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null),(0,0,0),(11,11,11)",
+		"insert into t4 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(0,0,0),(11,11,11)",
+		"insert into t5 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null),(0,0,0),(11,11,11)",
+		"insert into t6 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null),(0,0,0),(11,11,11)",
+		"insert into t7 values (null),(0),(1),(2),(3)",
+	}
+	for _, s := range inserts {
+		tk.MustExec(s)
+	}
+	tk.MustExec(`analyze table t1,t2,t3,t4,t5,t6,t7`)
+
+	// tk2 use to compare the result with normal table.
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("drop database if exists test_partition_2")
+	tk2.MustExec("create database test_partition_2")
+	tk2.MustExec("use test_partition_2")
+	tk2.MustExec("create table t1 (id int, a int, b int)")
+	tk2.MustExec("create table t2 (a int, id int, b int)")
+	tk2.MustExec("create table t3 (b int, id int, a int)")
+	tk2.MustExec("create table t4 (id int, a int, b int, primary key (a))")
+	tk2.MustExec("create table t5 (a int, id int, b int, unique key (a,b))")
+	tk2.MustExec("create table t6 (b int, id int, a int, unique key (a,b))")
+	tk2.MustExec(`create table t7 (a int unsigned)`)
+	for _, s := range inserts {
+		tk2.MustExec(s)
+	}
+	tk.MustExec(`analyze table t1,t2,t3,t4,t5,t6,t7`)
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+		Plan   []string
+	}
+	partitionPrunerData := getPartitionPrunerData()
+	partitionPrunerData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		result := tk.MustQuery(tt).Sort()
+		result.Check(testkit.Rows(output[i].Result...))
+		// If the query doesn't specify the partition, compare the result with normal table
+		if !strings.Contains(tt, "partition(") {
+			result.Check(tk2.MustQuery(tt).Sort().Rows())
+		}
 	}
 }
 
@@ -203,7 +291,6 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("create table t1 (id int, a int, b int) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(3,3),(4,4),(5,5)), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(10,10),(null,10)));")
 	tk.MustExec("create table t2 (id int, a int, b int) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)));")
 	tk.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
@@ -233,6 +320,106 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 	tk2.MustExec("create table t2 (id int, a int, b int)")
 	tk2.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
 	tk2.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
+
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk1.MustExec("set @@tidb_enable_chunk_rpc = on")
+
+	var input []struct {
+		SQL    string
+		Pruner string
+	}
+	var output []struct {
+		SQL       string
+		Result    []string
+		Plan      []string
+		IndexPlan []string
+	}
+	partitionPrunerData := getPartitionPrunerData()
+	partitionPrunerData.LoadTestCases(t, &input, &output)
+	valid := false
+	for i, tt := range input {
+		// Test for table without index.
+		plan := tk.MustQuery("explain format = 'brief' " + tt.SQL)
+		planTree := testdata.ConvertRowsToStrings(plan.Rows())
+		// Test for table with index.
+		indexPlan := tk1.MustQuery("explain format = 'brief' " + tt.SQL)
+		indexPlanTree := testdata.ConvertRowsToStrings(indexPlan.Rows())
+		testdata.OnRecord(func() {
+			output[i].SQL = tt.SQL
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt.SQL).Sort().Rows())
+			// Test for table without index.
+			output[i].Plan = planTree
+			// Test for table with index.
+			output[i].IndexPlan = indexPlanTree
+		})
+		// compare the plan.
+		plan.Check(testkit.Rows(output[i].Plan...))
+		indexPlan.Check(testkit.Rows(output[i].IndexPlan...))
+
+		// compare the pruner information.
+		checkPrunePartitionInfo(t, tt.SQL, tt.Pruner, planTree)
+		checkPrunePartitionInfo(t, tt.SQL, tt.Pruner, indexPlanTree)
+
+		// compare the result.
+		result := tk.MustQuery(tt.SQL).Sort()
+		idxResult := tk1.MustQuery(tt.SQL)
+		result.Check(idxResult.Sort().Rows())
+		result.Check(testkit.Rows(output[i].Result...))
+
+		// If the query doesn't specified the partition, compare the result with normal table
+		if !strings.Contains(tt.SQL, "partition(") {
+			result.Check(tk2.MustQuery(tt.SQL).Sort().Rows())
+			valid = true
+		}
+	}
+	require.True(t, valid)
+}
+
+func TestListColumnsDefaultPartitionPruner(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("set @@session.tidb_enable_default_list_partition = ON")
+	tk.MustExec("drop database if exists test_partition;")
+	tk.MustExec("create database test_partition")
+	tk.MustExec("use test_partition")
+	tk.MustExec("create table t1 (id int, a int, b int) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(4,4),(5,5)), partition pDef default, partition p1 values in ((6,6),(7,7),(8,8),(9,9),(null,10)))")
+	tk.MustExec("create table t2 (id int, a int, b int) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(null,null,null)), partition pDef VALUES IN (DEFAULT))")
+	insertT1 := "insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)"
+	insertT2 := "insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)"
+	tk.MustExec(insertT1)
+	tk.MustExec(insertT2)
+	tk.MustExec(`analyze table t1`)
+	tk.MustExec(`analyze table t2`)
+
+	// tk1 use to test partition table with index.
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("set tidb_cost_model_version=2")
+	tk1.MustExec("drop database if exists test_partition_1;")
+	tk1.MustExec(`set @@session.tidb_regard_null_as_point=false`)
+	tk1.MustExec("create database test_partition_1")
+	tk1.MustExec("use test_partition_1")
+	tk1.MustExec("set @@session.tidb_enable_default_list_partition = ON")
+	tk1.MustExec("create table t1 (id int, a int, b int, unique key (a,b,id)) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(4,4),(5,5)), partition pDef values in (default), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(null,10)))")
+	tk1.MustExec("create table t2 (id int, a int, b int, unique key (a,b,id)) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(null,null,null)), partition pDef default)")
+	tk1.MustExec(insertT1)
+	tk1.MustExec(insertT2)
+	tk1.MustExec(`analyze table t1`)
+	tk1.MustExec(`analyze table t2`)
+
+	// tk2 use to compare the result with normal table.
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set tidb_cost_model_version=2")
+	tk2.MustExec("drop database if exists test_partition_2;")
+	tk2.MustExec(`set @@session.tidb_regard_null_as_point=false`)
+	tk2.MustExec("create database test_partition_2")
+	tk2.MustExec("use test_partition_2")
+	tk2.MustExec("create table t1 (id int, a int, b int)")
+	tk2.MustExec("create table t2 (id int, a int, b int)")
+	tk2.MustExec(insertT1)
+	tk2.MustExec(insertT2)
+	tk2.MustExec(`analyze table t1`)
+	tk2.MustExec(`analyze table t2`)
 
 	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
 	tk1.MustExec("set @@tidb_enable_chunk_rpc = on")

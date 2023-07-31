@@ -4119,6 +4119,13 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if pi.Type == model.PartitionTypeList {
+		// TODO: make sure that checks in ddl_api and ddl_worker is the same.
+		err = checkAddListPartitions(meta)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	if err := d.assignPartitionIDs(partInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
@@ -7479,6 +7486,11 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 		if len(spec.PartDefinitions) == 0 {
 			return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
 		}
+		err := checkListPartitions(ctx, spec.PartDefinitions)
+		if err != nil {
+			return nil, err
+		}
+
 	case model.PartitionTypeRange:
 		if spec.Tp == ast.AlterTableAddLastPartition {
 			err := buildAddedPartitionDefs(ctx, meta, spec)
@@ -7553,6 +7565,12 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx sessionctx.Context, colTypes []typ
 	for i, colExpr := range exprs {
 		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
 			valStrings = append(valStrings, partitionMaxValue)
+			continue
+		}
+		if d, ok := colExpr.(*ast.DefaultExpr); ok {
+			if d.Name != nil {
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
 			continue
 		}
 		colType := colTypes[i]
