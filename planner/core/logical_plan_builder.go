@@ -4555,7 +4555,8 @@ func readSchemaFromParquetFile(client *hdfs.Client, path string) (*metadata.File
 	logutil.BgLogger().Warn("new parquet reader success")
 	if err != nil {
 		logutil.BgLogger().Error("file2.NewParquetReader fail")
-		return nil, err
+		logutil.BgLogger().Error("Error", zap.Error(err))
+		return nil, nil
 	}
 	defer reader.Close()
 	return reader.MetaData(), nil
