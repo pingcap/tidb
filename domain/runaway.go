@@ -189,7 +189,7 @@ func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) (int64
 	for {
 		select {
 		case <-timer.C:
-			return 0, errors.Errorf("add runaway watch timeout")
+			return 0, errors.Errorf("the query watch is added successfully, but the TiDB server load timed out, you can query information_schame.runaway_watches later to confirm")
 		case <-ticker.C:
 			r := do.runawayManager.GetWatchByKey(record.GetRecordKey())
 			if r.ID > 0 {
@@ -238,10 +238,6 @@ func (do *Domain) RemoveRunawayWatch(recordID int64) error {
 		return errors.Errorf("no runaway watch with the specific ID")
 	}
 	err = do.handleRunawayWatchDone(records[0])
-	if err != nil {
-		return err
-	}
-	err = do.handleRemoveStaleRunawayWatch(records[0])
 	return err
 }
 
@@ -331,6 +327,9 @@ func (do *Domain) handleRunawayWatch(record *resourcegroup.QuarantineRecord) err
 	exec, _ := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN")
+	if err != nil {
+		return errors.Trace(err)
+	}
 	defer func() {
 		if err != nil {
 			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
@@ -358,6 +357,9 @@ func (do *Domain) handleRunawayWatchDone(record *resourcegroup.QuarantineRecord)
 	exec, _ := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN")
+	if err != nil {
+		return errors.Trace(err)
+	}
 	defer func() {
 		if err != nil {
 			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
@@ -370,6 +372,11 @@ func (do *Domain) handleRunawayWatchDone(record *resourcegroup.QuarantineRecord)
 		}
 	}()
 	sql, params := record.GenInsertionDoneStmt()
+	_, err = exec.ExecuteInternal(ctx, sql, params...)
+	if err != nil {
+		return err
+	}
+	sql, params = record.GenDeletionStmt()
 	_, err = exec.ExecuteInternal(ctx, sql, params...)
 	return err
 }
@@ -385,6 +392,9 @@ func (do *Domain) handleRemoveStaleRunawayWatch(record *resourcegroup.Quarantine
 	exec, _ := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN")
+	if err != nil {
+		return errors.Trace(err)
+	}
 	defer func() {
 		if err != nil {
 			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
