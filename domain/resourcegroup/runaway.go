@@ -342,13 +342,15 @@ func (rm *RunawayManager) AddWatch(record *QuarantineRecord) {
 func (rm *RunawayManager) RemoveWatch(record *QuarantineRecord) {
 	// we should check whether the cached record is not the same as the removing record.
 	rm.queryLock.Lock()
+	defer rm.queryLock.Unlock()
 	item := rm.getWatchFromWatchList(record.GetRecordKey())
+	if item == nil {
+		return
+	}
 	if item.ID == record.ID {
 		rm.watchList.Delete(record.GetRecordKey())
 	}
-	rm.queryLock.Unlock()
 }
-
 func (rm *RunawayManager) getWatchFromWatchList(key string) *QuarantineRecord {
 	item := rm.watchList.Get(key)
 	if item != nil {
@@ -545,9 +547,9 @@ func (r *RunawayChecker) getSettingConvictIdentifier() string {
 	}
 	switch r.setting.Watch.Type {
 	case rmpb.RunawayWatchType_Plan:
-		return r.sqlDigest
-	case rmpb.RunawayWatchType_Similar:
 		return r.planDigest
+	case rmpb.RunawayWatchType_Similar:
+		return r.sqlDigest
 	case rmpb.RunawayWatchType_Exact:
 		return r.originalSQL
 	default:

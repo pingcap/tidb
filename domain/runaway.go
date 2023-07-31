@@ -517,13 +517,13 @@ func getRunawayWatchRecord(exec sqlexec.RestrictedSQLExecutor, reader *SystemTab
 	}
 	ret := make([]*resourcegroup.QuarantineRecord, 0, len(rs))
 	for _, r := range rs {
-		startTime, err := r.GetTime(2).GoTime(time.Local)
+		startTime, err := r.GetTime(2).GoTime(time.UTC)
 		if err != nil {
 			continue
 		}
 		var endTime time.Time
 		if !r.IsNull(3) {
-			endTime, err = r.GetTime(3).GoTime(time.Local)
+			endTime, err = r.GetTime(3).GoTime(time.UTC)
 			if err != nil {
 				continue
 			}
@@ -552,18 +552,18 @@ func getRunawayWatchDoneRecord(exec sqlexec.RestrictedSQLExecutor, reader *Syste
 	length := len(rs)
 	ret := make([]*resourcegroup.QuarantineRecord, 0, length)
 	for _, r := range rs {
-		startTime, err := r.GetTime(3).GoTime(time.Local)
+		startTime, err := r.GetTime(3).GoTime(time.UTC)
 		if err != nil {
 			continue
 		}
 		var endTime time.Time
 		if !r.IsNull(4) {
-			endTime, err = r.GetTime(4).GoTime(time.Local)
+			endTime, err = r.GetTime(4).GoTime(time.UTC)
 			if err != nil {
 				continue
 			}
 		}
-		updateTime, err := r.GetTime(9).GoTime(time.Local)
+		updateTime, err := r.GetTime(9).GoTime(time.UTC)
 		if err != nil {
 			continue
 		}
