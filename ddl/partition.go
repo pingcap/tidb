@@ -479,7 +479,7 @@ func storeHasEngineTiFlashLabel(store *metapb.Store) bool {
 	return false
 }
 
-func checkListPartitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition) error {
+func checkListPartitions(defs []*ast.PartitionDefinition) error {
 	for _, def := range defs {
 		_, ok := def.Clause.(*ast.PartitionDefinitionClauseIn)
 		if !ok {
@@ -515,7 +515,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		// Partition by list is enabled only when tidb_enable_list_partition is 'ON'.
 		enable = ctx.GetSessionVars().EnableListTablePartition
 		if enable {
-			err := checkListPartitions(ctx, s.Definitions)
+			err := checkListPartitions(s.Definitions)
 			if err != nil {
 				return err
 			}

@@ -7486,7 +7486,7 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 		if len(spec.PartDefinitions) == 0 {
 			return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
 		}
-		err := checkListPartitions(ctx, spec.PartDefinitions)
+		err := checkListPartitions(spec.PartDefinitions)
 		if err != nil {
 			return nil, err
 		}
