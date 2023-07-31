@@ -1214,3 +1214,25 @@ func TestIndexMergeNoOrderLimitPushed(t *testing.T) {
 	// The result is not stable. So we just check that it can run successfully.
 	tk.MustQuery(sql)
 }
+
+func TestIndexMergeKeepOrderDirtyRead(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, index idx1(a, c), index idx2(b, c))")
+	tk.MustExec("insert into t values(1, 1, 1), (1, 2, -1), (2, 1, -2)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values(1, 1, -3)")
+	querySQL := "select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 2"
+	tk.HasPlan(querySQL, "Limit")
+	tk.HasPlan(querySQL, "IndexMerge")
+	tk.MustQuery(querySQL).Check(testkit.Rows("1 1 -3", "2 1 -2"))
+	tk.MustExec("rollback")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values(1, 2, 4)")
+	querySQL = "select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c desc limit 2"
+	tk.HasPlan(querySQL, "Limit")
+	tk.HasPlan(querySQL, "IndexMerge")
+	tk.MustQuery(querySQL).Check(testkit.Rows("1 2 4", "1 1 1"))
+	tk.MustExec("rollback")
+}
