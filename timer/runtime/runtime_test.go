@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/timer/api"
-	"github.com/pingcap/tidb/timer/metrics"
 	mockutil "github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -67,6 +66,8 @@ func TestRuntimeStartStop(t *testing.T) {
 	runtime := NewTimerRuntimeBuilder("g1", store).
 		RegisterHookFactory("hook1", hookFactory).
 		Build()
+	require.NotNil(t, runtime.fullRefreshTimerCounter)
+	require.NotNil(t, runtime.partialRefreshTimerCounter)
 
 	runtime.Start()
 	require.True(t, runtime.Running())
@@ -390,16 +391,11 @@ func TestNextTryTriggerDuration(t *testing.T) {
 }
 
 func TestFullRefreshTimers(t *testing.T) {
-	origFullRefreshCounter := metrics.TimerFullRefreshCounter
-	defer func() {
-		metrics.TimerFullRefreshCounter = origFullRefreshCounter
-	}()
-
 	fullRefreshCounter := &mockutil.MetricsCounter{}
-	metrics.TimerFullRefreshCounter = fullRefreshCounter
-
 	mockCore, mockStore := newMockStore()
 	runtime := NewTimerRuntimeBuilder("g1", mockStore).Build()
+	require.NotNil(t, runtime.fullRefreshTimerCounter)
+	runtime.fullRefreshTimerCounter = fullRefreshCounter
 	runtime.cond = &api.TimerCond{Namespace: api.NewOptionalVal("n1")}
 	runtime.initCtx()
 
@@ -459,18 +455,13 @@ func TestFullRefreshTimers(t *testing.T) {
 }
 
 func TestBatchHandlerWatchResponses(t *testing.T) {
-	origPartialRefreshCounter := metrics.TimerPartialRefreshCounter
-	defer func() {
-		metrics.TimerPartialRefreshCounter = origPartialRefreshCounter
-	}()
-
 	partialRefreshCounter := &mockutil.MetricsCounter{}
-	metrics.TimerPartialRefreshCounter = partialRefreshCounter
-
 	mockCore, mockStore := newMockStore()
 	runtime := NewTimerRuntimeBuilder("g1", mockStore).Build()
+	require.NotNil(t, runtime.partialRefreshTimerCounter)
 	runtime.cond = &api.TimerCond{Namespace: api.NewOptionalVal("n1")}
 	runtime.initCtx()
+	runtime.partialRefreshTimerCounter = partialRefreshCounter
 
 	timers := make([]*api.TimerRecord, 7)
 	for i := 0; i < len(timers); i++ {
