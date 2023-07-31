@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
+	"go.uber.org/zap"
 )
 
 // TiDBDriver implements IDriver.
@@ -250,6 +251,16 @@ func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (Resu
 		rs, err = session.HandleNonTransactionalDML(ctx, s, tc.Session)
 	} else {
 		rs, err = tc.Session.ExecuteStmt(ctx, stmt)
+		if err == nil && rs != nil && !tc.GetSessionVars().InRestrictedSQL {
+			rs = newLogWrapped(
+				rs,
+				50,
+				zap.Uint64("conn", tc.GetSessionVars().ConnectionID),
+				zap.Uint64("txnStartTS", tc.GetSessionVars().TxnCtx.StartTS),
+				zap.Uint64("forUpdateTS", tc.GetSessionVars().TxnCtx.GetForUpdateTS()),
+				zap.String("sql", stmt.OriginalText()),
+			)
+		}
 	}
 	if err != nil {
 		tc.Session.GetSessionVars().StmtCtx.AppendError(err)

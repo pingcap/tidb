@@ -2359,6 +2359,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 				}
 			}
 		}
+
 		return &execStmtResult{
 			RecordSet: rs,
 			sql:       s,
