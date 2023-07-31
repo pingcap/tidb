@@ -58,7 +58,7 @@ var (
 	_ backfillScheduler = &ingestBackfillScheduler{}
 )
 
-const maxBackfillWorkerSize = 16
+const maxBackfillWorkerSize = 256
 
 type txnBackfillScheduler struct {
 	ctx          context.Context
