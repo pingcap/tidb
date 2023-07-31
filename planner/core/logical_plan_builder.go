@@ -75,6 +75,8 @@ const (
 	TiDBMergeJoin = "tidb_smj"
 	// HintSMJ is hint enforce merge join.
 	HintSMJ = "merge_join"
+	// HintNoMergeJoin is the hint to enforce the query not to use merge join.
+	HintNoMergeJoin = "no_merge_join"
 
 	// TiDBBroadCastJoin indicates applying broadcast join by force.
 	TiDBBroadCastJoin = "tidb_bcj"
@@ -96,6 +98,12 @@ const (
 	HintINLHJ = "inl_hash_join"
 	// HintINLMJ is hint enforce index nested loop merge join.
 	HintINLMJ = "inl_merge_join"
+	// HintNoIndexJoin is the hint to enforce the query not to use index join.
+	HintNoIndexJoin = "no_index_join"
+	// HintNoIndexHashJoin is the hint to enforce the query not to use index hash join.
+	HintNoIndexHashJoin = "no_index_hash_join"
+	// HintNoIndexMergeJoin is the hint to enforce the query not to use index merge join.
+	HintNoIndexMergeJoin = "no_index_merge_join"
 	// TiDBHashJoin is hint enforce hash join.
 	TiDBHashJoin = "tidb_hj"
 	// HintNoHashJoin is the hint to enforce the query not to use hash join.
@@ -214,17 +222,21 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 	for _, col := range projSchema.Columns {
 		proj.Exprs = append(proj.Exprs, col)
 	}
+	distinctGbyColNames := make(types.NameSlice, 0, len(distinctGbyExprs))
 	distinctGbyCols := make([]*expression.Column, 0, len(distinctGbyExprs))
 	for _, expr := range distinctGbyExprs {
 		// distinct group expr has been resolved in resolveGby.
 		proj.Exprs = append(proj.Exprs, expr)
 
 		// add the newly appended names.
+		var name *types.FieldName
 		if c, ok := expr.(*expression.Column); ok {
-			names = append(names, buildExpandFieldName(c, names[p.Schema().ColumnIndex(c)], ""))
+			name = buildExpandFieldName(c, names[p.Schema().ColumnIndex(c)], "")
 		} else {
-			names = append(names, buildExpandFieldName(expr, nil, ""))
+			name = buildExpandFieldName(expr, nil, "")
 		}
+		names = append(names, name)
+		distinctGbyColNames = append(distinctGbyColNames, name)
 
 		// since we will change the nullability of source col, proj it with a new col id.
 		col := &expression.Column{
@@ -255,8 +267,9 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 	expandSchema := proj.Schema().Clone()
 	expression.AdjustNullabilityFromGroupingSets(rollupGroupingSets, expandSchema)
 	expand := LogicalExpand{
-		rollupGroupingSets: rollupGroupingSets,
-		distinctGroupByCol: distinctGbyCols,
+		rollupGroupingSets:  rollupGroupingSets,
+		distinctGroupByCol:  distinctGbyCols,
+		distinctGbyColNames: distinctGbyColNames,
 		// for resolving grouping function args.
 		distinctGbyExprs: distinctGbyExprs,
 		gbyExprsRefPos:   gbyExprsRefPos,
@@ -713,8 +726,8 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 		return
 	}
 
-	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
-	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
+	lhsAlias := extractTableAlias(p.children[0], p.SelectBlockOffset())
+	rhsAlias := extractTableAlias(p.children[1], p.SelectBlockOffset())
 	if hintInfo.ifPreferMergeJoin(lhsAlias) {
 		p.preferJoinType |= preferMergeJoin
 		p.leftPreferJoinType |= preferMergeJoin
@@ -722,6 +735,14 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if hintInfo.ifPreferMergeJoin(rhsAlias) {
 		p.preferJoinType |= preferMergeJoin
 		p.rightPreferJoinType |= preferMergeJoin
+	}
+	if hintInfo.ifPreferNoMergeJoin(lhsAlias) {
+		p.preferJoinType |= preferNoMergeJoin
+		p.leftPreferJoinType |= preferNoMergeJoin
+	}
+	if hintInfo.ifPreferNoMergeJoin(rhsAlias) {
+		p.preferJoinType |= preferNoMergeJoin
+		p.rightPreferJoinType |= preferNoMergeJoin
 	}
 	if hintInfo.ifPreferBroadcastJoin(lhsAlias) {
 		p.preferJoinType |= preferBCJoin
@@ -779,6 +800,30 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 		p.preferJoinType |= preferRightAsINLMJInner
 		p.rightPreferJoinType |= preferINLMJ
 	}
+	if hintInfo.ifPreferNoIndexJoin(lhsAlias) {
+		p.preferJoinType |= preferNoIndexJoin
+		p.leftPreferJoinType |= preferNoIndexJoin
+	}
+	if hintInfo.ifPreferNoIndexJoin(rhsAlias) {
+		p.preferJoinType |= preferNoIndexJoin
+		p.rightPreferJoinType |= preferNoIndexJoin
+	}
+	if hintInfo.ifPreferNoIndexHashJoin(lhsAlias) {
+		p.preferJoinType |= preferNoIndexHashJoin
+		p.leftPreferJoinType |= preferNoIndexHashJoin
+	}
+	if hintInfo.ifPreferNoIndexHashJoin(rhsAlias) {
+		p.preferJoinType |= preferNoIndexHashJoin
+		p.rightPreferJoinType |= preferNoIndexHashJoin
+	}
+	if hintInfo.ifPreferNoIndexMergeJoin(lhsAlias) {
+		p.preferJoinType |= preferNoIndexMergeJoin
+		p.leftPreferJoinType |= preferNoIndexMergeJoin
+	}
+	if hintInfo.ifPreferNoIndexMergeJoin(rhsAlias) {
+		p.preferJoinType |= preferNoIndexMergeJoin
+		p.rightPreferJoinType |= preferNoIndexMergeJoin
+	}
 	if hintInfo.ifPreferHJBuild(lhsAlias) {
 		p.preferJoinType |= preferLeftAsHJBuild
 		p.leftPreferJoinType |= preferHJBuild
@@ -796,11 +841,11 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 		p.rightPreferJoinType |= preferHJProbe
 	}
 	hasConflict := false
-	if !p.ctx.GetSessionVars().EnableAdvancedJoinHint || p.ctx.GetSessionVars().StmtCtx.StraightJoinOrder {
+	if !p.SCtx().GetSessionVars().EnableAdvancedJoinHint || p.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
 		if containDifferentJoinTypes(p.preferJoinType) {
 			hasConflict = true
 		}
-	} else if p.ctx.GetSessionVars().EnableAdvancedJoinHint {
+	} else if p.SCtx().GetSessionVars().EnableAdvancedJoinHint {
 		if containDifferentJoinTypes(p.leftPreferJoinType) || containDifferentJoinTypes(p.rightPreferJoinType) {
 			hasConflict = true
 		}
@@ -808,7 +853,7 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if hasConflict {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
-		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
 		p.preferJoinType = 0
 	}
 	// set the join order
@@ -878,7 +923,7 @@ func (p *LogicalJoin) setPreferredJoinType() {
 	if containDifferentJoinTypes(p.preferJoinType) {
 		errMsg := "Join hints conflict after join reorder phase, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
-		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
 		p.preferJoinType = 0
 	}
 }
@@ -905,11 +950,11 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		if ds.preferStoreType&preferTiKV == 0 {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
-				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
+				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
 			warning := ErrInternal.GenWithStack(errMsg)
-			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
 		} else {
-			ds.ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have set a hint to read table `" + hintTbl.tblName.O + "` from TiKV.")
+			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have set a hint to read table `" + hintTbl.tblName.O + "` from TiKV.")
 		}
 	}
 	if hintTbl := hintInfo.ifPreferTiFlash(alias); hintTbl != nil {
@@ -919,7 +964,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			errMsg := fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s.%s",
 				alias.dbName.L, alias.tblName.L)
 			warning := ErrInternal.GenWithStack(errMsg)
-			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
 			ds.preferStoreType = 0
 			return
 		}
@@ -933,9 +978,9 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		if ds.preferStoreType&preferTiFlash == 0 {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
-				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
+				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
 			warning := ErrInternal.GenWithStack(errMsg)
-			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
 	}
 }
@@ -1606,6 +1651,28 @@ func (b *PlanBuilder) replaceGroupingFunc(expr expression.Expression) expression
 	return expr.Traverse(traverseAction)
 }
 
+func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Schema, projNames []*types.FieldName, projExprs []expression.Expression) (*expression.Schema, []*types.FieldName, []expression.Expression) {
+	if b.currentBlockExpand == nil {
+		return projSchema, projNames, projExprs
+	}
+	m := make(map[int64]struct{}, len(b.currentBlockExpand.distinctGroupByCol))
+	for _, col := range projSchema.Columns {
+		m[col.UniqueID] = struct{}{}
+	}
+	for idx, gCol := range b.currentBlockExpand.distinctGroupByCol {
+		if _, ok := m[gCol.UniqueID]; ok {
+			// grouping col has been explicitly projected, not need to reserve it here for later order-by item (a+1)
+			// like: select a+1, b from t group by a+1 order by a+1.
+			continue
+		}
+		// project the grouping col out implicitly here. If it's not used by later OP, it will be cleaned in column pruner.
+		projSchema.Append(gCol)
+		projExprs = append(projExprs, gCol)
+		projNames = append(projNames, b.currentBlockExpand.distinctGbyColNames[idx])
+	}
+	return projSchema, projNames, projExprs
+}
+
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
 	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (LogicalPlan, []expression.Expression, int, error) {
@@ -1675,6 +1742,9 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		schema.Append(col)
 		newNames = append(newNames, name)
 	}
+	// implicitly project expand grouping set cols, if not used later, prune it out in logical column pruner.
+	schema, newNames, proj.Exprs = b.implicitProjectGroupingSetCols(schema, newNames, proj.Exprs)
+
 	proj.SetSchema(schema)
 	proj.names = newNames
 	if expandGenerateColumn {
@@ -2241,6 +2311,13 @@ func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byI
 		if err != nil {
 			return nil, err
 		}
+		// for case: select a+1, b, sum(b) from t group by a+1, b with rollup order by a+1.
+		// currently, we fail to resolve (a+1) in order-by to projection item (a+1), and adding
+		// another a' in the select fields instead, leading finally resolved expr is a'+1 here.
+		//
+		// Anyway, a and a' has the same column unique id, so we can do the replacement work like
+		// we did in build projection phase.
+		it = b.replaceGroupingFunc(it)
 
 		// check whether ORDER BY items show up in SELECT DISTINCT fields, see #12442
 		if hasDistinct && projExprs != nil {
@@ -3924,7 +4001,8 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
 	var (
 		sortMergeTables, inljTables, inlhjTables, inlmjTables, hashJoinTables, bcTables []hintTableInfo
-		noHashJoinTables                                                                []hintTableInfo
+		noIndexJoinTables, noIndexHashJoinTables, noIndexMergeJoinTables                []hintTableInfo
+		noHashJoinTables, noMergeJoinTables                                             []hintTableInfo
 		shuffleJoinTables                                                               []hintTableInfo
 		indexHintList, indexMergeHintList                                               []indexHintInfo
 		tiflashTables, tikvTables                                                       []hintTableInfo
@@ -3939,7 +4017,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
 		switch hint.HintName.L {
-		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ, HintNoHashJoin,
+		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ, HintNoHashJoin, HintNoMergeJoin,
 			TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge, HintLeading:
 			if len(hint.Tables) == 0 {
 				b.pushHintWithoutTableWarning(hint)
@@ -3964,6 +4042,14 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case HintNoHashJoin:
 			noHashJoinTables = append(noHashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+		case HintNoMergeJoin:
+			noMergeJoinTables = append(noMergeJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+		case HintNoIndexJoin:
+			noIndexJoinTables = append(noIndexJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+		case HintNoIndexHashJoin:
+			noIndexHashJoinTables = append(noIndexHashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+		case HintNoIndexMergeJoin:
+			noIndexMergeJoinTables = append(noIndexMergeJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case HintMPP1PhaseAgg:
 			aggHints.preferAggType |= preferMPP1PhaseAgg
 		case HintMPP2PhaseAgg:
@@ -4073,8 +4159,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		broadcastJoinTables:       bcTables,
 		shuffleJoinTables:         shuffleJoinTables,
 		indexNestedLoopJoinTables: indexNestedLoopJoinTables{inljTables, inlhjTables, inlmjTables},
+		noIndexJoinTables:         indexNestedLoopJoinTables{noIndexJoinTables, noIndexHashJoinTables, noIndexMergeJoinTables},
 		hashJoinTables:            hashJoinTables,
 		noHashJoinTables:          noHashJoinTables,
+		noMergeJoinTables:         noMergeJoinTables,
 		indexHintList:             indexHintList,
 		tiflashTables:             tiflashTables,
 		tikvTables:                tikvTables,
@@ -4524,7 +4612,7 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	tp.SetFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
 	return &expression.Column{
 		RetType:  tp,
-		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
 		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraHandleName),
 	}
@@ -4544,7 +4632,7 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 	}
 	pidCol := &expression.Column{
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
-		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraPhysTblID,
 		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPhysTblIdName),
 	}
@@ -5152,10 +5240,10 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 			changed       bool
 			err           error
 		)
-		check := ds.ctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.isForUpdateRead
-		check = check && ds.ctx.GetSessionVars().ConnectionID > 0
+		check := ds.SCtx().GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.isForUpdateRead
+		check = check && ds.SCtx().GetSessionVars().ConnectionID > 0
 		if check {
-			latestIndexes, changed, err = getLatestIndexInfo(ds.ctx, ds.table.Meta().ID, 0)
+			latestIndexes, changed, err = getLatestIndexInfo(ds.SCtx(), ds.table.Meta().ID, 0)
 			if err != nil {
 				ds.fdSet = fds
 				return fds
@@ -5593,7 +5681,7 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 
 	setIsInApplyForCTE(innerPlan, join.Schema())
 	ap := &LogicalApply{LogicalJoin: *join, NoDecorrelate: markNoDecorrelate}
-	ap.tp = plancodec.TypeApply
+	ap.SetTP(plancodec.TypeApply)
 	ap.self = ap
 	return ap, nil
 }
@@ -7320,6 +7408,10 @@ func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 // join types.
 func containDifferentJoinTypes(preferJoinType uint) bool {
 	preferJoinType &= ^preferNoHashJoin
+	preferJoinType &= ^preferNoMergeJoin
+	preferJoinType &= ^preferNoIndexJoin
+	preferJoinType &= ^preferNoIndexHashJoin
+	preferJoinType &= ^preferNoIndexMergeJoin
 
 	inlMask := preferRightAsINLJInner ^ preferLeftAsINLJInner
 	inlhjMask := preferRightAsINLHJInner ^ preferLeftAsINLHJInner
