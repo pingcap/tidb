@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 
 	"github.com/ngaut/sync2"
 	"github.com/pingcap/tidb/util/logutil"
@@ -52,14 +53,18 @@ type GCID struct {
 	Is64bits    bool
 }
 
-const (
+var (
+	// ServerIDBits32 is the number of bits of serverID for 32bits global connection ID.
+	ServerIDBits32 uint = 11
 	// MaxServerID32 is maximum serverID for 32bits global connection ID.
-	MaxServerID32 = 1<<11 - 1
+	MaxServerID32 uint64 = 1<<ServerIDBits32 - 1
 	// LocalConnIDBits32 is the number of bits of localConnID for 32bits global connection ID.
-	LocalConnIDBits32 = 20
+	LocalConnIDBits32 uint = 20
 	// MaxLocalConnID32 is maximum localConnID for 32bits global connection ID.
-	MaxLocalConnID32 = 1<<LocalConnIDBits32 - 1
+	MaxLocalConnID32 uint64 = 1<<LocalConnIDBits32 - 1
+)
 
+const (
 	// MaxServerID64 is maximum serverID for 64bits global connection ID.
 	MaxServerID64 = 1<<22 - 1
 	// LocalConnIDBits64 is the number of bits of localConnID for 64bits global connection ID.
@@ -309,4 +314,42 @@ func (g *GlobalAllocator) Release(connectionID uint64) {
 			logutil.BgLogger().Error("failed to release 32bits connection ID", zap.Uint64("connectionID", connectionID), zap.Uint64("localConnID", globalConnID.LocalConnID))
 		}
 	}
+}
+
+var (
+	ldflagIsGlobalKillTest  = "0"  // 1:Yes, otherwise:No.
+	ldflagServerIDBits32    = "11" // Bits of ServerID32.
+	ldflagLocalConnIDBits32 = "20" // Bits of LocalConnID32.
+)
+
+func initByLDFlagsForGlobalKill() {
+	if ldflagIsGlobalKillTest == "1" {
+		var (
+			i   int
+			err error
+		)
+
+		if i, err = strconv.Atoi(ldflagServerIDBits32); err != nil {
+			panic("invalid ldflagServerIDBits32")
+		}
+		ServerIDBits32 = uint(i)
+		MaxServerID32 = 1<<ServerIDBits32 - 1
+
+		if i, err = strconv.Atoi(ldflagLocalConnIDBits32); err != nil {
+			panic("invalid ldflagLocalConnIDBits32")
+		}
+		LocalConnIDBits32 = uint(i)
+		MaxLocalConnID32 = 1<<LocalConnIDBits32 - 1
+
+		logutil.BgLogger().Info("global_kill_test is enabled",
+			zap.Uint("ServerIDBits32", ServerIDBits32),
+			zap.Uint64("MaxServerID32", MaxServerID32),
+			zap.Uint("LocalConnIDBits32", LocalConnIDBits32),
+			zap.Uint64("MaxLocalConnID32", MaxLocalConnID32),
+		)
+	}
+}
+
+func init() {
+	initByLDFlagsForGlobalKill()
 }

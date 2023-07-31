@@ -34,6 +34,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 )
 
 var (
@@ -95,10 +96,32 @@ func createGlobalKillSuite(t *testing.T, enable32bits bool) *GlobalKillSuite {
 	return s
 }
 
+// Conn is wrapper of DB connection.
+type Conn struct {
+	db     *sql.DB
+	conn   *sql.Conn
+	connID uint64
+}
+
+func (c *Conn) Close() {
+	c.conn.Close()
+	c.db.Close()
+}
+
+func (c *Conn) mustBe32(t *testing.T) {
+	require.Lessf(t, c.connID, uint64(1<<32), "connID %x", c.connID)
+}
+
+func (c *Conn) mustBe64(t *testing.T) {
+	require.Greaterf(t, c.connID, uint64(1<<32), "connID %x", c.connID)
+}
+
 func (s *GlobalKillSuite) connectPD() (cli *clientv3.Client, err error) {
 	etcdLogCfg := zap.NewProductionConfig()
 	etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
 	wait := 250 * time.Millisecond
+	backoffConfig := backoff.DefaultConfig
+	backoffConfig.MaxDelay = 3 * time.Second
 	for i := 0; i < 5; i++ {
 		log.Info(fmt.Sprintf("trying to connect pd, attempt %d", i))
 		cli, err = clientv3.New(clientv3.Config{
@@ -107,7 +130,9 @@ func (s *GlobalKillSuite) connectPD() (cli *clientv3.Client, err error) {
 			AutoSyncInterval: 30 * time.Second,
 			DialTimeout:      5 * time.Second,
 			DialOptions: []grpc.DialOption{
-				grpc.WithBackoffMaxDelay(time.Second * 3),
+				grpc.WithConnectParams(grpc.ConnectParams{
+					Backoff: backoffConfig,
+				}),
 			},
 		})
 		if err == nil {
@@ -179,22 +204,32 @@ func (s *GlobalKillSuite) startCluster() (err error) {
 }
 
 func (s *GlobalKillSuite) stopPD() (err error) {
+	if s.pdProc == nil {
+		log.Info("PD already killed")
+		return nil
+	}
 	if err = s.pdProc.Process.Kill(); err != nil {
 		return errors.Trace(err)
 	}
 	if err = s.pdProc.Wait(); err != nil && err.Error() != "signal: killed" {
 		return errors.Trace(err)
 	}
+	s.pdProc = nil
 	return nil
 }
 
 func (s *GlobalKillSuite) stopTiKV() (err error) {
+	if s.tikvProc == nil {
+		log.Info("TiKV already killed")
+		return nil
+	}
 	if err = s.tikvProc.Process.Kill(); err != nil {
 		return errors.Trace(err)
 	}
 	if err = s.tikvProc.Wait(); err != nil && err.Error() != "signal: killed" {
 		return errors.Trace(err)
 	}
+	s.tikvProc = nil
 	return nil
 }
 
@@ -252,6 +287,12 @@ func (s *GlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath strin
 	}
 	time.Sleep(500 * time.Millisecond)
 	return cmd, nil
+}
+
+func (s *GlobalKillSuite) mustStartTiDBWithPD(t *testing.T, port int, statusPort int, pdPath string) *exec.Cmd {
+	cmd, err := s.startTiDBWithPD(port, statusPort, pdPath)
+	require.Nil(t, err)
+	return cmd
 }
 
 func (s *GlobalKillSuite) stopService(name string, cmd *exec.Cmd, graceful bool) (err error) {
@@ -334,6 +375,23 @@ func (s *GlobalKillSuite) connectTiDB(port int) (db *sql.DB, err error) {
 
 	log.Info("connect to server ok", zap.String("addr", addr))
 	return db, nil
+}
+
+func (s *GlobalKillSuite) mustConnectTiDB(t *testing.T, port int) Conn {
+	ctx := context.TODO()
+
+	db, err := s.connectTiDB(port)
+	require.Nil(t, err)
+
+	conn, err := db.Conn(ctx)
+	require.NoError(t, err)
+
+	var connID uint64
+	err = conn.QueryRowContext(ctx, "SELECT CONNECTION_ID()").Scan(&connID)
+	require.NoError(t, err)
+
+	log.Info("connect to server ok", zap.Int("port", port), zap.Uint64("connID", connID))
+	return Conn{db, conn, connID}
 }
 
 type sleepResult struct {
@@ -676,4 +734,114 @@ func doTestLostConnection(t *testing.T, enable32Bits bool) {
 	}
 }
 
-// TODO: test for upgrade 32 -> 64 & downgrade 64 -> 32
+func TestServerIDUpgradeAndDowngrade(t *testing.T) {
+	s := createGlobalKillSuite(t, true)
+	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
+
+	connect := func(idx int) Conn {
+		return s.mustConnectTiDB(t, *tidbStartPort+idx)
+	}
+
+	// MaxTiDB32 is determined by `github.com/pingcap/tidb/util/globalconn.ldflagServerIDBits32`
+	// See the ldflags in `Makefile`.
+	// Also see `Domain.proposeServerID`.
+	const MaxTiDB32 = 2 // (3^2 -1) x 0.9
+	const MaxTiDB64 = 2
+
+	// Startup MAX_TIDB_32 number of TiDBs.
+	tidbs := make([]*exec.Cmd, MaxTiDB32*2)
+	defer func() {
+		for i := range tidbs {
+			if tidbs[i] != nil {
+				s.stopService(fmt.Sprintf("tidb%v", i), tidbs[i], true)
+			}
+		}
+	}()
+	{
+		for i := 0; i < MaxTiDB32; i++ {
+			tidbs[i] = s.mustStartTiDBWithPD(t, *tidbStartPort+i, *tidbStatusPort+i, *pdClientPath)
+		}
+		for i := 0; i < MaxTiDB32; i++ {
+			conn := connect(i)
+			conn.mustBe32(t)
+			conn.Close()
+		}
+	}
+
+	// Upgrade to 64 bits due to ServerID used up.
+	{
+		for i := MaxTiDB32; i < MaxTiDB32+MaxTiDB64; i++ {
+			tidbs[i] = s.mustStartTiDBWithPD(t, *tidbStartPort+i, *tidbStatusPort+i, *pdClientPath)
+		}
+		for i := MaxTiDB32; i < MaxTiDB32+MaxTiDB64; i++ {
+			conn := connect(i)
+			conn.mustBe64(t)
+			conn.Close()
+		}
+	}
+
+	// Close TiDBs to downgrade to 32 bits.
+	{
+		for i := MaxTiDB32 / 2; i < MaxTiDB32+MaxTiDB64; i++ {
+			s.stopService(fmt.Sprintf("tidb%v", i), tidbs[i], true)
+			tidbs[i] = nil
+		}
+
+		dbIdx := MaxTiDB32 + MaxTiDB64
+		tidb := s.mustStartTiDBWithPD(t, *tidbStartPort+dbIdx, *tidbStatusPort+dbIdx, *pdClientPath)
+		defer s.stopService(fmt.Sprintf("tidb%v", dbIdx), tidb, true)
+		conn := connect(dbIdx)
+		conn.mustBe32(t)
+		conn.Close()
+	}
+}
+
+func TestConnIDUpgradeAndDowngrade(t *testing.T) {
+	s := createGlobalKillSuite(t, true)
+	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
+
+	connect := func() Conn {
+		return s.mustConnectTiDB(t, *tidbStartPort)
+	}
+
+	tidb := s.mustStartTiDBWithPD(t, *tidbStartPort, *tidbStatusPort, *pdClientPath)
+	defer s.stopService("tidb0", tidb, true)
+
+	// MaxConn32 is determined by `github.com/pingcap/tidb/util/globalconn.ldflagLocalConnIDBits32`
+	// See the ldflags in `Makefile`.
+	// Also see `LockFreeCircularPool.Cap`.
+	const MaxConn32 = 1<<4 - 1
+
+	conns32 := make(map[uint64]Conn)
+	defer func() {
+		for _, conn := range conns32 {
+			conn.Close()
+		}
+	}()
+	// 32 bits connection ID
+	for i := 0; i < MaxConn32; i++ {
+		conn := connect()
+		require.Lessf(t, conn.connID, uint64(1<<32), "connID %x", conn.connID)
+		conns32[conn.connID] = conn
+	}
+	// 32bits pool is full, should upgrade to 64 bits
+	for i := MaxConn32; i < MaxConn32*2; i++ {
+		conn := connect()
+		conn.mustBe64(t)
+		conn.Close()
+	}
+
+	// Release more than half of 32 bits connections, should downgrade to 32 bits
+	count := MaxConn32/2 + 1
+	for connID, conn := range conns32 {
+		conn.Close()
+		delete(conns32, connID)
+		count--
+		if count == 0 {
+			break
+		}
+	}
+	conn := connect()
+	conn.mustBe32(t)
+	conn.Close()
+}
