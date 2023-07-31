@@ -1541,7 +1541,7 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 		columnAdded = true
 	}
 
-	// For the global index of the partitioned table, we also need the PhysicalTblID to indentify the rows from each partition.
+	// For the global index of the partitioned table, we also need the PhysicalTblID to identify the rows from each partition.
 	if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		var newColAdded bool
 		ts.Columns, ts.schema, newColAdded = AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.schema)

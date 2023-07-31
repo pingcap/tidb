@@ -1202,6 +1202,7 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 		}
 		if pushedLimit != nil {
 			fhsLen := uint64(len(fhs))
+			// The number of handles is less than the offset, discard all handles.
 			if fhsLen <= pushedLimit.Offset {
 				pushedLimit.Offset -= fhsLen
 				continue
@@ -1210,6 +1211,7 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 			pushedLimit.Offset = 0
 
 			fhsLen = uint64(len(fhs))
+			// The number of handles is greater than the limit, only keep limit count.
 			if fhsLen > pushedLimit.Count {
 				fhs = fhs[:pushedLimit.Count]
 			}
