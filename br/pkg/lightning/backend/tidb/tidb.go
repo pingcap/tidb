@@ -795,7 +795,8 @@ func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableN
 	var autoIDInfos []*TableAutoIDInfo
 	for rows.Next() {
 		var (
-			dbName, tblName, columnName, nextID, idType string
+			dbName, tblName, columnName, idType string
+			nextID                              uint64
 		)
 		columns, err := rows.Columns()
 		if err != nil {
@@ -819,14 +820,9 @@ func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableN
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		var nextIDUint uint64
-		nextIDUint, err = strconv.ParseUint(nextID, 0, 64)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		autoIDInfos = append(autoIDInfos, &TableAutoIDInfo{
 			Column: columnName,
-			NextID: nextIDUint,
+			NextID: nextID,
 			Type:   idType,
 		})
 	}
