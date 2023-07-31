@@ -969,14 +969,17 @@ const (
 	version169 = 169
 	version170 = 170
 	// version 171
+	//   keep the tidb_server length same as instance in other tables.
+	version171 = 171
+	// version 172
 	//   create table `mysql.tidb_runaway_watch` and table `mysql.tidb_runaway_watch_done`
 	//   to persist runaway watch and deletion of runaway watch at 7.3.
-	version171 = 171
+	version172 = 172
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version171
+var currentBootstrapVersion int64 = version172
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1116,6 +1119,7 @@ var (
 		upgradeToVer169,
 		upgradeToVer170,
 		upgradeToVer171,
+		upgradeToVer172,
 	}
 )
 
@@ -2773,10 +2777,16 @@ func upgradeToVer171(s Session, ver int64) {
 	if ver >= version171 {
 		return
 	}
+	mustExecute(s, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `tidb_server` `tidb_server` varchar(512)")
+}
+
+func upgradeToVer172(s Session, ver int64) {
+	if ver >= version172 {
+		return
+	}
 	mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_quarantined_watch")
 	mustExecute(s, CreateRunawayWatchTable)
 	mustExecute(s, CreateDoneRunawayWatchTable)
-	mustExecute(s, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `tidb_server` `tidb_server` varchar(512)")
 }
 
 func writeOOMAction(s Session) {
