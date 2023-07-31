@@ -68,3 +68,40 @@ func (r *SimpleRecordSet) Close() error {
 	r.idx = 0
 	return nil
 }
+
+type CopiedRecordSet struct {
+	Records      []chunk.Row
+	ResultFields []*ast.ResultField
+	idx          int
+}
+
+func (rs *CopiedRecordSet) Fields() []*ast.ResultField {
+	return rs.ResultFields
+}
+
+func (rs *CopiedRecordSet) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if rs.idx >= len(rs.Records) {
+		return nil
+	}
+	for i := 0; i < req.Capacity() && rs.idx < len(rs.Records); i++ {
+		req.AppendRow(rs.Records[rs.idx])
+		rs.idx++
+	}
+	return nil
+}
+
+func (rs *CopiedRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
+	fields := make([]*types.FieldType, 0, len(rs.ResultFields))
+	for _, field := range rs.ResultFields {
+		fields = append(fields, &field.Column.FieldType)
+	}
+	if alloc != nil {
+		return alloc.Alloc(fields, 1, 32)
+	}
+	return chunk.New(fields, 1, 32)
+}
+
+func (rs *CopiedRecordSet) Close() error {
+	return nil
+}
