@@ -150,7 +150,7 @@ func NewRegionHandler(tool *handler.TikvHandlerTool) *RegionHandler {
 	return &RegionHandler{tool}
 }
 
-// *TableHandler is the handler for list table's regions.
+// TableHandler is the handler for list table's regions.
 type TableHandler struct {
 	*handler.TikvHandlerTool
 	op string
@@ -629,6 +629,7 @@ func (h BinlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	writeData(w, binloginfo.GetBinlogStatus())
 }
 
+// TableFlashReplicaInfo is the replica information of a table.
 type TableFlashReplicaInfo struct {
 	// Modifying the field name needs to negotiate with TiFlash colleague.
 	ID             int64    `json:"id"`
@@ -638,6 +639,7 @@ type TableFlashReplicaInfo struct {
 	HighPriority   bool     `json:"high_priority"`
 }
 
+// ServeHTTP implements the HTTPHandler interface.
 func (h FlashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method == http.MethodPost {
 		h.handleStatusReport(w, req)
@@ -800,6 +802,7 @@ func (h FlashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		zap.Error(err))
 }
 
+// SchemaTableStorage is the schema table storage info.
 type SchemaTableStorage struct {
 	TableSchema   string `json:"table_schema"`
 	TableName     string `json:"table_name"`
