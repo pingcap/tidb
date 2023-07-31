@@ -4631,6 +4631,9 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 
 		ds := make([]*DataSource, 0)
 		ds = getDataSource(ds, plan.(LogicalPlan))
+		for _, datasource := range ds {
+			v.DataSourceNames = append(v.DataSourceNames, datasource.tableInfo.Name.L)
+		}
 		for _, name := range ds[0].OutputNames() {
 			v.DemoFlinkTSchemaCols = append(v.DemoFlinkTSchemaCols, name.ColNameString())
 		}

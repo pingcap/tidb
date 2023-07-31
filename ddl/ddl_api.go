@@ -161,8 +161,9 @@ func (d *ddl) CreateETL(ctx sessionctx.Context, s *ast.CreateETLStmt) error {
 	templateFilePath := fmt.Sprintf("/tmp/%s.template", etlJobID)
 	writeTemplateFile(templateFilePath, sb)
 	logutil.BgLogger().Info("template file and etlJobID", zap.String("templateFilePath", templateFilePath), zap.String("etlJobID", etlJobID))
+
 	// hard code the table name
-	sinkTaskDesc, err := startSinkTask(etlJobID, s.Table.Schema.L, "t", templateFilePath)
+	sinkTaskDesc, err := startSinkTask(etlJobID, s.Table.Schema.L, s.DataSourceNames[0], templateFilePath)
 	if err != nil {
 		return err
 	}

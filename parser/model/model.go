@@ -535,6 +535,7 @@ type TableInfo struct {
 	DemoFlinkTIncSourceTableSchemaFieldTypes []*types.FieldType
 
 	ETLPKColNames                 []string
+	ETLUnderlyingTableNames []string
 }
 
 func (t *TableInfo) GetProperty(propName string) (propValue []byte) {
