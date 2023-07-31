@@ -1033,6 +1033,8 @@ func TestCreateTableWithListPartition(t *testing.T) {
 		"create table t (a datetime) partition by list (to_seconds(a)) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
 		"create table t (a int, b int generated always as (a+1) virtual) partition by list (b + 1) (partition p0 values in (1));",
 		"create table t(a binary) partition by list columns (a) (partition p0 values in (X'0C'));",
+		"create table t (a varchar(39)) partition by list columns (a) (partition pNull values in (null), partition pEmptyString values in (''))",
+		"create table t (a varchar(39), b varchar(44)) partition by list columns (a) (partition pNull values in (('1',null),('2','NULL'),('','1')), partition pEmptyString values in (('2',''),('1',''),(NULL,'')",
 		generatePartitionTableByNum(mysql.PartitionCountLimit),
 	}
 
