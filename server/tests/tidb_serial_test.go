@@ -67,7 +67,7 @@ func TestLoadData1(t *testing.T) {
 	ts.RunTestLoadDataWithColumnList(t, ts.server)
 	ts.RunTestLoadData(t, ts.server)
 	ts.RunTestLoadDataWithSelectIntoOutfile(t)
-	ts.RunTestLoadDataForSlowLog(t, ts.server)
+	ts.RunTestLoadDataForSlowLog(t)
 }
 
 func TestConfigDefaultValue(t *testing.T) {

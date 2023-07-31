@@ -42,9 +42,9 @@ type configOverrider func(*mysql.Config)
 // TestServerClient config server connect parameters and provider several
 // method to communicate with server and run tests
 type TestServerClient struct {
+	StatusScheme string
 	Port         uint
 	StatusPort   uint
-	StatusScheme string
 }
 
 // NewTestServerClient return a TestServerClient with unique address
@@ -389,7 +389,7 @@ func (cli *TestServerClient) RunTestLoadDataWithSelectIntoOutfile(t *testing.T) 
 	})
 }
 
-func (cli *TestServerClient) RunTestLoadDataForSlowLog(t *testing.T, server *server.Server) {
+func (cli *TestServerClient) RunTestLoadDataForSlowLog(t *testing.T) {
 	t.Skip("unstable test")
 	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
@@ -451,7 +451,7 @@ func (cli *TestServerClient) RunTestLoadDataForSlowLog(t *testing.T, server *ser
 	})
 }
 
-func (cli *TestServerClient) prepareLoadDataFile(t *testing.T, fp *os.File, rows ...string) {
+func (*TestServerClient) prepareLoadDataFile(t *testing.T, fp *os.File, rows ...string) {
 	err := fp.Truncate(0)
 	require.NoError(t, err)
 	_, err = fp.Seek(0, 0)
@@ -803,7 +803,7 @@ func (cli *TestServerClient) RunTestLoadDataForListColumnPartition2(t *testing.T
 	})
 }
 
-func (cli *TestServerClient) Rows(t *testing.T, rows *sql.Rows) []string {
+func (*TestServerClient) Rows(t *testing.T, rows *sql.Rows) []string {
 	buf := bytes.NewBuffer(nil)
 	result := make([]string, 0, 2)
 	for rows.Next() {
@@ -825,7 +825,7 @@ func (cli *TestServerClient) Rows(t *testing.T, rows *sql.Rows) []string {
 			if raw == nil {
 				buf.WriteString("<nil>")
 			} else {
-				buf.WriteString(string(raw))
+				buf.Write(raw)
 			}
 		}
 		result = append(result, buf.String())

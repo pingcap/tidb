@@ -289,6 +289,7 @@
       "tools/check/xprog.go:": "ignore tools/check code",
       "cmd/explaintest/main.go": "ignore cmd/explaintest code",
       "GOROOT/": "ignore code",
+      "server/internal/testserverclient/server_client.go": "ignore server_client code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
