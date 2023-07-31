@@ -16,10 +16,13 @@ package sqlexec
 
 import (
 	"context"
+	"strings"
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // SimpleRecordSet is a simple implementation of RecordSet. All values are known when creating SimpleRecordSet.
@@ -69,39 +72,57 @@ func (r *SimpleRecordSet) Close() error {
 	return nil
 }
 
-type CopiedRecordSet struct {
-	Records      []chunk.Row
-	ResultFields []*ast.ResultField
-	idx          int
+// NewLogWrapped creates a RecordSet that logs the result of the underlying RecordSet.
+func NewLogWrapped(rs RecordSet, maxCachedRows int, fields ...zap.Field) RecordSet {
+	newRs := &recordSetLoggerWrapper{
+		rs:            rs,
+		maxCachedRows: maxCachedRows,
+		cachedRows:    make([]string, 0),
+		zapFields:     fields,
+	}
+	newRs.fieldTypes = make([]*types.FieldType, len(rs.Fields()))
+	for i, field := range rs.Fields() {
+		newRs.fieldTypes[i] = &field.Column.FieldType
+	}
+	return newRs
 }
 
-func (rs *CopiedRecordSet) Fields() []*ast.ResultField {
-	return rs.ResultFields
+type recordSetLoggerWrapper struct {
+	rs            RecordSet
+	cachedRows    []string
+	maxCachedRows int
+	zapFields     []zap.Field
+	fieldTypes    []*types.FieldType
 }
 
-func (rs *CopiedRecordSet) Next(ctx context.Context, req *chunk.Chunk) error {
+func (r *recordSetLoggerWrapper) Fields() []*ast.ResultField {
+	return r.rs.Fields()
+}
+
+func (r *recordSetLoggerWrapper) Next(ctx context.Context, req *chunk.Chunk) error {
+	chk := r.rs.NewChunk(nil)
+	err := r.rs.Next(ctx, chk)
+	if err != nil {
+		return err
+	}
 	req.Reset()
-	if rs.idx >= len(rs.Records) {
-		return nil
-	}
-	for i := 0; i < req.Capacity() && rs.idx < len(rs.Records); i++ {
-		req.AppendRow(rs.Records[rs.idx])
-		rs.idx++
+	for i := 0; i < chk.NumRows(); i++ {
+		row := chk.GetRow(i)
+		req.AppendRow(row)
+		r.cachedRows = append(r.cachedRows, row.ToString(r.fieldTypes))
 	}
 	return nil
 }
 
-func (rs *CopiedRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
-	fields := make([]*types.FieldType, 0, len(rs.ResultFields))
-	for _, field := range rs.ResultFields {
-		fields = append(fields, &field.Column.FieldType)
-	}
-	if alloc != nil {
-		return alloc.Alloc(fields, 1, 32)
-	}
-	return chunk.New(fields, 1, 32)
+func (r *recordSetLoggerWrapper) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
+	return r.rs.NewChunk(alloc)
 }
 
-func (rs *CopiedRecordSet) Close() error {
-	return nil
+func (r *recordSetLoggerWrapper) Close() error {
+	r.zapFields = append(r.zapFields, zap.String("rows", "("+strings.Join(r.cachedRows, ");\n (")+")"))
+	logutil.BgLogger().Info(
+		"statement result",
+		r.zapFields...,
+	)
+	return r.rs.Close()
 }

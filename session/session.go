@@ -86,7 +86,6 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -2237,49 +2236,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	return recordSet, nil
 }
 
-func copyAndPrintRecordSet(ctx context.Context, rs sqlexec.RecordSet, vars *variable.SessionVars,
-	sql string) (sqlexec.RecordSet, error) {
-	fieldTypes := make([]*types.FieldType, len(rs.Fields()))
-	for i, field := range rs.Fields() {
-		fieldTypes[i] = &field.Column.FieldType
-	}
-
-	chk := rs.NewChunk(nil)
-	var records []chunk.Row
-	var resultRows []string
-	for {
-		if err := rs.Next(ctx, chk); err != nil {
-			return nil, err
-		}
-		if chk.NumRows() == 0 {
-			break
-		}
-		// Copy and collect rows
-		for i := 0; i < chk.NumRows(); i++ {
-			row := chk.GetRow(i)
-			records = append(records, row)
-			resultRows = append(resultRows, row.ToString(fieldTypes))
-		}
-		chk = chunk.Renew(chk, 32)
-	}
-
-	// Print all rows
-	logutil.Logger(ctx).Info("statement returned result",
-		zap.Uint64("conn", vars.ConnectionID),
-		zap.String("SQL", sql),
-		zap.Uint64("start ts", vars.TxnCtx.StartTS),
-		zap.Uint64("for update ts", vars.TxnCtx.GetForUpdateTS()),
-		zap.String("rows", "("+strings.Join(resultRows, ");\n (")+")"),
-	)
-
-	copiedRs := &sqlexec.CopiedRecordSet{
-		Records:      records,
-		ResultFields: rs.Fields(),
-	}
-	rs.Close()
-	return copiedRs, nil
-}
-
 func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.StmtNode) error {
 	if s.sessionVars.RetryInfo.Retrying {
 		return sessiontxn.GetTxnManager(s).OnStmtRetry(ctx)
@@ -2404,17 +2360,20 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			}
 		}
 
-		copiedRs := rs
+		loggedRs := rs
 		if !se.isInternal() {
-			// print the recordset and return a copy of it
-			copiedRs, err = copyAndPrintRecordSet(ctx, rs, se.GetSessionVars(), s.OriginText())
-			if err != nil {
-				return nil, err
-			}
+			loggedRs = sqlexec.NewLogWrapped(
+				rs,
+				5,
+				zap.Uint64("conn", se.sessionVars.ConnectionID),
+				zap.Uint64("start ts", origTxnCtx.StartTS),
+				zap.Uint64("for update ts", origTxnCtx.GetForUpdateTS()),
+				zap.String("sql", s.OriginText()),
+			)
 		}
 
 		return &execStmtResult{
-			RecordSet: copiedRs,
+			RecordSet: loggedRs,
 			sql:       s,
 			se:        se,
 		}, err
