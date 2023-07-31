@@ -89,16 +89,16 @@ func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.D
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
 
-	server, err := server.NewServer(cfg, driver)
-	server.SetDomain(dom)
+	srv, err := server.NewServer(cfg, driver)
+	srv.SetDomain(dom)
 	require.NoError(t, err)
 	go func() {
-		err := server.Run()
+		err := srv.Run()
 		require.NoError(t, err)
 	}()
 
-	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
+	client.Port = testutil.GetPortFromTCPAddr(srv.ListenAddr())
+	client.StatusPort = testutil.GetPortFromTCPAddr(srv.StatusListenerAddr())
 	client.WaitUntilServerOnline()
 	return
 }
