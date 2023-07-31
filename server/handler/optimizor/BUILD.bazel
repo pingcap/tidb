@@ -41,10 +41,10 @@ go_test(
         "plan_replayer_test.go",
         "statistics_handler_test.go",
     ],
-    embed = [":optimizor"],
     flaky = True,
     shard_count = 4,
     deps = [
+        ":optimizor",
         "//config",
         "//domain",
         "//kv",
