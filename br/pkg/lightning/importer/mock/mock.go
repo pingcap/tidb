@@ -325,3 +325,7 @@ func (t *TargetInfo) IsTableEmpty(_ context.Context, schemaName string, tableNam
 func (*TargetInfo) CheckVersionRequirements(_ context.Context) error {
 	return nil
 }
+
+// Close closes the mock target.
+// It implements the TargetInfoGetter interface.
+func (*TargetInfo) Close() {}

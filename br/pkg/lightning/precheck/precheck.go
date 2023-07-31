@@ -85,4 +85,5 @@ type Checker interface {
 	// If the check is skipped, the returned `CheckResult` is nil
 	Check(ctx context.Context) (*CheckResult, error)
 	GetCheckItemID() CheckItemID
+	// Close() error
 }

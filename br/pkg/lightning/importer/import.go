@@ -426,6 +426,7 @@ func NewImportControllerWithPauser(
 		db:      db,
 		tls:     tls,
 		backend: wrapper,
+		pdCli:   pdCli,
 	}
 	preInfoGetter, err := NewPreImportInfoGetter(
 		cfg,
@@ -493,6 +494,9 @@ func NewImportControllerWithPauser(
 func (rc *Controller) Close() {
 	rc.backend.Close()
 	_ = rc.db.Close()
+	if rc.pdCli != nil {
+		rc.pdCli.Close()
+	}
 }
 
 // Run starts the restore task.

@@ -72,6 +72,18 @@ func (m *MockTiKVModeSwitcher) EXPECT() *MockTiKVModeSwitcherMockRecorder {
 	return m.recorder
 }
 
+// Close mocks base method.
+func (m *MockTiKVModeSwitcher) Close() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Close")
+}
+
+// Close indicates an expected call of Close.
+func (mr *MockTiKVModeSwitcherMockRecorder) Close() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockTiKVModeSwitcher)(nil).Close))
+}
+
 // ToImportMode mocks base method.
 func (m *MockTiKVModeSwitcher) ToImportMode(arg0 context.Context) {
 	m.ctrl.T.Helper()

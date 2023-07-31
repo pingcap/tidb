@@ -30,6 +30,8 @@ type TiKVModeSwitcher interface {
 	ToImportMode(ctx context.Context)
 	// ToNormalMode switches all TiKV nodes to Normal mode.
 	ToNormalMode(ctx context.Context)
+	// Close closes the switcher's pd client.
+	Close()
 }
 
 // TiKVModeSwitcher is used to switch TiKV nodes between Import and Normal mode.
@@ -54,6 +56,13 @@ func (rc *switcher) ToImportMode(ctx context.Context) {
 
 func (rc *switcher) ToNormalMode(ctx context.Context) {
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal)
+}
+
+func (rc *switcher) Close() {
+	if rc.pdCli != nil {
+		rc.pdCli.Close()
+		rc.pdCli = nil
+	}
 }
 
 func (rc *switcher) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
