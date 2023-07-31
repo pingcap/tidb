@@ -2776,6 +2776,7 @@ func upgradeToVer171(s Session, ver int64) {
 	mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_quarantined_watch")
 	mustExecute(s, CreateRunawayWatchTable)
 	mustExecute(s, CreateDoneRunawayWatchTable)
+	mustExecute(s, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `tidb_server` `tidb_server` varchar(512)")
 }
 
 func writeOOMAction(s Session) {
