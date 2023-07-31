@@ -557,16 +557,18 @@ func TestDeadlocksTable(t *testing.T) {
 }
 
 func TestTidbKvReadTimeout(t *testing.T) {
+	if *testkit.WithTiKV != "" {
+		t.Skip("skip test since it's only work for unistore")
+	}
 	store := testkit.CreateMockStore(t)
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int)")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCTimeout", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCTimeout"))
 	}()
 	// Test for point_get request
-	tk.MustExec("create table t (a int primary key, b int)")
 	rows := tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where a = 1").Rows()
 	require.Len(t, rows, 1)
 	explain := fmt.Sprintf("%v", rows[0])
