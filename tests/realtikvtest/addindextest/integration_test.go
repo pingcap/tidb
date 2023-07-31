@@ -477,11 +477,7 @@ func TestAddIndexBackfillLostUpdate(t *testing.T) {
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
-<<<<<<< HEAD
-	callback := newTestCallBack(t, dom)
-=======
-	hook := &callback.TestDDLCallback{}
->>>>>>> 7f016ce2f20 (ddl: create temp dir automatically for adding index (#45457))
+	hook := newTestCallBack(t, dom)
 	var runDML bool
 	hook.OnJobRunAfterExported = func(job *model.Job) {
 		if t.Failed() || runDML {
