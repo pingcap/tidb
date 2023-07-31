@@ -56,7 +56,9 @@ import (
 )
 
 var (
-	_                           exec.Executor = &IndexMergeReaderExecutor{}
+	_ exec.Executor = &IndexMergeReaderExecutor{}
+
+	// IndexMergeCancelFuncForTest is used just for test
 	IndexMergeCancelFuncForTest func()
 )
 
