@@ -120,6 +120,7 @@ func NewSchemaStorageHandler(tool *handler.TikvHandlerTool) *SchemaStorageHandle
 	return &SchemaStorageHandler{tool}
 }
 
+// DBTableHandler is the handler for list table's regions.
 type DBTableHandler struct {
 	*handler.TikvHandlerTool
 }
@@ -1048,9 +1049,9 @@ func (h *TableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	switch h.op {
 	case OpTableRegions:
-		h.handleRegionRequest(schema, tableVal, w, req)
+		h.handleRegionRequest(tableVal, w)
 	case OpTableRanges:
-		h.handleRangeRequest(schema, tableVal, w, req)
+		h.handleRangeRequest(tableVal, w)
 	case OpTableDiskUsage:
 		h.handleDiskUsageRequest(tableVal, w)
 	case OpTableScatter:
@@ -1060,14 +1061,14 @@ func (h *TableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			writeError(w, err)
 			return
 		}
-		h.handleScatterTableRequest(schema, ptbl, w, req)
+		h.handleScatterTableRequest(ptbl, w, req)
 	case OpStopTableScatter:
 		ptbl, err := h.GetPartition(tableVal, partitionName)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		h.handleStopScatterTableRequest(schema, ptbl, w, req)
+		h.handleStopScatterTableRequest(ptbl, w)
 	default:
 		writeError(w, errors.New("method not found"))
 	}
@@ -1218,7 +1219,7 @@ func (h *TableHandler) deleteScatterSchedule(name string) error {
 	return nil
 }
 
-func (h *TableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, tbl table.PhysicalTable, w http.ResponseWriter, req *http.Request) {
+func (h *TableHandler) handleScatterTableRequest(tbl table.PhysicalTable, w http.ResponseWriter, req *http.Request) {
 	// for record
 	tableID := tbl.GetPhysicalID()
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(tableID)
@@ -1247,7 +1248,7 @@ func (h *TableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, t
 	writeData(w, "success!")
 }
 
-func (h *TableHandler) handleStopScatterTableRequest(schema infoschema.InfoSchema, tbl table.PhysicalTable, w http.ResponseWriter, req *http.Request) {
+func (h *TableHandler) handleStopScatterTableRequest(tbl table.PhysicalTable, w http.ResponseWriter) {
 	// for record
 	tableName := fmt.Sprintf("%s-%d", tbl.Meta().Name.String(), tbl.GetPhysicalID())
 	err := h.deleteScatterSchedule(tableName)
@@ -1268,7 +1269,7 @@ func (h *TableHandler) handleStopScatterTableRequest(schema infoschema.InfoSchem
 	writeData(w, "success!")
 }
 
-func (h *TableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
+func (h *TableHandler) handleRegionRequest(tbl table.Table, w http.ResponseWriter) {
 	pi := tbl.Meta().GetPartitionInfo()
 	if pi != nil {
 		// Partitioned table.
@@ -1319,7 +1320,7 @@ func createTableRanges(tblID int64, tblName string, indices []*model.IndexInfo) 
 	return ranges
 }
 
-func (h *TableHandler) handleRangeRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
+func (h *TableHandler) handleRangeRequest(tbl table.Table, w http.ResponseWriter) {
 	meta := tbl.Meta()
 	pi := meta.GetPartitionInfo()
 	if pi != nil {

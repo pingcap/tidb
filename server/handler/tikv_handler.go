@@ -43,6 +43,7 @@ type mvccKV struct {
 	Value    *kvrpcpb.MvccGetByKeyResponse `json:"value"`
 }
 
+// GetRegionIDByKey gets the region id by the key.
 func (t *TikvHandlerTool) GetRegionIDByKey(encodedKey []byte) (uint64, error) {
 	keyLocation, err := t.RegionCache.LocateKey(tikv.NewBackofferWithVars(context.Background(), 500, nil), encodedKey)
 	if err != nil {
@@ -51,6 +52,7 @@ func (t *TikvHandlerTool) GetRegionIDByKey(encodedKey []byte) (uint64, error) {
 	return keyLocation.Region.GetID(), nil
 }
 
+// GetHandle gets the handle of the record.
 func (t *TikvHandlerTool) GetHandle(tb table.PhysicalTable, params map[string]string, values url.Values) (kv.Handle, error) {
 	var handle kv.Handle
 	if intHandleStr, ok := params[Handle]; ok {
@@ -93,6 +95,7 @@ func (t *TikvHandlerTool) GetHandle(tb table.PhysicalTable, params map[string]st
 	return handle, nil
 }
 
+// GetMvccByIdxValue gets the mvcc by the index value.
 func (t *TikvHandlerTool) GetMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handle kv.Handle) ([]*helper.MvccKV, error) {
 	sc := new(stmtctx.StatementContext)
 	// HTTP request is not a database session, set timezone to UTC directly here.
@@ -156,6 +159,7 @@ func (t *TikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, value
 	return data, nil
 }
 
+// GetTableID gets the table ID by the database name and table name.
 func (t *TikvHandlerTool) GetTableID(dbName, tableName string) (int64, error) {
 	tbl, err := t.GetTable(dbName, tableName)
 	if err != nil {
@@ -164,6 +168,7 @@ func (t *TikvHandlerTool) GetTableID(dbName, tableName string) (int64, error) {
 	return tbl.GetPhysicalID(), nil
 }
 
+// GetTable gets the table by the database name and table name.
 func (t *TikvHandlerTool) GetTable(dbName, tableName string) (table.PhysicalTable, error) {
 	schema, err := t.Schema()
 	if err != nil {
@@ -177,6 +182,7 @@ func (t *TikvHandlerTool) GetTable(dbName, tableName string) (table.PhysicalTabl
 	return t.GetPartition(tableVal, partitionName)
 }
 
+// GetPartition gets the partition by the table and partition name.
 func (t *TikvHandlerTool) GetPartition(tableVal table.Table, partitionName string) (table.PhysicalTable, error) {
 	if pt, ok := tableVal.(table.PartitionedTable); ok {
 		if partitionName == "" {
@@ -195,6 +201,7 @@ func (t *TikvHandlerTool) GetPartition(tableVal table.Table, partitionName strin
 	return tableVal.(table.PhysicalTable), nil
 }
 
+// Schema gets the schema.
 func (t *TikvHandlerTool) Schema() (infoschema.InfoSchema, error) {
 	dom, err := session.GetDomain(t.Store)
 	if err != nil {
@@ -203,6 +210,7 @@ func (t *TikvHandlerTool) Schema() (infoschema.InfoSchema, error) {
 	return dom.InfoSchema(), nil
 }
 
+// HandleMvccGetByHex handles the request of getting mvcc by hex encoded key.
 func (t *TikvHandlerTool) HandleMvccGetByHex(params map[string]string) (*mvccKV, error) {
 	encodedKey, err := hex.DecodeString(params[HexKey])
 	if err != nil {
@@ -227,6 +235,7 @@ type RegionMeta struct {
 	RegionEpoch *metapb.RegionEpoch `json:"region_epoch"`
 }
 
+// GetRegionsMeta gets regions meta by regionIDs
 func (t *TikvHandlerTool) GetRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
 	regions := make([]RegionMeta, len(regionIDs))
 	for i, regionID := range regionIDs {
