@@ -290,7 +290,7 @@ func TestStatusAPIWithTLS(t *testing.T) {
 	// but plain http connection should fail.
 	cli.StatusScheme = "http"
 	//nolint:bodyclose
-	_, err = cli.FetchStatus("/Status")
+	_, err = cli.FetchStatus("/status")
 	require.Error(t, err)
 
 	server.Close()
@@ -348,14 +348,14 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 		client1KeyPath,
 	)
 	//nolint:bodyclose
-	_, err = hc.Get(cli.StatusURL("/Status"))
+	_, err = hc.Get(cli.StatusURL("/status"))
 	require.Error(t, err)
 
 	hc = newTLSHttpClient(t, caPath,
 		client2CertPath,
 		client2KeyPath,
 	)
-	resp, err := hc.Get(cli.StatusURL("/Status"))
+	resp, err := hc.Get(cli.StatusURL("/status"))
 	require.NoError(t, err)
 	require.Nil(t, resp.Body.Close())
 }
@@ -1243,21 +1243,21 @@ func TestGracefulShutdown(t *testing.T) {
 	}()
 	time.Sleep(time.Millisecond * 100)
 
-	resp, err := cli.FetchStatus("/Status") // server is up
+	resp, err := cli.FetchStatus("/status") // server is up
 	require.NoError(t, err)
 	require.Nil(t, resp.Body.Close())
 
 	go server.Close()
 	time.Sleep(time.Millisecond * 500)
 
-	resp, _ = cli.FetchStatus("/Status") // should return 5xx code
+	resp, _ = cli.FetchStatus("/status") // should return 5xx code
 	require.Equal(t, 500, resp.StatusCode)
 	require.Nil(t, resp.Body.Close())
 
 	time.Sleep(time.Second * 2)
 
 	//nolint:bodyclose
-	_, err = cli.FetchStatus("/Status") // Status is gone
+	_, err = cli.FetchStatus("/status") // Status is gone
 	require.Error(t, err)
 	require.Regexp(t, "connect: connection refused$", err.Error())
 }
