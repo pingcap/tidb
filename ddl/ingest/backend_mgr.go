@@ -121,7 +121,7 @@ func createLocalBackend(ctx context.Context, cfg *Config) (*local.Backend, error
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{
 		DB: nil,
 	}
-	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName)
+	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName, "")
 	return local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 }
 

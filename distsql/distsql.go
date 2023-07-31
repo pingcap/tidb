@@ -183,7 +183,7 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars inte
 // Checksum sends a checksum request.
 func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{}) (SelectResult, error) {
 	// FIXME: As BR have dependency of `Checksum` and TiDB also introduced BR as dependency, Currently we can't edit
-	// Checksum function signature. The two-way dependence should be removed in future.
+	// Checksum function signature. The two-way dependence should be removed in the future.
 	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
