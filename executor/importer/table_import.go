@@ -190,6 +190,9 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		KeyspaceName:            tidb.GetGlobalKeyspaceName(),
 		PausePDSchedulerScope:   config.PausePDSchedulerScopeTable,
 	}
+	if e.IsRaftKV2 {
+		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
+	}
 
 	// todo: use a real region size getter
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{}

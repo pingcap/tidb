@@ -30,6 +30,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/backup"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -376,7 +377,15 @@ func NewImportControllerWithPauser(
 			}
 		}
 
-		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName, p.ResourceGroupName)
+		isRaftKV2, err := common.IsRaftKV2(ctx, db)
+		if err != nil {
+			log.FromContext(ctx).Warn("check isRaftKV2 failed", zap.Error(err))
+		}
+		var raftKV2SwitchModeDuration time.Duration
+		if isRaftKV2 {
+			raftKV2SwitchModeDuration = cfg.Cron.SwitchMode.Duration
+		}
+		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName, p.ResourceGroupName, raftKV2SwitchModeDuration)
 		backendObj, err = local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
@@ -1373,6 +1382,18 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 				f(do)
 			}
 		}
+}
+
+func (rc *Controller) buildTablesRanges() []tidbkv.KeyRange {
+	var keyRanges []tidbkv.KeyRange
+	for _, dbInfo := range rc.dbInfos {
+		for _, tableInfo := range dbInfo.Tables {
+			if ranges, err := backup.BuildTableRanges(tableInfo.Core); err == nil {
+				keyRanges = append(keyRanges, ranges...)
+			}
+		}
+	}
+	return keyRanges
 }
 
 type checksumManagerKeyType struct{}
