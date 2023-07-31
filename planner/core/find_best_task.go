@@ -1290,9 +1290,8 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
 	}
-	var byItems []*util.ByItems
 	// Add sort items for index scan for merge-sort operation between partitions.
-	byItems = make([]*util.ByItems, 0, len(prop.SortItems))
+	byItems := make([]*util.ByItems, 0, len(prop.SortItems))
 	for _, si := range prop.SortItems {
 		byItems = append(byItems, &util.ByItems{
 			Expr: si.Col,
@@ -1469,7 +1468,6 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 		tblCols:         ds.TblCols,
 		tblColHists:     ds.TblColHists,
 	}.Init(ds.SCtx(), ds.SelectBlockOffset())
-	copy(ts.Columns, ds.Columns)
 	ts.SetSchema(ds.schema.Clone())
 	err := setIndexMergeTableScanHandleCols(ds, ts)
 	if err != nil {
