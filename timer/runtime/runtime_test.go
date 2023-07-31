@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/timer/api"
+	mockutil "github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -65,11 +66,15 @@ func TestRuntimeStartStop(t *testing.T) {
 	runtime := NewTimerRuntimeBuilder("g1", store).
 		RegisterHookFactory("hook1", hookFactory).
 		Build()
+	require.NotNil(t, runtime.fullRefreshTimerCounter)
+	require.NotNil(t, runtime.partialRefreshTimerCounter)
 
 	runtime.Start()
+	require.True(t, runtime.Running())
 	waitDone(timerProcessed, time.Minute)
 	go func() {
 		runtime.Stop()
+		require.False(t, runtime.Running())
 		cancel()
 	}()
 	waitDone(ctx.Done(), time.Minute)
@@ -386,8 +391,11 @@ func TestNextTryTriggerDuration(t *testing.T) {
 }
 
 func TestFullRefreshTimers(t *testing.T) {
+	fullRefreshCounter := &mockutil.MetricsCounter{}
 	mockCore, mockStore := newMockStore()
 	runtime := NewTimerRuntimeBuilder("g1", mockStore).Build()
+	require.NotNil(t, runtime.fullRefreshTimerCounter)
+	runtime.fullRefreshTimerCounter = fullRefreshCounter
 	runtime.cond = &api.TimerCond{Namespace: api.NewOptionalVal("n1")}
 	runtime.initCtx()
 
@@ -426,11 +434,14 @@ func TestFullRefreshTimers(t *testing.T) {
 	t6New.Version++
 
 	mockCore.On("List", mock.Anything, runtime.cond).Return(timers[0:], errors.New("mockErr")).Once()
+	require.Equal(t, float64(0), fullRefreshCounter.Val())
 	runtime.fullRefreshTimers()
+	require.Equal(t, float64(1), fullRefreshCounter.Val())
 	require.Equal(t, 7, len(runtime.cache.items))
 
 	mockCore.On("List", mock.Anything, runtime.cond).Return([]*api.TimerRecord{t0New, timers[1], t2New, t4New, t6New}, nil).Once()
 	runtime.fullRefreshTimers()
+	require.Equal(t, float64(2), fullRefreshCounter.Val())
 	mockCore.AssertExpectations(t)
 	require.Equal(t, 5, len(runtime.cache.items))
 	require.Equal(t, t0New, runtime.cache.items["t0"].timer)
@@ -444,10 +455,13 @@ func TestFullRefreshTimers(t *testing.T) {
 }
 
 func TestBatchHandlerWatchResponses(t *testing.T) {
+	partialRefreshCounter := &mockutil.MetricsCounter{}
 	mockCore, mockStore := newMockStore()
 	runtime := NewTimerRuntimeBuilder("g1", mockStore).Build()
+	require.NotNil(t, runtime.partialRefreshTimerCounter)
 	runtime.cond = &api.TimerCond{Namespace: api.NewOptionalVal("n1")}
 	runtime.initCtx()
+	runtime.partialRefreshTimerCounter = partialRefreshCounter
 
 	timers := make([]*api.TimerRecord, 7)
 	for i := 0; i < len(timers); i++ {
@@ -507,6 +521,7 @@ func TestBatchHandlerWatchResponses(t *testing.T) {
 			require.Contains(t, condIDs, "t2")
 		})
 
+	require.Equal(t, float64(0), partialRefreshCounter.Val())
 	runtime.batchHandleWatchResponses([]api.WatchTimerResponse{
 		{
 			Events: []*api.WatchTimerEvent{
@@ -533,6 +548,7 @@ func TestBatchHandlerWatchResponses(t *testing.T) {
 			},
 		},
 	})
+	require.Equal(t, float64(1), partialRefreshCounter.Val())
 
 	mockCore.AssertExpectations(t)
 	require.Equal(t, 6, len(runtime.cache.items))

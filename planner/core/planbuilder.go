@@ -92,11 +92,13 @@ type indexNestedLoopJoinTables struct {
 
 type tableHintInfo struct {
 	indexNestedLoopJoinTables
+	noIndexJoinTables   indexNestedLoopJoinTables
 	sortMergeJoinTables []hintTableInfo
 	broadcastJoinTables []hintTableInfo
 	shuffleJoinTables   []hintTableInfo
 	hashJoinTables      []hintTableInfo
 	noHashJoinTables    []hintTableInfo
+	noMergeJoinTables   []hintTableInfo
 	indexHintList       []indexHintInfo
 	tiflashTables       []hintTableInfo
 	tikvTables          []hintTableInfo
@@ -245,6 +247,10 @@ func (info *tableHintInfo) ifPreferNoHashJoin(tableNames ...*hintTableInfo) bool
 	return info.matchTableName(tableNames, info.noHashJoinTables)
 }
 
+func (info *tableHintInfo) ifPreferNoMergeJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noMergeJoinTables)
+}
+
 func (info *tableHintInfo) ifPreferHJBuild(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.hjBuildTables)
 }
@@ -263,6 +269,18 @@ func (info *tableHintInfo) ifPreferINLHJ(tableNames ...*hintTableInfo) bool {
 
 func (info *tableHintInfo) ifPreferINLMJ(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inlmjTables)
+}
+
+func (info *tableHintInfo) ifPreferNoIndexJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noIndexJoinTables.inljTables)
+}
+
+func (info *tableHintInfo) ifPreferNoIndexHashJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noIndexJoinTables.inlhjTables)
+}
+
+func (info *tableHintInfo) ifPreferNoIndexMergeJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noIndexJoinTables.inlmjTables)
 }
 
 func (info *tableHintInfo) ifPreferTiFlash(tableName *hintTableInfo) *hintTableInfo {
@@ -338,6 +356,9 @@ func restore2TableHint(hintTables ...hintTableInfo) string {
 }
 
 func restore2JoinHint(hintType string, hintTables []hintTableInfo) string {
+	if len(hintTables) == 0 {
+		return strings.ToUpper(hintType)
+	}
 	buffer := bytes.NewBufferString("/*+ ")
 	buffer.WriteString(strings.ToUpper(hintType))
 	buffer.WriteString("(")
@@ -849,7 +870,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
 		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt,
-		*ast.LoadDataActionStmt, *ast.ImportIntoActionStmt, *ast.CalibrateResourceStmt:
+		*ast.LoadDataActionStmt, *ast.ImportIntoActionStmt, *ast.CalibrateResourceStmt, *ast.AddQueryWatchStmt, *ast.DropQueryWatchStmt:
 		return b.buildSimple(ctx, node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -3282,6 +3303,14 @@ func buildCalibrateResourceSchema() (*expression.Schema, types.NameSlice) {
 	return schema.col2Schema(), schema.names
 }
 
+func buildAddQueryWatchSchema() (*expression.Schema, types.NameSlice) {
+	longlongSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	cols := newColumnsWithNames(1)
+	cols.Append(buildColumnWithName("", "WATCH_ID", mysql.TypeLonglong, longlongSize))
+
+	return cols.col2Schema(), cols.names
+}
+
 func buildShowTelemetrySchema() (*expression.Schema, types.NameSlice) {
 	schema := newColumnsWithNames(1)
 	schema.Append(buildColumnWithName("", "TRACKING_ID", mysql.TypeVarchar, 64))
@@ -3549,6 +3578,13 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
 		p.setSchemaAndNames(buildCalibrateResourceSchema())
+	case *ast.AddQueryWatchStmt:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
+		p.setSchemaAndNames(buildAddQueryWatchSchema())
+	case *ast.DropQueryWatchStmt:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
 	case *ast.GrantRoleStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ROLE_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "ROLE_ADMIN", false, err)

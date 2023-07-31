@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor/internal/exec"
+	"github.com/pingcap/tidb/executor/internal/querywatch"
 	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -190,6 +191,8 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeAdmin(x)
 	case *ast.SetResourceGroupStmt:
 		err = e.executeSetResourceGroupName(x)
+	case *ast.DropQueryWatchStmt:
+		err = e.executeDropQueryWatch(ctx, x)
 	}
 	e.done = true
 	return err
@@ -2180,6 +2183,10 @@ func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, use
 		usernameColumn, users.OldUser.Username, hostColumn, strings.ToLower(users.OldUser.Hostname))
 	_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	return err
+}
+
+func (e *SimpleExec) executeDropQueryWatch(ctx context.Context, s *ast.DropQueryWatchStmt) error {
+	return querywatch.ExecDropQueryWatch(ctx, e.Ctx(), s.IntValue)
 }
 
 func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) error {

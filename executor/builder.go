@@ -39,6 +39,8 @@ import (
 	"github.com/pingcap/tidb/executor/internal/calibrateresource"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/executor/internal/pdhelper"
+	"github.com/pingcap/tidb/executor/internal/querywatch"
+	"github.com/pingcap/tidb/executor/internal/vecgroupchecker"
 	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -912,6 +914,11 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), 0),
 			WorkloadType: s.Tp,
 			OptionList:   s.DynamicCalibrateResourceOptionList,
+		}
+	case *ast.AddQueryWatchStmt:
+		return &querywatch.AddExecutor{
+			BaseExecutor:         exec.NewBaseExecutor(b.ctx, v.Schema(), 0),
+			QueryWatchOptionList: s.QueryWatchOptionList,
 		}
 	case *ast.LoadDataActionStmt:
 		return &LoadDataActionExec{
@@ -1817,7 +1824,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) exec.
 	}
 	e := &StreamAggExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
-		groupChecker: newVecGroupChecker(b.ctx, v.GroupByItems),
+		groupChecker: vecgroupchecker.NewVecGroupChecker(b.ctx, v.GroupByItems),
 		aggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
 	}
 
@@ -1929,6 +1936,8 @@ func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 	replicaReadType := sessVars.GetReplicaRead()
 	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
 	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
+	snapshot.SetOption(kv.ResourceGroupName, sessVars.ResourceGroupName)
+	snapshot.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
 
 	if replicaReadType.IsClosestRead() && b.readReplicaScope != kv.GlobalTxnScope {
 		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
@@ -4963,7 +4972,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 	if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
 		exec := &PipelinedWindowExec{
 			BaseExecutor:   base,
-			groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
+			groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx, groupByItems),
 			numWindowFuncs: len(v.WindowFuncDescs),
 		}
 
@@ -5022,7 +5031,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 	}
 	return &WindowExec{BaseExecutor: base,
 		processor:      processor,
-		groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
+		groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx, groupByItems),
 		numWindowFuncs: len(v.WindowFuncDescs),
 	}
 }
@@ -5220,7 +5229,6 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	if e.Ctx().GetSessionVars().IsReplicaReadClosestAdaptive() {
 		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.Ctx(), plan.GetAvgRowSize()))
 	}
-	e.snapshot.SetOption(kv.ResourceGroupName, b.ctx.GetSessionVars().ResourceGroupName)
 	if e.RuntimeStats() != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
