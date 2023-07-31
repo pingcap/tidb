@@ -10,6 +10,7 @@ go_library(
         "//session",
         "//sessionctx",
         "//util/logutil",
+        "//util/mathutil",
         "//util/mock",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
