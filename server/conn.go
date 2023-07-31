@@ -191,7 +191,7 @@ func (cc *clientConn) SetCtx(ctx *TiDBContext) {
 
 func (cc *clientConn) String() string {
 	collationStr := mysql.Collations[cc.collation]
-	return fmt.Sprintf("id:%d, addr:%s Status:%b, collation:%s, user:%s",
+	return fmt.Sprintf("id:%d, addr:%s status:%b, collation:%s, user:%s",
 		cc.connectionID, cc.bufReadConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
 	)
 }
@@ -977,10 +977,10 @@ func (cc *clientConn) Run(ctx context.Context) {
 		close(cc.quit)
 	}()
 
-	// Usually, client connection Status changes between [dispatching] <=> [reading].
+	// Usually, client connection status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting
-	// the Status to special values, for example: kill or graceful shutdown.
-	// The client connection would detect the events when it fails to change Status
+	// the status to special values, for example: kill or graceful shutdown.
+	// The client connection would detect the events when it fails to change status
 	// by CAS operation, it would then take some actions accordingly.
 	for {
 		// Close connection between txn when we are going to shutdown server.
@@ -1082,7 +1082,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				logutil.Logger(ctx).Info("command dispatched failed",
 					zap.String("connInfo", cc.String()),
 					zap.String("command", mysql.Command2Str[data[0]]),
-					zap.String("Status", cc.SessionStatusToString()),
+					zap.String("status", cc.SessionStatusToString()),
 					zap.Stringer("sql", getLastStmtInConn{cc}),
 					zap.String("txn_mode", txnMode),
 					zap.Uint64("timestamp", startTS),
@@ -1322,7 +1322,7 @@ func (cc *clientConn) writeStats(ctx context.Context) error {
 	info := tikvhandler.ServerInfo{}
 	info.ServerInfo, err = infosync.GetServerInfo()
 	if err != nil {
-		logutil.BgLogger().Error("Failed to get ServerInfo for uptime Status", zap.Error(err))
+		logutil.BgLogger().Error("Failed to get ServerInfo for uptime status", zap.Error(err))
 	} else {
 		uptime = int64(time.Since(time.Unix(info.ServerInfo.StartTimestamp, 0)).Seconds())
 	}
@@ -1806,7 +1806,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			if !allowTiFlashFallback {
 				break
 			}
-			// When the TiFlash server seems down, we append a warning to remind the user to check the Status of the TiFlash
+			// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
 			// server and fallback to TiKV.
 			warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
 			delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
