@@ -8,5 +8,6 @@ go_library(
     deps = [
         "//br/pkg/lightning/backend",
         "@com_github_golang_mock//gomock",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
     ],
 )

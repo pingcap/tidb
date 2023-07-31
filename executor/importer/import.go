@@ -33,6 +33,7 @@ import (
 	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/expression"
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -198,6 +199,8 @@ type Plan struct {
 	// the user who executes the statement, in the form of user@host
 	// only initialized for IMPORT INTO
 	User string `json:"-"`
+
+	IsRaftKV2 bool
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -367,6 +370,16 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 		return nil, err
 	}
 	return p, nil
+}
+
+// InitTiKVConfigs initializes some TiKV related configs.
+func (p *Plan) InitTiKVConfigs(ctx context.Context, sctx sessionctx.Context) error {
+	isRaftKV2, err := util.IsRaftKv2(ctx, sctx)
+	if err != nil {
+		return err
+	}
+	p.IsRaftKV2 = isRaftKV2
+	return nil
 }
 
 // ASTArgsFromPlan creates ASTArgs from plan.

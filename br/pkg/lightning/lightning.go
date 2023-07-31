@@ -1053,7 +1053,7 @@ func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) err
 }
 
 // SwitchMode switches the mode of the TiKV cluster.
-func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode string) error {
+func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode string, ranges ...*import_sstpb.Range) error {
 	var m import_sstpb.SwitchMode
 	switch mode {
 	case config.ImportMode:
@@ -1069,7 +1069,7 @@ func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode s
 		tls.WithHost(cfg.TiDB.PdAddr),
 		tikv.StoreStateDisconnected,
 		func(c context.Context, store *tikv.Store) error {
-			return tikv.SwitchMode(c, tls, store.Address, m)
+			return tikv.SwitchMode(c, tls, store.Address, m, ranges...)
 		},
 	)
 }

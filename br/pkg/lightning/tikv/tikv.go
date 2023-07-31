@@ -148,12 +148,19 @@ func ignoreUnimplementedError(err error, logger log.Logger) error {
 }
 
 // SwitchMode changes the TiKV node at the given address to a particular mode.
-func SwitchMode(ctx context.Context, tls *common.TLS, tikvAddr string, mode import_sstpb.SwitchMode) error {
+func SwitchMode(
+	ctx context.Context,
+	tls *common.TLS,
+	tikvAddr string,
+	mode import_sstpb.SwitchMode,
+	ranges ...*import_sstpb.Range,
+) error {
 	task := log.With(zap.Stringer("mode", mode),
 		zap.String("tikv", tikvAddr)).Begin(zap.DebugLevel, "switch mode")
 	err := withTiKVConnection(ctx, tls, tikvAddr, func(client import_sstpb.ImportSSTClient) error {
 		_, err := client.SwitchMode(ctx, &import_sstpb.SwitchModeRequest{
-			Mode: mode,
+			Mode:   mode,
+			Ranges: ranges,
 		})
 		return ignoreUnimplementedError(err, task.Logger)
 	})

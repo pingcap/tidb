@@ -28,6 +28,7 @@ go_library(
         "//br/pkg/streamhelper",
         "//br/pkg/utils",
         "//config",
+        "//ddl/util",
         "//executor/asyncloaddata",
         "//expression",
         "//kv",
