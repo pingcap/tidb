@@ -295,10 +295,6 @@ func NewImportControllerWithPauser(
 	if err != nil {
 		return nil, err
 	}
-	pdCli, err := pd.NewClientWithContext(ctx, []string{cfg.TiDB.PdAddr}, tls.ToPDSecurityOption())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 
 	var cpdb checkpoints.DB
 	// if CheckpointStorage is set, we should use given ExternalStorage to create checkpoints.
@@ -337,6 +333,7 @@ func NewImportControllerWithPauser(
 
 	var encodingBuilder encode.EncodingBuilder
 	var backendObj backend.Backend
+	var pdCli pd.Client
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
 		encodingBuilder = tidb.NewEncodingBuilder()
@@ -351,6 +348,10 @@ func NewImportControllerWithPauser(
 		// check overflow
 		if maxOpenFiles < 0 {
 			maxOpenFiles = math.MaxInt32
+		}
+		pdCli, err = pd.NewClientWithContext(ctx, []string{cfg.TiDB.PdAddr}, tls.ToPDSecurityOption())
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 
 		if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {

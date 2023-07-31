@@ -756,7 +756,7 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	lnConfig := config.NewConfig()
-	lnConfig.TikvImporter.Backend = config.BackendLocal
+	lnConfig.TikvImporter.Backend = config.BackendTiDB
 	targetGetter, err := NewTargetInfoGetterImpl(ctx, lnConfig, db)
 	require.NoError(t, err)
 	require.Equal(t, lnConfig, targetGetter.cfg)

@@ -137,15 +137,16 @@ func NewTargetInfoGetterImpl(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	pdCli, err := pd.NewClientWithContext(ctx, []string{cfg.TiDB.PdAddr}, tls.ToPDSecurityOption())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	var backendTargetInfoGetter backend.TargetInfoGetter
+	var pdCli pd.Client
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
 		backendTargetInfoGetter = tidb.NewTargetInfoGetter(targetDB)
 	case config.BackendLocal:
+		pdCli, err := pd.NewClientWithContext(ctx, []string{cfg.TiDB.PdAddr}, tls.ToPDSecurityOption())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDB, pdCli)
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
