@@ -16,6 +16,7 @@ package sessiontest
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -235,4 +236,36 @@ func TestIndexLookUpWithStaticPrune(t *testing.T) {
 	tk.MustExec("insert into t values (1,2.0,'c')")
 	tk.HasPlan("select * from t use index(idx_c) order by c limit 5", "Limit")
 	tk.MustExec("select * from t use index(idx_c) order by c limit 5")
+}
+
+func TestTidbKvReadTimeout(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("skip test since it's only work for tikv")
+	}
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int)")
+
+	require.NoError(t, failpoint.Enable("tikvclient/mockBatchClientSendDelay", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("tikvclient/mockBatchClientSendDelay"))
+	}()
+	// Test for point_get request
+	rows := tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where a = 1").Rows()
+	require.Len(t, rows, 1)
+	explain := fmt.Sprintf("%v", rows[0])
+	require.Regexp(t, ".*Point_Get.* Get:{num_rpc:2, total_time:.*", explain)
+
+	// Test for batch_point_get request
+	rows = tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where a in (1,2)").Rows()
+	require.Len(t, rows, 1)
+	explain = fmt.Sprintf("%v", rows[0])
+	require.Regexp(t, ".*Batch_Point_Get.* BatchGet:{num_rpc:2, total_time:.*", explain)
+
+	// Test for cop request
+	rows = tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where b > 1").Rows()
+	require.Len(t, rows, 3)
+	explain = fmt.Sprintf("%v", rows[0])
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:1.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
 }
