@@ -251,6 +251,10 @@ func writeTableDefinition(sb *strings.Builder, tblInfo *model.TableInfo, engineT
 
 func writeDemoFlinkTFile(sb *strings.Builder, tblInfo *model.TableInfo) *strings.Builder {
 	sb.WriteString("set execution.checkpointing.interval=2sec;\n")
+	sb.WriteString("set set state.backend = rocksdb;\n")
+	sb.WriteString("set state.checkpoints.dir = ${hdfs_address}/checkpoints;\n")
+	sb.WriteString("set state.savepoints.dir = ${hdfs_address}/savepoints;\n")
+	sb.WriteString("set state.backend.incremental = true;")
 	sb.WriteString("create database demo_flink;\n")
 	sb.WriteString("create database demo_hudi;\n")
 	sb.WriteString("create table demo_flink.t_file (\n")
