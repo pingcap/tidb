@@ -660,6 +660,9 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 		if time.Since(now) > maxDuration {
 			break
 		}
+		time.Sleep(sleepTime)
+		sleepTime = sleepTime * 2
+		sleepTime = mathutil.Min(maxSleepTime, sleepTime)
 		mdb, err = sql.Open(driverName, dataSourceName)
 		if err != nil {
 			log.Warn("open DB failed", zap.Duration("retry duration", time.Since(now)), zap.Error(err))
@@ -674,9 +677,6 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 		if err1 := mdb.Close(); err1 != nil {
 			log.Error("close DB failed", zap.Error(err1))
 		}
-		time.Sleep(sleepTime)
-		sleepTime = sleepTime * 2
-		sleepTime = mathutil.Min(maxSleepTime, sleepTime)
 	}
 	if err != nil {
 		log.Error("open Db failed", zap.Duration("take time", time.Since(startTime)), zap.Error(err))
