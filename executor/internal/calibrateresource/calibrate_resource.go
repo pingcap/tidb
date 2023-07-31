@@ -117,8 +117,8 @@ const (
 
 // Executor is used as executor of calibrate resource.
 type Executor struct {
+	OptionList []*ast.DynamicCalibrateResourceOption
 	exec.BaseExecutor
-	OptionList   []*ast.DynamicCalibrateResourceOption
 	WorkloadType ast.CalibrateResourceType
 	done         bool
 }
@@ -412,8 +412,8 @@ type timePointValue struct {
 }
 
 type timeSeriesValues struct {
-	idx  int
 	vals []*timePointValue
+	idx  int
 }
 
 func (t *timeSeriesValues) isEnd() bool {

@@ -208,7 +208,10 @@
       "util/watcher/": "util/watcher/ code",
       "util/gctuner": "util/gctuner",
       "store/mockstore/unistore/util": "store/mockstore/unistore/util code",
-      "ddl/util/": "ddl/util code"
+      "ddl/util/": "ddl/util code",
+      "server/internal": "server/internal code",
+      "planner/core/internal": "planner/core/internal code",
+      "executor/internal": "executor/internal code"
     }
   },
   "findcall": {
