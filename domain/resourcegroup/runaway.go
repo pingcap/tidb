@@ -369,9 +369,6 @@ func (rm *RunawayManager) getWatchFromWatchList(key string) *QuarantineRecord {
 
 func (rm *RunawayManager) markRunaway(resourceGroupName, originalSQL, planDigest string, action string, matchType RunawayMatchType, now *time.Time) {
 	source := rm.serverID
-	if len(source) > 128 {
-		source = source[:128]
-	}
 	select {
 	case rm.runawayQueriesChan <- &RunawayRecord{
 		ResourceGroupName: resourceGroupName,

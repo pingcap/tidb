@@ -613,7 +613,7 @@ const (
 		action varchar(12) NOT NULL,
 		original_sql TEXT NOT NULL,
 		plan_digest TEXT NOT NULL,
-		tidb_server varchar(64),
+		tidb_server varchar(512),
 		INDEX plan_index(plan_digest(64)) COMMENT "accelerate the speed when select runaway query",
 		INDEX time_index(time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -626,7 +626,7 @@ const (
 		end_time datetime(6),
 		watch bigint(10) NOT NULL,
 		watch_text TEXT NOT NULL,
-		source varchar(64) NOT NULL,
+		source varchar(512) NOT NULL,
 		action bigint(10),
 		INDEX sql_index(resource_group_name,watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
 		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
