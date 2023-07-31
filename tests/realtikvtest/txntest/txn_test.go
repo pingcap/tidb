@@ -179,3 +179,15 @@ func TestStatementErrorInTransaction(t *testing.T) {
 	tk.MustExec("rollback")
 	tk.MustQuery("select * from test where a = 1 and b = 11").Check(testkit.Rows())
 }
+
+func TestPrintSelectResult(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table print_result (c int primary key, v varchar(20))")
+	tk.MustExec("insert into print_result values (1, 'a')")
+	tk.MustExec("insert into print_result values (2, 'b')")
+	tk.MustExec("select * from print_result")
+}
