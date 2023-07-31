@@ -269,6 +269,7 @@ func (rm *RunawayManager) markQuarantine(resourceGroupName, convict string, watc
 		Source:            rm.serverID,
 		Action:            action,
 	}
+	// Add record without ID into watch list in this TiDB right now.
 	rm.addWatchList(record, ttl, false)
 	select {
 	case rm.quarantineChan <- record:
@@ -285,6 +286,7 @@ func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Durati
 		rm.queryLock.Lock()
 		defer rm.queryLock.Unlock()
 		if item != nil {
+			// check the ID because of the eariler scan.
 			if item.ID == record.ID {
 				return
 			}
@@ -301,7 +303,13 @@ func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Durati
 				rm.staleQuarantineRecord <- record
 			}
 			rm.queryLock.Unlock()
+		} else if item.ID == 0 {
+			// to replace the record without ID.
+			rm.queryLock.Lock()
+			defer rm.queryLock.Unlock()
+			rm.watchList.Set(key, record, ttl)
 		} else if item.ID != record.ID {
+			// check the ID because of the eariler scan.
 			rm.staleQuarantineRecord <- record
 		}
 	}
@@ -338,7 +346,7 @@ func (rm *RunawayManager) AddWatch(record *QuarantineRecord) {
 	rm.addWatchList(record, ttl, force)
 }
 
-// RemoveWatch is used to remove watch items from system table.
+// RemoveWatch is used to remove watch item, and this action is triggered by reading done watch system table.
 func (rm *RunawayManager) RemoveWatch(record *QuarantineRecord) {
 	// we should check whether the cached record is not the same as the removing record.
 	rm.queryLock.Lock()
@@ -460,6 +468,7 @@ func (r *RunawayChecker) BeforeExecutor() error {
 				now := time.Now()
 				r.markRunaway(RunawayMatchTypeWatch, action, &now)
 			}
+			// If no match action, it will do nothing.
 			switch action {
 			case rmpb.RunawayAction_Kill:
 				return exeerrors.ErrResourceGroupQueryRunawayQuarantine

@@ -516,6 +516,7 @@ func getRunawayWatchRecord(exec sqlexec.RestrictedSQLExecutor, reader *SystemTab
 		return nil, err
 	}
 	ret := make([]*resourcegroup.QuarantineRecord, 0, len(rs))
+	now := time.Now().UTC()
 	for _, r := range rs {
 		startTime, err := r.GetTime(2).GoTime(time.UTC)
 		if err != nil {
@@ -538,7 +539,9 @@ func getRunawayWatchRecord(exec sqlexec.RestrictedSQLExecutor, reader *SystemTab
 			Source:            r.GetString(6),
 			Action:            rmpb.RunawayAction(r.GetInt64(7)),
 		}
-		reader.CheckPoint = startTime
+		// If a TiDB write record slow, it will occur that the record which has earlier start time is inserted later than others.
+		// So we start the scan a little earlier.
+		reader.CheckPoint = now.Add(-3 * runawayWatchSyncInterval)
 		ret = append(ret, qr)
 	}
 	return ret, nil
@@ -551,6 +554,7 @@ func getRunawayWatchDoneRecord(exec sqlexec.RestrictedSQLExecutor, reader *Syste
 	}
 	length := len(rs)
 	ret := make([]*resourcegroup.QuarantineRecord, 0, length)
+	now := time.Now().UTC()
 	for _, r := range rs {
 		startTime, err := r.GetTime(3).GoTime(time.UTC)
 		if err != nil {
@@ -563,10 +567,6 @@ func getRunawayWatchDoneRecord(exec sqlexec.RestrictedSQLExecutor, reader *Syste
 				continue
 			}
 		}
-		updateTime, err := r.GetTime(9).GoTime(time.UTC)
-		if err != nil {
-			continue
-		}
 		qr := &resourcegroup.QuarantineRecord{
 			ID:                r.GetInt64(1),
 			ResourceGroupName: r.GetString(2),
@@ -577,7 +577,8 @@ func getRunawayWatchDoneRecord(exec sqlexec.RestrictedSQLExecutor, reader *Syste
 			Source:            r.GetString(7),
 			Action:            rmpb.RunawayAction(r.GetInt64(8)),
 		}
-		reader.CheckPoint = updateTime.Add(-3 * runawayWatchSyncInterval)
+		// Ditto as getRunawayWatchRecord.
+		reader.CheckPoint = now.Add(-3 * runawayWatchSyncInterval)
 		ret = append(ret, qr)
 	}
 	return ret, nil
