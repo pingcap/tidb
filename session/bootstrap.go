@@ -641,7 +641,7 @@ const (
 		end_time datetime(6),
 		watch bigint(10) NOT NULL,
 		watch_text TEXT NOT NULL,
-		source varchar(64) NOT NULL,
+		source varchar(512) NOT NULL,
 		action bigint(10),
 		done_time TIMESTAMP(6) NOT NULL
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
