@@ -37,7 +37,6 @@ go_test(
     deps = [
         "//testkit/testsetup",
         "//timer/api",
-        "//timer/metrics",
         "//util/mock",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
