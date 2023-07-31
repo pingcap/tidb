@@ -164,7 +164,7 @@ func (r *QuarantineRecord) GenInsertionDoneStmt() (string, []interface{}) {
 	params = append(params, r.WatchText)
 	params = append(params, r.Source)
 	params = append(params, r.Action)
-	params = append(params, time.Now())
+	params = append(params, time.Now().UTC())
 	return builder.String(), params
 }
 
@@ -258,11 +258,11 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDiges
 func (rm *RunawayManager) markQuarantine(resourceGroupName, convict string, watchType rmpb.RunawayWatchType, action rmpb.RunawayAction, ttl time.Duration, now *time.Time) {
 	var endTime time.Time
 	if ttl > 0 {
-		endTime = now.Add(ttl)
+		endTime = now.UTC().Add(ttl)
 	}
 	record := &QuarantineRecord{
 		ResourceGroupName: resourceGroupName,
-		StartTime:         *now,
+		StartTime:         now.UTC(),
 		EndTime:           endTime,
 		Watch:             watchType,
 		WatchText:         convict,

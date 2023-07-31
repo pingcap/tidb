@@ -309,7 +309,7 @@ func (do *Domain) runawayRecordFlushLoop() {
 						break
 					}
 					logutil.BgLogger().Error("remove stale runaway watch", zap.Error(err))
-					time.Sleep(1000 * time.Millisecond)
+					time.Sleep(time.Second)
 				}
 			}()
 		}
@@ -325,7 +325,7 @@ func (do *Domain) handleRunawayWatch(record *resourcegroup.QuarantineRecord) err
 		return errors.Annotate(err, "get session failed")
 	}
 	exec, _ := se.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return errors.Trace(err)
@@ -355,7 +355,7 @@ func (do *Domain) handleRunawayWatchDone(record *resourcegroup.QuarantineRecord)
 		return errors.Annotate(err, "get session failed")
 	}
 	exec, _ := se.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return errors.Trace(err)
@@ -390,7 +390,7 @@ func (do *Domain) handleRemoveStaleRunawayWatch(record *resourcegroup.Quarantine
 		return errors.Annotate(err, "get session failed")
 	}
 	exec, _ := se.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return errors.Trace(err)
@@ -420,7 +420,7 @@ func (do *Domain) execRestrictedSQL(sql string, params []interface{}) ([]chunk.R
 		return nil, errors.Annotate(err, "get session failed")
 	}
 	exec := se.(sqlexec.RestrictedSQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	r, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
 		sql, params...,
 	)
@@ -616,7 +616,7 @@ func (r *SystemTableReader) genSelectStmt() (string, []interface{}) {
 }
 
 func (r *SystemTableReader) Read(exec sqlexec.RestrictedSQLExecutor, genFn func() (string, []interface{})) ([]chunk.Row, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	sql, params := genFn()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
 		sql, params...,
