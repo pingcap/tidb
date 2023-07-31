@@ -89,10 +89,10 @@ func NewLogWrapped(rs RecordSet, maxCachedRows int, fields ...zap.Field) RecordS
 
 type recordSetLoggerWrapper struct {
 	rs            RecordSet
-	maxCachedRows int
 	cachedRows    []string
-	zapFields     []zap.Field
 	fieldTypes    []*types.FieldType
+	zapFields     []zap.Field
+	maxCachedRows int
 }
 
 func (r *recordSetLoggerWrapper) Fields() []*ast.ResultField {

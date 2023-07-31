@@ -262,7 +262,6 @@ func TestPrintSelectResult(t *testing.T) {
 	for i := 0; i < 103; i++ {
 		tk.MustExec(fmt.Sprintf("insert into print_result values (%d, '%s')", i, "a"))
 		expected = append(expected, fmt.Sprintf("%d a", i))
-
 	}
 	tk.MustQuery("select * from print_result").Check(testkit.Rows(expected...))
 }
