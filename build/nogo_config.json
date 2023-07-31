@@ -689,7 +689,7 @@
       "server/server_test.go": "ignore test code",
       "server/optimize_trace_test.go": "ignore test code",
       "server/plan_replayer_test.go": "ignore test code",
-      "server/internal/testserverclient/server_client.go": "ignore test code",
+      "server/internal/testserverclient/server_client.go": "ignore test code"
     }
   },
   "S1000": {
