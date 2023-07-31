@@ -1007,6 +1007,10 @@ func TestCreateTableWithListPartition(t *testing.T) {
 			dbterror.ErrTooManyPartitions,
 		},
 		{
+			"create table t (a int) partition by list (a) (partition p0 values in (null), partition p1 values in (null))",
+			dbterror.ErrMultipleDefConstInListPart,
+		},
+		{
 			"create table t (a int) partition by list (a) (partition p0 values in (default), partition p1 values in (default))",
 			dbterror.ErrMultipleDefConstInListPart,
 		},
@@ -1275,6 +1279,7 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustContainErrMsg(`create table t (a int) partition by list (a) (partition p1 values in (null, 6), partition p2 values in (7,null))`, "[ddl:1495]Multiple definition of same constant in list partitioning")
 	tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),
 	    partition p1 values in (3,4),
@@ -1284,6 +1289,8 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 		partition p4 values in (7),
 		partition p5 values in (8,9));`)
 
+	tk.MustContainErrMsg(`alter table t add partition (partition p6 values in (null, 6))`,
+		"[ddl:1495]Multiple definition of same constant in list partitioning")
 	tk.MustContainErrMsg(`alter table t add partition (partition pDef values in (default, 6))`,
 		"[ddl:8200]VALUES IN (DEFAULT) is not supported, please use 'tidb_enable_default_list_partition'")
 	tk.MustExec("set @@session.tidb_enable_default_list_partition = ON")
@@ -1633,6 +1640,9 @@ func TestDefaultListPartition(t *testing.T) {
 	// TODO: check ranges with 1,2 and 3 matching values, including 'holes' matching DEFAULT
 	// DEFAULT partition will not be used in reorganize partition if not included in the source/destination
 	tk.MustExecToErr(`alter table t reorganize partition p0 into (partition p0 values in (0))`, "[table:1526]Table has no partition for value 4")
+
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`CREATE TABLE t (a VARCHAR(100),b INT) PARTITION BY LIST COLUMNS (a) (PARTITION p1 VALUES IN ('a', 'b', 'DEFAULT'),PARTITION pDef DEFAULT)`)
 }
 
 func TestDefaultListColumnPartition(t *testing.T) {

@@ -1656,15 +1656,22 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 		}
 	}
 
+	haveDefault := false
 	exprStrs := make([]string, 0)
 	inValueStrs := make([]string, 0, mathutil.Max(len(pi.Columns), 1))
 	for i := range defs {
+	inValuesLoop:
 		for j, vs := range defs[i].InValues {
 			inValueStrs = inValueStrs[:0]
 			for k, v := range vs {
-				if strings.EqualFold(v, "DEFAULT") {
-					inValueStrs = append(inValueStrs, "DEFAULT")
-					continue
+				// if DEFAULT would be given as string, like "DEFAULT",
+				// it would be stored as "'DEFAULT'",
+				if strings.EqualFold(v, "DEFAULT") && k == 0 && len(vs) == 1 {
+					if haveDefault {
+						return nil, dbterror.ErrMultipleDefConstInListPart
+					}
+					haveDefault = true
+					continue inValuesLoop
 				}
 				if strings.EqualFold(v, "MAXVALUE") {
 					return nil, errors.Trace(dbterror.ErrMaxvalueInValuesIn)
