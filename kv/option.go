@@ -41,9 +41,9 @@ const (
 	Pessimistic
 	// SnapshotTS is defined to set snapshot ts.
 	SnapshotTS
-	// Set replica read
+	// ReplicaRead Set replica read
 	ReplicaRead
-	// Set task ID
+	// TaskID Set task ID
 	TaskID
 	// InfoSchema is schema version used by txn startTS.
 	InfoSchema
@@ -65,7 +65,7 @@ const (
 	TxnScope
 	// ReadReplicaScope
 	ReadReplicaScope
-	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
+	// IsStalenessReadOnly indicates whether the transaction is staleness read only transaction
 	IsStalenessReadOnly
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels
@@ -77,7 +77,7 @@ const (
 	KVFilter
 	// SnapInterceptor is used for setting the interceptor for snapshot
 	SnapInterceptor
-	// CommitTSUpperBoundChec is used by cached table
+	// CommitTSUpperBoundCheck is used by cached table
 	// The commitTS must be greater than all the write lock lease of the visited cached table.
 	CommitTSUpperBoundCheck
 	// RPCInterceptor is interceptor.RPCInterceptor on Transaction or Snapshot, used to decorate
@@ -94,7 +94,7 @@ const (
 	RequestSourceType
 	// ExplicitRequestSourceType is a complement of RequestSourceType, it may specified by the client or users.
 	ExplicitRequestSourceType
-	// ReplicaReadAdjuster set the adjust function of cop requsts.
+	// ReplicaReadAdjuster set the adjust function of cop requests.
 	ReplicaReadAdjuster
 	// ScanBatchSize set the iter scan batch size.
 	ScanBatchSize
@@ -191,6 +191,8 @@ const (
 	InternalTxnTools = "tools"
 	// InternalTxnBR is the type of BR usage.
 	InternalTxnBR = "br"
+	// InternalTxnLightning is the type of Lightning usage.
+	InternalTxnLightning = "lightning"
 	// InternalTxnTrace handles the trace statement.
 	InternalTxnTrace = "Trace"
 	// InternalTxnTTL is the type of TTL usage

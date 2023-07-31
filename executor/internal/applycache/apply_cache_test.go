@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package applycache
 
 import (
 	"strconv"
@@ -29,7 +29,7 @@ import (
 func TestApplyCache(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().MemQuotaApplyCache = 100
-	applyCache, err := newApplyCache(ctx)
+	applyCache, err := NewApplyCache(ctx)
 	require.NoError(t, err)
 
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}

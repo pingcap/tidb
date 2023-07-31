@@ -422,11 +422,12 @@ type BackendConfig struct {
 	KeyspaceName string
 	// the scope when pause PD schedulers.
 	PausePDSchedulerScope     config.PausePDSchedulerScope
+	ResourceGroupName         string
 	RaftKV2SwitchModeDuration time.Duration
 }
 
 // NewBackendConfig creates a new BackendConfig.
-func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string, raftKV2SwitchModeDuration time.Duration) BackendConfig {
+func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resourceGroupName string, raftKV2SwitchModeDuration time.Duration) BackendConfig {
 	return BackendConfig{
 		PDAddr:                    cfg.TiDB.PdAddr,
 		LocalStoreDir:             cfg.TikvImporter.SortedKVDir,
@@ -447,6 +448,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string,
 		MaxOpenFiles:              maxOpenFiles,
 		KeyspaceName:              keyspaceName,
 		PausePDSchedulerScope:     cfg.TikvImporter.PausePDSchedulerScope,
+		ResourceGroupName:         resourceGroupName,
 		RaftKV2SwitchModeDuration: raftKV2SwitchModeDuration,
 	}
 }

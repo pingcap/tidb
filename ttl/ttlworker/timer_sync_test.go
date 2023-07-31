@@ -24,12 +24,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	timerapi "github.com/pingcap/tidb/timer/api"
 	"github.com/pingcap/tidb/timer/tablestore"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/ttlworker"
+	mockutil "github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -195,7 +197,20 @@ func TestTTLManualTriggerOneTimer(t *testing.T) {
 }
 
 func TestTTLTimerSync(t *testing.T) {
+	origFullRefreshTimerCounter := metrics.TTLFullRefreshTimersCounter
+	origSyncTimerCounter := metrics.TTLSyncTimerCounter
+	defer func() {
+		metrics.TTLFullRefreshTimersCounter = origFullRefreshTimerCounter
+		metrics.TTLSyncTimerCounter = origSyncTimerCounter
+	}()
+
 	store, do := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, do)
+
+	fullRefreshTimersCounter := &mockutil.MetricsCounter{}
+	metrics.TTLFullRefreshTimersCounter = fullRefreshTimersCounter
+	syncTimerCounter := &mockutil.MetricsCounter{}
+	metrics.TTLSyncTimerCounter = syncTimerCounter
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -230,7 +245,12 @@ func TestTTLTimerSync(t *testing.T) {
 
 	// first sync
 	now := time.Now()
+	require.Equal(t, float64(0), fullRefreshTimersCounter.Val())
+	require.Equal(t, float64(0), syncTimerCounter.Val())
 	sync.SyncTimers(context.TODO(), do.InfoSchema())
+	require.Equal(t, float64(1), fullRefreshTimersCounter.Val())
+	require.Equal(t, float64(6), syncTimerCounter.Val())
+	syncCnt := syncTimerCounter.Val()
 	lastSyncTime, lastSyncVer = sync.GetLastSyncInfo()
 	require.Equal(t, do.InfoSchema().SchemaMetaVersion(), lastSyncVer)
 	require.GreaterOrEqual(t, lastSyncTime.Unix(), now.Unix())
@@ -252,6 +272,8 @@ func TestTTLTimerSync(t *testing.T) {
 		")")
 	now = time.Now()
 	sync.SyncTimers(context.TODO(), do.InfoSchema())
+	require.Equal(t, syncCnt+4, syncTimerCounter.Val())
+	syncCnt = syncTimerCounter.Val()
 	lastSyncTime, lastSyncVer = sync.GetLastSyncInfo()
 	require.Equal(t, do.InfoSchema().SchemaMetaVersion(), lastSyncVer)
 	require.GreaterOrEqual(t, lastSyncTime.Unix(), now.Unix())
@@ -269,6 +291,8 @@ func TestTTLTimerSync(t *testing.T) {
 	tk.MustExec("alter table t5 TTL=`t`+interval 10 HOUR ttl_enable='OFF'")
 	tk.MustExec("alter table tp1 ttl_job_interval='3m'")
 	sync.SyncTimers(context.TODO(), do.InfoSchema())
+	require.Equal(t, syncCnt+7, syncTimerCounter.Val())
+	syncCnt = syncTimerCounter.Val()
 	checkTimerCnt(t, cli, 11)
 	checkTimerWithTableMeta(t, do, cli, "test", "t1", "", zeroTime)
 	timer2 = checkTimerWithTableMeta(t, do, cli, "test", "t2", "", wm1)
@@ -282,6 +306,8 @@ func TestTTLTimerSync(t *testing.T) {
 	// rename table
 	tk.MustExec("rename table t1 to t1a")
 	sync.SyncTimers(context.TODO(), do.InfoSchema())
+	require.Equal(t, syncCnt+1, syncTimerCounter.Val())
+	syncCnt = syncTimerCounter.Val()
 	checkTimerCnt(t, cli, 11)
 	timer1 = checkTimerWithTableMeta(t, do, cli, "test", "t1a", "", zeroTime)
 	checkTimersNotChange(t, cli, timer1, timer2, timer3, timer4, timer5, timerP10, timerP11, timerP12, timerP13, timerP20, timerP21)
@@ -295,6 +321,8 @@ func TestTTLTimerSync(t *testing.T) {
 	tk.MustExec("alter table tp1 truncate partition p1")
 	tk.MustExec("truncate table tp2")
 	sync.SyncTimers(context.TODO(), do.InfoSchema())
+	require.Equal(t, syncCnt+7, syncTimerCounter.Val())
+	syncCnt = syncTimerCounter.Val()
 	checkTimerCnt(t, cli, 15)
 	timer2 = checkTimerWithTableMeta(t, do, cli, "test", "t2", "", zeroTime)
 	require.NotEqual(t, oldTimer2.ID, timer2.ID)
@@ -315,6 +343,8 @@ func TestTTLTimerSync(t *testing.T) {
 	tk.MustExec("alter table tp1 drop partition p3")
 	tk.MustExec("drop table tp2")
 	sync.SyncTimers(context.TODO(), do.InfoSchema())
+	require.Equal(t, syncCnt+3, syncTimerCounter.Val())
+	syncCnt = syncTimerCounter.Val()
 	checkTimerCnt(t, cli, 15)
 	checkTimerOnlyDisabled(t, cli, timer1)
 	checkTimerOnlyDisabled(t, cli, timerP13)
@@ -327,6 +357,8 @@ func TestTTLTimerSync(t *testing.T) {
 	sync.SetDelayDeleteInterval(time.Millisecond)
 	time.Sleep(time.Second)
 	sync.SyncTimers(context.TODO(), do.InfoSchema())
+	require.Equal(t, syncCnt+8, syncTimerCounter.Val())
+	syncCnt = syncTimerCounter.Val()
 	checkTimerCnt(t, cli, 7)
 	checkTimersNotChange(t, cli, timer2, timer3, timer4, timer5, timerP10, timerP11, timerP12)
 
@@ -338,7 +370,10 @@ func TestTTLTimerSync(t *testing.T) {
 
 	// sync after reset
 	now = time.Now()
+	require.Equal(t, float64(1), fullRefreshTimersCounter.Val())
 	sync.SyncTimers(context.TODO(), do.InfoSchema())
+	require.Equal(t, float64(2), fullRefreshTimersCounter.Val())
+	require.Equal(t, syncCnt, syncTimerCounter.Val())
 	lastSyncTime, lastSyncVer = sync.GetLastSyncInfo()
 	require.Equal(t, do.InfoSchema().SchemaMetaVersion(), lastSyncVer)
 	require.GreaterOrEqual(t, lastSyncTime.Unix(), now.Unix())
