@@ -365,7 +365,7 @@ func (cc *clientConn) closeWithoutLock() error {
 	return closeConn(cc, len(cc.server.clients))
 }
 
-// writeInitialHandshake sends server version, connection ID, server capability, collation, server Status
+// writeInitialHandshake sends server version, connection ID, server capability, collation, server status
 // and auth salt to the client.
 func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	data := make([]byte, 4, 128)
@@ -388,7 +388,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 		cc.collation = uint8(mysql.DefaultCollationID)
 	}
 	data = append(data, cc.collation)
-	// Status
+	// status
 	data = dump.Uint16(data, mysql.ServerStatusAutocommit)
 	// below 13 byte may not be used
 	// capability flag upper 2 bytes, using default capability here
