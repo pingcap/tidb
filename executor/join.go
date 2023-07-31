@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/internal/applycache"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/terror"
@@ -908,12 +909,12 @@ func (w *probeWorker) joinNAASJMatchProbeSideRow2Chunk(probeKey uint64, probeKey
 //	       For NA-AntiLeftOuterSemiJoin, we couldn't match null-bucket first, because once y set has a same key x and null
 //	       key, we should return the result as left side row appended with a scalar value 0 which is from same key matching failure.
 func (w *probeWorker) joinNAAJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *hashContext, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	NAAntiSemiJoin := w.hashJoinCtx.joinType == plannercore.AntiSemiJoin && w.hashJoinCtx.isNullAware
-	NAAntiLeftOuterSemiJoin := w.hashJoinCtx.joinType == plannercore.AntiLeftOuterSemiJoin && w.hashJoinCtx.isNullAware
-	if NAAntiSemiJoin {
+	naAntiSemiJoin := w.hashJoinCtx.joinType == plannercore.AntiSemiJoin && w.hashJoinCtx.isNullAware
+	naAntiLeftOuterSemiJoin := w.hashJoinCtx.joinType == plannercore.AntiLeftOuterSemiJoin && w.hashJoinCtx.isNullAware
+	if naAntiSemiJoin {
 		return w.joinNAASJMatchProbeSideRow2Chunk(probeKey, probeKeyNullBits, probeSideRow, hCtx, joinResult)
 	}
-	if NAAntiLeftOuterSemiJoin {
+	if naAntiLeftOuterSemiJoin {
 		return w.joinNAALOSJMatchProbeSideRow2Chunk(probeKey, probeKeyNullBits, probeSideRow, hCtx, joinResult)
 	}
 	// shouldn't be here, not a valid NAAJ.
@@ -1266,7 +1267,7 @@ type NestedLoopApplyExec struct {
 
 	joiner joiner
 
-	cache              *applyCache
+	cache              *applycache.ApplyCache
 	canUseCache        bool
 	cacheHitCounter    int
 	cacheAccessCounter int
@@ -1329,7 +1330,7 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.innerList.GetMemTracker().AttachTo(e.memTracker)
 
 	if e.canUseCache {
-		e.cache, err = newApplyCache(e.ctx)
+		e.cache, err = applycache.NewApplyCache(e.ctx)
 		if err != nil {
 			return err
 		}
@@ -1559,7 +1560,7 @@ func (e *joinRuntimeStats) String() string {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *joinRuntimeStats) Tp() int {
+func (*joinRuntimeStats) Tp() int {
 	return execdetails.TpJoinRuntimeStats
 }
 
@@ -1596,7 +1597,7 @@ func (e *hashJoinRuntimeStats) setMaxFetchAndProbeTime(t int64) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *hashJoinRuntimeStats) Tp() int {
+func (*hashJoinRuntimeStats) Tp() int {
 	return execdetails.TpHashJoinRuntimeStats
 }
 

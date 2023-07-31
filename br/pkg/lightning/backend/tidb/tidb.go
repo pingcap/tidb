@@ -266,6 +266,10 @@ func (*targetInfoGetter) CheckRequirements(ctx context.Context, _ *backend.Check
 
 type tidbBackend struct {
 	db          *sql.DB
+	conflictCfg config.Conflict
+	// onDuplicate is the type of INSERT SQL. It may be different with
+	// conflictCfg.Strategy to implement other feature, but the behaviour in caller's
+	// view should be the same.
 	onDuplicate string
 	errorMgr    *errormanager.ErrorManager
 }
@@ -302,6 +306,7 @@ func NewTiDBBackend(
 	}
 	return &tidbBackend{
 		db:          db,
+		conflictCfg: conflict,
 		onDuplicate: onDuplicate,
 		errorMgr:    errorMgr,
 	}
@@ -615,12 +620,14 @@ rowLoop:
 				continue rowLoop
 			case common.IsRetryableError(err):
 				// retry next loop
-			case be.errorMgr.TypeErrorsRemain() > 0 || be.errorMgr.ConflictErrorsRemain() > 0:
+			case be.errorMgr.TypeErrorsRemain() > 0 ||
+				be.errorMgr.ConflictErrorsRemain() > 0 ||
+				(be.conflictCfg.Strategy == config.ErrorOnDup && !be.errorMgr.RecordErrorOnce()):
 				// WriteBatchRowsToDB failed in the batch mode and can not be retried,
 				// we need to redo the writing row-by-row to find where the error locates (and skip it correctly in future).
 				if err = be.WriteRowsToDB(ctx, tableName, columnNames, r); err != nil {
-					// If the error is not nil, it means we reach the max error count in the non-batch mode.
-					// For now, we will treat like maxErrorCount is always 0. So we will just return if any error occurs.
+					// If the error is not nil, it means we reach the max error count in the
+					// non-batch mode or this is "error" conflict strategy.
 					return errors.Annotatef(err, "[%s] write rows exceed conflict threshold", tableName)
 				}
 				continue rowLoop
@@ -762,6 +769,19 @@ stmtLoop:
 
 		if isDupEntryError(err) {
 			// rowID is ignored in tidb backend
+			if be.conflictCfg.Strategy == config.ErrorOnDup {
+				be.errorMgr.RecordDuplicateOnce(
+					ctx,
+					log.FromContext(ctx),
+					tableName,
+					firstRow.path,
+					firstRow.offset,
+					err.Error(),
+					0,
+					firstRow.insertStmt,
+				)
+				return err
+			}
 			err = be.errorMgr.RecordDuplicate(
 				ctx,
 				log.FromContext(ctx),

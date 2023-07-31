@@ -15,12 +15,14 @@
 package ingest
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
@@ -45,7 +47,7 @@ var (
 const maxMemoryQuota = 2 * size.GB
 
 // InitGlobalLightningEnv initialize Lightning backfill environment.
-func InitGlobalLightningEnv() {
+func InitGlobalLightningEnv(ctx context.Context, sctx sessionctx.Context) {
 	log.SetAppLogger(logutil.BgLogger())
 	globalCfg := config.GetGlobalConfig()
 	if globalCfg.Store != "tikv" {
@@ -64,7 +66,7 @@ func InitGlobalLightningEnv() {
 		return
 	}
 	LitSortPath = sPath
-	LitBackCtxMgr = newLitBackendCtxMgr(LitSortPath, maxMemoryQuota)
+	LitBackCtxMgr = newLitBackendCtxMgr(ctx, sctx, LitSortPath, maxMemoryQuota)
 	LitRLimit = util.GenRLimit("ddl-ingest")
 	LitInitialized = true
 	logutil.BgLogger().Info(LitInfoEnvInitSucc,

@@ -200,7 +200,7 @@ func (p *PhysicalTableReader) GetTableScan() (*PhysicalTableScan, error) {
 
 // GetAvgRowSize return the average row size of this plan.
 func (p *PhysicalTableReader) GetAvgRowSize() float64 {
-	return getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+	return getTblStats(p.tablePlan).GetAvgRowSize(p.SCtx(), p.tablePlan.Schema().Columns, false, false)
 }
 
 // MemoryUsage return the memory usage of PhysicalTableReader
@@ -233,14 +233,14 @@ func setMppOrBatchCopForTableScan(curPlan PhysicalPlan) {
 
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
 func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
-	reader := PhysicalTableReader{}.Init(sg.ctx, sg.blockOffset)
+	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.SelectBlockOffset())
 	reader.PartitionInfo = PartitionInfo{
 		PruningConds:   sg.Source.allConds,
 		PartitionNames: sg.Source.partitionNames,
 		Columns:        sg.Source.TblCols,
 		ColumnNames:    sg.Source.names,
 	}
-	reader.stats = stats
+	reader.SetStats(stats)
 	reader.SetSchema(schema)
 	reader.childrenReqProps = props
 	return reader
@@ -248,8 +248,8 @@ func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, st
 
 // GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
 func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
-	reader := PhysicalIndexReader{}.Init(sg.ctx, sg.blockOffset)
-	reader.stats = stats
+	reader := PhysicalIndexReader{}.Init(sg.SCtx(), sg.SelectBlockOffset())
+	reader.SetStats(stats)
 	reader.SetSchema(schema)
 	reader.childrenReqProps = props
 	return reader
@@ -288,10 +288,11 @@ func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 	return corCols
 }
 
-func (p *PhysicalTableReader) buildPlanTrace() *tracing.PlanTrace {
-	rp := p.basePhysicalPlan.buildPlanTrace()
+// BuildPlanTrace implements PhysicalPlan interface.
+func (p *PhysicalTableReader) BuildPlanTrace() *tracing.PlanTrace {
+	rp := p.basePhysicalPlan.BuildPlanTrace()
 	if p.tablePlan != nil {
-		rp.Children = append(rp.Children, p.tablePlan.buildPlanTrace())
+		rp.Children = append(rp.Children, p.tablePlan.BuildPlanTrace())
 	}
 	return rp
 }
@@ -363,10 +364,11 @@ func (p *PhysicalIndexReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 	return corCols
 }
 
-func (p *PhysicalIndexReader) buildPlanTrace() *tracing.PlanTrace {
-	rp := p.basePhysicalPlan.buildPlanTrace()
+// BuildPlanTrace implements PhysicalPlan interface.
+func (p *PhysicalIndexReader) BuildPlanTrace() *tracing.PlanTrace {
+	rp := p.basePhysicalPlan.BuildPlanTrace()
 	if p.indexPlan != nil {
-		rp.Children = append(rp.Children, p.indexPlan.buildPlanTrace())
+		rp.Children = append(rp.Children, p.indexPlan.BuildPlanTrace())
 	}
 	return rp
 }
@@ -490,21 +492,22 @@ func (p *PhysicalIndexLookUpReader) ExtractCorrelatedCols() (corCols []*expressi
 
 // GetIndexNetDataSize return the estimated total size in bytes via network transfer.
 func (p *PhysicalIndexLookUpReader) GetIndexNetDataSize() float64 {
-	return getTblStats(p.indexPlan).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false) * p.indexPlan.StatsCount()
+	return getTblStats(p.indexPlan).GetAvgRowSize(p.SCtx(), p.indexPlan.Schema().Columns, true, false) * p.indexPlan.StatsCount()
 }
 
 // GetAvgTableRowSize return the average row size of each final row.
 func (p *PhysicalIndexLookUpReader) GetAvgTableRowSize() float64 {
-	return getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+	return getTblStats(p.tablePlan).GetAvgRowSize(p.SCtx(), p.tablePlan.Schema().Columns, false, false)
 }
 
-func (p *PhysicalIndexLookUpReader) buildPlanTrace() *tracing.PlanTrace {
-	rp := p.basePhysicalPlan.buildPlanTrace()
+// BuildPlanTrace implements PhysicalPlan interface.
+func (p *PhysicalIndexLookUpReader) BuildPlanTrace() *tracing.PlanTrace {
+	rp := p.basePhysicalPlan.BuildPlanTrace()
 	if p.indexPlan != nil {
-		rp.Children = append(rp.Children, p.indexPlan.buildPlanTrace())
+		rp.Children = append(rp.Children, p.indexPlan.BuildPlanTrace())
 	}
 	if p.tablePlan != nil {
-		rp.Children = append(rp.Children, p.tablePlan.buildPlanTrace())
+		rp.Children = append(rp.Children, p.tablePlan.BuildPlanTrace())
 	}
 	return rp
 }
@@ -598,13 +601,14 @@ func (p *PhysicalIndexMergeReader) ExtractCorrelatedCols() (corCols []*expressio
 	return corCols
 }
 
-func (p *PhysicalIndexMergeReader) buildPlanTrace() *tracing.PlanTrace {
-	rp := p.basePhysicalPlan.buildPlanTrace()
+// BuildPlanTrace implements PhysicalPlan interface.
+func (p *PhysicalIndexMergeReader) BuildPlanTrace() *tracing.PlanTrace {
+	rp := p.basePhysicalPlan.BuildPlanTrace()
 	if p.tablePlan != nil {
-		rp.Children = append(rp.Children, p.tablePlan.buildPlanTrace())
+		rp.Children = append(rp.Children, p.tablePlan.BuildPlanTrace())
 	}
 	for _, partialPlan := range p.partialPlans {
-		rp.Children = append(rp.Children, partialPlan.buildPlanTrace())
+		rp.Children = append(rp.Children, partialPlan.BuildPlanTrace())
 	}
 	return rp
 }
@@ -1426,9 +1430,9 @@ func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, new
 		basePhysicalJoin:  baseJoin,
 		EqualConditions:   p.EqualConditions,
 		NAEqualConditions: p.NAEQConditions,
-		Concurrency:       uint(p.ctx.GetSessionVars().HashJoinConcurrency()),
+		Concurrency:       uint(p.SCtx().GetSessionVars().HashJoinConcurrency()),
 		UseOuterToBuild:   useOuterToBuild,
-	}.Init(p.ctx, newStats, p.blockOffset, prop...)
+	}.Init(p.SCtx(), newStats, p.SelectBlockOffset(), prop...)
 	return hashJoin
 }
 
@@ -1610,7 +1614,7 @@ type PhysicalExpand struct {
 func (p PhysicalExpand) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalExpand {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeExpand, &p, offset)
 	p.childrenReqProps = props
-	p.stats = stats
+	p.SetStats(stats)
 	return &p
 }
 
@@ -1982,7 +1986,7 @@ func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, pr
 	agg := basePhysicalAgg{
 		GroupByItems: newGbyItems,
 		AggFuncs:     newAggFuncs,
-	}.initForHash(la.ctx, newStats, la.blockOffset, prop)
+	}.initForHash(la.SCtx(), newStats, la.SelectBlockOffset(), prop)
 	return agg
 }
 
@@ -2428,9 +2432,9 @@ func CollectPlanStatsVersion(plan PhysicalPlan, statsInfos map[string]uint64) ma
 		// because they use the same stats and we do not set the stats info for tablePlan.
 		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)
 	case *PhysicalIndexScan:
-		statsInfos[copPlan.Table.Name.O] = copPlan.stats.StatsVersion
+		statsInfos[copPlan.Table.Name.O] = copPlan.StatsInfo().StatsVersion
 	case *PhysicalTableScan:
-		statsInfos[copPlan.Table.Name.O] = copPlan.stats.StatsVersion
+		statsInfos[copPlan.Table.Name.O] = copPlan.StatsInfo().StatsVersion
 	}
 
 	return statsInfos
@@ -2578,10 +2582,10 @@ func (p *PhysicalCTE) ExplainInfo() string {
 // ExplainID overrides the ExplainID.
 func (p *PhysicalCTE) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
-		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
+		if p.SCtx() != nil && p.SCtx().GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.TP()
 		}
-		return p.TP() + "_" + strconv.Itoa(p.id)
+		return p.TP() + "_" + strconv.Itoa(p.ID())
 	})
 }
 
@@ -2770,10 +2774,10 @@ func (p *PhysicalSequence) MemoryUsage() (sum int64) {
 // ExplainID overrides the ExplainID.
 func (p *PhysicalSequence) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
-		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
+		if p.SCtx() != nil && p.SCtx().GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.TP()
 		}
-		return p.TP() + "_" + strconv.Itoa(p.id)
+		return p.TP() + "_" + strconv.Itoa(p.ID())
 	})
 }
 

@@ -762,7 +762,7 @@ func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum,
 	return memTblReader.getMemRows(ctx)
 }
 
-func (m *memIndexLookUpReader) getMemRowsHandle() ([]kv.Handle, error) {
+func (*memIndexLookUpReader) getMemRowsHandle() ([]kv.Handle, error) {
 	return nil, errors.New("getMemRowsHandle has not been implemented for memIndexLookUpReader")
 }
 
@@ -980,7 +980,7 @@ func (m *memIndexMergeReader) intersectionHandles(kvRanges [][]kv.KeyRange) (fin
 				cnt := 1
 				hMap.Set(h, &cnt)
 			} else {
-				*(cntPtr.(*int)) += 1
+				*(cntPtr.(*int))++
 			}
 		}
 	}
@@ -993,7 +993,7 @@ func (m *memIndexMergeReader) intersectionHandles(kvRanges [][]kv.KeyRange) (fin
 	return finalHandles, nil
 }
 
-func (m *memIndexMergeReader) getMemRowsHandle() ([]kv.Handle, error) {
+func (*memIndexMergeReader) getMemRowsHandle() ([]kv.Handle, error) {
 	return nil, errors.New("getMemRowsHandle has not been implemented for memIndexMergeReader")
 }
 

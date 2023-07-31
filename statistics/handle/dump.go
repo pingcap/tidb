@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"io"
 	"time"
 
@@ -135,14 +136,24 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo,
 	return h.DumpStatsToJSONBySnapshot(dbName, tableInfo, snapshot, dumpPartitionStats)
 }
 
-// DumpHistoricalStatsBySnapshot dumped json tables from mysql.stats_meta_history and mysql.stats_history
-func (h *Handle) DumpHistoricalStatsBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64) (jt *JSONTable, err error) {
+// DumpHistoricalStatsBySnapshot dumped json tables from mysql.stats_meta_history and mysql.stats_history.
+// As implemented in getTableHistoricalStatsToJSONWithFallback, if historical stats are nonexistent, it will fall back
+// to the latest stats, and these table names (and partition names) will be returned in fallbackTbls.
+func (h *Handle) DumpHistoricalStatsBySnapshot(
+	dbName string,
+	tableInfo *model.TableInfo,
+	snapshot uint64,
+) (
+	jt *JSONTable,
+	fallbackTbls []string,
+	err error,
+) {
 	historicalStatsEnabled, err := h.CheckHistoricalStatsEnable()
 	if err != nil {
-		return nil, errors.Errorf("check %v failed: %v", variable.TiDBEnableHistoricalStats, err)
+		return nil, nil, errors.Errorf("check %v failed: %v", variable.TiDBEnableHistoricalStats, err)
 	}
 	if !historicalStatsEnabled {
-		return nil, errors.Errorf("%v should be enabled", variable.TiDBEnableHistoricalStats)
+		return nil, nil, errors.Errorf("%v should be enabled", variable.TiDBEnableHistoricalStats)
 	}
 
 	defer func() {
@@ -154,7 +165,11 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(dbName string, tableInfo *model.T
 	}()
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
-		return h.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, tableInfo.ID, snapshot)
+		jt, fallback, err := h.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, tableInfo.ID, snapshot)
+		if fallback {
+			fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s.%s", dbName, tableInfo.Name.O))
+		}
+		return jt, fallbackTbls, err
 	}
 	jsonTbl := &JSONTable{
 		DatabaseName: dbName,
@@ -162,21 +177,27 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(dbName string, tableInfo *model.T
 		Partitions:   make(map[string]*JSONTable, len(pi.Definitions)),
 	}
 	for _, def := range pi.Definitions {
-		tbl, err := h.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, def.ID, snapshot)
+		tbl, fallback, err := h.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, def.ID, snapshot)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
+		}
+		if fallback {
+			fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s.%s %s", dbName, tableInfo.Name.O, def.Name.O))
 		}
 		jsonTbl.Partitions[def.Name.L] = tbl
 	}
-	tbl, err := h.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, tableInfo.ID, snapshot)
+	tbl, fallback, err := h.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, tableInfo.ID, snapshot)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	if fallback {
+		fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s.%s global", dbName, tableInfo.Name.O))
 	}
 	// dump its global-stats if existed
 	if tbl != nil {
 		jsonTbl.Partitions["global"] = tbl
 	}
-	return jsonTbl, nil
+	return jsonTbl, fallbackTbls, nil
 }
 
 // DumpStatsToJSONBySnapshot dumps statistic to json.
@@ -244,16 +265,31 @@ func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *stati
 	return jsonTbl, nil
 }
 
-// getTableHistoricalStatsToJSONWithFallback try to get table historical stats, if not exit, directly fallback to the latest stats
-func (h *Handle) getTableHistoricalStatsToJSONWithFallback(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*JSONTable, error) {
+// getTableHistoricalStatsToJSONWithFallback try to get table historical stats, if not exist, directly fallback to the
+// latest stats, and the second return value would be true.
+func (h *Handle) getTableHistoricalStatsToJSONWithFallback(
+	dbName string,
+	tableInfo *model.TableInfo,
+	physicalID int64,
+	snapshot uint64,
+) (
+	*JSONTable,
+	bool,
+	error,
+) {
 	jt, exist, err := h.tableHistoricalStatsToJSON(physicalID, snapshot)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if !exist {
-		return h.tableStatsToJSON(dbName, tableInfo, physicalID, 0)
+		jt, err = h.tableStatsToJSON(dbName, tableInfo, physicalID, 0)
+		fallback := true
+		if snapshot == 0 {
+			fallback = false
+		}
+		return jt, fallback, err
 	}
-	return jt, nil
+	return jt, false, nil
 }
 
 func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (*JSONTable, bool, error) {
