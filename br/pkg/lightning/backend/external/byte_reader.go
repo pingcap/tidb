@@ -36,8 +36,12 @@ type byteReader struct {
 	isEOF    bool
 }
 
-func openStoreReaderAndSeek(ctx context.Context, store storage.ExternalStorage,
-	name string, initFileOffset uint64) (storage.ReadSeekCloser, error) {
+func openStoreReaderAndSeek(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	name string,
+	initFileOffset uint64,
+) (storage.ReadSeekCloser, error) {
 	storageReader, err := store.Open(ctx, name)
 	if err != nil {
 		return nil, err
