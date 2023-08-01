@@ -440,12 +440,14 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	case model.PartitionTypeKey:
 		// Partition by key is not supported until v7.1.
 	case model.PartitionTypeHash:
-		// Partition by hash is enabled by default.
-		enable = true
+		if s.Sub != nil {
+			return ast.ErrSubpartition
+		}
 		// Note that linear hash is simply ignored, and creates non-linear hash/key.
 		if s.Linear {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("LINEAR %s is not supported, using non-linear %s instead", s.Tp.String(), s.Tp.String())))
 		}
+		enable = true
 	}
 
 	if !enable {

@@ -441,16 +441,13 @@ func TestSubPartitioning(t *testing.T) {
 		"(PARTITION `pMax` VALUES IN (1,3,4))"))
 	tk.MustExec(`drop table t`)
 
-	tk.MustExec(`create table t (a int) partition by hash (a) partitions 2 subpartition by key (a) subpartitions 2`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported subpartitioning, only using HASH partitioning"))
-	tk.MustExec(`drop table t`)
+	tk.MustContainErrMsg(`create table t (a int) partition by hash (a) partitions 2 subpartition by key (a) subpartitions 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
 	tk.MustExec(`create table t (a int) partition by key (a) partitions 2 subpartition by hash (a) subpartitions 2`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported partition type KEY, treat as normal table"))
 	tk.MustExec(`drop table t`)
 
-	tk.MustExec(`CREATE TABLE t ( col1 INT NOT NULL, col2 INT NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL, primary KEY (col1,col3) ) PARTITION BY HASH(col1) PARTITIONS 4 SUBPARTITION BY HASH(col3) SUBPARTITIONS 2`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported subpartitioning, only using HASH partitioning"))
-	tk.MustExec(`drop table t`)
+	tk.MustContainErrMsg(`CREATE TABLE t ( col1 INT NOT NULL, col2 INT NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL, primary KEY (col1,col3) ) PARTITION BY HASH(col1) PARTITIONS 4 SUBPARTITION BY HASH(col3) SUBPARTITIONS 2`,
+		"[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
 	tk.MustExec(`CREATE TABLE t ( col1 INT NOT NULL, col2 INT NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL, primary KEY (col1,col3) ) PARTITION BY KEY(col1) PARTITIONS 4 SUBPARTITION BY KEY(col3) SUBPARTITIONS 2`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported partition type KEY, treat as normal table"))
 }
