@@ -193,6 +193,8 @@ func (do *Domain) TryToUpdateRunawayWatch() error {
 
 // RemoveRunawayWatch is used to remove runaway watch item manually.
 func (do *Domain) RemoveRunawayWatch(recordID int64) error {
+	do.runawaySyncer.mu.Lock()
+	defer do.runawaySyncer.mu.Unlock()
 	records, err := do.runawaySyncer.getWatchRecordByID(recordID)
 	if err != nil {
 		return err
@@ -435,18 +437,18 @@ func newRunawaySyncer(sysSessionPool *sessionPool) *runawaySyncer {
 }
 
 func (s *runawaySyncer) getWatchRecordByID(id int64) ([]*resourcegroup.QuarantineRecord, error) {
-	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectByIDStmt(id))
+	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectByIDStmt(id), false)
 }
 
 func (s *runawaySyncer) getNewWatchRecords() ([]*resourcegroup.QuarantineRecord, error) {
-	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectStmt)
+	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectStmt, true)
 }
 
 func (s *runawaySyncer) getNewWatchDoneRecords() ([]*resourcegroup.QuarantineRecord, error) {
-	return s.getWatchDoneRecord(s.deletionWatchReader, s.deletionWatchReader.genSelectStmt)
+	return s.getWatchDoneRecord(s.deletionWatchReader, s.deletionWatchReader.genSelectStmt, true)
 }
 
-func (s *runawaySyncer) getWatchRecord(reader *SystemTableReader, sqlGenFn func() (string, []interface{})) ([]*resourcegroup.QuarantineRecord, error) {
+func (s *runawaySyncer) getWatchRecord(reader *SystemTableReader, sqlGenFn func() (string, []interface{}), push bool) ([]*resourcegroup.QuarantineRecord, error) {
 	se, err := s.sysSessionPool.Get()
 	defer func() {
 		s.sysSessionPool.Put(se)
@@ -455,10 +457,10 @@ func (s *runawaySyncer) getWatchRecord(reader *SystemTableReader, sqlGenFn func(
 		return nil, errors.Annotate(err, "get session failed")
 	}
 	exec := se.(sqlexec.RestrictedSQLExecutor)
-	return getRunawayWatchRecord(exec, reader, sqlGenFn)
+	return getRunawayWatchRecord(exec, reader, sqlGenFn, push)
 }
 
-func (s *runawaySyncer) getWatchDoneRecord(reader *SystemTableReader, sqlGenFn func() (string, []interface{})) ([]*resourcegroup.QuarantineRecord, error) {
+func (s *runawaySyncer) getWatchDoneRecord(reader *SystemTableReader, sqlGenFn func() (string, []interface{}), push bool) ([]*resourcegroup.QuarantineRecord, error) {
 	se, err := s.sysSessionPool.Get()
 	defer func() {
 		s.sysSessionPool.Put(se)
@@ -467,10 +469,10 @@ func (s *runawaySyncer) getWatchDoneRecord(reader *SystemTableReader, sqlGenFn f
 		return nil, errors.Annotate(err, "get session failed")
 	}
 	exec := se.(sqlexec.RestrictedSQLExecutor)
-	return getRunawayWatchDoneRecord(exec, reader, sqlGenFn)
+	return getRunawayWatchDoneRecord(exec, reader, sqlGenFn, push)
 }
 
-func getRunawayWatchRecord(exec sqlexec.RestrictedSQLExecutor, reader *SystemTableReader, sqlGenFn func() (string, []interface{})) ([]*resourcegroup.QuarantineRecord, error) {
+func getRunawayWatchRecord(exec sqlexec.RestrictedSQLExecutor, reader *SystemTableReader, sqlGenFn func() (string, []interface{}), push bool) ([]*resourcegroup.QuarantineRecord, error) {
 	rs, err := reader.Read(exec, sqlGenFn)
 	if err != nil {
 		return nil, err
@@ -501,13 +503,15 @@ func getRunawayWatchRecord(exec sqlexec.RestrictedSQLExecutor, reader *SystemTab
 		}
 		// If a TiDB write record slow, it will occur that the record which has earlier start time is inserted later than others.
 		// So we start the scan a little earlier.
-		reader.CheckPoint = now.Add(-3 * runawayWatchSyncInterval)
+		if push {
+			reader.CheckPoint = now.Add(-3 * runawayWatchSyncInterval)
+		}
 		ret = append(ret, qr)
 	}
 	return ret, nil
 }
 
-func getRunawayWatchDoneRecord(exec sqlexec.RestrictedSQLExecutor, reader *SystemTableReader, sqlGenFn func() (string, []interface{})) ([]*resourcegroup.QuarantineRecord, error) {
+func getRunawayWatchDoneRecord(exec sqlexec.RestrictedSQLExecutor, reader *SystemTableReader, sqlGenFn func() (string, []interface{}), push bool) ([]*resourcegroup.QuarantineRecord, error) {
 	rs, err := reader.Read(exec, sqlGenFn)
 	if err != nil {
 		return nil, err
@@ -538,7 +542,9 @@ func getRunawayWatchDoneRecord(exec sqlexec.RestrictedSQLExecutor, reader *Syste
 			Action:            rmpb.RunawayAction(r.GetInt64(8)),
 		}
 		// Ditto as getRunawayWatchRecord.
-		reader.CheckPoint = now.Add(-3 * runawayWatchSyncInterval)
+		if push {
+			reader.CheckPoint = now.Add(-3 * runawayWatchSyncInterval)
+		}
 		ret = append(ret, qr)
 	}
 	return ret, nil
