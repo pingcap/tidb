@@ -456,7 +456,6 @@ func TestIssue33231(t *testing.T) {
 func TestListDefaultPruning(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set tidb_enable_default_list_partition=1`)
 	tk.MustExec("create database ListDefaultPrune")
 	tk.MustExec("use ListDefaultPrune")
 	tk.MustExec(`create table t (a int, b int) partition by list columns (a,b) (partition p1 values in ((1,1)), partition p2 values in ((2,2)), partition pDef default)`)
