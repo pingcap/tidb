@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// https://github.com/pingcap/tidb/issues/45690
 func TestGetAnalyzePanicErr(t *testing.T) {
 	errMsg := fmt.Sprintf("%s", getAnalyzePanicErr(memory.PanicMemoryExceedWarnMsg))
 	require.NotContains(t, errMsg, `%!(EXTRA`)
