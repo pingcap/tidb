@@ -2049,7 +2049,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' SELECT SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP order by year+2",
+        "SQL": "explain format = 'brief' SELECT SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP order by year+2; -- 8. order by item year+2 resolve to gby grouping expression",
         "Plan": [
           "Projection 8000.00 root  Column#9",
           "└─Sort 8000.00 root  Column#6",
@@ -2067,7 +2067,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' SELECT year+2, SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP order by year+2",
+        "SQL": "explain format = 'brief' SELECT year+2, SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP order by year+2; -- 9. order by item year+2 resolve to select field",
         "Plan": [
           "Projection 8000.00 root  Column#6->Column#10, Column#9",
           "└─Sort 8000.00 root  Column#6",
@@ -2081,6 +2081,25 @@
           "                └─Expand 10000.00 mpp[tiflash]  level-projection:[test.sales.profit, <nil>->Column#6, <nil>->Column#7, 0->gid],[test.sales.profit, Column#6, <nil>->Column#7, 1->gid],[test.sales.profit, Column#6, Column#7, 3->gid]; schema: [test.sales.profit,Column#6,Column#7,gid]",
           "                  └─Projection 10000.00 mpp[tiflash]  test.sales.profit, plus(test.sales.year, 2)->Column#6, plus(test.sales.year, test.sales.profit)->Column#7",
           "                    └─TableFullScan 10000.00 mpp[tiflash] table:sales keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' SELECT year+2 as y, SUM(profit) as profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP having y > 2002 order by year+2, profit; -- 10. having (year+2) shouldn't be pushed down",
+        "Plan": [
+          "Projection 6400.00 root  Column#6, Column#9",
+          "└─Sort 6400.00 root  Column#6, Column#9",
+          "  └─TableReader 6400.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─Projection 6400.00 mpp[tiflash]  Column#9, Column#6",
+          "        └─HashAgg 6400.00 mpp[tiflash]  group by:Column#20, Column#21, Column#22, funcs:sum(Column#18)->Column#9, funcs:firstrow(Column#19)->Column#6",
+          "          └─Projection 8000.00 mpp[tiflash]  cast(test.sales.profit, decimal(10,0) BINARY)->Column#18, Column#6->Column#19, Column#6->Column#20, Column#7->Column#21, gid->Column#22",
+          "            └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#6, collate: binary], [name: Column#7, collate: binary], [name: gid, collate: binary]",
+          "                └─Selection 8000.00 mpp[tiflash]  gt(Column#6, 2002)",
+          "                  └─Expand 10000.00 mpp[tiflash]  level-projection:[test.sales.profit, <nil>->Column#6, <nil>->Column#7, 0->gid],[test.sales.profit, Column#6, <nil>->Column#7, 1->gid],[test.sales.profit, Column#6, Column#7, 3->gid]; schema: [test.sales.profit,Column#6,Column#7,gid]",
+          "                    └─Projection 10000.00 mpp[tiflash]  test.sales.profit, plus(test.sales.year, 2)->Column#6, plus(test.sales.year, test.sales.profit)->Column#7",
+          "                      └─TableFullScan 10000.00 mpp[tiflash] table:sales keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
