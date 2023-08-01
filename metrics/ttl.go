@@ -31,6 +31,12 @@ var (
 	TTLInsertRowsCount prometheus.Counter
 
 	TTLWatermarkDelay *prometheus.GaugeVec
+
+	TTLEventCounter *prometheus.CounterVec
+
+	TTLSyncTimerCounter prometheus.Counter
+
+	TTLFullRefreshTimersCounter prometheus.Counter
 )
 
 // InitTTLMetrics initializes ttl metrics.
@@ -91,4 +97,15 @@ func InitTTLMetrics() {
 			Name:      "ttl_watermark_delay",
 			Help:      "Bucketed delay time in seconds for TTL tables.",
 		}, []string{LblType, LblName})
+
+	TTLEventCounter = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "ttl_event_count",
+			Help:      "Counter of ttl event.",
+		}, []string{LblType})
+
+	TTLSyncTimerCounter = TTLEventCounter.WithLabelValues("sync_one_timer")
+	TTLFullRefreshTimersCounter = TTLEventCounter.WithLabelValues("full_refresh_timers")
 }

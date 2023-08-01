@@ -335,9 +335,14 @@ func (cc *clientConn) Close() error {
 	return closeConn(cc, connections)
 }
 
+// closeConn should be idempotent.
+// It will be called on the same `clientConn` more than once to avoid connection leak.
 func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
-	cc.server.dom.ReleaseConnID(cc.connectionID)
+	if cc.connectionID > 0 {
+		cc.server.dom.ReleaseConnID(cc.connectionID)
+		cc.connectionID = 0
+	}
 	if cc.bufReadConn != nil {
 		err := cc.bufReadConn.Close()
 		if err != nil {
@@ -1640,7 +1645,7 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 		return errors.New("Index Advise: infile is empty")
 	}
 
-	if err := indexAdviseInfo.GetIndexAdvice(ctx, data); err != nil {
+	if err := indexAdviseInfo.GetIndexAdvice(data); err != nil {
 		return err
 	}
 
