@@ -123,9 +123,9 @@ func TestFrameworkRollback(t *testing.T) {
 	var v atomic.Int64
 	RegisterRollbackTaskMeta(&v)
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe", "1*return(true)")
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskAfterMonitorTask", "2*return(true)")
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskAfterMonitorTask"))
 	}()
 
 	DispatchTaskAndCheckFail("key2", t, &v)

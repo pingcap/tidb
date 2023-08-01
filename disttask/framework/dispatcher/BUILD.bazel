@@ -4,6 +4,7 @@ go_library(
     name = "dispatcher",
     srcs = [
         "dispatcher.go",
+        "dispatcher_manager.go",
         "dispatcher_mock.go",
         "register.go",
     ],
