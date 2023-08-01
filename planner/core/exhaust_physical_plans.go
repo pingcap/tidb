@@ -2961,21 +2961,21 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 		switch c := ch.(type) {
 		case *DataSource:
 			validDs := false
-			considerIndexMerge := false
+			indexMergeIsIntersection := false
 			for _, path := range c.possibleAccessPaths {
 				if path.StoreType == storeTp {
 					validDs = true
 				}
-				if len(path.PartialIndexPaths) > 0 {
-					considerIndexMerge = true
+				if len(path.PartialIndexPaths) > 0 && path.IndexMergeIsIntersection {
+					indexMergeIsIntersection = true
 				}
 			}
 			ret = ret && validDs
 
 			_, isTopN := p.self.(*LogicalTopN)
 			_, isLimit := p.self.(*LogicalLimit)
-			if (isTopN || isLimit) && considerIndexMerge {
-				return false // TopN and Limit cannot be pushed down to IndexMerge
+			if (isTopN || isLimit) && indexMergeIsIntersection {
+				return false // TopN and Limit cannot be pushed down to the intersection type IndexMerge
 			}
 
 			if c.tableInfo.TableCacheStatusType != model.TableCacheStatusDisable {

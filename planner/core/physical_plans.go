@@ -578,6 +578,8 @@ type PhysicalIndexMergeReader struct {
 	PartitionInfo PartitionInfo
 
 	KeepOrder bool
+
+	HandleCols HandleCols
 }
 
 // GetAvgTableRowSize return the average row size of table plan.
