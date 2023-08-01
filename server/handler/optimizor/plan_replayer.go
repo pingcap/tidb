@@ -51,6 +51,7 @@ type PlanReplayerHandler struct {
 	statusPort  uint
 }
 
+// NewPlanReplayerHandler creates a new PlanReplayerHandler.
 func NewPlanReplayerHandler(is infoschema.InfoSchema, statsHandle *handle.Handle, infoGetter *infosync.InfoSyncer, address string, statusPort uint) *PlanReplayerHandler {
 	return &PlanReplayerHandler{
 		is:          is,
@@ -61,6 +62,7 @@ func NewPlanReplayerHandler(is infoschema.InfoSchema, statsHandle *handle.Handle
 	}
 }
 
+// ServeHTTP handles request of dumping plan replayer file.
 func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
 	name := params[handler.FileName]

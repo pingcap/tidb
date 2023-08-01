@@ -130,6 +130,7 @@ func NewDBTableHandler(tool *handler.TikvHandlerTool) *DBTableHandler {
 	return &DBTableHandler{tool}
 }
 
+// FlashReplicaHandler is the handler for flash replica.
 type FlashReplicaHandler struct {
 	*handler.TikvHandlerTool
 }

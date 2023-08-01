@@ -515,6 +515,7 @@
       "server/conn_stmt.go": "server/conn_stmt.go",
       "server/conn_test.go": "server/conn_test.go",
       "server/internal": "server/internal",
+      "server/handle": "server/handle",
       "distsql/": "ignore distsql code",
       "disttask": "disttask code",
       "dumpling/export": "dumpling/export code",
