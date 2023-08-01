@@ -98,11 +98,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 	if len(ranges) == 0 {
 		return nil
 	}
-
-	db, err := local.g.GetDB()
-	if err != nil {
-		return errors.Trace(err)
-	}
+    var err error
 
 	minKey := codec.EncodeBytes([]byte{}, ranges[0].start)
 	maxKey := codec.EncodeBytes([]byte{}, ranges[len(ranges)-1].end)
@@ -172,16 +168,6 @@ func (local *local) SplitAndScatterRegionByRanges(
 		if len(ranges) == 0 {
 			log.FromContext(ctx).Info("no ranges need to be split, skipped.")
 			return nil
-		}
-
-		var tableRegionStats map[uint64]int64
-		if tableInfo != nil {
-			tableRegionStats, err = fetchTableRegionSizeStats(ctx, db, tableInfo.ID)
-			if err != nil {
-				log.FromContext(ctx).Warn("fetch table region size statistics failed",
-					zap.String("table", tableInfo.Name), zap.Error(err))
-				tableRegionStats, err = make(map[uint64]int64), nil
-			}
 		}
 
 		regionMap := make(map[uint64]*split.RegionInfo)
@@ -293,15 +279,6 @@ func (local *local) SplitAndScatterRegionByRanges(
 		}
 	sendLoop:
 		for regionID, keys := range splitKeyMap {
-			// if region not in tableRegionStats, that means this region is newly split, so
-			// we can skip split it again.
-			regionSize, ok := tableRegionStats[regionID]
-			if !ok {
-				log.FromContext(ctx).Warn("region stats not found", zap.Uint64("region", regionID))
-			}
-			if len(keys) == 1 && regionSize < regionSplitSize {
-				skippedKeys++
-			}
 			select {
 			case ch <- &splitInfo{region: regionMap[regionID], keys: keys}:
 			case <-ctx.Done():
@@ -337,10 +314,9 @@ func (local *local) SplitAndScatterRegionByRanges(
 	scatterCount, err := local.waitForScatterRegions(ctx, scatterRegions)
 	if scatterCount == len(scatterRegions) {
 		log.FromContext(ctx).Info("waiting for scattering regions done",
-			zap.Int("skipped_keys", skippedKeys),
 			zap.Int("regions", len(scatterRegions)), zap.Duration("take", time.Since(startTime)))
 	} else {
-		log.FromContext(ctx).Info("waiting for scattering regions timeout",
+		log.FromContext(ctx).Warn("waiting for scattering regions timeout",
 			zap.Int("skipped_keys", skippedKeys),
 			zap.Int("scatterCount", scatterCount),
 			zap.Int("regions", len(scatterRegions)),
