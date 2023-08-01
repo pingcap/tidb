@@ -20,6 +20,7 @@ import (
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -34,15 +35,15 @@ type TiKVModeSwitcher interface {
 // TiKVModeSwitcher is used to switch TiKV nodes between Import and Normal mode.
 type switcher struct {
 	tls    *common.TLS
-	pdAddr string
+	pdCli  pd.Client
 	logger *zap.Logger
 }
 
 // NewTiKVModeSwitcher creates a new TiKVModeSwitcher.
-func NewTiKVModeSwitcher(tls *common.TLS, pdAddr string, logger *zap.Logger) TiKVModeSwitcher {
+func NewTiKVModeSwitcher(tls *common.TLS, pdCli pd.Client, logger *zap.Logger) TiKVModeSwitcher {
 	return &switcher{
 		tls:    tls,
-		pdAddr: pdAddr,
+		pdCli:  pdCli,
 		logger: logger,
 	}
 }
@@ -68,7 +69,7 @@ func (rc *switcher) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode, r
 	} else {
 		minState = tikv.StoreStateDisconnected
 	}
-	tls := rc.tls.WithHost(rc.pdAddr)
+	tls := rc.tls.WithHost(rc.pdCli.GetLeaderAddr())
 	// we ignore switch mode failure since it is not fatal.
 	// no need log the error, it is done in kv.SwitchMode already.
 	_ = tikv.ForAllStores(
