@@ -1876,7 +1876,6 @@ type RunawayActionType int32
 
 //revive:disable:exported
 const (
-	// Note: RunawayActionNone is only defined in tidb, so take care of converting.
 	RunawayActionNone RunawayActionType = iota
 	RunawayActionDryRun
 	RunawayActionCooldown

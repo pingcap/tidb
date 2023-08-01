@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -66,12 +65,9 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/telemetry"
-	"github.com/pingcap/tidb/ttl/cache"
-	"github.com/pingcap/tidb/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/ttl/ttlworker"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -165,6 +161,7 @@ type Domain struct {
 	historicalStatsWorker    *HistoricalStatsWorker
 	ttlJobManager            atomic.Pointer[ttlworker.JobManager]
 	runawayManager           *resourcegroup.RunawayManager
+	runawaySyncer            *runawaySyncer
 	resourceGroupsController *rmclient.ResourceGroupsController
 
 	serverID             uint64
@@ -1243,6 +1240,7 @@ func (do *Domain) Init(
 	do.wg.Run(do.infoSyncerKeeper, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
 	do.wg.Run(do.runawayRecordFlushLoop, "runawayRecordFlushLoop")
+	do.wg.Run(do.runawayWatchSyncLoop, "runawayWatchSyncLoop")
 	if !skipRegisterToDashboard {
 		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
 	}
@@ -1268,255 +1266,6 @@ func (do *Domain) InitInfo4Test() {
 // SetOnClose used to set do.onClose func.
 func (do *Domain) SetOnClose(onClose func()) {
 	do.onClose = onClose
-}
-
-const (
-	runawayRecordFluashInterval  = time.Second
-	quarantineRecordGCInterval   = time.Minute * 10
-	runawayRecordGCInterval      = time.Hour * 24
-	runawayRecordExpiredDuration = time.Hour * 24 * 7
-
-	runawayRecordGCBatchSize       = 100
-	runawayRecordGCSelectBatchSize = runawayRecordGCBatchSize * 5
-)
-
-var systemSchemaCIStr = model.NewCIStr("mysql")
-
-func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration time.Duration) {
-	if !do.DDL().OwnerManager().IsOwner() {
-		return
-	}
-	failpoint.Inject("FastRunawayGC", func() {
-		expiredDuration = time.Second * 1
-	})
-	expiredTime := time.Now().Add(-expiredDuration)
-	tbCIStr := model.NewCIStr(tableName)
-	tbl, err := do.InfoSchema().TableByName(systemSchemaCIStr, tbCIStr)
-	if err != nil {
-		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
-		return
-	}
-	tbInfo := tbl.Meta()
-	col := tbInfo.FindPublicColumnByName(colName)
-	if col == nil {
-		logutil.BgLogger().Error("time column is not public in table", zap.String("table", tableName), zap.String("column", colName))
-		return
-	}
-	tb, err := cache.NewBasePhysicalTable(systemSchemaCIStr, tbInfo, model.NewCIStr(""), col)
-	if err != nil {
-		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
-		return
-	}
-	generator, err := sqlbuilder.NewScanQueryGenerator(tb, expiredTime, nil, nil)
-	if err != nil {
-		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
-		return
-	}
-	var leftRows [][]types.Datum
-	for {
-		sql := ""
-		if sql, err = generator.NextSQL(leftRows, runawayRecordGCSelectBatchSize); err != nil {
-			logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
-			return
-		}
-		// to remove
-		if len(sql) == 0 {
-			return
-		}
-
-		rows, sqlErr := do.execRestrictedSQL(sql, nil)
-		if sqlErr != nil {
-			logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
-			return
-		}
-		leftRows = make([][]types.Datum, len(rows))
-		for i, row := range rows {
-			leftRows[i] = row.GetDatumRow(tb.KeyColumnTypes)
-		}
-
-		for len(leftRows) > 0 {
-			var delBatch [][]types.Datum
-			if len(leftRows) < runawayRecordGCBatchSize {
-				delBatch = leftRows
-				leftRows = nil
-			} else {
-				delBatch = leftRows[0:runawayRecordGCBatchSize]
-				leftRows = leftRows[runawayRecordGCBatchSize:]
-			}
-			sql, err := sqlbuilder.BuildDeleteSQL(tb, delBatch, expiredTime)
-			if err != nil {
-				logutil.BgLogger().Error(
-					"build delete SQL failed when deleting system table",
-					zap.Error(err),
-					zap.String("table", tb.Schema.O+"."+tb.Name.O),
-				)
-				return
-			}
-
-			_, err = do.execRestrictedSQL(sql, nil)
-			if err != nil {
-				logutil.BgLogger().Error(
-					"delete SQL failed when deleting system table", zap.Error(err), zap.String("SQL", sql),
-				)
-			}
-		}
-	}
-}
-
-func (do *Domain) runawayRecordFlushLoop() {
-	defer util.Recover(metrics.LabelDomain, "runawayRecordFlushLoop", nil, false)
-
-	// this times is used to batch flushing rocords, with 1s duration,
-	// we can guarantee a watch record can be seen by the user within 1s.
-	runawayRecordFluashTimer := time.NewTimer(runawayRecordFluashInterval)
-	runawayRecordGCTicker := time.NewTicker(runawayRecordGCInterval)
-	quarantineRecordGCTicker := time.NewTicker(quarantineRecordGCInterval)
-	failpoint.Inject("FastRunawayGC", func() {
-		runawayRecordFluashTimer.Stop()
-		runawayRecordGCTicker.Stop()
-		quarantineRecordGCTicker.Stop()
-		runawayRecordFluashTimer = time.NewTimer(time.Millisecond * 50)
-		runawayRecordGCTicker = time.NewTicker(time.Millisecond * 200)
-		quarantineRecordGCTicker = time.NewTicker(time.Millisecond * 200)
-	})
-
-	fired := false
-	recordCh := do.RunawayManager().RunawayRecordChan()
-	quarantineRecordCh := do.RunawayManager().QuarantineRecordChan()
-	flushThrehold := do.runawayManager.FlushThreshold()
-	records := make([]*resourcegroup.RunawayRecord, 0, flushThrehold)
-	quarantineRecords := make([]*resourcegroup.QuarantineRecord, 0)
-
-	flushRunawayRecords := func() {
-		if len(records) == 0 {
-			return
-		}
-		sql, params := genRunawayQueriesStmt(records)
-		if _, err := do.execRestrictedSQL(sql, params); err != nil {
-			logutil.BgLogger().Error("flush runaway records failed", zap.Error(err), zap.Int("count", len(records)))
-		}
-		records = records[:0]
-	}
-	flushQuarantineRecords := func() {
-		if len(quarantineRecords) == 0 {
-			return
-		}
-		sql, params := genQuarantineQueriesStmt(quarantineRecords)
-		if _, err := do.execRestrictedSQL(sql, params); err != nil {
-			logutil.BgLogger().Error("flush quarantine records failed", zap.Error(err), zap.Int("count", len(quarantineRecords)))
-		}
-		quarantineRecords = quarantineRecords[:0]
-	}
-	for {
-		select {
-		case <-do.exit:
-			return
-		case <-runawayRecordFluashTimer.C:
-			flushRunawayRecords()
-			fired = true
-		case r := <-quarantineRecordCh:
-			quarantineRecords = append(quarantineRecords, r)
-			// we expect quarantine record should not be triggered very often, so always
-			// flush as soon as possible.
-			if len(quarantineRecordCh) == 0 || len(quarantineRecords) >= flushThrehold {
-				flushQuarantineRecords()
-			}
-		case r := <-recordCh:
-			records = append(records, r)
-			failpoint.Inject("FastRunawayGC", func() {
-				flushRunawayRecords()
-			})
-			if len(records) >= flushThrehold {
-				flushRunawayRecords()
-			} else if fired {
-				fired = false
-				// meet a new record, reset the timer.
-				runawayRecordFluashTimer.Reset(runawayRecordFluashInterval)
-			}
-		case <-runawayRecordGCTicker.C:
-			go do.deleteExpiredRows("tidb_runaway_queries", "time", runawayRecordExpiredDuration)
-		case <-quarantineRecordGCTicker.C:
-			go do.deleteExpiredRows("tidb_runaway_quarantined_watch", "end_time", time.Duration(0))
-		}
-	}
-}
-
-func (do *Domain) execRestrictedSQL(sql string, params []interface{}) ([]chunk.Row, error) {
-	se, err := do.sysSessionPool.Get()
-	defer func() {
-		do.sysSessionPool.Put(se)
-	}()
-	if err != nil {
-		return nil, errors.Annotate(err, "get session failed")
-	}
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	r, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-		sql, params...,
-	)
-	return r, err
-}
-
-func genRunawayQueriesStmt(records []*resourcegroup.RunawayRecord) (string, []interface{}) {
-	var builder strings.Builder
-	params := make([]interface{}, 0, len(records)*7)
-	builder.WriteString("insert into mysql.tidb_runaway_queries VALUES ")
-	for count, r := range records {
-		if count > 0 {
-			builder.WriteByte(',')
-		}
-		builder.WriteString("(%?, %?, %?, %?, %?, %?, %?)")
-		params = append(params, r.ResourceGroupName)
-		params = append(params, r.Time)
-		params = append(params, r.Match)
-		params = append(params, r.Action)
-		params = append(params, r.SQLText)
-		params = append(params, r.PlanDigest)
-		params = append(params, r.From)
-	}
-	return builder.String(), params
-}
-
-func genQuarantineQueriesStmt(records []*resourcegroup.QuarantineRecord) (string, []interface{}) {
-	var builder strings.Builder
-	params := make([]interface{}, 0, len(records)*7)
-	builder.WriteString("insert into mysql.tidb_runaway_quarantined_watch VALUES ")
-	for count, r := range records {
-		if count > 0 {
-			builder.WriteByte(',')
-		}
-		builder.WriteString("(%?, %?, %?, %?, %?, %?)")
-		params = append(params, r.ResourceGroupName)
-		params = append(params, r.StartTime)
-		params = append(params, r.EndTime)
-		params = append(params, r.Watch)
-		params = append(params, r.WatchText)
-		params = append(params, r.Source)
-	}
-	return builder.String(), params
-}
-
-func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.Client) error {
-	if pdClient == nil {
-		logutil.BgLogger().Warn("cannot setup up resource controller, not using tikv storage")
-		// return nil as unistore doesn't support it
-		return nil
-	}
-
-	control, err := rmclient.NewResourceGroupController(ctx, do.ServerID(), pdClient, nil, rmclient.WithMaxWaitDuration(resourcegroup.MaxWaitDuration))
-	if err != nil {
-		return err
-	}
-	control.Start(ctx)
-	serverInfo, err := infosync.GetServerInfo()
-	if err != nil {
-		return err
-	}
-	serverAddr := net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
-	do.runawayManager = resourcegroup.NewRunawayManager(control, serverAddr)
-	do.resourceGroupsController = control
-	tikv.SetResourceControlInterceptor(control)
-	return nil
 }
 
 func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {

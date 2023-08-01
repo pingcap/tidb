@@ -6,10 +6,20 @@ go_library(
     importpath = "github.com/pingcap/tidb/executor/internal/querywatch",
     visibility = ["//executor:__subpackages__"],
     deps = [
+        "//domain",
+        "//domain/resourcegroup",
         "//executor/internal/exec",
+        "//expression",
+        "//infoschema",
+        "//parser",
         "//parser/ast",
+        "//parser/model",
         "//sessionctx",
         "//util/chunk",
+        "//util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/resource_manager",
+        "@com_github_tikv_pd_client//resource_group/controller",
     ],
 )
 
@@ -24,6 +34,8 @@ go_test(
     flaky = True,
     deps = [
         "//config",
+        "//errno",
+        "//kv",
         "//meta/autoid",
         "//testkit",
         "//testkit/testsetup",
