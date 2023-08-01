@@ -43,6 +43,7 @@ type ExtractTaskServeHandler struct {
 	ExtractHandler *domain.ExtractHandle
 }
 
+// NewExtractTaskServeHandler creates a new extract task serve handler
 func NewExtractTaskServeHandler(extractHandler *domain.ExtractHandle) *ExtractTaskServeHandler {
 	return &ExtractTaskServeHandler{ExtractHandler: extractHandler}
 }
@@ -112,8 +113,7 @@ func loadExtractResponse(name string) ([]byte, error) {
 
 func buildExtractTask(req *http.Request) (*domain.ExtractTask, bool, error) {
 	extractTaskType := req.URL.Query().Get(handler.Type)
-	switch strings.ToLower(extractTaskType) {
-	case extractPlanTaskType:
+	if strings.ToLower(extractTaskType) == extractPlanTaskType {
 		return buildExtractPlanTask(req)
 	}
 	logutil.BgLogger().Error("unknown extract task type")
