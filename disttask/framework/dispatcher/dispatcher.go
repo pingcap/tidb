@@ -217,10 +217,8 @@ func (d *dispatcher) updateTask(task *proto.Task, taskState string, newSubTasks 
 		time.Sleep(retrySQLInterval)
 	}
 	if err != nil && retryTimes != nonRetrySQLTime {
-		// ywq todo fix the log
-		logutil.BgLogger().Warn("updateTask failed and delete running task info", zap.Int64("task-id", task.ID),
+		logutil.BgLogger().Warn("updateTask failed", zap.Int64("task-id", task.ID),
 			zap.String("previous state", prevState), zap.String("curr state", task.State), zap.Int("retry times", retryTimes), zap.Error(err))
-		d.finishedCh <- task
 	}
 	return err
 }
