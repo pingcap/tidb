@@ -238,6 +238,21 @@ func newBackupMetaValidateCommand() *cobra.Command {
 						Name: indexInfo.Name,
 					}
 				}
+				if table.Info.Partition != nil {
+					if table.Info.Partition != nil {
+						newTable.Partition = &model.PartitionInfo{
+							Definitions: make([]model.PartitionDefinition, len(table.Info.Partition.Definitions)),
+						}
+					}
+					for _, old := range table.Info.Partition.Definitions {
+						partitionID, _ := tableIDAllocator.Alloc()
+						newTable.Partition.Definitions = append(newTable.Partition.Definitions, model.PartitionDefinition{
+							ID:   int64(partitionID),
+							Name: old.Name,
+						})
+					}
+				}
+
 				rules := restore.GetRewriteRules(newTable, table.Info, 0, true)
 				rewriteRules.Data = append(rewriteRules.Data, rules.Data...)
 				tableIDMap[table.Info.ID] = int64(tableID)

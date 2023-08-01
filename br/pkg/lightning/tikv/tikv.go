@@ -24,12 +24,15 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -145,12 +148,19 @@ func ignoreUnimplementedError(err error, logger log.Logger) error {
 }
 
 // SwitchMode changes the TiKV node at the given address to a particular mode.
-func SwitchMode(ctx context.Context, tls *common.TLS, tikvAddr string, mode import_sstpb.SwitchMode) error {
+func SwitchMode(
+	ctx context.Context,
+	tls *common.TLS,
+	tikvAddr string,
+	mode import_sstpb.SwitchMode,
+	ranges ...*import_sstpb.Range,
+) error {
 	task := log.With(zap.Stringer("mode", mode),
 		zap.String("tikv", tikvAddr)).Begin(zap.DebugLevel, "switch mode")
 	err := withTiKVConnection(ctx, tls, tikvAddr, func(client import_sstpb.ImportSSTClient) error {
 		_, err := client.SwitchMode(ctx, &import_sstpb.SwitchModeRequest{
-			Mode: mode,
+			Mode:   mode,
+			Ranges: ranges,
 		})
 		return ignoreUnimplementedError(err, task.Logger)
 	})
@@ -159,11 +169,17 @@ func SwitchMode(ctx context.Context, tls *common.TLS, tikvAddr string, mode impo
 }
 
 // Compact performs a leveled compaction with the given minimum level.
-func Compact(ctx context.Context, tls *common.TLS, tikvAddr string, level int32) error {
+func Compact(ctx context.Context, tls *common.TLS, tikvAddr string, level int32, resourceGroupName string) error {
 	task := log.With(zap.Int32("level", level), zap.String("tikv", tikvAddr)).Begin(zap.InfoLevel, "compact cluster")
 	err := withTiKVConnection(ctx, tls, tikvAddr, func(client import_sstpb.ImportSSTClient) error {
 		_, err := client.Compact(ctx, &import_sstpb.CompactRequest{
 			OutputLevel: level,
+			Context: &kvrpcpb.Context{
+				ResourceControlContext: &kvrpcpb.ResourceControlContext{
+					ResourceGroupName: resourceGroupName,
+				},
+				RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
+			},
 		})
 		return ignoreUnimplementedError(err, task.Logger)
 	})
