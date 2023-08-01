@@ -16,6 +16,7 @@ package chunk
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -137,7 +138,23 @@ func (c *RowContainer) SpillToDisk() {
 	N := c.m.records.inMemory.NumChunks()
 	c.m.records.inDisk = NewListInDisk(c.m.records.inMemory.FieldTypes())
 	c.m.records.inDisk.diskTracker.AttachTo(c.diskTracker)
+<<<<<<< HEAD
 	for i := 0; i < N; i++ {
+=======
+	defer func() {
+		if r := recover(); r != nil {
+			err := fmt.Errorf("%v", r)
+			c.m.records.spillError = err
+			logutil.BgLogger().Error("spill to disk failed", zap.Stack("stack"), zap.Error(err))
+		}
+	}()
+	failpoint.Inject("spillToDiskOutOfDiskQuota", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("out of disk quota when spilling")
+		}
+	})
+	for i := 0; i < n; i++ {
+>>>>>>> 838b3674752 (executor, util: make tmp-storage-quota take affect (#45549))
 		chk := c.m.records.inMemory.GetChunk(i)
 		err = c.m.records.inDisk.Add(chk)
 		if err != nil {
