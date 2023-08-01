@@ -3959,6 +3959,7 @@ func (c *weightStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err != nil {
 		return nil, err
 	}
+	types.SetBinChsClnFlag(bf.tp)
 	var sig builtinFunc
 	if padding == weightStringPaddingNull {
 		sig = &builtinWeightStringNullSig{bf}
