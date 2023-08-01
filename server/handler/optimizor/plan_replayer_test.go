@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package optimizor_test
 
 import (
 	"archive/zip"
@@ -34,6 +34,9 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/server/internal/testserverclient"
+	"github.com/pingcap/tidb/server/internal/testutil"
 	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -77,26 +80,26 @@ var expectedFilesInReplayerForCapture = []string{
 	"variables.toml",
 }
 
-func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.Domain) (server *Server, client *testServerClient) {
-	driver := NewTiDBDriver(store)
-	client = newTestServerClient()
+func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.Domain) (srv *server.Server, client *testserverclient.TestServerClient) {
+	driver := server.NewTiDBDriver(store)
+	client = testserverclient.NewTestServerClient()
 
 	cfg := util.NewTestConfig()
-	cfg.Port = client.port
-	cfg.Status.StatusPort = client.statusPort
+	cfg.Port = client.Port
+	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
 
-	server, err := NewServer(cfg, driver)
-	server.SetDomain(dom)
+	srv, err := server.NewServer(cfg, driver)
+	srv.SetDomain(dom)
 	require.NoError(t, err)
 	go func() {
-		err := server.Run()
+		err := srv.Run()
 		require.NoError(t, err)
 	}()
 
-	client.port = getPortFromTCPAddr(server.listener.Addr())
-	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
-	client.waitUntilServerOnline()
+	client.Port = testutil.GetPortFromTCPAddr(srv.ListenAddr())
+	client.StatusPort = testutil.GetPortFromTCPAddr(srv.StatusListenerAddr())
+	client.WaitUntilServerOnline()
 	return
 }
 
@@ -124,7 +127,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	}
 
 	// 2-1. check the plan replayer file from manual command
-	resp0, err := client.fetchStatus(filepath.Join("/plan_replayer/dump/", filename))
+	resp0, err := client.FetchStatus(filepath.Join("/plan_replayer/dump/", filename))
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, resp0.Body.Close())
@@ -136,7 +139,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	require.Equal(t, expectedFilesInReplayer, filesInReplayer)
 
 	// 2-2. check the plan replayer file from capture
-	resp1, err := client.fetchStatus(filepath.Join("/plan_replayer/dump/", fileNameFromCapture))
+	resp1, err := client.FetchStatus(filepath.Join("/plan_replayer/dump/", fileNameFromCapture))
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, resp1.Body.Close())
@@ -165,7 +168,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	require.NoError(t, fp.Sync())
 
 	// 3-2. connect to tidb and use PLAN REPLAYER LOAD to load this file
-	db, err := sql.Open("mysql", client.getDSN(func(config *mysql.Config) {
+	db, err := sql.Open("mysql", client.GetDSN(func(config *mysql.Config) {
 		config.AllowAllFiles = true
 	}))
 	require.NoError(t, err, "Error connecting")
@@ -195,10 +198,10 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 
 // prepareData4PlanReplayer trigger tidb to dump 2 plan replayer files,
 // one by manual command, the other by capture, and return the filenames.
-func prepareData4PlanReplayer(t *testing.T, client *testServerClient, dom *domain.Domain) (string, string) {
+func prepareData4PlanReplayer(t *testing.T, client *testserverclient.TestServerClient, dom *domain.Domain) (string, string) {
 	h := dom.StatsHandle()
 	replayerHandle := dom.GetPlanReplayerHandle()
-	db, err := sql.Open("mysql", client.getDSN())
+	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
 	defer func() {
 		err := db.Close()
@@ -252,8 +255,8 @@ func forEachFileInZipBytes(t *testing.T, b []byte, fn func(file *zip.File)) {
 	}
 }
 
-func fetchZipFromPlanReplayerAPI(t *testing.T, client *testServerClient, filename string) *zip.Reader {
-	resp0, err := client.fetchStatus(filepath.Join("/plan_replayer/dump/", filename))
+func fetchZipFromPlanReplayerAPI(t *testing.T, client *testserverclient.TestServerClient, filename string) *zip.Reader {
+	resp0, err := client.FetchStatus(filepath.Join("/plan_replayer/dump/", filename))
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, resp0.Body.Close())
