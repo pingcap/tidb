@@ -1934,33 +1934,13 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 			case p.preferAny(preferLeftAsINLMJInner, preferRightAsINLMJInner): // prefer index merge join
 				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLMJ, indexMergeJoinTables))
 			}
-<<<<<<< HEAD
-			if p.hintInfo != nil && p.preferJoinType > 0 {
-				t := p.hintInfo.indexNestedLoopJoinTables
-				switch {
-				case len(t.inljTables) != 0:
-					errMsg = fmt.Sprintf("Optimizer Hint %s or %s is inapplicable",
-						restore2JoinHint(HintINLJ, t.inljTables), restore2JoinHint(TiDBIndexNestedLoopJoin, t.inljTables))
-				case len(t.inlhjTables) != 0:
-					errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLHJ, t.inlhjTables))
-				case len(t.inlmjTables) != 0:
-					errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLMJ, t.inlmjTables))
-				}
-			}
-
-=======
->>>>>>> 64be9ec4c0c (planner: refine `tryToGetIndexJoin` (#45587))
 			// Append inapplicable reason.
 			if len(p.EqualConditions) == 0 {
 				errMsg += " without column equal ON condition"
 			}
 			// Generate warning message to client.
-<<<<<<< HEAD
 			warning := ErrInternal.GenWithStack(errMsg)
 			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-=======
-			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
->>>>>>> 64be9ec4c0c (planner: refine `tryToGetIndexJoin` (#45587))
 		}
 	}()
 
