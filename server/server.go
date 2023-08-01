@@ -860,7 +860,7 @@ func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
 	}
 
 	if !query {
-		// Mark the client connection Status as WaitShutdown, when clientConn.Run detect
+		// Mark the client connection status as WaitShutdown, when clientConn.Run detect
 		// this, it will end the dispatch loop and exit.
 		conn.setStatus(connStatusWaitShutdown)
 	}
