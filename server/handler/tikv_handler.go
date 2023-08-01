@@ -28,6 +28,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
+// TikvHandlerTool is a tool to handle TiKV data.
 type TikvHandlerTool struct {
 	helper.Helper
 }
@@ -132,7 +133,7 @@ func (t *TikvHandlerTool) GetMvccByIdxValue(idx table.Index, values url.Values, 
 }
 
 // formValue2DatumRow converts URL query string to a Datum Row.
-func (t *TikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
+func (*TikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
 	data := make([]types.Datum, len(idxCols))
 	for i, col := range idxCols {
 		colName := col.Name.String()
@@ -183,7 +184,7 @@ func (t *TikvHandlerTool) GetTable(dbName, tableName string) (table.PhysicalTabl
 }
 
 // GetPartition gets the partition by the table and partition name.
-func (t *TikvHandlerTool) GetPartition(tableVal table.Table, partitionName string) (table.PhysicalTable, error) {
+func (*TikvHandlerTool) GetPartition(tableVal table.Table, partitionName string) (table.PhysicalTable, error) {
 	if pt, ok := tableVal.(table.PartitionedTable); ok {
 		if partitionName == "" {
 			return tableVal.(table.PhysicalTable), errors.New("work on partitioned table, please specify the table name like this: table(partition)")
