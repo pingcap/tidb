@@ -146,6 +146,7 @@ func validateWatchRecord(record *resourcegroup.QuarantineRecord, client *rmclien
 		if rg.RunawaySettings == nil {
 			return errors.Errorf("must set runaway config for resource group `%s`", record.ResourceGroupName)
 		}
+		record.Action = rg.RunawaySettings.Action
 	}
 	if record.Watch == rmpb.RunawayWatchType_NoneWatch {
 		return errors.Errorf("must specify watch type")
@@ -179,11 +180,10 @@ func (e *AddExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err := validateWatchRecord(record, do.ResourceGroupsController()); err != nil {
 		return err
 	}
-	id, err := do.AddRunawayWatch(record)
+	err = do.AddRunawayWatch(record)
 	if err != nil {
 		return err
 	}
-	req.AppendUint64(0, uint64(id))
 	return nil
 }
 

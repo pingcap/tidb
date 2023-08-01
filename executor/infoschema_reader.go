@@ -3250,7 +3250,6 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 
 func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) error {
 	do := domain.GetDomain(sctx)
-	rmClient := do.ResourceGroupsController()
 	err := do.TryToUpdateRunawayWatch()
 	if err != nil {
 		logutil.BgLogger().Warn("read runaway watch list", zap.Error(err))
@@ -3259,14 +3258,6 @@ func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) e
 	rows := make([][]types.Datum, 0, len(watches))
 	for _, watch := range watches {
 		action := watch.Action
-		if action == rmpb.RunawayAction_NoneAction {
-			rg, err := rmClient.GetResourceGroup(watch.ResourceGroupName)
-			if err == nil && rg != nil {
-				if setting := rg.GetRunawaySettings(); setting != nil {
-					action = setting.GetAction()
-				}
-			}
-		}
 		row := types.MakeDatums(
 			watch.ID,
 			watch.ResourceGroupName,

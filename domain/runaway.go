@@ -19,6 +19,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -136,37 +137,37 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 	}
 }
 
+func (do *Domain) updateNewAndDoneWatch() error {
+	do.runawaySyncer.mu.Lock()
+	defer do.runawaySyncer.mu.Unlock()
+	records, err := do.runawaySyncer.getNewWatchRecords()
+	if err != nil {
+		logutil.BgLogger().Error("try to get new runaway watch", zap.Error(err))
+		return err
+	}
+	for _, r := range records {
+		do.runawayManager.AddWatch(r)
+	}
+	doneRecords, err := do.runawaySyncer.getNewWatchDoneRecords()
+	if err != nil {
+		logutil.BgLogger().Error("try to get done runaway watch", zap.Error(err))
+		return err
+	}
+	for _, r := range doneRecords {
+		do.runawayManager.RemoveWatch(r)
+	}
+	return nil
+}
+
 func (do *Domain) runawayWatchSyncLoop() {
 	defer util.Recover(metrics.LabelDomain, "runawayWatchSyncLoop", nil, false)
 	runawayWatchSyncTicker := time.NewTicker(runawayWatchSyncInterval)
-	updateFn := func() error {
-		records, err := do.runawaySyncer.getNewWatchRecords()
-		if err != nil {
-			logutil.BgLogger().Error("try to get new runaway watch", zap.Error(err))
-			return err
-		}
-		for _, r := range records {
-			do.runawayManager.AddWatch(r)
-		}
-		doneRecords, err := do.runawaySyncer.getNewWatchDoneRecords()
-		if err != nil {
-			logutil.BgLogger().Error("try to get done runaway watch", zap.Error(err))
-			return err
-		}
-		for _, r := range doneRecords {
-			do.runawayManager.RemoveWatch(r)
-		}
-		return nil
-	}
 	for {
 		select {
 		case <-do.exit:
 			return
-		case <-do.runawaySyncer.notifyChan:
-			err := updateFn()
-			do.runawaySyncer.doneChan <- err
 		case <-runawayWatchSyncTicker.C:
-			err := updateFn()
+			err := do.updateNewAndDoneWatch()
 			if err != nil {
 				logutil.BgLogger().Warn("get runaway watch record failed", zap.Error(err))
 			}
@@ -175,36 +176,8 @@ func (do *Domain) runawayWatchSyncLoop() {
 }
 
 // AddRunawayWatch is used to add runaway watch item manually.
-func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) (int64, error) {
-	if err := do.handleRunawayWatch(record); err != nil {
-		return 0, err
-	}
-	do.runawaySyncer.notifyChan <- struct{}{}
-	timer := time.NewTimer(10 * time.Second)
-	ticker := time.NewTicker(time.Second)
-	defer func() {
-		ticker.Stop()
-		timer.Stop()
-	}()
-	for {
-		select {
-		case <-timer.C:
-			return 0, errors.Errorf("the query watch is added successfully, but the TiDB server load timed out, you can query information_schame.runaway_watches later to confirm")
-		case <-ticker.C:
-			r := do.runawayManager.GetWatchByKey(record.GetRecordKey())
-			if r.ID > 0 {
-				return r.ID, nil
-			}
-		case err := <-do.runawaySyncer.doneChan:
-			if err != nil {
-				continue
-			}
-			r := do.runawayManager.GetWatchByKey(record.GetRecordKey())
-			if r.ID > 0 {
-				return r.ID, nil
-			}
-		}
-	}
+func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) error {
+	return do.handleRunawayWatch(record)
 }
 
 // GetRunawayWatchList is used to get all items from runaway watch list.
@@ -212,20 +185,10 @@ func (do *Domain) GetRunawayWatchList() []*resourcegroup.QuarantineRecord {
 	return do.runawayManager.GetWatchList()
 }
 
-// TryToUpdateRunawayWatch is used to notify runawaySyncer to update watch list including
-// creation and deletion. It will wait for finishing the updation.
+// TryToUpdateRunawayWatch is used to to update watch list including
+// creation and deletion by manual trigger.
 func (do *Domain) TryToUpdateRunawayWatch() error {
-	do.runawaySyncer.notifyChan <- struct{}{}
-	timer := time.NewTimer(3 * time.Second)
-	defer timer.Stop()
-	for {
-		select {
-		case <-timer.C:
-			return errors.Errorf("try to update runaway watch failed")
-		case err := <-do.runawaySyncer.doneChan:
-			return err
-		}
-	}
+	return do.updateNewAndDoneWatch()
 }
 
 // RemoveRunawayWatch is used to remove runaway watch item manually.
@@ -455,8 +418,7 @@ type runawaySyncer struct {
 	newWatchReader      *SystemTableReader
 	deletionWatchReader *SystemTableReader
 	sysSessionPool      *sessionPool
-	notifyChan          chan struct{}
-	doneChan            chan error
+	mu                  sync.Mutex
 }
 
 func newRunawaySyncer(sysSessionPool *sessionPool) *runawaySyncer {
@@ -469,8 +431,6 @@ func newRunawaySyncer(sysSessionPool *sessionPool) *runawaySyncer {
 		deletionWatchReader: &SystemTableReader{resourcegroup.RunawayWatchDoneTableName,
 			"done_time",
 			resourcegroup.NullTime},
-		notifyChan: make(chan struct{}, 64),
-		doneChan:   make(chan error, 64),
 	}
 }
 
