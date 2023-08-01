@@ -48,6 +48,17 @@
     ]
   },
   {
+    "name": "TestNoMergeJoinHint",
+    "cases": [
+      "select /*+ no_merge_join() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ no_merge_join(t1), merge_join(t1) */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ no_merge_join(t1), merge_join(t2) */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ no_merge_join(t1) */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ no_merge_join(t1, t2) */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ no_merge_join(t2) */ * from t1 right join t2 on t1.a=t2.a"
+    ]
+  },
+  {
     "name": "TestLeadingJoinHint",
     "cases": [
       "select /*+ leading(t, t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
