@@ -1681,13 +1681,17 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				if !eval.IsNull() && colTps[k].EvalType() == types.ETInt {
-					defs[i].InValues[j][k] = s
+				if eval.IsNull() {
+					s = "NULL"
+				} else {
+					if colTps[k].EvalType() == types.ETInt {
+						defs[i].InValues[j][k] = s
+					}
+					if colTps[k].EvalType() == types.ETString {
+						s = string(hack.String(collate.GetCollator(cols[k].GetCollate()).Key(s)))
+						s = driver.WrapInSingleQuotes(s)
+					}
 				}
-				if colTps[k].EvalType() == types.ETString {
-					s = string(hack.String(collate.GetCollator(cols[k].GetCollate()).Key(s)))
-				}
-				s = strings.ReplaceAll(s, ",", `\,`)
 				inValueStrs = append(inValueStrs, s)
 			}
 			exprStrs = append(exprStrs, strings.Join(inValueStrs, ","))
