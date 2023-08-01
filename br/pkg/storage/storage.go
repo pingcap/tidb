@@ -77,6 +77,10 @@ type Writer interface {
 	Close(ctx context.Context) error
 }
 
+type WriterOption struct {
+	Concurrency int
+}
+
 // ExternalStorage represents a kind of file system storage.
 type ExternalStorage interface {
 	// WriteFile writes a complete file to storage, similar to os.WriteFile, but WriteFile should be atomic
@@ -101,7 +105,7 @@ type ExternalStorage interface {
 	URI() string
 
 	// Create opens a file writer by path. path is relative path to storage base path
-	Create(ctx context.Context, path string) (ExternalFileWriter, error)
+	Create(ctx context.Context, path string, option *WriterOption) (ExternalFileWriter, error)
 	// Rename file name from oldFileName to newFileName
 	Rename(ctx context.Context, oldFileName, newFileName string) error
 }
