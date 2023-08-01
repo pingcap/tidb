@@ -52,7 +52,7 @@ func getAnalyzePanicErr(r interface{}) error {
 			return errAnalyzeOOM
 		}
 		if strings.Contains(msg, memory.PanicMemoryExceedWarnMsg) {
-			return errors.Errorf(msg, errAnalyzeOOM)
+			return errors.Errorf("%s, %s", msg, errAnalyzeOOM)
 		}
 	}
 	if err, ok := r.(error); ok {
