@@ -91,12 +91,12 @@ protobuf_deps()
 
 http_archive(
     name = "remote_java_tools",
-    sha256 = "5cd59ea6bf938a1efc1e11ea562d37b39c82f76781211b7cd941a2346ea8484d",
+    sha256 = "f58a358ca694a41416a9b6a92b852935ad301d8882e5d22f4f11134f035317d5",
     urls = [
-            "http://bazel-cache.pingcap.net:8080/bazelbuild/java_tools/releases/download/java_v11.9/java_tools-v11.9.zip",
-            "http://ats.apps.svc/bazel_java_tools/releases/java/v11.9/java_tools-v11.9.zip",
-            "https://mirror.bazel.build/bazel_java_tools/releases/java/v11.9/java_tools-v11.9.zip",
-            "https://github.com/bazelbuild/java_tools/releases/download/java_v11.9/java_tools-v11.9.zip",
+            "http://bazel-cache.pingcap.net:8080/bazelbuild/java_tools/releases/download/java_v12.6/java_tools-v12.6.zip",
+            "http://ats.apps.svc/bazel_java_tools/releases/java/v12.6/java_tools-v12.6.zip",
+            "https://mirror.bazel.build/bazel_java_tools/releases/java/v12.6/java_tools-v12.6.zip",
+            "https://github.com/bazelbuild/java_tools/releases/download/java_v12.6/java_tools-v12.6.zip",
     ],
 )
 
