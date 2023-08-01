@@ -134,7 +134,7 @@ type baseExecutor struct {
 
 const (
 	// globalPanicStorageExceed represents the panic message when out of storage quota.
-	globalPanicStorageExceed string = "Out Of Global Storage Quota!"
+	globalPanicStorageExceed string = "Out Of Quota For Local Temporary Space!"
 	// globalPanicMemoryExceed represents the panic message when out of memory limit.
 	globalPanicMemoryExceed string = "Out Of Global Memory Limit!"
 	// globalPanicAnalyzeMemoryExceed represents the panic message when out of analyze memory limit.
@@ -1798,7 +1798,30 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
+<<<<<<< HEAD
 	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
+=======
+	vars.MemTracker.Detach()
+	vars.MemTracker.UnbindActions()
+	vars.MemTracker.SetBytesLimit(vars.MemQuotaQuery)
+	vars.MemTracker.ResetMaxConsumed()
+	vars.DiskTracker.Detach()
+	vars.DiskTracker.ResetMaxConsumed()
+	vars.MemTracker.SessionID.Store(vars.ConnectionID)
+	vars.StmtCtx.TableStats = make(map[int64]interface{})
+
+	isAnalyze := false
+	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
+		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
+		if err != nil {
+			return err
+		}
+		_, isAnalyze = prepareStmt.PreparedAst.Stmt.(*ast.AnalyzeTableStmt)
+	} else if _, ok := s.(*ast.AnalyzeTableStmt); ok {
+		isAnalyze = true
+	}
+	if isAnalyze {
+>>>>>>> 838b3674752 (executor, util: make tmp-storage-quota take affect (#45549))
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
 		sc.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
 	} else {
@@ -1819,9 +1842,25 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case variable.OOMActionLog:
 		fallthrough
 	default:
+<<<<<<< HEAD
 		action := &memory.LogOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
 		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
 		sc.MemTracker.SetActionOnExceed(action)
+=======
+		action := &memory.LogOnExceed{ConnID: vars.ConnectionID}
+		action.SetLogHook(logOnQueryExceedMemQuota)
+		vars.MemTracker.SetActionOnExceed(action)
+	}
+	sc.MemTracker.SessionID.Store(vars.ConnectionID)
+	sc.MemTracker.AttachTo(vars.MemTracker)
+	sc.InitDiskTracker(memory.LabelForSQLText, -1)
+	globalConfig := config.GetGlobalConfig()
+	if variable.EnableTmpStorageOnOOM.Load() && sc.DiskTracker != nil {
+		sc.DiskTracker.AttachTo(vars.DiskTracker)
+		if GlobalDiskUsageTracker != nil {
+			vars.DiskTracker.AttachTo(GlobalDiskUsageTracker)
+		}
+>>>>>>> 838b3674752 (executor, util: make tmp-storage-quota take affect (#45549))
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
