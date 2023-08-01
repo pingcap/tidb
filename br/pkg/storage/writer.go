@@ -3,13 +3,14 @@ package storage
 import (
 	"bytes"
 	"context"
+	"io"
+
 	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/snappy"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
-	"io"
 )
 
 // CompressType represents the type of compression.
@@ -217,7 +218,6 @@ func (u *bufferedWriter) uploadChunk(ctx context.Context) error {
 func (u *bufferedWriter) Close(ctx context.Context) error {
 	u.buf.Close()
 	err := u.uploadChunk(ctx)
-
 	if err != nil {
 		return errors.Trace(err)
 	}
