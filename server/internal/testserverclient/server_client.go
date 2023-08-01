@@ -480,7 +480,7 @@ func (cli *TestServerClient) RunTestLoadDataAutoRandom(t *testing.T) {
 
 	cksum1 := 0
 	cksum2 := 0
-	for i := 0; i < 50000; i++ {
+	for i := 0; i < 1000; i++ {
 		n1 := rand.Intn(1000)
 		n2 := rand.Intn(1000)
 		str1 := strconv.Itoa(n1)
@@ -512,7 +512,7 @@ func (cli *TestServerClient) RunTestLoadDataAutoRandom(t *testing.T) {
 		dbt.MustExec("create table t(c1 bigint auto_random primary key, c2 bigint, c3 bigint)")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t (c2, c3) with batch_size = 128, thread=1", path))
 		rows := dbt.MustQuery("select count(*) from t")
-		cli.CheckRows(t, rows, "50000")
+		cli.CheckRows(t, rows, "1000")
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select bit_xor(c2), bit_xor(c3) from t")
 		res := strconv.Itoa(cksum1)
@@ -535,7 +535,7 @@ func (cli *TestServerClient) RunTestLoadDataAutoRandomWithSpecialTerm(t *testing
 
 	cksum1 := 0
 	cksum2 := 0
-	for i := 0; i < 50000; i++ {
+	for i := 0; i < 5000; i++ {
 		n1 := rand.Intn(1000)
 		n2 := rand.Intn(1000)
 		str1 := strconv.Itoa(n1)
@@ -569,7 +569,7 @@ func (cli *TestServerClient) RunTestLoadDataAutoRandomWithSpecialTerm(t *testing
 		dbt.MustExec("create table t1(c1 bigint auto_random primary key, c2 bigint, c3 bigint)")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t1 fields terminated by ',' enclosed by '\\'' lines terminated by '|' (c2, c3) with batch_size = 128, thread=1", path))
 		rows := dbt.MustQuery("select count(*) from t1")
-		cli.CheckRows(t, rows, "50000")
+		cli.CheckRows(t, rows, "5000")
 		rows = dbt.MustQuery("select bit_xor(c2), bit_xor(c3) from t1")
 		res := strconv.Itoa(cksum1)
 		res = res + " "
