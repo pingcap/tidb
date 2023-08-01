@@ -522,6 +522,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	}
 }
 
+// SetCNChecker set the CN checker for server.
 func (s *Server) SetCNChecker(tlsConfig *tls.Config) *tls.Config {
 	if tlsConfig != nil && len(s.cfg.Security.ClusterVerifyCN) != 0 {
 		checkCN := make(map[string]struct{})

@@ -872,6 +872,7 @@ func (s *Server) UpdateTLSConfig(cfg *tls.Config) {
 	atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(cfg))
 }
 
+// GetTLSConfig implements the SessionManager interface.
 func (s *Server) GetTLSConfig() *tls.Config {
 	return (*tls.Config)(atomic.LoadPointer(&s.tlsConfig))
 }
