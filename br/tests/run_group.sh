@@ -74,3 +74,5 @@ else
 	echo "Error: invalid group name: ${group}"
 	exit 1
 fi
+
+# add new line to trigger ci test
