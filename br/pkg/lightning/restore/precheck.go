@@ -7,7 +7,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+<<<<<<< HEAD:br/pkg/lightning/restore/precheck.go
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
+=======
+	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
+	pd "github.com/tikv/pd/client"
+>>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680)):br/pkg/lightning/importer/precheck.go
 )
 
 type CheckItemID string
@@ -57,7 +62,13 @@ type PrecheckItemBuilder struct {
 	checkpointsDB checkpoints.DB
 }
 
+<<<<<<< HEAD:br/pkg/lightning/restore/precheck.go
 func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, opts ...ropts.PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
+=======
+// NewPrecheckItemBuilderFromConfig creates a new PrecheckItemBuilder from config
+// pdCli **must not** be nil for local backend
+func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, pdCli pd.Client, opts ...ropts.PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
+>>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680)):br/pkg/lightning/importer/precheck.go
 	var gerr error
 	builderCfg := new(ropts.PrecheckItemBuilderConfig)
 	for _, o := range opts {
@@ -67,7 +78,7 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, o
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	targetInfoGetter, err := NewTargetInfoGetterImpl(cfg, targetDB)
+	targetInfoGetter, err := NewTargetInfoGetterImpl(cfg, targetDB, pdCli)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
