@@ -185,11 +185,11 @@ func (*Manager) checkConcurrencyOverflow(cnt int) bool {
 }
 
 func (dm *Manager) startDispatcher(task *proto.Task) {
-	dispatcher := newDispatcher(dm.ctx, dm.taskMgr, task, dm.finishedTaskCh)
+	dispatcher := newDispatcher(dm.ctx, dm.gPool, dm.taskMgr, task, dm.finishedTaskCh)
 	dm.setRunningTask(task, dispatcher)
 }
 
 // MockDispatcher mock one dispatcher for one task, only used for tests.
 func (dm *Manager) MockDispatcher(task *proto.Task) *dispatcher {
-	return &dispatcher{dm.ctx, dm.taskMgr, task, nil}
+	return &dispatcher{dm.ctx, dm.gPool, dm.taskMgr, task, nil}
 }
