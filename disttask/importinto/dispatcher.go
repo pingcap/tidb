@@ -165,13 +165,13 @@ func (h *flowHandle) switchTiKVMode(ctx context.Context, task *proto.Task) {
 	}
 
 	logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
-	switcher, err := importer.GetTiKVModeSwitcher(ctx, logger)
+	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(ctx, logger)
 	if err != nil {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
 	switcher.ToImportMode(ctx)
-	switcher.Close()
+	pdCli.Close()
 	h.lastSwitchTime.Store(time.Now())
 }
 
@@ -336,13 +336,13 @@ func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, task *proto.Task
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	switcher, err := importer.GetTiKVModeSwitcher(ctx, logger)
+	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(ctx, logger)
 	if err != nil {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
 	switcher.ToNormalMode(ctx)
-	switcher.Close()
+	pdCli.Close()
 
 	// clear it, so next task can switch TiKV mode again.
 	h.lastSwitchTime.Store(time.Time{})

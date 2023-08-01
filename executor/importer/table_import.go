@@ -109,8 +109,8 @@ func prepareSortDir(e *LoadDataController, taskID int64, tidbCfg *tidb.Config) (
 	return sortDir, nil
 }
 
-// GetTiKVModeSwitcher creates a new TiKV mode switcher.
-func GetTiKVModeSwitcher(ctx context.Context, logger *zap.Logger) (local.TiKVModeSwitcher, error) {
+// GetTiKVModeSwitcherWithPDClient creates a new TiKV mode switcher with its pd Client.
+func GetTiKVModeSwitcherWithPDClient(ctx context.Context, logger *zap.Logger) (pd.Client, local.TiKVModeSwitcher, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
 	tls, err := common.NewTLS(
@@ -121,15 +121,15 @@ func GetTiKVModeSwitcher(ctx context.Context, logger *zap.Logger) (local.TiKVMod
 		nil, nil, nil,
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	tlsOpt := tls.ToPDSecurityOption()
 	pdCli, err := pd.NewClientWithContext(ctx, []string{tidbCfg.Path}, tlsOpt)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
-	return NewTiKVModeSwitcher(tls, pdCli, logger), nil
+	return pdCli, NewTiKVModeSwitcher(tls, pdCli, logger), nil
 }
 
 func getCachedKVStoreFrom(pdAddr string, tls *common.TLS) (tidbkv.Storage, error) {

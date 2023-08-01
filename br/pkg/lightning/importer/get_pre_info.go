@@ -105,8 +105,6 @@ type TargetInfoGetter interface {
 	GetStorageInfo(ctx context.Context) (*pdtypes.StoresInfo, error)
 	// GetEmptyRegionsInfo gets the region information of all the empty regions on the target.
 	GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.RegionsInfo, error)
-	// Close closes TargetInfoGetter's embed pd client.
-	Close()
 }
 
 type preInfoGetterKey string
@@ -134,20 +132,19 @@ func NewTargetInfoGetterImpl(
 	ctx context.Context,
 	cfg *config.Config,
 	targetDB *sql.DB,
+	pdCli pd.Client,
 ) (*TargetInfoGetterImpl, error) {
 	tls, err := cfg.ToTLS()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	var backendTargetInfoGetter backend.TargetInfoGetter
-	var pdCli pd.Client
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
 		backendTargetInfoGetter = tidb.NewTargetInfoGetter(targetDB)
 	case config.BackendLocal:
-		pdCli, err := pd.NewClientWithContext(ctx, []string{cfg.TiDB.PdAddr}, tls.ToPDSecurityOption())
-		if err != nil {
-			return nil, errors.Trace(err)
+		if pdCli == nil {
+			return nil, common.ErrUnknown.GenWithStack("pd client is required when using local backend")
 		}
 		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDB, pdCli)
 	default:
@@ -266,15 +263,6 @@ func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdtype
 		return nil, errors.Trace(err)
 	}
 	return result, nil
-}
-
-// Close closes TargetInfoGetterImpl's embed pd client.
-// It implements the TargetInfoGetter interface.
-func (g *TargetInfoGetterImpl) Close() {
-	if g.pdCli != nil {
-		g.pdCli.Close()
-		g.pdCli = nil
-	}
 }
 
 // PreImportInfoGetterImpl implements the operations to get information used in importing preparation.
@@ -843,10 +831,4 @@ func (p *PreImportInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Con
 	sysVars = p.targetInfoGetter.GetTargetSysVariablesForImport(ctx)
 	p.sysVarsCache = sysVars
 	return sysVars
-}
-
-// Close closes the embed target info getter.
-// It implements the PreImportInfoGetter interface.
-func (p *PreImportInfoGetterImpl) Close() {
-	p.targetInfoGetter.Close()
 }
