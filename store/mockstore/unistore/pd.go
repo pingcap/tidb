@@ -182,11 +182,6 @@ func (c *pdClient) LoadKeyspace(ctx context.Context, name string) (*keyspacepb.K
 	return nil, nil
 }
 
-// GetAllKeyspaces get all keyspace's metadata.
-func (c *pdClient) GetAllKeyspaces(ctx context.Context, startID uint32, limit uint32) ([]*keyspacepb.KeyspaceMeta, error) {
-	return nil, nil
-}
-
 // WatchKeyspaces watches keyspace meta changes.
 // It returns a stream of slices of keyspace metadata.
 // The first message in stream contains all current keyspaceMeta,

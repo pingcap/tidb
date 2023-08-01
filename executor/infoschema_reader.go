@@ -192,6 +192,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClusterMemoryUsageOpsHistory(sctx)
 		case infoschema.TableResourceGroups:
 			err = e.setDataFromResourceGroups()
+		case infoschema.TableRunawayWatches:
+			err = e.setDataFromRunawayWatches(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -3241,6 +3243,35 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 	return nil
 }
 
+func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) error {
+	do := domain.GetDomain(sctx)
+	err := do.TryToUpdateRunawayWatch()
+	if err != nil {
+		logutil.BgLogger().Warn("read runaway watch list", zap.Error(err))
+	}
+	watches := do.GetRunawayWatchList()
+	rows := make([][]types.Datum, 0, len(watches))
+	for _, watch := range watches {
+		action := watch.Action
+		row := types.MakeDatums(
+			watch.ID,
+			watch.ResourceGroupName,
+			watch.StartTime.Local().Format(time.DateTime),
+			watch.EndTime.Local().Format(time.DateTime),
+			rmpb.RunawayWatchType_name[int32(watch.Watch)],
+			watch.WatchText,
+			watch.Source,
+			rmpb.RunawayAction_name[int32(action)],
+		)
+		if watch.EndTime.Equal(resourcegroup.NullTime) {
+			row[3].SetString("UNLIMITED", mysql.DefaultCollationName)
+		}
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
+}
+
 // used in resource_groups
 const (
 	burstableStr      = "YES"
@@ -3271,7 +3302,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			}
 			dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
 			fmt.Fprintf(limitBuilder, "EXEC_ELAPSED='%s'", dur.String())
-			fmt.Fprintf(limitBuilder, ", ACTION=%s", model.RunawayActionType(setting.Action+1).String())
+			fmt.Fprintf(limitBuilder, ", ACTION=%s", model.RunawayActionType(setting.Action).String())
 			if setting.Watch != nil {
 				if setting.Watch.LastingDurationMs > 0 {
 					dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond
