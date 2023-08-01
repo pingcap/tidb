@@ -411,7 +411,7 @@ const (
 	TiDBMaxBytesBeforeTiFlashExternalSort = "tidb_max_bytes_before_tiflash_external_sort"
 
 	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
-	// Default value is `false`, means never use pipeline model in tiflash.
+	// Default value is `true`, means never use pipeline model in tiflash.
 	// Value set to `true` means try to execute query with pipeline model in tiflash.
 	TiDBEnableTiFlashPipelineMode = "tidb_enable_tiflash_pipeline_model"
 
@@ -1170,7 +1170,7 @@ const (
 	DefTiFlashMaxBytesBeforeExternalJoin           = -1
 	DefTiFlashMaxBytesBeforeExternalGroupBy        = -1
 	DefTiFlashMaxBytesBeforeExternalSort           = -1
-	DefTiDBEnableTiFlashPipelineMode               = false
+	DefTiDBEnableTiFlashPipelineMode               = true
 	DefTiDBMPPStoreFailTTL                         = "60s"
 	DefTiDBTxnMode                                 = ""
 	DefTiDBRowFormatV1                             = 1

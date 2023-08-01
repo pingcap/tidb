@@ -885,7 +885,7 @@ type SessionVars struct {
 	TiFlashMaxBytesBeforeExternalSort int64
 
 	// TiFlashEnablePipelineMode means if we should use pipeline model to execute query or not in tiflash.
-	// Default value is `false`, means never use pipeline model in tiflash.
+	// Default value is `true`, means never use pipeline model in tiflash.
 	// Value set to `true` means try to execute query with pipeline model in tiflash.
 	TiFlashEnablePipelineMode bool
 
