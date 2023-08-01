@@ -342,7 +342,7 @@ func (rm *RunawayManager) AddWatch(record *QuarantineRecord) {
 
 	force := false
 	// The manual record replaces the old record.
-	force = record.Source == ManualSource || record.Source == rm.serverID
+	force = record.Source == ManualSource
 	rm.addWatchList(record, ttl, force)
 }
 
