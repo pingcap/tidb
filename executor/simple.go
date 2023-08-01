@@ -1203,7 +1203,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		case privileges.SslTypeAny:
 			sslType = "ANY"
 		case privileges.SslTypeX509:
-			sslType = "x509"
+			sslType = "X509"
 		case privileges.SslTypeSpecified:
 			sslType = "SPECIFIED"
 		}
