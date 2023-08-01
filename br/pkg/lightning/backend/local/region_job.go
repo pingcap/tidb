@@ -138,6 +138,7 @@ type ingestData interface {
 	Finish(totalBytes, totalCount int64)
 }
 
+// ForwardIter describes a iterator that can only move forward.
 type ForwardIter interface {
 	// First moves this iter to the first key.
 	First() bool

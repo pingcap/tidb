@@ -982,14 +982,17 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 	return firstKey, lastKey, nil
 }
 
+// NewIter implements ingestData interface.
 func (e *Engine) NewIter(ctx context.Context, lowerBound, upperBound []byte) ForwardIter {
 	return e.newKVIter(ctx, &pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound})
 }
 
+// GetTS implements ingestData interface.
 func (e *Engine) GetTS() uint64 {
 	return e.TS
 }
 
+// Finish implements ingestData interface.
 func (e *Engine) Finish(totalBytes, totalCount int64) {
 	e.importedKVSize.Add(totalBytes)
 	e.importedKVCount.Add(totalCount)
