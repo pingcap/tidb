@@ -255,9 +255,13 @@ func NewMvccTxnHandler(tool *handler.TikvHandlerTool, op string) *MvccTxnHandler
 }
 
 const (
+	// OpMvccGetByHex is the operation for getting mvcc value by hex format.
 	OpMvccGetByHex = "hex"
+	// OpMvccGetByKey is the operation for getting mvcc value by key.
 	OpMvccGetByKey = "key"
+	// OpMvccGetByIdx is the operation for getting mvcc value by idx.
 	OpMvccGetByIdx = "idx"
+	// OpMvccGetByTxn is the operation for getting mvcc value by txn.
 	OpMvccGetByTxn = "txn"
 )
 
