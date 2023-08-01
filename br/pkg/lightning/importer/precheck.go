@@ -41,7 +41,7 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, p
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	targetInfoGetter, err := NewTargetInfoGetterImpl(ctx, cfg, targetDB, pdCli)
+	targetInfoGetter, err := NewTargetInfoGetterImpl(cfg, targetDB, pdCli)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

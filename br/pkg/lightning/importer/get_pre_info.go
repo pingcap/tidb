@@ -129,7 +129,6 @@ type TargetInfoGetterImpl struct {
 
 // NewTargetInfoGetterImpl creates a TargetInfoGetterImpl object.
 func NewTargetInfoGetterImpl(
-	ctx context.Context,
 	cfg *config.Config,
 	targetDB *sql.DB,
 	pdCli pd.Client,
