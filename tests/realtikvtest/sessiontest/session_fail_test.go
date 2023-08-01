@@ -17,6 +17,8 @@ package sessiontest
 import (
 	"context"
 	"fmt"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -248,24 +250,44 @@ func TestTidbKvReadTimeout(t *testing.T) {
 	tk.MustExec("create table t (a int primary key, b int)")
 
 	require.NoError(t, failpoint.Enable("tikvclient/mockBatchClientSendDelay", "return(true)"))
+	require.NoError(t, failpoint.Enable("tikvclient/beforeSendReqToRegion", "return"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("tikvclient/mockBatchClientSendDelay"))
+		require.NoError(t, failpoint.Disable("tikvclient/beforeSendReqToRegion"))
 	}()
+
+	targetAddrs := make(map[string]int)
+	hook := func(rpcCtx *tikv.RPCContext, req *tikvrpc.Request) {
+		switch req.Type {
+		case tikvrpc.CmdGet, tikvrpc.CmdBatchGet, tikvrpc.CmdCop:
+		default:
+			return
+		}
+		fmt.Printf("sendReqToRegionHook: %v %v ----------------------------------------------------\n\n", rpcCtx.Addr, req.Type.String())
+		targetAddrs[rpcCtx.Addr]++
+	}
+	ctx := context.WithValue(context.TODO(), "sendReqToRegionHook", hook)
+
 	// Test for point_get request
-	rows := tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where a = 1").Rows()
+	rows := tk.MustQueryWithContext(ctx, "explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where a = 1").Rows()
+	//rows := tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where a = 1").Rows()
 	require.Len(t, rows, 1)
 	explain := fmt.Sprintf("%v", rows[0])
+	require.NotContains(t, explain, "backoff")
+	require.Len(t, targetAddrs, 2)
 	require.Regexp(t, ".*Point_Get.* Get:{num_rpc:2, total_time:.*", explain)
 
 	// Test for batch_point_get request
 	rows = tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where a in (1,2)").Rows()
 	require.Len(t, rows, 1)
 	explain = fmt.Sprintf("%v", rows[0])
+	require.NotContains(t, explain, "backoff")
 	require.Regexp(t, ".*Batch_Point_Get.* BatchGet:{num_rpc:2, total_time:.*", explain)
 
 	// Test for cop request
 	rows = tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where b > 1").Rows()
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
+	require.NotContains(t, explain, "backoff")
 	require.Regexp(t, ".*TableReader.* root  time:.*, loops:1.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
 }
