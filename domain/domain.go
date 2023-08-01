@@ -1460,35 +1460,34 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		logutil.BgLogger().Info("dist task scheduler stopped")
 	}()
 
-	var dispatch dispatcher.Dispatch
+	var dispatcherManager *dispatcher.Manager
 	startDispatchIfNeeded := func() {
-		if dispatch != nil {
+		if dispatcherManager != nil && dispatcherManager.Inited() {
 			return
 		}
-		newDispatch, err := dispatcher.NewDispatcher(ctx, taskManager)
+		var err error
+		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager)
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
 			return
 		}
-		dispatch = newDispatch
-		dispatch.Start()
+		dispatcherManager.Start()
 	}
 	stopDispatchIfNeeded := func() {
-		if dispatch != nil {
+		if dispatcherManager != nil && dispatcherManager.Inited() {
 			logutil.BgLogger().Info("stopping dist task dispatcher because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
-			dispatch.Stop()
-			dispatch = nil
+			dispatcherManager.Stop()
 			logutil.BgLogger().Info("dist task dispatcher stopped", zap.String("id", do.ddl.GetID()))
 		}
 	}
 
-	ticker := time.Tick(time.Second)
+	ticker := time.NewTicker(time.Second)
 	for {
 		select {
 		case <-do.exit:
 			stopDispatchIfNeeded()
 			return
-		case <-ticker:
+		case <-ticker.C:
 			if do.ddl.OwnerManager().IsOwner() {
 				startDispatchIfNeeded()
 			} else {
