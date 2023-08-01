@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
@@ -110,4 +109,3 @@ func TestOnReboot(t *testing.T) {
 	require.NoError(t, watcher.Step(ctx))
 	require.True(t, callBackCalled)
 }
-
