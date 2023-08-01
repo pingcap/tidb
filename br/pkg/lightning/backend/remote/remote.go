@@ -1801,6 +1801,7 @@ func (remote *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			// we will shrink the key range of this job to real written range
 			if iter.Next() {
 				remainingStartKey = append([]byte{}, iter.Key()...)
+				j.writeBatch = j.writeBatch[totalCount:]
 				log.FromContext(ctx).Info("write to tikv partial finish",
 					zap.Int64("count", totalCount),
 					zap.Int64("size", totalSize),
