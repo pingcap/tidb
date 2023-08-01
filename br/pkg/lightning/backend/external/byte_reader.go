@@ -82,13 +82,14 @@ func (s lazySlice) get() []byte {
 }
 
 // sliceNext reads the next n bytes from the reader and returns a buffer slice containing those bytes.
-// If the reader has fewer than n bytes remaining in current buffer, `auxBuf` is used as a container instead.
 func (r *byteReader) sliceNext(n int) (slice, error) {
 	b := r.next(n)
 	readLen := len(b)
 	if readLen == n {
 		return mkLazySlice(r, b), nil
 	}
+	// If the reader has fewer than n bytes remaining in current buffer,
+	// `auxBuf` is used as a container instead.
 	if cap(r.auxBuf) < n {
 		r.auxBuf = make([]byte, n)
 	}
