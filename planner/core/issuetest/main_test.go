@@ -15,17 +15,32 @@
 package issuetest
 
 import (
+	"flag"
 	"testing"
 
+	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
+var testDataMap = make(testdata.BookKeeper)
+
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
+	flag.Parse()
+	testDataMap.LoadTestSuiteData("testdata", "issue_test")
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 	}
-	goleak.VerifyTestMain(m, opts...)
+	callback := func(i int) int {
+		testDataMap.GenerateOutputIfNeeded()
+		return i
+	}
+	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
+}
+
+func GetIssueTestData() testdata.TestData {
+	return testDataMap["issue_test"]
 }

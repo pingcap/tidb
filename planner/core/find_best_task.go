@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -796,6 +798,23 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 	return isMatchProp
 }
 
+func (ds *DataSource) isMatchPropForIndexMerge(path *util.AccessPath, prop *property.PhysicalProperty) bool {
+	// Execution part doesn't support the merge operation for intersection case yet.
+	if path.IndexMergeIsIntersection {
+		return false
+	}
+	allSame, _ := prop.AllSameOrder()
+	if !allSame {
+		return false
+	}
+	for _, partialPath := range path.PartialIndexPaths {
+		if !ds.isMatchProp(partialPath, prop) {
+			return false
+		}
+	}
+	return true
+}
+
 func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
@@ -811,8 +830,9 @@ func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.Ph
 	return candidate
 }
 
-func (*DataSource) getIndexMergeCandidate(path *util.AccessPath) *candidatePath {
+func (ds *DataSource) getIndexMergeCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
+	candidate.isMatchProp = ds.isMatchPropForIndexMerge(path, prop)
 	return candidate
 }
 
@@ -826,7 +846,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			continue
 		}
 		if path.PartialIndexPaths != nil {
-			candidates = append(candidates, ds.getIndexMergeCandidate(path))
+			candidates = append(candidates, ds.getIndexMergeCandidate(path, prop))
 			continue
 		}
 		// if we already know the range of the scan is empty, just return a TableDual
@@ -1239,12 +1259,22 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 }
 
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
-	if prop.IsFlashProp() || prop.TaskTp == property.CopSingleReadTaskType || !prop.IsSortItemEmpty() {
+	if prop.IsFlashProp() || prop.TaskTp == property.CopSingleReadTaskType {
 		return invalidTask, nil
 	}
 	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IndexMergeIsIntersection {
 		return invalidTask, nil
 	}
+	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
+		return invalidTask, nil
+	}
+	failpoint.Inject("forceIndexMergeKeepOrder", func(_ failpoint.Value) {
+		if len(candidate.path.PartialIndexPaths) > 0 && !candidate.path.IndexMergeIsIntersection {
+			if prop.IsSortItemEmpty() {
+				failpoint.Return(invalidTask, nil)
+			}
+		}
+	})
 	path := candidate.path
 	scans := make([]PhysicalPlan, 0, len(path.PartialIndexPaths))
 	cop := &copTask{
@@ -1257,12 +1287,20 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
 	}
+	// Add sort items for index scan for merge-sort operation between partitions.
+	byItems := make([]*util.ByItems, 0, len(prop.SortItems))
+	for _, si := range prop.SortItems {
+		byItems = append(byItems, &util.ByItems{
+			Expr: si.Col,
+			Desc: si.Desc,
+		})
+	}
 	for _, partPath := range path.PartialIndexPaths {
 		var scan PhysicalPlan
 		if partPath.IsTablePath() {
-			scan = ds.convertToPartialTableScan(prop, partPath)
+			scan = ds.convertToPartialTableScan(prop, partPath, candidate.isMatchProp, byItems)
 		} else {
-			scan = ds.convertToPartialIndexScan(prop, partPath)
+			scan = ds.convertToPartialIndexScan(prop, partPath, candidate.isMatchProp, byItems)
 		}
 		scans = append(scans, scan)
 	}
@@ -1270,32 +1308,40 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	if prop.ExpectedCnt < ds.StatsInfo().RowCount {
 		totalRowCount *= prop.ExpectedCnt / ds.StatsInfo().RowCount
 	}
-	ts, remainingFilters, err := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
+	ts, remainingFilters, moreColumn, err := ds.buildIndexMergeTableScan(path.TableFilters, totalRowCount, candidate.isMatchProp)
 	if err != nil {
 		return invalidTask, err
 	}
+	if prop.TaskTp != property.RootTaskType && len(remainingFilters) > 0 {
+		return invalidTask, nil
+	}
+	cop.keepOrder = candidate.isMatchProp
 	cop.tablePlan = ts
 	cop.idxMergePartPlans = scans
 	cop.idxMergeIsIntersection = path.IndexMergeIsIntersection
 	cop.idxMergeAccessMVIndex = path.IndexMergeAccessMVIndex
+	if moreColumn {
+		cop.needExtraProj = true
+		cop.originSchema = ds.Schema()
+	}
 	if remainingFilters != nil {
 		cop.rootTaskConds = remainingFilters
-	}
-	_, pureTableScan := ts.(*PhysicalTableScan)
-	if prop.TaskTp != property.RootTaskType && (len(remainingFilters) > 0 || !pureTableScan) {
-		return invalidTask, nil
 	}
 	if prop.TaskTp == property.RootTaskType {
 		cop.indexPlanFinished = true
 		task = cop.convertToRootTask(ds.SCtx())
 	} else {
+		_, pureTableScan := ts.(*PhysicalTableScan)
+		if !pureTableScan {
+			cop.indexPlanFinished = true
+		}
 		task = cop
 	}
 	return task, nil
 }
 
-func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty, path *util.AccessPath) (indexPlan PhysicalPlan) {
-	is := ds.getOriginalPhysicalIndexScan(prop, path, false, false)
+func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (indexPlan PhysicalPlan) {
+	is := ds.getOriginalPhysicalIndexScan(prop, path, matchProp, false)
 	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
 	indexConds := path.IndexFilters
 	if len(indexConds) > 0 {
@@ -1313,6 +1359,13 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 		indexPlan.SetChildren(is)
 		return indexPlan
 	}
+	if matchProp {
+		if is.Table.GetPartitionInfo() != nil && !is.Index.Global && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+			is.Columns, is.schema, _ = AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.schema)
+		}
+		// Add sort items for index scan for merge-sort operation between partitions.
+		is.ByItems = byItems
+	}
 	indexPlan = is
 	return indexPlan
 }
@@ -1326,8 +1379,8 @@ func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool
 	return true
 }
 
-func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty, path *util.AccessPath) (tablePlan PhysicalPlan) {
-	ts, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
+func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (tablePlan PhysicalPlan) {
+	ts, rowCount := ds.getOriginalPhysicalTableScan(prop, path, matchProp)
 	overwritePartialTableScanSchema(ds, ts)
 	// remove ineffetive filter condition after overwriting physicalscan schema
 	newFilterConds := make([]expression.Expression, 0, len(path.TableFilters))
@@ -1347,6 +1400,12 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 		tablePlan = PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(selectivity*rowCount), ds.SelectBlockOffset())
 		tablePlan.SetChildren(ts)
 		return tablePlan
+	}
+	if matchProp {
+		if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+			ts.Columns, ts.schema, _ = AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.schema)
+		}
+		ts.ByItems = byItems
 	}
 	tablePlan = ts
 	return tablePlan
@@ -1392,12 +1451,12 @@ func setIndexMergeTableScanHandleCols(ds *DataSource, ts *PhysicalTableScan) (er
 
 // buildIndexMergeTableScan() returns Selection that will be pushed to TiKV.
 // Filters that cannot be pushed to TiKV are also returned, and an extra Selection above IndexMergeReader will be constructed later.
-func (ds *DataSource) buildIndexMergeTableScan(_ *property.PhysicalProperty, tableFilters []expression.Expression,
-	totalRowCount float64) (PhysicalPlan, []expression.Expression, error) {
+func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Expression,
+	totalRowCount float64, matchProp bool) (PhysicalPlan, []expression.Expression, bool, error) {
 	sessVars := ds.SCtx().GetSessionVars()
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
-		Columns:         ds.Columns,
+		Columns:         slices.Clone(ds.Columns),
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
 		isPartition:     ds.isPartition,
@@ -1409,7 +1468,7 @@ func (ds *DataSource) buildIndexMergeTableScan(_ *property.PhysicalProperty, tab
 	ts.SetSchema(ds.schema.Clone())
 	err := setIndexMergeTableScanHandleCols(ds, ts)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
@@ -1426,6 +1485,7 @@ func (ds *DataSource) buildIndexMergeTableScan(_ *property.PhysicalProperty, tab
 	if ds.statisticTable.Pseudo {
 		ts.StatsInfo().StatsVersion = statistics.PseudoVersion
 	}
+	var currentTopPlan PhysicalPlan = ts
 	if len(tableFilters) > 0 {
 		pushedFilters, remainingFilters := extractFiltersForIndexMerge(sessVars.StmtCtx, ds.SCtx().GetClient(), tableFilters)
 		pushedFilters1, remainingFilters1 := SplitSelCondsWithVirtualColumn(pushedFilters)
@@ -1439,11 +1499,50 @@ func (ds *DataSource) buildIndexMergeTableScan(_ *property.PhysicalProperty, tab
 			}
 			sel := PhysicalSelection{Conditions: pushedFilters}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(selectivity*totalRowCount), ts.SelectBlockOffset())
 			sel.SetChildren(ts)
-			return sel, remainingFilters, nil
+			currentTopPlan = sel
 		}
-		return ts, remainingFilters, nil
+		if len(remainingFilters) > 0 {
+			return currentTopPlan, remainingFilters, false, nil
+		}
 	}
-	return ts, nil, nil
+	// If we don't need to use ordered scan, we don't need do the following codes for adding new columns.
+	if !matchProp {
+		return currentTopPlan, nil, false, nil
+	}
+
+	// Add the row handle into the schema.
+	columnAdded := false
+	if ts.Table.PKIsHandle {
+		pk := ts.Table.GetPkColInfo()
+		pkCol := expression.ColInfo2Col(ts.tblCols, pk)
+		if !ts.schema.Contains(pkCol) {
+			ts.schema.Append(pkCol)
+			ts.Columns = append(ts.Columns, pk)
+			columnAdded = true
+		}
+	} else if ts.Table.IsCommonHandle {
+		idxInfo := ts.Table.GetPrimaryKey()
+		for _, idxCol := range idxInfo.Columns {
+			col := ts.tblCols[idxCol.Offset]
+			if !ts.schema.Contains(col) {
+				columnAdded = true
+				ts.schema.Append(col)
+				ts.Columns = append(ts.Columns, col.ToInfo())
+			}
+		}
+	} else if !ts.schema.Contains(ts.HandleCols.GetCol(0)) {
+		ts.schema.Append(ts.HandleCols.GetCol(0))
+		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
+		columnAdded = true
+	}
+
+	// For the global index of the partitioned table, we also need the PhysicalTblID to identify the rows from each partition.
+	if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		var newColAdded bool
+		ts.Columns, ts.schema, newColAdded = AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.schema)
+		columnAdded = columnAdded || newColAdded
+	}
+	return currentTopPlan, nil, columnAdded, nil
 }
 
 // extractFiltersForIndexMerge returns:
@@ -2554,7 +2653,7 @@ func (ts *PhysicalTableScan) getScanRowSize() float64 {
 func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool) (*PhysicalTableScan, float64) {
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
-		Columns:         ds.Columns,
+		Columns:         slices.Clone(ds.Columns),
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
 		isPartition:     ds.isPartition,
@@ -2567,9 +2666,8 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		tblColHists:     ds.TblColHists,
 		constColsByCond: path.ConstCols,
 		prop:            prop,
+		filterCondition: slices.Clone(path.TableFilters),
 	}.Init(ds.SCtx(), ds.SelectBlockOffset())
-	ts.filterCondition = make([]expression.Expression, len(path.TableFilters))
-	copy(ts.filterCondition, path.TableFilters)
 	ts.SetSchema(ds.schema.Clone())
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {

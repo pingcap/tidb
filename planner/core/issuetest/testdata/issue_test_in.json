@@ -1,0 +1,12 @@
+[
+  {
+    "name": "TestIssue29221",
+    "cases": [
+        "explain format = 'brief' select * from t where a = 1 or b = 1;",
+        "explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;",
+        "set @@session.sql_select_limit=18446744073709551615;",
+        "explain format = 'brief' select * from t where a = 1 or b = 1;",
+        "explain format = 'brief' select * from t where a = 1 or b = 1 limit 3;"
+    ]
+  }
+]
