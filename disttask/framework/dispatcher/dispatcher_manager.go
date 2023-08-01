@@ -186,7 +186,7 @@ func (*Manager) checkConcurrencyOverflow(cnt int) bool {
 }
 
 func (dm *Manager) startDispatcher(task *proto.Task) {
-	dispatcher := newDispatcher(context.Context(dm.ctx), dm.taskMgr, task, dm.finishedTaskCh)
+	dispatcher := newDispatcher(dm.ctx, dm.taskMgr, task, dm.finishedTaskCh)
 	dm.setRunningTask(task, dispatcher)
 }
 
