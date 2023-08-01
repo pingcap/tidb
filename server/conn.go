@@ -75,6 +75,7 @@ import (
 	"github.com/pingcap/tidb/privilege/conn"
 	"github.com/pingcap/tidb/privilege/privileges/ldap"
 	servererr "github.com/pingcap/tidb/server/err"
+	"github.com/pingcap/tidb/server/handler/tikvhandler"
 	"github.com/pingcap/tidb/server/internal"
 	"github.com/pingcap/tidb/server/internal/column"
 	"github.com/pingcap/tidb/server/internal/dump"
@@ -182,7 +183,7 @@ func (cc *clientConn) getCtx() *TiDBContext {
 	return cc.ctx.TiDBContext
 }
 
-func (cc *clientConn) setCtx(ctx *TiDBContext) {
+func (cc *clientConn) SetCtx(ctx *TiDBContext) {
 	cc.ctx.Lock()
 	cc.ctx.TiDBContext = ctx
 	cc.ctx.Unlock()
@@ -417,7 +418,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	if err = cc.ctx.Close(); err != nil {
 		return err
 	}
-	cc.setCtx(nil)
+	cc.SetCtx(nil)
 
 	data = append(data, 0)
 	if err = cc.writePacket(data); err != nil {
@@ -704,7 +705,7 @@ func (cc *clientConn) openSession() error {
 	if err != nil {
 		return err
 	}
-	cc.setCtx(ctx)
+	cc.SetCtx(ctx)
 
 	err = cc.server.checkConnectionCount()
 	if err != nil {
@@ -1293,7 +1294,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			data = data[:len(data)-1]
 			dataStr = string(hack.String(data))
 		}
-		return cc.handleStmtPrepare(ctx, dataStr)
+		return cc.HandleStmtPrepare(ctx, dataStr)
 	case mysql.ComStmtExecute:
 		return cc.handleStmtExecute(ctx, data)
 	case mysql.ComStmtSendLongData:
@@ -1318,7 +1319,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 func (cc *clientConn) writeStats(ctx context.Context) error {
 	var err error
 	var uptime int64
-	info := serverInfo{}
+	info := tikvhandler.ServerInfo{}
 	info.ServerInfo, err = infosync.GetServerInfo()
 	if err != nil {
 		logutil.BgLogger().Error("Failed to get ServerInfo for uptime status", zap.Error(err))
@@ -2436,7 +2437,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	cc.setCtx(tidbCtx)
+	cc.SetCtx(tidbCtx)
 	if !cc.ctx.AuthWithoutVerification(user) {
 		return errors.New("Could not reset connection")
 	}

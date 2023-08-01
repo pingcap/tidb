@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package optimizor_test
 
 import (
 	"database/sql"
@@ -26,6 +26,10 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/parser/model"
+	server2 "github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/server/handler/optimizor"
+	"github.com/pingcap/tidb/server/internal/testserverclient"
+	"github.com/pingcap/tidb/server/internal/testutil"
 	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -36,15 +40,15 @@ import (
 func TestDumpStatsAPI(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	driver := NewTiDBDriver(store)
-	client := newTestServerClient()
+	driver := server2.NewTiDBDriver(store)
+	client := testserverclient.NewTestServerClient()
 	cfg := util.NewTestConfig()
-	cfg.Port = client.port
-	cfg.Status.StatusPort = client.statusPort
+	cfg.Port = client.Port
+	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
 
-	server, err := NewServer(cfg, driver)
+	server, err := server2.NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
 
@@ -52,15 +56,15 @@ func TestDumpStatsAPI(t *testing.T) {
 	require.NoError(t, err)
 	server.SetDomain(dom)
 
-	client.port = getPortFromTCPAddr(server.listener.Addr())
-	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
+	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
 	}()
-	client.waitUntilServerOnline()
+	client.WaitUntilServerOnline()
 
-	statsHandler := &StatsHandler{dom}
+	statsHandler := optimizor.NewStatsHandler(dom)
 
 	prepareData(t, client, statsHandler)
 	tableInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
@@ -71,7 +75,7 @@ func TestDumpStatsAPI(t *testing.T) {
 	router := mux.NewRouter()
 	router.Handle("/stats/dump/{db}/{table}", statsHandler)
 
-	resp0, err := client.fetchStatus("/stats/dump/tidb/test")
+	resp0, err := client.FetchStatus("/stats/dump/tidb/test")
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, resp0.Body.Close())
@@ -100,7 +104,7 @@ func TestDumpStatsAPI(t *testing.T) {
 	prepare4DumpHistoryStats(t, client)
 
 	// test dump history stats
-	resp1, err := client.fetchStatus("/stats/dump/tidb/test")
+	resp1, err := client.FetchStatus("/stats/dump/tidb/test")
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, resp1.Body.Close())
@@ -118,7 +122,7 @@ func TestDumpStatsAPI(t *testing.T) {
 		require.NoError(t, os.Remove(path1))
 	}()
 
-	resp2, err := client.fetchStatus("/stats/dump/tidb/test/" + snapshot)
+	resp2, err := client.FetchStatus("/stats/dump/tidb/test/" + snapshot)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, resp2.Body.Close())
@@ -132,7 +136,33 @@ func TestDumpStatsAPI(t *testing.T) {
 	testDumpPartitionTableStats(t, client, statsHandler)
 }
 
-func testDumpPartitionTableStats(t *testing.T, client *testServerClient, handler *StatsHandler) {
+func prepareData(t *testing.T, client *testserverclient.TestServerClient, statHandle *optimizor.StatsHandler) {
+	db, err := sql.Open("mysql", client.GetDSN())
+	require.NoError(t, err, "Error connecting")
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	tk := testkit.NewDBTestKit(t, db)
+
+	h := statHandle.Domain().StatsHandle()
+	tk.MustExec("create database tidb")
+	tk.MustExec("use tidb")
+	tk.MustExec("create table test (a int, b varchar(20))")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+	tk.MustExec("create index c on test (a, b)")
+	tk.MustExec("insert test values (1, 's')")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec("analyze table test")
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustExec("insert into test(a,b) values (1, 'v'),(3, 'vvv'),(5, 'vv')")
+	is := statHandle.Domain().InfoSchema()
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
+}
+
+func testDumpPartitionTableStats(t *testing.T, client *testserverclient.TestServerClient, handler *optimizor.StatsHandler) {
 	preparePartitionData(t, client, handler)
 	check := func(dumpStats bool) {
 		expectedLen := 1
@@ -140,7 +170,7 @@ func testDumpPartitionTableStats(t *testing.T, client *testServerClient, handler
 			expectedLen = 2
 		}
 		url := fmt.Sprintf("/stats/dump/test/test2?dumpPartitionStats=%v", dumpStats)
-		resp0, err := client.fetchStatus(url)
+		resp0, err := client.FetchStatus(url)
 		require.NoError(t, err)
 		defer func() {
 			resp0.Body.Close()
@@ -157,51 +187,25 @@ func testDumpPartitionTableStats(t *testing.T, client *testServerClient, handler
 	check(true)
 }
 
-func prepareData(t *testing.T, client *testServerClient, statHandle *StatsHandler) {
-	db, err := sql.Open("mysql", client.getDSN())
+func preparePartitionData(t *testing.T, client *testserverclient.TestServerClient, statHandle *optimizor.StatsHandler) {
+	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
 	defer func() {
 		err := db.Close()
 		require.NoError(t, err)
 	}()
-	tk := testkit.NewDBTestKit(t, db)
-
-	h := statHandle.do.StatsHandle()
-	tk.MustExec("create database tidb")
-	tk.MustExec("use tidb")
-	tk.MustExec("create table test (a int, b varchar(20))")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
-	tk.MustExec("create index c on test (a, b)")
-	tk.MustExec("insert test values (1, 's')")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	tk.MustExec("analyze table test")
-	tk.MustExec("set global tidb_enable_historical_stats = 1")
-	tk.MustExec("insert into test(a,b) values (1, 'v'),(3, 'vvv'),(5, 'vv')")
-	is := statHandle.do.InfoSchema()
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.NoError(t, h.Update(is))
-}
-
-func preparePartitionData(t *testing.T, client *testServerClient, statHandle *StatsHandler) {
-	db, err := sql.Open("mysql", client.getDSN())
-	require.NoError(t, err, "Error connecting")
-	defer func() {
-		err := db.Close()
-		require.NoError(t, err)
-	}()
-	h := statHandle.do.StatsHandle()
+	h := statHandle.Domain().StatsHandle()
 	tk := testkit.NewDBTestKit(t, db)
 	tk.MustExec("create table test2(a int) PARTITION BY RANGE ( a ) (PARTITION p0 VALUES LESS THAN (6))")
 	tk.MustExec("insert into test2 (a) values (1)")
 	tk.MustExec("analyze table test2")
-	is := statHandle.do.InfoSchema()
+	is := statHandle.Domain().InfoSchema()
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
 }
 
-func prepare4DumpHistoryStats(t *testing.T, client *testServerClient) {
-	db, err := sql.Open("mysql", client.getDSN())
+func prepare4DumpHistoryStats(t *testing.T, client *testserverclient.TestServerClient) {
+	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
 	defer func() {
 		err := db.Close()
@@ -222,8 +226,8 @@ func prepare4DumpHistoryStats(t *testing.T, client *testServerClient) {
 	tk.MustExec("create table tidb.test (a int, b varchar(20))")
 }
 
-func checkCorrelation(t *testing.T, client *testServerClient) {
-	db, err := sql.Open("mysql", client.getDSN())
+func checkCorrelation(t *testing.T, client *testserverclient.TestServerClient) {
+	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
 	tk := testkit.NewDBTestKit(t, db)
 	defer func() {
@@ -255,8 +259,8 @@ func checkCorrelation(t *testing.T, client *testServerClient) {
 	require.NoError(t, rows.Close())
 }
 
-func checkData(t *testing.T, path string, client *testServerClient) {
-	db, err := sql.Open("mysql", client.getDSN(func(config *mysql.Config) {
+func checkData(t *testing.T, path string, client *testserverclient.TestServerClient) {
+	db, err := sql.Open("mysql", client.GetDSN(func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}))
