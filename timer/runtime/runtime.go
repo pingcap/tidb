@@ -23,7 +23,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/timer/api"
+	"github.com/pingcap/tidb/timer/metrics"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
@@ -59,6 +61,9 @@ func NewTimerRuntimeBuilder(groupID string, store *api.TimerStore) *TimerRuntime
 			workerRespCh: make(chan *triggerEventResponse, workerRespChanCap),
 			workers:      make(map[string]*hookWorker),
 			nowFunc:      time.Now,
+			// metrics
+			fullRefreshTimerCounter:    metrics.TimerScopeCounter(fmt.Sprintf("runtime.%s", groupID), "full_refresh_timers"),
+			partialRefreshTimerCounter: metrics.TimerScopeCounter(fmt.Sprintf("runtime.%s", groupID), "partial_refresh_timers"),
 		},
 	}
 }
@@ -100,6 +105,9 @@ type TimerGroupRuntime struct {
 	workers      map[string]*hookWorker
 	// nowFunc is only used by test
 	nowFunc func() time.Time
+	// metrics
+	fullRefreshTimerCounter    prometheus.Counter
+	partialRefreshTimerCounter prometheus.Counter
 }
 
 // Start starts the TimerGroupRuntime
@@ -210,6 +218,7 @@ func (rt *TimerGroupRuntime) loop() {
 }
 
 func (rt *TimerGroupRuntime) fullRefreshTimers() {
+	rt.fullRefreshTimerCounter.Inc()
 	timers, err := rt.store.List(rt.ctx, rt.cond)
 	if err != nil {
 		rt.logger.Error("error occurs when fullRefreshTimers", zap.Error(err))
@@ -354,6 +363,7 @@ func (rt *TimerGroupRuntime) partialRefreshTimers(timerIDs map[string]struct{}) 
 		return false
 	}
 
+	rt.partialRefreshTimerCounter.Inc()
 	cond := rt.buildTimerIDsCond(timerIDs)
 	timers, err := rt.store.List(rt.ctx, cond)
 	if err != nil {

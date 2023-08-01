@@ -350,7 +350,8 @@ func (h *flowHandle) updateCurrentTask(task *proto.Task) {
 	if h.currTaskID.Swap(task.ID) != task.ID {
 		taskMeta := &TaskMeta{}
 		if err := json.Unmarshal(task.Meta, taskMeta); err == nil {
-			h.disableTiKVImportMode.Store(taskMeta.Plan.DisableTiKVImportMode)
+			// for raftkv2, switch mode in local backend
+			h.disableTiKVImportMode.Store(taskMeta.Plan.DisableTiKVImportMode || taskMeta.Plan.IsRaftKV2)
 		}
 	}
 }

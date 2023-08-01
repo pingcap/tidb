@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/mock"
 	"go.uber.org/zap"
 )
@@ -649,14 +650,22 @@ func loadAllTests() ([]string, error) {
 // openDBWithRetry opens a database specified by its database driver name and a
 // driver-specific data source name. And it will do some retries if the connection fails.
 func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error) {
+	now := time.Now()
 	startTime := time.Now()
-	sleepTime := time.Millisecond * 500
-	retryCnt := 60
-	// The max retry interval is 30 s.
-	for i := 0; i < retryCnt; i++ {
+	sleepTime := time.Millisecond * 100
+	maxSleepTime := time.Second * 2
+	// The max retry interval is 60 s.
+	maxDuration := time.Minute
+	for {
+		if time.Since(now) > maxDuration {
+			break
+		}
+		time.Sleep(sleepTime)
+		sleepTime = sleepTime * 2
+		sleepTime = mathutil.Min(maxSleepTime, sleepTime)
 		mdb, err = sql.Open(driverName, dataSourceName)
 		if err != nil {
-			log.Warn("open DB failed", zap.Int("retry count", i), zap.Error(err))
+			log.Warn("open DB failed", zap.Duration("retry duration", time.Since(now)), zap.Error(err))
 			time.Sleep(sleepTime)
 			continue
 		}
@@ -664,11 +673,10 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 		if err == nil {
 			break
 		}
-		log.Warn("ping DB failed", zap.Int("retry count", i), zap.Error(err))
+		log.Warn("ping DB failed", zap.Duration("retry duration", time.Since(now)), zap.Error(err))
 		if err1 := mdb.Close(); err1 != nil {
 			log.Error("close DB failed", zap.Error(err1))
 		}
-		time.Sleep(sleepTime)
 	}
 	if err != nil {
 		log.Error("open Db failed", zap.Duration("take time", time.Since(startTime)), zap.Error(err))

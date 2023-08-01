@@ -173,6 +173,10 @@ func (c *pdClient) UpdateOption(option pd.DynamicOption, value interface{}) erro
 	return nil
 }
 
+func (c *pdClient) GetAllKeyspaces(ctx context.Context, startID uint32, limit uint32) ([]*keyspacepb.KeyspaceMeta, error) {
+	return nil, nil
+}
+
 // LoadKeyspace loads and returns target keyspace's metadata.
 func (c *pdClient) LoadKeyspace(ctx context.Context, name string) (*keyspacepb.KeyspaceMeta, error) {
 	return nil, nil

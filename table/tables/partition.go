@@ -400,6 +400,8 @@ type ForListPruning struct {
 	valueMap map[int64]int
 	// nullPartitionIdx is the partition idx for null value.
 	nullPartitionIdx int
+	// defaultPartitionIdx is the partition idx for default value/fallback.
+	defaultPartitionIdx int
 
 	// For list columns partition pruning
 	ColPrunes []*ForListColumnPruning
@@ -446,6 +448,9 @@ type ForListColumnPruning struct {
 	schema  *expression.Schema
 	names   types.NameSlice
 	colIdx  int
+
+	// catch-all partition / DEFAULT
+	defaultPartID int64
 }
 
 // ListPartitionGroup indicate the group index of the column value in a partition.
@@ -882,6 +887,7 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context,
 	pi := tblInfo.GetPartitionInfo()
 	schema := expression.NewSchema(columns...)
 	p := parser.New()
+	lp.defaultPartitionIdx = -1
 	colPrunes := make([]*ForListColumnPruning, 0, len(pi.Columns))
 	for colIdx := range pi.Columns {
 		colInfo := model.FindColumnInfo(tblInfo.Columns, pi.Columns[colIdx].L)
@@ -907,6 +913,17 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context,
 		if err != nil {
 			return err
 		}
+		if colPrune.defaultPartID > 0 {
+			for i := range defs {
+				if defs[i].ID == colPrune.defaultPartID {
+					if lp.defaultPartitionIdx >= 0 && i != lp.defaultPartitionIdx {
+						// Should be same for all columns, i.e. should never happen!
+						return table.ErrUnknownPartition
+					}
+					lp.defaultPartitionIdx = i
+				}
+			}
+		}
 		colPrunes = append(colPrunes, colPrune)
 	}
 	lp.ColPrunes = colPrunes
@@ -920,8 +937,13 @@ func (lp *ForListPruning) buildListPartitionValueMap(ctx sessionctx.Context, def
 	schema *expression.Schema, names types.NameSlice, p *parser.Parser) error {
 	lp.valueMap = map[int64]int{}
 	lp.nullPartitionIdx = -1
+	lp.defaultPartitionIdx = -1
 	for partitionIdx, def := range defs {
 		for _, vs := range def.InValues {
+			if strings.EqualFold(vs[0], "DEFAULT") {
+				lp.defaultPartitionIdx = partitionIdx
+				continue
+			}
 			expr, err := parseSimpleExprWithNames(p, ctx, vs[0], schema, names)
 			if err != nil {
 				return errors.Trace(err)
@@ -943,11 +965,14 @@ func (lp *ForListPruning) buildListPartitionValueMap(ctx sessionctx.Context, def
 // LocatePartition locates partition by the column value
 func (lp *ForListPruning) LocatePartition(value int64, isNull bool) int {
 	if isNull {
-		return lp.nullPartitionIdx
+		if lp.nullPartitionIdx >= 0 {
+			return lp.nullPartitionIdx
+		}
+		return lp.defaultPartitionIdx
 	}
 	partitionIdx, ok := lp.valueMap[value]
 	if !ok {
-		return -1
+		return lp.defaultPartitionIdx
 	}
 	return partitionIdx
 }
@@ -988,9 +1013,17 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context
 	}
 	location := helper.GetLocation()
 	if location.IsEmpty() {
+		if lp.defaultPartitionIdx >= 0 {
+			return lp.defaultPartitionIdx, nil
+		}
 		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("from column_list")
 	}
 	return location[0].PartIdx, nil
+}
+
+// GetDefaultIdx return the Default partitions index.
+func (lp *ForListPruning) GetDefaultIdx() int {
+	return lp.defaultPartitionIdx
 }
 
 // buildPartitionValueMapAndSorted builds list columns partition value map for the specified column.
@@ -1006,6 +1039,11 @@ func (lp *ForListColumnPruning) buildPartitionValueMapAndSorted(p *parser.Parser
 	return lp.buildListPartitionValueMapAndSorted(p, defs)
 }
 
+// HasDefault return true if the partition has the DEFAULT value
+func (lp *ForListColumnPruning) HasDefault() bool {
+	return lp.defaultPartID > 0
+}
+
 // RebuildPartitionValueMapAndSorted rebuilds list columns partition value map for the specified column.
 func (lp *ForListColumnPruning) RebuildPartitionValueMapAndSorted(p *parser.Parser,
 	defs []model.PartitionDefinition) error {
@@ -1016,8 +1054,13 @@ func (lp *ForListColumnPruning) RebuildPartitionValueMapAndSorted(p *parser.Pars
 
 func (lp *ForListColumnPruning) buildListPartitionValueMapAndSorted(p *parser.Parser, defs []model.PartitionDefinition) error {
 	sc := lp.ctx.GetSessionVars().StmtCtx
+DEFS:
 	for partitionIdx, def := range defs {
 		for groupIdx, vs := range def.InValues {
+			if len(vs) == 1 && vs[0] == "DEFAULT" {
+				lp.defaultPartID = def.ID
+				continue DEFS
+			}
 			keyBytes, err := lp.genConstExprKey(lp.ctx, sc, vs[lp.colIdx], lp.schema, lp.names, p)
 			if err != nil {
 				return errors.Trace(err)
@@ -1082,7 +1125,7 @@ func (lp *ForListColumnPruning) LocatePartition(sc *stmtctx.StatementContext, v 
 }
 
 // LocateRanges locates partition ranges by the column range
-func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ranger.Range) ([]ListPartitionLocation, error) {
+func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ranger.Range, defaultPartIdx int) ([]ListPartitionLocation, error) {
 	var lowKey, highKey []byte
 	var err error
 	lowVal := r.LowVal[0]
@@ -1126,6 +1169,16 @@ func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ra
 		locations = append(locations, item.location)
 		return true
 	})
+	if lp.HasDefault() {
+		// Add the default partition since there may be a gap
+		// between the conditions range and the LIST COLUMNS values
+		locations = append(locations, ListPartitionLocation{
+			ListPartitionGroup{
+				PartIdx:   defaultPartIdx,
+				GroupIdxs: []int{-1}, // Special group!
+			},
+		})
+	}
 	return locations, nil
 }
 
