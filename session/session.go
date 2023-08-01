@@ -2360,20 +2360,8 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			}
 		}
 
-		loggedRs := rs
-		if !se.isInternal() {
-			loggedRs = sqlexec.NewLogWrapped(
-				rs,
-				5,
-				zap.Uint64("conn", se.sessionVars.ConnectionID),
-				zap.Uint64("start ts", origTxnCtx.StartTS),
-				zap.Uint64("for update ts", origTxnCtx.GetForUpdateTS()),
-				zap.String("sql", s.OriginText()),
-			)
-		}
-
 		return &execStmtResult{
-			RecordSet: loggedRs,
+			RecordSet: rs,
 			sql:       s,
 			se:        se,
 		}, err

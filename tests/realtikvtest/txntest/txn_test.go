@@ -251,17 +251,3 @@ func TestAssertionWhenPessimisticLockLost(t *testing.T) {
 	err := tk1.ExecToErr("commit")
 	require.NotContains(t, err.Error(), "assertion")
 }
-
-func TestPrintSelectResult(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table print_result (c int primary key, v varchar(20))")
-	var expected []string
-	for i := 0; i < 103; i++ {
-		tk.MustExec(fmt.Sprintf("insert into print_result values (%d, '%s')", i, "a"))
-		expected = append(expected, fmt.Sprintf("%d a", i))
-	}
-	tk.MustQuery("select * from print_result").Check(testkit.Rows(expected...))
-}

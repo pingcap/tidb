@@ -37,20 +37,24 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"io"
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -542,4 +546,67 @@ func (h CorsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Access-Control-Allow-Methods", "GET")
 	}
 	h.handler.ServeHTTP(w, req)
+}
+
+// newLogWrapped creates a RecordSet that logs the result of the underlying RecordSet.
+func newLogWrapped(rs sqlexec.RecordSet, maxCachedRows int, fields ...zap.Field) sqlexec.RecordSet {
+	newRs := &recordSetLoggerWrapper{
+		rs:            rs,
+		maxCachedRows: maxCachedRows,
+		cachedRows:    make([]string, 0),
+		zapFields:     fields,
+	}
+	newRs.columnInfos = make([]*ColumnInfo, len(rs.Fields()))
+	for i, field := range rs.Fields() {
+		newRs.columnInfos[i] = convertColumnInfo(field)
+	}
+	return newRs
+}
+
+type recordSetLoggerWrapper struct {
+	rs            sqlexec.RecordSet
+	cachedRows    []string
+	columnInfos   []*ColumnInfo
+	zapFields     []zap.Field
+	maxCachedRows int
+}
+
+func (r *recordSetLoggerWrapper) Fields() []*ast.ResultField {
+	return r.rs.Fields()
+}
+
+func (r *recordSetLoggerWrapper) Next(ctx context.Context, req *chunk.Chunk) error {
+	chk := r.rs.NewChunk(nil)
+	err := r.rs.Next(ctx, chk)
+	if err != nil {
+		return err
+	}
+	req.Reset()
+	for i := 0; i < chk.NumRows(); i++ {
+		row := chk.GetRow(i)
+		req.AppendRow(row)
+		if len(r.cachedRows) < r.maxCachedRows {
+			buf := make([]byte, 0)
+			buf, err = dumpTextRow(buf, r.columnInfos, row, nil)
+			if err != nil {
+				logutil.BgLogger().Error("recordSetLoggerWrapper failed to dump text row", zap.Error(err))
+				return err
+			}
+			r.cachedRows = append(r.cachedRows, string(buf))
+		}
+	}
+	return nil
+}
+
+func (r *recordSetLoggerWrapper) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
+	return r.rs.NewChunk(alloc)
+}
+
+func (r *recordSetLoggerWrapper) Close() error {
+	r.zapFields = append(r.zapFields, zap.String("rows", "("+strings.Join(r.cachedRows, ");\n (")+")"))
+	logutil.BgLogger().Info(
+		"statement result",
+		r.zapFields...,
+	)
+	return r.rs.Close()
 }

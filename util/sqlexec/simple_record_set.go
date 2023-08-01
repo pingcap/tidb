@@ -16,13 +16,10 @@ package sqlexec
 
 import (
 	"context"
-	"strings"
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // SimpleRecordSet is a simple implementation of RecordSet. All values are known when creating SimpleRecordSet.
@@ -70,59 +67,4 @@ func (r *SimpleRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 func (r *SimpleRecordSet) Close() error {
 	r.idx = 0
 	return nil
-}
-
-// NewLogWrapped creates a RecordSet that logs the result of the underlying RecordSet.
-func NewLogWrapped(rs RecordSet, maxCachedRows int, fields ...zap.Field) RecordSet {
-	newRs := &recordSetLoggerWrapper{
-		rs:            rs,
-		maxCachedRows: maxCachedRows,
-		cachedRows:    make([]string, 0),
-		zapFields:     fields,
-	}
-	newRs.fieldTypes = make([]*types.FieldType, len(rs.Fields()))
-	for i, field := range rs.Fields() {
-		newRs.fieldTypes[i] = &field.Column.FieldType
-	}
-	return newRs
-}
-
-type recordSetLoggerWrapper struct {
-	rs            RecordSet
-	cachedRows    []string
-	fieldTypes    []*types.FieldType
-	zapFields     []zap.Field
-	maxCachedRows int
-}
-
-func (r *recordSetLoggerWrapper) Fields() []*ast.ResultField {
-	return r.rs.Fields()
-}
-
-func (r *recordSetLoggerWrapper) Next(ctx context.Context, req *chunk.Chunk) error {
-	chk := r.rs.NewChunk(nil)
-	err := r.rs.Next(ctx, chk)
-	if err != nil {
-		return err
-	}
-	req.Reset()
-	for i := 0; i < chk.NumRows(); i++ {
-		row := chk.GetRow(i)
-		req.AppendRow(row)
-		r.cachedRows = append(r.cachedRows, row.ToString(r.fieldTypes))
-	}
-	return nil
-}
-
-func (r *recordSetLoggerWrapper) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
-	return r.rs.NewChunk(alloc)
-}
-
-func (r *recordSetLoggerWrapper) Close() error {
-	r.zapFields = append(r.zapFields, zap.String("rows", "("+strings.Join(r.cachedRows, ");\n (")+")"))
-	logutil.BgLogger().Info(
-		"statement result",
-		r.zapFields...,
-	)
-	return r.rs.Close()
 }
