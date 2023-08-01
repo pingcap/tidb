@@ -269,7 +269,7 @@ func loadSQLMetaFile(z *zip.Reader) (uint64, error) {
 			if err != nil {
 				return 0, errors.AddStack(err)
 			}
-			//nolint: errcheck,all_revive
+			//nolint: errcheck,all_revive,revive
 			defer v.Close()
 			_, err = toml.NewDecoder(v).Decode(&varMap)
 			if err != nil {
@@ -293,7 +293,7 @@ func loadSchemaMeta(z *zip.Reader, is infoschema.InfoSchema) (map[int64]*tblInfo
 			if err != nil {
 				return nil, errors.AddStack(err)
 			}
-			//nolint: errcheck,all_revive
+			//nolint: errcheck,all_revive,revive
 			defer v.Close()
 			buf := new(bytes.Buffer)
 			_, err = buf.ReadFrom(v)

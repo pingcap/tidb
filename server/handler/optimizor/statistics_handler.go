@@ -44,10 +44,12 @@ func NewStatsHandler(do *domain.Domain) *StatsHandler {
 	return &StatsHandler{do: do}
 }
 
+// Domain is to get domain.
 func (sh *StatsHandler) Domain() *domain.Domain {
 	return sh.do
 }
 
+// ServeHTTP dumps the statistics to json.
 func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
