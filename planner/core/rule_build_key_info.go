@@ -152,7 +152,7 @@ func (p *LogicalProjection) buildSchemaByExprs(selfSchema *expression.Schema) *e
 		} else {
 			// If the expression is not a column, we add a column to occupy the position.
 			schema.Append(&expression.Column{
-				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
 				RetType:  expr.GetType(),
 			})
 		}
@@ -201,13 +201,13 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 			ln := expr.GetArgs()[0].(*expression.Column)
 			rn := expr.GetArgs()[1].(*expression.Column)
 			for _, key := range childSchema[0].Keys {
-				if len(key) == 1 && key[0].Equal(p.ctx, ln) {
+				if len(key) == 1 && key[0].Equal(p.SCtx(), ln) {
 					lOk = true
 					break
 				}
 			}
 			for _, key := range childSchema[1].Keys {
-				if len(key) == 1 && key[0].Equal(p.ctx, rn) {
+				if len(key) == 1 && key[0].Equal(p.SCtx(), rn) {
 					rOk = true
 					break
 				}
@@ -271,11 +271,11 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 	var latestIndexes map[int64]*model.IndexInfo
 	var changed bool
 	var err error
-	check := ds.ctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.isForUpdateRead
-	check = check && ds.ctx.GetSessionVars().ConnectionID > 0
+	check := ds.SCtx().GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.isForUpdateRead
+	check = check && ds.SCtx().GetSessionVars().ConnectionID > 0
 	// we should check index valid while forUpdateRead, see detail in https://github.com/pingcap/tidb/pull/22152
 	if check {
-		latestIndexes, changed, err = getLatestIndexInfo(ds.ctx, ds.table.Meta().ID, 0)
+		latestIndexes, changed, err = getLatestIndexInfo(ds.SCtx(), ds.table.Meta().ID, 0)
 		if err != nil {
 			return
 		}

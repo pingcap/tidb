@@ -491,7 +491,7 @@ func TestPartitionRangeColumnsForExpr(t *testing.T) {
 		{"c = 3", partitionRangeOR{{0, len(partDefs)}}},
 		{"b > 3 AND c = 3", partitionRangeOR{{0, len(partDefs)}}},
 		{"a = 5 AND c = 3", partitionRangeOR{{9, 10}}},
-		{"a = 4 AND c = 3", partitionRangeOR{{1, 10}}},
+		{"a = 4 AND c = 3", partitionRangeOR{{1, 9}}},
 		{"b > 3", partitionRangeOR{{0, len(partDefs)}}},
 		{"a > 3", partitionRangeOR{{1, len(partDefs)}}},
 		{"a < 3", partitionRangeOR{{0, 1}}},

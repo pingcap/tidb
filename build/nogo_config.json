@@ -160,6 +160,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
+      ".cgo/": "no need to cgo code",
       ".*_generated\\.go$": "ignore generated code",
       ".*_/testmain\\.go$": "ignore code"
     }
@@ -207,7 +208,10 @@
       "util/watcher/": "util/watcher/ code",
       "util/gctuner": "util/gctuner",
       "store/mockstore/unistore/util": "store/mockstore/unistore/util code",
-      "ddl/util/": "ddl/util code"
+      "ddl/util/": "ddl/util code",
+      "server/internal": "server/internal code",
+      "planner/core/internal": "planner/core/internal code",
+      "executor/internal": "executor/internal code"
     }
   },
   "findcall": {
@@ -278,6 +282,7 @@
       "/cgo/": "ignore cgo code",
       "/rules_go_work-*": "ignore generated code",
       "tools/check/ut.go": "ignore tools/check code",
+      "cmd/mirror": "ignore cmd/mirror code",
       "tools/check/xprog.go": "ignore tools/check code",
       "cmd/pluginpkg/pluginpkg.go": "ignore cmd/pluginpkg code",
       "tools/check/xprog.go:": "ignore tools/check code",
@@ -499,13 +504,7 @@
       "autoid_service/": "autoid_service",
       "bindinfo/": "bindinfo",
       "br/pkg/lightning/": "br/pkg/lightning/",
-      "executor/aggregate.go": "executor/aggregate.go",
-      "executor/analyze": "executor/analyze",
-      "executor/change.go": "executor/change.go",
-      "executor/internal/": "executor/internal/",
-      "executor/aggfuncs/": "executor/aggfuncs/",
-      "executor/asyncloaddata/": "executor/asyncloaddata/",
-      "executor/importer/": "executor/importer/",
+      "executor/": "executor/",
       "types/json_binary_functions.go": "types/json_binary_functions.go",
       "types/json_binary_test.go": "types/json_binary_test.go",
       "ddl/": "ddl",
@@ -582,6 +581,65 @@
       "parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "toomanytests": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "/cgo/": "ignore cgo code",
+      "/rules_go_work-*": "ignore generated code",
+      ".*test_/testmain\\.go$": "ignore generated code",
+      ".*failpoint_binding__.go$": "ignore generated code",
+      "util/chunk": "ignore util/chunk",
+      "br/pkg/restore": "ignore br/pkg/restore"
+    },
+    "only_files": {
+      "planer/core/casetest/binaryplan": "planer/core/casetest/binaryplan",
+      "planer/core/casetest/cbotest": "planer/core/casetest/cbotest",
+      "planer/core/casetest/enforcempp": "planer/core/casetest/enforcempp",
+      "planer/core/casetest/flatplan": "planer/core/casetest/flatplan",
+      "planer/core/casetest/hint": "planer/core/casetest/hint",
+      "planer/core/casetest/mpp": "planer/core/casetest/mpp",
+      "planer/core/casetest/partition": "planer/core/casetest/partition",
+      "planer/core/casetest/pushdown": "planer/core/casetest/pushdown",
+      "planer/core/casetest/rule": "planer/core/casetest/rule",
+      "planer/core/casetest/scalarsubquery": "planer/core/casetest/scalarsubquery",
+      "planer/core/casetest/testdata": "planer/core/casetest/testdata",
+      "planer/core/casetest/windows": "planer/core/casetest/windows",
+      "executor/test/admintest": "executor/test/admintest",
+      "executor/test/aggregate": "executor/test/aggregate",
+      "executor/test/autoidtest": "executor/test/autoidtest",
+      "executor/test/distsqltest": "executor/test/distsqltest",
+      "executor/test/fktest": "executor/test/fktest",
+      "executor/test/indexmergereadtest": "executor/test/indexmergereadtest",
+      "executor/test/jointest": "executor/test/jointest",
+      "executor/test/kvtest": "executor/test/kvtest",
+      "executor/test/loaddatatest": "executor/test/loaddatatest",
+      "executor/test/loadremotetest": "executor/test/loadremotetest",
+      "executor/test/memtest": "executor/test/memtest",
+      "executor/test/oomtest": "executor/test/oomtest",
+      "executor/test/partitiontest": "executor/test/partitiontest",
+      "executor/test/passwordtest": "executor/test/passwordtest",
+      "executor/test/seqtest": "executor/test/seqtest",
+      "executor/test/showtest": "executor/test/showtest",
+      "executor/test/simpletest": "executor/test/simpletest",
+      "executor/test/splittest": "executor/test/splittest",
+      "executor/test/tiflashtest": "executor/test/tiflashtest",
+      "executor/test/unstabletest": "executor/test/unstabletest",
+      "ddl/tests": "ddl/tests code",
+      "disttask/": "disttask code",
+      "timer/": "timer code",
+      "util/": "util code",
+      "br/pkg/lightning/config/": "br/pkg/lightning/config code",
+      "br/pkg/storage": "br/pkg/storage code",
+      "br/pkg/utils": "br/pkg/utils code",
+      "planner/cascades": "planner/cascades code",
+      "store/": "store code",
+      "ttl/": "ttl code",
+      "bindinfo/": "bindinfo code",
+      "domain/": "domain code"
     }
   },
   "unconvert": {
@@ -1137,6 +1195,7 @@
   "prealloc": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
+      "cmd/mirror": "cmd/mirror code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "parser/yy_parser.go": "ignore generated code",
@@ -1146,6 +1205,7 @@
   "predeclared": {
     "exclude_files": {
       "external/": "no need to vet third party code",
+      "cmd/mirror": "no need to mirror",
       ".*_generated\\.go$": "ignore generated code",
       "parser/yy_parser.go": "ignore generated code",
       "parser/parser.go": "ignore generated code",

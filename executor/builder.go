@@ -39,6 +39,8 @@ import (
 	"github.com/pingcap/tidb/executor/internal/calibrateresource"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/executor/internal/pdhelper"
+	"github.com/pingcap/tidb/executor/internal/querywatch"
+	"github.com/pingcap/tidb/executor/internal/vecgroupchecker"
 	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -446,7 +448,7 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 	is := p.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	fullColLen := len(is.Index.Columns) + len(p.CommonHandleCols)
 	if !e.isCommonHandle() {
-		fullColLen += 1
+		fullColLen++
 	}
 	e.dagPB.OutputOffsets = make([]uint32, fullColLen)
 	for i := 0; i < fullColLen; i++ {
@@ -889,7 +891,7 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 		if b.Ti.AccountLockTelemetry == nil {
 			b.Ti.AccountLockTelemetry = &AccountLockTelemetryInfo{}
 		}
-		b.Ti.AccountLockTelemetry.CreateOrAlterUser += 1
+		b.Ti.AccountLockTelemetry.CreateOrAlterUser++
 		if stmt, ok := v.Statement.(*ast.CreateUserStmt); ok {
 			lockOptions = stmt.PasswordOrLockOptions
 		} else if stmt, ok := v.Statement.(*ast.AlterUserStmt); ok {
@@ -899,10 +901,10 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 			// Multiple lock options are supported for the parser, but only the last one option takes effect.
 			for i := len(lockOptions) - 1; i >= 0; i-- {
 				if lockOptions[i].Type == ast.Lock {
-					b.Ti.AccountLockTelemetry.LockUser += 1
+					b.Ti.AccountLockTelemetry.LockUser++
 					break
 				} else if lockOptions[i].Type == ast.Unlock {
-					b.Ti.AccountLockTelemetry.UnlockUser += 1
+					b.Ti.AccountLockTelemetry.UnlockUser++
 					break
 				}
 			}
@@ -912,6 +914,11 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), 0),
 			WorkloadType: s.Tp,
 			OptionList:   s.DynamicCalibrateResourceOptionList,
+		}
+	case *ast.AddQueryWatchStmt:
+		return &querywatch.AddExecutor{
+			BaseExecutor:         exec.NewBaseExecutor(b.ctx, v.Schema(), 0),
+			QueryWatchOptionList: s.QueryWatchOptionList,
 		}
 	case *ast.LoadDataActionStmt:
 		return &LoadDataActionExec{
@@ -1126,9 +1133,10 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) exec.Ex
 	e := &PlanReplayerExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		DumpInfo: &PlanReplayerDumpInfo{
-			Analyze: v.Analyze,
-			Path:    v.File,
-			ctx:     b.ctx,
+			Analyze:           v.Analyze,
+			Path:              v.File,
+			ctx:               b.ctx,
+			HistoricalStatsTS: v.HistoricalStatsTS,
 		},
 	}
 	if v.ExecStmt != nil {
@@ -1139,7 +1147,7 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) exec.Ex
 	return e
 }
 
-func (b *executorBuilder) buildReplace(vals *InsertValues) exec.Executor {
+func (*executorBuilder) buildReplace(vals *InsertValues) exec.Executor {
 	replaceExec := &ReplaceExec{
 		InsertValues: vals,
 	}
@@ -1437,7 +1445,23 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
 		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *IndexMergeReaderExecutor:
-		// IndexMergeReader doesn't care order for now. So we will not set desc, useIndex and keepOrder.
+		if len(x.byItems) != 0 {
+			us.keepOrder = x.keepOrder
+			us.desc = x.byItems[0].Desc
+			for _, item := range x.byItems {
+				c, ok := item.Expr.(*expression.Column)
+				if !ok {
+					b.err = errors.Errorf("Not support non-column in orderBy pushed down")
+					return nil
+				}
+				for i, col := range x.columns {
+					if col.ID == c.ID {
+						us.usedIndex = append(us.usedIndex, i)
+						break
+					}
+				}
+			}
+		}
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
@@ -1466,7 +1490,7 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 			x.setDummy()
 			us.cacheTable = cacheData
 		} else if loading {
-			// continue
+			return
 		} else {
 			if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
 				store := b.ctx.GetStore()
@@ -1800,7 +1824,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) exec.
 	}
 	e := &StreamAggExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
-		groupChecker: newVecGroupChecker(b.ctx, v.GroupByItems),
+		groupChecker: vecgroupchecker.NewVecGroupChecker(b.ctx, v.GroupByItems),
 		aggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
 	}
 
@@ -1912,6 +1936,8 @@ func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 	replicaReadType := sessVars.GetReplicaRead()
 	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
 	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
+	snapshot.SetOption(kv.ResourceGroupName, sessVars.ResourceGroupName)
+	snapshot.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
 
 	if replicaReadType.IsClosestRead() && b.readReplicaScope != kv.GlobalTxnScope {
 		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
@@ -2084,7 +2110,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableMemoryUsageOpsHistory),
 			strings.ToLower(infoschema.ClusterTableMemoryUsage),
 			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory),
-			strings.ToLower(infoschema.TableResourceGroups):
+			strings.ToLower(infoschema.TableResourceGroups),
+			strings.ToLower(infoschema.TableRunawayWatches):
 			return &MemTableReaderExec{
 				BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -2136,7 +2163,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			return &MemTableReaderExec{
 				BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
-				retriever:    buildStmtSummaryRetriever(b.ctx, v.Table, v.Columns, extractor),
+				retriever:    buildStmtSummaryRetriever(v.Table, v.Columns, extractor),
 			}
 		case strings.ToLower(infoschema.TableColumns):
 			return &MemTableReaderExec{
@@ -3098,7 +3125,7 @@ func markChildrenUsedCols(outputCols []*expression.Column, childSchemas ...*expr
 	return
 }
 
-func (b *executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) bool {
+func (*executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) bool {
 	for _, p := range plans {
 		x, ok := p.(*plannercore.PhysicalSelection)
 		if !ok {
@@ -3114,7 +3141,7 @@ func (b *executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) boo
 }
 
 // corColInAccess checks whether there's correlated column in access conditions.
-func (b *executorBuilder) corColInAccess(p plannercore.PhysicalPlan) bool {
+func (*executorBuilder) corColInAccess(p plannercore.PhysicalPlan) bool {
 	var access []expression.Expression
 	switch x := p.(type) {
 	case *plannercore.PhysicalTableScan:
@@ -3709,7 +3736,7 @@ func getPartitionKeyColOffsets(keyColIDs []int64, pt table.PartitionedTable) []i
 	return keyColOffsets
 }
 
-func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table, schema *expression.Schema, partitionInfo *plannercore.PartitionInfo,
+func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table, partitionInfo *plannercore.PartitionInfo,
 	lookUpContent []*indexJoinLookUpContent) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
 	partitionTbl := tbl.(table.PartitionedTable)
 
@@ -4191,7 +4218,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		dataReaderBuilder:        readerBuilder,
 		feedbacks:                feedbacks,
 		paging:                   paging,
-		handleCols:               ts.HandleCols,
+		handleCols:               v.HandleCols,
 		isCorColInPartialFilters: isCorColInPartialFilters,
 		isCorColInTableFilter:    isCorColInTableFilter,
 		isCorColInPartialAccess:  isCorColInPartialAccess,
@@ -4280,26 +4307,26 @@ type mockPhysicalIndexReader struct {
 }
 
 // MemoryUsage of mockPhysicalIndexReader is only for testing
-func (p *mockPhysicalIndexReader) MemoryUsage() (sum int64) {
+func (*mockPhysicalIndexReader) MemoryUsage() (sum int64) {
 	return
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, lookUpContents []*indexJoinLookUpContent,
-	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error) {
-	return builder.buildExecutorForIndexJoinInternal(ctx, builder.Plan, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+	indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error) {
+	return builder.buildExecutorForIndexJoinInternal(ctx, builder.Plan, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.Context, plan plannercore.Plan, lookUpContents []*indexJoinLookUpContent,
-	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error) {
+	indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error) {
 	switch v := plan.(type) {
 	case *plannercore.PhysicalTableReader:
-		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	case *plannercore.PhysicalIndexReader:
-		return builder.buildIndexReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
+		return builder.buildIndexReaderForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 	case *plannercore.PhysicalIndexLookUpReader:
-		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
+		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 	case *plannercore.PhysicalUnionScan:
-		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	// The inner child of IndexJoin might be Projection when a combination of the following conditions is true:
 	// 	1. The inner child fetch data using indexLookupReader
 	// 	2. PK is not handle
@@ -4307,11 +4334,11 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 	// In this case, an extra column tidb_rowid will be appended in the output result of IndexLookupReader(see copTask.doubleReadNeedProj).
 	// Then we need a Projection upon IndexLookupReader to prune the redundant column.
 	case *plannercore.PhysicalProjection:
-		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
+		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 	// Need to support physical selection because after PR 16389, TiDB will push down all the expr supported by TiKV or TiFlash
 	// in predicate push down stage, so if there is an expr which only supported by TiFlash, a physical selection will be added after index read
 	case *plannercore.PhysicalSelection:
-		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
 		}
@@ -4654,7 +4681,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	}
 
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
-	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
+	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, &v.PartitionInfo, lookUpContents)
 	if err != nil {
 		return nil, err
 	}
@@ -4729,7 +4756,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 	}
 
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
-	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
+	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, &v.PartitionInfo, lookUpContents)
 	if err != nil {
 		return nil, err
 	}
@@ -4946,7 +4973,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 	if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
 		exec := &PipelinedWindowExec{
 			BaseExecutor:   base,
-			groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
+			groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx, groupByItems),
 			numWindowFuncs: len(v.WindowFuncDescs),
 		}
 
@@ -5005,7 +5032,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 	}
 	return &WindowExec{BaseExecutor: base,
 		processor:      processor,
-		groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
+		groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx, groupByItems),
 		numWindowFuncs: len(v.WindowFuncDescs),
 	}
 }
@@ -5050,7 +5077,7 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	for _, dataSource := range v.DataSources {
 		stub := plannercore.PhysicalShuffleReceiverStub{
 			DataSource: dataSource,
-		}.Init(b.ctx, dataSource.Stats(), dataSource.SelectBlockOffset(), nil)
+		}.Init(b.ctx, dataSource.StatsInfo(), dataSource.SelectBlockOffset(), nil)
 		stub.SetSchema(dataSource.Schema())
 		stubs = append(stubs, stub)
 	}
@@ -5084,7 +5111,7 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	return shuffle
 }
 
-func (b *executorBuilder) buildShuffleReceiverStub(v *plannercore.PhysicalShuffleReceiverStub) *shuffleReceiver {
+func (*executorBuilder) buildShuffleReceiverStub(v *plannercore.PhysicalShuffleReceiverStub) *shuffleReceiver {
 	return (*shuffleReceiver)(v.Receiver)
 }
 
@@ -5203,7 +5230,6 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	if e.Ctx().GetSessionVars().IsReplicaReadClosestAdaptive() {
 		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.Ctx(), plan.GetAvgRowSize()))
 	}
-	e.snapshot.SetOption(kv.ResourceGroupName, b.ctx.GetSessionVars().ResourceGroupName)
 	if e.RuntimeStats() != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
@@ -5405,11 +5431,11 @@ func fullRangePartition(idxArr []int) bool {
 
 type emptySampler struct{}
 
-func (s *emptySampler) writeChunk(_ *chunk.Chunk) error {
+func (*emptySampler) writeChunk(_ *chunk.Chunk) error {
 	return nil
 }
 
-func (s *emptySampler) finished() bool {
+func (*emptySampler) finished() bool {
 	return true
 }
 
@@ -5612,7 +5638,7 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 		sessVars.StmtCtx.ReadFromTableCache = true
 		return cacheData
 	} else if loading {
-		// continue
+		return nil
 	} else {
 		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
 			tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
