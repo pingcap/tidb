@@ -254,7 +254,7 @@ func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (Resu
 		if err == nil && rs != nil && len(rs.Fields()) > 0 && !tc.GetSessionVars().InRestrictedSQL {
 			rs = newLogWrapped(
 				rs,
-				5,
+				50,
 				zap.Uint64("conn", tc.GetSessionVars().ConnectionID),
 				zap.Uint64("txnStartTS", tc.GetSessionVars().TxnCtx.StartTS),
 				zap.Uint64("forUpdateTS", tc.GetSessionVars().TxnCtx.GetForUpdateTS()),
