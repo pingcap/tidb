@@ -25,9 +25,9 @@ import (
 
 // AddExecutor is used as executor of add query watch.
 type AddExecutor struct {
-	exec.BaseExecutor
 	QueryWatchOptionList []*ast.QueryWatchOption
-	done                 bool
+	exec.BaseExecutor
+	done bool
 }
 
 // Next implements the interface of Executor.

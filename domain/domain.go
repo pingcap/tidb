@@ -993,6 +993,7 @@ func (do *Domain) Close() {
 			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
 		}
 	}
+	do.releaseServerID(context.Background())
 	close(do.exit)
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
@@ -3007,6 +3008,25 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 	}
 }
 
+func (do *Domain) releaseServerID(ctx context.Context) {
+	serverID := do.ServerID()
+	if serverID == 0 {
+		return
+	}
+	atomic.StoreUint64(&do.serverID, 0)
+
+	if do.etcdClient == nil {
+		return
+	}
+	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, serverID)
+	err := ddlutil.DeleteKeyFromEtcd(key, do.etcdClient, refreshServerIDRetryCnt, acquireServerIDTimeout)
+	if err != nil {
+		logutil.BgLogger().Error("releaseServerID fail", zap.Uint64("serverID", serverID), zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("releaseServerID succeed", zap.Uint64("serverID", serverID))
+	}
+}
+
 // propose server ID by random.
 func (do *Domain) proposeServerID(ctx context.Context, conflictCnt int) (uint64, error) {
 	// get a random server ID in range [min, max]
@@ -3020,7 +3040,8 @@ func (do *Domain) proposeServerID(ctx context.Context, conflictCnt int) (uint64,
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		if float32(len(allServerInfo)) < 0.9*globalconn.MaxServerID32 {
+		// `allServerInfo` contains current TiDB.
+		if float32(len(allServerInfo)) <= 0.9*float32(globalconn.MaxServerID32) {
 			serverIDs := make(map[uint64]struct{}, len(allServerInfo))
 			for _, info := range allServerInfo {
 				serverID := info.ServerIDGetter()
@@ -3036,6 +3057,9 @@ func (do *Domain) proposeServerID(ctx context.Context, conflictCnt int) (uint64,
 				}
 			}
 		}
+		logutil.BgLogger().Info("upgrade to 64 bits server ID due to used up", zap.Int("len(allServerInfo)", len(allServerInfo)))
+	} else {
+		logutil.BgLogger().Info("upgrade to 64 bits server ID due to conflict", zap.Int("conflictCnt", conflictCnt))
 	}
 
 	// upgrade to 64 bits.
