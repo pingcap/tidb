@@ -910,7 +910,6 @@ func TestCreateTableWithListPartition(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
-	tk.MustExec("set @@session.tidb_enable_default_list_partition = ON")
 	tk.MustExec("drop table if exists t")
 	type errorCase struct {
 		sql string
@@ -1067,7 +1066,6 @@ func TestCreateTableWithListColumnsPartition(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
-	tk.MustExec("set @@session.tidb_enable_default_list_partition = ON")
 	tk.MustExec("drop table if exists t")
 	type errorCase struct {
 		sql string
@@ -1291,9 +1289,6 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 
 	tk.MustContainErrMsg(`alter table t add partition (partition p6 values in (null, 6))`,
 		"[ddl:1495]Multiple definition of same constant in list partitioning")
-	tk.MustContainErrMsg(`alter table t add partition (partition pDef values in (default, 6))`,
-		"[ddl:8200]VALUES IN (DEFAULT) is not supported, please use 'tidb_enable_default_list_partition'")
-	tk.MustExec("set @@session.tidb_enable_default_list_partition = ON")
 	tk.MustExec(`alter table t add partition (partition pDef values in (default, 6))`)
 	tk.MustContainErrMsg(`alter table t add partition (partition pDef2 values in (10, default))`, `[ddl:8200]Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead`)
 	tk.MustContainErrMsg(`alter table t add partition (partition pDef2 values in (10))`, `[ddl:8200]Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead`)
@@ -1427,10 +1422,6 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 				partition p5 values in ((8,'a')));`)
 	// We only support a single DEFAULT (catch-all),
 	// Not a DEFAULT per column in LIST COLUMNS!
-	tk.MustGetErrMsg(`alter table t add partition (
-				partition pDef values in (10, default))`,
-		"[ddl:8200]VALUES IN (DEFAULT) is not supported, please use 'tidb_enable_default_list_partition'")
-	tk.MustExec(`set tidb_enable_default_list_partition = ON`)
 	tk.MustGetErrMsg(`alter table t add partition (
 				partition pDef values in (10, default))`, `[ddl:1653]Inconsistency in usage of column lists for partitioning`)
 	tk.MustGetErrCode(`alter table t add partition (
@@ -1595,7 +1586,6 @@ func TestDefaultListPartition(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database defaultPartition")
 	tk.MustExec("use defaultPartition")
-	tk.MustExec(`set @@session.tidb_enable_default_list_partition=ON`)
 
 	tk.MustExec(`create table t (a int, b varchar(255), unique key (a), key (b)) partition by list (a) (partition p0 values in (0,4), partition p1 values in (1, null, default), partition p2 values in (2,7,10))`)
 	tk.MustExec(`insert into t values (1, "1"), (2, "2"), (3,'3'), (null, "null"), (4, "4"), (11, "11")`)
@@ -1650,7 +1640,6 @@ func TestDefaultListColumnPartition(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database defaultPartition")
 	tk.MustExec("use defaultPartition")
-	tk.MustExec(`set @@session.tidb_enable_default_list_partition=ON`)
 
 	tk.MustExec(`create table t (b int, a varchar(255)) partition by list columns (a) (partition p0 values in (0,4), partition p1 values in (1, null, default), partition p2 values in (2,7,10))`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
@@ -1756,7 +1745,6 @@ func TestDefaultListErrors(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create schema defaultListErrors")
 	tk.MustExec("use defaultListErrors")
-	tk.MustExec(`set tidb_enable_default_list_partition=ON`)
 	tk.MustContainErrMsg(`create table t (a int) partition by range (a) (partition p0 values less than (default))`,
 		"[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 86 near ")
 	tk.MustContainErrMsg(`create table t (a int) partition by range (a) (partition p0 values less than ("default"))`,
@@ -1832,7 +1820,6 @@ func TestAlterTableDropPartitionByListColumns(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
-	tk.MustExec("set @@session.tidb_enable_default_list_partition = ON")
 	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id,name) (
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),

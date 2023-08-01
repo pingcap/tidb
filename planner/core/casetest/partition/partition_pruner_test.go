@@ -140,7 +140,6 @@ func TestListDefaultPartitionPruner(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database default_partition")
 	tk.MustExec("use default_partition")
-	tk.MustExec(`set tidb_enable_default_list_partition=1`)
 	tk.MustExec("" +
 		`create table t (a int, b varchar(255), key (b)) partition by list (a)` +
 		`(partition p0 values in (0, 10),` +
@@ -379,7 +378,6 @@ func TestListColumnsDefaultPartitionPruner(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("set @@session.tidb_enable_default_list_partition = ON")
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
@@ -399,7 +397,6 @@ func TestListColumnsDefaultPartitionPruner(t *testing.T) {
 	tk1.MustExec(`set @@session.tidb_regard_null_as_point=false`)
 	tk1.MustExec("create database test_partition_1")
 	tk1.MustExec("use test_partition_1")
-	tk1.MustExec("set @@session.tidb_enable_default_list_partition = ON")
 	tk1.MustExec("create table t1 (id int, a int, b int, unique key (a,b,id)) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(4,4),(5,5)), partition pDef values in (default), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(null,10)))")
 	tk1.MustExec("create table t2 (id int, a int, b int, unique key (a,b,id)) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(null,null,null)), partition pDef default)")
 	tk1.MustExec(insertT1)

@@ -2515,10 +2515,6 @@ var defaultSysVars = []*SysVar{
 			s.OptOrderingIdxSelThresh = tidbOptFloat64(val, DefTiDBOptOrderingIdxSelThresh)
 			return nil
 		}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableDefaultListPartition, Value: BoolToOnOff(DefTiDBEnableDefaultListPartition), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableDefaultListPartition = TiDBOptOn(val)
-		return nil
-	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableMPPSharedCTEExecution, Value: BoolToOnOff(DefTiDBOptEnableMPPSharedCTEExecution), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableMPPSharedCTEExecution = TiDBOptOn(val)
 		return nil

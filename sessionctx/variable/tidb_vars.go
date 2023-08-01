@@ -278,11 +278,6 @@ const (
 	// TiDBUseAlloc indicates whether the last statement used chunk alloc
 	TiDBUseAlloc = "last_sql_use_alloc"
 
-	// TiDBEnableDefaultListPartition is used to control
-	// table partition DEFAULT list partition feature.
-	// The valid value include on/off
-	TiDBEnableDefaultListPartition = "tidb_enable_default_list_partition"
-
 	// TiDBExplicitRequestSourceType indicates the source of the request, it's a complement of RequestSourceType.
 	// The value maybe "lightning", "br", "dumpling" etc.
 	TiDBExplicitRequestSourceType = "tidb_request_source_type"
@@ -1391,7 +1386,6 @@ const (
 	DefRuntimeFilterMode                              = "OFF"
 	DefTiDBLockUnchangedKeys                          = true
 	DefTiDBEnableCheckConstraint                      = false
-	DefTiDBEnableDefaultListPartition                 = false
 	DefTiDBSkipMissingPartitionStats                  = true
 )
 

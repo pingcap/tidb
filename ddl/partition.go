@@ -479,9 +479,9 @@ func storeHasEngineTiFlashLabel(store *metapb.Store) bool {
 	return false
 }
 
-func checkListPartitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition) error {
+func checkListPartitions(defs []*ast.PartitionDefinition) error {
 	for _, def := range defs {
-		valIn, ok := def.Clause.(*ast.PartitionDefinitionClauseIn)
+		_, ok := def.Clause.(*ast.PartitionDefinitionClauseIn)
 		if !ok {
 			switch def.Clause.(type) {
 			case *ast.PartitionDefinitionClauseLessThan:
@@ -490,13 +490,6 @@ func checkListPartitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition
 				return ast.ErrPartitionRequiresValues.GenWithStackByArgs("LIST", "IN")
 			default:
 				return dbterror.ErrUnsupportedCreatePartition.GenWithStack("Only VALUES IN () is supported for LIST partitioning")
-			}
-		}
-		if !ctx.GetSessionVars().EnableDefaultListPartition {
-			for _, val := range valIn.Values {
-				if _, ok := val[0].(*ast.DefaultExpr); ok {
-					return dbterror.ErrUnsupportedCreatePartition.GenWithStack("VALUES IN (DEFAULT) is not supported, please use 'tidb_enable_default_list_partition'")
-				}
 			}
 		}
 	}
@@ -522,7 +515,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		// Partition by list is enabled only when tidb_enable_list_partition is 'ON'.
 		enable = ctx.GetSessionVars().EnableListTablePartition
 		if enable {
-			err := checkListPartitions(ctx, s.Definitions)
+			err := checkListPartitions(s.Definitions)
 			if err != nil {
 				return err
 			}
