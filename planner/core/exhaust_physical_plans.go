@@ -2042,12 +2042,8 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 				errMsg += " without column equal ON condition"
 			}
 			// Generate warning message to client.
-<<<<<<< HEAD
 			warning := ErrInternal.GenWithStack(errMsg)
 			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-=======
-			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
->>>>>>> 64be9ec4c0c (planner: refine `tryToGetIndexJoin` (#45587))
 		}
 	}()
 
