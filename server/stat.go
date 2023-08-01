@@ -55,7 +55,7 @@ func (s *Server) Stats(vars *variable.SessionVars) (map[string]interface{}, erro
 		if len(tlsConfig.Certificates) == 1 {
 			pc, err := x509.ParseCertificate(tlsConfig.Certificates[0].Certificate[0])
 			if err != nil {
-				logutil.BgLogger().Error("Failed to parse TLS certficates to get server Status", zap.Error(err))
+				logutil.BgLogger().Error("Failed to parse TLS certficates to get server status", zap.Error(err))
 			} else {
 				m[serverNotAfter] = pc.NotAfter.Format("Jan _2 15:04:05 2006 MST")
 				m[serverNotBefore] = pc.NotBefore.Format("Jan _2 15:04:05 2006 MST")
@@ -67,7 +67,7 @@ func (s *Server) Stats(vars *variable.SessionVars) (map[string]interface{}, erro
 	info := tikvhandler.ServerInfo{}
 	info.ServerInfo, err = infosync.GetServerInfo()
 	if err != nil {
-		logutil.BgLogger().Error("Failed to get ServerInfo for uptime Status", zap.Error(err))
+		logutil.BgLogger().Error("Failed to get ServerInfo for uptime status", zap.Error(err))
 	} else {
 		m[upTime] = int64(time.Since(time.Unix(info.ServerInfo.StartTimestamp, 0)).Seconds())
 	}
