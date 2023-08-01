@@ -4485,8 +4485,6 @@ func TestAddHashPartition(t *testing.T) {
 		" PARTITION `p11`,\n" +
 		" PARTITION `p12` COMMENT 'p12' /*T![placement] PLACEMENT POLICY=`tworeplicas` */,\n" +
 		" PARTITION `p13`)"))
-	tk.MustContainErrMsg(`alter table t remove partitioning`, "[ddl:8200]Unsupported REMOVE PARTITIONING, tidb_enable_remove_partitioning is not enabled")
-	tk.MustExec(`set session tidb_enable_remove_partitioning = 1`)
 	tk.MustExec(`alter table t remove partitioning`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
@@ -4713,8 +4711,6 @@ func TestUnsupportedPartitionManagementDDLs(t *testing.T) {
 	tk.MustContainErrMsg(`alter table test_1465 discard partition p1 tablespace`, "[ddl:8200]Unsupported Unsupported/unknown ALTER TABLE specification")
 	tk.MustContainErrMsg(`alter table test_1465 rebuild partition p1`, "[ddl:8200]Unsupported rebuild partition")
 	tk.MustContainErrMsg(`alter table test_1465 coalesce partition 1`, "[ddl:1509]COALESCE PARTITION can only be used on HASH/KEY partitions")
-	tk.MustContainErrMsg("alter table test_1465 partition by hash(a)", "PARTITION BY, tidb_enable_alter_partition_by is not enabled")
-	tk.MustExec("set @@session.tidb_enable_alter_partition_by = ON")
 	tk.MustExec("alter table test_1465 partition by hash(a)")
 	tk.MustQuery(`show create table test_1465`).Check(testkit.Rows("" +
 		"test_1465 CREATE TABLE `test_1465` (\n" +
@@ -5110,8 +5106,6 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 	for _, pid := range p.GetAllPartitionIDs() {
 		require.True(t, tbl.Meta().TiFlashReplica.IsPartitionAvailable(pid))
 	}
-	tk.MustContainErrMsg(`alter table t remove partitioning`, "[ddl:8200]Unsupported REMOVE PARTITIONING, tidb_enable_remove_partitioning is not enabled")
-	tk.MustExec(`set tidb_enable_remove_partitioning = 1`)
 	tk.MustExec(`alter table t remove partitioning`)
 	tbl = external.GetTableByName(t, tk, schemaName, "t")
 	require.Nil(t, tbl.GetPartitionedTable())
@@ -5128,8 +5122,6 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 	require.NotNil(t, tbl.Meta().TiFlashReplica)
 	require.True(t, tbl.Meta().TiFlashReplica.Available)
 	require.Nil(t, tbl.GetPartitionedTable())
-	tk.MustContainErrMsg(`alter table t partition by key(a) partitions 3`, "[ddl:8200]Unsupported PARTITION BY, tidb_enable_alter_partition_by is not enabled")
-	tk.MustExec(`set @@session.tidb_enable_alter_partition_by = "ON"`)
 	tk.MustExec(`alter table t partition by key(a) partitions 3`)
 	tbl = external.GetTableByName(t, tk, schemaName, "t")
 	p = tbl.GetPartitionedTable()
@@ -6023,8 +6015,6 @@ partition pMax values less than maxvalue)`)
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (1000000),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	tk.MustContainErrMsg(`alter table tRange remove partitioning`, "[ddl:8200]Unsupported REMOVE PARTITIONING, tidb_enable_remove_partitioning is not enabled")
-	tk.MustExec(`set session tidb_enable_remove_partitioning = ON`)
 	tk.MustExec(`alter table tRange remove partitioning`)
 	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
 		"tRange CREATE TABLE `tRange` (\n" +
@@ -6053,8 +6043,6 @@ partition pMax values less than maxvalue)`)
 		"PARTITION BY RANGE COLUMNS(`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN ('1000000'),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	tk.MustContainErrMsg(`alter table tRange remove partitioning`, "[ddl:8200]Unsupported REMOVE PARTITIONING, tidb_enable_remove_partitioning is not enabled")
-	tk.MustExec(`set @@session.tidb_enable_remove_partitioning = ON`)
 	tk.MustExec(`alter table tRange remove partitioning`)
 	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
 		"tRange CREATE TABLE `tRange` (\n" +
@@ -6082,8 +6070,6 @@ partition pMax values less than (maxvalue,1))`)
 		"PARTITION BY RANGE COLUMNS(`a`,`b`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN ('1000000','1000000'),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE,'1'))"))
-	tk.MustContainErrMsg(`alter table tRange remove partitioning`, "[ddl:8200]Unsupported REMOVE PARTITIONING, tidb_enable_remove_partitioning is not enabled")
-	tk.MustExec(`set tidb_enable_remove_partitioning = 1`)
 	tk.MustExec(`alter table tRange remove partitioning`)
 	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
 		"tRange CREATE TABLE `tRange` (\n" +
@@ -6111,8 +6097,6 @@ func TestRemoveHashPartitioning(t *testing.T) {
 		"p4 14",
 		"p5 14",
 		"p6 14"))
-	tk.MustContainErrMsg(`alter table t remove partitioning`, "[ddl:8200]Unsupported REMOVE PARTITIONING, tidb_enable_remove_partitioning is not enabled")
-	tk.MustExec(`set tidb_enable_remove_partitioning = ON`)
 	tk.MustExec(`alter table t remove partitioning`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
@@ -6153,8 +6137,6 @@ func TestRemoveKeyPartitioning(t *testing.T) {
 		"p4 16",
 		"p5 23",
 		"p6 11"))
-	tk.MustContainErrMsg(`alter table t remove partitioning`, "[ddl:8200]Unsupported REMOVE PARTITIONING, tidb_enable_remove_partitioning is not enabled")
-	tk.MustExec(`set tidb_enable_remove_partitioning = 1`)
 	tk.MustExec(`alter table t remove partitioning`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
@@ -6201,8 +6183,6 @@ func TestRemoveListPartitioning(t *testing.T) {
 		"p2 19",
 		"p3 19",
 		"p4 19"))
-	tk.MustContainErrMsg(`alter table t remove partitioning`, "[ddl:8200]Unsupported REMOVE PARTITIONING, tidb_enable_remove_partitioning is not enabled")
-	tk.MustExec(`set tidb_enable_remove_partitioning = "ON"`)
 	tk.MustExec(`alter table t remove partitioning`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
@@ -6249,8 +6229,6 @@ func TestRemoveListColumnPartitioning(t *testing.T) {
 		"p2 19",
 		"p3 19",
 		"p4 19"))
-	tk.MustContainErrMsg(`alter table t remove partitioning`, "[ddl:8200]Unsupported REMOVE PARTITIONING, tidb_enable_remove_partitioning is not enabled")
-	tk.MustExec(`set tidb_enable_remove_partitioning = 1`)
 	tk.MustExec(`alter table t remove partitioning`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
@@ -6297,8 +6275,6 @@ func TestRemoveListColumnsPartitioning(t *testing.T) {
 		"p2 19",
 		"p3 19",
 		"p4 19"))
-	tk.MustContainErrMsg(`alter table t remove partitioning`, "[ddl:8200]Unsupported REMOVE PARTITIONING, tidb_enable_remove_partitioning is not enabled")
-	tk.MustExec(`set tidb_enable_remove_partitioning = 1`)
 	tk.MustExec(`alter table t remove partitioning`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +

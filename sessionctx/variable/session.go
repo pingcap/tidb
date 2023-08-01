@@ -1503,14 +1503,6 @@ type SessionVars struct {
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
 
-	// EnableRemovePartitioning for ALTER TABLE t REMOVE PARTITIONING
-	EnableRemovePartitioning bool
-
-	// EnableAlterPartitionBy for ALTER TABLE t PARTITION BY
-	// both for partition a non-partitioned table as well as
-	// change the partitioning type/schema
-	EnableAlterPartitionBy bool
-
 	// FastCheckTable is used to control whether fast check table is enabled.
 	FastCheckTable bool
 
