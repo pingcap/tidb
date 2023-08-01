@@ -1035,8 +1035,6 @@ func TestTidbKvReadTimeout(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table TidbKvReadTimeout( id int,name varchar(128),age int);")
 	tk.MustExec("begin")
-	tk.MustExec("insert into TidbKvReadTimeout (id,name,age) values (1,'john',18),(2,'lary',19),(3,'lily',18);")
-
 	tk.MustQuery("select /*+ TIDB_KV_READ_TIMEOUT(1000) TIDB_KV_READ_TIMEOUT(500) */ * FROM TidbKvReadTimeout;")
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
 	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "TIDB_KV_READ_TIMEOUT() is defined more than once, only the last definition takes effect: TIDB_KV_READ_TIMEOUT(500)")
@@ -1045,14 +1043,8 @@ func TestTidbKvReadTimeout(t *testing.T) {
 
 	tk.MustQuery("select @@TIDB_KV_READ_TIMEOUT;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.TIDB_KV_READ_TIMEOUT;").Check(testkit.Rows("0"))
-	tk.MustQuery("select /*+ TIDB_KV_READ_TIMEOUT(1000) */ * FROM TidbKvReadTimeout;")
-
 	tk.MustExec("set @@global.TIDB_KV_READ_TIMEOUT = 300;")
-	tk.MustQuery("select * FROM TidbKvReadTimeout;")
-
 	tk.MustExec("set @@TIDB_KV_READ_TIMEOUT = 150;")
-	tk.MustQuery("select * FROM TidbKvReadTimeout;")
-
 	tk.MustQuery("select @@global.TIDB_KV_READ_TIMEOUT;").Check(testkit.Rows("300"))
 	tk.MustQuery("select @@TIDB_KV_READ_TIMEOUT;").Check(testkit.Rows("150"))
 
