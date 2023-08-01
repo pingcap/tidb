@@ -1711,13 +1711,13 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		logutil.BgLogger().Info("dist task scheduler stopped")
 	}()
 
-	var dispatcherManager dispatcher.Dispatcher
+	var dispatcherManager *dispatcher.Manager
 	startDispatchIfNeeded := func() {
 		if dispatcherManager != nil && dispatcherManager.Inited() {
 			return
 		}
 		var err error
-		dispatcherManager, err = dispatcher.NewDispatcher(ctx, taskManager)
+		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager)
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
 			return

@@ -126,6 +126,9 @@ func RegisterTaskMeta(v *atomic.Int64) {
 	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
 		return &testScheduler{}, nil
 	})
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepTwo, func(_ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+		return &testScheduler{}, nil
+	})
 	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &testSubtaskExecutor{v: v}, nil
 	})
