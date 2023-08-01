@@ -275,7 +275,11 @@ func writeDemoHudiT(sb *strings.Builder, tblInfo *model.TableInfo) *strings.Buil
 	sb.WriteString("With (\n")
 	sb.WriteString("  'connector' = 'hudi',\n")
 	sb.WriteString("  'path' = '${hdfs_address}',\n")
-	sb.WriteString("  'table.type' = 'COPY_ON_WRITE'\n")
+	sb.WriteString("  'table.type' = 'COPY_ON_WRITE',\n")
+	sb.WriteString("  'write.option' = 'bulk_insert',\n")
+	//	sb.WriteString("  'write.bucket_assign.tasks' = '12',\n")
+	sb.WriteString("  'write.tasks' = '4',\n")
+	sb.WriteString("  'index.type' = 'BUCKET'\n")
 	sb.WriteString(");\n")
 	return sb
 }
