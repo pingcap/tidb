@@ -231,10 +231,15 @@ type ValueHandler struct {
 type LabelHandler struct{}
 
 const (
-	OpTableRegions     = "regions"
-	OpTableRanges      = "ranges"
-	OpTableDiskUsage   = "disk-usage"
-	OpTableScatter     = "scatter-table"
+	// OpTableRegions is the operation for getting regions of a table.
+	OpTableRegions = "regions"
+	// OpTableRanges is the operation for getting ranges of a table.
+	OpTableRanges = "ranges"
+	// OpTableDiskUsage is the operation for getting disk usage of a table.
+	OpTableDiskUsage = "disk-usage"
+	// OpTableScatter is the operation for scattering a table.
+	OpTableScatter = "scatter-table"
+	// OpStopTableScatter is the operation for stopping scattering a table.
 	OpStopTableScatter = "stop-scatter-table"
 )
 
@@ -257,7 +262,7 @@ const (
 )
 
 // ServeHTTP handles request of list a database or table's schemas.
-func (vh ValueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (ValueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// parse params
 	params := mux.Vars(req)
 
@@ -289,8 +294,8 @@ func (vh ValueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	values := make(url.Values)
-	shouldUnescape := false
-	err = parseQuery(req.URL.RawQuery, values, shouldUnescape)
+
+	err = parseQuery(req.URL.RawQuery, values, false)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -598,7 +603,7 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // ServeHTTP recovers binlog service.
-func (h BinlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (BinlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	op := req.FormValue(handler.Operation)
 	switch op {
 	case "reset":
@@ -668,7 +673,7 @@ func (h FlashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	writeData(w, replicaInfos)
 }
 
-func (h FlashReplicaHandler) getTiFlashReplicaInfo(tblInfo *model.TableInfo, replicaInfos []*TableFlashReplicaInfo) []*TableFlashReplicaInfo {
+func (FlashReplicaHandler) getTiFlashReplicaInfo(tblInfo *model.TableInfo, replicaInfos []*TableFlashReplicaInfo) []*TableFlashReplicaInfo {
 	if tblInfo.TiFlashReplica == nil {
 		return replicaInfos
 	}
@@ -1065,7 +1070,7 @@ func (h *TableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			writeError(w, err)
 			return
 		}
-		h.handleScatterTableRequest(ptbl, w, req)
+		h.handleScatterTableRequest(ptbl, w)
 	case OpStopTableScatter:
 		ptbl, err := h.GetPartition(tableVal, partitionName)
 		if err != nil {
@@ -1223,7 +1228,7 @@ func (h *TableHandler) deleteScatterSchedule(name string) error {
 	return nil
 }
 
-func (h *TableHandler) handleScatterTableRequest(tbl table.PhysicalTable, w http.ResponseWriter, req *http.Request) {
+func (h *TableHandler) handleScatterTableRequest(tbl table.PhysicalTable, w http.ResponseWriter) {
 	// for record
 	tableID := tbl.GetPhysicalID()
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(tableID)
@@ -1324,7 +1329,7 @@ func createTableRanges(tblID int64, tblName string, indices []*model.IndexInfo) 
 	return ranges
 }
 
-func (h *TableHandler) handleRangeRequest(tbl table.Table, w http.ResponseWriter) {
+func (*TableHandler) handleRangeRequest(tbl table.Table, w http.ResponseWriter) {
 	meta := tbl.Meta()
 	pi := meta.GetPartitionInfo()
 	if pi != nil {
@@ -1672,7 +1677,7 @@ func (h MvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 	return result, nil
 }
 
-func (h MvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldType, tb *model.TableInfo) (map[string]string, error) {
+func (MvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldType, tb *model.TableInfo) (map[string]string, error) {
 	rs, err := tablecodec.DecodeRowToDatumMap(bs, colMap, time.UTC)
 	record := make(map[string]string, len(tb.Columns))
 	for _, col := range tb.Columns {
@@ -1710,7 +1715,7 @@ type ServerInfo struct {
 }
 
 // ServeHTTP handles request of ddl server info.
-func (h ServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h ServerInfoHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	do, err := session.GetDomain(h.Store)
 	if err != nil {
 		writeError(w, errors.New("create session error"))
@@ -1740,7 +1745,7 @@ type ClusterServerInfo struct {
 }
 
 // ServeHTTP handles request of all ddl servers info.
-func (h AllServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h AllServerInfoHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	do, err := session.GetDomain(h.Store)
 	if err != nil {
 		writeError(w, errors.New("create session error"))
@@ -1982,7 +1987,7 @@ func (h DDLHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // ServeHTTP handles request of set server labels.
-func (h LabelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (LabelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		writeError(w, errors.Errorf("This api only support POST method"))
 		return
