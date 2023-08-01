@@ -43,6 +43,8 @@ const (
 	MPPErrTunnelNotFound = iota
 	// MPPErrEstablishConnMultiTimes means we receive the Establish requests at least twice.
 	MPPErrEstablishConnMultiTimes
+	// MPPErrMPPGatherIDMismatch means we get mismatched gather id, usually a bug in MPP coordinator
+	MPPErrMPPGatherIDMismatch
 )
 
 const (
@@ -614,12 +616,21 @@ func (h *MPPTaskHandler) HandleEstablishConn(_ context.Context, req *mpp.Establi
 		if err == nil {
 			return tunnel, nil
 		}
+		if err.Code == MPPErrMPPGatherIDMismatch {
+			return nil, errors.Errorf(err.Msg)
+		}
 		time.Sleep(time.Second)
 	}
 	return nil, errors.Errorf("cannot find client task %d registered in server task %d", meta.TaskId, req.SenderMeta.TaskId)
 }
 
 func (h *MPPTaskHandler) registerTunnel(tunnel *ExchangerTunnel) error {
+	if h.Meta.GatherId != tunnel.sourceTask.GatherId {
+		return errors.Errorf("mpp gather id mismatch, maybe a bug in MPP coordinator")
+	}
+	if h.Meta.GatherId != tunnel.targetTask.GatherId {
+		return errors.Errorf("mpp gather id mismatch, maybe a bug in MPP coordinator")
+	}
 	taskID := tunnel.targetTask.TaskId
 	h.tunnelSetLock.Lock()
 	defer h.tunnelSetLock.Unlock()
@@ -632,6 +643,9 @@ func (h *MPPTaskHandler) registerTunnel(tunnel *ExchangerTunnel) error {
 }
 
 func (h *MPPTaskHandler) getAndActiveTunnel(req *mpp.EstablishMPPConnectionRequest) (*ExchangerTunnel, *mpp.Error) {
+	if h.Meta.GatherId != req.ReceiverMeta.GatherId {
+		return nil, &mpp.Error{Code: MPPErrMPPGatherIDMismatch, Msg: "mpp gather id mismatch, maybe a bug in MPP coordinator"}
+	}
 	targetID := req.ReceiverMeta.TaskId
 	h.tunnelSetLock.Lock()
 	defer h.tunnelSetLock.Unlock()

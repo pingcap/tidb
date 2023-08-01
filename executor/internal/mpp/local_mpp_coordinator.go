@@ -52,12 +52,11 @@ const (
 
 // mppResponse wraps mpp data packet.
 type mppResponse struct {
+	err      error
 	pbResp   *mpp.MPPDataPacket
 	detail   *copr.CopRuntimeStats
 	respTime time.Duration
 	respSize int64
-
-	err error
 }
 
 // GetData implements the kv.ResultSubset GetData interface.
@@ -95,50 +94,55 @@ func (m *mppResponse) RespTime() time.Duration {
 
 type mppRequestReport struct {
 	mppReq             *kv.MPPDispatchRequest
-	receivedReport     bool // if received ReportStatus from mpp task
 	errMsg             string
 	executionSummaries []*tipb.ExecutorExecutionSummary
+	receivedReport     bool // if received ReportStatus from mpp task
 }
 
 // localMppCoordinator stands for constructing and dispatching mpp tasks in local tidb server, since these work might be done remotely too
 type localMppCoordinator struct {
-	sessionCtx          sessionctx.Context
-	is                  infoschema.InfoSchema
-	originalPlan        plannercore.PhysicalPlan
-	planIDs             []int
-	startTS             uint64
-	mppQueryID          kv.MPPQueryID
-	gatherID            uint64
-	coordinatorAddr     string // empty if coordinator service not available
-	reportExecutionInfo bool   // if each mpp task needs to report execution info directly to coordinator through ReportMPPTaskStatus
-
-	mppReqs []*kv.MPPDispatchRequest
-
-	finishCh chan struct{}
-
-	respChan chan *mppResponse
-
-	reportStatusCh chan struct{} // used to notify inside coordinator that all reports has been received
+	sessionCtx   sessionctx.Context
+	is           infoschema.InfoSchema
+	originalPlan plannercore.PhysicalPlan
+	reqMap       map[int64]*mppRequestReport
 
 	cancelFunc context.CancelFunc
 
-	wg         sync.WaitGroup
 	wgDoneChan chan struct{}
 
-	closed uint32
+	memTracker *memory.Tracker
+
+	reportStatusCh chan struct{} // used to notify inside coordinator that all reports has been received
 
 	vars *kv.Variables
 
+	respChan chan *mppResponse
+
+	finishCh chan struct{}
+
+	coordinatorAddr string // empty if coordinator service not available
+	firstErrMsg     string
+
+	mppReqs []*kv.MPPDispatchRequest
+
+	planIDs    []int
+	mppQueryID kv.MPPQueryID
+
+	wg               sync.WaitGroup
+	gatherID         uint64
+	reportedReqCount int
+	startTS          uint64
+	mu               sync.Mutex
+
+	closed uint32
+
+	dispatchFailed    uint32
+	allReportsHandled uint32
+
 	needTriggerFallback        bool
 	enableCollectExecutionInfo bool
-	mu                         sync.Mutex
-	firstErrMsg                string
-	reqMap                     map[int64]*mppRequestReport
-	reportedReqCount           int
-	dispatchFailed             uint32
-	allReportsHandled          uint32
+	reportExecutionInfo        bool // if each mpp task needs to report execution info directly to coordinator through ReportMPPTaskStatus
 
-	memTracker *memory.Tracker
 }
 
 // NewLocalMPPCoordinator creates a new localMppCoordinator instance
@@ -302,6 +306,8 @@ func (c *localMppCoordinator) fixTaskForCTEStorageAndReader(exec *tipb.Executor,
 		children = append(children, exec.Sort.Child)
 	case tipb.ExecType_TypeExpand:
 		children = append(children, exec.Expand.Child)
+	case tipb.ExecType_TypeExpand2:
+		children = append(children, exec.Expand2.Child)
 	default:
 		return errors.Errorf("unknown new tipb protocol %d", exec.Tp)
 	}
@@ -442,7 +448,7 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 		return
 	}
 	// only root task should establish a stream conn with tiFlash to receive result.
-	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, QueryTs: req.MppQueryID.QueryTs, LocalQueryId: req.MppQueryID.LocalQueryID, TaskId: req.ID, ServerId: req.MppQueryID.ServerID,
+	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, GatherId: c.gatherID, QueryTs: req.MppQueryID.QueryTs, LocalQueryId: req.MppQueryID.LocalQueryID, TaskId: req.ID, ServerId: req.MppQueryID.ServerID,
 		Address:    req.Meta.GetAddress(),
 		MppVersion: req.MppVersion.ToInt64(),
 	}
@@ -698,7 +704,7 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := c.originalPlan.(*plannercore.PhysicalExchangeSender)
 	sctx := c.sessionCtx
-	frags, kvRanges, err := plannercore.GenerateRootMPPTasks(sctx, c.startTS, c.mppQueryID, sender, c.is)
+	frags, kvRanges, err := plannercore.GenerateRootMPPTasks(sctx, c.startTS, c.gatherID, c.mppQueryID, sender, c.is)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

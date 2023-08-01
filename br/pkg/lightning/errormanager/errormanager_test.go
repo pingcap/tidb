@@ -21,7 +21,6 @@ import (
 	"io"
 	"math/rand"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -39,17 +38,16 @@ func TestInit(t *testing.T) {
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
-	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
-	cfg.App.MaxErrorRecords = 100
+	cfg.Conflict.Strategy = config.ReplaceOnDup
 	cfg.App.MaxError.Type.Store(10)
-	cfg.App.MaxError.Conflict.Store(20)
+	cfg.Conflict.Threshold = 20
 	cfg.App.TaskInfoSchemaName = "lightning_errors"
 
 	em := New(db, cfg, log.L())
 	require.False(t, em.conflictV1Enabled)
 	require.True(t, em.conflictV2Enabled)
 	require.Equal(t, cfg.App.MaxError.Type.Load(), em.remainingError.Type.Load())
-	require.Equal(t, cfg.App.MaxError.Conflict.Load(), em.remainingError.Conflict.Load())
+	require.Equal(t, cfg.Conflict.Threshold, em.conflictErrRemain.Load())
 
 	em.remainingError.Type.Store(0)
 	em.conflictV1Enabled = false
@@ -75,7 +73,7 @@ func TestInit(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(6, 1))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v1.*").
 		WillReturnResult(sqlmock.NewResult(7, 1))
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v2.*").
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_records.*").
 		WillReturnResult(sqlmock.NewResult(7, 1))
 	err = em.Init(ctx)
 	require.NoError(t, err)
@@ -183,14 +181,16 @@ func TestResolveAllConflictKeys(t *testing.T) {
 func TestErrorMgrHasError(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.App.MaxError = config.MaxError{
-		Syntax:   *atomic.NewInt64(100),
-		Charset:  *atomic.NewInt64(100),
-		Type:     *atomic.NewInt64(100),
-		Conflict: *atomic.NewInt64(100),
+		Syntax:  *atomic.NewInt64(100),
+		Charset: *atomic.NewInt64(100),
+		Type:    *atomic.NewInt64(100),
 	}
+	cfg.Conflict.Threshold = 100
 	em := &ErrorManager{
-		configError:    &cfg.App.MaxError,
-		remainingError: cfg.App.MaxError,
+		configError:       &cfg.App.MaxError,
+		remainingError:    cfg.App.MaxError,
+		configConflict:    &cfg.Conflict,
+		conflictErrRemain: atomic.NewInt64(100),
 	}
 
 	// no field changes, should return false
@@ -209,7 +209,7 @@ func TestErrorMgrHasError(t *testing.T) {
 	require.True(t, em.HasError())
 
 	em.remainingError = cfg.App.MaxError
-	em.remainingError.Conflict.Sub(1)
+	em.conflictErrRemain.Sub(1)
 	require.True(t, em.HasError())
 
 	// change multiple keys
@@ -217,21 +217,24 @@ func TestErrorMgrHasError(t *testing.T) {
 	em.remainingError.Syntax.Store(0)
 	em.remainingError.Charset.Store(0)
 	em.remainingError.Type.Store(0)
-	em.remainingError.Conflict.Store(0)
+	em.conflictErrRemain.Store(0)
 	require.True(t, em.HasError())
 }
 
 func TestErrorMgrErrorOutput(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.App.MaxError = config.MaxError{
-		Syntax:   *atomic.NewInt64(100),
-		Charset:  *atomic.NewInt64(100),
-		Type:     *atomic.NewInt64(100),
-		Conflict: *atomic.NewInt64(100),
+		Syntax:  *atomic.NewInt64(100),
+		Charset: *atomic.NewInt64(100),
+		Type:    *atomic.NewInt64(100),
 	}
+	cfg.Conflict.Threshold = 100
+
 	em := &ErrorManager{
 		configError:       &cfg.App.MaxError,
 		remainingError:    cfg.App.MaxError,
+		configConflict:    &cfg.Conflict,
+		conflictErrRemain: atomic.NewInt64(100),
 		schemaEscaped:     "`error_info`",
 		conflictV1Enabled: true,
 	}
@@ -241,26 +244,60 @@ func TestErrorMgrErrorOutput(t *testing.T) {
 
 	em.remainingError.Syntax.Sub(1)
 	output = em.Output()
-	checkStr := strings.ReplaceAll(output, "\n", "")
-	expected := "Import Data Error Summary: +---+-------------+-------------+--------------------------------+| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |+---+-------------+-------------+--------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m           1 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|+---+-------------+-------------+--------------------------------+"
-	require.Equal(t, expected, checkStr)
+	expected := "\n" +
+		"Import Data Error Summary: \n" +
+		"+---+-------------+-------------+--------------------------------+\n" +
+		"| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |\n" +
+		"+---+-------------+-------------+--------------------------------+\n" +
+		"|\x1b[31m 1 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m           1 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|\n" +
+		"+---+-------------+-------------+--------------------------------+\n"
+	require.Equal(t, expected, output)
 
 	em.remainingError = cfg.App.MaxError
 	em.remainingError.Syntax.Sub(10)
 	em.remainingError.Type.Store(10)
 	output = em.Output()
-	checkStr = strings.ReplaceAll(output, "\n", "")
-	expected = "Import Data Error Summary: +---+-------------+-------------+--------------------------------+| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |+---+-------------+-------------+--------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type   \x1b[0m|\x1b[31m          90 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`   \x1b[0m||\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m          10 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|+---+-------------+-------------+--------------------------------+"
-	require.Equal(t, expected, checkStr)
+	expected = "\n" +
+		"Import Data Error Summary: \n" +
+		"+---+-------------+-------------+--------------------------------+\n" +
+		"| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |\n" +
+		"+---+-------------+-------------+--------------------------------+\n" +
+		"|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type   \x1b[0m|\x1b[31m          90 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`   \x1b[0m|\n" +
+		"|\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m          10 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|\n" +
+		"+---+-------------+-------------+--------------------------------+\n"
+	require.Equal(t, expected, output)
 
 	// change multiple keys
 	em.remainingError = cfg.App.MaxError
 	em.remainingError.Syntax.Store(0)
 	em.remainingError.Charset.Store(0)
 	em.remainingError.Type.Store(0)
-	em.remainingError.Conflict.Store(0)
+	em.conflictErrRemain.Store(0)
 	output = em.Output()
-	checkStr = strings.ReplaceAll(output, "\n", "")
-	expected = "Import Data Error Summary: +---+---------------------+-------------+----------------------------------+| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE                 |+---+---------------------+-------------+----------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`     \x1b[0m||\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1`   \x1b[0m||\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                  \x1b[0m||\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_error_v1` \x1b[0m|+---+---------------------+-------------+----------------------------------+"
-	require.Equal(t, expected, checkStr)
+	expected = "\n" +
+		"Import Data Error Summary: \n" +
+		"+---+---------------------+-------------+----------------------------------+\n" +
+		"| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE                 |\n" +
+		"+---+---------------------+-------------+----------------------------------+\n" +
+		"|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`     \x1b[0m|\n" +
+		"|\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1`   \x1b[0m|\n" +
+		"|\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                  \x1b[0m|\n" +
+		"|\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_error_v1` \x1b[0m|\n" +
+		"+---+---------------------+-------------+----------------------------------+\n"
+	require.Equal(t, expected, output)
+
+	em.conflictV2Enabled = true
+	em.conflictV1Enabled = false
+	output = em.Output()
+	expected = "\n" +
+		"Import Data Error Summary: \n" +
+		"+---+---------------------+-------------+---------------------------------+\n" +
+		"| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE                |\n" +
+		"+---+---------------------+-------------+---------------------------------+\n" +
+		"|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`    \x1b[0m|\n" +
+		"|\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1`  \x1b[0m|\n" +
+		"|\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                 \x1b[0m|\n" +
+		"|\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_records` \x1b[0m|\n" +
+		"+---+---------------------+-------------+---------------------------------+\n"
+	require.Equal(t, expected, output)
 }

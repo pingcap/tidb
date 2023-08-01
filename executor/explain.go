@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/size"
 	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -178,7 +179,7 @@ type memoryDebugModeHandler struct {
 
 func (h *memoryDebugModeHandler) fetchCurrentMemoryUsage(gc bool) (heapInUse, trackedMem uint64) {
 	if gc {
-		runtime.GC()
+		runtime.GC() //nolint: revive
 	}
 	instanceStats := memory.ForceReadMemStats()
 	heapInUse = instanceStats.HeapInuse
@@ -214,10 +215,9 @@ func (h *memoryDebugModeHandler) getTrackerTreeMemUseLogs() []zap.Field {
 }
 
 func updateTriggerIntervalByHeapInUse(heapInUse uint64) (time.Duration, int) {
-	const GB uint64 = 1 << 30
-	if heapInUse < 30*GB {
+	if heapInUse < 30*size.GB {
 		return 5 * time.Second, 6
-	} else if heapInUse < 40*GB {
+	} else if heapInUse < 40*size.GB {
 		return 15 * time.Second, 2
 	} else {
 		return 30 * time.Second, 1
@@ -356,6 +356,6 @@ func (e *ruRuntimeStats) Merge(other execdetails.RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *ruRuntimeStats) Tp() int {
+func (*ruRuntimeStats) Tp() int {
 	return execdetails.TpRURuntimeStats
 }

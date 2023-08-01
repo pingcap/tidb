@@ -45,7 +45,7 @@ type LoadStatsInfo struct {
 type loadStatsVarKeyType int
 
 // String defines a Stringer function for debugging and pretty printing.
-func (k loadStatsVarKeyType) String() string {
+func (loadStatsVarKeyType) String() string {
 	return "load_stats_var"
 }
 
@@ -68,12 +68,12 @@ func (e *LoadStatsExec) Next(_ context.Context, req *chunk.Chunk) error {
 }
 
 // Close implements the Executor Close interface.
-func (e *LoadStatsExec) Close() error {
+func (*LoadStatsExec) Close() error {
 	return nil
 }
 
 // Open implements the Executor Open interface.
-func (e *LoadStatsExec) Open(_ context.Context) error {
+func (*LoadStatsExec) Open(context.Context) error {
 	return nil
 }
 

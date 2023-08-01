@@ -18,6 +18,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/config"
@@ -27,12 +28,15 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
-	"github.com/pingcap/tidb/statistics/handle/cache/internal/lru"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal/lfu"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/mapcache"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
+	"go.uber.org/zap"
 )
 
 // TableStatsOption used to indicate the way to get table stats
@@ -55,86 +59,166 @@ func WithTableStatsByQuery() TableStatsOpt {
 	}
 }
 
-// NewStatsCacheWrapper creates a new StatsCacheWrapper.
-func NewStatsCacheWrapper() *StatsCacheWrapper {
+// NewStatsCache creates a new StatsCacheWrapper.
+func NewStatsCache() (*StatsCache, error) {
 	enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota
 	if enableQuota {
 		capacity := variable.StatsCacheMemQuota.Load()
-		return &StatsCacheWrapper{
-			StatsCacheInner: lru.NewStatsLruCache(capacity),
+		stats, err := lfu.NewLFU(capacity)
+		if err != nil {
+			return nil, err
 		}
+		return &StatsCache{
+			c: stats,
+		}, nil
 	}
-	return &StatsCacheWrapper{
-		StatsCacheInner: mapcache.NewMapCache(),
-	}
+	return &StatsCache{
+		c: mapcache.NewMapCache(),
+	}, nil
 }
 
-// StatsCacheWrapper caches the tables in memory for Handle.
-type StatsCacheWrapper struct {
-	internal.StatsCacheInner
-	// version is the latest version of cache. It is bumped when new records of `mysql.stats_meta` are loaded into cache.
-	version uint64
-	// minorVersion is to differentiate the cache when the version is unchanged while the cache contents are
-	// modified indeed. This can happen when we load extra column histograms into cache, or when we modify the cache with
-	// statistics feedbacks, etc. We cannot bump the version then because no new changes of `mysql.stats_meta` are loaded,
-	// while the override of StatsCacheWrapper is in a copy-on-write way, to make sure the StatsCacheWrapper is unchanged by others during the
-	// the interval of 'copy' and 'write', every 'write' should bump / check this minorVersion if the version keeps
-	// unchanged.
-	// This bump / check logic is encapsulated in `StatsCacheWrapper.update` and `updateStatsCache`, callers don't need to care
-	// about this minorVersion actually.
-	minorVersion uint64
+// StatsCache caches the tables in memory for Handle.
+type StatsCache struct {
+	c internal.StatsCacheInner
+	// the max table stats version the cache has in its lifecycle.
+	maxTblStatsVer atomic.Uint64
 }
 
 // Len returns the number of tables in the cache.
-func (sc *StatsCacheWrapper) Len() int {
-	return sc.StatsCacheInner.Len()
+func (sc *StatsCache) Len() int {
+	return sc.c.Len()
 }
 
-// Copy copies the cache.
-func (sc *StatsCacheWrapper) Copy() StatsCacheWrapper {
-	newCache := StatsCacheWrapper{
-		version:      sc.version,
-		minorVersion: sc.minorVersion,
+// GetFromUser returns the statistics of the specified Table ID.
+// The returned value should be read-only, if you update it, don't forget to use Put to put it back again, otherwise the memory trace can be inaccurate.
+//
+//	e.g. v := sc.Get(id); /* update the value */ v.Version = 123; sc.Put(id, v);
+func (sc *StatsCache) GetFromUser(id int64) (*statistics.Table, bool) {
+	return sc.getCache(id, true)
+}
+
+func (sc *StatsCache) getCache(id int64, moveFront bool) (*statistics.Table, bool) {
+	result, ok := sc.c.Get(id, moveFront)
+	if ok {
+		metrics.HitCounter.Add(1)
+	} else {
+		metrics.MissCounter.Add(1)
 	}
-	newCache.StatsCacheInner = sc.StatsCacheInner.Copy()
-	return newCache
+	return result, ok
 }
 
-// SetVersion sets the version of the cache.
-func (sc *StatsCacheWrapper) SetVersion(version uint64) {
-	sc.version = version
+// GetFromInternal returns the statistics of the specified Table ID.
+func (sc *StatsCache) GetFromInternal(id int64) (*statistics.Table, bool) {
+	return sc.getCache(id, false)
 }
 
-// Version returns the version of the cache.
-func (sc *StatsCacheWrapper) Version() uint64 {
-	return sc.version
+// Put puts the table statistics to the cache from query.
+func (sc *StatsCache) Put(id int64, t *statistics.Table) {
+	sc.put(id, t)
 }
 
-// Update updates the statistics table cache using Copy on write.
-func (sc *StatsCacheWrapper) Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64, opts ...TableStatsOpt) StatsCacheWrapper {
+func (sc *StatsCache) putCache(id int64, t *statistics.Table) bool {
+	ok := sc.c.Put(id, t)
+	if ok {
+		return ok
+	}
+	// TODO(hawkingrei): If necessary, add asynchronous retries
+	logutil.BgLogger().Warn("fail to put the stats cache", zap.Int64("id", id))
+	return ok
+}
+
+// Put puts the table statistics to the cache.
+func (sc *StatsCache) put(id int64, t *statistics.Table) {
+	ok := sc.putCache(id, t)
+	if !ok {
+		logutil.BgLogger().Warn("fail to put the stats cache", zap.Int64("id", id))
+		return
+	}
+	// update the maxTblStatsVer
+	for v := sc.maxTblStatsVer.Load(); v < t.Version; v = sc.maxTblStatsVer.Load() {
+		if sc.maxTblStatsVer.CompareAndSwap(v, t.Version) {
+			break
+		} // other goroutines have updated the sc.maxTblStatsVer, so we need to check again.
+	}
+}
+
+// Values returns all the cached statistics tables.
+func (sc *StatsCache) Values() []*statistics.Table {
+	return sc.c.Values()
+}
+
+// Cost returns the memory usage of the cache.
+func (sc *StatsCache) Cost() int64 {
+	return sc.c.Cost()
+}
+
+// SetCapacity sets the memory capacity of the cache.
+func (sc *StatsCache) SetCapacity(c int64) {
+	// metrics will be updated in the SetCapacity function of the StatsCacheInner.
+	sc.c.SetCapacity(c)
+}
+
+// Close stops the cache.
+func (sc *StatsCache) Close() {
+	sc.c.Close()
+}
+
+// Version returns the version of the current cache, which is defined as
+// the max table stats version the cache has in its lifecycle.
+func (sc *StatsCache) Version() uint64 {
+	return sc.maxTblStatsVer.Load()
+}
+
+// Front returns the front element's owner tableID, only used for test.
+func (sc *StatsCache) Front() int64 {
+	return sc.c.Front()
+}
+
+// CopyAndUpdate copies a new cache and updates the new statistics table cache. It is only used in the COW mode.
+func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) *StatsCache {
 	option := &TableStatsOption{}
 	for _, opt := range opts {
 		opt(option)
 	}
-	newCache := sc.Copy()
-	if newVersion == newCache.version {
-		newCache.minorVersion += uint64(1)
-	} else {
-		newCache.version = newVersion
-		newCache.minorVersion = uint64(0)
+	newCache := &StatsCache{c: sc.c.Copy()}
+	newCache.maxTblStatsVer.Store(sc.maxTblStatsVer.Load())
+	for _, tbl := range tables {
+		id := tbl.PhysicalID
+		newCache.c.Put(id, tbl)
+	}
+	for _, id := range deletedIDs {
+		newCache.c.Del(id)
+	}
+
+	// update the maxTblStatsVer
+	for _, t := range tables {
+		if t.Version > newCache.maxTblStatsVer.Load() {
+			newCache.maxTblStatsVer.Store(t.Version)
+		}
+	}
+	return newCache
+}
+
+// Update updates the new statistics table cache.
+func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) {
+	option := &TableStatsOption{}
+	for _, opt := range opts {
+		opt(option)
 	}
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
-		if option.byQuery {
-			newCache.PutByQuery(id, tbl)
-		} else {
-			newCache.Put(id, tbl)
-		}
+		sc.c.Put(id, tbl)
 	}
 	for _, id := range deletedIDs {
-		newCache.Del(id)
+		sc.c.Del(id)
 	}
-	return newCache
+
+	// update the maxTblStatsVer
+	for _, t := range tables {
+		if oldVersion := sc.maxTblStatsVer.Load(); t.Version > oldVersion {
+			sc.maxTblStatsVer.CompareAndSwap(oldVersion, t.Version)
+		}
+	}
 }
 
 // TableRowStatsCache is the cache of table row count.

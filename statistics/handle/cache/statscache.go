@@ -17,61 +17,43 @@ package cache
 import (
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/syncutil"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 )
 
-// StatsCache is used to cache the stats of a table.
-type StatsCache struct {
-	cache      atomic.Pointer[StatsCacheWrapper]
-	memTracker *memory.Tracker
-	mu         syncutil.Mutex
+// StatsCachePointer is used to cache the stats of a table.
+type StatsCachePointer struct {
+	atomic.Pointer[StatsCache]
 }
 
-// NewStatsCache creates a new StatsCache.
-func NewStatsCache() *StatsCache {
-	newCache := NewStatsCacheWrapper()
-	result := StatsCache{
-		memTracker: memory.NewTracker(memory.LabelForStatsCache, -1),
+// NewStatsCachePointer creates a new StatsCache.
+func NewStatsCachePointer() (*StatsCachePointer, error) {
+	newCache, err := NewStatsCache()
+	if err != nil {
+		return nil, err
 	}
-	result.cache.Store(newCache)
-	return &result
-}
-
-// Clear removes all cached stats from the cache.
-func (s *StatsCache) Clear() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	newCache := NewStatsCacheWrapper()
-	s.cache.Store(newCache)
-	s.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
+	result := StatsCachePointer{}
+	result.Store(newCache)
+	return &result, nil
 }
 
 // Load loads the cached stats from the cache.
-func (s *StatsCache) Load() *StatsCacheWrapper {
-	return s.cache.Load()
+func (s *StatsCachePointer) Load() *StatsCache {
+	return s.Pointer.Load()
 }
 
-// Version returns the version of the cached stats.
-func (s *StatsCache) Version() uint64 {
-	return s.Load().version
+// Replace replaces the cache with the new cache.
+func (s *StatsCachePointer) Replace(newCache *StatsCache) {
+	s.Store(newCache)
+	metrics.CostGauge.Set(float64(newCache.Cost()))
 }
 
-// GetMemConsumed returns the memory usage of the cache.
-func (s *StatsCache) GetMemConsumed() int64 {
-	return s.memTracker.BytesConsumed()
-}
-
-// UpdateCache updates the cache with the new cache.
-func (s *StatsCache) UpdateCache(newCache StatsCacheWrapper) (updated bool, newCost int64) {
-	s.mu.Lock()
-	oldCache := s.cache.Load()
-	newCost = newCache.Cost()
-	if oldCache.version < newCache.version || (oldCache.version == newCache.version && oldCache.minorVersion < newCache.minorVersion) {
-		s.memTracker.Consume(newCost - oldCache.Cost())
-		s.cache.Store(&newCache)
-		updated = true
+// UpdateStatsCache updates the cache with the new cache.
+func (s *StatsCachePointer) UpdateStatsCache(newCache *StatsCache, tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) {
+	if enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota; enableQuota {
+		s.Load().Update(tables, deletedIDs, opts...)
+	} else {
+		s.Replace(newCache.CopyAndUpdate(tables, deletedIDs, opts...))
 	}
-	s.mu.Unlock()
-	return updated, newCost
 }

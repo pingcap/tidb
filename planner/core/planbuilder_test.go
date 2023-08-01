@@ -220,6 +220,36 @@ func TestDeepClone(t *testing.T) {
 	require.NoError(t, checkDeepClone(sort1, sort2))
 }
 
+func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
+	ctx := mock.NewContext()
+	col, cst := &expression.Column{RetType: types.NewFieldType(mysql.TypeString)}, &expression.Constant{RetType: types.NewFieldType(mysql.TypeLonglong)}
+	schema := expression.NewSchema(col)
+	tblInfo := &model.TableInfo{}
+	hist := &statistics.Histogram{Bounds: chunk.New(nil, 0, 0)}
+
+	// table scan
+	tableScan := &PhysicalTableScan{
+		AccessCondition: []expression.Expression{col, cst},
+		Table:           tblInfo,
+		Hist:            hist,
+	}
+	tableScan = tableScan.Init(ctx, 0)
+	tableScan.SetSchema(schema)
+
+	// table reader
+	tableReader := &PhysicalTableReader{
+		tablePlan:  tableScan,
+		TablePlans: []PhysicalPlan{tableScan},
+		StoreType:  kv.TiFlash,
+	}
+	tableReader = tableReader.Init(ctx, 0)
+	clonedPlan, err := tableReader.Clone()
+	require.NoError(t, err)
+	newTableReader, ok := clonedPlan.(*PhysicalTableReader)
+	require.True(t, ok)
+	require.True(t, newTableReader.tablePlan == newTableReader.TablePlans[0])
+}
+
 func TestPhysicalPlanClone(t *testing.T) {
 	ctx := mock.NewContext()
 	col, cst := &expression.Column{RetType: types.NewFieldType(mysql.TypeString)}, &expression.Constant{RetType: types.NewFieldType(mysql.TypeLonglong)}

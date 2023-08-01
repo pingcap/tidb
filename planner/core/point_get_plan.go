@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
 	ptypes "github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/planner/core/internal/base"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -61,7 +62,7 @@ import (
 // When we detect that the statement has a unique equal access condition, this plan is used.
 // This plan is much faster to build and to execute because it avoid the optimization and coprocessor cost.
 type PointGetPlan struct {
-	basePlan
+	base.Plan
 	dbName             string
 	schema             *expression.Schema
 	TblInfo            *model.TableInfo
@@ -102,7 +103,7 @@ func (p *PointGetPlan) getEstRowCountForDisplay() float64 {
 	if p == nil {
 		return 0
 	}
-	return p.statsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
+	return p.StatsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
 }
 
 func (p *PointGetPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
@@ -215,13 +216,13 @@ func (*PointGetPlan) StatsCount() float64 {
 	return 1
 }
 
-// statsInfo will return the the RowCount of property.StatsInfo for this plan.
-func (p *PointGetPlan) statsInfo() *property.StatsInfo {
-	if p.stats == nil {
-		p.stats = &property.StatsInfo{}
+// StatsInfo will return the the RowCount of property.StatsInfo for this plan.
+func (p *PointGetPlan) StatsInfo() *property.StatsInfo {
+	if p.Plan.StatsInfo() == nil {
+		p.Plan.SetStats(&property.StatsInfo{})
 	}
-	p.stats.RowCount = 1
-	return p.stats
+	p.Plan.StatsInfo().RowCount = 1
+	return p.Plan.StatsInfo()
 }
 
 // Children gets all the children.
@@ -260,7 +261,7 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyPointGetPlanSize + p.basePlan.MemoryUsage() + int64(len(p.dbName)) + int64(cap(p.IdxColLens))*size.SizeOfInt +
+	sum = emptyPointGetPlanSize + p.Plan.MemoryUsage() + int64(len(p.dbName)) + int64(cap(p.IdxColLens))*size.SizeOfInt +
 		int64(cap(p.IndexConstants)+cap(p.ColsFieldType)+cap(p.IdxCols)+cap(p.outputNames)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
 	if p.schema != nil {
 		sum += p.schema.MemoryUsage()
@@ -352,7 +353,7 @@ func (p *BatchPointGetPlan) getEstRowCountForDisplay() float64 {
 	if p == nil {
 		return 0
 	}
-	return p.statsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
+	return p.StatsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
 }
 
 func (p *BatchPointGetPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
@@ -440,12 +441,12 @@ func (*BatchPointGetPlan) GetChildReqProps(_ int) *property.PhysicalProperty {
 
 // StatsCount will return the the RowCount of property.StatsInfo for this plan.
 func (p *BatchPointGetPlan) StatsCount() float64 {
-	return p.statsInfo().RowCount
+	return p.Plan.StatsInfo().RowCount
 }
 
-// statsInfo will return the the RowCount of property.StatsInfo for this plan.
-func (p *BatchPointGetPlan) statsInfo() *property.StatsInfo {
-	return p.stats
+// StatsInfo will return the the RowCount of property.StatsInfo for this plan.
+func (p *BatchPointGetPlan) StatsInfo() *property.StatsInfo {
+	return p.Plan.StatsInfo()
 }
 
 // Children gets all the children.
@@ -549,7 +550,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 				if vars.StmtCtx.OptimizeTracer == nil {
 					vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
 				}
-				vars.StmtCtx.OptimizeTracer.SetFastPlan(p.buildPlanTrace())
+				vars.StmtCtx.OptimizeTracer.SetFastPlan(p.BuildPlanTrace())
 			}
 		}()
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
@@ -1203,7 +1204,7 @@ func partitionNameInSet(name model.CIStr, pnames []model.CIStr) bool {
 
 func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
 	p := &PointGetPlan{
-		basePlan:     newBasePlan(ctx, plancodec.TypePointGet, 0),
+		Plan:         base.NewBasePlan(ctx, plancodec.TypePointGet, 0),
 		dbName:       dbName,
 		schema:       schema,
 		TblInfo:      tbl,
@@ -1891,17 +1892,31 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 		return 0, nil
 	}
 
+	partitionColName := getPartitionColumnName(partitionExpr, tbl)
+	if partitionColName == nil {
+		return 0, errors.Errorf("unsupported partition type in BatchGet")
+	}
+
+	return getColumnPosInIndex(idx, partitionColName), nil
+}
+
+func getPartitionColumnName(partitionExpr *tables.PartitionExpr, tbl *model.TableInfo) *model.CIStr {
+	if partitionExpr == nil {
+		return nil
+	}
+
+	pi := tbl.GetPartitionInfo()
 	var partitionColName model.CIStr
 	switch pi.Type {
 	case model.PartitionTypeHash:
 		col, ok := partitionExpr.OrigExpr.(*ast.ColumnNameExpr)
 		if !ok {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
+			return nil
 		}
 		partitionColName = col.Name.Name
 	case model.PartitionTypeKey:
 		if len(partitionExpr.KeyPartCols) != 1 {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
+			return nil
 		}
 		colInfo := findColNameByColID(tbl.Columns, partitionExpr.KeyPartCols[0])
 		partitionColName = colInfo.Name
@@ -1909,7 +1924,7 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 		// left range columns partition for future development
 		col, ok := partitionExpr.Expr.(*expression.Column)
 		if !(ok && len(pi.Columns) == 0) {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
+			return nil
 		}
 		colInfo := findColNameByColID(tbl.Columns, col)
 		partitionColName = colInfo.Name
@@ -1917,13 +1932,13 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 		// left list columns partition for future development
 		locateExpr, ok := partitionExpr.ForListPruning.LocateExpr.(*expression.Column)
 		if !(ok && partitionExpr.ForListPruning.ColPrunes == nil) {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
+			return nil
 		}
 		colInfo := findColNameByColID(tbl.Columns, locateExpr)
 		partitionColName = colInfo.Name
 	}
 
-	return getColumnPosInIndex(idx, &partitionColName), nil
+	return &partitionColName
 }
 
 // getColumnPosInIndex gets the column's position in the index.
@@ -1954,36 +1969,6 @@ func getPartitionExpr(ctx sessionctx.Context, tbl *model.TableInfo) *tables.Part
 
 	// PartitionExpr don't need columns and names for hash partition.
 	return partTable.PartitionExpr()
-}
-
-func getHashOrKeyPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *model.CIStr {
-	pi := tbl.GetPartitionInfo()
-	if pi == nil {
-		return nil
-	}
-	if pi.Type != model.PartitionTypeHash && pi.Type != model.PartitionTypeKey {
-		return nil
-	}
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	table, ok := is.TableByID(tbl.ID)
-	if !ok {
-		return nil
-	}
-	// PartitionExpr don't need columns and names for hash partition.
-	partitionExpr := table.(partitionTable).PartitionExpr()
-	if pi.Type == model.PartitionTypeKey {
-		// used to judge whether the key partition contains only one field
-		if len(pi.Columns) != 1 {
-			return nil
-		}
-		return &pi.Columns[0]
-	}
-	expr := partitionExpr.OrigExpr
-	col, ok := expr.(*ast.ColumnNameExpr)
-	if !ok {
-		return nil
-	}
-	return &col.Name.Name
 }
 
 func findColNameByColID(cols []*model.ColumnInfo, col *expression.Column) *model.ColumnInfo {

@@ -25,7 +25,7 @@ type stddevSamp4Float64 struct {
 	varPop4Float64
 }
 
-func (e *stddevSamp4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *stddevSamp4Float64) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4VarPopFloat64)(pr)
 	if p.count <= 1 {
 		chk.AppendNull(e.ordinal)
@@ -40,7 +40,7 @@ type stddevSamp4DistinctFloat64 struct {
 	varPop4DistinctFloat64
 }
 
-func (e *stddevSamp4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *stddevSamp4DistinctFloat64) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
 	if p.count <= 1 {
 		chk.AppendNull(e.ordinal)

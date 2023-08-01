@@ -47,24 +47,14 @@ func NewMapCache() *MapCache {
 	}
 }
 
-// GetByQuery implements StatsCacheInner
-func (m *MapCache) GetByQuery(k int64) (*statistics.Table, bool) {
-	return m.Get(k)
-}
-
 // Get implements StatsCacheInner
-func (m *MapCache) Get(k int64) (*statistics.Table, bool) {
+func (m *MapCache) Get(k int64, _ bool) (*statistics.Table, bool) {
 	v, ok := m.tables[k]
 	return v.value, ok
 }
 
-// PutByQuery implements StatsCacheInner
-func (m *MapCache) PutByQuery(k int64, v *statistics.Table) {
-	m.Put(k, v)
-}
-
 // Put implements StatsCacheInner
-func (m *MapCache) Put(k int64, v *statistics.Table) {
+func (m *MapCache) Put(k int64, v *statistics.Table) bool {
 	item, ok := m.tables[k]
 	if ok {
 		oldCost := item.cost
@@ -73,7 +63,7 @@ func (m *MapCache) Put(k int64, v *statistics.Table) {
 		item.cost = newCost
 		m.tables[k] = item
 		m.memUsage += newCost - oldCost
-		return
+		return true
 	}
 	cost := v.MemoryUsage().TotalMemUsage
 	item = cacheItem{
@@ -83,6 +73,7 @@ func (m *MapCache) Put(k int64, v *statistics.Table) {
 	}
 	m.tables[k] = item
 	m.memUsage += cost
+	return true
 }
 
 // Del implements StatsCacheInner
@@ -118,27 +109,9 @@ func (m *MapCache) Values() []*statistics.Table {
 	return vs
 }
 
-// Map implements StatsCacheInner
-func (m *MapCache) Map() map[int64]*statistics.Table {
-	t := make(map[int64]*statistics.Table, len(m.tables))
-	for k, v := range m.tables {
-		t[k] = v.value
-	}
-	return t
-}
-
 // Len implements StatsCacheInner
 func (m *MapCache) Len() int {
 	return len(m.tables)
-}
-
-// FreshMemUsage implements StatsCacheInner
-func (m *MapCache) FreshMemUsage() {
-	for _, v := range m.tables {
-		oldCost := v.cost
-		newCost := v.value.MemoryUsage().TotalMemUsage
-		m.memUsage += newCost - oldCost
-	}
 }
 
 // Copy implements StatsCacheInner
@@ -160,3 +133,6 @@ func (*MapCache) SetCapacity(int64) {}
 func (*MapCache) Front() int64 {
 	return 0
 }
+
+// Close implements StatsCacheInner
+func (*MapCache) Close() {}
