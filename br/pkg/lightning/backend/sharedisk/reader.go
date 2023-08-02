@@ -46,8 +46,8 @@ func newKVReader(ctx context.Context, name string, store storage.ExternalStorage
 }
 
 func (r *kvReader) nextKV() (key, val []byte, err error) {
-	if r.byteReader.eof() {
-		return nil, nil, nil
+	if eof, err := r.byteReader.eof(); err != nil || eof {
+		return nil, nil, err
 	}
 	r.byteReader.reset()
 	lenBuf, err := r.byteReader.sliceNext(8)
@@ -92,8 +92,8 @@ func newStatsReader(ctx context.Context, store storage.ExternalStorage, name str
 }
 
 func (r *statsReader) nextProp() (*RangeProperty, error) {
-	if r.byteReader.eof() {
-		return nil, nil
+	if eof, err := r.byteReader.eof(); err != nil || eof {
+		return nil, err
 	}
 	r.byteReader.reset()
 	lenBuf, err := r.byteReader.sliceNext(4)
@@ -225,8 +225,17 @@ func (r *byteReader) cloneSlices() {
 	}
 }
 
-func (r *byteReader) eof() bool {
-	return r.isEOF && len(r.buf) == r.bufOffset
+func (r *byteReader) eof() (bool, error) {
+	if !r.isEOF && len(r.buf) == r.bufOffset {
+		err := r.reload()
+		if err == io.EOF {
+			return true, nil
+		} else if err != nil {
+			return true, err
+		}
+		return false, nil
+	}
+	return r.isEOF && len(r.buf) == r.bufOffset, nil
 }
 
 func (r *byteReader) next(n int) []byte {
@@ -240,7 +249,7 @@ func (r *byteReader) reload() error {
 	startTime := time.Now()
 	nBytes, err := io.ReadFull(r.storageReader, r.buf[0:])
 	if err == io.EOF {
-		logutil.BgLogger().Error("unexpected EOF", zap.String("file", r.name), zap.Uint64("start", r.fileStart))
+		logutil.BgLogger().Warn("meet EOF", zap.String("file", r.name), zap.Uint64("start", r.fileStart))
 		r.isEOF = true
 		return err
 	} else if err != nil && err == io.ErrUnexpectedEOF {
