@@ -174,6 +174,8 @@ func (rc *logFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 		}
 		return meta, nil
 	}
+	// TODO: maybe we need to be able to adjust the concurrency to download files,
+	// which currently is the same as the chunk size
 	reader := iter.Transform(namesIter, readMeta,
 		iter.WithChunkSize(rc.metadataDownloadBatchSize), iter.WithConcurrency(rc.metadataDownloadBatchSize))
 	return reader, nil

@@ -93,7 +93,7 @@ const (
 	flagCipherKeyFile = "crypter.key-file"
 
 	flagMetadataDownloadBatchSize    = "metadata-download-batch-size"
-	defaultMetadataDownloadBatchSize = 64
+	defaultMetadataDownloadBatchSize = 128
 
 	unlimited           = 0
 	crypterAES128KeyLen = 16
@@ -302,6 +302,8 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 
 	flags.Uint(flagMetadataDownloadBatchSize, defaultMetadataDownloadBatchSize,
 		"the batch size of downloading metadata, such as log restore metadata for truncate or restore")
+
+	_ = flags.MarkHidden(flagMetadataDownloadBatchSize)
 
 	storage.DefineFlags(flags)
 }
