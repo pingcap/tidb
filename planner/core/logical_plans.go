@@ -570,7 +570,6 @@ type LogicalExpand struct {
 	// keep the old gbyExprs for resolve cases like grouping(a+b), the args:
 	// a+b should be resolved to new projected gby col according to ref pos.
 	distinctGbyExprs []expression.Expression
-	gbyExprsRefPos   []int
 
 	// rollup grouping sets.
 	distinctSize       int
@@ -731,11 +730,7 @@ func (p *LogicalExpand) trySubstituteExprWithGroupingSetCol(expr expression.Expr
 	for i, oneExpr := range p.distinctGbyExprs {
 		if bytes.Equal(expr.HashCode(sc), oneExpr.HashCode(sc)) {
 			// found
-			for originIdx, ref := range p.gbyExprsRefPos {
-				if ref == i {
-					return p.distinctGroupByCol[originIdx], true
-				}
-			}
+			return p.distinctGroupByCol[i], true
 		}
 	}
 	// not found.
@@ -768,12 +763,7 @@ func (p *LogicalExpand) resolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expr
 		}
 		if refPos != -1 {
 			// directly ref original group by expressions.
-			for originIdx, ref := range p.gbyExprsRefPos {
-				if ref == refPos {
-					rewrittenArgCols = append(rewrittenArgCols, p.distinctGroupByCol[originIdx])
-					break
-				}
-			}
+			rewrittenArgCols = append(rewrittenArgCols, p.distinctGroupByCol[refPos])
 		} else {
 			// case for refPos == -1
 			// since for case like: select year from t group by year, country with rollup order by grouping(year)
