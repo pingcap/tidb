@@ -32,8 +32,7 @@ type byteReader struct {
 	buf       []byte
 	bufOffset int
 
-	auxBuf []byte
-	isEOF  bool
+	isEOF bool
 
 	retPointers []*[]byte
 }
@@ -55,13 +54,14 @@ func openStoreReaderAndSeek(
 	return storageReader, nil
 }
 
-func newByteReader(ctx context.Context, storageReader storage.ReadSeekCloser, bufSize int) *byteReader {
-	return &byteReader{
+func newByteReader(ctx context.Context, storageReader storage.ReadSeekCloser, bufSize int) (*byteReader, error) {
+	r := &byteReader{
 		ctx:           ctx,
 		storageReader: storageReader,
 		buf:           make([]byte, bufSize),
 		bufOffset:     0,
 	}
+	return r, r.reload()
 }
 
 // readNBytes reads the next n bytes from the reader and returns a buffer slice containing those bytes.
@@ -78,11 +78,8 @@ func (r *byteReader) readNBytes(n int) (*[]byte, error) {
 	}
 	// If the reader has fewer than n bytes remaining in current buffer,
 	// `auxBuf` is used as a container instead.
-	if cap(r.auxBuf) < n {
-		r.auxBuf = make([]byte, n)
-	}
-	r.auxBuf = r.auxBuf[:n]
-	copy(r.auxBuf, b)
+	auxBuf := make([]byte, n)
+	copy(auxBuf, b)
 	for readLen < n {
 		r.cloneSlices()
 		err := r.reload()
@@ -90,15 +87,10 @@ func (r *byteReader) readNBytes(n int) (*[]byte, error) {
 			return nil, err
 		}
 		b = r.next(n - readLen)
-		copy(r.auxBuf[readLen:], b)
+		copy(auxBuf[readLen:], b)
 		readLen += len(b)
 	}
-	return &r.auxBuf, nil
-}
-
-// reset releases the tracked slice (pointer) returned by r.readNBytes.
-func (r *byteReader) reset() {
-	r.retPointers = r.retPointers[:0]
+	return &auxBuf, nil
 }
 
 func (r *byteReader) cloneSlices() {
@@ -106,7 +98,9 @@ func (r *byteReader) cloneSlices() {
 		copied := make([]byte, len(*r.retPointers[i]))
 		copy(copied, *r.retPointers[i])
 		*r.retPointers[i] = copied
+		r.retPointers[i] = nil
 	}
+	r.retPointers = r.retPointers[:0]
 }
 
 func (r *byteReader) eof() bool {
@@ -126,7 +120,7 @@ func (r *byteReader) reload() error {
 		logutil.Logger(r.ctx).Error("unexpected EOF")
 		r.isEOF = true
 		return err
-	} else if err != nil && err == io.ErrUnexpectedEOF {
+	} else if err == io.ErrUnexpectedEOF {
 		r.isEOF = true
 	} else if err != nil {
 		logutil.Logger(r.ctx).Warn("other error during reading from external storage", zap.Error(err))
