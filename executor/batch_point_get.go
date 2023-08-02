@@ -51,7 +51,6 @@ type BatchPointGetExec struct {
 	partExpr    *tables.PartitionExpr
 	partPos     int
 	planPhysIDs []int64
-	singlePart  bool
 	partTblID   []int64
 	idxVals     [][]types.Datum
 	txn         kv.Transaction
@@ -235,11 +234,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				}
 			}
 
-			// If this BatchPointGetExec is built only for the specific table partition, skip those filters not matching this partition.
+			// If this BatchPointGetExec is built only for the specific table partitions, skip those filters not matching those partitions.
 			if len(e.partTblID) >= 1 {
-				if e.singlePart && e.partTblID[0] != physID {
-					continue
-				}
 				if _, found := slices.BinarySearch(e.partTblID, physID); !found {
 					continue
 				}
@@ -384,11 +380,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				}
 			}
 		}
-		// If this BatchPointGetExec is built only for the specific table partition, skip those handles not matching this partition.
+		// If this BatchPointGetExec is built only for the specific table partitions, skip those handles not matching those partitions.
 		if len(e.partTblID) >= 1 {
-			if e.singlePart && e.partTblID[0] != tID {
-				continue
-			}
 			if _, found := slices.BinarySearch(e.partTblID, tID); !found {
 				continue
 			}

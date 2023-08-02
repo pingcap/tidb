@@ -2547,7 +2547,6 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	}
 	if ds.isPartition {
 		// static prune
-		batchPointGetPlan.SinglePart = true
 		batchPointGetPlan.PartTblID = make([]int64, 1)
 		batchPointGetPlan.PartTblID[0] = ds.physicalTableID
 	} else if ds.tableInfo.GetPartitionInfo() != nil {
