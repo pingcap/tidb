@@ -235,7 +235,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		tikv.WithCodec(codec),
 	)
 
-	s, err = tikv.NewKVStore(uuid, pdClient, spkv, rpcClient, tikv.WithPDHTTPClient(tlsConfig, etcdAddrs))
+	s, err = tikv.NewKVStore(uuid, pdClient, spkv, rpcClient)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
