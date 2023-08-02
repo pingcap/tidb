@@ -701,6 +701,84 @@ func TestIssue31629(t *testing.T) {
 	}
 }
 
+func TestKeyPartitionTableMixed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database partitiondb2")
+	defer tk.MustExec("drop database partitiondb2")
+	tk.MustExec("use partitiondb2")
+	// SHOW CREATE TABLE
+	tk.MustExec("CREATE TABLE tkey1 (col1 INT NOT NULL, col2 DATE NOT NULL,col3 INT NOT NULL, col4 INT NOT NULL, UNIQUE KEY (col3))" +
+		" PARTITION BY KEY(col3)" +
+		"(PARTITION `p0`," +
+		"PARTITION `p1`," +
+		"PARTITION `p2`," +
+		"PARTITION `p3`)")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported partition type KEY, treat as normal table"))
+	tk.MustQuery("show create table tkey1").Check(testkit.Rows("tkey1 CREATE TABLE `tkey1` (\n" +
+		"  `col1` int(11) NOT NULL,\n" +
+		"  `col2` date NOT NULL,\n" +
+		"  `col3` int(11) NOT NULL,\n" +
+		"  `col4` int(11) NOT NULL,\n" +
+		"  UNIQUE KEY `col3` (`col3`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestKeyPartitionWithDifferentCharsets(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database partitiondb4")
+	defer tk.MustExec("drop database partitiondb4")
+	tk.MustExec("use partitiondb4")
+
+	tk.MustExec("CREATE TABLE tkey29 (" +
+		"col1 INT NOT NULL," +
+		"col2 DATE NOT NULL," +
+		"col3 VARCHAR(12) NOT NULL," +
+		"col4 INT NOT NULL," +
+		"UNIQUE KEY (col3)" +
+		") CHARSET=utf8mb4 COLLATE=utf8mb4_bin " +
+		"PARTITION BY KEY(col3) " +
+		"PARTITIONS 4")
+	// ignore tail spaces
+	err := tk.ExecToErr("INSERT INTO tkey29 VALUES(1, '2023-02-22', 'linpin', 1), (1, '2023-02-22', 'linpin ', 5)")
+	require.Regexp(t, "Duplicate entry 'linpin ' for key 'tkey29.col3'", err)
+	// case sensitive
+	tk.MustExec("INSERT INTO tkey29 VALUES(3, '2023-02-22', 'abc', 1), (4, '2023-02-22', 'ABC ', 5)")
+
+	tk.MustExec("CREATE TABLE tkey30 (" +
+		"col1 INT NOT NULL," +
+		"col2 DATE NOT NULL," +
+		"col3 VARCHAR(12) NOT NULL," +
+		"col4 INT NOT NULL," +
+		"UNIQUE KEY (col3)" +
+		") CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci " +
+		"PARTITION BY KEY(col3) " +
+		"PARTITIONS 4")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported partition type KEY, treat as normal table"))
+	// case insensitive
+	err = tk.ExecToErr("INSERT INTO tkey30 VALUES(1, '2023-02-22', 'linpin', 1), (1, '2023-02-22', 'LINPIN', 5)")
+	require.Regexp(t, "Duplicate entry 'LINPIN' for key 'tkey30.col3'", err)
+	// ignore tail spaces
+	err = tk.ExecToErr("INSERT INTO tkey30 VALUES(1, '2023-02-22', 'linpin', 1), (1, '2023-02-22', 'LINPIN ', 5)")
+	require.Regexp(t, "Duplicate entry 'LINPIN ' for key 'tkey30.col3'", err)
+
+	tk.MustExec("CREATE TABLE tkey31 (" +
+		"col1 INT NOT NULL," +
+		"col2 DATE NOT NULL," +
+		"col3 VARCHAR(12) NOT NULL," +
+		"col4 INT NOT NULL," +
+		"UNIQUE KEY (col3)" +
+		") CHARSET=gbk COLLATE=gbk_chinese_ci " +
+		"PARTITION BY KEY(col3) " +
+		"PARTITIONS 4")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported partition type KEY, treat as normal table"))
+	err = tk.ExecToErr("INSERT INTO tkey31 VALUES(1, '2023-02-22', '刘德华', 1), (1, '2023-02-22', '刘德华 ', 5)")
+	require.Regexp(t, "Duplicate entry '刘德华 ' for key 'tkey31.col3'", err)
+	tk.MustExec("INSERT INTO tkey31 VALUES(1, '2023-02-22', '刘德华', 1), (5, '2023-02-22', '张学友', 5),(6, '2023-02-22', '艾伦', 6), (7, '2023-02-22', '宁采臣', 7)")
+	tk.MustContainErrMsg("SELECT * FROM tkey31 partition(p0)", "[planner:1747]PARTITION () clause on non partitioned table")
+}
+
 func TestIssue31721(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
