@@ -66,7 +66,7 @@ func (idx *Index) GetEvictedStatus() int {
 }
 
 func (idx *Index) dropUnnecessaryData() {
-	if idx.statsVer() < Version2 {
+	if idx.GetStatsVer() < Version2 {
 		idx.CMSketch = nil
 	}
 	idx.TopN = nil
@@ -80,10 +80,12 @@ func (idx *Index) isStatsInitialized() bool {
 	return idx.statsInitialized
 }
 
+// GetStatsVer returns the version of the current stats
 func (idx *Index) GetStatsVer() int64 {
 	return idx.StatsVer
 }
 
+// IsCMSExist returns whether CMSketch exists.
 func (idx *Index) IsCMSExist() bool {
 	return idx.CMSketch != nil
 }

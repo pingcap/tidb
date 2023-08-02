@@ -369,18 +369,22 @@ func (c *Column) IsAllEvicted() bool {
 	return c.statsInitialized && c.evictedStatus >= AllEvicted
 }
 
+// GetEvictedStatus indicates the evicted status
 func (c *Column) GetEvictedStatus() int {
 	return c.evictedStatus
 }
 
+// IsStatsInitialized indicates whether stats is initialized
 func (c *Column) IsStatsInitialized() bool {
 	return c.statsInitialized
 }
 
+// GetStatsVer indicates the stats version
 func (c *Column) GetStatsVer() int64 {
 	return c.StatsVer
 }
 
+// IsCMSExist indicates whether CMSketch exists
 func (c *Column) IsCMSExist() bool {
 	return c.CMSketch != nil
 }
