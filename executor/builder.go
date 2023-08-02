@@ -1445,7 +1445,23 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
 		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *IndexMergeReaderExecutor:
-		// IndexMergeReader doesn't care order for now. So we will not set desc, useIndex and keepOrder.
+		if len(x.byItems) != 0 {
+			us.keepOrder = x.keepOrder
+			us.desc = x.byItems[0].Desc
+			for _, item := range x.byItems {
+				c, ok := item.Expr.(*expression.Column)
+				if !ok {
+					b.err = errors.Errorf("Not support non-column in orderBy pushed down")
+					return nil
+				}
+				for i, col := range x.columns {
+					if col.ID == c.ID {
+						us.usedIndex = append(us.usedIndex, i)
+						break
+					}
+				}
+			}
+		}
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
@@ -2094,7 +2110,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableMemoryUsageOpsHistory),
 			strings.ToLower(infoschema.ClusterTableMemoryUsage),
 			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory),
-			strings.ToLower(infoschema.TableResourceGroups):
+			strings.ToLower(infoschema.TableResourceGroups),
+			strings.ToLower(infoschema.TableRunawayWatches):
 			return &MemTableReaderExec{
 				BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -4201,7 +4218,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		dataReaderBuilder:        readerBuilder,
 		feedbacks:                feedbacks,
 		paging:                   paging,
-		handleCols:               ts.HandleCols,
+		handleCols:               v.HandleCols,
 		isCorColInPartialFilters: isCorColInPartialFilters,
 		isCorColInTableFilter:    isCorColInTableFilter,
 		isCorColInPartialAccess:  isCorColInPartialAccess,

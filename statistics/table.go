@@ -64,10 +64,10 @@ const (
 
 // Table represents statistics for a table.
 type Table struct {
-	HistColl
-	Version       uint64
-	Name          string
 	ExtendedStats *ExtendedStatsColl
+	Name          string
+	HistColl
+	Version uint64
 	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
 	// It is the schema version of the corresponding table. It is used to skip redundant
 	// loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
@@ -78,10 +78,10 @@ type Table struct {
 
 // ExtendedStatsItem is the cached item of a mysql.stats_extended record.
 type ExtendedStatsItem struct {
-	ColIDs     []int64
-	Tp         uint8
-	ScalarVals float64
 	StringVals string
+	ColIDs     []int64
+	ScalarVals float64
+	Tp         uint8
 }
 
 // ExtendedStatsColl is a collection of cached items for mysql.stats_extended records.
@@ -106,13 +106,13 @@ const (
 
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
-	PhysicalID int64
-	Columns    map[int64]*Column
-	Indices    map[int64]*Index
+	Columns map[int64]*Column
+	Indices map[int64]*Index
 	// Idx2ColumnIDs maps the index id to its column ids. It's used to calculate the selectivity in planner.
 	Idx2ColumnIDs map[int64][]int64
 	// ColID2IdxIDs maps the column id to a list index ids whose first column is it. It's used to calculate the selectivity in planner.
 	ColID2IdxIDs map[int64][]int64
+	PhysicalID   int64
 	// TODO: add AnalyzeCount here
 	RealtimeCount int64 // RealtimeCount is the current table row count, maintained by applying stats delta based on AnalyzeCount.
 	ModifyCount   int64 // Total modify count in a table.
@@ -125,10 +125,10 @@ type HistColl struct {
 
 // TableMemoryUsage records tbl memory usage
 type TableMemoryUsage struct {
-	TableID         int64
-	TotalMemUsage   int64
 	ColumnsMemUsage map[int64]CacheItemMemoryUsage
 	IndicesMemUsage map[int64]CacheItemMemoryUsage
+	TableID         int64
+	TotalMemUsage   int64
 }
 
 // TotalIdxTrackingMemUsage returns total indices' tracking memory usage
@@ -442,8 +442,8 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 }
 
 type neededStatsMap struct {
-	m     sync.RWMutex
 	items map[model.TableItemID]struct{}
+	m     sync.RWMutex
 }
 
 func (n *neededStatsMap) AllItems() []model.TableItemID {

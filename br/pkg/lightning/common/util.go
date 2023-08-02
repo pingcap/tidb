@@ -660,3 +660,28 @@ func IsFunctionNotExistErr(err error, functionName string) bool {
 		(strings.Contains(err.Error(), "No database selected") ||
 			strings.Contains(err.Error(), fmt.Sprintf("%s does not exist", functionName)))
 }
+
+// IsRaftKV2 checks whether the raft-kv2 is enabled
+func IsRaftKV2(ctx context.Context, db *sql.DB) (bool, error) {
+	var (
+		getRaftKvVersionSQL       = "show config where type = 'tikv' and name = 'storage.engine'"
+		raftKv2                   = "raft-kv2"
+		tp, instance, name, value string
+	)
+
+	rows, err := db.QueryContext(ctx, getRaftKvVersionSQL)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		if err = rows.Scan(&tp, &instance, &name, &value); err != nil {
+			return false, errors.Trace(err)
+		}
+		if value == raftKv2 {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}

@@ -1129,6 +1129,80 @@ func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
 	require.True(t, l.isRetryableImportTiKVError(errors.Trace(io.EOF)))
 }
 
+// mockIngestData must be ordered on the first element of each [2][]byte.
+type mockIngestData [][2][]byte
+
+func (m mockIngestData) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
+	i, j := m.getFirstAndLastKeyIdx(lowerBound, upperBound)
+	if i == -1 {
+		return nil, nil, nil
+	}
+	return m[i][0], m[j][0], nil
+}
+
+func (m mockIngestData) getFirstAndLastKeyIdx(lowerBound, upperBound []byte) (int, int) {
+	var first int
+	if len(lowerBound) == 0 {
+		first = 0
+	} else {
+		i, _ := sort.Find(len(m), func(i int) int {
+			return bytes.Compare(lowerBound, m[i][0])
+		})
+		if i == len(m) {
+			return -1, -1
+		}
+		first = i
+	}
+
+	var last int
+	if len(upperBound) == 0 {
+		last = len(m) - 1
+	} else {
+		i, _ := sort.Find(len(m), func(i int) int {
+			return bytes.Compare(upperBound, m[i][1])
+		})
+		if i == 0 {
+			return -1, -1
+		}
+		last = i - 1
+	}
+	return first, last
+}
+
+type mockIngestIter struct {
+	data                     mockIngestData
+	startIdx, endIdx, curIdx int
+}
+
+func (m *mockIngestIter) First() bool {
+	m.curIdx = m.startIdx
+	return true
+}
+
+func (m *mockIngestIter) Valid() bool { return m.curIdx < m.endIdx }
+
+func (m *mockIngestIter) Next() bool {
+	m.curIdx++
+	return m.Valid()
+}
+
+func (m *mockIngestIter) Key() []byte { return m.data[m.curIdx][0] }
+
+func (m *mockIngestIter) Value() []byte { return m.data[m.curIdx][1] }
+
+func (m *mockIngestIter) Close() error { return nil }
+
+func (m *mockIngestIter) Error() error { return nil }
+
+func (m mockIngestData) NewIter(ctx context.Context, lowerBound, upperBound []byte) ForwardIter {
+	i, j := m.getFirstAndLastKeyIdx(lowerBound, upperBound)
+	return &mockIngestIter{data: m, startIdx: i, endIdx: j, curIdx: i}
+}
+
+func (m mockIngestData) GetTS() uint64 { return 0 }
+
+func (m mockIngestData) Finish(_, _ int64) {}
+
 func TestCheckPeersBusy(t *testing.T) {
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 300
@@ -1177,23 +1251,7 @@ func TestCheckPeersBusy(t *testing.T) {
 		tikvCodec: keyspace.CodecV1,
 	}
 
-	db, tmpPath := makePebbleDB(t, nil)
-	_, engineUUID := backend.MakeUUID("ww", 0)
-	engineCtx, cancel2 := context.WithCancel(context.Background())
-	f := &Engine{
-		UUID:         engineUUID,
-		sstDir:       tmpPath,
-		ctx:          engineCtx,
-		cancel:       cancel2,
-		sstMetasChan: make(chan metaOrFlush, 64),
-		keyAdapter:   noopKeyAdapter{},
-		logger:       log.L(),
-	}
-	f.db.Store(db)
-	err := db.Set([]byte("a"), []byte("a"), nil)
-	require.NoError(t, err)
-	err = db.Set([]byte("b"), []byte("b"), nil)
-	require.NoError(t, err)
+	data := mockIngestData{{[]byte("a"), []byte("a")}, {[]byte("b"), []byte("b")}}
 
 	jobCh := make(chan *regionJob, 10)
 
@@ -1211,7 +1269,7 @@ func TestCheckPeersBusy(t *testing.T) {
 			Leader: &metapb.Peer{Id: 1, StoreId: 11},
 		},
 		stage:      regionScanned,
-		engine:     f,
+		ingestData: data,
 		retryCount: 20,
 		waitUntil:  time.Now().Add(-time.Second),
 	}
@@ -1231,7 +1289,7 @@ func TestCheckPeersBusy(t *testing.T) {
 			Leader: &metapb.Peer{Id: 4, StoreId: 21},
 		},
 		stage:      regionScanned,
-		engine:     f,
+		ingestData: data,
 		retryCount: 20,
 		waitUntil:  time.Now().Add(-time.Second),
 	}
@@ -1313,21 +1371,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 		tikvCodec: keyspace.CodecV1,
 	}
 
-	db, tmpPath := makePebbleDB(t, nil)
-	_, engineUUID := backend.MakeUUID("ww", 0)
-	engineCtx, cancel2 := context.WithCancel(context.Background())
-	f := &Engine{
-		UUID:         engineUUID,
-		sstDir:       tmpPath,
-		ctx:          engineCtx,
-		cancel:       cancel2,
-		sstMetasChan: make(chan metaOrFlush, 64),
-		keyAdapter:   noopKeyAdapter{},
-		logger:       log.L(),
-	}
-	f.db.Store(db)
-	err := db.Set([]byte("a"), []byte("a"), nil)
-	require.NoError(t, err)
+	data := mockIngestData{{[]byte("a"), []byte("a")}}
 
 	jobCh := make(chan *regionJob, 10)
 
@@ -1344,8 +1388,8 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 			},
 			Leader: &metapb.Peer{Id: 1, StoreId: 1},
 		},
-		stage:  regionScanned,
-		engine: f,
+		stage:      regionScanned,
+		ingestData: data,
 	}
 	var jobWg sync.WaitGroup
 	jobWg.Add(1)
@@ -1385,7 +1429,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	require.Equal(t, []uint64{1, 2, 3, 1, 11, 12, 13, 11}, apiInvokeRecorder["MultiIngest"])
 }
 
-func TestPartialWriteIngestErrorWillPanic(t *testing.T) {
+func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1420,23 +1464,7 @@ func TestPartialWriteIngestErrorWillPanic(t *testing.T) {
 		tikvCodec:          keyspace.CodecV1,
 	}
 
-	db, tmpPath := makePebbleDB(t, nil)
-	_, engineUUID := backend.MakeUUID("ww", 0)
-	engineCtx, cancel2 := context.WithCancel(context.Background())
-	f := &Engine{
-		UUID:         engineUUID,
-		sstDir:       tmpPath,
-		ctx:          engineCtx,
-		cancel:       cancel2,
-		sstMetasChan: make(chan metaOrFlush, 64),
-		keyAdapter:   noopKeyAdapter{},
-		logger:       log.L(),
-	}
-	f.db.Store(db)
-	err := db.Set([]byte("a"), []byte("a"), nil)
-	require.NoError(t, err)
-	err = db.Set([]byte("a2"), []byte("a2"), nil)
-	require.NoError(t, err)
+	data := mockIngestData{{[]byte("a"), []byte("a")}, {[]byte("a2"), []byte("a2")}}
 
 	jobCh := make(chan *regionJob, 10)
 
@@ -1453,8 +1481,8 @@ func TestPartialWriteIngestErrorWillPanic(t *testing.T) {
 			},
 			Leader: &metapb.Peer{Id: 1, StoreId: 1},
 		},
-		stage:  regionScanned,
-		engine: f,
+		stage:      regionScanned,
+		ingestData: data,
 		// use small regionSplitSize to trigger partial write
 		regionSplitSize: 1,
 	}
@@ -1560,8 +1588,8 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 			},
 			Leader: &metapb.Peer{Id: 1, StoreId: 1},
 		},
-		stage:  regionScanned,
-		engine: f,
+		stage:      regionScanned,
+		ingestData: f,
 		// use small regionSplitSize to trigger partial write
 		regionSplitSize: 1,
 	}
@@ -1775,17 +1803,17 @@ func TestDoImport(t *testing.T) {
 		{"a", "b"}: {
 			jobs: []*regionJob{
 				{
-					keyRange: Range{start: []byte{'a'}, end: []byte{'b'}},
-					engine:   &Engine{},
-					injected: getSuccessInjectedBehaviour(),
+					keyRange:   Range{start: []byte{'a'}, end: []byte{'b'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
 		},
 		{"b", "c"}: {
 			jobs: []*regionJob{
 				{
-					keyRange: Range{start: []byte{'b'}, end: []byte{'c'}},
-					engine:   &Engine{},
+					keyRange:   Range{start: []byte{'b'}, end: []byte{'c'}},
+					ingestData: &Engine{},
 					injected: []injectedBehaviour{
 						{
 							write: injectedWriteBehaviour{
@@ -1818,13 +1846,13 @@ func TestDoImport(t *testing.T) {
 		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
-					keyRange: Range{start: []byte{'c'}, end: []byte{'c', '2'}},
-					engine:   &Engine{},
-					injected: getNeedRescanWhenIngestBehaviour(),
+					keyRange:   Range{start: []byte{'c'}, end: []byte{'c', '2'}},
+					ingestData: &Engine{},
+					injected:   getNeedRescanWhenIngestBehaviour(),
 				},
 				{
-					keyRange: Range{start: []byte{'c', '2'}, end: []byte{'d'}},
-					engine:   &Engine{},
+					keyRange:   Range{start: []byte{'c', '2'}, end: []byte{'d'}},
+					ingestData: &Engine{},
 					injected: []injectedBehaviour{
 						{
 							write: injectedWriteBehaviour{
@@ -1839,18 +1867,18 @@ func TestDoImport(t *testing.T) {
 		{"c", "c2"}: {
 			jobs: []*regionJob{
 				{
-					keyRange: Range{start: []byte{'c'}, end: []byte{'c', '2'}},
-					engine:   &Engine{},
-					injected: getSuccessInjectedBehaviour(),
+					keyRange:   Range{start: []byte{'c'}, end: []byte{'c', '2'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
 		},
 		{"c2", "d"}: {
 			jobs: []*regionJob{
 				{
-					keyRange: Range{start: []byte{'c', '2'}, end: []byte{'d'}},
-					engine:   &Engine{},
-					injected: getSuccessInjectedBehaviour(),
+					keyRange:   Range{start: []byte{'c', '2'}, end: []byte{'d'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
 		},
@@ -1880,9 +1908,9 @@ func TestDoImport(t *testing.T) {
 		{"a", "b"}: {
 			jobs: []*regionJob{
 				{
-					keyRange: Range{start: []byte{'a'}, end: []byte{'b'}},
-					engine:   &Engine{},
-					injected: getSuccessInjectedBehaviour(),
+					keyRange:   Range{start: []byte{'a'}, end: []byte{'b'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
 		},
@@ -1902,32 +1930,32 @@ func TestDoImport(t *testing.T) {
 		{"a", "b"}: {
 			jobs: []*regionJob{
 				{
-					keyRange: Range{start: []byte{'a'}, end: []byte{'a', '2'}},
-					engine:   &Engine{},
-					injected: getNeedRescanWhenIngestBehaviour(),
+					keyRange:   Range{start: []byte{'a'}, end: []byte{'a', '2'}},
+					ingestData: &Engine{},
+					injected:   getNeedRescanWhenIngestBehaviour(),
 				},
 				{
-					keyRange: Range{start: []byte{'a', '2'}, end: []byte{'b'}},
-					engine:   &Engine{},
-					injected: getSuccessInjectedBehaviour(),
+					keyRange:   Range{start: []byte{'a', '2'}, end: []byte{'b'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
 		},
 		{"b", "c"}: {
 			jobs: []*regionJob{
 				{
-					keyRange: Range{start: []byte{'b'}, end: []byte{'c'}},
-					engine:   &Engine{},
-					injected: getSuccessInjectedBehaviour(),
+					keyRange:   Range{start: []byte{'b'}, end: []byte{'c'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
 		},
 		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
-					keyRange: Range{start: []byte{'c'}, end: []byte{'d'}},
-					engine:   &Engine{},
-					injected: getSuccessInjectedBehaviour(),
+					keyRange:   Range{start: []byte{'c'}, end: []byte{'d'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
 		},
@@ -1949,7 +1977,7 @@ func TestDoImport(t *testing.T) {
 			jobs: []*regionJob{
 				{
 					keyRange:   Range{start: []byte{'a'}, end: []byte{'b'}},
-					engine:     &Engine{},
+					ingestData: &Engine{},
 					retryCount: maxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -1959,7 +1987,7 @@ func TestDoImport(t *testing.T) {
 			jobs: []*regionJob{
 				{
 					keyRange:   Range{start: []byte{'b'}, end: []byte{'c'}},
-					engine:     &Engine{},
+					ingestData: &Engine{},
 					retryCount: maxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -1969,7 +1997,7 @@ func TestDoImport(t *testing.T) {
 			jobs: []*regionJob{
 				{
 					keyRange:   Range{start: []byte{'c'}, end: []byte{'d'}},
-					engine:     &Engine{},
+					ingestData: &Engine{},
 					retryCount: maxWriteAndIngestRetryTimes - 2,
 					injected: []injectedBehaviour{
 						{
@@ -2019,13 +2047,13 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 			jobs: []*regionJob{
 				{
 					keyRange:   Range{start: []byte{'c'}, end: []byte{'c', '2'}},
-					engine:     &Engine{},
+					ingestData: &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
 					retryCount: maxWriteAndIngestRetryTimes,
 				},
 				{
 					keyRange:   Range{start: []byte{'c', '2'}, end: []byte{'d'}},
-					engine:     &Engine{},
+					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 					retryCount: maxWriteAndIngestRetryTimes,
 				},
@@ -2034,9 +2062,9 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 		{"c", "c2"}: {
 			jobs: []*regionJob{
 				{
-					keyRange: Range{start: []byte{'c'}, end: []byte{'c', '2'}},
-					engine:   &Engine{},
-					injected: getSuccessInjectedBehaviour(),
+					keyRange:   Range{start: []byte{'c'}, end: []byte{'c', '2'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
 		},
@@ -2087,18 +2115,18 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
-					keyRange: Range{start: []byte{'c'}, end: []byte{'d'}},
-					engine:   &Engine{},
-					injected: getSuccessInjectedBehaviour(),
+					keyRange:   Range{start: []byte{'c'}, end: []byte{'d'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
 		},
 		{"d", "e"}: {
 			jobs: []*regionJob{
 				{
-					keyRange: Range{start: []byte{'d'}, end: []byte{'e'}},
-					engine:   &Engine{},
-					injected: getSuccessInjectedBehaviour(),
+					keyRange:   Range{start: []byte{'d'}, end: []byte{'e'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
 		},

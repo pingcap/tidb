@@ -60,7 +60,6 @@ go_library(
         "function_traits.go",
         "grouping_sets.go",
         "helper.go",
-        "partition_pruner.go",
         "scalar_function.go",
         "schema.go",
         "simple_rewriter.go",

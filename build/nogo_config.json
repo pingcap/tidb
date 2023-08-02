@@ -146,6 +146,7 @@
       "/rules_go_work-*": "ignore generated code",
       "GOROOT/": "ignore code",
       "/parser/": "ignore code",
+      "server/internal/testserverclient/server_client.go": "ignore code",
       ".*_/testmain\\.go$": "ignore code"
     }
   },
@@ -174,7 +175,7 @@
       ".*_test\\.go$": "ignore test code"
     },
     "only_files": {
-      "statistics/handle": "statistics/handle code",
+      "statistics/": "statistics/ code",
       "util/checksum": "util/checksum code",
       "util/processinfo.go": "util/processinfo.go code",
       "util/cpuprofile/": "util/cpuprofile/ code",
@@ -208,7 +209,10 @@
       "util/watcher/": "util/watcher/ code",
       "util/gctuner": "util/gctuner",
       "store/mockstore/unistore/util": "store/mockstore/unistore/util code",
-      "ddl/util/": "ddl/util code"
+      "ddl/util/": "ddl/util code",
+      "server/internal": "server/internal code",
+      "planner/core/internal": "planner/core/internal code",
+      "executor/internal": "executor/internal code"
     }
   },
   "findcall": {
@@ -285,6 +289,7 @@
       "tools/check/xprog.go:": "ignore tools/check code",
       "cmd/explaintest/main.go": "ignore cmd/explaintest code",
       "GOROOT/": "ignore code",
+      "server/internal/testserverclient/server_client.go": "ignore server_client code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
@@ -510,6 +515,7 @@
       "server/conn_stmt.go": "server/conn_stmt.go",
       "server/conn_test.go": "server/conn_test.go",
       "server/internal": "server/internal",
+      "server/handle": "server/handle",
       "distsql/": "ignore distsql code",
       "disttask": "disttask code",
       "dumpling/export": "dumpling/export code",
@@ -627,7 +633,6 @@
       "executor/test/unstabletest": "executor/test/unstabletest",
       "ddl/tests": "ddl/tests code",
       "disttask/": "disttask code",
-      "executor/test/tiflashtest": "executor/test/tiflashtest code",
       "timer/": "timer code",
       "util/": "util code",
       "br/pkg/lightning/config/": "br/pkg/lightning/config code",
@@ -636,7 +641,8 @@
       "planner/cascades": "planner/cascades code",
       "store/": "store code",
       "ttl/": "ttl code",
-      "bindinfo/": "bindinfo code"
+      "bindinfo/": "bindinfo code",
+      "domain/": "domain code"
     }
   },
   "unconvert": {
@@ -680,11 +686,17 @@
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "server/tidb_test.go": "ignore test code",
+      "server/tests/tidb_test.go": "ignore test code",
+      "server/tests/tidb_serial_test.go": "ignore test code",
       "server/tidb_serial_test.go": "ignore test code",
       "server/statistics_handler_test.go": "ignore test code",
+      "server/handler/optimizor/optimize_trace_test.go": "ignore test code",
+      "server/handler/optimizor/plan_replayer_test.go": "ignore test code",
+      "server/handler/optimizor/statistics_handler_test.go": "ignore test code",
       "server/server_test.go": "ignore test code",
       "server/optimize_trace_test.go": "ignore test code",
-      "server/plan_replayer_test.go": "ignore test code"
+      "server/plan_replayer_test.go": "ignore test code",
+      "server/internal/testserverclient/server_client.go": "ignore test code"
     }
   },
   "S1000": {

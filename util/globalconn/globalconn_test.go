@@ -202,7 +202,7 @@ func BenchmarkLocalConnIDAllocator(b *testing.B) {
 
 		b.Run(fmt.Sprintf("Allocator 32(LockBased) x%v", concurrency), func(b *testing.B) {
 			pool := LockBasedCircularPool{}
-			pool.InitExt(globalconn.LocalConnIDBits32, math.MaxUint32)
+			pool.InitExt(1<<globalconn.LocalConnIDBits32, math.MaxUint32)
 
 			b.SetParallelism(concurrency)
 			b.ResetTimer()

@@ -31,28 +31,29 @@ import (
 
 // StatsTblTraceInfo is simplified from Table and used for debug trace.
 type StatsTblTraceInfo struct {
+	Columns     []*statsTblColOrIdxInfo
+	Indexes     []*statsTblColOrIdxInfo
 	PhysicalID  int64
 	Version     uint64
 	Count       int64
 	ModifyCount int64
-	Columns     []*statsTblColOrIdxInfo
-	Indexes     []*statsTblColOrIdxInfo
 }
 
 type statsTblColOrIdxInfo struct {
+	CMSketchInfo  *cmSketchInfo
+	Name          string
+	LoadingStatus string
+
 	ID                int64
-	Name              string
 	NDV               int64
 	NullCount         int64
 	LastUpdateVersion uint64
 	TotColSize        int64
 	Correlation       float64
 	StatsVer          int64
-	LoadingStatus     string
 
 	HistogramSize int
 	TopNSize      int
-	CMSketchInfo  *cmSketchInfo
 }
 
 type cmSketchInfo struct {
@@ -176,8 +177,8 @@ func TraceStatsTbl(statsTbl *Table) *StatsTblTraceInfo {
 */
 
 type getRowCountInput struct {
-	ID     int64
 	Ranges []string
+	ID     int64
 }
 
 func debugTraceGetRowCountInput(
@@ -201,10 +202,10 @@ func debugTraceGetRowCountInput(
 */
 
 type startEstimateRangeInfo struct {
-	CurrentRowCount  float64
 	Range            string
 	LowValueEncoded  []byte
 	HighValueEncoded []byte
+	CurrentRowCount  float64
 }
 
 func debugTraceStartEstimateRange(
@@ -271,8 +272,8 @@ func debugTraceEndEstimateRange(
 
 type locateBucketInfo struct {
 	Value          string
-	Exceed         bool
 	BucketIdx      int
+	Exceed         bool
 	InBucket       bool
 	MatchLastValue bool
 }
@@ -329,11 +330,11 @@ func debugTraceBuckets(s sessionctx.Context, hg *Histogram, bucketIdxs []int) {
 */
 
 type topNRangeInfo struct {
-	FirstIdx     int
 	FirstEncoded []byte
-	LastIdx      int
 	LastEncoded  []byte
 	Count        []uint64
+	FirstIdx     int
+	LastIdx      int
 }
 
 func debugTraceTopNRange(s sessionctx.Context, t *TopN, startIdx, endIdx int) {

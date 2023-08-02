@@ -264,27 +264,33 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2,t3,t4,t5,t6")
 
-	tk.MustExec("create table t1(a int, b int, primary key(a,b) nonclustered) partition by hash(b) partitions 2")
-	tk.MustExec("insert into t1 values(1,1),(1,2),(2,1),(2,2)")
+	tk.MustExec("create table thash1(a int, b int, primary key(a,b) nonclustered) partition by hash(b) partitions 2")
+	tk.MustExec("insert into thash1 values(1,1),(1,2),(2,1),(2,2)")
 
-	tk.MustExec("create table t2(a int, b int, primary key(a,b) nonclustered) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
-	tk.MustExec("insert into t2 values(1,1),(1,2),(2,1),(2,2)")
+	tk.MustExec("create table trange1(a int, b int, primary key(a,b) nonclustered) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
+	tk.MustExec("insert into trange1 values(1,1),(1,2),(2,1),(2,2)")
 
-	tk.MustExec("create table t3(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
-	tk.MustExec("insert into t3 values(1,1),(1,2),(2,1),(2,2)")
+	tk.MustExec("create table tlist1(a int, b int, primary key(a,b) nonclustered) partition by list(b) (partition p0 values in (0, 1), partition p1 values in (2, 3))")
+	tk.MustExec("insert into tlist1 values(1,1),(1,2),(2,1),(2,2)")
 
-	tk.MustExec("create table t4(a int, b int, primary key(a,b)) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
-	tk.MustExec("insert into t4 values(1,1),(1,2),(2,1),(2,2)")
+	tk.MustExec("create table thash2(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
+	tk.MustExec("insert into thash2 values(1,1),(1,2),(2,1),(2,2)")
 
-	tk.MustExec("create table t5(a int, b int, primary key(a)) partition by hash(a) partitions 2")
-	tk.MustExec("insert into t5 values(1,0),(2,0),(3,0),(4,0)")
+	tk.MustExec("create table trange2(a int, b int, primary key(a,b)) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
+	tk.MustExec("insert into trange2 values(1,1),(1,2),(2,1),(2,2)")
 
-	tk.MustExec("create table t6(a int, b int, primary key(a)) partition by range(a) (partition p0 values less than (3), partition p1 values less than maxvalue)")
-	tk.MustExec("insert into t6 values(1,0),(2,0),(3,0),(4,0)")
+	tk.MustExec("create table tlist2(a int, b int, primary key(a,b)) partition by list(b) (partition p0 values in (0, 1), partition p1 values in (2, 3))")
+	tk.MustExec("insert into tlist2 values(1,1),(1,2),(2,1),(2,2)")
 
-	tk.MustExec(`analyze table t1, t2, t3, t4, t5, t6`)
+	tk.MustExec("create table thash3(a int, b int, primary key(a)) partition by hash(a) partitions 2")
+	tk.MustExec("insert into thash3 values(1,0),(2,0),(3,0),(4,0)")
+
+	tk.MustExec("create table trange3(a int, b int, primary key(a)) partition by range(a) (partition p0 values less than (3), partition p1 values less than maxvalue)")
+	tk.MustExec("insert into trange3 values(1,0),(2,0),(3,0),(4,0)")
+
+	tk.MustExec("create table tlist3(a int, b int, primary key(a)) partition by list(a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5))")
+	tk.MustExec("insert into tlist3 values(1,0),(2,0),(3,0),(4,0)")
 
 	var input []string
 	var output []struct {
@@ -301,20 +307,88 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 			output[i].SQL = tt
 			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 			output[i].DynamicPlan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
-			dynamicRes := testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+			dynamicQuery := tk.MustQuery(tt)
+			if !strings.Contains(tt, "order by") {
+				dynamicQuery = dynamicQuery.Sort()
+			}
+			dynamicRes := testdata.ConvertRowsToStrings(dynamicQuery.Rows())
 			tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 			output[i].StaticPlan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
-			staticRes := testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
-
+			staticQuery := tk.MustQuery(tt)
+			if !strings.Contains(tt, "order by") {
+				staticQuery = staticQuery.Sort()
+			}
+			staticRes := testdata.ConvertRowsToStrings(staticQuery.Rows())
 			require.Equal(t, dynamicRes, staticRes)
 			output[i].Result = staticRes
 		})
 
 		tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].DynamicPlan...))
-		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
+		if strings.Contains(tt, "order by") {
+			tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+		} else {
+			tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
+		}
 		tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].StaticPlan...))
-		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
+		if strings.Contains(tt, "order by") {
+			tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+		} else {
+			tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
+		}
+	}
+}
+
+func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, b int, UNIQUE KEY (b)) PARTITION BY HASH(b) PARTITIONS 4")
+	tk.MustExec("insert into t1 values(1, 1), (2, 2), (3, 3), (4, 4)")
+
+	tk.MustExec("CREATE TABLE t2 (id int primary key, name_id int) PARTITION BY LIST(id) (" +
+		"partition p0 values IN (1, 2), " +
+		"partition p1 values IN (3, 4), " +
+		"partition p3 values IN (5))")
+	tk.MustExec("insert into t2 values(1, 1), (2, 2), (3, 3), (4, 4)")
+
+	tk.MustExec("CREATE TABLE t3 (id int primary key, name_id int) PARTITION BY LIST COLUMNS(id) (" +
+		"partition p0 values IN (1, 2), " +
+		"partition p1 values IN (3, 4), " +
+		"partition p3 values IN (5))")
+	tk.MustExec("insert into t3 values(1, 1), (2, 2), (3, 3), (4, 4)")
+
+	tk.MustExec("CREATE TABLE t4 (id int, name_id int, unique key(id, name_id)) PARTITION BY LIST COLUMNS(id, name_id) (" +
+		"partition p0 values IN ((1, 1),(2, 2)), " +
+		"partition p1 values IN ((3, 3),(4, 4)), " +
+		"partition p3 values IN ((5, 5)))")
+	tk.MustExec("insert into t4 values(1, 1), (2, 2), (3, 3), (4, 4)")
+
+	tk.MustExec("CREATE TABLE t5 (id int, name varchar(10), unique key(id, name)) PARTITION BY LIST COLUMNS(id, name) (" +
+		"partition p0 values IN ((1,'a'),(2,'b')), " +
+		"partition p1 values IN ((3,'c'),(4,'d')), " +
+		"partition p3 values IN ((5,'e')))")
+	tk.MustExec("insert into t5 values(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')")
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+
+	integrationPartitionSuiteData := getIntegrationPartitionSuiteData()
+	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }

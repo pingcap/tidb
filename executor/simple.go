@@ -192,7 +192,7 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	case *ast.SetResourceGroupStmt:
 		err = e.executeSetResourceGroupName(x)
 	case *ast.DropQueryWatchStmt:
-		err = e.executeDropQueryWatch(ctx, x)
+		err = e.executeDropQueryWatch(x)
 	}
 	e.done = true
 	return err
@@ -2185,8 +2185,8 @@ func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, use
 	return err
 }
 
-func (e *SimpleExec) executeDropQueryWatch(ctx context.Context, s *ast.DropQueryWatchStmt) error {
-	return querywatch.ExecDropQueryWatch(ctx, e.Ctx(), s.IntValue)
+func (e *SimpleExec) executeDropQueryWatch(s *ast.DropQueryWatchStmt) error {
+	return querywatch.ExecDropQueryWatch(e.Ctx(), s.IntValue)
 }
 
 func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) error {
