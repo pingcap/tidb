@@ -66,12 +66,12 @@ func TestByteReader(t *testing.T) {
 	require.True(t, br.eof())
 	require.NoError(t, br.Close())
 
-	// Test basic sliceNext() usage.
+	// Test basic readNBytes() usage.
 	br = newByteReader(context.Background(), &mockExtStore{src: []byte("abcde")}, 3)
 	require.NoError(t, br.reload())
-	y, err := br.sliceNext(2)
+	y, err := br.readNBytes(2)
 	require.NoError(t, err)
-	x = y.get()
+	x = *y
 	require.Equal(t, 2, len(x))
 	require.Equal(t, byte('a'), x[0])
 	require.Equal(t, byte('b'), x[1])
@@ -79,28 +79,28 @@ func TestByteReader(t *testing.T) {
 
 	br = newByteReader(context.Background(), &mockExtStore{src: []byte("abcde")}, 3)
 	require.NoError(t, br.reload())
-	y, err = br.sliceNext(5) // Read all the data.
+	y, err = br.readNBytes(5) // Read all the data.
 	require.NoError(t, err)
-	x = y.get()
+	x = *y
 	require.Equal(t, 5, len(x))
 	require.Equal(t, byte('e'), x[4])
 	require.NoError(t, br.Close())
 
 	br = newByteReader(context.Background(), &mockExtStore{src: []byte("abcde")}, 3)
 	require.NoError(t, br.reload())
-	_, err = br.sliceNext(7) // EOF
+	_, err = br.readNBytes(7) // EOF
 	require.Error(t, err)
 
 	ms := &mockExtStore{src: []byte("abcdef")}
 	br = newByteReader(context.Background(), ms, 2)
 	require.NoError(t, br.reload())
-	y, err = br.sliceNext(3)
+	y, err = br.readNBytes(3)
 	require.NoError(t, err)
 	// Pollute mockExtStore to verify if the slice is not affected.
 	for i, b := range []byte{'x', 'y', 'z'} {
 		ms.src[i] = b
 	}
-	x = y.get()
+	x = *y
 	require.Equal(t, 3, len(x))
 	require.Equal(t, byte('c'), x[2])
 	require.NoError(t, br.Close())
@@ -108,13 +108,13 @@ func TestByteReader(t *testing.T) {
 	ms = &mockExtStore{src: []byte("abcdef")}
 	br = newByteReader(context.Background(), ms, 2)
 	require.NoError(t, br.reload())
-	y, err = br.sliceNext(2)
+	y, err = br.readNBytes(2)
 	require.NoError(t, err)
 	// Pollute mockExtStore to verify if the slice is not affected.
 	for i, b := range []byte{'x', 'y', 'z'} {
 		ms.src[i] = b
 	}
-	x = y.get()
+	x = *y
 	require.Equal(t, 2, len(x))
 	require.Equal(t, byte('b'), x[1])
 	require.NoError(t, br.Close())
@@ -124,17 +124,17 @@ func TestByteReaderClone(t *testing.T) {
 	ms := &mockExtStore{src: []byte("0123456789")}
 	br := newByteReader(context.Background(), ms, 4)
 	require.NoError(t, br.reload())
-	y1, err := br.sliceNext(2)
+	y1, err := br.readNBytes(2)
 	require.NoError(t, err)
-	y2, err := br.sliceNext(1)
+	y2, err := br.readNBytes(1)
 	require.NoError(t, err)
-	x1, x2 := y1.get(), y2.get()
+	x1, x2 := *y1, *y2
 	require.Len(t, x1, 2)
 	require.Len(t, x2, 1)
 	require.Equal(t, byte('0'), x1[0])
 	require.Equal(t, byte('2'), x2[0])
 	require.NoError(t, br.reload()) // Perform a reload to overwrite buffer.
-	x1, x2 = y1.get(), y2.get()
+	x1, x2 = *y1, *y2
 	require.Len(t, x1, 2)
 	require.Len(t, x2, 1)
 	require.Equal(t, byte('4'), x1[0]) // Verify if the buffer is overwritten.
@@ -144,18 +144,18 @@ func TestByteReaderClone(t *testing.T) {
 	ms = &mockExtStore{src: []byte("0123456789")}
 	br = newByteReader(context.Background(), ms, 4)
 	require.NoError(t, br.reload())
-	y1, err = br.sliceNext(2)
+	y1, err = br.readNBytes(2)
 	require.NoError(t, err)
-	y2, err = br.sliceNext(1)
+	y2, err = br.readNBytes(1)
 	require.NoError(t, err)
-	x1, x2 = y1.get(), y2.get()
+	x1, x2 = *y1, *y2
 	require.Len(t, x1, 2)
 	require.Len(t, x2, 1)
 	require.Equal(t, byte('0'), x1[0])
 	require.Equal(t, byte('2'), x2[0])
 	br.cloneSlices()
 	require.NoError(t, br.reload()) // Perform a reload to overwrite buffer.
-	x1, x2 = y1.get(), y2.get()
+	x1, x2 = *y1, *y2
 	require.Len(t, x1, 2)
 	require.Len(t, x2, 1)
 	require.Equal(t, byte('0'), x1[0]) // Verify if the buffer is NOT overwritten.

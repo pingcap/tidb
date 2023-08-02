@@ -24,6 +24,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// byteReader provides structured reading on a byte stream of external storage.
 type byteReader struct {
 	ctx           context.Context
 	storageReader storage.ReadSeekCloser
@@ -31,9 +32,10 @@ type byteReader struct {
 	buf       []byte
 	bufOffset int
 
-	auxBuf   []byte
-	cowSlice [][]byte // copy-on-write slices
-	isEOF    bool
+	auxBuf []byte
+	isEOF  bool
+
+	retPointers []*[]byte
 }
 
 func openStoreReaderAndSeek(
@@ -62,31 +64,17 @@ func newByteReader(ctx context.Context, storageReader storage.ReadSeekCloser, bu
 	}
 }
 
-type slice interface {
-	get() []byte
-}
-
-type commonSlice []byte
-
-func (c commonSlice) get() []byte {
-	return c
-}
-
-type lazySlice struct {
-	cowIdx     int
-	byteReader *byteReader
-}
-
-func (s lazySlice) get() []byte {
-	return s.byteReader.cowSlice[s.cowIdx]
-}
-
-// sliceNext reads the next n bytes from the reader and returns a buffer slice containing those bytes.
-func (r *byteReader) sliceNext(n int) (slice, error) {
+// readNBytes reads the next n bytes from the reader and returns a buffer slice containing those bytes.
+// The returned slice (pointer) can not be used after r.reset. In the same interval of r.reset,
+// byteReader guarantees that the returned slice (pointer) will point to the same content
+// though the slice may be changed.
+func (r *byteReader) readNBytes(n int) (*[]byte, error) {
 	b := r.next(n)
 	readLen := len(b)
 	if readLen == n {
-		return mkLazySlice(r, b), nil
+		ret := &b
+		r.retPointers = append(r.retPointers, ret)
+		return ret, nil
 	}
 	// If the reader has fewer than n bytes remaining in current buffer,
 	// `auxBuf` is used as a container instead.
@@ -105,24 +93,19 @@ func (r *byteReader) sliceNext(n int) (slice, error) {
 		copy(r.auxBuf[readLen:], b)
 		readLen += len(b)
 	}
-	return commonSlice(r.auxBuf), nil
+	return &r.auxBuf, nil
 }
 
-func mkLazySlice(r *byteReader, s []byte) lazySlice {
-	r.cowSlice = append(r.cowSlice, s)
-	return lazySlice{
-		cowIdx:     len(r.cowSlice) - 1,
-		byteReader: r,
-	}
-}
-
+// reset releases the tracked slice (pointer) returned by r.readNBytes.
 func (r *byteReader) reset() {
-	r.cowSlice = r.cowSlice[:0]
+	r.retPointers = r.retPointers[:0]
 }
 
 func (r *byteReader) cloneSlices() {
-	for i := range r.cowSlice {
-		r.cowSlice[i] = append([]byte(nil), r.cowSlice[i]...)
+	for i := range r.retPointers {
+		copied := make([]byte, len(*r.retPointers[i]))
+		copy(copied, *r.retPointers[i])
+		*r.retPointers[i] = copied
 	}
 }
 
