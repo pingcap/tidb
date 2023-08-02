@@ -50,11 +50,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/sessionctx/sessionstates"
->>>>>>> ffb0654ae85 (binlog: fix show pump/drainer status (#44764))
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
@@ -1678,18 +1674,12 @@ func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 	return nil
 }
 
-<<<<<<< HEAD
-// createRegistry returns an ectd registry
-func createRegistry(urls string) (*node.EtcdRegistry, error) {
-	ectdEndpoints, err := utils.ParseHostPortAddr(urls)
-=======
 // getOrCreateBinlogRegistry returns an etcd registry for binlog, need to close, and error
 func getOrCreateBinlogRegistry(urls string) (*node.EtcdRegistry, bool, error) {
 	if pumpClient := binloginfo.GetPumpsClient(); pumpClient != nil && pumpClient.EtcdRegistry != nil {
 		return pumpClient.EtcdRegistry, false, nil
 	}
-	ectdEndpoints, err := util.ParseHostPortAddr(urls)
->>>>>>> ffb0654ae85 (binlog: fix show pump/drainer status (#44764))
+	ectdEndpoints, err := utils.ParseHostPortAddr(urls)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
