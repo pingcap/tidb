@@ -1055,6 +1055,7 @@ func (remote *Backend) createMergeIter(ctx context.Context, start kv.Key) (*shar
 		log.FromContext(ctx).Info("seek props offsets",
 			zap.Uint64s("offsets", offsets),
 			zap.String("startKey", hex.EncodeToString(start)),
+			zap.Strings("dataFiles", sharedisk.PrettyFileNames(remote.dataFiles)),
 			zap.Strings("statsFiles", sharedisk.PrettyFileNames(remote.statsFiles)))
 	}
 
