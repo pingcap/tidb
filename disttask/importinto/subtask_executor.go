@@ -124,7 +124,6 @@ func verifyChecksum(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostPr
 			return err
 		}
 		logger.Warn("checksumTable failed, will skip this error and go on", zap.Error(err))
-		err = nil
 	}
 	if remoteChecksum != nil {
 		if !remoteChecksum.IsEqual(&localChecksum) {
