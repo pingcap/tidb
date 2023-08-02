@@ -99,7 +99,6 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 			return
 		}
 		partNum := len(allTopNs)
-		checkNum := len(checkTopNs)
 		removeVals := make([][]TopNMeta, partNum)
 		// Different TopN structures may hold the same value, we have to merge them.
 		counter := make(map[hack.MutableString]float64)
