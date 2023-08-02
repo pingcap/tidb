@@ -3542,6 +3542,13 @@ func checkExprInGroupByOrIsSingleValue(
 	if _, ok := expr.(*ast.AggregateFuncExpr); ok {
 		return
 	}
+	if f, ok := expr.(*ast.FuncCallExpr); ok {
+		if f.FnName.L == ast.Grouping {
+			// just skip grouping function check here, because later in building plan phase, we
+			// will do the grouping function valid check.
+			return
+		}
+	}
 	if _, ok := expr.(*ast.ColumnNameExpr); !ok {
 		for _, gbyExpr := range gbyExprs {
 			if ast.ExpressionDeepEqual(gbyExpr, expr) {
