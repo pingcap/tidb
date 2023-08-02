@@ -7,6 +7,8 @@ go_library(
         "batch_request_sender.go",
         "coprocessor.go",
         "coprocessor_cache.go",
+        "coprocessor_const.go",
+        "coprocessor_const_dev.go", #keep
         "key_ranges.go",
         "mpp.go",
         "mpp_probe.go",
