@@ -1302,10 +1302,20 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				Count:  p.Count,
 			}
 			extraInfo, extraCol, hasExtraCol := tryGetPkExtraColumn(p.ctx.GetSessionVars(), tblInfo)
-			// TODO: sometimes it will add a duplicate `_tidb_rowid` column in ts.schema()
 			if hasExtraCol {
-				idxLookup.ExtraHandleCol = extraCol
 				ts := idxLookup.TablePlans[0].(*PhysicalTableScan)
+				if findColNameByColID(ts.Columns, extraCol) != nil {
+					return rootTask, true
+				}
+
+				idxLookup.ExtraHandleCol = extraCol
+				extraProj := PhysicalProjection{
+					Exprs: expression.Column2Exprs(ts.schema.Clone().Columns),
+				}.Init(p.SCtx(), p.statsInfo(), p.blockOffset, nil)
+				extraProj.SetSchema(ts.schema.Clone())
+				extraProj.SetChildren(rootTask.p)
+				rootTask.p = extraProj
+
 				ts.Columns = append(ts.Columns, extraInfo)
 				ts.schema.Append(extraCol)
 				ts.HandleIdx = []int{len(ts.Columns) - 1}
