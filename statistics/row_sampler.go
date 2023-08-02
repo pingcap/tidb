@@ -65,9 +65,9 @@ type ReservoirRowSampleCollector struct {
 
 // ReservoirRowSampleItem is the item for the ReservoirRowSampleCollector. The weight is needed for the sampling algorithm.
 type ReservoirRowSampleItem struct {
+	Handle  kv.Handle
 	Columns []types.Datum
 	Weight  int64
-	Handle  kv.Handle
 }
 
 // EmptyReservoirSampleItemSize = (24 + 16 + 8) now.
@@ -119,15 +119,15 @@ func (h *WeightedRowSampleHeap) Pop() interface{} {
 
 // RowSampleBuilder is used to construct the ReservoirRowSampleCollector to get the samples.
 type RowSampleBuilder struct {
-	Sc              *stmtctx.StatementContext
 	RecordSet       sqlexec.RecordSet
+	Sc              *stmtctx.StatementContext
+	Rng             *rand.Rand
 	ColsFieldType   []*types.FieldType
 	Collators       []collate.Collator
 	ColGroups       [][]int64
 	MaxSampleSize   int
 	SampleRate      float64
 	MaxFMSketchSize int
-	Rng             *rand.Rand
 }
 
 // NewRowSampleCollector creates a collector from the given inputs.

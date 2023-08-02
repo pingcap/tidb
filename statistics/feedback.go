@@ -95,8 +95,8 @@ type QueryFeedbackKey struct {
 
 // QueryFeedbackMap is the collection of feedbacks.
 type QueryFeedbackMap struct {
-	Size      int
 	Feedbacks map[QueryFeedbackKey][]*QueryFeedback
+	Size      int
 }
 
 // NewQueryFeedbackMap builds a feedback collection.
@@ -387,9 +387,9 @@ func NonOverlappedFeedbacks(sc *stmtctx.StatementContext, fbs []Feedback) ([]Fee
 
 // BucketFeedback stands for all the feedback for a bucket.
 type BucketFeedback struct {
-	feedback []Feedback   // All the feedback info in the same bucket.
 	lower    *types.Datum // The lower bound of the new bucket.
 	upper    *types.Datum // The upper bound of the new bucket.
+	feedback []Feedback   // All the feedback info in the same bucket.
 }
 
 // outOfRange checks if the `val` is between `min` and `max`.

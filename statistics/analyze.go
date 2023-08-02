@@ -68,12 +68,12 @@ type AnalyzeResult struct {
 
 // AnalyzeResults represents the analyze results of a task.
 type AnalyzeResults struct {
-	TableID  AnalyzeTableID
-	Ars      []*AnalyzeResult
-	Count    int64
-	ExtStats *ExtendedStatsColl
 	Err      error
+	ExtStats *ExtendedStatsColl
 	Job      *AnalyzeJob
+	Ars      []*AnalyzeResult
+	TableID  AnalyzeTableID
+	Count    int64
 	StatsVer int
 	Snapshot uint64
 	// BaseCount is the original count in mysql.stats_meta at the beginning of analyze.

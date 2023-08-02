@@ -53,11 +53,11 @@ var (
 // CMSketch is used to estimate point queries.
 // Refer: https://en.wikipedia.org/wiki/Count-min_sketch
 type CMSketch struct {
-	depth        int32
-	width        int32
+	table        [][]uint32
 	count        uint64 // TopN is not counted in count
 	defaultValue uint64 // In sampled data, if cmsketch returns a small value (less than avg value / 2), then this will returned.
-	table        [][]uint32
+	depth        int32
+	width        int32
 }
 
 // NewCMSketch returns a new CM sketch.
@@ -80,8 +80,8 @@ func NewCMSketch(d, w int32) *CMSketch {
 
 // topNHelper wraps some variables used when building cmsketch with top n.
 type topNHelper struct {
-	sampleSize    uint64
 	sorted        []dataCnt
+	sampleSize    uint64
 	onlyOnceItems uint64
 	sumTopN       uint64
 	actualNumTop  uint32
@@ -133,7 +133,7 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 		sumTopN += sorted[actualNumTop].cnt
 	}
 
-	return &topNHelper{uint64(len(sample)), sorted, onlyOnceItems, sumTopN, actualNumTop}
+	return &topNHelper{sorted, uint64(len(sample)), onlyOnceItems, sumTopN, actualNumTop}
 }
 
 // NewCMSketchAndTopN returns a new CM sketch with TopN elements, the estimate NDV and the scale ratio.

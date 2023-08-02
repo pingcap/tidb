@@ -35,20 +35,21 @@ import (
 
 // Column represents a column histogram.
 type Column struct {
-	Histogram
-	CMSketch   *CMSketch
-	TopN       *TopN
-	FMSketch   *FMSketch
-	PhysicalID int64
-	Info       *model.ColumnInfo
-	IsHandle   bool
-	ErrorRate
-	Flag           int64
 	LastAnalyzePos types.Datum
-	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
+	CMSketch       *CMSketch
+	TopN           *TopN
+	FMSketch       *FMSketch
+	Info           *model.ColumnInfo
+	Histogram
+	ErrorRate
 
 	// StatsLoadedStatus indicates the status of column statistics
 	StatsLoadedStatus
+	PhysicalID int64
+	Flag       int64
+	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
+
+	IsHandle bool
 }
 
 func (c *Column) String() string {

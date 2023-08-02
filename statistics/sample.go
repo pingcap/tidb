@@ -40,12 +40,12 @@ import (
 type SampleItem struct {
 	// Value is the sampled column value.
 	Value types.Datum
-	// Ordinal is original position of this item in SampleCollector before sorting. This
-	// is used for computing correlation.
-	Ordinal int
 	// Handle is the handle of the sample in its key.
 	// This property is used to calculate Ordinal in fast analyze.
 	Handle kv.Handle
+	// Ordinal is original position of this item in SampleCollector before sorting. This
+	// is used for computing correlation.
+	Ordinal int
 }
 
 // EmptySampleItemSize is the size of empty SampleItem, 96 = 72 (datum) + 8 (int) + 16.
@@ -71,9 +71,9 @@ func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) ([]*Samp
 }
 
 type sampleItemSorter struct {
-	items []*SampleItem
-	sc    *stmtctx.StatementContext
 	err   error
+	sc    *stmtctx.StatementContext
+	items []*SampleItem
 }
 
 func (s *sampleItemSorter) Len() int {
@@ -95,17 +95,17 @@ func (s *sampleItemSorter) Swap(i, j int) {
 
 // SampleCollector will collect Samples and calculate the count and ndv of an attribute.
 type SampleCollector struct {
-	Samples       []*SampleItem
-	seenValues    int64 // seenValues is the current seen values.
-	IsMerger      bool
-	NullCount     int64
-	Count         int64 // Count is the number of non-null rows.
-	MaxSampleSize int64
 	FMSketch      *FMSketch
 	CMSketch      *CMSketch
 	TopN          *TopN
+	Samples       []*SampleItem
+	seenValues    int64 // seenValues is the current seen values.
+	NullCount     int64
+	Count         int64 // Count is the number of non-null rows.
+	MaxSampleSize int64
 	TotalSize     int64 // TotalSize is the total size of column.
 	MemSize       int64 // major memory size of this sample collector.
+	IsMerger      bool
 }
 
 // MergeSampleCollector merges two sample collectors.
@@ -214,17 +214,17 @@ func (c *SampleCollector) CalcTotalSize() {
 // SampleBuilder is used to build samples for columns.
 // Also, if primary key is handle, it will directly build histogram for it.
 type SampleBuilder struct {
-	Sc              *stmtctx.StatementContext
 	RecordSet       sqlexec.RecordSet
-	ColLen          int // ColLen is the number of columns need to be sampled.
+	Sc              *stmtctx.StatementContext
 	PkBuilder       *SortedBuilder
+	Collators       []collate.Collator
+	ColsFieldType   []*types.FieldType
+	ColLen          int // ColLen is the number of columns need to be sampled.
 	MaxBucketSize   int64
 	MaxSampleSize   int64
 	MaxFMSketchSize int64
 	CMSketchDepth   int32
 	CMSketchWidth   int32
-	Collators       []collate.Collator
-	ColsFieldType   []*types.FieldType
 }
 
 // CollectColumnStats collects sample from the result set using Reservoir Sampling algorithm,

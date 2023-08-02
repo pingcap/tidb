@@ -38,17 +38,17 @@ import (
 
 // Index represents an index histogram.
 type Index struct {
-	Histogram
-	CMSketch *CMSketch
-	TopN     *TopN
-	FMSketch *FMSketch
-	ErrorRate
-	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
-	Info           *model.IndexInfo
-	Flag           int64
 	LastAnalyzePos types.Datum
-	PhysicalID     int64
+	CMSketch       *CMSketch
+	TopN           *TopN
+	FMSketch       *FMSketch
+	Info           *model.IndexInfo
+	Histogram
+	ErrorRate
 	StatsLoadedStatus
+	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
+	Flag       int64
+	PhysicalID int64
 }
 
 // ItemID implements TableCacheItem
