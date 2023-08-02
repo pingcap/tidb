@@ -1561,7 +1561,6 @@ func TestTiDBDowngradeTo65(t *testing.T) {
 	require.NoError(t, err)
 	err = txn.Commit(ctx)
 	require.NoError(t, err)
-	require.NoError(t, err)
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	dom.Close()
