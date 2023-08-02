@@ -251,7 +251,7 @@ func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (Resu
 		rs, err = session.HandleNonTransactionalDML(ctx, s, tc.Session)
 	} else {
 		rs, err = tc.Session.ExecuteStmt(ctx, stmt)
-		if err == nil && rs != nil && len(rs.Fields()) > 0 && !tc.GetSessionVars().InRestrictedSQL {
+		if err == nil && rs != nil && !tc.GetSessionVars().InRestrictedSQL {
 			rs = newLogWrapped(
 				rs,
 				50,

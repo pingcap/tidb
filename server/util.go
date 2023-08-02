@@ -116,8 +116,10 @@ func dumpLengthEncodedInt(buffer []byte, n uint64) []byte {
 		return append(buffer, 0xfd, byte(n), byte(n>>8), byte(n>>16))
 
 	case n <= 0xffffffffffffffff:
-		return append(buffer, 0xfe, byte(n), byte(n>>8), byte(n>>16), byte(n>>24),
-			byte(n>>32), byte(n>>40), byte(n>>48), byte(n>>56))
+		return append(
+			buffer, 0xfe, byte(n), byte(n>>8), byte(n>>16), byte(n>>24),
+			byte(n>>32), byte(n>>40), byte(n>>48), byte(n>>56),
+		)
 	}
 
 	return buffer
@@ -553,20 +555,15 @@ func newLogWrapped(rs sqlexec.RecordSet, maxCachedRows int, fields ...zap.Field)
 	newRs := &recordSetLoggerWrapper{
 		rs:            rs,
 		maxCachedRows: maxCachedRows,
-		cachedRows:    make([]string, 0),
+		cachedRows:    make([]chunk.Row, 0),
 		zapFields:     fields,
-	}
-	newRs.columnInfos = make([]*ColumnInfo, len(rs.Fields()))
-	for i, field := range rs.Fields() {
-		newRs.columnInfos[i] = convertColumnInfo(field)
 	}
 	return newRs
 }
 
 type recordSetLoggerWrapper struct {
 	rs            sqlexec.RecordSet
-	cachedRows    []string
-	columnInfos   []*ColumnInfo
+	cachedRows    []chunk.Row
 	zapFields     []zap.Field
 	maxCachedRows int
 }
@@ -586,13 +583,7 @@ func (r *recordSetLoggerWrapper) Next(ctx context.Context, req *chunk.Chunk) err
 		row := chk.GetRow(i)
 		req.AppendRow(row)
 		if len(r.cachedRows) < r.maxCachedRows {
-			buf := make([]byte, 0)
-			buf, err = dumpTextRow(buf, r.columnInfos, row, nil)
-			if err != nil {
-				logutil.BgLogger().Error("recordSetLoggerWrapper failed to dump text row", zap.Error(err))
-				return err
-			}
-			r.cachedRows = append(r.cachedRows, string(buf))
+			r.cachedRows = append(r.cachedRows, row)
 		}
 	}
 	return nil
@@ -603,7 +594,23 @@ func (r *recordSetLoggerWrapper) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 }
 
 func (r *recordSetLoggerWrapper) Close() error {
-	r.zapFields = append(r.zapFields, zap.String("rows", "("+strings.Join(r.cachedRows, ");\n (")+")"))
+	columnInfos := make([]*ColumnInfo, 0, len(r.rs.Fields()))
+	for _, field := range r.rs.Fields() {
+		columnInfos = append(columnInfos, convertColumnInfo(field))
+	}
+
+	rows := make([]string, 0, len(r.cachedRows))
+	for _, row := range r.cachedRows {
+		buf := make([]byte, 0)
+		buf, err := dumpTextRow(buf, columnInfos, row, nil)
+		if err != nil {
+			logutil.BgLogger().Error("recordSetLoggerWrapper failed to dump text row", zap.Error(err))
+			return err
+		}
+		rows = append(rows, string(buf))
+	}
+
+	r.zapFields = append(r.zapFields, zap.String("rows", "("+strings.Join(rows, ");\n (")+")"))
 	logutil.BgLogger().Info(
 		"statement result",
 		r.zapFields...,
