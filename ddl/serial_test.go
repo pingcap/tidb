@@ -1342,12 +1342,12 @@ func TestGetReverseKey(t *testing.T) {
 	// [minInt64, minInt64]
 	checkRet(minKey, minKey.Next(), minKey.Next())
 	// [minInt64, 1<<64-1]
-	endKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(1<<61-1))
+	endKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(1<<61-1)).Next()
 	retKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(math.MinInt64+1)).Next()
 	checkRet(minKey, endKey, retKey)
 	// [1<<64, 2<<64]
 	startKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(1<<61))
-	endKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(2<<61))
+	endKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(2<<61)).Next()
 	checkRet(startKey, endKey, startKey.Next())
 	// [3<<64, maxInt64]
 	startKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(3<<61))
