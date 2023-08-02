@@ -334,8 +334,8 @@ type BatchPointGetPlan struct {
 	// this value would be true. This value would decide the behavior of BatchPointGetExec, i.e, whether to compute the table ID of the partition
 	// on the fly.
 	SinglePart bool
-	// PartTblID is the table ID for the specific table partition.
-	PartTblID int64
+	// PartTblID is the table IDs for the specific table partitions.
+	PartTblID []int64
 
 	// required by cost model
 	planCostInit bool
