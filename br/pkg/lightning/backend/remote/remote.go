@@ -466,7 +466,7 @@ func (remote *Backend) GetRangeSplitter(ctx context.Context, dataFiles sharedisk
 	}
 	// TODO(tangenta): determine the max key and max ways.
 	var approxSubtaskCnt uint64
-	if remote.config.SubtaskCnt == -1 {
+	if remote.config.SubtaskCnt < 1 {
 		approxSubtaskCnt = uint64(instanceCnt)
 	} else {
 		approxSubtaskCnt = uint64(remote.config.SubtaskCnt)

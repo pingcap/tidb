@@ -1396,7 +1396,7 @@ const (
 	DefTiDBGlobalSortWriteBatchSize                   = 8 * 1024
 	DefTiDBGlobalSortStatSampleKeys                   = 8 * 1024
 	DefTiDBGlobalSortStatSampleSize                   = int(1 * size.MB)
-	DefTiDBGlobalSortSubtaskCnt                       = -1
+	DefTiDBGlobalSortSubtaskCnt                       = 0
 	DefTiDBGlobalSortS3ChunkSize                      = int(5 * size.MB)
 )
 
