@@ -64,9 +64,9 @@ func (r *RangeSplitter) SplitOne() (kv.Key, []string, []string, [][]byte, error)
 
 	var curSize, curKeys uint64
 	var curRegionSize, curRegionKeys int64
-	var lastFilePath string
+	var lastFile, lastStats string
 	var lastWays int
-	var exhaustedFilePaths []string
+	var exhaustedFiles, exhaustedStats []string
 	for r.propIter.Next() {
 		if err := r.propIter.Error(); err != nil {
 			return nil, nil, nil, nil, err
@@ -79,7 +79,8 @@ func (r *RangeSplitter) SplitOne() (kv.Key, []string, []string, [][]byte, error)
 
 		ways := r.propIter.propHeap.Len()
 		if ways < lastWays {
-			exhaustedFilePaths = append(exhaustedFilePaths, lastFilePath)
+			exhaustedFiles = append(exhaustedFiles, lastFile)
+			exhaustedStats = append(exhaustedStats, lastStats)
 		}
 
 		dataFilePath := r.dataFileHandle.Get(prop.WriterID, prop.DataSeq)
@@ -96,14 +97,18 @@ func (r *RangeSplitter) SplitOne() (kv.Key, []string, []string, [][]byte, error)
 
 		if curSize >= r.maxSize || curKeys >= r.maxKeys || uint64(len(r.activeDataFiles)) >= r.maxWays {
 			dataFiles, statsFiles := r.collectFiles()
-			for _, p := range exhaustedFilePaths {
+			for _, p := range exhaustedFiles {
 				delete(r.activeDataFiles, p)
+			}
+			for _, p := range exhaustedStats {
+				delete(r.activeStatFiles, p)
 			}
 			splitKeys := r.collectSplitKeys()
 			return prop.Key, dataFiles, statsFiles, splitKeys, nil
 		}
 
-		lastFilePath = dataFilePath
+		lastFile = dataFilePath
+		lastStats = statFilePath
 		lastWays = ways
 	}
 

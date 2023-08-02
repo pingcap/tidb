@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"sync"
 	"sync/atomic"
 
@@ -108,7 +109,7 @@ func NewMergeIter(ctx context.Context, paths []string, pathsStartOffset []uint64
 
 	for i, rd := range it.dataFileReader {
 		k, v, err := rd.nextKV()
-		if err != nil {
+		if err != nil && err != io.EOF {
 			return nil, err
 		}
 		if len(k) == 0 {
