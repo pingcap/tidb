@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package extactorhandler_test
 
 import (
 	"database/sql"
@@ -26,6 +26,10 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	server2 "github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/server/handler/extactorhandler"
+	"github.com/pingcap/tidb/server/internal/testserverclient"
+	"github.com/pingcap/tidb/server/internal/testutil"
 	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
@@ -40,14 +44,14 @@ func TestExtractHandler(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 
-	driver := NewTiDBDriver(store)
-	client := newTestServerClient()
+	driver := server2.NewTiDBDriver(store)
+	client := testserverclient.NewTestServerClient()
 	cfg := util.NewTestConfig()
-	cfg.Port = client.port
-	cfg.Status.StatusPort = client.statusPort
+	cfg.Port = client.Port
+	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
 
-	server, err := NewServer(cfg, driver)
+	server, err := server2.NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
 
@@ -55,33 +59,33 @@ func TestExtractHandler(t *testing.T) {
 	require.NoError(t, err)
 	server.SetDomain(dom)
 
-	client.port = getPortFromTCPAddr(server.listener.Addr())
-	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
+	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
 	}()
-	client.waitUntilServerOnline()
+	client.WaitUntilServerOnline()
 	startTime := time.Now()
 	time.Sleep(time.Second)
 	prepareData4ExtractPlanTask(t, client)
 	time.Sleep(time.Second)
 	endTime := time.Now()
-	eh := &ExtractTaskServeHandler{extractHandler: dom.GetExtractHandle()}
+	eh := &extactorhandler.ExtractTaskServeHandler{ExtractHandler: dom.GetExtractHandle()}
 	router := mux.NewRouter()
 	router.Handle("/extract_task/dump", eh)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/extractTaskServeHandler", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/extractTaskServeHandler"))
 	}()
-	resp0, err := client.fetchStatus(fmt.Sprintf("/extract_task/dump?type=plan&begin=%s&end=%s",
+	resp0, err := client.FetchStatus(fmt.Sprintf("/extract_task/dump?type=plan&begin=%s&end=%s",
 		url.QueryEscape(startTime.Format(types.TimeFormat)), url.QueryEscape(endTime.Format(types.TimeFormat))))
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, resp0.Body.Close())
 	}()
 	require.Equal(t, resp0.StatusCode, http.StatusOK)
-	resp0, err = client.fetchStatus("/extract_task/dump?type=plan")
+	resp0, err = client.FetchStatus("/extract_task/dump?type=plan")
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, resp0.Body.Close())
@@ -89,8 +93,8 @@ func TestExtractHandler(t *testing.T) {
 	require.Equal(t, resp0.StatusCode, http.StatusOK)
 }
 
-func prepareData4ExtractPlanTask(t *testing.T, client *testServerClient) {
-	db, err := sql.Open("mysql", client.getDSN())
+func prepareData4ExtractPlanTask(t *testing.T, client *testserverclient.TestServerClient) {
+	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
 	defer func() {
 		err := db.Close()

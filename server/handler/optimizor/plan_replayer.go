@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package optimizor
 
 import (
 	"archive/zip"
@@ -30,11 +30,11 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/server/handler"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -51,27 +51,21 @@ type PlanReplayerHandler struct {
 	statusPort  uint
 }
 
-func (s *Server) newPlanReplayerHandler() *PlanReplayerHandler {
-	cfg := config.GetGlobalConfig()
-	prh := &PlanReplayerHandler{
-		address:    cfg.AdvertiseAddress,
-		statusPort: cfg.Status.StatusPort,
+// NewPlanReplayerHandler creates a new PlanReplayerHandler.
+func NewPlanReplayerHandler(is infoschema.InfoSchema, statsHandle *handle.Handle, infoGetter *infosync.InfoSyncer, address string, statusPort uint) *PlanReplayerHandler {
+	return &PlanReplayerHandler{
+		is:          is,
+		statsHandle: statsHandle,
+		infoGetter:  infoGetter,
+		address:     address,
+		statusPort:  statusPort,
 	}
-	if s.dom != nil && s.dom.InfoSyncer() != nil {
-		prh.infoGetter = s.dom.InfoSyncer()
-	}
-	if s.dom != nil && s.dom.InfoSchema() != nil {
-		prh.is = s.dom.InfoSchema()
-	}
-	if s.dom != nil && s.dom.StatsHandle() != nil {
-		prh.statsHandle = s.dom.StatsHandle()
-	}
-	return prh
 }
 
+// ServeHTTP handles request of dumping plan replayer file.
 func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
-	name := params[pFileName]
+	name := params[handler.FileName]
 	handler := downloadFileHandler{
 		filePath:           filepath.Join(replayer.GetPlanReplayerDirName(), name),
 		fileName:           name,
@@ -87,74 +81,74 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	handleDownloadFile(handler, w, req)
 }
 
-func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req *http.Request) {
+func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
-	name := params[pFileName]
-	path := handler.filePath
+	name := params[handler.FileName]
+	path := dfHandler.filePath
 	isForwarded := len(req.URL.Query().Get("forward")) > 0
-	localAddr := net.JoinHostPort(handler.address, strconv.Itoa(int(handler.statusPort)))
+	localAddr := net.JoinHostPort(dfHandler.address, strconv.Itoa(int(dfHandler.statusPort)))
 	exist, err := isExists(path)
 	if err != nil {
-		writeError(w, err)
+		handler.WriteError(w, err)
 		return
 	}
 	if exist {
 		//nolint: gosec
 		file, err := os.Open(path)
 		if err != nil {
-			writeError(w, err)
+			handler.WriteError(w, err)
 			return
 		}
 		content, err := io.ReadAll(file)
 		if err != nil {
-			writeError(w, err)
+			handler.WriteError(w, err)
 			return
 		}
 		err = file.Close()
 		if err != nil {
-			writeError(w, err)
+			handler.WriteError(w, err)
 			return
 		}
-		if handler.downloadedFilename == "plan_replayer" {
-			content, err = handlePlanReplayerCaptureFile(content, path, handler)
+		if dfHandler.downloadedFilename == "plan_replayer" {
+			content, err = handlePlanReplayerCaptureFile(content, path, dfHandler)
 			if err != nil {
-				writeError(w, err)
+				handler.WriteError(w, err)
 				return
 			}
 		}
 		_, err = w.Write(content)
 		if err != nil {
-			writeError(w, err)
+			handler.WriteError(w, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/zip")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", handler.downloadedFilename))
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", dfHandler.downloadedFilename))
 		logutil.BgLogger().Info("return dump file successfully", zap.String("filename", name),
 			zap.String("address", localAddr), zap.Bool("forwarded", isForwarded))
 		return
 	}
 	// handler.infoGetter will be nil only in unit test
 	// or we couldn't find file for forward request, return 404
-	if handler.infoGetter == nil || isForwarded {
+	if dfHandler.infoGetter == nil || isForwarded {
 		logutil.BgLogger().Info("failed to find dump file", zap.String("filename", name),
 			zap.String("address", localAddr), zap.Bool("forwarded", isForwarded))
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	// If we didn't find file in origin request, try to broadcast the request to all remote tidb-servers
-	topos, err := handler.infoGetter.GetAllTiDBTopology(req.Context())
+	topos, err := dfHandler.infoGetter.GetAllTiDBTopology(req.Context())
 	if err != nil {
-		writeError(w, err)
+		handler.WriteError(w, err)
 		return
 	}
 	client := util.InternalHTTPClient()
 	// transfer each remote tidb-server and try to find dump file
 	for _, topo := range topos {
-		if topo.IP == handler.address && topo.StatusPort == handler.statusPort {
+		if topo.IP == dfHandler.address && topo.StatusPort == dfHandler.statusPort {
 			continue
 		}
 		remoteAddr := net.JoinHostPort(topo.IP, strconv.Itoa(int(topo.StatusPort)))
-		url := fmt.Sprintf("%s://%s/%s?forward=true", handler.scheme, remoteAddr, handler.urlPath)
+		url := fmt.Sprintf("%s://%s/%s?forward=true", dfHandler.scheme, remoteAddr, dfHandler.urlPath)
 		resp, err := client.Get(url)
 		if err != nil {
 			logutil.BgLogger().Error("forward request failed",
@@ -168,22 +162,22 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 		}
 		content, err := io.ReadAll(resp.Body)
 		if err != nil {
-			writeError(w, err)
+			handler.WriteError(w, err)
 			return
 		}
 		err = resp.Body.Close()
 		if err != nil {
-			writeError(w, err)
+			handler.WriteError(w, err)
 			return
 		}
 		_, err = w.Write(content)
 		if err != nil {
-			writeError(w, err)
+			handler.WriteError(w, err)
 			return
 		}
 		// find dump file in one remote tidb-server, return file directly
 		w.Header().Set("Content-Type", "application/zip")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", handler.downloadedFilename))
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", dfHandler.downloadedFilename))
 		logutil.BgLogger().Info("return dump file successfully in remote server",
 			zap.String("filename", name), zap.String("remote-addr", remoteAddr))
 		return
@@ -192,7 +186,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 	logutil.BgLogger().Info("can't find dump file in any remote server", zap.String("filename", name))
 	w.WriteHeader(http.StatusNotFound)
 	_, err = fmt.Fprintf(w, "can't find dump file %s in any remote server", name)
-	writeError(w, err)
+	handler.WriteError(w, err)
 }
 
 type downloadFileHandler struct {
@@ -275,7 +269,7 @@ func loadSQLMetaFile(z *zip.Reader) (uint64, error) {
 			if err != nil {
 				return 0, errors.AddStack(err)
 			}
-			//nolint: errcheck,all_revive
+			//nolint: errcheck,all_revive,revive
 			defer v.Close()
 			_, err = toml.NewDecoder(v).Decode(&varMap)
 			if err != nil {
@@ -299,7 +293,7 @@ func loadSchemaMeta(z *zip.Reader, is infoschema.InfoSchema) (map[int64]*tblInfo
 			if err != nil {
 				return nil, errors.AddStack(err)
 			}
-			//nolint: errcheck,all_revive
+			//nolint: errcheck,all_revive,revive
 			defer v.Close()
 			buf := new(bytes.Buffer)
 			_, err = buf.ReadFrom(v)

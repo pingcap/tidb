@@ -268,15 +268,15 @@ func (*encodingBuilder) MakeEmptyRows() encode.Rows {
 type targetInfoGetter struct {
 	tls      *common.TLS
 	targetDB *sql.DB
-	pdAddr   string
+	pdCli    pd.Client
 }
 
 // NewTargetInfoGetter creates an TargetInfoGetter with local backend implementation.
-func NewTargetInfoGetter(tls *common.TLS, db *sql.DB, pdAddr string) backend.TargetInfoGetter {
+func NewTargetInfoGetter(tls *common.TLS, db *sql.DB, pdCli pd.Client) backend.TargetInfoGetter {
 	return &targetInfoGetter{
 		tls:      tls,
 		targetDB: db,
-		pdAddr:   pdAddr,
+		pdCli:    pdCli,
 	}
 }
 
@@ -297,10 +297,10 @@ func (g *targetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *back
 	if err := checkTiDBVersion(ctx, versionStr, localMinTiDBVersion, localMaxTiDBVersion); err != nil {
 		return err
 	}
-	if err := tikv.CheckPDVersion(ctx, g.tls, g.pdAddr, localMinPDVersion, localMaxPDVersion); err != nil {
+	if err := tikv.CheckPDVersion(ctx, g.tls, g.pdCli.GetLeaderAddr(), localMinPDVersion, localMaxPDVersion); err != nil {
 		return err
 	}
-	if err := tikv.CheckTiKVVersion(ctx, g.tls, g.pdAddr, localMinTiKVVersion, localMaxTiKVVersion); err != nil {
+	if err := tikv.CheckTiKVVersion(ctx, g.tls, g.pdCli.GetLeaderAddr(), localMinTiKVVersion, localMaxTiKVVersion); err != nil {
 		return err
 	}
 
@@ -1024,7 +1024,7 @@ func (local *Backend) readAndSplitIntoRange(
 	sizeLimit int64,
 	keysLimit int64,
 ) ([]Range, error) {
-	firstKey, lastKey, err := engine.getFirstAndLastKey(nil, nil)
+	firstKey, lastKey, err := engine.GetFirstAndLastKey(nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1191,7 +1191,7 @@ var fakeRegionJobs map[[2]string]struct {
 // It will retry internally when scan region meet error.
 func (local *Backend) generateJobForRange(
 	ctx context.Context,
-	engine *Engine,
+	engine ingestData,
 	keyRange Range,
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {
@@ -1210,7 +1210,7 @@ func (local *Backend) generateJobForRange(
 	})
 
 	start, end := keyRange.start, keyRange.end
-	pairStart, pairEnd, err := engine.getFirstAndLastKey(start, end)
+	pairStart, pairEnd, err := engine.GetFirstAndLastKey(start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -1247,7 +1247,7 @@ func (local *Backend) generateJobForRange(
 			keyRange:        intersectRange(region.Region, Range{start: start, end: end}),
 			region:          region,
 			stage:           regionScanned,
-			engine:          engine,
+			ingestData:      engine,
 			regionSplitSize: regionSplitSize,
 			regionSplitKeys: regionSplitKeys,
 			metrics:         local.metrics,
@@ -1283,7 +1283,7 @@ func (local *Backend) startWorker(
 			case needRescan:
 				jobs, err2 := local.generateJobForRange(
 					ctx,
-					job.engine,
+					job.ingestData,
 					job.keyRange,
 					job.regionSplitSize,
 					job.regionSplitKeys,
@@ -1719,7 +1719,7 @@ func (local *Backend) LocalWriter(_ context.Context, cfg *backend.LocalWriterCon
 // This function will spawn a goroutine to keep switch mode periodically until the context is done.
 // The return done channel is used to notify the caller that the background goroutine is exited.
 func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []Range) (<-chan struct{}, error) {
-	switcher := NewTiKVModeSwitcher(local.tls, local.PDAddr, log.FromContext(ctx).Logger)
+	switcher := NewTiKVModeSwitcher(local.tls, local.pdCtl.GetPDClient(), log.FromContext(ctx).Logger)
 	done := make(chan struct{})
 
 	keyRanges := make([]*sst.Range, 0, len(ranges))

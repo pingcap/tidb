@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package tests
 
 import (
 	"context"
@@ -29,6 +29,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/server/internal/testserverclient"
+	"github.com/pingcap/tidb/server/internal/testutil"
 	util2 "github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
@@ -61,18 +64,18 @@ func isTLSExpiredError(err error) bool {
 func TestLoadData1(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	ts.runTestLoadDataWithColumnList(t, ts.server)
-	ts.runTestLoadData(t, ts.server)
-	ts.runTestLoadDataWithSelectIntoOutfile(t, ts.server)
-	ts.runTestLoadDataForSlowLog(t, ts.server)
+	ts.RunTestLoadDataWithColumnList(t, ts.server)
+	ts.RunTestLoadData(t, ts.server)
+	ts.RunTestLoadDataWithSelectIntoOutfile(t)
+	ts.RunTestLoadDataForSlowLog(t)
 }
 
 func TestConfigDefaultValue(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	ts.runTestsOnNewDB(t, nil, "config", func(dbt *testkit.DBTestKit) {
+	ts.RunTestsOnNewDB(t, nil, "config", func(dbt *testkit.DBTestKit) {
 		rows := dbt.MustQuery("select @@tidb_slow_log_threshold;")
-		ts.checkRows(t, rows, "300")
+		ts.CheckRows(t, rows, "300")
 	})
 }
 
@@ -87,19 +90,19 @@ func TestLoadDataAutoRandom(t *testing.T) {
 	}()
 	ts := createTidbTestSuite(t)
 
-	ts.runTestLoadDataAutoRandom(t)
+	ts.RunTestLoadDataAutoRandom(t)
 }
 
 func TestLoadDataAutoRandomWithSpecialTerm(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	ts.runTestLoadDataAutoRandomWithSpecialTerm(t)
+	ts.RunTestLoadDataAutoRandomWithSpecialTerm(t)
 }
 
 func TestExplainFor(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	ts.runTestExplainForConn(t)
+	ts.RunTestExplainForConn(t)
 }
 
 func TestStmtCount(t *testing.T) {
@@ -111,22 +114,22 @@ func TestStmtCount(t *testing.T) {
 	cfg.Performance.TCPKeepAlive = true
 	ts := createTidbTestSuiteWithCfg(t, cfg)
 
-	ts.runTestStmtCount(t)
+	ts.RunTestStmtCount(t)
 }
 
 func TestDBStmtCount(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	ts.runTestDBStmtCount(t)
+	ts.RunTestDBStmtCount(t)
 }
 
 func TestLoadDataListPartition(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	ts.runTestLoadDataForListPartition(t)
-	ts.runTestLoadDataForListPartition2(t)
-	ts.runTestLoadDataForListColumnPartition(t)
-	ts.runTestLoadDataForListColumnPartition2(t)
+	ts.RunTestLoadDataForListPartition(t)
+	ts.RunTestLoadDataForListPartition2(t)
+	ts.RunTestLoadDataForListColumnPartition(t)
+	ts.RunTestLoadDataForListColumnPartition2(t)
 }
 
 func TestInvalidTLS(t *testing.T) {
@@ -140,7 +143,7 @@ func TestInvalidTLS(t *testing.T) {
 		SSLCert: "bogus-server-cert.pem",
 		SSLKey:  "bogus-server-key.pem",
 	}
-	_, err := NewServer(cfg, ts.tidbdrv)
+	_, err := server.NewServer(cfg, ts.tidbdrv)
 	require.Error(t, err)
 }
 
@@ -151,24 +154,24 @@ func TestTLSAuto(t *testing.T) {
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "skip-verify"
 	}
-	cli := newTestServerClient()
+	cli := testserverclient.NewTestServerClient()
 	cfg := util2.NewTestConfig()
-	cfg.Port = cli.port
+	cfg.Port = cli.Port
 	cfg.Status.ReportStatus = false
 	cfg.Security.AutoTLS = true
 	cfg.Security.RSAKeySize = 528 // Reduces unittest runtime
 	err := os.MkdirAll(cfg.TempStoragePath, 0700)
 	require.NoError(t, err)
-	server, err := NewServer(cfg, ts.tidbdrv)
+	server, err := server.NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.domain)
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
-	err = cli.runTestTLSConnection(t, connOverrider) // Relying on automatically created TLS certificates
+	err = cli.RunTestTLSConnection(t, connOverrider) // Relying on automatically created TLS certificates
 	require.NoError(t, err)
 
 	server.Close()
@@ -197,33 +200,33 @@ func TestTLSBasic(t *testing.T) {
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "skip-verify"
 	}
-	cli := newTestServerClient()
+	cli := testserverclient.NewTestServerClient()
 	cfg := util2.NewTestConfig()
-	cfg.Port = cli.port
+	cfg.Port = cli.Port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
 		SSLCert: fileName("server-cert.pem"),
 		SSLKey:  fileName("server-key.pem"),
 	}
-	server, err := NewServer(cfg, ts.tidbdrv)
+	server, err := server.NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.domain)
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
-	err = cli.runTestTLSConnection(t, connOverrider) // We should establish connection successfully.
+	err = cli.RunTestTLSConnection(t, connOverrider) // We should establish connection successfully.
 	require.NoError(t, err)
-	cli.runTestRegression(t, connOverrider, "TLSRegression")
+	cli.RunTestRegression(t, connOverrider, "TLSRegression")
 	// Perform server verification.
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "client-certificate"
 	}
-	err = cli.runTestTLSConnection(t, connOverrider) // We should establish connection successfully.
+	err = cli.RunTestTLSConnection(t, connOverrider) // We should establish connection successfully.
 	require.NoError(t, err, "%v", errors.ErrorStack(err))
-	cli.runTestRegression(t, connOverrider, "TLSRegression")
+	cli.RunTestRegression(t, connOverrider, "TLSRegression")
 
 	// Test SSL/TLS session vars
 	var v *variable.SessionVars
@@ -259,9 +262,9 @@ func TestTLSVerify(t *testing.T) {
 	require.NoError(t, err)
 
 	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
-	cli := newTestServerClient()
+	cli := testserverclient.NewTestServerClient()
 	cfg := util2.NewTestConfig()
-	cfg.Port = cli.port
+	cfg.Port = cli.Port
 	cfg.Socket = dir + "/tidbtest.sock"
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -269,30 +272,30 @@ func TestTLSVerify(t *testing.T) {
 		SSLCert: fileName("server-cert.pem"),
 		SSLKey:  fileName("server-key.pem"),
 	}
-	server, err := NewServer(cfg, ts.tidbdrv)
+	server, err := server.NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.domain)
 	defer server.Close()
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
 	// The client does not provide a certificate, the connection should succeed.
-	err = cli.runTestTLSConnection(t, nil)
+	err = cli.RunTestTLSConnection(t, nil)
 	require.NoError(t, err)
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "client-certificate"
 	}
-	cli.runTestRegression(t, connOverrider, "TLSRegression")
+	cli.RunTestRegression(t, connOverrider, "TLSRegression")
 	// The client provides a valid certificate.
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "client-certificate"
 	}
-	err = cli.runTestTLSConnection(t, connOverrider)
+	err = cli.RunTestTLSConnection(t, connOverrider)
 	require.NoError(t, err)
-	cli.runTestRegression(t, connOverrider, "TLSRegression")
+	cli.RunTestRegression(t, connOverrider, "TLSRegression")
 
 	require.False(t, isTLSExpiredError(errors.New("unknown test")))
 	require.False(t, isTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}))
@@ -306,24 +309,24 @@ func TestTLSVerify(t *testing.T) {
 	// Test connecting with a client that does not have TLS configured.
 	// It can still connect, but it should not be able to change "require_secure_transport" to "ON"
 	// because that is a lock-out risk.
-	err = cli.runTestEnableSecureTransport(t, nil)
+	err = cli.RunTestEnableSecureTransport(t, nil)
 	require.ErrorContains(t, err, "require_secure_transport can only be set to ON if the connection issuing the change is secure")
 
 	// Success: when using a secure connection, the value of "require_secure_transport" can change to "ON"
-	err = cli.runTestEnableSecureTransport(t, connOverrider)
+	err = cli.RunTestEnableSecureTransport(t, connOverrider)
 	require.NoError(t, err)
 
 	// This connection will now fail since the client is not configured to use TLS.
-	err = cli.runTestTLSConnection(t, nil)
+	err = cli.RunTestTLSConnection(t, nil)
 	require.ErrorContains(t, err, "Connections using insecure transport are prohibited while --require_secure_transport=ON")
 
 	// However, this connection is successful
-	err = cli.runTestTLSConnection(t, connOverrider)
+	err = cli.RunTestTLSConnection(t, connOverrider)
 	require.NoError(t, err)
 
 	// Test socketFile does not require TLS enabled in require-secure-transport.
 	// Since this restriction should only apply to TCP connections.
-	err = cli.runTestTLSConnection(t, func(config *mysql.Config) {
+	err = cli.RunTestTLSConnection(t, func(config *mysql.Config) {
 		config.User = "root"
 		config.Net = "unix"
 		config.Addr = cfg.Socket
@@ -355,9 +358,9 @@ func TestErrorNoRollback(t *testing.T) {
 		os.Remove("/tmp/client-cert-rollback.pem")
 	}()
 
-	cli := newTestServerClient()
+	cli := testserverclient.NewTestServerClient()
 	cfg := util2.NewTestConfig()
-	cfg.Port = cli.port
+	cfg.Port = cli.Port
 	cfg.Status.ReportStatus = false
 
 	cfg.Security = config.Security{
@@ -365,7 +368,7 @@ func TestErrorNoRollback(t *testing.T) {
 		SSLCert: "wrong path",
 		SSLKey:  "wrong path",
 	}
-	_, err = NewServer(cfg, ts.tidbdrv)
+	_, err = server.NewServer(cfg, ts.tidbdrv)
 	require.Error(t, err)
 
 	// test reload tls fail with/without "error no rollback option"
@@ -374,10 +377,10 @@ func TestErrorNoRollback(t *testing.T) {
 		SSLCert: "/tmp/server-cert-rollback.pem",
 		SSLKey:  "/tmp/server-key-rollback.pem",
 	}
-	server, err := NewServer(cfg, ts.tidbdrv)
+	server, err := server.NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.domain)
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
@@ -387,16 +390,16 @@ func TestErrorNoRollback(t *testing.T) {
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "client-cert-rollback-test"
 	}
-	err = cli.runTestTLSConnection(t, connOverrider)
+	err = cli.RunTestTLSConnection(t, connOverrider)
 	require.NoError(t, err)
 	os.Remove("/tmp/server-key-rollback.pem")
-	err = cli.runReloadTLS(t, connOverrider, false)
+	err = cli.RunReloadTLS(t, connOverrider, false)
 	require.Error(t, err)
-	tlsCfg := server.getTLSConfig()
+	tlsCfg := server.GetTLSConfig()
 	require.NotNil(t, tlsCfg)
-	err = cli.runReloadTLS(t, connOverrider, true)
+	err = cli.RunReloadTLS(t, connOverrider, true)
 	require.NoError(t, err)
-	tlsCfg = server.getTLSConfig()
+	tlsCfg = server.GetTLSConfig()
 	require.Nil(t, tlsCfg)
 }
 
@@ -510,19 +513,19 @@ func TestReloadTLS(t *testing.T) {
 	}()
 
 	// try old cert used in startup configuration.
-	cli := newTestServerClient()
+	cli := testserverclient.NewTestServerClient()
 	cfg := util2.NewTestConfig()
-	cfg.Port = cli.port
+	cfg.Port = cli.Port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
 		SSLCA:   "/tmp/ca-cert-reload.pem",
 		SSLCert: "/tmp/server-cert-reload.pem",
 		SSLKey:  "/tmp/server-key-reload.pem",
 	}
-	server, err := NewServer(cfg, ts.tidbdrv)
+	server, err := server.NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.domain)
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
@@ -532,11 +535,11 @@ func TestReloadTLS(t *testing.T) {
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "client-certificate-reload"
 	}
-	err = cli.runTestTLSConnection(t, connOverrider)
+	err = cli.RunTestTLSConnection(t, connOverrider)
 	require.NoError(t, err)
 
 	// try reload a valid cert.
-	tlsCfg := server.getTLSConfig()
+	tlsCfg := server.GetTLSConfig()
 	cert, err := x509.ParseCertificate(tlsCfg.Certificates[0].Certificate[0])
 	require.NoError(t, err)
 	oldExpireTime := cert.NotAfter
@@ -552,15 +555,15 @@ func TestReloadTLS(t *testing.T) {
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "skip-verify"
 	}
-	err = cli.runReloadTLS(t, connOverrider, false)
+	err = cli.RunReloadTLS(t, connOverrider, false)
 	require.NoError(t, err)
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "client-certificate-reload"
 	}
-	err = cli.runTestTLSConnection(t, connOverrider)
+	err = cli.RunTestTLSConnection(t, connOverrider)
 	require.NoError(t, err)
 
-	tlsCfg = server.getTLSConfig()
+	tlsCfg = server.GetTLSConfig()
 	cert, err = x509.ParseCertificate(tlsCfg.Certificates[0].Certificate[0])
 	require.NoError(t, err)
 	newExpireTime := cert.NotAfter
@@ -579,12 +582,12 @@ func TestReloadTLS(t *testing.T) {
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "skip-verify"
 	}
-	err = cli.runReloadTLS(t, connOverrider, false)
+	err = cli.RunReloadTLS(t, connOverrider, false)
 	require.NoError(t, err)
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "client-certificate-reload"
 	}
-	err = cli.runTestTLSConnection(t, connOverrider)
+	err = cli.RunTestTLSConnection(t, connOverrider)
 	require.NotNil(t, err)
 	require.Truef(t, isTLSExpiredError(err), "real error is %+v", err)
 	server.Close()
