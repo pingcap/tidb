@@ -28,10 +28,7 @@ import (
 
 // LFU is a LFU based on the ristretto.Cache
 type LFU struct {
-	l0cache *ristretto.Cache
-	l1cache *ristretto.Cache
-	l2cache *ristretto.Cache
-
+	cache        *ristretto.Cache
 	resultKeySet *keySetShard
 	cost         atomic.Int64
 }
@@ -64,40 +61,14 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 	if err != nil {
 		return nil, err
 	}
-	result.l0cache = cache
-	l1cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters:        mathutil.Max(totalMemCost/128*2, 10), // assume the cost per table stats is 128
-		MaxCost:            totalMemCost,
-		BufferItems:        bufferItems,
-		OnEvict:            result.onEvict,
-		OnExit:             result.onExit,
-		IgnoreInternalCost: intest.InTest,
-		Metrics:            intest.InTest,
-	})
-	if err != nil {
-		return nil, err
-	}
-	result.l1cache = l1cache
-	l2cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters:        mathutil.Max(totalMemCost/128*2, 10), // assume the cost per table stats is 128
-		MaxCost:            totalMemCost,
-		BufferItems:        bufferItems,
-		OnEvict:            result.onEvict,
-		OnExit:             result.onExit,
-		IgnoreInternalCost: intest.InTest,
-		Metrics:            intest.InTest,
-	})
-	if err != nil {
-		return nil, err
-	}
-	result.l2cache = l2cache
+	result.cache = cache
 	result.resultKeySet = newKeySetShard()
 	return result, err
 }
 
 // Get implements statsCacheInner
 func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
-	result, ok := s.l0cache.Get(tid)
+	result, ok := s.cache.Get(tid)
 	if !ok {
 		return nil, ok
 	}
@@ -106,21 +77,27 @@ func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
 
 // Put implements statsCacheInner
 func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
-	ok := s.l0cache.Set(tblID, tbl, tbl.MemoryUsage().TotalTrackingMemUsage())
+	ok := s.cache.Set(tblID, tbl, tbl.MemoryUsage().TotalTrackingMemUsage())
 	if ok { // NOTE: `s.cache` and `s.resultKeySet` may be inconsistent since the update operation is not atomic, but it's acceptable for our scenario
 		s.resultKeySet.Add(tblID)
 		s.cost.Add(tbl.MemoryUsage().TotalTrackingMemUsage())
-		metrics.CostGauge.Set(float64(s.cost.Load()))
+	} else {
+		cost := s.resultKeySet.Remove(tblID)
+		if cost != 0 {
+			s.cost.Add(-1 * cost)
+		}
 	}
+	metrics.CostGauge.Set(float64(s.cost.Load()))
 	return ok
 }
 
 // Del implements statsCacheInner
 func (s *LFU) Del(tblID int64) {
-	s.l0cache.Del(tblID)
-	s.l1cache.Del(tblID)
-	s.l2cache.Del(tblID)
-	s.resultKeySet.Remove(tblID)
+	s.cache.Del(tblID)
+	cost := s.resultKeySet.Remove(tblID)
+	if cost != 0 {
+		s.cost.Add(-1 * cost)
+	}
 }
 
 // Cost implements statsCacheInner
@@ -132,11 +109,26 @@ func (s *LFU) Cost() int64 {
 func (s *LFU) Values() []*statistics.Table {
 	result := make([]*statistics.Table, 0, 512)
 	for _, k := range s.resultKeySet.Keys() {
-		if value, ok := s.l0cache.Get(k); ok {
+		if value, ok := s.cache.Get(k); ok {
 			result = append(result, value.(*statistics.Table))
 		}
 	}
 	return result
+}
+
+// dropEvicted drop stats for table column/index
+func dropEvicted(item statistics.TableCacheItem) {
+	if !item.IsStatsInitialized() {
+		return
+	}
+	if item.IsCMSExist() && item.StatsVer() < statistics.Version2 {
+		item.DropCMS()
+	}
+	// For stats version2, there is no cms thus we directly drop topn
+	item.DropTopN()
+	item.DropTopN()
+	item.DropHist()
+	return
 }
 
 func (s *LFU) onEvict(item *ristretto.Item) {
@@ -144,26 +136,14 @@ func (s *LFU) onEvict(item *ristretto.Item) {
 	// is also called when the evict event occurs.
 	metrics.EvictCounter.Inc()
 	table := item.Value.(*statistics.Table)
-	var getEvictedStatus int
 	for _, column := range table.Columns {
-		statistics.DropEvicted(column)
-		getEvictedStatus = column.GetEvictedStatus()
+		dropEvicted(column)
 	}
 	for _, indix := range table.Indices {
-		statistics.DropEvicted(indix)
-		getEvictedStatus = indix.GetEvictedStatus()
+		dropEvicted(indix)
 	}
-	switch getEvictedStatus {
-	case statistics.AllLoaded:
-		panic("unreachable")
-	case statistics.OnlyCmsEvicted:
-		s.l1cache.Set(item.Key, item.Value, item.Cost)
-	case statistics.OnlyHistRemained:
-		s.l2cache.Set(item.Key, item.Value, item.Cost)
-	case statistics.AllEvicted:
-		s.resultKeySet.AddKeyValue(int64(item.Key), item.Value.(*statistics.Table))
-		s.cost.Add(item.Value.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
-	}
+	s.resultKeySet.AddKeyValue(int64(item.Key), item.Value.(*statistics.Table))
+	s.cost.Add(item.Value.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
 }
 
 func (s *LFU) onExit(val interface{}) {
@@ -188,28 +168,22 @@ func (s *LFU) Copy() internal.StatsCacheInner {
 
 // SetCapacity implements statsCacheInner
 func (s *LFU) SetCapacity(maxCost int64) {
-	s.l0cache.UpdateMaxCost(maxCost)
+	s.cache.UpdateMaxCost(maxCost)
 	metrics.CapacityGauge.Set(float64(maxCost))
 }
 
 // wait blocks until all buffered writes have been applied. This ensures a call to Set()
 // will be visible to future calls to Get(). it is only used for test.
 func (s *LFU) wait() {
-	s.l0cache.Wait()
-	s.l1cache.Wait()
-	s.l2cache.Wait()
+	s.cache.Wait()
 }
 
 func (s *LFU) metrics() *ristretto.Metrics {
-	return s.l0cache.Metrics
+	return s.cache.Metrics
 }
 
 // Close implements statsCacheInner
 func (s *LFU) Close() {
-	s.l0cache.Close()
-	s.l1cache.Close()
-	s.l2cache.Close()
-	s.l0cache.Wait()
-	s.l1cache.Wait()
-	s.l2cache.Wait()
+	s.cache.Close()
+	s.cache.Wait()
 }

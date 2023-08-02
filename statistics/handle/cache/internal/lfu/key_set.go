@@ -32,10 +32,15 @@ func (ks *keySet) Add(key int64) {
 	ks.mu.Unlock()
 }
 
-func (ks *keySet) Remove(key int64) {
+func (ks *keySet) Remove(key int64) int64 {
+	var cost int64
 	ks.mu.Lock()
-	delete(ks.set, key)
+	if table, ok := ks.set[key]; ok {
+		cost = table.MemoryUsage().TotalTrackingMemUsage()
+		delete(ks.set, key)
+	}
 	ks.mu.Unlock()
+	return cost
 }
 
 func (ks *keySet) Keys() []int64 {

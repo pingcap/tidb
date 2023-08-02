@@ -373,15 +373,15 @@ func (c *Column) GetEvictedStatus() int {
 	return c.evictedStatus
 }
 
-func (c *Column) isStatsInitialized() bool {
+func (c *Column) IsStatsInitialized() bool {
 	return c.statsInitialized
 }
 
-func (c *Column) statsVer() int64 {
+func (c *Column) StatsVer() int64 {
 	return c.StatsVer
 }
 
-func (c *Column) isCMSExist() bool {
+func (c *Column) IsCMSExist() bool {
 	return c.CMSketch != nil
 }
 

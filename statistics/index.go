@@ -80,11 +80,11 @@ func (idx *Index) isStatsInitialized() bool {
 	return idx.statsInitialized
 }
 
-func (idx *Index) statsVer() int64 {
+func (idx *Index) StatsVer() int64 {
 	return idx.StatsVer
 }
 
-func (idx *Index) isCMSExist() bool {
+func (idx *Index) IsCMSExist() bool {
 	return idx.CMSketch != nil
 }
 
