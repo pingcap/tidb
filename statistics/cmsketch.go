@@ -801,15 +801,8 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 	}
 
 	partNum := len(topNs)
-	topNsNum := make([]int, partNum)
 	removeVals := make([][]TopNMeta, partNum)
-	for i, topN := range topNs {
-		if topN == nil {
-			topNsNum[i] = 0
-			continue
-		}
-		topNsNum[i] = len(topN.TopN)
-	}
+
 	// Different TopN structures may hold the same value, we have to merge them.
 	counter := make(map[hack.MutableString]float64)
 	// datumMap is used to store the mapping from the string type to datum type.
@@ -834,6 +827,9 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 			// 1. Check the topN first.
 			// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
 			for j := 0; j < partNum; j++ {
+				if atomic.LoadUint32(kiiled) == 1 {
+					return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
+				}
 				if (j == i && version >= 2) || topNs[j].findTopN(val.Encoded) != -1 {
 					continue
 				}

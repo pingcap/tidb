@@ -420,8 +420,8 @@ func TestExtensionStmtEvents(t *testing.T) {
 				return l.DB < r.DB || (l.DB == r.DB && l.Table < r.Table)
 			})
 			sort.Slice(record.tables, func(i, j int) bool {
-				l := subCase.tables[i]
-				r := subCase.tables[j]
+				l := record.tables[i]
+				r := record.tables[j]
 				return l.DB < r.DB || (l.DB == r.DB && l.Table < r.Table)
 			})
 			require.Equal(t, subCase.tables, record.tables)

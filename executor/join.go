@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/internal/applycache"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/terror"
@@ -1266,7 +1267,7 @@ type NestedLoopApplyExec struct {
 
 	joiner joiner
 
-	cache              *applyCache
+	cache              *applycache.ApplyCache
 	canUseCache        bool
 	cacheHitCounter    int
 	cacheAccessCounter int
@@ -1329,7 +1330,7 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.innerList.GetMemTracker().AttachTo(e.memTracker)
 
 	if e.canUseCache {
-		e.cache, err = newApplyCache(e.ctx)
+		e.cache, err = applycache.NewApplyCache(e.ctx)
 		if err != nil {
 			return err
 		}
