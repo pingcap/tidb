@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/internal"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -1327,7 +1328,7 @@ func TestMultipleTableUpdate(t *testing.T) {
 func TestDelete(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	fillData(tk, "delete_test")
+	internal.FillData(tk, "delete_test")
 
 	tk.MustExec(`update delete_test set name = "abc" where id = 2;`)
 	tk.CheckExecResult(1, 0)
@@ -2848,7 +2849,6 @@ func TestWriteListColumnsPartitionTable2(t *testing.T) {
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows())
 }
 
-// TestWriteListColumnsPartitionTable2 test for write list partition when the partition by multi-columns.
 func TestWriteListPartitionTableIssue21437(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3128,7 +3128,7 @@ func TestUpdate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	fillData(tk, "update_test")
+	internal.FillData(tk, "update_test")
 
 	updateStr := `UPDATE update_test SET name = "abc" where id > 0;`
 	tk.MustExec(updateStr)

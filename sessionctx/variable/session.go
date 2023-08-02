@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -743,6 +744,9 @@ type SessionVars struct {
 	// PlanColumnID is the unique id for column when building plan.
 	PlanColumnID atomic.Int64
 
+	// MapScalarSubQ maps the scalar sub queries from its ID to its struct.
+	MapScalarSubQ []interface{}
+
 	// MapHashCode2UniqueID4ExtendedCol map the expr's hash code to specified unique ID.
 	MapHashCode2UniqueID4ExtendedCol map[string]int
 
@@ -821,6 +825,8 @@ type SessionVars struct {
 	// Enable3StageMultiDistinctAgg indicates whether to allow 3 stage multi distinct aggregate
 	Enable3StageMultiDistinctAgg bool
 
+	ExplainNonEvaledSubQuery bool
+
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
 
@@ -879,7 +885,7 @@ type SessionVars struct {
 	TiFlashMaxBytesBeforeExternalSort int64
 
 	// TiFlashEnablePipelineMode means if we should use pipeline model to execute query or not in tiflash.
-	// Default value is `false`, means never use pipeline model in tiflash.
+	// Default value is `true`, means never use pipeline model in tiflash.
 	// Value set to `true` means try to execute query with pipeline model in tiflash.
 	TiFlashEnablePipelineMode bool
 
@@ -1323,6 +1329,8 @@ type SessionVars struct {
 
 	// RequestSourceType is the type of inner request.
 	RequestSourceType string
+	// ExplicitRequestSourceType is the type of origin external request.
+	ExplicitRequestSourceType string
 
 	// MemoryDebugModeMinHeapInUse indicated the minimum heapInUse threshold that triggers the memoryDebugMode.
 	MemoryDebugModeMinHeapInUse int64
@@ -1497,6 +1505,10 @@ type SessionVars struct {
 
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+
+	// TiFlashReplicaRead indicates the policy of TiFlash node selection when the query needs the TiFlash engine.
+	TiFlashReplicaRead tiflash.ReplicaRead
+
 	// HypoTiFlashReplicas are for the Index Advisor.
 	HypoTiFlashReplicas map[string]map[string]struct{} // dbName -> tblName -> whether to have replicas
 
@@ -1507,31 +1519,22 @@ type SessionVars struct {
 	// Runtime filter mode: only support OFF, LOCAL now
 	runtimeFilterMode RuntimeFilterMode
 
+	// Whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
+	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
+	LockUnchangedKeys bool
+
 	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
 	AnalyzeSkipColumnTypes map[string]struct{}
+
+	// SkipMissingPartitionStats controls how to handle missing partition stats when merging partition stats to global stats.
+	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
+	// When set to false, give up merging partition stats to global stats.
+	SkipMissingPartitionStats bool
 }
 
-var (
-	// variables below are for the optimizer fix control.
-
-	// TiDBOptFixControl44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
-	TiDBOptFixControl44262 uint64 = 44262
-	// TiDBOptFixControl44389 controls whether to consider non-point ranges of some CNF item when building ranges.
-	TiDBOptFixControl44389 uint64 = 44389
-	// TiDBOptFixControl44830 controls whether to allow to cache Batch/PointGet from some complex scenarios.
-	// See #44830 for more details.
-	TiDBOptFixControl44830 uint64 = 44830
-	// TiDBOptFixControl44823 controls the maximum number of parameters for a query that can be cached in the Plan Cache.
-	TiDBOptFixControl44823 uint64 = 44823
-)
-
-// GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
-func (s *SessionVars) GetOptimizerFixControlValue(key uint64) (value string, exist bool) {
-	if s.OptimizerFixControl == nil {
-		return "", false
-	}
-	value, exist = s.OptimizerFixControl[key]
-	return
+// GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
+func (s *SessionVars) GetOptimizerFixControlMap() map[uint64]string {
+	return s.OptimizerFixControl
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -2154,6 +2157,11 @@ func (s *SessionVars) CleanBuffers() {
 // AllocPlanColumnID allocates column id for plan.
 func (s *SessionVars) AllocPlanColumnID() int64 {
 	return s.PlanColumnID.Add(1)
+}
+
+// RegisterScalarSubQ register a scalar sub query into the map. This will be used for EXPLAIN.
+func (s *SessionVars) RegisterScalarSubQ(scalarSubQ interface{}) {
+	s.MapScalarSubQ = append(s.MapScalarSubQ, scalarSubQ)
 }
 
 // GetCharsetInfo gets charset and collation for current context.

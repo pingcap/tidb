@@ -47,10 +47,16 @@ func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHan
 			[]byte("task3"),
 		}, nil
 	}
+	if gTask.Step == proto.StepOne {
+		gTask.Step = proto.StepTwo
+		return [][]byte{
+			[]byte("task4"),
+		}, nil
+	}
 	return nil, nil
 }
 
-func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
+func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	return nil, nil
 }
 
@@ -119,8 +125,14 @@ func RegisterTaskMeta(v *atomic.Int64) {
 	scheduler.RegisterTaskType(proto.TaskTypeExample)
 	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
 		return &testScheduler{}, nil
-	}, scheduler.WithConcurrentSubtask())
+	})
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepTwo, func(_ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+		return &testScheduler{}, nil
+	})
 	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
+		return &testSubtaskExecutor{v: v}, nil
+	})
+	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepTwo, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &testSubtaskExecutor{v: v}, nil
 	})
 }
@@ -154,34 +166,17 @@ func DispatchTaskAndCheckSuccess(taskKey string, t *testing.T, v *atomic.Int64) 
 	task := DispatchTask(taskKey, t)
 
 	require.Equal(t, proto.TaskStateSucceed, task.State)
-	require.Equal(t, int64(9), v.Load())
+	require.Equal(t, int64(12), v.Load())
 	v.Store(0)
 }
 
 func DispatchAndCancelTask(taskKey string, t *testing.T, v *atomic.Int64) {
-	mgr, err := storage.GetTaskManager()
-	require.NoError(t, err)
-	taskID, err := mgr.AddNewGlobalTask(taskKey, proto.TaskTypeExample, 8, nil)
-	require.NoError(t, err)
-	start := time.Now()
-	mgr.CancelGlobalTask(taskID)
-	var task *proto.Task
-	for {
-		if time.Since(start) > 2*time.Minute {
-			require.FailNow(t, "timeout")
-		}
-
-		time.Sleep(time.Second)
-		task, err = mgr.GetGlobalTaskByID(taskID)
-		require.NoError(t, err)
-		require.NotNil(t, task)
-		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting {
-			break
-		}
-	}
-
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunCancel", "1*return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunCancel"))
+	}()
+	task := DispatchTask(taskKey, t)
 	require.Equal(t, proto.TaskStateReverted, task.State)
-	require.Equal(t, int64(0), v.Load())
 	v.Store(0)
 }
 
@@ -203,6 +198,9 @@ func TestFrameworkBasic(t *testing.T) {
 	time.Sleep(2 * time.Second) // make sure owner changed
 	DispatchTaskAndCheckSuccess("key3", t, &v)
 	DispatchTaskAndCheckSuccess("key4", t, &v)
+	distContext.SetOwner(1)
+	time.Sleep(2 * time.Second) // make sure owner changed
+	DispatchTaskAndCheckSuccess("key5", t, &v)
 	distContext.Close()
 }
 
@@ -295,5 +293,37 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
 	}()
 	DispatchTaskAndCheckFail("key1", t, &v)
+	distContext.Close()
+}
+
+func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+
+	var v atomic.Int64
+	RegisterTaskMeta(&v)
+	distContext := testkit.NewDistExecutionContext(t, 1)
+	err := failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockExecSubtaskInitEnvErr", "return()")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockExecSubtaskInitEnvErr"))
+	}()
+	DispatchTaskAndCheckFail("key1", t, &v)
+	distContext.Close()
+}
+
+func TestOwnerChange(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+	var v atomic.Int64
+	RegisterTaskMeta(&v)
+
+	distContext := testkit.NewDistExecutionContext(t, 3)
+	dispatcher.MockOwnerChange = func() {
+		distContext.SetOwner(0)
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockOwnerChange", "1*return(true)"))
+	DispatchTaskAndCheckSuccess("😊", t, &v)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockOwnerChange"))
 	distContext.Close()
 }

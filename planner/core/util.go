@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/core/internal/base"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -197,7 +198,7 @@ func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
 type baseSchemaProducer struct {
 	schema *expression.Schema
 	names  types.NameSlice
-	basePlan
+	base.Plan
 }
 
 // OutputNames returns the outputting names of each column.
@@ -233,7 +234,7 @@ func (s *baseSchemaProducer) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = size.SizeOfPointer + size.SizeOfSlice + int64(cap(s.names))*size.SizeOfPointer + s.basePlan.MemoryUsage()
+	sum = size.SizeOfPointer + size.SizeOfSlice + int64(cap(s.names))*size.SizeOfPointer + s.Plan.MemoryUsage()
 	if s.schema != nil {
 		sum += s.schema.MemoryUsage()
 	}
@@ -295,12 +296,12 @@ func GetStatsInfoFromFlatPlan(flat *FlatPhysicalPlan) map[string]uint64 {
 	for _, op := range flat.Main {
 		switch p := op.Origin.(type) {
 		case *PhysicalIndexScan:
-			if _, ok := res[p.Table.Name.O]; p.stats != nil && !ok {
-				res[p.Table.Name.O] = p.stats.StatsVersion
+			if _, ok := res[p.Table.Name.O]; p.StatsInfo() != nil && !ok {
+				res[p.Table.Name.O] = p.StatsInfo().StatsVersion
 			}
 		case *PhysicalTableScan:
-			if _, ok := res[p.Table.Name.O]; p.stats != nil && !ok {
-				res[p.Table.Name.O] = p.stats.StatsVersion
+			if _, ok := res[p.Table.Name.O]; p.StatsInfo() != nil && !ok {
+				res[p.Table.Name.O] = p.StatsInfo().StatsVersion
 			}
 		}
 	}

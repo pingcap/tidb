@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"go.uber.org/multierr"
+	"go.uber.org/zap"
 )
 
 // Iter abstract iterator method for Ingester.
@@ -126,7 +127,7 @@ func (d *dupDetectIter) flush() {
 }
 
 func (d *dupDetectIter) record(rawKey, key, val []byte) {
-	d.logger.Debug("[detect-dupe] local duplicate key detected",
+	d.logger.Debug("local duplicate key detected", zap.String("category", "detect-dupe"),
 		logutil.Key("key", key),
 		logutil.Key("value", val),
 		logutil.Key("rawKey", rawKey))

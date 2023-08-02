@@ -52,6 +52,18 @@ func TestInitLRUWithSystemVar(t *testing.T) {
 	require.NotNil(t, lru)
 }
 
+func TestIssue45086(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	tk.MustExec(`CREATE TABLE t (a int(11) DEFAULT NULL, b date DEFAULT NULL)`)
+	tk.MustExec(`INSERT INTO t VALUES (1, current_date())`)
+
+	tk.MustExec(`PREPARE stmt FROM 'SELECT * FROM t WHERE b=current_date()'`)
+	require.Equal(t, len(tk.MustQuery(`EXECUTE stmt`).Rows()), 1)
+}
+
 func TestIssue43311(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -955,7 +967,7 @@ func TestIssue43852(t *testing.T) {
 	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
 	tk.MustQuery(`select * from t6 where a in (2015, '8')`).Check(testkit.Rows())
 	tk.MustQuery(`select * from t6 where a in (2009, '2023-01-21')`).Check(testkit.Rows(`2023-01-21 2023-01-05`))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
 func TestNonPreparedPlanTypeRandomly(t *testing.T) {
@@ -2403,6 +2415,62 @@ func TestIssue43667(t *testing.T) {
 
 	tctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestIssue43667, updateAST)
 	tk.MustQueryWithContext(tctx, `select (val) from cycle where pk = 4`).Check(testkit.Rows("4"))
+}
+
+func TestIssue45253(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`CREATE TABLE t1 (c1 INT)`)
+	tk.MustExec(`INSERT INTO t1 VALUES (1)`)
+
+	tk.MustQuery(`SELECT c1 FROM t1 WHERE TO_BASE64('牵')`).Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT c1 FROM t1 WHERE TO_BASE64('牵')`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT c1 FROM t1 WHERE TO_BASE64('哈')`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT c1 FROM t1 WHERE TO_BASE64('')`).Check(testkit.Rows())
+}
+
+func TestIssue45378(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`CREATE TABLE t1(c1 INT)`)
+	tk.MustExec(`INSERT INTO t1 VALUES (1)`)
+
+	tk.MustQuery(`SELECT c1 FROM t1 WHERE UNHEX(2038330881)`).Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT c1 FROM t1 WHERE UNHEX(2038330881)`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestBuiltinFuncFlen(t *testing.T) {
+	// same as TestIssue45378 and TestIssue45253
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t1(c1 INT)`)
+	tk.MustExec(`INSERT INTO t1 VALUES (1)`)
+
+	funcs := []string{ast.Abs, ast.Acos, ast.Asin, ast.Atan, ast.Ceil, ast.Ceiling, ast.Cos,
+		ast.CRC32, ast.Degrees, ast.Floor, ast.Ln, ast.Log, ast.Log2, ast.Log10, ast.Unhex,
+		ast.Radians, ast.Rand, ast.Round, ast.Sign, ast.Sin, ast.Sqrt, ast.Tan, ast.SM3,
+		ast.Quote, ast.RTrim, ast.ToBase64, ast.Trim, ast.Upper, ast.Ucase, ast.Hex,
+		ast.BitLength, ast.CharLength, ast.Compress, ast.MD5, ast.SHA1, ast.SHA}
+	args := []string{"2038330881", "'2038330881'", "'牵'", "-1", "''", "0"}
+
+	for _, f := range funcs {
+		for _, a := range args {
+			q := fmt.Sprintf("SELECT c1 from t1 where %s(%s)", f, a)
+			tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+			r1 := tk.MustQuery(q)
+			tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
+			r2 := tk.MustQuery(q)
+			r1.Sort().Check(r2.Sort().Rows())
+		}
+	}
 }
 
 func TestNonPreparedPlanCacheBuiltinFuncs(t *testing.T) {

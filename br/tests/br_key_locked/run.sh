@@ -16,12 +16,13 @@
 
 set -eu
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DB="$TEST_NAME"
 TABLE="usertable"
 
 run_sql "CREATE DATABASE $DB;"
 
-go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
+go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
 
 row_count_ori=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE;" | awk '/COUNT/{print $2}')
 

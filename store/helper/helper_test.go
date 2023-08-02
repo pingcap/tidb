@@ -229,31 +229,31 @@ func getRegionsTableInfoAns(dbs []*model.DBInfo) map[int64][]helper.TableInfo {
 	db := dbs[0]
 	ans[1] = []helper.TableInfo{}
 	ans[2] = []helper.TableInfo{
-		{db, db.Tables[0], true, db.Tables[0].Indices[0]},
-		{db, db.Tables[0], false, nil},
+		{db, db.Tables[0], false, nil, true, db.Tables[0].Indices[0]},
+		{db, db.Tables[0], false, nil, false, nil},
 	}
 	ans[3] = []helper.TableInfo{
-		{db, db.Tables[1], true, db.Tables[1].Indices[0]},
-		{db, db.Tables[1], true, db.Tables[1].Indices[1]},
-		{db, db.Tables[1], false, nil},
+		{db, db.Tables[1], false, nil, true, db.Tables[1].Indices[0]},
+		{db, db.Tables[1], false, nil, true, db.Tables[1].Indices[1]},
+		{db, db.Tables[1], false, nil, false, nil},
 	}
 	ans[4] = []helper.TableInfo{
-		{db, db.Tables[2], false, nil},
+		{db, db.Tables[2], false, nil, false, nil},
 	}
 	ans[5] = []helper.TableInfo{
-		{db, db.Tables[2], true, db.Tables[2].Indices[2]},
-		{db, db.Tables[2], false, nil},
+		{db, db.Tables[2], false, nil, true, db.Tables[2].Indices[2]},
+		{db, db.Tables[2], false, nil, false, nil},
 	}
 	ans[6] = []helper.TableInfo{
-		{db, db.Tables[2], true, db.Tables[2].Indices[0]},
+		{db, db.Tables[2], false, nil, true, db.Tables[2].Indices[0]},
 	}
 	ans[7] = []helper.TableInfo{
-		{db, db.Tables[2], true, db.Tables[2].Indices[1]},
+		{db, db.Tables[2], false, nil, true, db.Tables[2].Indices[1]},
 	}
 	ans[8] = []helper.TableInfo{
-		{db, db.Tables[2], true, db.Tables[2].Indices[1]},
-		{db, db.Tables[2], true, db.Tables[2].Indices[2]},
-		{db, db.Tables[2], false, nil},
+		{db, db.Tables[2], false, nil, true, db.Tables[2].Indices[1]},
+		{db, db.Tables[2], false, nil, true, db.Tables[2].Indices[2]},
+		{db, db.Tables[2], false, nil, false, nil},
 	}
 	return ans
 }

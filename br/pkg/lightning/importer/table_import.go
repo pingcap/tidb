@@ -198,7 +198,7 @@ func (tr *TableImporter) importTable(
 	}
 
 	// 2. Do duplicate detection if needed
-	if isLocalBackend(rc.cfg) && rc.cfg.TikvImporter.OnDuplicate != "" {
+	if isLocalBackend(rc.cfg) && rc.cfg.Conflict.Strategy != "" {
 		_, uuid := backend.MakeUUID(tr.tableName, common.IndexEngineID)
 		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupDetectDirSuffix)
 		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupResultDirSuffix)
@@ -1616,8 +1616,12 @@ func (tr *TableImporter) preDeduplicate(
 		return errors.Trace(originalErr)
 	}
 	if !rc.cfg.Checkpoint.Enable {
-		return errors.Errorf("duplicate key in table %s caused by index `%s`, you can turn on checkpoint and re-run to see the conflicting rows",
+		err := errors.Errorf("duplicate key in table %s caused by index `%s`, but because checkpoint is off we can't have more details",
 			tr.tableName, idxName)
+		rc.errorMgr.RecordDuplicateOnce(
+			ctx, tr.logger, tr.tableName, "<unknown-path>", -1, err.Error(), -1, "<unknown-data>",
+		)
+		return err
 	}
 	conflictEncodedRowIDs := dupErr.Args()[1].([][]byte)
 	if len(conflictEncodedRowIDs) < 2 {
@@ -1648,6 +1652,9 @@ func (tr *TableImporter) preDeduplicate(
 		tr.logger.Error("failed to get table checkpoint", zap.Error(err))
 		return errors.Trace(err)
 	}
+	var (
+		secondConflictPath string
+	)
 	for _, engineCp := range tableCp.Engines {
 		for _, chunkCp := range engineCp.Chunks {
 			if chunkCp.Chunk.PrevRowIDMax <= rowID[0] && rowID[0] < chunkCp.Chunk.RowIDMax {
@@ -1657,6 +1664,7 @@ func (tr *TableImporter) preDeduplicate(
 					chunkCp.FileMeta.Path)
 			}
 			if chunkCp.Chunk.PrevRowIDMax <= rowID[1] && rowID[1] < chunkCp.Chunk.RowIDMax {
+				secondConflictPath = chunkCp.FileMeta.Path
 				otherConflictMsg = fmt.Sprintf("row %d counting from offset %d in file %s",
 					rowID[1]-chunkCp.Chunk.PrevRowIDMax,
 					chunkCp.Chunk.Offset,
@@ -1670,6 +1678,10 @@ func (tr *TableImporter) preDeduplicate(
 			zap.Int64("rowID[1]", rowID[1]))
 		return errors.Trace(originalErr)
 	}
-	return errors.Errorf("duplicate entry for key '%s', a pair of conflicting rows are (%s, %s)",
+	err = errors.Errorf("duplicate entry for key '%s', a pair of conflicting rows are (%s, %s)",
 		idxName, oneConflictMsg, otherConflictMsg)
+	rc.errorMgr.RecordDuplicateOnce(
+		ctx, tr.logger, tr.tableName, secondConflictPath, -1, err.Error(), rowID[1], "<unknown-data>",
+	)
+	return err
 }

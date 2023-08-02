@@ -38,13 +38,12 @@ package server
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
-	"math"
 	"runtime/trace"
 	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -53,19 +52,23 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/server/internal/dump"
+	"github.com/pingcap/tidb/server/internal/parse"
+	"github.com/pingcap/tidb/server/internal/resultset"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
 )
 
-func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
+func (cc *clientConn) HandleStmtPrepare(ctx context.Context, sql string) error {
 	stmt, columns, params, err := cc.ctx.Prepare(sql)
 	if err != nil {
 		return err
@@ -75,11 +78,11 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 	// status ok
 	data = append(data, 0)
 	// stmt id
-	data = dumpUint32(data, uint32(stmt.ID()))
+	data = dump.Uint32(data, uint32(stmt.ID()))
 	// number columns
-	data = dumpUint16(data, uint16(len(columns)))
+	data = dump.Uint16(data, uint16(len(columns)))
 	// number params
-	data = dumpUint16(data, uint16(len(params)))
+	data = dump.Uint16(data, uint16(len(params)))
 	// filter [00]
 	data = append(data, 0)
 	// warning count
@@ -90,7 +93,7 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 	}
 
 	cc.initResultEncoder(ctx)
-	defer cc.rsEncoder.clean()
+	defer cc.rsEncoder.Clean()
 	if len(params) > 0 {
 		for i := 0; i < len(params); i++ {
 			data = data[0:4]
@@ -203,8 +206,12 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			paramValues = data[pos+1:]
 		}
 
-		err = parseExecArgs(cc.ctx.GetSessionVars().StmtCtx, args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
-		stmt.Reset()
+		err = parse.ExecArgs(cc.ctx.GetSessionVars().StmtCtx, args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
+		// This `.Reset` resets the arguments, so it's fine to just ignore the error (and the it'll be reset again in the following routine)
+		errReset := stmt.Reset()
+		if errReset != nil {
+			logutil.Logger(ctx).Warn("fail to reset statement in EXECUTE command", zap.Error(errReset))
+		}
 		if err != nil {
 			return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 		}
@@ -266,6 +273,26 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		PrepStmt:   prepStmt,
 	}
 
+	// first, try to clear the left cursor if there is one
+	if useCursor && stmt.GetCursorActive() {
+		if stmt.GetResultSet() != nil && stmt.GetResultSet().GetRowContainerReader() != nil {
+			stmt.GetResultSet().GetRowContainerReader().Close()
+		}
+		if stmt.GetRowContainer() != nil {
+			stmt.GetRowContainer().GetMemTracker().Detach()
+			stmt.GetRowContainer().GetDiskTracker().Detach()
+			err := stmt.GetRowContainer().Close()
+			if err != nil {
+				logutil.Logger(ctx).Error(
+					"Fail to close rowContainer before executing statement. May cause resource leak",
+					zap.Error(err))
+			}
+			stmt.StoreRowContainer(nil)
+		}
+		stmt.StoreResultSet(nil)
+		stmt.SetCursorActive(false)
+	}
+
 	// For the combination of `ComPrepare` and `ComExecute`, the statement name is stored in the client side, and the
 	// TiDB only has the ID, so don't try to construct an `EXECUTE SOMETHING`. Use the original prepared statement here
 	// instead.
@@ -295,54 +322,91 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		}
 		return false, cc.writeOK(ctx)
 	}
-	// since there are multiple implementations of ResultSet (the rs might be wrapped), we have to unwrap the rs before
-	// casting it to *tidbResultSet.
-	if result, ok := rs.(*tidbResultSet); ok {
-		if planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt); ok {
-			result.preparedStmt = planCacheStmt
-		}
+	if planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt); ok {
+		rs.SetPreparedStmt(planCacheStmt)
 	}
 
 	// if the client wants to use cursor
 	// we should hold the ResultSet in PreparedStatement for next stmt_fetch, and only send back ColumnInfo.
 	// Tell the client cursor exists in server by setting proper serverStatus.
 	if useCursor {
+		crs := resultset.WrapWithCursor(rs)
+
 		cc.initResultEncoder(ctx)
-		defer cc.rsEncoder.clean()
+		defer cc.rsEncoder.Clean()
 		// fetch all results of the resultSet, and stored them locally, so that the future `FETCH` command can read
 		// the rows directly to avoid running executor and accessing shared params/variables in the session
 		// NOTE: chunk should not be allocated from the connection allocator, which will reset after executing this command
 		// but the rows are still needed in the following FETCH command.
-		//
-		// TODO: trace the memory used here
-		chk := rs.NewChunk(nil)
-		var rows []chunk.Row
+
+		// create the row container to manage spill
+		// this `rowContainer` will be released when the statement (or the connection) is closed.
+		rowContainer := chunk.NewRowContainer(crs.FieldTypes(), vars.MaxChunkSize)
+		rowContainer.GetMemTracker().AttachTo(vars.MemTracker)
+		rowContainer.GetMemTracker().SetLabel(memory.LabelForCursorFetch)
+		rowContainer.GetDiskTracker().AttachTo(vars.DiskTracker)
+		rowContainer.GetDiskTracker().SetLabel(memory.LabelForCursorFetch)
+		if variable.EnableTmpStorageOnOOM.Load() {
+			failpoint.Inject("testCursorFetchSpill", func(val failpoint.Value) {
+				if val, ok := val.(bool); val && ok {
+					actionSpill := rowContainer.ActionSpillForTest()
+					defer actionSpill.WaitForTest()
+				}
+			})
+			action := memory.NewActionWithPriority(rowContainer.ActionSpill(), memory.DefCursorFetchSpillPriority)
+			vars.MemTracker.FallbackOldAndSetNewAction(action)
+		}
+		defer func() {
+			if err != nil {
+				rowContainer.GetMemTracker().Detach()
+				rowContainer.GetDiskTracker().Detach()
+				errCloseRowContainer := rowContainer.Close()
+				if errCloseRowContainer != nil {
+					logutil.Logger(ctx).Error("Fail to close rowContainer in error handler. May cause resource leak",
+						zap.NamedError("original-error", err), zap.NamedError("close-error", errCloseRowContainer))
+				}
+			}
+		}()
+
 		for {
-			if err = rs.Next(ctx, chk); err != nil {
+			chk := crs.NewChunk(nil)
+
+			if err = crs.Next(ctx, chk); err != nil {
 				return false, err
 			}
 			rowCount := chk.NumRows()
 			if rowCount == 0 {
 				break
 			}
-			// filling fetchedRows with chunk
-			for i := 0; i < rowCount; i++ {
-				row := chk.GetRow(i)
-				rows = append(rows, row)
-			}
-			chk = chunk.Renew(chk, vars.MaxChunkSize)
-		}
-		rs.StoreFetchedRows(rows)
 
-		stmt.StoreResultSet(rs)
-		if err = cc.writeColumnInfo(rs.Columns()); err != nil {
-			return false, err
+			err = rowContainer.Add(chk)
+			if err != nil {
+				return false, err
+			}
 		}
-		if cl, ok := rs.(fetchNotifier); ok {
+
+		reader := chunk.NewRowContainerReader(rowContainer)
+		crs.StoreRowContainerReader(reader)
+		stmt.StoreResultSet(crs)
+		stmt.StoreRowContainer(rowContainer)
+		if cl, ok := crs.(resultset.FetchNotifier); ok {
 			cl.OnFetchReturned()
 		}
-
 		stmt.SetCursorActive(true)
+		defer func() {
+			if err != nil {
+				reader.Close()
+
+				// the resultSet and rowContainer have been closed in former "defer" statement.
+				stmt.StoreResultSet(nil)
+				stmt.StoreRowContainer(nil)
+				stmt.SetCursorActive(false)
+			}
+		}()
+
+		if err = cc.writeColumnInfo(crs.Columns()); err != nil {
+			return false, err
+		}
 
 		// explicitly flush columnInfo to client.
 		err = cc.writeEOF(ctx, cc.ctx.Status())
@@ -359,18 +423,19 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	return false, nil
 }
 
-// maxFetchSize constants
-const (
-	maxFetchSize = 1024
-)
-
 func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
 	cc.ctx.GetSessionVars().StartTime = time.Now()
 	cc.ctx.GetSessionVars().ClearAlloc(nil, false)
 	cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
 	defer cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, false)
+	// Reset the warn count. TODO: consider whether it's better to reset the whole session context/statement context.
+	if cc.ctx.GetSessionVars().StmtCtx != nil {
+		cc.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+	}
+	cc.ctx.GetSessionVars().SysErrorCount = 0
+	cc.ctx.GetSessionVars().SysWarningCount = 0
 
-	stmtID, fetchSize, err := parseStmtFetchCmd(data)
+	stmtID, fetchSize, err := parse.StmtFetchCmd(data)
 	if err != nil {
 		return err
 	}
@@ -380,6 +445,21 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch"), cc.preparedStmt2String(stmtID))
 	}
+	if !stmt.GetCursorActive() {
+		return errors.Annotate(mysql.NewErr(mysql.ErrSpCursorNotOpen), cc.preparedStmt2String(stmtID))
+	}
+	// from now on, we have made sure: the statement has an active cursor
+	// then if facing any error, this cursor should be reset
+	defer func() {
+		if err != nil {
+			errReset := stmt.Reset()
+			if errReset != nil {
+				logutil.Logger(ctx).Error("Fail to reset statement in error handler. May cause resource leak.",
+					zap.NamedError("original-error", err), zap.NamedError("reset-error", errReset))
+			}
+		}
+	}()
+
 	if topsqlstate.TopSQLEnabled() {
 		prepareObj, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
 		if prepareObj != nil && prepareObj.SQLDigest != nil {
@@ -392,349 +472,24 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	}
 	cc.ctx.SetProcessInfo(sql, time.Now(), mysql.ComStmtExecute, 0)
 	rs := stmt.GetResultSet()
-	if rs == nil {
-		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
-			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
-	}
 
-	sendingEOF := false
-	// if the `fetchedRows` are empty before writing result, we could say the `FETCH` command will send EOF
-	if len(rs.GetFetchedRows()) == 0 {
-		sendingEOF = true
-	}
 	_, err = cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), int(fetchSize))
+	// if the iterator reached the end before writing result, we could say the `FETCH` command will send EOF
+	if rs.GetRowContainerReader().Current() == rs.GetRowContainerReader().End() {
+		// also reset the statement when the cursor reaches the end
+		// don't overwrite the `err` in outer scope, to avoid redundant `Reset()` in `defer` statement (though, it's not
+		// a big problem, as the `Reset()` function call is idempotent.)
+		err := stmt.Reset()
+		if err != nil {
+			logutil.Logger(ctx).Error("Fail to reset statement when FETCH command reaches the end. May cause resource leak",
+				zap.NamedError("error", err))
+		}
+	}
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}
-	if sendingEOF {
-		stmt.SetCursorActive(false)
-	}
 
 	return nil
-}
-
-func parseStmtFetchCmd(data []byte) (stmtID uint32, fetchSize uint32, err error) {
-	if len(data) != 8 {
-		return 0, 0, mysql.ErrMalformPacket
-	}
-	// Please refer to https://dev.mysql.com/doc/internals/en/com-stmt-fetch.html
-	stmtID = binary.LittleEndian.Uint32(data[0:4])
-	fetchSize = binary.LittleEndian.Uint32(data[4:8])
-	if fetchSize > maxFetchSize {
-		fetchSize = maxFetchSize
-	}
-	return
-}
-
-func parseExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boundParams [][]byte,
-	nullBitmap, paramTypes, paramValues []byte, enc *inputDecoder) (err error) {
-	pos := 0
-	var (
-		tmp    interface{}
-		v      []byte
-		n      int
-		isNull bool
-	)
-	if enc == nil {
-		enc = newInputDecoder(charset.CharsetUTF8)
-	}
-
-	args := make([]types.Datum, len(params))
-	for i := 0; i < len(args); i++ {
-		// if params had received via ComStmtSendLongData, use them directly.
-		// ref https://dev.mysql.com/doc/internals/en/com-stmt-send-long-data.html
-		// see clientConn#handleStmtSendLongData
-		if boundParams[i] != nil {
-			args[i] = types.NewBytesDatum(enc.decodeInput(boundParams[i]))
-			continue
-		}
-
-		// check nullBitMap to determine the NULL arguments.
-		// ref https://dev.mysql.com/doc/internals/en/com-stmt-execute.html
-		// notice: some client(e.g. mariadb) will set nullBitMap even if data had be sent via ComStmtSendLongData,
-		// so this check need place after boundParam's check.
-		if nullBitmap[i>>3]&(1<<(uint(i)%8)) > 0 {
-			var nilDatum types.Datum
-			nilDatum.SetNull()
-			args[i] = nilDatum
-			continue
-		}
-
-		if (i<<1)+1 >= len(paramTypes) {
-			return mysql.ErrMalformPacket
-		}
-
-		tp := paramTypes[i<<1]
-		isUnsigned := (paramTypes[(i<<1)+1] & 0x80) > 0
-
-		switch tp {
-		case mysql.TypeNull:
-			var nilDatum types.Datum
-			nilDatum.SetNull()
-			args[i] = nilDatum
-			continue
-
-		case mysql.TypeTiny:
-			if len(paramValues) < (pos + 1) {
-				err = mysql.ErrMalformPacket
-				return
-			}
-
-			if isUnsigned {
-				args[i] = types.NewUintDatum(uint64(paramValues[pos]))
-			} else {
-				args[i] = types.NewIntDatum(int64(int8(paramValues[pos])))
-			}
-
-			pos++
-			continue
-
-		case mysql.TypeShort, mysql.TypeYear:
-			if len(paramValues) < (pos + 2) {
-				err = mysql.ErrMalformPacket
-				return
-			}
-			valU16 := binary.LittleEndian.Uint16(paramValues[pos : pos+2])
-			if isUnsigned {
-				args[i] = types.NewUintDatum(uint64(valU16))
-			} else {
-				args[i] = types.NewIntDatum(int64(int16(valU16)))
-			}
-			pos += 2
-			continue
-
-		case mysql.TypeInt24, mysql.TypeLong:
-			if len(paramValues) < (pos + 4) {
-				err = mysql.ErrMalformPacket
-				return
-			}
-			valU32 := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
-			if isUnsigned {
-				args[i] = types.NewUintDatum(uint64(valU32))
-			} else {
-				args[i] = types.NewIntDatum(int64(int32(valU32)))
-			}
-			pos += 4
-			continue
-
-		case mysql.TypeLonglong:
-			if len(paramValues) < (pos + 8) {
-				err = mysql.ErrMalformPacket
-				return
-			}
-			valU64 := binary.LittleEndian.Uint64(paramValues[pos : pos+8])
-			if isUnsigned {
-				args[i] = types.NewUintDatum(valU64)
-			} else {
-				args[i] = types.NewIntDatum(int64(valU64))
-			}
-			pos += 8
-			continue
-
-		case mysql.TypeFloat:
-			if len(paramValues) < (pos + 4) {
-				err = mysql.ErrMalformPacket
-				return
-			}
-
-			args[i] = types.NewFloat32Datum(math.Float32frombits(binary.LittleEndian.Uint32(paramValues[pos : pos+4])))
-			pos += 4
-			continue
-
-		case mysql.TypeDouble:
-			if len(paramValues) < (pos + 8) {
-				err = mysql.ErrMalformPacket
-				return
-			}
-
-			args[i] = types.NewFloat64Datum(math.Float64frombits(binary.LittleEndian.Uint64(paramValues[pos : pos+8])))
-			pos += 8
-			continue
-
-		case mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeDatetime:
-			if len(paramValues) < (pos + 1) {
-				err = mysql.ErrMalformPacket
-				return
-			}
-			// See https://dev.mysql.com/doc/internals/en/binary-protocol-value.html
-			// for more details.
-			length := paramValues[pos]
-			pos++
-			switch length {
-			case 0:
-				tmp = types.ZeroDatetimeStr
-			case 4:
-				pos, tmp = parseBinaryDate(pos, paramValues)
-			case 7:
-				pos, tmp = parseBinaryDateTime(pos, paramValues)
-			case 11:
-				pos, tmp = parseBinaryTimestamp(pos, paramValues)
-			default:
-				err = mysql.ErrMalformPacket
-				return
-			}
-			args[i] = types.NewDatum(tmp) // FIXME: After check works!!!!!!
-			continue
-
-		case mysql.TypeDuration:
-			if len(paramValues) < (pos + 1) {
-				err = mysql.ErrMalformPacket
-				return
-			}
-			// See https://dev.mysql.com/doc/internals/en/binary-protocol-value.html
-			// for more details.
-			length := paramValues[pos]
-			pos++
-			switch length {
-			case 0:
-				tmp = "0"
-			case 8:
-				isNegative := paramValues[pos]
-				if isNegative > 1 {
-					err = mysql.ErrMalformPacket
-					return
-				}
-				pos++
-				pos, tmp = parseBinaryDuration(pos, paramValues, isNegative)
-			case 12:
-				isNegative := paramValues[pos]
-				if isNegative > 1 {
-					err = mysql.ErrMalformPacket
-					return
-				}
-				pos++
-				pos, tmp = parseBinaryDurationWithMS(pos, paramValues, isNegative)
-			default:
-				err = mysql.ErrMalformPacket
-				return
-			}
-			args[i] = types.NewDatum(tmp)
-			continue
-		case mysql.TypeNewDecimal:
-			if len(paramValues) < (pos + 1) {
-				err = mysql.ErrMalformPacket
-				return
-			}
-
-			v, isNull, n, err = parseLengthEncodedBytes(paramValues[pos:])
-			pos += n
-			if err != nil {
-				return
-			}
-
-			if isNull {
-				args[i] = types.NewDecimalDatum(nil)
-			} else {
-				var dec types.MyDecimal
-				err = sc.HandleTruncate(dec.FromString(v))
-				if err != nil {
-					return err
-				}
-				args[i] = types.NewDecimalDatum(&dec)
-			}
-			continue
-		case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			if len(paramValues) < (pos + 1) {
-				err = mysql.ErrMalformPacket
-				return
-			}
-			v, isNull, n, err = parseLengthEncodedBytes(paramValues[pos:])
-			pos += n
-			if err != nil {
-				return
-			}
-
-			if isNull {
-				args[i] = types.NewBytesDatum(nil)
-			} else {
-				args[i] = types.NewBytesDatum(v)
-			}
-			continue
-		case mysql.TypeUnspecified, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
-			mysql.TypeEnum, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeBit:
-			if len(paramValues) < (pos + 1) {
-				err = mysql.ErrMalformPacket
-				return
-			}
-
-			v, isNull, n, err = parseLengthEncodedBytes(paramValues[pos:])
-			pos += n
-			if err != nil {
-				return
-			}
-
-			if !isNull {
-				v = enc.decodeInput(v)
-				tmp = string(hack.String(v))
-			} else {
-				tmp = nil
-			}
-			args[i] = types.NewDatum(tmp)
-			continue
-		default:
-			err = errUnknownFieldType.GenWithStack("stmt unknown field type %d", tp)
-			return
-		}
-	}
-
-	for i := range params {
-		ft := new(types.FieldType)
-		types.InferParamTypeFromUnderlyingValue(args[i].GetValue(), ft)
-		params[i] = &expression.Constant{Value: args[i], RetType: ft}
-	}
-	return
-}
-
-func parseBinaryDate(pos int, paramValues []byte) (int, string) {
-	year := binary.LittleEndian.Uint16(paramValues[pos : pos+2])
-	pos += 2
-	month := paramValues[pos]
-	pos++
-	day := paramValues[pos]
-	pos++
-	return pos, fmt.Sprintf("%04d-%02d-%02d", year, month, day)
-}
-
-func parseBinaryDateTime(pos int, paramValues []byte) (int, string) {
-	pos, date := parseBinaryDate(pos, paramValues)
-	hour := paramValues[pos]
-	pos++
-	minute := paramValues[pos]
-	pos++
-	second := paramValues[pos]
-	pos++
-	return pos, fmt.Sprintf("%s %02d:%02d:%02d", date, hour, minute, second)
-}
-
-func parseBinaryTimestamp(pos int, paramValues []byte) (int, string) {
-	pos, dateTime := parseBinaryDateTime(pos, paramValues)
-	microSecond := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
-	pos += 4
-	return pos, fmt.Sprintf("%s.%06d", dateTime, microSecond)
-}
-
-func parseBinaryDuration(pos int, paramValues []byte, isNegative uint8) (int, string) {
-	sign := ""
-	if isNegative == 1 {
-		sign = "-"
-	}
-	days := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
-	pos += 4
-	hours := paramValues[pos]
-	pos++
-	minutes := paramValues[pos]
-	pos++
-	seconds := paramValues[pos]
-	pos++
-	return pos, fmt.Sprintf("%s%d %02d:%02d:%02d", sign, days, hours, minutes, seconds)
-}
-
-func parseBinaryDurationWithMS(pos int, paramValues []byte,
-	isNegative uint8) (int, string) {
-	pos, dur := parseBinaryDuration(pos, paramValues, isNegative)
-	microSecond := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
-	pos += 4
-	return pos, fmt.Sprintf("%s.%06d", dur, microSecond)
 }
 
 func (cc *clientConn) handleStmtClose(data []byte) (err error) {
@@ -769,6 +524,10 @@ func (cc *clientConn) handleStmtSendLongData(data []byte) (err error) {
 }
 
 func (cc *clientConn) handleStmtReset(ctx context.Context, data []byte) (err error) {
+	// A reset command should reset the statement to the state when it was right after prepare
+	// Then the following state should be cleared:
+	// 1.The opened cursor, including the rowContainer (and its cursor/memTracker).
+	// 2.The argument sent through `SEND_LONG_DATA`.
 	if len(data) < 4 {
 		return mysql.ErrMalformPacket
 	}
@@ -779,8 +538,16 @@ func (cc *clientConn) handleStmtReset(ctx context.Context, data []byte) (err err
 		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.Itoa(stmtID), "stmt_reset")
 	}
-	stmt.Reset()
-	stmt.StoreResultSet(nil)
+	err = stmt.Reset()
+	if err != nil {
+		// Both server and client cannot handle the error case well, so just left an error and return OK.
+		// It's fine to receive further `EXECUTE` command even the `Reset` function call failed.
+		logutil.Logger(ctx).Error("Fail to close statement in error handler of RESET command. May cause resource leak",
+			zap.NamedError("original-error", err), zap.NamedError("close-error", err))
+
+		return cc.writeOK(ctx)
+	}
+
 	return cc.writeOK(ctx)
 }
 

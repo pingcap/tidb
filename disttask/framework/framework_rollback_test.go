@@ -48,7 +48,7 @@ func (*rollbackFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.Tas
 	return nil, nil
 }
 
-func (*rollbackFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
+func (*rollbackFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	return []byte("rollbacktask1"), nil
 }
 
@@ -110,7 +110,7 @@ func RegisterRollbackTaskMeta(v *atomic.Int64) {
 	scheduler.RegisterTaskType(proto.TaskTypeExample)
 	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
 		return &rollbackScheduler{v: v}, nil
-	}, scheduler.WithConcurrentSubtask())
+	})
 	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &rollbackSubtaskExecutor{v: v}, nil
 	})
@@ -123,9 +123,9 @@ func TestFrameworkRollback(t *testing.T) {
 	var v atomic.Int64
 	RegisterRollbackTaskMeta(&v)
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe", "1*return(true)")
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskAfterMonitorTask", "2*return(true)")
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskAfterMonitorTask"))
 	}()
 
 	DispatchTaskAndCheckFail("key2", t, &v)

@@ -629,7 +629,7 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo, ar
 		sc.AppendWarning(ErrColumnCantNull.FastGenByArgs(col.Name))
 		return GetZeroValue(col), nil
 	}
-	return types.Datum{}, ErrNoDefaultValue.FastGenByArgs(col.Name)
+	return types.Datum{}, ErrNoDefaultValue.GenWithStackByArgs(col.Name)
 }
 
 // GetZeroValue gets zero value for given column type.

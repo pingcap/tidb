@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/privilege/privileges/ldap"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/tls"
@@ -50,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	tikvcliutil "github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -206,6 +209,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnable3StageMultiDistinctAgg, Value: BoolToOnOff(DefTiDB3StageMultiDistinctAgg), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.Enable3StageMultiDistinctAgg = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptExplainNoEvaledSubQuery, Value: BoolToOnOff(DefTiDBOptExplainEvaledSubquery), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.ExplainNonEvaledSubQuery = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBOptWriteRowID, Value: BoolToOnOff(DefOptWriteRowID), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
@@ -382,6 +389,12 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeSession, Name: TiDBUseAlloc, Value: BoolToOnOff(DefTiDBUseAlloc), Type: TypeBool, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(s.preUseChunkAlloc), nil
+	}},
+	{Scope: ScopeSession, Name: TiDBExplicitRequestSourceType, Value: "", Type: TypeEnum, PossibleValues: tikvcliutil.ExplicitTypeList, GetSession: func(s *SessionVars) (string, error) {
+		return s.ExplicitRequestSourceType, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		s.ExplicitRequestSourceType = val
+		return nil
 	}},
 	/* The system variables below have INSTANCE scope  */
 	{Scope: ScopeInstance, Name: TiDBLogFileMaxDays, Value: strconv.Itoa(config.GetGlobalConfig().Log.File.MaxDays), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
@@ -1075,7 +1088,8 @@ var defaultSysVars = []*SysVar{
 			oldv := StatsCacheMemQuota.Load()
 			if v != oldv {
 				StatsCacheMemQuota.Store(v)
-				SetStatsCacheCapacity.Load().(func(int64))(v)
+				SetStatsCacheCapacityFunc := SetStatsCacheCapacity.Load()
+				(*SetStatsCacheCapacityFunc)(v)
 			}
 			return nil
 		},
@@ -1293,7 +1307,7 @@ var defaultSysVars = []*SysVar{
 			return s, nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(true), Type: TypeBool,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(DefTiDBEnablePlanReplayerCapture), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.EnablePlanReplayerCapture = TiDBOptOn(val)
 			return nil
@@ -2285,7 +2299,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return strconv.Itoa(int(ts)), err
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableExternalTSRead, Value: BoolToOnOff(false), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableExternalTSRead, Value: BoolToOnOff(DefTiDBEnableExternalTSRead), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableExternalTSRead = TiDBOptOn(val)
 		return nil
 	}},
@@ -2506,28 +2520,25 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptFixControl, Value: "", Type: TypeStr, IsHintUpdatable: true,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			// validation logic for setting global
+			// we don't put this in Validation to avoid repeating the checking logic for setting session.
+			_, warnings, err := fixcontrol.ParseToMap(val)
+			if err != nil {
+				return err
+			}
+			for _, warning := range warnings {
+				vars.StmtCtx.AppendWarning(errors.New(warning))
+			}
+			return nil
+		},
 		SetSession: func(s *SessionVars, val string) error {
-			newMap := make(map[uint64]string)
-			for _, singleFixCtrl := range strings.Split(val, ",") {
-				if len(singleFixCtrl) == 0 {
-					continue
-				}
-				colonIdx := strings.Index(singleFixCtrl, ":")
-				if colonIdx < 0 {
-					return errors.New("invalid fix control: colon not found")
-				}
-				k := strings.TrimSpace(singleFixCtrl[0:colonIdx])
-				v := strings.TrimSpace(singleFixCtrl[colonIdx+1:])
-				num, err := strconv.ParseUint(k, 10, 64)
-				if err != nil {
-					return err
-				}
-				originalV, ok := newMap[num]
-				if ok {
-					s.StmtCtx.AppendWarning(
-						errors.Errorf("found repeated fix control: %d:%s is overwritten with %s", num, originalV, v))
-				}
-				newMap[num] = v
+			newMap, warnings, err := fixcontrol.ParseToMap(val)
+			if err != nil {
+				return err
+			}
+			for _, warning := range warnings {
+				s.StmtCtx.AppendWarning(errors.New(warning))
 			}
 			s.OptimizerFixControl = newMap
 			return nil
@@ -2544,8 +2555,21 @@ var defaultSysVars = []*SysVar{
 		s.PlanCacheInvalidationOnFreshStats = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashReplicaRead, Value: DefTiFlashReplicaRead, Type: TypeEnum, PossibleValues: []string{DefTiFlashReplicaRead, tiflash.ClosestAdaptiveStr, tiflash.ClosestReplicasStr},
+		SetSession: func(s *SessionVars, val string) error {
+			s.TiFlashReplicaRead = tiflash.GetTiFlashReplicaReadByStr(val)
+			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return tiflash.GetTiFlashReplicaRead(s.TiFlashReplicaRead), nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBFastCheckTable, Value: BoolToOnOff(DefTiDBEnableFastCheckTable), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.FastCheckTable = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSkipMissingPartitionStats, Value: BoolToOnOff(DefTiDBSkipMissingPartitionStats), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.SkipMissingPartitionStats = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLAuthMethodName, Value: DefAuthenticationLDAPSASLAuthMethodName, Type: TypeEnum, PossibleValues: []string{ldap.SASLAuthMethodSCRAMSHA1, ldap.SASLAuthMethodSCRAMSHA256, ldap.SASLAuthMethodGSSAPI}, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
@@ -2741,6 +2765,22 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{
+		Scope: ScopeGlobal | ScopeSession,
+		Name:  TiDBLockUnchangedKeys,
+		Value: BoolToOnOff(DefTiDBLockUnchangedKeys),
+		Type:  TypeBool,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.LockUnchangedKeys = TiDBOptOn(s)
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: TiDBEnableCheckConstraint, Value: BoolToOnOff(DefTiDBEnableCheckConstraint), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		EnableCheckConstraint.Store(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(EnableCheckConstraint.Load()), nil
+	}},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

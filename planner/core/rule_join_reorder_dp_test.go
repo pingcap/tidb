@@ -41,8 +41,8 @@ func (mj mockLogicalJoin) init(ctx sessionctx.Context) *mockLogicalJoin {
 }
 
 func (mj *mockLogicalJoin) recursiveDeriveStats(_ [][]*expression.Column) (*property.StatsInfo, error) {
-	if mj.stats == nil {
-		mj.stats = mj.statsMap[mj.involvedNodeSet]
+	if mj.StatsInfo() == nil {
+		mj.SetStats(mj.statsMap[mj.involvedNodeSet])
 	}
 	return mj.statsMap[mj.involvedNodeSet], nil
 }
@@ -142,9 +142,9 @@ func newDataSource(ctx sessionctx.Context, name string, count int) LogicalPlan {
 		UniqueID: ctx.GetSessionVars().PlanColumnID.Add(1),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
-	ds.stats = &property.StatsInfo{
+	ds.SetStats(&property.StatsInfo{
 		RowCount: float64(count),
-	}
+	})
 	return ds
 }
 

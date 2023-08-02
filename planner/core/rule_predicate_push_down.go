@@ -108,7 +108,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	retConditions, child = p.children[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
 	retConditions = append(retConditions, canNotBePushDown...)
 	if len(retConditions) > 0 {
-		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
+		p.Conditions = expression.PropagateConstant(p.SCtx(), retConditions)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, p.Conditions)
 		if dual != nil {
@@ -132,13 +132,13 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression,
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
-	predicates = expression.PropagateConstant(ds.ctx, predicates)
+	predicates = expression.PropagateConstant(ds.SCtx(), predicates)
 	predicates = DeleteTrueExprs(ds, predicates)
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
 	// TODO: remove it to the place building logical plan
-	predicates = ds.AddPrefix4ShardIndexes(ds.ctx, predicates)
+	predicates = ds.AddPrefix4ShardIndexes(ds.SCtx(), predicates)
 	ds.allConds = predicates
-	ds.pushedDownConds, predicates = expression.PushDownExprs(ds.ctx.GetSessionVars().StmtCtx, predicates, ds.ctx.GetClient(), kv.UnSpecified)
+	ds.pushedDownConds, predicates = expression.PushDownExprs(ds.SCtx().GetSessionVars().StmtCtx, predicates, ds.SCtx().GetClient(), kv.UnSpecified)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
 	return predicates, ds
 }
@@ -162,7 +162,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 			return ret, dual
 		}
 		// Handle where conditions
-		predicates = expression.ExtractFiltersFromDNFs(p.ctx, predicates)
+		predicates = expression.ExtractFiltersFromDNFs(p.SCtx(), predicates)
 		// Only derive left where condition, because right where condition cannot be pushed down
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(predicates, true, false)
 		leftCond = leftPushCond
@@ -181,7 +181,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 			return ret, dual
 		}
 		// Handle where conditions
-		predicates = expression.ExtractFiltersFromDNFs(p.ctx, predicates)
+		predicates = expression.ExtractFiltersFromDNFs(p.SCtx(), predicates)
 		// Only derive right where condition, because left where condition cannot be pushed down
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(predicates, false, true)
 		rightCond = rightPushCond
@@ -199,8 +199,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
-		tempCond = expression.ExtractFiltersFromDNFs(p.ctx, tempCond)
-		tempCond = expression.PropagateConstant(p.ctx, tempCond)
+		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx(), tempCond)
+		tempCond = expression.PropagateConstant(p.SCtx(), tempCond)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
@@ -215,7 +215,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	case AntiSemiJoin:
-		predicates = expression.PropagateConstant(p.ctx, predicates)
+		predicates = expression.PropagateConstant(p.SCtx(), predicates)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
@@ -233,8 +233,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		rightCond = append(p.RightConditions, rightPushCond...)
 		p.RightConditions = nil
 	}
-	leftCond = expression.RemoveDupExprs(p.ctx, leftCond)
-	rightCond = expression.RemoveDupExprs(p.ctx, rightCond)
+	leftCond = expression.RemoveDupExprs(p.SCtx(), leftCond)
+	rightCond = expression.RemoveDupExprs(p.SCtx(), rightCond)
 	leftRet, lCh := p.children[0].PredicatePushDown(leftCond, opt)
 	rightRet, rCh := p.children[1].PredicatePushDown(rightCond, opt)
 	addSelection(p, lCh, leftRet, 0, opt)
@@ -304,7 +304,7 @@ func (p *LogicalJoin) updateEQCond() {
 				if rProj != nil {
 					rKey = rProj.appendExpr(rKey)
 				}
-				eqCond := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
+				eqCond := expression.NewFunctionInternal(p.SCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
 				if isNA {
 					p.NAEQConditions = append(p.NAEQConditions, eqCond.(*expression.ScalarFunction))
 				} else {
@@ -353,7 +353,7 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 	p.Exprs = append(p.Exprs, expr)
 
 	col := &expression.Column{
-		UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
 		RetType:  expr.GetType().Clone(),
 	}
 	col.SetCoercibility(expr.Coercibility())
@@ -372,7 +372,7 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 	if ok {
 		return proj
 	}
-	proj = LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.Init(p.ctx, child.SelectBlockOffset())
+	proj = LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.Init(p.SCtx(), child.SelectBlockOffset())
 	for _, col := range child.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col)
 	}
@@ -412,7 +412,7 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 		if expression.ExprFromSchema(expr, outerTable.Schema()) {
 			continue
 		}
-		isOk := isNullRejected(p.ctx, innerTable.Schema(), expr)
+		isOk := isNullRejected(p.SCtx(), innerTable.Schema(), expr)
 		if isOk {
 			canBeSimplified = true
 			break
@@ -451,6 +451,18 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 		}
 	}
 	return false
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) (ret []expression.Expression, retPlan LogicalPlan) {
+	// Note that, grouping column related predicates can't be pushed down, since grouping column has nullability change after Expand OP itself.
+	// condition related with grouping column shouldn't be pushed down through it.
+	// currently, since expand is adjacent to aggregate, any filter above aggregate wanted to be push down through expand only have two cases:
+	// 		1. agg function related filters. (these condition is always above aggregate)
+	// 		2. group-by item related filters. (there condition is always related with grouping sets columns, which can't be pushed down)
+	// As a whole, we banned all the predicates pushing-down logic here that remained in Expand OP, and constructing a new selection above it if any.
+	remained, child := p.baseLogicalPlan.PredicatePushDown(nil, opt)
+	return append(remained, predicates...), child
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
@@ -538,10 +550,10 @@ func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expressio
 	for _, item := range subCNFItem {
 		condsToPushForItem, retForItem := la.pushDownDNFPredicatesForAggregation(item, groupByColumns, exprsOriginal)
 		if len(condsToPushForItem) > 0 {
-			condsToPush = append(condsToPush, expression.ComposeDNFCondition(la.ctx, condsToPushForItem...))
+			condsToPush = append(condsToPush, expression.ComposeDNFCondition(la.SCtx(), condsToPushForItem...))
 		}
 		if len(retForItem) > 0 {
-			ret = append(ret, expression.ComposeDNFCondition(la.ctx, retForItem...))
+			ret = append(ret, expression.ComposeDNFCondition(la.SCtx(), retForItem...))
 		}
 	}
 	return condsToPush, ret
@@ -565,16 +577,16 @@ func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expressio
 		if len(condsToPushForItem) <= 0 {
 			return nil, []expression.Expression{cond}
 		}
-		condsToPush = append(condsToPush, expression.ComposeCNFCondition(la.ctx, condsToPushForItem...))
+		condsToPush = append(condsToPush, expression.ComposeCNFCondition(la.SCtx(), condsToPushForItem...))
 		if len(retForItem) > 0 {
-			ret = append(ret, expression.ComposeCNFCondition(la.ctx, retForItem...))
+			ret = append(ret, expression.ComposeCNFCondition(la.SCtx(), retForItem...))
 		}
 	}
 	if len(ret) == 0 {
 		// All the condition can be pushed down.
 		return []expression.Expression{cond}, nil
 	}
-	dnfPushDownCond := expression.ComposeDNFCondition(la.ctx, condsToPush...)
+	dnfPushDownCond := expression.ComposeDNFCondition(la.SCtx(), condsToPush...)
 	// Some condition can't be pushed down, we need to keep all the condition.
 	return []expression.Expression{dnfPushDownCond}, []expression.Expression{cond}
 }
@@ -744,7 +756,7 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	p.RightConditions = nil
 	p.OtherConditions = nil
 	nullSensitive := p.JoinType == AntiLeftOuterSemiJoin || p.JoinType == LeftOuterSemiJoin
-	joinConds, predicates = expression.PropConstOverOuterJoin(p.ctx, joinConds, predicates, outerTable.Schema(), innerTable.Schema(), nullSensitive)
+	joinConds, predicates = expression.PropConstOverOuterJoin(p.SCtx(), joinConds, predicates, outerTable.Schema(), innerTable.Schema(), nullSensitive)
 	p.AttachOnConds(joinConds)
 	return predicates
 }
@@ -779,7 +791,7 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, op
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression, _ *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	if p.Extractor != nil {
-		predicates = p.Extractor.Extract(p.ctx, p.schema, p.names, predicates)
+		predicates = p.Extractor.Extract(p.SCtx(), p.schema, p.names, predicates)
 	}
 	return predicates, p.self
 }
@@ -1010,7 +1022,7 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *lo
 		newPred = append(newPred, pushedPredicates[i].Clone())
 		ResolveExprAndReplace(newPred[i], p.cte.ColumnMap)
 	}
-	p.cte.pushDownPredicates = append(p.cte.pushDownPredicates, expression.ComposeCNFCondition(p.ctx, newPred...))
+	p.cte.pushDownPredicates = append(p.cte.pushDownPredicates, expression.ComposeCNFCondition(p.SCtx(), newPred...))
 	return predicates, p.self
 }
 
