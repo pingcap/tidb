@@ -117,6 +117,7 @@ func TestByteReader(t *testing.T) {
 	x = *y
 	require.Equal(t, 2, len(x))
 	require.Equal(t, byte('b'), x[1])
+	br.reset()
 	require.NoError(t, br.Close())
 }
 

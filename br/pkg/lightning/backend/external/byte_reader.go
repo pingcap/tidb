@@ -93,6 +93,10 @@ func (r *byteReader) readNBytes(n int) (*[]byte, error) {
 	return &auxBuf, nil
 }
 
+func (r *byteReader) reset() {
+	r.retPointers = r.retPointers[:0]
+}
+
 func (r *byteReader) cloneSlices() {
 	for i := range r.retPointers {
 		copied := make([]byte, len(*r.retPointers[i]))
