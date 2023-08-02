@@ -2834,7 +2834,7 @@ var defaultSysVars = []*SysVar{
 		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return strconv.Itoa(int(GlobalSortStatSampleSize.Load())), nil
 		}},
-	{Scope: ScopeGlobal, Name: TiDBGlobalSortSubtaskCnt, Value: strconv.Itoa(DefTiDBGlobalSortSubtaskCnt), Type: TypeInt, MinValue: 1, MaxValue: 1000,
+	{Scope: ScopeGlobal, Name: TiDBGlobalSortSubtaskCnt, Value: strconv.Itoa(DefTiDBGlobalSortSubtaskCnt), Type: TypeInt, MinValue: 0, MaxValue: 1000,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			val, err := strconv.ParseInt(s, 10, 64)
 			if err != nil {
