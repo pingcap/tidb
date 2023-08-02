@@ -1304,18 +1304,17 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			extraInfo, extraCol, hasExtraCol := tryGetPkExtraColumn(p.ctx.GetSessionVars(), tblInfo)
 			if hasExtraCol {
 				ts := idxLookup.TablePlans[0].(*PhysicalTableScan)
-				if findColNameByColID(ts.Columns, extraCol) != nil {
-					return rootTask, true
+
+				if !p.SCtx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
+					extraProj := PhysicalProjection{
+						Exprs: expression.Column2Exprs(ts.schema.Clone().Columns),
+					}.Init(p.SCtx(), p.statsInfo(), p.blockOffset, nil)
+					extraProj.SetSchema(ts.schema.Clone())
+					extraProj.SetChildren(rootTask.p)
+					rootTask.p = extraProj
 				}
 
 				idxLookup.ExtraHandleCol = extraCol
-				extraProj := PhysicalProjection{
-					Exprs: expression.Column2Exprs(ts.schema.Clone().Columns),
-				}.Init(p.SCtx(), p.statsInfo(), p.blockOffset, nil)
-				extraProj.SetSchema(ts.schema.Clone())
-				extraProj.SetChildren(rootTask.p)
-				rootTask.p = extraProj
-
 				ts.Columns = append(ts.Columns, extraInfo)
 				ts.schema.Append(extraCol)
 				ts.HandleIdx = []int{len(ts.Columns) - 1}
