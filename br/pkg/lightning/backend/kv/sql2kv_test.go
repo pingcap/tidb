@@ -17,7 +17,10 @@ package kv_test
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	lkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -717,4 +720,38 @@ func BenchmarkSQL2KV(b *testing.B) {
 		l := reflect.ValueOf(rows).Elem().Field(0).Len()
 		require.Equal(b, l, 2)
 	}
+}
+
+func TestLogKVConvertFailed(t *testing.T) {
+	tempPath := filepath.Join(t.TempDir(), "/temp.txt")
+	logCfg := &log.Config{File: tempPath, FileMaxSize: 1}
+	err := log.InitLogger(logCfg, "info")
+	require.NoError(t, err)
+
+	modelName := model.NewCIStr("c1")
+	modelState := model.StatePublic
+	modelFieldType := *types.NewFieldType(mysql.TypeTiny)
+	c1 := &model.ColumnInfo{ID: 1, Name: modelName, State: modelState, Offset: 0, FieldType: modelFieldType}
+	cols := []*model.ColumnInfo{c1}
+	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
+	_, err = tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
+	require.NoError(t, err)
+
+	var newString strings.Builder
+	for i := 0; i < 100000; i++ {
+		newString.WriteString("test_test_test_test_")
+	}
+	newDatum := types.NewStringDatum(newString.String())
+	rows := []types.Datum{}
+	for i := 0; i <= 10; i++ {
+		rows = append(rows, newDatum)
+	}
+	err = lkv.LogKVConvertFailed(log.L(), rows, 6, c1, err)
+	require.NoError(t, err)
+
+	var content []byte
+	content, err = os.ReadFile(tempPath)
+	require.NoError(t, err)
+	require.LessOrEqual(t, 500, len(string(content)))
+	require.NotContains(t, content, "exceeds maximum file size")
 }
