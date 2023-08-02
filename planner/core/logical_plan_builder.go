@@ -157,7 +157,7 @@ const (
 
 	// HintMemoryQuota sets the memory limit for a query
 	HintMemoryQuota = "memory_quota"
-	// HintUserToja is a hint to optimize `in (select ...)` subquery into `join`
+	// HintUseToja is a hint to optimize `in (select ...)` subquery into `join`
 	HintUseToja = "use_toja"
 	// HintNoIndexMerge is a hint to disable index merge
 	HintNoIndexMerge = "no_index_merge"
