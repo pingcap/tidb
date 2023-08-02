@@ -1080,6 +1080,9 @@
       "server/http_status.go": "ignore server/http_status.go",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
+    },
+    "only_files": {
+      "statistics/": "statistics code"
     }
   },
   "SA4009": {
