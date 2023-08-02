@@ -553,7 +553,7 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 		if len(endKey) == 0 {
 			endKey = prefix.PrefixNext()
 		}
-		endK, err := getRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, prefix, keyRange.StartKey, endKey)
+		endK, err := getRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, prefix, startKey, endKey)
 		if err != nil {
 			logutil.BgLogger().Info("get backfill range task, get reverse key failed", zap.String("category", "ddl"), zap.Error(err))
 		} else {
