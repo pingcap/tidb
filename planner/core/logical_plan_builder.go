@@ -4480,6 +4480,10 @@ const (
 )
 
 func getParquetFiles(client *hdfs.Client, path string) ([]string, error) {
+	nowTs, err := getTs(client, path)
+	if err != nil {
+		return nil, err
+	}
 	var allfiles []string
 	var files []string
 	walkFunc := func(path string, info os.FileInfo, err error) error {
@@ -4491,7 +4495,7 @@ func getParquetFiles(client *hdfs.Client, path string) ([]string, error) {
 		}
 		return nil
 	}
-	err := client.Walk(path, walkFunc)
+	err = client.Walk(path, walkFunc)
 
 	var m1 map[string]map[string]uint64 = make(map[string]map[string]uint64)
 	var m2 map[string]map[string]string = make(map[string]map[string]string)
@@ -4507,6 +4511,9 @@ func getParquetFiles(client *hdfs.Client, path string) ([]string, error) {
 		timeStamp, err := strconv.ParseUint(fileParts[2], 10, 64)
 		if err != nil {
 			return nil, err
+		}
+		if timeStamp > nowTs {
+			continue
 		}
 
 		if m1[partition] == nil {
@@ -4526,6 +4533,28 @@ func getParquetFiles(client *hdfs.Client, path string) ([]string, error) {
 		}
 	}
 	return files, err
+}
+
+func getTs(client *hdfs.Client, path string) (uint64, error) {
+	path = path + "/.hoodie"
+	var maxTs uint64 = 0
+	walkFunc := func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.HasSuffix(info.Name(), ".commit") {
+			tsString := info.Name()
+			tsString = strings.TrimSuffix(tsString, path2.Ext(tsString))
+			ts, err := strconv.ParseUint(tsString, 10, 64)
+			if err != nil {
+				return err
+			}
+			maxTs = mathutil.Max(maxTs, ts)
+		}
+		return nil
+	}
+	err := client.Walk(path, walkFunc)
+	return maxTs, err
 }
 
 func getTableLocation(tbl *model.TableInfo) (tblLocation string, err error) {
