@@ -77,10 +77,10 @@ func NewTopnStatsMergeTask(start, end int) *TopnStatsMergeTask {
 
 // TopnStatsMergeResponse indicates topn merge worker response
 type TopnStatsMergeResponse struct {
+	Err        error
 	TopN       *TopN
 	PopedTopn  []TopNMeta
 	RemoveVals [][]TopNMeta
-	Err        error
 }
 
 // Run runs topn merge like statistics.MergePartTopN2GlobalTopN
