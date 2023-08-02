@@ -58,10 +58,10 @@ func (idx *Index) ItemID() int64 {
 
 // IsAllEvicted indicates whether all stats evicted
 func (idx *Index) IsAllEvicted() bool {
-	return idx.statsInitialized && idx.evictedStatus >= allEvicted
+	return idx.statsInitialized && idx.evictedStatus >= AllEvicted
 }
 
-func (idx *Index) getEvictedStatus() int {
+func (idx *Index) GetEvictedStatus() int {
 	return idx.evictedStatus
 }
 
@@ -73,7 +73,7 @@ func (idx *Index) dropUnnecessaryData() {
 	idx.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
 	idx.Histogram.Buckets = make([]Bucket, 0)
 	idx.Histogram.scalars = make([]scalar, 0)
-	idx.evictedStatus = allEvicted
+	idx.evictedStatus = AllEvicted
 }
 
 func (idx *Index) isStatsInitialized() bool {
@@ -90,7 +90,7 @@ func (idx *Index) isCMSExist() bool {
 
 // IsEvicted returns whether index statistics got evicted
 func (idx *Index) IsEvicted() bool {
-	return idx.evictedStatus != allLoaded
+	return idx.evictedStatus != AllLoaded
 }
 
 func (idx *Index) String() string {
@@ -136,7 +136,7 @@ func (idx *Index) EvictAllStats() {
 	idx.Histogram.Buckets = nil
 	idx.CMSketch = nil
 	idx.TopN = nil
-	idx.StatsLoadedStatus.evictedStatus = allEvicted
+	idx.StatsLoadedStatus.evictedStatus = AllEvicted
 }
 
 // MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.

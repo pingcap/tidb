@@ -17,17 +17,18 @@ package lfu
 import (
 	"sync"
 
+	"github.com/pingcap/tidb/statistics"
 	"golang.org/x/exp/maps"
 )
 
 type keySet struct {
-	set map[int64]struct{}
+	set map[int64]*statistics.Table
 	mu  sync.RWMutex
 }
 
 func (ks *keySet) Add(key int64) {
 	ks.mu.Lock()
-	ks.set[key] = struct{}{}
+	ks.set[key] = nil
 	ks.mu.Unlock()
 }
 
@@ -49,4 +50,10 @@ func (ks *keySet) Len() int {
 	result := len(ks.set)
 	ks.mu.RUnlock()
 	return result
+}
+
+func (ks *keySet) AddKeyValue(key int64, value *statistics.Table) {
+	ks.mu.Lock()
+	ks.set[key] = value
+	ks.mu.Unlock()
 }

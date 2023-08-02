@@ -347,7 +347,7 @@ func (c *Column) ItemID() int64 {
 // DropEvicted implements TableCacheItem
 // DropEvicted drops evicted structures
 func (c *Column) DropEvicted() {
-	if !c.statsInitialized || c.evictedStatus == allEvicted {
+	if !c.statsInitialized || c.evictedStatus == AllEvicted {
 		return
 	}
 	c.dropUnnecessaryData()
@@ -361,15 +361,15 @@ func (c *Column) dropUnnecessaryData() {
 	c.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
 	c.Histogram.Buckets = make([]Bucket, 0)
 	c.Histogram.scalars = make([]scalar, 0)
-	c.evictedStatus = allEvicted
+	c.evictedStatus = AllEvicted
 }
 
 // IsAllEvicted indicates whether all stats evicted
 func (c *Column) IsAllEvicted() bool {
-	return c.statsInitialized && c.evictedStatus >= allEvicted
+	return c.statsInitialized && c.evictedStatus >= AllEvicted
 }
 
-func (c *Column) getEvictedStatus() int {
+func (c *Column) GetEvictedStatus() int {
 	return c.evictedStatus
 }
 
@@ -474,9 +474,9 @@ func (s StatsLoadedStatus) StatusToString() string {
 		return "unInitialized"
 	}
 	switch s.evictedStatus {
-	case allLoaded:
+	case AllLoaded:
 		return "allLoaded"
-	case allEvicted:
+	case AllEvicted:
 		return "allEvicted"
 	}
 	return "unknown"

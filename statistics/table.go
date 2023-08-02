@@ -157,16 +157,16 @@ type TableCacheItem interface {
 	ItemID() int64
 	MemoryUsage() CacheItemMemoryUsage
 	IsAllEvicted() bool
+	GetEvictedStatus() int
 
 	dropUnnecessaryData()
 	isStatsInitialized() bool
-	getEvictedStatus() int
 	statsVer() int64
 }
 
 // DropEvicted drop stats for table column/index
 func DropEvicted(item TableCacheItem) {
-	if !item.isStatsInitialized() || item.getEvictedStatus() == allEvicted {
+	if !item.isStatsInitialized() || item.GetEvictedStatus() == AllEvicted {
 		return
 	}
 	item.dropUnnecessaryData()

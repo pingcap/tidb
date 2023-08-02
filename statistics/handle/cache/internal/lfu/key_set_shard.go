@@ -14,6 +14,8 @@
 
 package lfu
 
+import "github.com/pingcap/tidb/statistics"
+
 const keySetCnt = 128
 
 type keySetShard struct {
@@ -24,7 +26,7 @@ func newKeySetShard() *keySetShard {
 	result := keySetShard{}
 	for i := 0; i < keySetCnt; i++ {
 		result.resultKeySet[i] = keySet{
-			set: make(map[int64]struct{}),
+			set: make(map[int64]*statistics.Table),
 		}
 	}
 	return &result
@@ -32,6 +34,10 @@ func newKeySetShard() *keySetShard {
 
 func (kss *keySetShard) Add(key int64) {
 	kss.resultKeySet[key%keySetCnt].Add(key)
+}
+
+func (kss *keySetShard) AddKeyValue(key int64, table *statistics.Table) {
+	kss.resultKeySet[key%keySetCnt].AddKeyValue(key, table)
 }
 
 func (kss *keySetShard) Remove(key int64) {
