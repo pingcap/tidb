@@ -21,7 +21,6 @@ import (
 
 // AnalyzeJob is used to represent the status of one analyze job.
 type AnalyzeJob struct {
-	Progress      AnalyzeProgress
 	StartTime     time.Time
 	EndTime       time.Time
 	ID            *uint64
@@ -29,6 +28,7 @@ type AnalyzeJob struct {
 	TableName     string
 	PartitionName string
 	JobInfo       string
+	Progress      AnalyzeProgress
 }
 
 // AnalyzeProgress represents the process of one analyze job.
