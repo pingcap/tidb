@@ -18,11 +18,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -169,11 +171,9 @@ func TestIssue29850(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // cannot use PointGet since it contains a range condition
-		`Selection_7 1.00 root  ge(test.t.a, 1), le(test.t.a, 1)`,
-		`└─TableReader_6 1.00 root  data:TableRangeScan_5`,
-		`  └─TableRangeScan_5 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`))
+		`Point_Get_5 1.00 root table:t handle:1`))
 	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
 	tk.MustExec(`prepare stmt from 'select * from t where a=? or a=?'`)
 	tk.MustQuery(`execute stmt using @a1, @a1`).Check(testkit.Rows("1"))
@@ -181,9 +181,7 @@ func TestIssue29850(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // cannot use PointGet since it contains a or condition
-		`Selection_7 1.00 root  or(eq(test.t.a, 1), eq(test.t.a, 1))`,
-		`└─TableReader_6 1.00 root  data:TableRangeScan_5`,
-		`  └─TableRangeScan_5 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`))
+		`Point_Get_5 1.00 root table:t handle:1`))
 	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
 }
 
@@ -1254,4 +1252,19 @@ func TestIssue31141(t *testing.T) {
 
 	tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
 	tk.MustExec("prepare stmt1 from 'do 1'")
+}
+
+func TestMaxPreparedStmtCount(t *testing.T) {
+	oldVal := atomic.LoadInt64(&variable.PreparedStmtCount)
+	atomic.StoreInt64(&variable.PreparedStmtCount, 0)
+	defer func() {
+		atomic.StoreInt64(&variable.PreparedStmtCount, oldVal)
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.max_prepared_stmt_count = 2")
+	tk.MustExec("prepare stmt1 from 'select ? as num from dual'")
+	tk.MustExec("prepare stmt2 from 'select ? as num from dual'")
+	err := tk.ExecToErr("prepare stmt3 from 'select ? as num from dual'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrMaxPreparedStmtCountReached))
 }

@@ -811,7 +811,30 @@ func doReorgWorkForModifyColumnMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, j
 func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table,
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
-	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
+	var rh *reorgHandler
+	if w.concurrentDDL {
+		sctx, err1 := w.sessPool.get()
+		if err1 != nil {
+			err = errors.Trace(err1)
+			return
+		}
+		defer w.sessPool.put(sctx)
+		sess := newSession(sctx)
+		err = sess.begin()
+		if err != nil {
+			return
+		}
+		defer sess.rollback()
+		txn, err1 := sess.txn()
+		if err1 != nil {
+			err = errors.Trace(err1)
+			return
+		}
+		newMeta := meta.NewMeta(txn)
+		rh = newReorgHandler(newMeta, newSession(sctx), w.concurrentDDL)
+	} else {
+		rh = newReorgHandler(t, w.sess, w.concurrentDDL)
+	}
 	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, BuildElements(changingCol, changingIdxs), false)
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
@@ -1273,8 +1296,8 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	if err != nil {
 		return w.reformatErrors(err)
 	}
-	if w.sessCtx.GetSessionVars().StmtCtx.GetWarnings() != nil && len(w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()) != 0 {
-		warn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
+	warn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
+	if len(warn) != 0 {
 		//nolint:forcetypeassert
 		recordWarning = errors.Cause(w.reformatErrors(warn[0].Err)).(*terror.Error)
 	}
@@ -1346,6 +1369,20 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
+
+		// Because TiCDC do not want this kind of change,
+		// so we set the lossy DDL reorg txn source to 1 to
+		// avoid TiCDC to replicate this kind of change.
+		var txnSource uint64
+		if val := txn.GetOption(kv.TxnSource); val != nil {
+			txnSource, _ = val.(uint64)
+		}
+		err := kv.SetLossyDDLReorgSource(&txnSource, kv.LossyDDLColumnReorgSource)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		txn.SetOption(kv.TxnSource, txnSource)
+
 		txn.SetOption(kv.Priority, w.priority)
 		if tagger := w.reorgInfo.d.getResourceGroupTaggerForTopSQL(w.reorgInfo.Job); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
@@ -1358,8 +1395,9 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
-		warningsMap := make(map[errors.ErrorID]*terror.Error, len(rowRecords))
-		warningsCountMap := make(map[errors.ErrorID]int64, len(rowRecords))
+		// Optimize for few warnings!
+		warningsMap := make(map[errors.ErrorID]*terror.Error, 2)
+		warningsCountMap := make(map[errors.ErrorID]int64, 2)
 		for _, rowRecord := range rowRecords {
 			taskCtx.scanCount++
 

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/spkg/bom"
 	"go.uber.org/zap"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
@@ -83,7 +84,7 @@ func ExportStatement(ctx context.Context, store storage.ExternalStorage, sqlFile
 	}
 	defer fd.Close()
 
-	br := bufio.NewReader(fd)
+	br := bufio.NewReader(bom.NewReader(fd))
 
 	data := make([]byte, 0, sqlFile.FileMeta.FileSize+1)
 	buffer := make([]byte, 0, sqlFile.FileMeta.FileSize+1)

@@ -640,10 +640,15 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 		logutil.BgLogger().Warn("get system session failed", zap.Error(err))
 		return
 	}
+	// Make sure the session is new.
+	if _, err := se.(sqlexec.SQLExecutor).ExecuteInternal(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), "rollback"); err != nil {
+		se.Close()
+		return
+	}
 	defer do.sysSessionPool.Put(se)
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
-	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
+	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
 	if err != nil {
 		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
 		return
@@ -727,6 +732,7 @@ func (do *Domain) mdlCheckLoop() {
 				err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
 				if err != nil {
 					logutil.BgLogger().Warn("update self version failed", zap.Error(err))
+					jobNeedToSync = true
 				} else {
 					jobCache[jobID] = ver
 				}
@@ -1302,6 +1308,14 @@ func (do *Domain) SysProcTracker() sessionctx.SysProcTracker {
 // GetEtcdClient returns the etcd client.
 func (do *Domain) GetEtcdClient() *clientv3.Client {
 	return do.etcdClient
+}
+
+// GetPDClient returns the PD client.
+func (do *Domain) GetPDClient() pd.Client {
+	if store, ok := do.store.(kv.StorageWithPD); ok {
+		return store.GetPDClient()
+	}
+	return nil
 }
 
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it

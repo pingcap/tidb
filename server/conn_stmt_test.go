@@ -17,9 +17,19 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/binary"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -256,92 +266,6 @@ func TestParseStmtFetchCmd(t *testing.T) {
 	}
 }
 
-func TestCursorReadHoldTS(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	srv := CreateMockServer(t, store)
-	srv.SetDomain(dom)
-	defer srv.Close()
-
-	appendUint32 := binary.LittleEndian.AppendUint32
-	ctx := context.Background()
-	c := CreateMockConn(t, srv)
-	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key)")
-	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8)")
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("8"))
-
-	stmt, _, _, err := c.Context().Prepare("select * from t")
-	require.NoError(t, err)
-	require.Zero(t, tk.Session().ShowProcess().GetMinStartTS(0))
-
-	// should hold ts after executing stmt with cursor
-	require.NoError(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
-		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
-	)))
-	ts := tk.Session().ShowProcess().GetMinStartTS(0)
-	require.Positive(t, ts)
-	// should unhold ts when result set exhausted
-	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
-	require.Equal(t, ts, tk.Session().ShowProcess().GetMinStartTS(0))
-	require.Equal(t, ts, srv.GetMinStartTS(0))
-	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
-	require.Equal(t, ts, tk.Session().ShowProcess().GetMinStartTS(0))
-	require.Equal(t, ts, srv.GetMinStartTS(0))
-	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
-	require.Zero(t, tk.Session().ShowProcess().GetMinStartTS(0))
-
-	// should hold ts after executing stmt with cursor
-	require.NoError(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
-		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
-	)))
-	require.Positive(t, tk.Session().ShowProcess().GetMinStartTS(0))
-	// should unhold ts when stmt reset
-	require.NoError(t, c.Dispatch(ctx, appendUint32([]byte{mysql.ComStmtReset}, uint32(stmt.ID()))))
-	require.Zero(t, tk.Session().ShowProcess().GetMinStartTS(0))
-
-	// should hold ts after executing stmt with cursor
-	require.NoError(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
-		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
-	)))
-	require.Positive(t, tk.Session().ShowProcess().GetMinStartTS(0))
-	// should unhold ts when stmt closed
-	require.NoError(t, c.Dispatch(ctx, appendUint32([]byte{mysql.ComStmtClose}, uint32(stmt.ID()))))
-	require.Zero(t, tk.Session().ShowProcess().GetMinStartTS(0))
-
-	// create another 2 stmts and execute them
-	stmt1, _, _, err := c.Context().Prepare("select * from t")
-	require.NoError(t, err)
-	require.NoError(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt1.ID())),
-		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
-	)))
-	ts1 := tk.Session().ShowProcess().GetMinStartTS(0)
-	require.Positive(t, ts1)
-	stmt2, _, _, err := c.Context().Prepare("select * from t")
-	require.NoError(t, err)
-	require.NoError(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt2.ID())),
-		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
-	)))
-	ts2 := tk.Session().ShowProcess().GetMinStartTS(ts1)
-	require.Positive(t, ts2)
-
-	require.Less(t, ts1, ts2)
-	require.Equal(t, ts1, srv.GetMinStartTS(0))
-	require.Equal(t, ts2, srv.GetMinStartTS(ts1))
-	require.Zero(t, srv.GetMinStartTS(ts2))
-
-	// should unhold all when session closed
-	c.Close()
-	require.Zero(t, tk.Session().ShowProcess().GetMinStartTS(0))
-	require.Zero(t, srv.GetMinStartTS(0))
-}
-
 func TestCursorExistsFlag(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := CreateMockServer(t, store)
@@ -383,12 +307,7 @@ func TestCursorExistsFlag(t *testing.T) {
 	require.NoError(t, c.Dispatch(ctx, append([]byte{mysql.ComQuery}, "select * from t"...)))
 	require.False(t, mysql.HasCursorExistsFlag(getLastStatus()))
 
-	// fetch last 3
-	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
-	require.True(t, mysql.HasCursorExistsFlag(getLastStatus()))
-
-	// final fetch with no row retured
-	// (tidb doesn't unset cursor-exists flag in the previous response like mysql, one more fetch is needed)
+	// fetch last 3, the `CursorExist` flag should have been unset and the `LastRowSend` flag should have been set
 	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
 	require.False(t, mysql.HasCursorExistsFlag(getLastStatus()))
 	require.True(t, getLastStatus()&mysql.ServerStatusLastRowSend > 0)
@@ -396,4 +315,271 @@ func TestCursorExistsFlag(t *testing.T) {
 	// COM_QUERY after fetch
 	require.NoError(t, c.Dispatch(ctx, append([]byte{mysql.ComQuery}, "select * from t"...)))
 	require.False(t, mysql.HasCursorExistsFlag(getLastStatus()))
+
+	// try another query without response
+	stmt, _, _, err = c.Context().Prepare("select * from t where a = 100")
+	require.NoError(t, err)
+
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+	)))
+	require.True(t, mysql.HasCursorExistsFlag(getLastStatus()))
+
+	// fetch 5 rows, it will return no data with the `CursorExist` unset and `LastRowSend` set.
+	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
+	require.False(t, mysql.HasCursorExistsFlag(getLastStatus()))
+	require.True(t, getLastStatus()&mysql.ServerStatusLastRowSend > 0)
+
+	// the following FETCH should fail, as the cursor has been automatically closed
+	require.Error(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
+}
+
+func TestCursorWithParams(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	appendUint32 := binary.LittleEndian.AppendUint32
+	ctx := context.Background()
+	c := CreateMockConn(t, srv).(*mockConn)
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id_1 int, id_2 int)")
+	tk.MustExec("insert into t values (1, 1), (1, 2)")
+
+	stmt1, _, _, err := c.Context().Prepare("select * from t where id_1 = ? and id_2 = ?")
+	require.NoError(t, err)
+	stmt2, _, _, err := c.Context().Prepare("select * from t where id_1 = ?")
+	require.NoError(t, err)
+
+	// `execute stmt1 using 1,2` with cursor
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt1.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+		0x0, 0x1, 0x3, 0x0, 0x3, 0x0,
+		0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0,
+	)))
+	rows := c.Context().stmts[stmt1.ID()].GetResultSet().GetRowContainerReader()
+	require.Equal(t, int64(1), rows.Current().GetInt64(0))
+	require.Equal(t, int64(2), rows.Current().GetInt64(1))
+	rows.Next()
+	require.Equal(t, rows.End(), rows.Current())
+
+	// `execute stmt2 using 1` with cursor
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt2.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+		0x0, 0x1, 0x3, 0x0,
+		0x1, 0x0, 0x0, 0x0,
+	)))
+	rows = c.Context().stmts[stmt2.ID()].GetResultSet().GetRowContainerReader()
+	require.Equal(t, int64(1), rows.Current().GetInt64(0))
+	require.Equal(t, int64(1), rows.Current().GetInt64(1))
+	require.Equal(t, int64(1), rows.Next().GetInt64(0))
+	require.Equal(t, int64(2), rows.Current().GetInt64(1))
+	rows.Next()
+	require.Equal(t, rows.End(), rows.Current())
+
+	// fetch stmt2 with fetch size 256
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt2.ID())),
+		0x0, 0x1, 0x0, 0x0,
+	)))
+
+	// fetch stmt1 with fetch size 256, as it has more params, if we fetch the result at the first execute command, it
+	// will panic because the params have been overwritten and is not long enough.
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt1.ID())),
+		0x0, 0x1, 0x0, 0x0,
+	)))
+}
+
+func TestCursorDetachMemTracker(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	appendUint32 := binary.LittleEndian.AppendUint32
+	ctx := context.Background()
+	c := CreateMockConn(t, srv).(*mockConn)
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id_1 int, id_2 int)")
+	tk.MustExec("insert into t values (1, 1), (1, 2)")
+	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
+	defer tk.MustExec("set global tidb_mem_oom_action= DEFAULT")
+	// TODO: find whether it's expected to have one child at the beginning
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
+
+	// execute a normal statement, it'll success
+	stmt, _, _, err := c.Context().Prepare("select count(id_2) from t")
+	require.NoError(t, err)
+
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+	)))
+	maxConsumed := tk.Session().GetSessionVars().MemTracker.MaxConsumed()
+
+	// testkit also uses `PREPARE` related calls to run statement with arguments.
+	// format the SQL to avoid the interference from testkit.
+	tk.MustExec(fmt.Sprintf("set tidb_mem_quota_query=%d", maxConsumed/2))
+	// there is one memTracker for the resultSet spill-disk
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
+
+	// This query should exceed the memory limitation during `openExecutor`
+	require.Error(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+	)))
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
+
+	// The next query should succeed
+	tk.MustExec(fmt.Sprintf("set tidb_mem_quota_query=%d", maxConsumed+1))
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
+	// This query should succeed
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+	)))
+	// there is one memTracker for the resultSet spill-disk
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
+}
+
+func TestMemoryTrackForPrepareBinaryProtocol(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	c := CreateMockConn(t, srv).(*mockConn)
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id_2 int)")
+	for i := 0; i <= 10; i++ {
+		stmt, _, _, err := c.Context().Prepare("select count(id_2) from t")
+		require.NoError(t, err)
+		require.NoError(t, stmt.Close())
+	}
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
+}
+
+func TestCursorFetchShouldSpill(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/testCursorFetchSpill", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/testCursorFetchSpill"))
+	}()
+
+	appendUint32 := binary.LittleEndian.AppendUint32
+	ctx := context.Background()
+	c := CreateMockConn(t, srv).(*mockConn)
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id_1 int, id_2 int)")
+	tk.MustExec("insert into t values (1, 1), (1, 2)")
+	tk.MustExec("set global tidb_enable_tmp_storage_on_oom = ON")
+	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
+	defer tk.MustExec("set global tidb_mem_oom_action= DEFAULT")
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
+
+	// execute a normal statement, it'll spill to disk
+	stmt, _, _, err := c.Context().Prepare("select * from t")
+	require.NoError(t, err)
+
+	tk.MustExec(fmt.Sprintf("set tidb_mem_quota_query=%d", 1))
+
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+	)))
+}
+
+func TestCursorFetchErrorInFetch(t *testing.T) {
+	tmpStoragePath := t.TempDir()
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = tmpStoragePath
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	appendUint32 := binary.LittleEndian.AppendUint32
+	ctx := context.Background()
+	c := CreateMockConn(t, srv).(*mockConn)
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, payload BLOB)")
+	payload := make([]byte, 512)
+	for i := 0; i < 2048; i++ {
+		rand.Read(payload)
+		tk.MustExec("insert into t values (?, ?)", i, payload)
+	}
+
+	tk.MustExec("set global tidb_enable_tmp_storage_on_oom = ON")
+	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
+	defer tk.MustExec("set global tidb_mem_oom_action= DEFAULT")
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
+
+	// execute a normal statement, it'll spill to disk
+	stmt, _, _, err := c.Context().Prepare("select * from t")
+	require.NoError(t, err)
+
+	tk.MustExec(fmt.Sprintf("set tidb_mem_quota_query=%d", 1))
+
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+	)))
+
+	// close these disk files to produce error
+	filepath.Walk("/proc/self/fd", func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		target, err := os.Readlink(path)
+		if err != nil {
+			return nil
+		}
+		if strings.HasPrefix(target, tmpStoragePath) {
+			fd, err := strconv.Atoi(filepath.Base(path))
+			require.NoError(t, err)
+			require.NoError(t, syscall.Close(fd))
+		}
+		return nil
+	})
+
+	// it'll get "bad file descriptor", as it has been closed in the test.
+	require.Error(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1024)))
+	// after getting a failed FETCH, the cursor should have been reseted
+	require.False(t, stmt.GetCursorActive())
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
+	require.Len(t, tk.Session().GetSessionVars().DiskTracker.GetChildrenForTest(), 0)
 }

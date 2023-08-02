@@ -682,6 +682,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
+		logutil.BgLogger().Info("[ddl] run add index job done",
+			zap.String("charset", job.Charset),
+			zap.String("collation", job.Collate))
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 	}
@@ -896,6 +899,30 @@ func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *m
 func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo, mergingTmpIdx bool) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
+	var rh *reorgHandler
+	if w.concurrentDDL {
+		sctx, err1 := w.sessPool.get()
+		if err1 != nil {
+			err = err1
+			return
+		}
+		defer w.sessPool.put(sctx)
+		sess := newSession(sctx)
+		err = sess.begin()
+		if err != nil {
+			return
+		}
+		defer sess.rollback()
+		txn, err1 := sess.txn()
+		if err1 != nil {
+			err = err1
+			return
+		}
+		newMeta := meta.NewMeta(txn)
+		rh = newReorgHandler(newMeta, sess, w.concurrentDDL)
+	} else {
+		rh = newReorgHandler(t, w.sess, w.concurrentDDL)
+	}
 
 	failpoint.Inject("mockDMLExecutionStateMerging", func(val failpoint.Value) {
 		//nolint:forcetypeassert
@@ -905,7 +932,6 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 	})
 
-	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
 	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements, mergingTmpIdx)
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version

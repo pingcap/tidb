@@ -64,6 +64,7 @@ go_test(
         "key_test.go",
         "main_test.go",
         "mock_test.go",
+        "option_test.go",
         "txn_test.go",
         "utils_test.go",
         "version_test.go",

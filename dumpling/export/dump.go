@@ -1531,7 +1531,7 @@ func setSessionParam(d *Dumper) error {
 				d.L().Info("cannot check whether TiDB has TiKV, will apply tidb_snapshot by default. This won't affect dump process", log.ShortError(err))
 			}
 			if conf.ServerInfo.HasTiKV {
-				sessionParam["tidb_snapshot"] = snapshot
+				sessionParam[snapshotVar] = snapshot
 			}
 		}
 	}

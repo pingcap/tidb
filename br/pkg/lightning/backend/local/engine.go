@@ -94,7 +94,7 @@ func (r *syncedRanges) reset() {
 type Engine struct {
 	engineMeta
 	closed       atomic.Bool
-	db           *pebble.DB
+	db           atomic.Pointer[pebble.DB]
 	UUID         uuid.UUID
 	localWriters sync.Map
 
@@ -147,13 +147,19 @@ func (e *Engine) setError(err error) {
 	}
 }
 
+func (e *Engine) getDB() *pebble.DB {
+	return e.db.Load()
+}
+
+// Close closes the engine and release all resources.
 func (e *Engine) Close() error {
 	e.logger.Debug("closing local engine", zap.Stringer("engine", e.UUID), zap.Stack("stack"))
-	if e.db == nil {
+	db := e.getDB()
+	if db == nil {
 		return nil
 	}
-	err := errors.Trace(e.db.Close())
-	e.db = nil
+	err := errors.Trace(db.Close())
+	e.db.Store(nil)
 	return err
 }
 
@@ -444,9 +450,7 @@ func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) 
 }
 
 func (e *Engine) getEngineFileSize() backend.EngineFileSize {
-	e.mutex.RLock()
-	db := e.db
-	e.mutex.RUnlock()
+	db := e.getDB()
 
 	var total pebble.LevelMetrics
 	if db != nil {
@@ -852,7 +856,7 @@ func (e *Engine) flushEngineWithoutLock(ctx context.Context) error {
 		return err
 	}
 
-	flushFinishedCh, err := e.db.AsyncFlush()
+	flushFinishedCh, err := e.getDB().AsyncFlush()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -880,11 +884,11 @@ func saveEngineMetaToDB(meta *engineMeta, db *pebble.DB) error {
 func (e *Engine) saveEngineMeta() error {
 	e.logger.Debug("save engine meta", zap.Stringer("uuid", e.UUID), zap.Int64("count", e.Length.Load()),
 		zap.Int64("size", e.TotalSize.Load()))
-	return errors.Trace(saveEngineMetaToDB(&e.engineMeta, e.db))
+	return errors.Trace(saveEngineMetaToDB(&e.engineMeta, e.getDB()))
 }
 
 func (e *Engine) loadEngineMeta() error {
-	jsonBytes, closer, err := e.db.Get(engineMetaKey)
+	jsonBytes, closer, err := e.getDB().Get(engineMetaKey)
 	if err != nil {
 		if err == pebble.ErrNotFound {
 			e.logger.Debug("local db missing engine meta", zap.Stringer("uuid", e.UUID), log.ShortError(err))
@@ -977,13 +981,13 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 		opts = &newOpts
 	}
 	if !e.duplicateDetection {
-		return pebbleIter{Iterator: e.db.NewIter(opts)}
+		return pebbleIter{Iterator: e.getDB().NewIter(opts)}
 	}
 	logger := log.FromContext(ctx).With(
 		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
 		zap.Int64("tableID", e.tableInfo.ID),
 		zap.Stringer("engineUUID", e.UUID))
-	return newDupDetectIter(ctx, e.db, e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
+	return newDupDetectIter(ctx, e.getDB(), e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
 }
 
 type sstMeta struct {
@@ -1498,8 +1502,9 @@ func (i dbSSTIngester) ingest(metas []*sstMeta) error {
 	for _, m := range metas {
 		paths = append(paths, m.path)
 	}
-	if i.e.db == nil {
+	db := i.e.getDB()
+	if db == nil {
 		return errorEngineClosed
 	}
-	return i.e.db.Ingest(paths)
+	return db.Ingest(paths)
 }

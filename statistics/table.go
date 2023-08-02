@@ -402,9 +402,7 @@ func (t *Table) GetColRowCount() float64 {
 	slices.Sort(IDs)
 	for _, id := range IDs {
 		col := t.Columns[id]
-		// need to make sure stats on this column is loaded.
-		// TODO: use the new method to check if it's loaded
-		if col != nil && !(col.Histogram.NDV > 0 && col.notNullCount() == 0) && col.TotalRowCount() != 0 {
+		if col != nil && col.IsFullLoad() {
 			return col.TotalRowCount()
 		}
 	}
@@ -1375,8 +1373,7 @@ func (coll *HistColl) GetIndexAvgRowSize(ctx sessionctx.Context, cols []*express
 // We use this check to make sure all the statistics of the table are in the same version.
 func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 	for _, col := range tbl.Columns {
-		// Version0 means no statistics is collected currently.
-		if col.StatsVer == Version0 {
+		if !col.IsAnalyzed() {
 			continue
 		}
 		if col.StatsVer != int64(*version) {
@@ -1387,8 +1384,7 @@ func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 		return true
 	}
 	for _, idx := range tbl.Indices {
-		// Version0 means no statistics is collected currently.
-		if idx.StatsVer == Version0 {
+		if !idx.IsAnalyzed() {
 			continue
 		}
 		if idx.StatsVer != int64(*version) {

@@ -145,7 +145,6 @@ go_test(
     ],
     embed = [":server"],
     flaky = True,
-    race = "on",
     shard_count = 50,
     deps = [
         "//config",
@@ -194,7 +193,6 @@ go_test(
         "//util/plancodec",
         "//util/resourcegrouptag",
         "//util/rowcodec",
-        "//util/sqlexec",
         "//util/topsql",
         "//util/topsql/collector",
         "//util/topsql/collector/mock",
