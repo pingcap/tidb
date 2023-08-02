@@ -160,6 +160,11 @@ func (d *ddl) CreateETL(ctx sessionctx.Context, s *ast.CreateETLStmt) error {
 	if err != nil {
 		return err
 	}
+	logutil.BgLogger().Info("sinkTaskDesc", zap.String("sinkTaskDesc", sinkTaskDesc))
+	err = d.CreateTableWithInfo(ctx, schema.Name, tblInfo, onExist)
+	if err != nil {
+		return err
+	}
 	sctx, err := d.sessPool.get()
 	if err != nil {
 		return err
@@ -167,11 +172,10 @@ func (d *ddl) CreateETL(ctx sessionctx.Context, s *ast.CreateETLStmt) error {
 	defer d.sessPool.put(sctx)
 	restrictedCtx := sctx.(sessionctx.Context)
 	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
-	if _, err := sqlExecutor.ExecuteInternal(d.ctx, fmt.Sprintf("alter table %s.%s set tiflash replica 1", ident.Schema.L, s.DataSourceNames[0])); err != nil {
+	if _, err := sqlExecutor.ExecuteInternal(d.ctx, fmt.Sprintf("alter table %s.%s set tiflash replica 1", ident.Schema.L, s.Table.Name.L)); err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("sinkTaskDesc", zap.String("sinkTaskDesc", sinkTaskDesc))
-	return d.CreateTableWithInfo(ctx, schema.Name, tblInfo, onExist)
+	return nil
 }
 
 func writeTableDefinition(sb *strings.Builder, stmt *ast.CreateETLStmt, engineType string) *strings.Builder {
@@ -244,7 +248,7 @@ func writeDemoHudiT(sb *strings.Builder, stmt *ast.CreateETLStmt) *strings.Build
 	sb.WriteString("With (\n")
 	sb.WriteString("  'connector' = 'hudi',\n")
 	sb.WriteString("  'path' = '${hdfs_address}',\n")
-	sb.WriteString("  'table.type' = 'MERGE_ON_READ',\n")
+	sb.WriteString("  'table.type' = 'COPY_ON_WRITE',\n")
 	sb.WriteString("  'write.option' = 'bulk_insert',\n")
 	//	sb.WriteString("  'write.bucket_assign.tasks' = '12',\n")
 	sb.WriteString("  'write.tasks' = '4',\n")
