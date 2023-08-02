@@ -1202,6 +1202,9 @@ func (remote *Backend) generateAndSendJob(
 		}
 		for _, job := range jobs {
 			remote.fillJobKVs(job, iter)
+			if len(job.writeBatch) == 0 {
+				continue
+			}
 			jobWg.Add(1)
 			select {
 			case jobToWorkerCh <- job:
