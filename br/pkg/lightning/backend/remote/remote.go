@@ -454,6 +454,12 @@ func (remote *Backend) GetAllRemoteFiles(ctx context.Context) (dataFiles sharedi
 // GetRangeSplitter returns a RangeSplitter that can be used to split the range into multiple subtasks.
 func (remote *Backend) GetRangeSplitter(ctx context.Context, dataFiles sharedisk.FilePathHandle,
 	statFiles []string, totalKVSize uint64, instanceCnt int) (*sharedisk.RangeSplitter, error) {
+	for _, fname := range dataFiles.FlatSlice() {
+		log.FromContext(ctx).Info("data file", zap.String("file", fname))
+	}
+	for _, sname := range statFiles {
+		log.FromContext(ctx).Info("stat file", zap.String("file", sname))
+	}
 	mergePropIter, err := sharedisk.NewMergePropIter(ctx, statFiles, remote.externalStorage)
 	if err != nil {
 		return nil, err
