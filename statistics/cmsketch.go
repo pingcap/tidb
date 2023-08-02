@@ -801,15 +801,8 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 	}
 
 	partNum := len(topNs)
-	topNsNum := make([]int, partNum)
 	removeVals := make([][]TopNMeta, partNum)
-	for i, topN := range topNs {
-		if topN == nil {
-			topNsNum[i] = 0
-			continue
-		}
-		topNsNum[i] = len(topN.TopN)
-	}
+
 	// Different TopN structures may hold the same value, we have to merge them.
 	counter := make(map[hack.MutableString]float64)
 	// datumMap is used to store the mapping from the string type to datum type.
