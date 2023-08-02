@@ -525,14 +525,14 @@ type TableInfo struct {
 	ETLStoragePath                string
 	// The first column of DemoHudiTSchemaCols must be the primary key column
 	// This is the schema for demo_hudi.t
-	DemoHudiTSchemaCols          []string
-	DemoHudiTSchemaColsFieldTypes []*types.FieldType
-	// This is schema for demo_flink.t
-	DemoFlinkTSchemaCols          []string
-	DemoFlinkTSchemaColsFieldTypes []*types.FieldType
-	// This is the schema for demo_flink.t_inc
-	DemoFlinkTIncSourceTableSchema []string
-	DemoFlinkTIncSourceTableSchemaFieldTypes []*types.FieldType
+	// DemoHudiTSchemaCols          []string
+	// DemoHudiTSchemaColsFieldTypes []*types.FieldType
+	// // This is schema for demo_flink.t
+	// DemoFlinkTSchemaCols          []string
+	// DemoFlinkTSchemaColsFieldTypes []*types.FieldType
+	// // This is the schema for demo_flink.t_inc
+	// DemoFlinkTIncSourceTableSchema []string
+	// DemoFlinkTIncSourceTableSchemaFieldTypes []*types.FieldType
 
 	ETLPKColNames                 []string
 	ETLUnderlyingTableNames []string

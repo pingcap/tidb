@@ -122,19 +122,12 @@ func (d *ddl) CreateETL(ctx sessionctx.Context, s *ast.CreateETLStmt) error {
 	}
 	tblInfo.IsETL = true
 	tblInfo.ETLQuery = s.ETLSelect.Text()
-	if s.HudiTCols == nil {
-		tblInfo.DemoHudiTSchemaCols = s.DemoHudiTSchemaCols
-	} else {
+	if s.HudiTCols != nil {
+		s.DemoHudiTSchemaCols = s.DemoHudiTSchemaCols[:0]
 		for _, name := range s.HudiTCols {
-			tblInfo.DemoHudiTSchemaCols = append(tblInfo.DemoHudiTSchemaCols, name.L)
+			s.DemoHudiTSchemaCols = append(s.DemoHudiTSchemaCols, name.L)
 		}
 	}
-	tblInfo.DemoHudiTSchemaColsFieldTypes = s.DemoHudiTSchemaColsFiledTypes
-	tblInfo.DemoFlinkTSchemaCols = s.DemoFlinkTSchemaCols
-	tblInfo.DemoFlinkTSchemaColsFieldTypes = s.DemoFlinkTSchemaColsFiledTypes
-	tblInfo.DemoFlinkTIncSourceTableSchema = s.DemoFlinkTIncSchemaCols
-	tblInfo.DemoFlinkTIncSourceTableSchemaFieldTypes = s.DemoFlinkTIncSchemaColsFiledTypes
-	tblInfo.ETLPKColNames = s.PKNamesForFlinkTable
 
 	onExist := OnExistError
 	if s.IfNotExists {
@@ -150,11 +143,11 @@ func (d *ddl) CreateETL(ctx sessionctx.Context, s *ast.CreateETLStmt) error {
 	// 7. insert into demo_flink.t (select * from demo_flink.t_inc)
 
 	sb := new(strings.Builder)
-	sb = writeDemoFlinkTFile(sb, tblInfo)
-	sb = writeDemoHudiT(sb, tblInfo)
-	sb = writeDemoFlinkT(sb, tblInfo)
-	sb = writeDemoFlinkTInc(sb, tblInfo)
-	sb = writeDemoHudiTInsert(sb, tblInfo)
+	sb = writeDemoFlinkTFile(sb, s)
+	sb = writeDemoHudiT(sb, s)
+	sb = writeDemoFlinkT(sb, s)
+	sb = writeDemoFlinkTInc(sb, s)
+	sb = writeDemoHudiTInsert(sb, tblInfo, s)
 	etlJobID := NewSHA1Hash()
 	tblInfo.ETLStoragePath = etlPathPrefix + "etl" + etlJobID + "-sink-5"
 	// tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
@@ -167,89 +160,65 @@ func (d *ddl) CreateETL(ctx sessionctx.Context, s *ast.CreateETLStmt) error {
 	if err != nil {
 		return err
 	}
+	sctx, err := d.sessPool.get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.put(sctx)
+	restrictedCtx := sctx.(sessionctx.Context)
+	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
+	if _, err := sqlExecutor.ExecuteInternal(d.ctx, fmt.Sprintf("alter table %s.%s set tiflash replica 1", ident.Schema.L, s.DataSourceNames[0])); err != nil {
+		return err
+	}
 	logutil.BgLogger().Info("sinkTaskDesc", zap.String("sinkTaskDesc", sinkTaskDesc))
 	return d.CreateTableWithInfo(ctx, schema.Name, tblInfo, onExist)
 }
 
-func writeTableDefinition(sb *strings.Builder, tblInfo *model.TableInfo, engineType string) *strings.Builder {
+func writeTableDefinition(sb *strings.Builder, stmt *ast.CreateETLStmt, engineType string) *strings.Builder {
 	if engineType == "DemoHudiT" {
-		for i, name := range tblInfo.DemoHudiTSchemaCols {
-			tpStr := tblInfo.DemoHudiTSchemaColsFieldTypes[i].CompactStr()
+		for i, name := range stmt.DemoHudiTSchemaCols {
+			tpStr := stmt.DemoHudiTSchemaColsFiledTypes[i].CompactStr()
 			if strings.Contains(tpStr, "int") {
 				tpStr = "bigint"
 			}
-			if i == 0 {
-				tpStr += " primary key"
-			}
 
 			s := fmt.Sprintf("  %s %s,\n", name, tpStr)
-			if i == len(tblInfo.DemoHudiTSchemaCols)-1 {
-				s = fmt.Sprintf("  %s %s\n", name, tpStr)
-			}
 			sb.WriteString(s)
 		}
+		s := strings.Join(stmt.PKNamesForHudiTable, ",")
+		sb.WriteString(fmt.Sprintf("  primary key (%s) not enforced\n", s))
 	}
 	if engineType == "DemoFlinkT" {
-		for i, name := range tblInfo.DemoFlinkTSchemaCols {
-			tpStr := tblInfo.DemoFlinkTSchemaColsFieldTypes[i].CompactStr()
+		for i, name := range stmt.DemoFlinkTSchemaCols {
+			tpStr := stmt.DemoFlinkTIncSchemaColsFiledTypes[i].CompactStr()
 			if strings.Contains(tpStr, "int") {
 				tpStr = "bigint"
 			}
-			if i == 0 {
-				tpStr += " primary key"
-			}
 
 			s := fmt.Sprintf("  %s %s,\n", name, tpStr)
-			if i == len(tblInfo.DemoFlinkTSchemaCols)-1 {
-				s = fmt.Sprintf("  %s %s\n", name, tpStr)
-			}
 			sb.WriteString(s)
 		}
+		s := strings.Join(stmt.PKNamesForFlinkTable, ",")
+		sb.WriteString(fmt.Sprintf("  primary key (%s) not enforced\n", s))
 	}
 	if engineType == "DemoFlinkTInc" {
-		for i, name := range tblInfo.DemoFlinkTIncSourceTableSchema {
-			tpStr := tblInfo.DemoFlinkTSchemaColsFieldTypes[i].CompactStr()
+		for i, name := range stmt.DemoFlinkTIncSchemaCols {
+			tpStr := stmt.DemoFlinkTIncSchemaColsFiledTypes[i].CompactStr()
 			if strings.Contains(tpStr, "int") {
 				tpStr = "bigint"
 			}
-			if i == 0 {
-				tpStr += " primary key"
-			}
 
 			s := fmt.Sprintf("  %s %s,\n", name, tpStr)
-			if i == len(tblInfo.DemoFlinkTSchemaCols)-1 {
-				s = fmt.Sprintf("  %s %s\n", name, tpStr)
-			}
 			sb.WriteString(s)
 		}
+		s := strings.Join(stmt.PKNamesForFlinkTable, ",")
+		sb.WriteString(fmt.Sprintf("  primary key (%s) not enforced\n", s))
 	}
-	// for i, name := range tblInfo.DemoHudiTSchemaCols {
-	// 	tpStr := tblInfo.DemoHudiTSchemaColsFieldTypes[i].CompactStr()
-	// 	if engineType == "flink" {
-	// 		if strings.Contains(tpStr, "char") {
-	// 			tpStr = "string"
-	// 		}
-	// 	}
-	// 	if strings.Contains(tpStr, "int") {
-	// 		tpStr = "int"
-	// 	}
-	// 	for _, pkname := range tblInfo.ETLPKColNames {
-	// 		if name == pkname {
-	// 			tpStr += " primary key"
-	// 		}
-	// 	}
-
-	// 	s := fmt.Sprintf("  %s %s,\n", name, tpStr)
-	// 	if i == len(tblInfo.DemoHudiTSchemaCols)-1 {
-	// 		s = fmt.Sprintf("  %s %s\n", name, tpStr)
-	// 	}
-	// 	sb.WriteString(s)
-	// }
 
 	return sb
 }
 
-func writeDemoFlinkTFile(sb *strings.Builder, tblInfo *model.TableInfo) *strings.Builder {
+func writeDemoFlinkTFile(sb *strings.Builder, stmt *ast.CreateETLStmt) *strings.Builder {
 	sb.WriteString("set execution.checkpointing.interval=1min;\n")
 	sb.WriteString("set state.backend = rocksdb;\n")
 	sb.WriteString("set state.checkpoints.dir = ${hdfs_address}/checkpoints;\n")
@@ -258,7 +227,7 @@ func writeDemoFlinkTFile(sb *strings.Builder, tblInfo *model.TableInfo) *strings
 	sb.WriteString("create database demo_flink;\n")
 	sb.WriteString("create database demo_hudi;\n")
 	sb.WriteString("create table demo_flink.t_file (\n")
-	sb = writeTableDefinition(sb, tblInfo, "DemoFlinkTInc")
+	sb = writeTableDefinition(sb, stmt, "DemoFlinkTInc")
 	sb.WriteString(")\n")
 	sb.WriteString("with (\n")
 	sb.WriteString("  'connector' = 'filesystem',\n")
@@ -268,14 +237,14 @@ func writeDemoFlinkTFile(sb *strings.Builder, tblInfo *model.TableInfo) *strings
 	return sb
 }
 
-func writeDemoHudiT(sb *strings.Builder, tblInfo *model.TableInfo) *strings.Builder {
+func writeDemoHudiT(sb *strings.Builder, stmt *ast.CreateETLStmt) *strings.Builder {
 	sb.WriteString("create table demo_hudi.t (\n")
-	sb = writeTableDefinition(sb, tblInfo, "DemoHudiT")
+	sb = writeTableDefinition(sb, stmt, "DemoHudiT")
 	sb.WriteString(")\n")
 	sb.WriteString("With (\n")
 	sb.WriteString("  'connector' = 'hudi',\n")
 	sb.WriteString("  'path' = '${hdfs_address}',\n")
-	sb.WriteString("  'table.type' = 'COPY_ON_WRITE',\n")
+	sb.WriteString("  'table.type' = 'MERGE_ON_READ',\n")
 	sb.WriteString("  'write.option' = 'bulk_insert',\n")
 	//	sb.WriteString("  'write.bucket_assign.tasks' = '12',\n")
 	sb.WriteString("  'write.tasks' = '4',\n")
@@ -284,9 +253,9 @@ func writeDemoHudiT(sb *strings.Builder, tblInfo *model.TableInfo) *strings.Buil
 	return sb
 }
 
-func writeDemoFlinkT(sb *strings.Builder, tblInfo *model.TableInfo) *strings.Builder {
+func writeDemoFlinkT(sb *strings.Builder, stmt *ast.CreateETLStmt) *strings.Builder {
 	sb.WriteString("create table demo_flink.t (\n")
-	sb = writeTableDefinition(sb, tblInfo, "DemoFlinkT")
+	sb = writeTableDefinition(sb, stmt, "DemoFlinkT")
 	sb.WriteString(")\n")
 	sb.WriteString("with (\n")
 	sb.WriteString("  'connector' = 'kafka',\n")
@@ -300,9 +269,9 @@ func writeDemoFlinkT(sb *strings.Builder, tblInfo *model.TableInfo) *strings.Bui
 	return sb
 }
 
-func writeDemoFlinkTInc(sb *strings.Builder, tblInfo *model.TableInfo) *strings.Builder {
+func writeDemoFlinkTInc(sb *strings.Builder, stmt *ast.CreateETLStmt) *strings.Builder {
 	sb.WriteString("create table demo_flink.t_inc (\n")
-	sb = writeTableDefinition(sb, tblInfo, "DemoFlinkTInc")
+	sb = writeTableDefinition(sb, stmt, "DemoFlinkTInc")
 	sb.WriteString(")\n")
 	sb.WriteString("with (\n")
 	sb.WriteString("  'connector' = 'kafka',\n")
@@ -317,10 +286,10 @@ func writeDemoFlinkTInc(sb *strings.Builder, tblInfo *model.TableInfo) *strings.
 
 // 1. read part of the columns: insert into demo_hudi.t(a, b) (select * from demo_flink.t);
 // 2.
-func writeDemoHudiTInsert(sb *strings.Builder, tblInfo *model.TableInfo) *strings.Builder {
+func writeDemoHudiTInsert(sb *strings.Builder, tblInfo *model.TableInfo, stmt *ast.CreateETLStmt) *strings.Builder {
 	demoHudiColNames := ""
-	for i, name := range tblInfo.DemoHudiTSchemaCols {
-		if i == len(tblInfo.DemoHudiTSchemaCols)-1 {
+	for i, name := range stmt.DemoHudiTSchemaCols {
+		if i == len(stmt.DemoHudiTSchemaCols)-1 {
 			demoHudiColNames += name
 		} else {
 			demoHudiColNames += name + ","
@@ -334,8 +303,8 @@ func writeDemoHudiTInsert(sb *strings.Builder, tblInfo *model.TableInfo) *string
 	// sb.WriteString("insert into demo_hudi.t (select * from demo_flink.t);\n")
 	sb.WriteString("SET table.dml-sync=true;\n")
 	demoFlinkTColNames := ""
-	for i, name := range tblInfo.DemoFlinkTSchemaCols {
-		if i == len(tblInfo.DemoFlinkTSchemaCols)-1 {
+	for i, name := range stmt.DemoFlinkTSchemaCols {
+		if i == len(stmt.DemoFlinkTSchemaCols)-1 {
 			demoFlinkTColNames += name
 		} else {
 			demoFlinkTColNames += name + ","

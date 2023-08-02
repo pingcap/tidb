@@ -4645,6 +4645,22 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			v.DemoFlinkTIncSchemaCols = append(v.DemoFlinkTIncSchemaCols, col.Name.L)
 			v.DemoFlinkTIncSchemaColsFiledTypes = append(v.DemoFlinkTIncSchemaColsFiledTypes, &col.FieldType)
 		}
+		for _, indexInfo := range ds[0].tableInfo.Indices {
+			if indexInfo.Primary {
+				for _, col := range indexInfo.Columns {
+					v.PKNamesForFlinkTable = append(v.PKNamesForFlinkTable, col.Name.L)
+				}
+			}
+		}
+		if v.HudiTCols == nil {
+			v.PKNamesForHudiTable = v.PKNamesForFlinkTable
+		} else {
+			for _, col := range v.HudiTCols {
+				if strings.HasPrefix(col.L, "_") {
+					v.PKNamesForHudiTable = append(v.PKNamesForHudiTable, col.L)
+				}
+			}
+		}
 		logutil.BgLogger().Warn("DemoFlinkTIncSchemaCols", zap.Any("DemoFlinkTIncSchemaCols", v.DemoFlinkTIncSchemaCols), zap.Any("DemoFlinkT", v.DemoFlinkTSchemaCols), zap.Any("DemoHudiT", v.DemoHudiTSchemaCols))
 		// dsNames := make(map[string]string)
 		// dsNames = getDataSourceNames(dsNames, plan.(LogicalPlan))
