@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -178,6 +180,8 @@ func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error
 }
 
 func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask, step int64, minimalTaskCh chan func()) {
+	defer util.Recover(metrics.LabelDDL, "ingestWorker.HandleTask", func() {
+	}, false)
 	minimalTasks, err := scheduler.SplitSubtask(ctx, subtask)
 	if err != nil {
 		s.onError(err)
