@@ -121,7 +121,7 @@ func dropEvicted(item statistics.TableCacheItem) {
 	if !item.IsStatsInitialized() {
 		return
 	}
-	if item.IsCMSExist() && item.StatsVer() < statistics.Version2 {
+	if item.IsCMSExist() && item.GetStatsVer() < statistics.Version2 {
 		item.DropCMS()
 	}
 	// For stats version2, there is no cms thus we directly drop topn

@@ -80,7 +80,7 @@ func (idx *Index) isStatsInitialized() bool {
 	return idx.statsInitialized
 }
 
-func (idx *Index) StatsVer() int64 {
+func (idx *Index) GetStatsVer() int64 {
 	return idx.StatsVer
 }
 

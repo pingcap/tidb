@@ -377,7 +377,7 @@ func (c *Column) IsStatsInitialized() bool {
 	return c.statsInitialized
 }
 
-func (c *Column) StatsVer() int64 {
+func (c *Column) GetStatsVer() int64 {
 	return c.StatsVer
 }
 
@@ -485,7 +485,7 @@ func (s StatsLoadedStatus) StatusToString() string {
 // IsAnalyzed indicates whether the column is analyzed.
 // The set of IsAnalyzed columns is a subset of the set of StatsAvailable columns.
 func (c *Column) IsAnalyzed() bool {
-	return c.StatsVer != Version0
+	return c.GetStatsVer() != Version0
 }
 
 // StatsAvailable indicates whether the column stats are collected.
