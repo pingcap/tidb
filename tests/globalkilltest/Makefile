@@ -24,6 +24,10 @@ GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/domain.ldflagServ
 GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/domain.ldflagLostConnectionToPDTimeout=5"
 GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/store.ldflagGetEtcdAddrsFromConfig=1"
 
+GLOBAL_KILL_TEST_SERVER_LDFLAGS +=  -X "github.com/pingcap/tidb/util/globalconn.ldflagIsGlobalKillTest=1"
+GLOBAL_KILL_TEST_SERVER_LDFLAGS +=  -X "github.com/pingcap/tidb/util/globalconn.ldflagServerIDBits32=2"
+GLOBAL_KILL_TEST_SERVER_LDFLAGS +=  -X "github.com/pingcap/tidb/util/globalconn.ldflagLocalConnIDBits32=4"
+
 .PHONY: server buildsucc
 
 default: server buildsucc

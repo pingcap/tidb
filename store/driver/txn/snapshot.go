@@ -129,6 +129,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetRequestSourceInternal(val.(bool))
 	case kv.RequestSourceType:
 		s.KVSnapshot.SetRequestSourceType(val.(string))
+	case kv.ExplicitRequestSourceType:
+		s.KVSnapshot.SetExplicitRequestSourceType(val.(string))
 	case kv.ReplicaReadAdjuster:
 		s.KVSnapshot.SetReplicaReadAdjuster(val.(txnkv.ReplicaReadAdjuster))
 	case kv.ScanBatchSize:

@@ -111,6 +111,10 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err2
 	}
 
+	if err := e.importPlan.InitTiKVConfigs(ctx, newSCtx); err != nil {
+		return err
+	}
+
 	failpoint.Inject("cancellableCtx", func() {
 		// KILL is not implemented in testkit, so we use a fail-point to simulate it.
 		newCtx, cancel := context.WithCancel(ctx)
