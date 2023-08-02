@@ -538,17 +538,29 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 	} else {
 		prefix = t.RecordPrefix()
 	}
+	// Build reorg tasks.
+	job := reorgInfo.Job
 	//nolint:forcetypeassert
 	phyTbl := t.(table.PhysicalTable)
+	jobCtx := reorgInfo.d.jobContext(job.ID)
 	for _, keyRange := range kvRanges {
 		taskID := taskIDAlloc.alloc()
 		startKey := keyRange.StartKey
-		endKey := keyRange.EndKey
 		if len(startKey) == 0 {
 			startKey = prefix
 		}
+		endKey := keyRange.EndKey
 		if len(endKey) == 0 {
 			endKey = prefix.PrefixNext()
+		}
+		endK, err := getRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, prefix, keyRange.StartKey, endKey)
+		if err != nil {
+			logutil.BgLogger().Info("[ddl] get backfill range task, get reverse key failed", zap.Error(err))
+		} else {
+			logutil.BgLogger().Info("[ddl] get backfill range task, change end key",
+				zap.Int("id", taskID), zap.Int64("pTbl", phyTbl.GetPhysicalID()),
+				zap.String("end key", hex.EncodeToString(endKey)), zap.String("current end key", hex.EncodeToString(endK)))
+			endKey = endK
 		}
 
 		task := &reorgBackfillTask{
@@ -803,7 +815,7 @@ func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, keyPre
 	return nil
 }
 
-// getRegionEndKey gets the actual end key for the range of [startKey, endKey].
+// getRegionEndKey gets the actual end key for the range of [startKey, endKey).
 func getRangeEndKey(ctx *JobContext, store kv.Storage, priority int, keyPrefix kv.Key, startKey, endKey kv.Key) (kv.Key, error) {
 	snap := store.GetSnapshot(kv.MaxVersion)
 	snap.SetOption(kv.Priority, priority)
@@ -812,20 +824,20 @@ func getRangeEndKey(ctx *JobContext, store kv.Storage, priority int, keyPrefix k
 	}
 	snap.SetOption(kv.RequestSourceInternal, true)
 	snap.SetOption(kv.RequestSourceType, ctx.ddlJobSourceType())
-	it, err := snap.IterReverse(endKey.Next(), nil)
+	it, err := snap.IterReverse(endKey, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	defer it.Close()
 
 	if !it.Valid() || !it.Key().HasPrefix(keyPrefix) {
-		return startKey, nil
+		return startKey.Next(), nil
 	}
 	if it.Key().Cmp(startKey) < 0 {
-		return startKey, nil
+		return startKey.Next(), nil
 	}
 
-	return it.Key(), nil
+	return it.Key().Next(), nil
 }
 
 func mergeWarningsAndWarningsCount(partWarnings, totalWarnings map[errors.ErrorID]*terror.Error, partWarningsCount, totalWarningsCount map[errors.ErrorID]int64) (map[errors.ErrorID]*terror.Error, map[errors.ErrorID]int64) {
