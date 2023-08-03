@@ -64,3 +64,8 @@ func (*BytesConn) SetReadDeadline(time.Time) error {
 func (*BytesConn) SetWriteDeadline(time.Time) error {
 	return nil
 }
+
+// GetPortFromTCPAddr gets the port from a net.Addr.
+func GetPortFromTCPAddr(addr net.Addr) uint {
+	return uint(addr.(*net.TCPAddr).Port)
+}

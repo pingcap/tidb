@@ -796,6 +796,9 @@ type memIndexMergeReader struct {
 	partitionMode     bool                  // if it is accessing a partition table
 	partitionTables   []table.PhysicalTable // partition tables to access
 	partitionKVRanges [][][]kv.KeyRange     // kv ranges for these partition tables
+
+	keepOrder bool
+	compareExec
 }
 
 func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMergeReader *IndexMergeReaderExecutor) *memIndexMergeReader {
@@ -847,6 +850,9 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 		partitionMode:     indexMergeReader.partitionTableMode,
 		partitionTables:   indexMergeReader.prunedPartitions,
 		partitionKVRanges: indexMergeReader.partitionKeyRanges,
+
+		keepOrder:   us.keepOrder,
+		compareExec: us.compareExec,
 	}
 }
 
@@ -1039,7 +1045,24 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 		},
 	}
 
-	return memTblReader.getMemRows(ctx)
+	rows, err := memTblReader.getMemRows(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Didn't set keepOrder = true for memTblReader,
+	// In indexMerge, non-partitioned tables are also need reordered.
+	if m.keepOrder {
+		slices.SortFunc(rows, func(a, b []types.Datum) bool {
+			ret, err1 := m.compare(m.ctx.GetSessionVars().StmtCtx, a, b)
+			if err1 != nil {
+				err = err1
+			}
+			return ret
+		})
+	}
+
+	return rows, err
 }
 
 // Union all handles of all partial paths.

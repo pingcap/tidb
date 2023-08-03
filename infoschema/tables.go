@@ -203,6 +203,8 @@ const (
 	TableMemoryUsageOpsHistory = "MEMORY_USAGE_OPS_HISTORY"
 	// TableResourceGroups is the metadata of resource groups.
 	TableResourceGroups = "RESOURCE_GROUPS"
+	// TableRunawayWatches is the query list of runaway watch.
+	TableRunawayWatches = "RUNAWAY_WATCHES"
 )
 
 const (
@@ -310,6 +312,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableMemoryUsage:              autoid.InformationSchemaDBID + 86,
 	ClusterTableMemoryUsageOpsHistory:    autoid.InformationSchemaDBID + 87,
 	TableResourceGroups:                  autoid.InformationSchemaDBID + 88,
+	TableRunawayWatches:                  autoid.InformationSchemaDBID + 89,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1014,6 +1017,9 @@ var TableTiKVRegionStatusCols = []columnInfo{
 	{name: "IS_INDEX", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "INDEX_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "IS_PARTITION", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "EPOCH_CONF_VER", tp: mysql.TypeLonglong, size: 21},
 	{name: "EPOCH_VERSION", tp: mysql.TypeLonglong, size: 21},
 	{name: "WRITTEN_BYTES", tp: mysql.TypeLonglong, size: 21},
@@ -1606,6 +1612,17 @@ var tableResourceGroupsCols = []columnInfo{
 	{name: "BACKGROUND", tp: mysql.TypeVarchar, size: 256},
 }
 
+var tableRunawayWatchListCols = []columnInfo{
+	{name: "ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "RESOURCE_GROUP_NAME", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag},
+	{name: "START_TIME", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag},
+	{name: "END_TIME", tp: mysql.TypeVarchar, size: 32},
+	{name: "WATCH", tp: mysql.TypeVarchar, size: 12, flag: mysql.NotNullFlag},
+	{name: "WATCH_TEXT", tp: mysql.TypeBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "SOURCE", tp: mysql.TypeVarchar, size: 128, flag: mysql.NotNullFlag},
+	{name: "ACTION", tp: mysql.TypeVarchar, size: 12, flag: mysql.NotNullFlag},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2118,6 +2135,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableMemoryUsage:                        tableMemoryUsageCols,
 	TableMemoryUsageOpsHistory:              tableMemoryUsageOpsHistoryCols,
 	TableResourceGroups:                     tableResourceGroupsCols,
+	TableRunawayWatches:                     tableRunawayWatchListCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
