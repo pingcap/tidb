@@ -378,7 +378,7 @@ func (iter *txnMemBufferIter) Value() []byte {
 	return iter.curr.Value()
 }
 
-func (iter *txnMemBufferIter) Close() {
+func (*txnMemBufferIter) Close() {
 }
 
 func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
