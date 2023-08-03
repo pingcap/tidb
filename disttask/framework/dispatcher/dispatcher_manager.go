@@ -183,7 +183,7 @@ func (*Manager) checkConcurrencyOverflow(cnt int) bool {
 
 func (dm *Manager) startDispatcher(task *proto.Task) {
 	// Using the pool with block, so it wouldn't return an error.
-	dm.gPool.Run(func() {
+	_ = dm.gPool.Run(func() {
 		dispatcher := newDispatcher(dm.ctx, dm.taskMgr, task)
 		dm.setRunningTask(task, dispatcher)
 		dispatcher.ExecuteTask()
