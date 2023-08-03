@@ -191,7 +191,7 @@ const (
 		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
 	// CreateProcsPrivTable is the SQL statement that creates the procedures privileges table (for compatibility).
-	CreateProcsPrivTable = `CREATE TABLE mysql.procs_priv (
+	CreateProcsPrivTable = `CREATE TABLE IF NOT EXISTS mysql.procs_priv (
         Host char(255) NOT NULL DEFAULT '',
         Db char(64) NOT NULL DEFAULT '',
         User char(32) NOT NULL DEFAULT '',
@@ -2852,7 +2852,7 @@ func upgradeToVer173(s Session, ver int64) {
            Grantor varchar(288) COLLATE utf8mb3_bin NOT NULL DEFAULT '',
            Proc_priv set('Execute','Alter Routine','Grant')  NOT NULL DEFAULT '',
            Timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-           PRIMARY KEY (Host,User,Db,Routine_name,Routine_type),
+           PRIMARY KEY (Host,User,Db,Routine_name,Routine_type)
          )`,
 	)
 }
