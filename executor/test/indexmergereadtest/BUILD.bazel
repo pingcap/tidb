@@ -9,10 +9,12 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 33,
+    shard_count = 34,
     deps = [
         "//config",
+        "//executor",
         "//meta/autoid",
+        "//session",
         "//testkit",
         "//testkit/testutil",
         "//util",

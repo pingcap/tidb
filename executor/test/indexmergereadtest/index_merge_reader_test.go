@@ -15,6 +15,7 @@
 package indexmergereadtest
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"regexp"
@@ -25,6 +26,8 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
@@ -1163,6 +1166,29 @@ func TestProcessInfoRaceWithIndexScan(t *testing.T) {
 		tk.MustQuery("select /*+ use_index(t1, c1) */ c1 from t1 where c1 = 0 union all select /*+ use_index(t1, c2) */ c2 from t1 where c2 = 0 union all select /*+ use_index(t1, c3) */ c3 from t1 where c3 = 0 ")
 	}
 	wg.Wait()
+}
+
+func TestIndexMergeReaderIssue45279(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists reproduce;")
+	tk.MustExec("CREATE TABLE reproduce (c1 int primary key, c2 int, c3 int, key ci2(c2), key ci3(c3));")
+	tk.MustExec("insert into reproduce values (1, 1, 1), (2, 2, 2), (3, 3, 3);")
+	tk.MustQuery("explain select * from reproduce where c1 in (0, 1, 2, 3) or c2 in (0, 1, 2);").Check(testkit.Rows(
+		"IndexMerge_11 33.99 root  type: union",
+		"├─TableRangeScan_8(Build) 4.00 cop[tikv] table:reproduce range:[0,0], [1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+		"├─IndexRangeScan_9(Build) 30.00 cop[tikv] table:reproduce, index:ci2(c2) range:[0,0], [1,1], [2,2], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_10(Probe) 33.99 cop[tikv] table:reproduce keep order:false, stats:pseudo"))
+
+	// This function should return successfully
+	var ctx context.Context
+	ctx, executor.IndexMergeCancelFuncForTest = context.WithCancel(context.Background())
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testCancelContext", "return()"))
+	rs, _ := tk.ExecWithContext(ctx, "select * from reproduce where c1 in (0, 1, 2, 3) or c2 in (0, 1, 2);")
+	session.ResultSetToStringSlice(ctx, tk.Session(), rs)
+	failpoint.Disable("github.com/pingcap/tidb/br/pkg/checksum/testCancelContext")
 }
 
 func TestIndexMergeLimitNotPushedOnPartialSideButKeepOrder(t *testing.T) {
