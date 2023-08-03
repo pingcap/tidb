@@ -1142,6 +1142,56 @@ func TestPlanCacheGeneratedCols(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(`1`)) // hit cache
 }
 
+func TestPlanCacheGeneratedCols2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t1 (
+  ipk varbinary(255) NOT NULL,
+  i_id varchar(45) DEFAULT NULL,
+  i_set_id varchar(45) DEFAULT NULL,
+  p_id varchar(45) DEFAULT NULL,
+  p_set_id varchar(45) DEFAULT NULL,
+  m_id bigint(20) DEFAULT NULL,
+  m_i_id varchar(127) DEFAULT NULL,
+  m_i_set_id varchar(127) DEFAULT NULL,
+  d json DEFAULT NULL,
+  p_sources json DEFAULT NULL,
+  nslc json DEFAULT NULL,
+  cl json DEFAULT NULL,
+  fii json DEFAULT NULL,
+  fpi json DEFAULT NULL,
+  PRIMARY KEY (ipk) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY i_id (i_id),
+  KEY d ((cast(d as char(253) array))),
+  KEY m_i_id (m_i_id),
+  KEY m_i_set_id (m_i_set_id),
+  KEY fpi ((cast(fpi as unsigned array))),
+  KEY nslc ((cast(nslc as char(1000) array))),
+  KEY cl ((cast(cl as char(3000) array))),
+  KEY fii ((cast(fii as unsigned array))),
+  KEY m_id (m_id),
+  KEY i_set_id (i_set_id),
+  KEY m_i_and_m_id (m_i_id,m_id))`)
+
+	tk.MustExec(`CREATE TABLE t2 (
+  ipk varbinary(255) NOT NULL,
+  created_time bigint(20) DEFAULT NULL,
+  arrival_time bigint(20) DEFAULT NULL,
+  updated_time bigint(20) DEFAULT NULL,
+  timestamp_data json DEFAULT NULL,
+  PRIMARY KEY (ipk) /*T![clustered_index] CLUSTERED */)`)
+
+	tk.MustExec(`prepare stmt from 'select *
+    from ( t1 left outer join t2 on ( t1 . ipk = t2 . ipk ) )
+    where ( t1 . i_id = ? )'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+	tk.MustExec(`set @a='a', @b='b'`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows())
+	tk.MustQuery(`execute stmt using @b`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(`1`)) // hit cache
+}
+
 func TestInvalidRange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
