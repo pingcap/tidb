@@ -80,10 +80,10 @@ func TestLFUPutTooBig(t *testing.T) {
 	lfu, err := NewLFU(1)
 	require.NoError(t, err)
 	mockTable := testutil.NewMockStatisticsTable(1, 1, true, false, false)
-	// put mockTable, the index should be evicted
+	// put mockTable, the index should be evicted but the table still exists in the list.
 	lfu.Put(int64(1), mockTable)
 	_, ok := lfu.Get(int64(1), false)
-	require.False(t, ok)
+	require.True(t, ok)
 	lfu.wait()
 	require.Equal(t, uint64(lfu.Cost()), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
 }
@@ -102,7 +102,7 @@ func TestCacheLen(t *testing.T) {
 	require.Equal(t, lfu.Len(), 2)
 	require.Equal(t, uint64(8), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
 
-	// put t3, t1/t2 should be evicted all items and disappeared from the list
+	// put t3, t1/t2 should be evicted all items. but t1/t2 still exists in the list
 	t3 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
 	lfu.Put(int64(3), t3)
 	lfu.wait()

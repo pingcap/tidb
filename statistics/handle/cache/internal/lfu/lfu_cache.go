@@ -70,7 +70,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
 	result, ok := s.cache.Get(tid)
 	if !ok {
-		return nil, ok
+		return s.resultKeySet.Get(tid)
 	}
 	return result.(*statistics.Table), ok
 }
@@ -79,12 +79,10 @@ func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
 func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
 	ok := s.cache.Set(tblID, tbl, tbl.MemoryUsage().TotalTrackingMemUsage())
 	if ok { // NOTE: `s.cache` and `s.resultKeySet` may be inconsistent since the update operation is not atomic, but it's acceptable for our scenario
-		s.resultKeySet.AddKeyValue(tblID, nil)
+		s.resultKeySet.AddKeyValue(tblID, tbl)
 		s.cost.Add(tbl.MemoryUsage().TotalTrackingMemUsage())
-	} else {
-		s.resultKeySet.Remove(tblID)
 	}
-	metrics.CostGauge.Set(float64(s.cost.Load()) + float64(s.resultKeySet.Cost()))
+	metrics.CostGauge.Set(float64(s.cost.Load()))
 	return ok
 }
 
@@ -129,13 +127,17 @@ func (s *LFU) onEvict(item *ristretto.Item) {
 	// is also called when the evict event occurs.
 	metrics.EvictCounter.Inc()
 	table := item.Value.(*statistics.Table)
+	before := table.MemoryUsage().TotalTrackingMemUsage()
 	for _, column := range table.Columns {
 		dropEvicted(column)
 	}
 	for _, indix := range table.Indices {
 		dropEvicted(indix)
 	}
-	s.resultKeySet.AddKeyValue(int64(item.Key), item.Value.(*statistics.Table))
+	after := table.MemoryUsage().TotalTrackingMemUsage()
+	// why add before again? because the cost will be subtracted in onExit.
+	// in fact, it is  -(before - after) + after = after + after - before
+	s.cost.Add(2*after - before)
 }
 
 func (s *LFU) onExit(val interface{}) {

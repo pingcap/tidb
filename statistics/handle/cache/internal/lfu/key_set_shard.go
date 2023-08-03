@@ -16,14 +16,12 @@ package lfu
 
 import (
 	"github.com/pingcap/tidb/statistics"
-	atomicutil "go.uber.org/atomic"
 )
 
 const keySetCnt = 256
 
 type keySetShard struct {
 	resultKeySet [keySetCnt]keySet
-	cost         atomicutil.Uint64
 }
 
 func newKeySetShard() *keySetShard {
@@ -36,14 +34,16 @@ func newKeySetShard() *keySetShard {
 	return &result
 }
 
+func (kss *keySetShard) Get(key int64) (*statistics.Table, bool) {
+	return kss.resultKeySet[key%keySetCnt].Get(key)
+}
+
 func (kss *keySetShard) AddKeyValue(key int64, table *statistics.Table) {
-	cost := kss.resultKeySet[key%keySetCnt].AddKeyValue(key, table)
-	kss.cost.Add(cost)
+	kss.resultKeySet[key%keySetCnt].AddKeyValue(key, table)
 }
 
 func (kss *keySetShard) Remove(key int64) {
-	cost := kss.resultKeySet[key%keySetCnt].Remove(key)
-	kss.cost.Sub(uint64(cost))
+	kss.resultKeySet[key%keySetCnt].Remove(key)
 }
 
 func (kss *keySetShard) Keys() []int64 {
@@ -60,8 +60,4 @@ func (kss *keySetShard) Len() int {
 		result += kss.resultKeySet[idx].Len()
 	}
 	return result
-}
-
-func (kss *keySetShard) Cost() uint64 {
-	return kss.cost.Load()
 }
