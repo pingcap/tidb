@@ -2855,7 +2855,6 @@ func upgradeToVer173(s Session, ver int64) {
            PRIMARY KEY (Host,User,Db,Routine_name,Routine_type),
          )`,
 	)
-
 }
 
 func writeOOMAction(s Session) {
