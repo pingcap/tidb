@@ -2827,9 +2827,9 @@ func upgradeToVer173(s Session, ver int64) {
 	mustExecute(s, `UPDATE mysql.user u JOIN mysql.global_priv p ON u.Host=p.Host AND u.User=p.User
 	SET u.ssl_cipher=p.Priv->>'$.ssl_cipher' WHERE p.Priv->>'$.ssl_cipher' IS NOT NULL`)
 	mustExecute(s, `UPDATE mysql.user u JOIN mysql.global_priv p ON u.Host=p.Host AND u.User=p.User
-	SET u.ssl_issuer=p.Priv->>'$.ssl_issuer' WHERE p.Priv->>'$.ssl_issuer' IS NOT NULL`)
+	SET u.x509_issuer=p.Priv->>'$.ssl_issuer' WHERE p.Priv->>'$.ssl_issuer' IS NOT NULL`)
 	mustExecute(s, `UPDATE mysql.user u JOIN mysql.global_priv p ON u.Host=p.Host AND u.User=p.User
-	SET u.ssl_subject=p.Priv->>'$.ssl_subject' WHERE p.Priv->>'$.ssl_subject' IS NOT NULL`)
+	SET u.x509_subject=p.Priv->>'$.ssl_subject' WHERE p.Priv->>'$.ssl_subject' IS NOT NULL`)
 }
 
 func writeOOMAction(s Session) {
