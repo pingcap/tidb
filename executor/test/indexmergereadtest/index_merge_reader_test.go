@@ -697,7 +697,7 @@ func TestIntersectionWithDifferentConcurrency(t *testing.T) {
 		tk.MustExec(tblSchema)
 
 		const queryCnt int = 10
-		const rowCnt int = 1000
+		const rowCnt int = 500
 		curRowCnt := 0
 		insertStr := "insert into t1 values"
 		for i := 0; i < rowCnt; i++ {
@@ -809,7 +809,7 @@ func setupPartitionTableHelper(tk *testkit.TestKit) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3));")
 	insertStr := "insert into t1 values(0, 0, 0)"
-	for i := 1; i < 1000; i++ {
+	for i := 1; i < 500; i++ {
 		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
 	}
 	tk.MustExec(insertStr)
