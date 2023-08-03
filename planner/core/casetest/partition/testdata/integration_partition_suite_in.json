@@ -247,14 +247,23 @@
       "select * from thash3 where a in (1,3) and 1 = 1",
       "select * from thash3 where a in (1,3) and 1 = 1 order by a",
       "select * from thash3 where a in (1,3) and 1 = 1 order by a desc",
+      "select * from thash3 partition(p0) where a in (1,4)",
+      "select * from thash3 partition(p1) where a in (2,4)",
+      "select * from thash3 partition(p0,p1) where a in (2,4)",
       "select * from trange3 where a in (1,2) and 1 = 1",
       "select * from trange3 where a in (1,3) and 1 = 1",
       "select * from trange3 where a in (1,3) and 1 = 1 order by a",
       "select * from trange3 where a in (1,3) and 1 = 1 order by a desc",
+      "select * from trange3 partition(p0) where a in (1,4)",
+      "select * from trange3 partition(p1) where a in (1,2)",
+      "select * from trange3 partition(p0,p1) where a in (1,2)",
       "select * from tlist3 where a in (1,2) and 1 = 1",
       "select * from tlist3 where a in (1,3) and 1 = 1",
       "select * from tlist3 where a in (1,2) and 1 = 1 order by a",
-      "select * from tlist3 where a in (1,2) and 1 = 1 order by a desc"
+      "select * from tlist3 where a in (1,2) and 1 = 1 order by a desc",
+      "select * from tlist3 partition(p0) where a in (1,4)",
+      "select * from tlist3 partition(p1) where a in (1,2)",
+      "select * from tlist3 partition(p0,p1) where a in (1,2)"
     ]
   },
   {

@@ -2268,6 +2268,42 @@
         ]
       },
       {
+        "SQL": "select * from thash3 partition(p0) where a in (1,4)",
+        "DynamicPlan": [
+          "Batch_Point_Get 2.00 root table:thash3 handle:[1 4], keep order:false, desc:false"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:thash3 handle:[1 4], keep order:false, desc:false"
+        ],
+        "Result": [
+          "4 0"
+        ]
+      },
+      {
+        "SQL": "select * from thash3 partition(p1) where a in (2,4)",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:dual data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:thash3 range:[2,2], [4,4], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from thash3 partition(p0,p1) where a in (2,4)",
+        "DynamicPlan": [
+          "Batch_Point_Get 2.00 root table:thash3 handle:[2 4], keep order:false, desc:false"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:thash3 handle:[2 4], keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 0",
+          "4 0"
+        ]
+      },
+      {
         "SQL": "select * from trange3 where a in (1,2) and 1 = 1",
         "DynamicPlan": [
           "Batch_Point_Get 2.00 root table:trange3 handle:[1 2], keep order:false, desc:false"
@@ -2330,6 +2366,42 @@
         ]
       },
       {
+        "SQL": "select * from trange3 partition(p0) where a in (1,4)",
+        "DynamicPlan": [
+          "Batch_Point_Get 2.00 root table:trange3 handle:[1 4], keep order:false, desc:false"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:trange3 handle:[1 4], keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 0"
+        ]
+      },
+      {
+        "SQL": "select * from trange3 partition(p1) where a in (1,2)",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:dual data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:trange3 range:[1,1], [2,2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from trange3 partition(p0,p1) where a in (1,2)",
+        "DynamicPlan": [
+          "Batch_Point_Get 2.00 root table:trange3 handle:[1 2], keep order:false, desc:false"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:trange3 handle:[1 2], keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 0",
+          "2 0"
+        ]
+      },
+      {
         "SQL": "select * from tlist3 where a in (1,2) and 1 = 1",
         "DynamicPlan": [
           "Batch_Point_Get 2.00 root table:tlist3 handle:[1 2], keep order:false, desc:false"
@@ -2383,6 +2455,42 @@
         "Result": [
           "2 0",
           "1 0"
+        ]
+      },
+      {
+        "SQL": "select * from tlist3 partition(p0) where a in (1,4)",
+        "DynamicPlan": [
+          "Batch_Point_Get 2.00 root table:tlist3 handle:[1 4], keep order:false, desc:false"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:tlist3 handle:[1 4], keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 0"
+        ]
+      },
+      {
+        "SQL": "select * from tlist3 partition(p1) where a in (1,2)",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:dual data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist3 range:[1,1], [2,2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from tlist3 partition(p0,p1) where a in (1,2)",
+        "DynamicPlan": [
+          "Batch_Point_Get 2.00 root table:tlist3 handle:[1 2], keep order:false, desc:false"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:tlist3 handle:[1 2], keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 0",
+          "2 0"
         ]
       }
     ]
