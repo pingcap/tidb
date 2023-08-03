@@ -103,10 +103,6 @@ func (m *memIndexReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 		return nil, errors.Trace(err)
 	}
 	tps := m.getTypes()
-	hdStatus := tablecodec.HandleDefault
-	if mysql.HasUnsignedFlag(tps[len(tps)-1].GetFlag()) {
-		hdStatus = tablecodec.HandleIsUnsigned
-	}
 	colInfos := tables.BuildRowcodecColInfoForIndexColumns(m.index, m.table)
 	colInfos = tables.TryAppendCommonHandleRowcodecColInfos(colInfos, m.table)
 	return &memRowsIterForIndex{
@@ -114,7 +110,6 @@ func (m *memIndexReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 		tps:            tps,
 		mutableRow:     chunk.MutRowFromTypes(m.retFieldTypes),
 		memIndexReader: m,
-		hdStatus:       hdStatus,
 		colInfos:       colInfos,
 	}, nil
 }
@@ -282,10 +277,6 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 		keepOrder:   us.keepOrder,
 		compareExec: us.compareExec,
 	}
-}
-
-type kvProcessor interface {
-	processKV(key, value []byte) []types.Datum
 }
 
 // txnMemBufferIter implements a kv.Iterator, it is an iterator that combines the membuffer data and snapshot data.
@@ -942,7 +933,6 @@ type memRowsIterForIndex struct {
 	tps        []*types.FieldType
 	mutableRow chunk.MutRow
 	*memIndexReader
-	hdStatus tablecodec.HandleStatus
 	colInfos []rowcodec.ColInfo
 }
 
