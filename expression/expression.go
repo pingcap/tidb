@@ -24,6 +24,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/expression/internal"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -62,33 +63,6 @@ var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, e
 // import expression and planner/core together to use EvalAstExpr
 var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names types.NameSlice, allowCastArray bool) (Expression, error)
 
-// VecExpr contains all vectorized evaluation methods.
-type VecExpr interface {
-	// Vectorized returns if this expression supports vectorized evaluation.
-	Vectorized() bool
-
-	// VecEvalInt evaluates this expression in a vectorized manner.
-	VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
-
-	// VecEvalReal evaluates this expression in a vectorized manner.
-	VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
-
-	// VecEvalString evaluates this expression in a vectorized manner.
-	VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
-
-	// VecEvalDecimal evaluates this expression in a vectorized manner.
-	VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
-
-	// VecEvalTime evaluates this expression in a vectorized manner.
-	VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
-
-	// VecEvalDuration evaluates this expression in a vectorized manner.
-	VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
-
-	// VecEvalJSON evaluates this expression in a vectorized manner.
-	VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
-}
-
 // ReverseExpr contains all resersed evaluation methods.
 type ReverseExpr interface {
 	// SupportReverseEval checks whether the builtinFunc support reverse evaluation.
@@ -107,7 +81,7 @@ type TraverseAction interface {
 type Expression interface {
 	fmt.Stringer
 	goJSON.Marshaler
-	VecExpr
+	internal.VecExpr
 	ReverseExpr
 	CollationInfo
 
