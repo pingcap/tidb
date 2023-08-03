@@ -36,7 +36,9 @@ func (ks *keySet) Remove(key int64) int64 {
 	var cost int64
 	ks.mu.Lock()
 	if table, ok := ks.set[key]; ok {
-		cost = table.MemoryUsage().TotalTrackingMemUsage()
+		if table != nil {
+			cost = table.MemoryUsage().TotalTrackingMemUsage()
+		}
 		delete(ks.set, key)
 	}
 	ks.mu.Unlock()
