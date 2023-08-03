@@ -272,7 +272,6 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 		distinctGbyColNames: distinctGbyColNames,
 		// for resolving grouping function args.
 		distinctGbyExprs: distinctGbyExprs,
-		gbyExprsRefPos:   gbyExprsRefPos,
 
 		// fill the gen col names when building level projections.
 	}.Init(b.ctx, b.getSelectOffset())
@@ -297,6 +296,7 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 	expandSchema.Append(gid)
 	expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gid.OrigName)
 	names = append(names, buildExpandFieldName(gid, nil, "gid_"))
+	expand.GIDName = names[len(names)-1]
 	if hasDuplicateGroupingSet {
 		// the last two col of the schema should be gid & gpos
 		gpos := &expression.Column{
@@ -308,6 +308,7 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 		expandSchema.Append(gpos)
 		expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gpos.OrigName)
 		names = append(names, buildExpandFieldName(gpos, nil, "gpos_"))
+		expand.GPosName = names[len(names)-1]
 	}
 	expand.SetChildren(proj)
 	expand.SetSchema(expandSchema)
@@ -1677,6 +1678,16 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 		projExprs = append(projExprs, gCol)
 		projNames = append(projNames, b.currentBlockExpand.distinctGbyColNames[idx])
 	}
+	// project GID.
+	projSchema.Append(b.currentBlockExpand.GID)
+	projExprs = append(projExprs, b.currentBlockExpand.GID)
+	projNames = append(projNames, b.currentBlockExpand.GIDName)
+	// project GPos if any.
+	if b.currentBlockExpand.GPos != nil {
+		projSchema.Append(b.currentBlockExpand.GPos)
+		projExprs = append(projExprs, b.currentBlockExpand.GPos)
+		projNames = append(projNames, b.currentBlockExpand.GPosName)
+	}
 	return projSchema, projNames, projExprs
 }
 
@@ -1749,7 +1760,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		schema.Append(col)
 		newNames = append(newNames, name)
 	}
-	// implicitly project expand grouping set cols, if not used later, prune it out in logical column pruner.
+	// implicitly project expand grouping set cols, if not used later, it will being pruned out in logical column pruner.
 	schema, newNames, proj.Exprs = b.implicitProjectGroupingSetCols(schema, newNames, proj.Exprs)
 
 	proj.SetSchema(schema)
