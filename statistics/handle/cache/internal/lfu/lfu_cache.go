@@ -128,7 +128,6 @@ func dropEvicted(item statistics.TableCacheItem) {
 	item.DropTopN()
 	item.DropTopN()
 	item.DropHist()
-	return
 }
 
 func (s *LFU) onEvict(item *ristretto.Item) {
