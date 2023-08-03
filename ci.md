@@ -22,4 +22,4 @@ ci pipeline will be triggered when your comment on pull request matched command.
 | tidb_ghpr_sqllogic_test_2                | /run-sqllogic-test<br />/run-integration-tests                  |
 | tidb_ghpr_tics_test                      | /run-tics-test<br />/run-integration-tests                      |
 | tidb_ghpr_unit_test                      | /run-unit-test<br />/run-all-tests<br />/merge                  |
-
+# add new line to test trigger rules
