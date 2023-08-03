@@ -44,7 +44,7 @@ func (kss *keySetShard) AddKeyValue(key int64, table *statistics.Table) {
 
 func (kss *keySetShard) Remove(key int64) {
 	cost := kss.resultKeySet[key%keySetCnt].Remove(key)
-	kss.cost.Add(uint64(-1) * uint64(cost))
+	kss.cost.Add(-1 * uint64(cost))
 }
 
 func (kss *keySetShard) Keys() []int64 {
