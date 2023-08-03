@@ -1622,7 +1622,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 }
 
 const (
+	// AllLoaded indicates all statistics are loaded
 	AllLoaded = iota
+	// AllEvicted indicates all statistics are evicted
 	AllEvicted
 )
 
