@@ -55,7 +55,7 @@ func (ks *keySet) Len() int {
 
 func (ks *keySet) AddKeyValue(key int64, value *statistics.Table) (cost uint64) {
 	ks.mu.Lock()
-	if v, ok := ks.set[key]; ok {
+	if v, ok := ks.set[key]; ok && v != nil {
 		cost = uint64(v.MemoryUsage().TotalTrackingMemUsage())
 	}
 	ks.set[key] = value
