@@ -15,16 +15,15 @@
 package lfu
 
 import (
-	"sync/atomic"
-
 	"github.com/pingcap/tidb/statistics"
+	atomicutil "go.uber.org/atomic"
 )
 
 const keySetCnt = 256
 
 type keySetShard struct {
 	resultKeySet [keySetCnt]keySet
-	cost         atomic.Uint64
+	cost         atomicutil.Uint64
 }
 
 func newKeySetShard() *keySetShard {
@@ -44,7 +43,7 @@ func (kss *keySetShard) AddKeyValue(key int64, table *statistics.Table) {
 
 func (kss *keySetShard) Remove(key int64) {
 	cost := kss.resultKeySet[key%keySetCnt].Remove(key)
-	kss.cost.Add(-1 * uint64(cost))
+	kss.cost.Sub(uint64(cost))
 }
 
 func (kss *keySetShard) Keys() []int64 {
