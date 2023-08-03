@@ -109,8 +109,6 @@ func (m *memIndexReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 	}
 	colInfos := tables.BuildRowcodecColInfoForIndexColumns(m.index, m.table)
 	colInfos = tables.TryAppendCommonHandleRowcodecColInfos(colInfos, m.table)
-	chk := chunk.New(tps, 1, 1)
-	decoder := codec.NewDecoder(chk, m.ctx.GetSessionVars().Location())
 	return &memRowsIterForIndex{
 		kvIter:         kvIter,
 		tps:            tps,
@@ -118,9 +116,6 @@ func (m *memIndexReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 		memIndexReader: m,
 		hdStatus:       hdStatus,
 		colInfos:       colInfos,
-		decoder:        decoder,
-		chk:            chk,
-		datumRow:       make([]types.Datum, len(m.retFieldTypes)),
 	}, nil
 }
 
@@ -886,21 +881,27 @@ type memRowsIterForTable struct {
 func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 	curr := iter.kvIter
 	var ret []types.Datum
-	for ; curr.Valid(); curr.Next() {
+	for curr.Valid() {
+		key := curr.Key()
+		value := curr.Value()
+		if err := curr.Next(); err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		// check whether the key was been deleted.
-		if len(curr.Value()) == 0 {
+		if len(value) == 0 {
 			continue
 		}
-		handle, err := tablecodec.DecodeRowKey(curr.Key())
+		handle, err := tablecodec.DecodeRowKey(key)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		iter.chk.Reset()
 
-		if !rowcodec.IsNewFormat(curr.Value()) {
+		if !rowcodec.IsNewFormat(value) {
 			// TODO: remove the legacy code!
 			// fallback to the old way.
-			iter.datumRow, err = iter.memTableReader.decodeRecordKeyValue(curr.Key(), curr.Value(), &iter.datumRow)
+			iter.datumRow, err = iter.memTableReader.decodeRecordKeyValue(key, value, &iter.datumRow)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -914,10 +915,10 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 			if !matched {
 				continue
 			}
-			return iter.datumRow, curr.Next()
+			return iter.datumRow, nil
 		}
 
-		err = iter.cd.DecodeToChunk(curr.Value(), handle, iter.chk)
+		err = iter.cd.DecodeToChunk(value, handle, iter.chk)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -933,7 +934,7 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 		ret = row.GetDatumRowWithBuffer(iter.retFieldTypes, iter.datumRow)
 		break
 	}
-	return ret, curr.Next()
+	return ret, nil
 }
 
 type memRowsIterForIndex struct {
@@ -943,21 +944,23 @@ type memRowsIterForIndex struct {
 	*memIndexReader
 	hdStatus tablecodec.HandleStatus
 	colInfos []rowcodec.ColInfo
-	decoder  *codec.Decoder
-	chk      *chunk.Chunk
-	datumRow []types.Datum
 }
 
 func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 	var ret []types.Datum
 	curr := iter.kvIter
-	for ; curr.Valid(); curr.Next() {
+	for curr.Valid() {
+		key := curr.Key()
+		value := curr.Value()
+		if err := curr.Next(); err != nil {
+			return nil, errors.Trace(err)
+		}
 		// check whether the key was been deleted.
-		if len(curr.Value()) == 0 {
+		if len(value) == 0 {
 			continue
 		}
 
-		data, err := iter.memIndexReader.decodeIndexKeyValue(curr.Key(), curr.Value(), iter.tps, iter.colInfos)
+		data, err := iter.memIndexReader.decodeIndexKeyValue(key, value, iter.tps, iter.colInfos)
 		if err != nil {
 			return nil, err
 		}
@@ -973,7 +976,7 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 		ret = data
 		break
 	}
-	return ret, curr.Next()
+	return ret, nil
 }
 
 func (m *memIndexMergeReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
