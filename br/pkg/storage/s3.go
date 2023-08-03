@@ -916,13 +916,12 @@ type s3ObjectWriter struct {
 }
 
 // Write implement the io.Writer interface.
-func (s *s3ObjectWriter) Write(ctx context.Context, p []byte) (int, error) {
-	n, err := s.wd.Write(p)
-	return n, err
+func (s *s3ObjectWriter) Write(_ context.Context, p []byte) (int, error) {
+	return s.wd.Write(p)
 }
 
 // Close implement the io.Closer interface.
-func (s *s3ObjectWriter) Close(ctx context.Context) error {
+func (s *s3ObjectWriter) Close(_ context.Context) error {
 	err := s.wd.Close()
 	if err != nil {
 		return err
@@ -954,9 +953,10 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 		s3Writer := &s3ObjectWriter{wd: wd, wg: &sync.WaitGroup{}}
 		s3Writer.wg.Add(1)
 		go func() {
-			_, err := up.Upload(upParams)
+			_, err := up.UploadWithContext(ctx, upParams)
+			err1 := rd.Close()
 			if err != nil {
-				log.Warn("upload to s3 failed", zap.String("filename", name), zap.Error(err))
+				log.Warn("upload to s3 failed", zap.String("filename", name), zap.Error(err), zap.Error(err1))
 			}
 			s3Writer.err = err
 			s3Writer.wg.Done()
