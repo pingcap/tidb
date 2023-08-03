@@ -125,10 +125,9 @@ func (r *byteReader) reload() error {
 	nBytes, err := io.ReadFull(r.storageReader, r.buf[0:])
 	if err == io.EOF {
 		r.isEOF = true
-	} else if err == io.ErrUnexpectedEOF {
-		logutil.Logger(r.ctx).Error("unexpected EOF")
-		r.isEOF = true
 		return err
+	} else if err == io.ErrUnexpectedEOF {
+		r.isEOF = true
 	} else if err != nil {
 		logutil.Logger(r.ctx).Warn("other error during reading from external storage", zap.Error(err))
 		return err
