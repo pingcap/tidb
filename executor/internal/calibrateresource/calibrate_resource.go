@@ -110,7 +110,7 @@ const (
 
 	// duration Indicates the supported calibration duration
 	maxDuration = time.Hour * 24
-	minDuration = time.Minute * 1
+	minDuration = time.Minute
 )
 
 // Executor is used as executor of calibrate resource.
