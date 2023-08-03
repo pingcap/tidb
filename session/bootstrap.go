@@ -190,6 +190,17 @@ const (
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
+	// CreateProcsPrivTable is the SQL statement that creates the procedures privileges table (for compatibility).
+	CreateProcsPrivTable = `CREATE TABLE mysql.procs_priv (
+        Host char(255) NOT NULL DEFAULT '',
+        Db char(64) NOT NULL DEFAULT '',
+        User char(32) NOT NULL DEFAULT '',
+        Routine_name char(64) NOT NULL DEFAULT '',
+        Routine_type enum('FUNCTION','PROCEDURE')  NOT NULL,
+        Grantor varchar(288) COLLATE utf8mb3_bin NOT NULL DEFAULT '',
+        Proc_priv set('Execute','Alter Routine','Grant')  NOT NULL DEFAULT '',
+        Timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (Host,User,Db,Routine_name,Routine_type));`
 	// CreateGlobalVariablesTable is the SQL statement creates global variable table in system db.
 	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
 	// INFORMATION_SCHEMA is a virtual db in TiDB. So we put this table in system db.
@@ -2830,6 +2841,21 @@ func upgradeToVer173(s Session, ver int64) {
 	SET u.x509_issuer=p.Priv->>'$.ssl_issuer' WHERE p.Priv->>'$.ssl_issuer' IS NOT NULL`)
 	mustExecute(s, `UPDATE mysql.user u JOIN mysql.global_priv p ON u.Host=p.Host AND u.User=p.User
 	SET u.x509_subject=p.Priv->>'$.ssl_subject' WHERE p.Priv->>'$.ssl_subject' IS NOT NULL`)
+
+	mustExecute(s,
+		`CREATE TABLE mysql.procs_priv (
+           Host char(255) NOT NULL DEFAULT '',
+           Db char(64) NOT NULL DEFAULT '',
+           User char(32) NOT NULL DEFAULT '',
+           Routine_name char(64) NOT NULL DEFAULT '',
+           Routine_type enum('FUNCTION','PROCEDURE')  NOT NULL,
+           Grantor varchar(288) COLLATE utf8mb3_bin NOT NULL DEFAULT '',
+           Proc_priv set('Execute','Alter Routine','Grant')  NOT NULL DEFAULT '',
+           Timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+           PRIMARY KEY (Host,User,Db,Routine_name,Routine_type),
+         )`,
+	)
+
 }
 
 func writeOOMAction(s Session) {
@@ -2874,6 +2900,7 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateDBPrivTable)
 	mustExecute(s, CreateTablePrivTable)
 	mustExecute(s, CreateColumnPrivTable)
+	mustExecute(s, CreateProcsPrivTable)
 	// Create global system variable table.
 	mustExecute(s, CreateGlobalVariablesTable)
 	// Create TiDB table.
