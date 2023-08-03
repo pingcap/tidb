@@ -198,11 +198,11 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				checker.reason = "query accesses partitioned tables is un-cacheable"
 				return in, true
 			}
-			if hasGeneratedCol(checker.schema, node) {
-				checker.cacheable = false
-				checker.reason = "query accesses generated columns is un-cacheable"
-				return in, true
-			}
+			//if hasGeneratedCol(checker.schema, node) {
+			//	checker.cacheable = false
+			//	checker.reason = "query accesses generated columns is un-cacheable"
+			//	return in, true
+			//}
 			if isTempTable(checker.schema, node) {
 				checker.cacheable = false
 				checker.reason = "query accesses temporary tables is un-cacheable"

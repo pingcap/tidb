@@ -1105,6 +1105,43 @@ func TestIssue38533(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
+func TestPlanCacheGeneratedCols(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (a int, info json, city varchar(64) as (JSON_UNQUOTE(JSON_EXTRACT(info, '$.city'))))`)
+	tk.MustExec(`create table t2 (a int, info json, city varchar(64) as (JSON_UNQUOTE(JSON_EXTRACT(info, '$.city'))) virtual)`)
+	tk.MustExec(`create table t3 (a int, info json, city varchar(64) as (JSON_UNQUOTE(JSON_EXTRACT(info, '$.city'))) stored)`)
+	tk.MustExec(`create table t4 (a int, info json, index zips( (CAST(info->'$.zipcode' AS UNSIGNED ARRAY))))`)
+
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`set @b=2`)
+
+	tk.MustExec(`prepare s1 from 'select * from t1 where a=?'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+	tk.MustQuery(`execute s1 using @a`).Check(testkit.Rows())
+	tk.MustQuery(`execute s1 using @b`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(`1`)) // hit cache
+
+	tk.MustExec(`prepare s1 from 'select * from t2 where a=?'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+	tk.MustQuery(`execute s1 using @a`).Check(testkit.Rows())
+	tk.MustQuery(`execute s1 using @b`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(`1`)) // hit cache
+
+	tk.MustExec(`prepare s1 from 'select * from t3 where a=?'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+	tk.MustQuery(`execute s1 using @a`).Check(testkit.Rows())
+	tk.MustQuery(`execute s1 using @b`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(`1`)) // hit cache
+
+	tk.MustExec(`prepare s1 from 'select * from t4 where a=?'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+	tk.MustQuery(`execute s1 using @a`).Check(testkit.Rows())
+	tk.MustQuery(`execute s1 using @b`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(`1`)) // hit cache
+}
+
 func TestInvalidRange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
