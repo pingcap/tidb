@@ -1088,11 +1088,11 @@ func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, ta
 		return bo
 	}
 	boMaxSleep := CopNextMaxBackoff
-	if value, _err_ := failpoint.Eval(_curpkg_("ReduceCopNextMaxBackoff")); _err_ == nil {
+	failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
 		if value.(bool) {
 			boMaxSleep = 2
 		}
-	}
+	})
 	newbo := backoff.NewBackofferWithVars(ctx, boMaxSleep, worker.vars)
 	backoffermap[task.region.GetID()] = newbo
 	return newbo
