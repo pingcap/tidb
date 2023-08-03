@@ -547,11 +547,21 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 		taskID := taskIDAlloc.alloc()
 		startKey := keyRange.StartKey
 		if len(startKey) == 0 {
-			startKey = prefix
+			if reorgInfo.mergingTmpIdx {
+				startKey, _ = tablecodec.GetTableIndexKeyRange(reorgInfo.PhysicalTableID,
+					tablecodec.TempIndexPrefix|reorgInfo.elements[0].ID)
+			} else {
+				startKey = prefix
+			}
 		}
 		endKey := keyRange.EndKey
 		if len(endKey) == 0 {
-			endKey = prefix.PrefixNext()
+			if reorgInfo.mergingTmpIdx {
+				_, endKey = tablecodec.GetTableIndexKeyRange(reorgInfo.PhysicalTableID,
+					tablecodec.TempIndexPrefix|reorgInfo.elements[0].ID)
+			} else {
+				endKey = prefix.PrefixNext()
+			}
 		}
 		endK, err := getRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, prefix, startKey, endKey)
 		if err != nil {
