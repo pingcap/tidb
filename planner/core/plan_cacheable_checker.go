@@ -656,9 +656,9 @@ func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, 
 	case *PhysicalMemTable:
 		return false, "PhysicalMemTable plan is un-cacheable"
 	case *PhysicalIndexMergeReader:
-		if x.AccessMVIndex {
-			return false, "the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
-		}
+		//if x.AccessMVIndex {
+		//	return false, "the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
+		//}
 		underIndexMerge = true
 		subPlans = append(subPlans, x.partialPlans...)
 	case *PhysicalIndexScan:
