@@ -90,15 +90,42 @@ func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *Inde
 }
 
 func (m *memIndexReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
-	data, err := m.getMemRows(ctx)
+	if m.table.GetPartitionInfo() != nil {
+		// if m.keepOrder && m.table.GetPartitionInfo() != nil {
+		data, err := m.getMemRows(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &defaultRowsIter{data: data}, nil
+	}
+
+	kvIter, err := newTxnMemBufferIter(m.ctx, m.cacheTable, m.kvRanges, m.desc)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &defaultRowsIter{data: data}, nil
+	tps := m.getTypes()
+	hdStatus := tablecodec.HandleDefault
+	if mysql.HasUnsignedFlag(tps[len(tps)-1].GetFlag()) {
+		hdStatus = tablecodec.HandleIsUnsigned
+	}
+	colInfos := tables.BuildRowcodecColInfoForIndexColumns(m.index, m.table)
+	colInfos = tables.TryAppendCommonHandleRowcodecColInfos(colInfos, m.table)
+	chk := chunk.New(tps, 1, 1)
+	decoder := codec.NewDecoder(chk, m.ctx.GetSessionVars().Location())
+	return &memRowsIterForIndex{
+		kvIter:         kvIter,
+		tps:            tps,
+		mutableRow:     chunk.MutRowFromTypes(m.retFieldTypes),
+		memIndexReader: m,
+		hdStatus:       hdStatus,
+		colInfos:       colInfos,
+		decoder:        decoder,
+		chk:            chk,
+		datumRow:       make([]types.Datum, len(m.retFieldTypes)),
+	}, nil
 }
 
-func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
-	defer tracing.StartRegion(ctx, "memIndexReader.getMemRows").End()
+func (m *memIndexReader) getTypes() []*types.FieldType {
 	tps := make([]*types.FieldType, 0, len(m.index.Columns)+1)
 	cols := m.table.Columns
 	for _, col := range m.index.Columns {
@@ -121,10 +148,18 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	default: // ExtraHandle Column tp.
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
+	return tps
+}
+
+func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
+	defer tracing.StartRegion(ctx, "memIndexReader.getMemRows").End()
+	tps := m.getTypes()
+	colInfos := tables.BuildRowcodecColInfoForIndexColumns(m.index, m.table)
+	colInfos = tables.TryAppendCommonHandleRowcodecColInfos(colInfos, m.table)
 
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
 	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, m.desc, func(key, value []byte) error {
-		data, err := m.decodeIndexKeyValue(key, value, tps)
+		data, err := m.decodeIndexKeyValue(key, value, tps, colInfos)
 		if err != nil {
 			return err
 		}
@@ -155,13 +190,11 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	return m.addedRows, nil
 }
 
-func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldType) ([]types.Datum, error) {
+func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldType, colInfos []rowcodec.ColInfo) ([]types.Datum, error) {
 	hdStatus := tablecodec.HandleDefault
 	if mysql.HasUnsignedFlag(tps[len(tps)-1].GetFlag()) {
 		hdStatus = tablecodec.HandleIsUnsigned
 	}
-	colInfos := tables.BuildRowcodecColInfoForIndexColumns(m.index, m.table)
-	colInfos = tables.TryAppendCommonHandleRowcodecColInfos(colInfos, m.table)
 	values, err := tablecodec.DecodeIndexKV(key, value, len(m.index.Columns), hdStatus, colInfos)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -258,113 +291,97 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 	}
 }
 
+type kvProcessor interface {
+	processKV(key, value []byte) []types.Datum
+}
+
+// txnMemBufferIter implements a kv.Iterator, it is an iterator that combines the membuffer data and snapshot data.
 type txnMemBufferIter struct {
-	*memTableReader
-	txn  kv.Transaction
-	idx  int
-	curr kv.Iterator
-
-	reverse  bool
-	cd       *rowcodec.ChunkDecoder
-	chk      *chunk.Chunk
-	datumRow []types.Datum
+	sctx       sessionctx.Context
+	kvRanges   []kv.KeyRange
+	cacheTable kv.MemBuffer
+	txn        kv.Transaction
+	idx        int
+	curr       kv.Iterator
+	reverse    bool
+	err        error
 }
 
-func (iter *txnMemBufferIter) Next() ([]types.Datum, error) {
-	var ret []types.Datum
-	for iter.idx < len(iter.kvRanges) {
-		if iter.curr == nil {
-			rg := iter.kvRanges[iter.idx]
-			var tmp kv.Iterator
-			if !iter.reverse {
-				tmp = iter.txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
-			} else {
-				tmp = iter.txn.GetMemBuffer().SnapshotIterReverse(rg.EndKey, rg.StartKey)
-			}
-			snapCacheIter, err := getSnapIter(iter.ctx, iter.cacheTable, rg, iter.reverse)
-			if err != nil {
-				return nil, err
-			}
-			if snapCacheIter != nil {
-				tmp, err = transaction.NewUnionIter(tmp, snapCacheIter, iter.reverse)
-				if err != nil {
-					return nil, err
-				}
-			}
-			iter.curr = tmp
+func newTxnMemBufferIter(sctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges []kv.KeyRange, reverse bool) (*txnMemBufferIter, error) {
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &txnMemBufferIter{
+		sctx:       sctx,
+		txn:        txn,
+		kvRanges:   kvRanges,
+		cacheTable: cacheTable,
+		reverse:    reverse,
+	}, nil
+}
+
+func (iter *txnMemBufferIter) Valid() bool {
+	if iter.curr != nil {
+		if iter.curr.Valid() {
+			return true
+		}
+		iter.curr = nil
+		iter.idx++
+	}
+	if iter.idx < len(iter.kvRanges) {
+		rg := iter.kvRanges[iter.idx]
+		var tmp kv.Iterator
+		if !iter.reverse {
+			tmp = iter.txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
 		} else {
-			var err error
-			ret, err = iter.next()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if ret != nil {
-				break
-			}
-			iter.idx++
-			iter.curr = nil
+			tmp = iter.txn.GetMemBuffer().SnapshotIterReverse(rg.EndKey, rg.StartKey)
 		}
+		snapCacheIter, err := getSnapIter(iter.sctx, iter.cacheTable, rg, iter.reverse)
+		if err != nil {
+			iter.err = errors.Trace(err)
+			return true
+		}
+		if snapCacheIter != nil {
+			tmp, err = transaction.NewUnionIter(tmp, snapCacheIter, iter.reverse)
+			if err != nil {
+				iter.err = errors.Trace(err)
+				return true
+			}
+		}
+		iter.curr = tmp
+		return iter.curr.Valid()
 	}
-	return ret, nil
+	return false
 }
 
-func (iter *txnMemBufferIter) next() ([]types.Datum, error) {
-	var err error
-	curr := iter.curr
-	for ; err == nil && curr.Valid(); err = curr.Next() {
-		// check whether the key was been deleted.
-		if len(curr.Value()) == 0 {
-			continue
-		}
-
-		handle, err := tablecodec.DecodeRowKey(curr.Key())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		iter.chk.Reset()
-
-		if !rowcodec.IsNewFormat(curr.Value()) {
-			// TODO: remove the legacy code!
-			// fallback to the old way.
-			iter.datumRow, err = iter.decodeRecordKeyValue(curr.Key(), curr.Value(), &iter.datumRow)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-
-			mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
-			mutableRow.SetDatums(iter.datumRow...)
-			matched, _, err := expression.EvalBool(iter.ctx, iter.conditions, mutableRow.ToRow())
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if !matched {
-				continue
-			}
-			return iter.datumRow, curr.Next()
-		}
-
-		err = iter.cd.DecodeToChunk(curr.Value(), handle, iter.chk)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		row := iter.chk.GetRow(0)
-		matched, _, err := expression.EvalBool(iter.ctx, iter.conditions, row)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !matched {
-			continue
-		}
-		ret := row.GetDatumRowWithBuffer(iter.retFieldTypes, iter.datumRow)
-		return ret, curr.Next()
+func (iter *txnMemBufferIter) Next() error {
+	if iter.err != nil {
+		return errors.Trace(iter.err)
 	}
-	return nil, err
+	if iter.curr != nil {
+		if iter.curr.Valid() {
+			return iter.curr.Next()
+		}
+	}
+	return nil
+}
+
+func (iter *txnMemBufferIter) Key() kv.Key {
+	return iter.curr.Key()
+}
+
+func (iter *txnMemBufferIter) Value() []byte {
+	return iter.curr.Value()
+}
+
+func (iter *txnMemBufferIter) Close() {
 }
 
 func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
 	// txnMemBufferIter not supports keepOrder + partitionTable.
-	if m.keepOrder && m.table.GetPartitionInfo() != nil {
+	if m.table.GetPartitionInfo() != nil {
+		// if m.keepOrder && m.table.GetPartitionInfo() != nil {
 		data, err := m.getMemRows(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -376,22 +393,20 @@ func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 	for i, col := range m.columns {
 		m.offsets[i] = m.colIDs[col.ID]
 	}
-	txn, err := m.ctx.Txn(true)
-	if err != nil {
-		return nil, err
-	}
 
-	return &txnMemBufferIter{
-		memTableReader: m,
-		txn:            txn,
+	kvIter, err := newTxnMemBufferIter(m.ctx, m.cacheTable, m.kvRanges, m.desc)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &memRowsIterForTable{
+		kvIter:         kvIter,
 		cd:             m.buffer.cd,
 		chk:            chunk.New(m.retFieldTypes, 1, 1),
 		datumRow:       make([]types.Datum, len(m.retFieldTypes)),
-		reverse:        m.desc,
+		memTableReader: m,
 	}, nil
 }
 
-// TODO: Try to make memXXXReader lazy, There is no need to decode many rows when parent operator only need 1 row.
 func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
 	defer tracing.StartRegion(ctx, "memTableReader.getMemRows").End()
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
@@ -850,6 +865,108 @@ func (iter *defaultRowsIter) Next() ([]types.Datum, error) {
 		return ret, nil
 	}
 	return nil, nil
+}
+
+// memRowsIterForTable combine a kv.Iterator and a kv decoder to get a memRowsIter.
+type memRowsIterForTable struct {
+	kvIter   *txnMemBufferIter // txnMemBufferIter is the kv.Iterator
+	cd       *rowcodec.ChunkDecoder
+	chk      *chunk.Chunk
+	datumRow []types.Datum
+	*memTableReader
+}
+
+func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
+	curr := iter.kvIter
+	var ret []types.Datum
+	for ; curr.Valid(); curr.Next() {
+		// check whether the key was been deleted.
+		if len(curr.Value()) == 0 {
+			continue
+		}
+		handle, err := tablecodec.DecodeRowKey(curr.Key())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		iter.chk.Reset()
+
+		if !rowcodec.IsNewFormat(curr.Value()) {
+			// TODO: remove the legacy code!
+			// fallback to the old way.
+			iter.datumRow, err = iter.memTableReader.decodeRecordKeyValue(curr.Key(), curr.Value(), &iter.datumRow)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
+			mutableRow.SetDatums(iter.datumRow...)
+			matched, _, err := expression.EvalBool(iter.ctx, iter.conditions, mutableRow.ToRow())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !matched {
+				continue
+			}
+			return iter.datumRow, curr.Next()
+		}
+
+		err = iter.cd.DecodeToChunk(curr.Value(), handle, iter.chk)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		row := iter.chk.GetRow(0)
+		matched, _, err := expression.EvalBool(iter.ctx, iter.conditions, row)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !matched {
+			continue
+		}
+		ret = row.GetDatumRowWithBuffer(iter.retFieldTypes, iter.datumRow)
+		break
+	}
+	return ret, curr.Next()
+}
+
+type memRowsIterForIndex struct {
+	kvIter     *txnMemBufferIter
+	tps        []*types.FieldType
+	mutableRow chunk.MutRow
+	*memIndexReader
+	hdStatus tablecodec.HandleStatus
+	colInfos []rowcodec.ColInfo
+	decoder  *codec.Decoder
+	chk      *chunk.Chunk
+	datumRow []types.Datum
+}
+
+func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
+	var ret []types.Datum
+	curr := iter.kvIter
+	for ; curr.Valid(); curr.Next() {
+		// check whether the key was been deleted.
+		if len(curr.Value()) == 0 {
+			continue
+		}
+
+		data, err := iter.memIndexReader.decodeIndexKeyValue(curr.Key(), curr.Value(), iter.tps, iter.colInfos)
+		if err != nil {
+			return nil, err
+		}
+
+		iter.mutableRow.SetDatums(data...)
+		matched, _, err := expression.EvalBool(iter.memIndexReader.ctx, iter.memIndexReader.conditions, iter.mutableRow.ToRow())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !matched {
+			continue
+		}
+		ret = data
+		break
+	}
+	return ret, curr.Next()
 }
 
 func (m *memIndexMergeReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
