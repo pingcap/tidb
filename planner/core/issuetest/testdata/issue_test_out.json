@@ -1,0 +1,53 @@
+[
+  {
+    "Name": "TestIssue29221",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t where a = 1 or b = 1;",
+        "ExplainResult": [
+          "IndexMerge 3.00 root  type: union, limit embedded(offset:0, count:3)",
+          "├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+          "│ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+          "├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+          "│ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;",
+        "ExplainResult": [
+          "IndexMerge 3.00 root  type: union, limit embedded(offset:0, count:3)",
+          "├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+          "│ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+          "├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+          "│ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "set @@session.sql_select_limit=18446744073709551615;",
+        "ExplainResult": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a = 1 or b = 1;",
+        "ExplainResult": [
+          "IndexMerge 19.99 root  type: union",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a = 1 or b = 1 limit 3;",
+        "ExplainResult": [
+          "IndexMerge 3.00 root  type: union, limit embedded(offset:0, count:3)",
+          "├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+          "│ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+          "├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+          "│ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  }
+]

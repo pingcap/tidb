@@ -947,9 +947,11 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 	return newDupDetectIter(e.getDB(), e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
 }
 
-// getFirstAndLastKey reads the first and last key in range [lowerBound, upperBound)
+var _ ingestData = (*Engine)(nil)
+
+// GetFirstAndLastKey reads the first and last key in range [lowerBound, upperBound)
 // in the engine. Empty upperBound means unbounded.
-func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
+func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
 	if len(upperBound) == 0 {
 		// we use empty slice for unbounded upper bound, but it means max value in pebble
 		// so reset to nil
@@ -978,6 +980,22 @@ func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 	}
 	lastKey := append([]byte{}, iter.Key()...)
 	return firstKey, lastKey, nil
+}
+
+// NewIter implements ingestData interface.
+func (e *Engine) NewIter(ctx context.Context, lowerBound, upperBound []byte) ForwardIter {
+	return e.newKVIter(ctx, &pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound})
+}
+
+// GetTS implements ingestData interface.
+func (e *Engine) GetTS() uint64 {
+	return e.TS
+}
+
+// Finish implements ingestData interface.
+func (e *Engine) Finish(totalBytes, totalCount int64) {
+	e.importedKVSize.Add(totalBytes)
+	e.importedKVCount.Add(totalCount)
 }
 
 type sstMeta struct {

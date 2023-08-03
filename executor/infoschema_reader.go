@@ -192,6 +192,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClusterMemoryUsageOpsHistory(sctx)
 		case infoschema.TableResourceGroups:
 			err = e.setDataFromResourceGroups()
+		case infoschema.TableRunawayWatches:
+			err = e.setDataFromRunawayWatches(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -937,20 +939,15 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 					} else if table.Partition.Type == model.PartitionTypeList {
 						if len(pi.InValues) > 0 {
 							buf := bytes.NewBuffer(nil)
-							if len(pi.InValues[0]) == 1 {
-								for i, vs := range pi.InValues {
-									if i > 0 {
-										buf.WriteString(",")
-									}
-									buf.WriteString(vs[0])
+							for i, vs := range pi.InValues {
+								if i > 0 {
+									buf.WriteString(",")
 								}
-							} else if len(pi.InValues[0]) > 1 {
-								for i, vs := range pi.InValues {
-									if i > 0 {
-										buf.WriteString(",")
-									}
+								if len(vs) != 1 {
 									buf.WriteString("(")
-									buf.WriteString(strings.Join(vs, ","))
+								}
+								buf.WriteString(strings.Join(vs, ","))
+								if len(vs) != 1 {
 									buf.WriteString(")")
 								}
 							}
@@ -1675,18 +1672,26 @@ func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo,
 		} else {
 			row[6].SetInt64(0)
 		}
+		if table.IsPartition {
+			row[9].SetInt64(1)
+			row[10].SetInt64(table.Partition.ID)
+			row[11].SetString(table.Partition.Name.O, mysql.DefaultCollationName)
+		} else {
+			row[9].SetInt64(0)
+		}
 	} else {
 		row[6].SetInt64(0)
+		row[9].SetInt64(0)
 	}
-	row[9].SetInt64(region.Epoch.ConfVer)
-	row[10].SetInt64(region.Epoch.Version)
-	row[11].SetUint64(region.WrittenBytes)
-	row[12].SetUint64(region.ReadBytes)
-	row[13].SetInt64(region.ApproximateSize)
-	row[14].SetInt64(region.ApproximateKeys)
+	row[12].SetInt64(region.Epoch.ConfVer)
+	row[13].SetInt64(region.Epoch.Version)
+	row[14].SetUint64(region.WrittenBytes)
+	row[15].SetUint64(region.ReadBytes)
+	row[16].SetInt64(region.ApproximateSize)
+	row[17].SetInt64(region.ApproximateKeys)
 	if region.ReplicationStatus != nil {
-		row[15].SetString(region.ReplicationStatus.State, mysql.DefaultCollationName)
-		row[16].SetInt64(region.ReplicationStatus.StateID)
+		row[18].SetString(region.ReplicationStatus.State, mysql.DefaultCollationName)
+		row[19].SetInt64(region.ReplicationStatus.StateID)
 	}
 	e.rows = append(e.rows, row)
 }
@@ -3238,6 +3243,35 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 	return nil
 }
 
+func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) error {
+	do := domain.GetDomain(sctx)
+	err := do.TryToUpdateRunawayWatch()
+	if err != nil {
+		logutil.BgLogger().Warn("read runaway watch list", zap.Error(err))
+	}
+	watches := do.GetRunawayWatchList()
+	rows := make([][]types.Datum, 0, len(watches))
+	for _, watch := range watches {
+		action := watch.Action
+		row := types.MakeDatums(
+			watch.ID,
+			watch.ResourceGroupName,
+			watch.StartTime.Local().Format(time.DateTime),
+			watch.EndTime.Local().Format(time.DateTime),
+			rmpb.RunawayWatchType_name[int32(watch.Watch)],
+			watch.WatchText,
+			watch.Source,
+			rmpb.RunawayAction_name[int32(action)],
+		)
+		if watch.EndTime.Equal(resourcegroup.NullTime) {
+			row[3].SetString("UNLIMITED", mysql.DefaultCollationName)
+		}
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
+}
+
 // used in resource_groups
 const (
 	burstableStr      = "YES"
@@ -3268,10 +3302,14 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			}
 			dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
 			fmt.Fprintf(limitBuilder, "EXEC_ELAPSED='%s'", dur.String())
-			fmt.Fprintf(limitBuilder, ", ACTION=%s", model.RunawayActionType(setting.Action+1).String())
+			fmt.Fprintf(limitBuilder, ", ACTION=%s", model.RunawayActionType(setting.Action).String())
 			if setting.Watch != nil {
-				dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond
-				fmt.Fprintf(limitBuilder, ", WATCH=%s DURATION='%s'", model.RunawayWatchType(setting.Watch.Type).String(), dur.String())
+				if setting.Watch.LastingDurationMs > 0 {
+					dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond
+					fmt.Fprintf(limitBuilder, ", WATCH=%s DURATION='%s'", model.RunawayWatchType(setting.Watch.Type).String(), dur.String())
+				} else {
+					fmt.Fprintf(limitBuilder, ", WATCH=%s DURATION=UNLIMITED", model.RunawayWatchType(setting.Watch.Type).String())
+				}
 			}
 		}
 		queryLimit := limitBuilder.String()
