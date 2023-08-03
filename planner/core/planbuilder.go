@@ -4634,15 +4634,18 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		for _, datasource := range ds {
 			v.DataSourceNames = append(v.DataSourceNames, datasource.tableInfo.Name.L)
 		}
-		for _, name := range ds[0].OutputNames() {
-			v.DemoFlinkTSchemaCols = append(v.DemoFlinkTSchemaCols, name.ColNameString())
-		}
-		for _, col := range ds[0].Schema().Columns {
-			v.DemoFlinkTSchemaColsFiledTypes = append(v.DemoFlinkTSchemaColsFiledTypes, col.RetType)
-		}
+		// for _, name := range ds[0].OutputNames() {
+		// 	v.DemoFlinkTSchemaCols = append(v.DemoFlinkTSchemaCols, name.ColNameString())
+		// }
+		// for _, col := range ds[0].Schema().Columns {
+		// 	v.DemoFlinkTSchemaColsFiledTypes = append(v.DemoFlinkTSchemaColsFiledTypes, col.RetType)
+		// }
 
 		for _, col := range ds[0].tableInfo.Columns {
+			logutil.BgLogger().Warn("col name", zap.String("col name", col.Name.L))
+			v.DemoFlinkTSchemaCols = append(v.DemoFlinkTSchemaCols, col.Name.L)
 			v.DemoFlinkTIncSchemaCols = append(v.DemoFlinkTIncSchemaCols, col.Name.L)
+			v.DemoFlinkTSchemaColsFiledTypes = append(v.DemoFlinkTSchemaColsFiledTypes, &col.FieldType)
 			v.DemoFlinkTIncSchemaColsFiledTypes = append(v.DemoFlinkTIncSchemaColsFiledTypes, &col.FieldType)
 		}
 		for _, indexInfo := range ds[0].tableInfo.Indices {

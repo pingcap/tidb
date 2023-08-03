@@ -4629,7 +4629,7 @@ func newHDFSClient(address string) (client *hdfs.Client, err error) {
 	}
 
 	options.User = u.Username
-	options.UseDatanodeHostname = false
+	options.UseDatanodeHostname = true
 	return hdfs.NewClient(options)
 }
 
