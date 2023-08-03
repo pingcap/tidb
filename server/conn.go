@@ -67,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -976,12 +977,24 @@ func (cc *clientConn) Run(ctx context.Context) {
 	// the status to special values, for example: kill or graceful shutdown.
 	// The client connection would detect the events when it fails to change status
 	// by CAS operation, it would then take some actions accordingly.
+	var traceInfo *model.TraceInfo
+	parentCtx := ctx
 	for {
+		sessVars := cc.ctx.GetSessionVars()
+		if alias := sessVars.SessionAlias; traceInfo == nil || traceInfo.SessionAlias != alias {
+			traceInfo = &model.TraceInfo{
+				ConnectionID: cc.connectionID,
+				SessionAlias: alias,
+			}
+			ctx = logutil.WithSessionAlias(parentCtx, sessVars.SessionAlias)
+			ctx = tracing.ContextWithTraceInfo(ctx, traceInfo)
+		}
+
 		// Close connection between txn when we are going to shutdown server.
 		// Note the current implementation when shutting down, for an idle connection, the connection may block at readPacket()
 		// consider provider a way to close the connection directly after sometime if we can not read any data.
 		if cc.server.inShutdownMode.Load() {
-			if !cc.ctx.GetSessionVars().InTxn() {
+			if !sessVars.InTxn() {
 				return
 			}
 		}
@@ -1210,7 +1223,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			defer task.End()
 
 			trace.Log(ctx, "sql", lc.String())
-			ctx = logutil.WithTraceLogger(ctx, cc.connectionID)
+			ctx = logutil.WithTraceLogger(ctx, tracing.TraceInfoFromContext(ctx))
 
 			taskID := *(*uint64)(unsafe.Pointer(task))
 			ctx = pprof.WithLabels(ctx, pprof.Labels("trace", strconv.FormatUint(taskID, 10)))

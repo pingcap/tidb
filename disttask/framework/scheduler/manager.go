@@ -88,7 +88,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		id:                   id,
 		taskTable:            taskTable,
 		subtaskExecutorPools: make(map[string]Pool),
-		logCtx:               logutil.WithKeyValue(context.Background(), "dist_task_manager", id),
+		logCtx:               logutil.WithFields(context.Background(), zap.String("dist_task_manager", id)),
 		newPool:              b.newPool,
 		newScheduler:         b.newScheduler,
 	}

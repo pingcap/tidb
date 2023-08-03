@@ -31,7 +31,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -50,6 +52,10 @@ func NewCoprocessorDAGHandler(sctx sessionctx.Context) *CoprocessorDAGHandler {
 
 // HandleRequest handles the coprocessor request.
 func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
+	traceInfo := tracing.TraceInfoFromPbTraceContext(req.Context.TraceContext)
+	ctx = tracing.ContextWithTraceInfo(ctx, traceInfo)
+	ctx = logutil.WithTraceInfo(ctx, traceInfo)
+
 	e, err := h.buildDAGExecutor(req)
 	if err != nil {
 		return h.buildErrorResponse(err)
@@ -90,6 +96,10 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 
 // HandleStreamRequest handles the coprocessor stream request.
 func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *coprocessor.Request, stream tikvpb.Tikv_CoprocessorStreamServer) error {
+	traceInfo := tracing.TraceInfoFromPbTraceContext(req.Context.TraceContext)
+	ctx = tracing.ContextWithTraceInfo(ctx, traceInfo)
+	ctx = logutil.WithTraceInfo(ctx, traceInfo)
+
 	e, err := h.buildDAGExecutor(req)
 	if err != nil {
 		return stream.Send(h.buildErrorResponse(err))

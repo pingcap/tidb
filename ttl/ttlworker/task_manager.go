@@ -97,7 +97,7 @@ type taskManager struct {
 
 func newTaskManager(ctx context.Context, sessPool sessionPool, infoSchemaCache *cache.InfoSchemaCache, id string, store kv.Storage) *taskManager {
 	return &taskManager{
-		ctx:      logutil.WithKeyValue(ctx, "ttl-worker", "task-manager"),
+		ctx:      logutil.WithFields(ctx, zap.String("ttl-worker", "task-manager")),
 		sessPool: sessPool,
 
 		id: id,

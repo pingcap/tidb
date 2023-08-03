@@ -904,6 +904,9 @@ const (
 
 	// TiDBEnableCheckConstraint indicates whether to enable check constraint feature.
 	TiDBEnableCheckConstraint = "tidb_enable_check_constraint"
+
+	// TiDBSessionAlias indicates the alias of a session
+	TiDBSessionAlias = "tidb_session_alias"
 )
 
 // TiDB vars that have only global scope

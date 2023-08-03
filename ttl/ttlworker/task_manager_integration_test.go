@@ -314,7 +314,7 @@ func TestTTLRunningTasksLimitation(t *testing.T) {
 			workers = append(workers, scanWorker)
 		}
 
-		ctx := logutil.WithKeyValue(context.Background(), "ttl-worker-test", fmt.Sprintf("task-manager-%d", i))
+		ctx := logutil.WithFields(context.Background(), zap.String("ttl-worker-test", fmt.Sprintf("task-manager-%d", i)))
 		m := ttlworker.NewTaskManager(ctx, nil, isc, fmt.Sprintf("task-manager-%d", i), store)
 		m.SetScanWorkers4Test(workers)
 		scheduleWg.Add(1)

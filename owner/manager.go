@@ -125,7 +125,7 @@ func NewOwnerManager(ctx context.Context, etcdCli *clientv3.Client, prompt, id, 
 		prompt:       prompt,
 		cancel:       cancelFunc,
 		logPrefix:    logPrefix,
-		logCtx:       logutil.WithKeyValue(context.Background(), "owner info", logPrefix),
+		logCtx:       logutil.WithFields(context.Background(), zap.String("owner info", logPrefix)),
 		sessionLease: atomicutil.NewInt64(0),
 	}
 }
@@ -418,14 +418,14 @@ func GetOwnerOpValue(ctx context.Context, etcdCli *clientv3.Client, ownerPath, l
 		return *mockOwnerOpValue.Load(), nil
 	}
 
-	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
+	logCtx := logutil.WithFields(context.Background(), zap.String("owner info", logPrefix))
 	_, _, op, _, err := getOwnerInfo(ctx, logCtx, etcdCli, ownerPath)
 	return op, errors.Trace(err)
 }
 
 func (m *ownerManager) watchOwner(ctx context.Context, etcdSession *concurrency.Session, key string) {
 	logPrefix := fmt.Sprintf("[%s] ownerManager %s watch owner key %v", m.prompt, m.id, key)
-	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
+	logCtx := logutil.WithFields(context.Background(), zap.String("owner info", logPrefix))
 	logutil.BgLogger().Debug(logPrefix)
 	watchCh := m.etcdCli.Watch(ctx, key)
 	for {

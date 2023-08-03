@@ -589,6 +589,9 @@ type Request struct {
 
 	// ConnID stores the session connection id.
 	ConnID uint64
+
+	// TraceInfo indicates the trace info
+	TraceInfo *model.TraceInfo
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.

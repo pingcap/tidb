@@ -118,7 +118,7 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *c
 	manager.sessPool = sessPool
 
 	manager.init(manager.jobLoop)
-	manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", "job-manager")
+	manager.ctx = logutil.WithFields(manager.ctx, zap.String("ttl-worker", "job-manager"))
 
 	manager.infoSchemaCache = cache.NewInfoSchemaCache(getUpdateInfoSchemaCacheInterval())
 	manager.tableStatusCache = cache.NewTableStatusCache(getUpdateTTLTableStatusCacheInterval())

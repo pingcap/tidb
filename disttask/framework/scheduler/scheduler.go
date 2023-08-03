@@ -60,7 +60,7 @@ func NewInternalScheduler(ctx context.Context, id string, taskID int64, taskTabl
 		taskID:    taskID,
 		taskTable: taskTable,
 		pool:      pool,
-		logCtx:    logutil.WithKeyValue(context.Background(), "scheduler", logPrefix),
+		logCtx:    logutil.WithFields(context.Background(), zap.String("scheduler", logPrefix)),
 	}
 	schedulerImpl.ctx, schedulerImpl.cancel = context.WithCancel(ctx)
 

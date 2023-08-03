@@ -437,6 +437,9 @@ type Job struct {
 	// AdminOperator indicates where the Admin command comes, by the TiDB
 	// itself (AdminCommandBySystem) or by user (AdminCommandByEndUser).
 	AdminOperator AdminCommandOperator `json:"admin_operator"`
+
+	// TraceInfo is the info for trace
+	TraceInfo *TraceInfo
 }
 
 // FinishTableJob is called when a job is finished.

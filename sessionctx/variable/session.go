@@ -1530,6 +1530,9 @@ type SessionVars struct {
 	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
 	// When set to false, give up merging partition stats to global stats.
 	SkipMissingPartitionStats bool
+
+	// SessionAlias is the identifier of the session
+	SessionAlias string
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -2948,6 +2951,8 @@ const (
 	SlowLogHostStr = "Host"
 	// SlowLogConnIDStr is slow log field name.
 	SlowLogConnIDStr = "Conn_ID"
+	// SlowLogSessionAliasStr is the session alias set by user.
+	SlowLogSessionAliasStr = "Session_alias"
 	// SlowLogQueryTimeStr is slow log field name.
 	SlowLogQueryTimeStr = "Query_time"
 	// SlowLogParseTimeStr is the parse sql time.
@@ -3149,6 +3154,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if s.ConnectionID != 0 {
 		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
+	}
+	if s.SessionAlias != "" {
+		writeSlowLogItem(&buf, SlowLogSessionAliasStr, s.SessionAlias)
 	}
 	if logItems.ExecRetryCount > 0 {
 		buf.WriteString(SlowLogRowPrefixStr)
@@ -3498,6 +3506,14 @@ func (s *SessionVars) GetRuntimeFilterTypes() []RuntimeFilterType {
 // GetRuntimeFilterMode return the session variable runtimeFilterMode
 func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 	return s.runtimeFilterMode
+}
+
+// GetTraceInfo returns the trace info of a session
+func (s *SessionVars) GetTraceInfo() *model.TraceInfo {
+	return &model.TraceInfo{
+		ConnectionID: s.ConnectionID,
+		SessionAlias: s.SessionAlias,
+	}
 }
 
 // RuntimeFilterType type of runtime filter "IN"

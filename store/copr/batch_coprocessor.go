@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -1275,6 +1276,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 		RecordTimeStat: true,
 		RecordScanStat: true,
 		TaskId:         b.req.TaskID,
+		TraceContext:   tracing.ToPbTraceContext(b.req.TraceInfo),
 	})
 	if b.req.ResourceGroupTagger != nil {
 		b.req.ResourceGroupTagger(req)

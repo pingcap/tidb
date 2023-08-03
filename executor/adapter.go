@@ -1640,19 +1640,20 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			tableIDs = strings.ReplaceAll(fmt.Sprintf("%v", stmtCtx.TableIDs), " ", ",")
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
-			SQL:        sql.String(),
-			Digest:     digest.String(),
-			Start:      sessVars.StartTime,
-			Duration:   costTime,
-			Detail:     stmtCtx.GetExecDetails(),
-			Succ:       succ,
-			ConnID:     sessVars.ConnectionID,
-			TxnTS:      txnTS,
-			User:       userString,
-			DB:         sessVars.CurrentDB,
-			TableIDs:   tableIDs,
-			IndexNames: indexNames,
-			Internal:   sessVars.InRestrictedSQL,
+			SQL:          sql.String(),
+			Digest:       digest.String(),
+			Start:        sessVars.StartTime,
+			Duration:     costTime,
+			Detail:       stmtCtx.GetExecDetails(),
+			Succ:         succ,
+			ConnID:       sessVars.ConnectionID,
+			SessionAlias: sessVars.SessionAlias,
+			TxnTS:        txnTS,
+			User:         userString,
+			DB:           sessVars.CurrentDB,
+			TableIDs:     tableIDs,
+			IndexNames:   indexNames,
+			Internal:     sessVars.InRestrictedSQL,
 		})
 	}
 }

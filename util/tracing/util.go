@@ -20,10 +20,16 @@ import (
 
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/kvproto/pkg/tracepb"
+	"github.com/pingcap/tidb/parser/model"
 )
 
 // TiDBTrace is set as Baggage on traces which are used for tidb tracing.
 const TiDBTrace = "tr"
+
+type sqlTracingCtxKeyType struct{}
+
+var sqlTracingCtxKey = sqlTracingCtxKeyType{}
 
 // A CallbackRecorder immediately invokes itself on received trace spans.
 type CallbackRecorder func(sp basictracer.RawSpan)
@@ -109,4 +115,43 @@ func (r Region) End() {
 		r.Span.Finish()
 	}
 	r.Region.End()
+}
+
+// TraceInfoFromContext returns the `model.TraceInfo` in context
+func TraceInfoFromContext(ctx context.Context) *model.TraceInfo {
+	val := ctx.Value(sqlTracingCtxKey)
+	if info, ok := val.(*model.TraceInfo); ok {
+		return info
+	}
+	return nil
+}
+
+// ContextWithTraceInfo creates a new `model.TraceInfo` for context
+func ContextWithTraceInfo(ctx context.Context, info *model.TraceInfo) context.Context {
+	return context.WithValue(ctx, sqlTracingCtxKey, info)
+}
+
+// ToPbTraceContext creates `tracepb.TraceContext` from `model.TraceInfo`
+func ToPbTraceContext(info *model.TraceInfo) *tracepb.TraceContext {
+	if info == nil {
+		return nil
+	}
+	return &tracepb.TraceContext{
+		SqlTraceInfo: &tracepb.SQLTraceInfo{
+			ConnectionId: info.ConnectionID,
+			SessionAlias: info.SessionAlias,
+		},
+	}
+}
+
+func TraceInfoFromPbTraceContext(trace *tracepb.TraceContext) *model.TraceInfo {
+	if trace == nil || trace.SqlTraceInfo == nil {
+		return nil
+	}
+
+	sqlTrace := trace.SqlTraceInfo
+	return &model.TraceInfo{
+		ConnectionID: sqlTrace.ConnectionId,
+		SessionAlias: sqlTrace.SessionAlias,
+	}
 }

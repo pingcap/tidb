@@ -50,7 +50,7 @@ func TestZapLoggerWithKeys(t *testing.T) {
 	require.NoError(t, err)
 	key := "ctxKey"
 	val := "ctxValue"
-	ctx1 := WithKeyValue(context.Background(), key, val)
+	ctx1 := WithFields(context.Background(), zap.String(key, val))
 	testZapLogger(ctx1, t, fileCfg.Filename, zapLogWithKeyValPatternByCtx)
 	err = os.Remove(fileCfg.Filename)
 	require.NoError(t, err)

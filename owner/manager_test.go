@@ -35,6 +35,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.etcd.io/etcd/tests/v3/integration"
+	"go.uber.org/zap"
 )
 
 const testLease = 5 * time.Millisecond
@@ -271,7 +272,7 @@ func TestCluster(t *testing.T) {
 	d1.OwnerManager().Cancel()
 
 	logPrefix := fmt.Sprintf("[ddl] %s ownerManager %s", DDLOwnerKey, "useless id")
-	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
+	logCtx := logutil.WithFields(context.Background(), zap.String("owner info", logPrefix))
 	_, err = owner.GetOwnerKey(context.Background(), logCtx, cliRW, DDLOwnerKey, "useless id")
 	require.Truef(t, terror.ErrorEqual(err, concurrency.ErrElectionNoLeader), "get owner info result don't match, err %v", err)
 	op, err := owner.GetOwnerOpValue(context.Background(), cliRW, DDLOwnerKey, logPrefix)

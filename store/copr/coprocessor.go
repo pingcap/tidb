@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/tracepb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/domain/resourcegroup"
@@ -84,6 +85,8 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	if !ok {
 		return copErrorResponse{errors.Errorf("unsupported variables:%+v", variables)}
 	}
+
+	req.TraceInfo = tracing.TraceInfoFromContext(ctx)
 	if req.StoreType == kv.TiFlash && req.BatchCop {
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars, option)
@@ -271,6 +274,8 @@ type copTask struct {
 	redirect2Replica *uint64
 	busyThreshold    time.Duration
 	meetLockFallback bool
+
+	sqlTrace *tracepb.SQLTraceInfo
 }
 
 type batchedCopTask struct {
@@ -1165,6 +1170,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			ResourceGroupName: worker.req.ResourceGroupName,
 		},
 		BusyThresholdMs: uint32(task.busyThreshold.Milliseconds()),
+		TraceContext:    tracing.ToPbTraceContext(worker.req.TraceInfo),
 	})
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
