@@ -71,7 +71,7 @@
                   "Version": 440930000000000000
                 },
                 "TableName": "t",
-                "TblInfoID": 98,
+                "TblInfoID": 100,
                 "Uninitialized": true,
                 "UsePartitionStats": false
               }
