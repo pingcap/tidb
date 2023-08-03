@@ -340,17 +340,15 @@ func TestAddIndexForGeneratedColumn(t *testing.T) {
 	}
 	tk.MustExec("insert into t values()")
 	tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y + 2)")
-	tk.MustExec("ALTER TABLE t ADD INDEX idx_y(y1)")
 
 	tbl := external.GetTableByName(t, tk, "test", "t")
 	for _, idx := range tbl.Indices() {
 		require.False(t, strings.EqualFold(idx.Meta().Name.L, "idx_c2"))
 	}
-	// NOTE: this test case contains a bug, it should be uncommented after the bug is fixed.
-	// TODO: Fix bug https://github.com/pingcap/tidb/issues/12181
-	// tk.MustExec("delete from t where y = 2155")
-	// tk.MustExec("alter table t add index idx_y(y1)")
-	// tk.MustExec("alter table t drop index idx_y")
+
+	tk.MustExec("delete from t where y = 2155")
+	tk.MustExec("alter table t add index idx_y(y1)")
+	tk.MustExec("alter table t drop index idx_y")
 
 	// Fix issue 9311.
 	tk.MustExec("drop table if exists gcai_table")

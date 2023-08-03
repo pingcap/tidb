@@ -1613,8 +1613,7 @@ func TestAlterColumn(t *testing.T) {
 	colC = tblInfo.Columns[2]
 	hasNoDefault = mysql.HasNoDefaultValueFlag(colC.GetFlag())
 	require.False(t, hasNoDefault)
-	// TODO: After fix issue 2606.
-	// tk.MustExec( "alter table test_alter_column alter column d set default null")
+	tk.MustExec("alter table test_alter_column alter column d set default null")
 	tk.MustExec("alter table test_alter_column alter column a drop default")
 	tk.MustGetErrCode("insert into test_alter_column set b = 'd', c = 'dd'", errno.ErrNoDefaultForField)
 	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123"))

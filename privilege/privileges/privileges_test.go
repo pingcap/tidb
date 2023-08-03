@@ -2850,18 +2850,21 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 			tk.MustGetErrCode(test.sql, test.errcode)
 		}
 	}
-	//nolint:revive,all_revive
-	// TODO: issue #29282 to be fixed.
-	//for i, test := range tests {
-	//	preparedStmt := fmt.Sprintf("prepare stmt%d from '%s'", i, test.sql)
-	//	executeStmt := fmt.Sprintf("execute stmt%d", i)
-	//	tk.MustExec(preparedStmt)
-	//	if test.errcode == 0 {
-	//		tk.MustExec(executeStmt)
-	//	} else {
-	//		tk.MustGetErrCode(executeStmt, test.errcode)
-	//	}
-	//}
+	for i, test := range tests {
+		preparedStmt := fmt.Sprintf("prepare stmt%d from '%s'", i, test.sql)
+		executeStmt := fmt.Sprintf("execute stmt%d", i)
+		if test.errcode == 0 {
+			tk.MustExec(preparedStmt)
+			tk.MustExec(executeStmt)
+		} else {
+			_, err := tk.Exec(preparedStmt)
+			if err != nil {
+				tk.MustGetErrCode(preparedStmt, test.errcode)
+			} else {
+				tk.MustGetErrCode(executeStmt, test.errcode)
+			}
+		}
+	}
 }
 
 func TestRevokeSecondSyntax(t *testing.T) {
