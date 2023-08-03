@@ -15,6 +15,8 @@
 # limitations under the License.
 
 set -eu
+set -x
+
 DB="$TEST_NAME"
 TABLES_COUNT=300
 
@@ -42,7 +44,7 @@ echo "backup meta v2 start..."
 unset BR_LOG_TO_TERM
 rm -f $BACKUPMETAV2_LOG
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/progress-call-back=return(\"$PROGRESS_FILE\")"
-run_br backup db --db "$DB" --log-file $BACKUPMETAV2_LOG -s "local://$TEST_DIR/${DB}v2" --pd $PD_ADDR --use-backupmeta-v2 
+run_br backup db --db "$DB" --log-file $BACKUPMETAV2_LOG -s "local://$TEST_DIR/${DB}v2" --pd $PD_ADDR --use-backupmeta-v2
 backupv2_size=`grep "backup-data-size" "${BACKUPMETAV2_LOG}" | grep -oP '\[\K[^\]]+' | grep "backup-data-size" | awk -F '=' '{print $2}' | grep -oP '\d*\.\d+'`
 echo "backup meta v2 backup size is ${backupv2_size}"
 export GO_FAILPOINTS=""
@@ -60,14 +62,14 @@ rm -rf $PROGRESS_FILE
 
 echo "backup meta v1 start..."
 rm -f $BACKUPMETAV1_LOG
-run_br backup db --db "$DB" --log-file $BACKUPMETAV1_LOG -s "local://$TEST_DIR/$DB" --pd $PD_ADDR 
+run_br backup db --db "$DB" --log-file $BACKUPMETAV1_LOG -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 backupv1_size=`grep "backup-data-size" "${BACKUPMETAV1_LOG}" | grep -oP '\[\K[^\]]+' | grep "backup-data-size" | awk -F '=' '{print $2}' | grep -oP '\d*\.\d+'`
 echo "backup meta v1 backup size is ${backupv1_size}"
 
 
-if [ $(calc "${backupv1_size}-${backupv2_size}==0") -eq 1 ]; then 
+if [ $(calc "${backupv1_size}-${backupv2_size}==0") -eq 1 ]; then
     echo "backup meta v1 data size match backup meta v2 data size"
-else 
+else
     echo "statistics unmatch"
     exit 1
 fi
@@ -91,11 +93,11 @@ echo "the difference is ${diff}"
 
 threshold="1"
 
-if [ $(calc "$diff<$threshold") -eq 1 ]; then 
-    echo "statistics match" 
-else 
+if [ $(calc "$diff<$threshold") -eq 1 ]; then
+    echo "statistics match"
+else
     echo "statistics unmatch"
-    exit 1 
+    exit 1
 fi
 
 # restore db
