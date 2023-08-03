@@ -26,12 +26,6 @@ type keySet struct {
 	mu  sync.RWMutex
 }
 
-func (ks *keySet) Add(key int64) {
-	ks.mu.Lock()
-	ks.set[key] = nil
-	ks.mu.Unlock()
-}
-
 func (ks *keySet) Remove(key int64) int64 {
 	var cost int64
 	ks.mu.Lock()
@@ -59,8 +53,13 @@ func (ks *keySet) Len() int {
 	return result
 }
 
-func (ks *keySet) AddKeyValue(key int64, value *statistics.Table) {
+func (ks *keySet) AddKeyValue(key int64, value *statistics.Table) (cost uint64) {
 	ks.mu.Lock()
+	if v, ok := ks.set[key]; ok {
+		cost = uint64(v.MemoryUsage().TotalTrackingMemUsage())
+	}
 	ks.set[key] = value
 	ks.mu.Unlock()
+	cost = uint64(value.MemoryUsage().TotalTrackingMemUsage()) - cost
+	return cost
 }

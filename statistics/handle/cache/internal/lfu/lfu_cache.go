@@ -79,25 +79,19 @@ func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
 func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
 	ok := s.cache.Set(tblID, tbl, tbl.MemoryUsage().TotalTrackingMemUsage())
 	if ok { // NOTE: `s.cache` and `s.resultKeySet` may be inconsistent since the update operation is not atomic, but it's acceptable for our scenario
-		s.resultKeySet.Add(tblID)
+		s.resultKeySet.AddKeyValue(tblID, nil)
 		s.cost.Add(tbl.MemoryUsage().TotalTrackingMemUsage())
 	} else {
-		cost := s.resultKeySet.Remove(tblID)
-		if cost != 0 {
-			s.cost.Add(-1 * cost)
-		}
+		s.resultKeySet.Remove(tblID)
 	}
-	metrics.CostGauge.Set(float64(s.cost.Load()))
+	metrics.CostGauge.Set(float64(s.cost.Load()) + float64(s.resultKeySet.Cost()))
 	return ok
 }
 
 // Del implements statsCacheInner
 func (s *LFU) Del(tblID int64) {
 	s.cache.Del(tblID)
-	cost := s.resultKeySet.Remove(tblID)
-	if cost != 0 {
-		s.cost.Add(-1 * cost)
-	}
+	s.resultKeySet.Remove(tblID)
 }
 
 // Cost implements statsCacheInner
@@ -142,7 +136,6 @@ func (s *LFU) onEvict(item *ristretto.Item) {
 		dropEvicted(indix)
 	}
 	s.resultKeySet.AddKeyValue(int64(item.Key), item.Value.(*statistics.Table))
-	s.cost.Add(item.Value.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
 }
 
 func (s *LFU) onExit(val interface{}) {
