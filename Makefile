@@ -433,21 +433,16 @@ generate_grafana_scripts:
 
 bazel_ci_prepare:
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable -prune
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror:mirror -- --mirror> tmp.txt
 	mv tmp.txt DEPS.bzl
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  \
 		--run_under="cd $(CURDIR) && " \
 		 //tools/tazel:tazel
 
-# "-prune" prunes some dependencies that are still needed. So it needs manual steps.
-bazel_prune:
-	bazel run //:gazelle
-	bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable -prune
-
 bazel_prepare:
 	bazel run //:gazelle
-	bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable
+	bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable -prune
 	bazel run \
 		--run_under="cd $(CURDIR) && " \
 		 //tools/tazel:tazel
@@ -458,7 +453,7 @@ bazel_prepare:
 
 bazel_ci_prepare_rbe:
 	bazel run //:gazelle
-	bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable
+	bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable -prune
 	bazel run --//build:with_rbe_flag=true \
 		--run_under="cd $(CURDIR) && " \
 		 //tools/tazel:tazel
