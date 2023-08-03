@@ -160,6 +160,9 @@ func (d *ddl) CreateETL(ctx sessionctx.Context, s *ast.CreateETLStmt) error {
 	if err != nil {
 		return err
 	}
+	for _, name := range s.HudiTCols {
+		tblInfo.UserDefinedHudiTCols = append(tblInfo.UserDefinedHudiTCols, name.L)
+	}
 	logutil.BgLogger().Info("sinkTaskDesc", zap.String("sinkTaskDesc", sinkTaskDesc))
 	err = d.CreateTableWithInfo(ctx, schema.Name, tblInfo, onExist)
 	if err != nil {
@@ -300,7 +303,7 @@ func writeDemoHudiTInsert(sb *strings.Builder, tblInfo *model.TableInfo, stmt *a
 		}
 	}
 	// 实际上这里应该把原 sql 中的表名，替换成 demo_flink.tbl_name
-	fromOffset := strings.Index(tblInfo.ETLQuery, "from ")
+	fromOffset := strings.Index(strings.ToLower(tblInfo.ETLQuery), "from ")
 	extractTableName := tblInfo.ETLQuery[fromOffset+5+strings.Index(tblInfo.ETLQuery[fromOffset+5:], " "):]
 	query := tblInfo.ETLQuery[0:fromOffset+5] + "demo_flink.t" + extractTableName
 	sb.WriteString(fmt.Sprintf("insert into demo_hudi.t(%s) (%s);\n", demoHudiColNames, query))

@@ -4622,7 +4622,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		if len(v.DemoHudiTSchemaCols) == 0 {
 			outputNames := plan.OutputNames()
 			for _, name := range outputNames {
-				v.DemoHudiTSchemaCols = append(v.DemoHudiTSchemaCols, name.ColNameString())
+				v.DemoHudiTSchemaCols = append(v.DemoHudiTSchemaCols, name.ColName.O)
 			}
 		}
 		for _, col := range plan.Schema().Columns {
@@ -4632,7 +4632,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		ds := make([]*DataSource, 0)
 		ds = getDataSource(ds, plan.(LogicalPlan))
 		for _, datasource := range ds {
-			v.DataSourceNames = append(v.DataSourceNames, datasource.tableInfo.Name.L)
+			v.DataSourceNames = append(v.DataSourceNames, datasource.tableInfo.Name.O)
 		}
 		// for _, name := range ds[0].OutputNames() {
 		// 	v.DemoFlinkTSchemaCols = append(v.DemoFlinkTSchemaCols, name.ColNameString())
@@ -4642,17 +4642,23 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		// }
 
 		for _, col := range ds[0].tableInfo.Columns {
-			logutil.BgLogger().Warn("col name", zap.String("col name", col.Name.L))
-			v.DemoFlinkTSchemaCols = append(v.DemoFlinkTSchemaCols, col.Name.L)
-			v.DemoFlinkTIncSchemaCols = append(v.DemoFlinkTIncSchemaCols, col.Name.L)
+			logutil.BgLogger().Warn("col name", zap.String("col name", col.Name.O))
+			v.DemoFlinkTSchemaCols = append(v.DemoFlinkTSchemaCols, col.Name.O)
+			v.DemoFlinkTIncSchemaCols = append(v.DemoFlinkTIncSchemaCols, col.Name.O)
 			v.DemoFlinkTSchemaColsFiledTypes = append(v.DemoFlinkTSchemaColsFiledTypes, &col.FieldType)
 			v.DemoFlinkTIncSchemaColsFiledTypes = append(v.DemoFlinkTIncSchemaColsFiledTypes, &col.FieldType)
 		}
-		for _, indexInfo := range ds[0].tableInfo.Indices {
-			if indexInfo.Primary {
-				for _, col := range indexInfo.Columns {
-					v.PKNamesForFlinkTable = append(v.PKNamesForFlinkTable, col.Name.L)
+		logutil.BgLogger().Warn("len(indices)", zap.Int("len(indices)", len(ds[0].tableInfo.Indices)))
+		pkInfo := tables.FindPrimaryIndex(ds[0].tableInfo)
+		if pkInfo == nil {
+			for _, col := range ds[0].tableInfo.Columns {
+				if mysql.HasPriKeyFlag(col.FieldType.GetFlag()) {
+					v.PKNamesForFlinkTable = append(v.PKNamesForFlinkTable, col.Name.O)
 				}
+			}
+		} else {
+			for _, col := range pkInfo.Columns {
+				v.PKNamesForFlinkTable = append(v.PKNamesForFlinkTable, col.Name.O)
 			}
 		}
 		if v.HudiTCols == nil {
@@ -4660,7 +4666,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		} else {
 			for _, col := range v.HudiTCols {
 				if strings.HasPrefix(col.L, "_") {
-					v.PKNamesForHudiTable = append(v.PKNamesForHudiTable, col.L)
+					v.PKNamesForHudiTable = append(v.PKNamesForHudiTable, col.O)
 				}
 			}
 		}

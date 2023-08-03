@@ -534,6 +534,7 @@ type TableInfo struct {
 	// DemoFlinkTIncSourceTableSchema []string
 	// DemoFlinkTIncSourceTableSchemaFieldTypes []*types.FieldType
 
+	UserDefinedHudiTCols []string
 	ETLPKColNames                 []string
 	ETLUnderlyingTableNames []string
 }
