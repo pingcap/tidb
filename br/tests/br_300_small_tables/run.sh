@@ -64,7 +64,7 @@ rm -rf $PROGRESS_FILE
 echo "backup meta v1 start..."
 rm -f $BACKUPMETAV1_LOG
 run_br backup db --db "$DB" --log-file $BACKUPMETAV1_LOG -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
-backupv1_size=`grep "backup-data-size" "${BACKUPMETAV1_LOG}" | grep -oP '\[\K[^\]]+' | grep "backup-data-size" | awk -F '=' '{print $2}' | grep -oP '\d*\.\d+'`
+backupv1_size=`grep "backup-data-size" "${BACKUPMETAV1_LOG}" | grep -oP '\[\K[^\]]+' | grep "backup-data-size" | awk -F '=' '{print $2}' | grep -oP '\d*\.?\d+'`
 echo "backup meta v1 backup size is ${backupv1_size}"
 
 
