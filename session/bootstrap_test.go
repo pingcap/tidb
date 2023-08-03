@@ -184,7 +184,7 @@ func TestBootstrapWithError(t *testing.T) {
 
 	row := req.GetRow(0)
 	rows := statistics.RowToDatums(row, r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil)
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil, nil, nil, nil, nil, "0", "0", "0", "0")
 	require.NoError(t, r.Close())
 
 	mustExec(t, se, "USE test")
@@ -193,6 +193,7 @@ func TestBootstrapWithError(t *testing.T) {
 	mustExec(t, se, "SELECT * from mysql.db")
 	mustExec(t, se, "SELECT * from mysql.tables_priv")
 	mustExec(t, se, "SELECT * from mysql.columns_priv")
+	mustExec(t, se, "SELECT * from mysql.procs_priv")
 	// Check role tables.
 	mustExec(t, se, "SELECT * from mysql.role_edges")
 	mustExec(t, se, "SELECT * from mysql.default_roles")
