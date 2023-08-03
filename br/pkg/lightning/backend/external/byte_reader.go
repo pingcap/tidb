@@ -94,6 +94,9 @@ func (r *byteReader) readNBytes(n int) (*[]byte, error) {
 }
 
 func (r *byteReader) reset() {
+	for i := range r.retPointers {
+		r.retPointers[i] = nil
+	}
 	r.retPointers = r.retPointers[:0]
 }
 
