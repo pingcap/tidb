@@ -89,8 +89,15 @@ func NewTLSFromMockServer(server *httptest.Server) *TLS {
 	}
 }
 
+// GetMockTLSUrl returns tls's host for mock test
+func GetMockTLSUrl(tls *TLS) string {
+	return tls.url
+}
+
 // WithHost creates a new TLS instance with the host replaced.
 func (tc *TLS) WithHost(host string) *TLS {
+	host = strings.TrimPrefix(host, "http://")
+	host = strings.TrimPrefix(host, "https://")
 	var url string
 	host = strings.TrimPrefix(host, "http://")
 	host = strings.TrimPrefix(host, "https://")
