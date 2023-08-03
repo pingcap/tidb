@@ -329,13 +329,8 @@ type BatchPointGetPlan struct {
 	Columns          []*model.ColumnInfo
 	cost             float64
 
-	// SinglePart indicates whether this BatchPointGetPlan is just for a single partition, instead of the whole partition table.
-	// If the BatchPointGetPlan is built in fast path, this value is false; if the plan is generated in physical optimization for a partition,
-	// this value would be true. This value would decide the behavior of BatchPointGetExec, i.e, whether to compute the table ID of the partition
-	// on the fly.
-	SinglePart bool
-	// PartTblID is the table ID for the specific table partition.
-	PartTblID int64
+	// PartTblID is the table IDs for the specific table partitions.
+	PartTblID []int64
 
 	// required by cost model
 	planCostInit bool
