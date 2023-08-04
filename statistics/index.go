@@ -61,31 +61,19 @@ func (idx *Index) IsAllEvicted() bool {
 	return idx.statsInitialized && idx.evictedStatus >= allEvicted
 }
 
-func (idx *Index) dropCMS() {
-	idx.CMSketch = nil
-	idx.evictedStatus = onlyCmsEvicted
+func (idx *Index) getEvictedStatus() int {
+	return idx.evictedStatus
 }
 
-func (idx *Index) dropHist() {
+func (idx *Index) dropUnnecessaryData() {
+	if idx.statsVer() < Version2 {
+		idx.CMSketch = nil
+	}
+	idx.TopN = nil
 	idx.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
 	idx.Histogram.Buckets = make([]Bucket, 0)
 	idx.Histogram.scalars = make([]scalar, 0)
 	idx.evictedStatus = allEvicted
-}
-
-func (idx *Index) dropTopN() {
-	originTopNNum := int64(idx.TopN.Num())
-	idx.TopN = nil
-	if len(idx.Histogram.Buckets) == 0 && originTopNNum >= idx.Histogram.NDV {
-		// This indicates index has topn instead of histogram
-		idx.evictedStatus = allEvicted
-	} else {
-		idx.evictedStatus = onlyHistRemained
-	}
-}
-
-func (idx *Index) getEvictedStatus() int {
-	return idx.evictedStatus
 }
 
 func (idx *Index) isStatsInitialized() bool {

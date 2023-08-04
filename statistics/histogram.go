@@ -1623,8 +1623,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 
 const (
 	allLoaded = iota
-	onlyCmsEvicted
-	onlyHistRemained
 	allEvicted
 )
 
@@ -1673,16 +1671,6 @@ func (s StatsLoadedStatus) IsLoadNeeded() bool {
 // If the column/index was loaded, and at least histogram and topN still exists, the necessary statistics is still loaded.
 func (s StatsLoadedStatus) IsEssentialStatsLoaded() bool {
 	return s.statsInitialized && (s.evictedStatus < allEvicted)
-}
-
-// IsCMSEvicted indicates whether the cms got evicted now.
-func (s StatsLoadedStatus) IsCMSEvicted() bool {
-	return s.statsInitialized && s.evictedStatus >= onlyCmsEvicted
-}
-
-// IsTopNEvicted indicates whether the topn got evicted now.
-func (s StatsLoadedStatus) IsTopNEvicted() bool {
-	return s.statsInitialized && s.evictedStatus >= onlyHistRemained
 }
 
 // IsAllEvicted indicates whether all the stats got evicted or not.

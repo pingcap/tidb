@@ -1687,7 +1687,6 @@ func TestEvictedColumnLoadedStatus(t *testing.T) {
 	tblStats = domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
 	for _, col := range tblStats.Columns {
 		require.True(t, col.IsStatsInitialized())
-		require.True(t, col.IsCMSEvicted())
 	}
 }
 
