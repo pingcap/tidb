@@ -146,7 +146,7 @@ func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, Nu
 		TotalCreateSnapshotTimeMs:           &totalCreateSnapshotTimeMs,
 		TotalLocalRegionNum:                 &totalLocalRegionNum,
 		TotalRemoteRegionNum:                &totalRemoteRegionNum,
-		TotalLearnerReadTimeMs:              &totalLearnerReadMs,
+		TotalLearnerReadMs:                  &totalLearnerReadMs,
 		TotalDisaggReadCacheHitSize:         &totalDisaggReadCacheHitSize,
 		TotalDisaggReadCacheMissSize:        &totalDisaggReadCacheMissSize,
 	}
