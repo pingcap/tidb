@@ -38,7 +38,7 @@ var defaultStatus = map[string]*variable.StatusVal{
 }
 
 // GetScope gets the Status variables scope.
-func (s *Server) GetScope(_ string) variable.ScopeFlag {
+func (*Server) GetScope(_ string) variable.ScopeFlag {
 	return variable.DefaultStatusVarScopeFlag
 }
 

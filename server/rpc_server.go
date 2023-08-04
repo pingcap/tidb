@@ -244,7 +244,7 @@ func (s *rpcServer) createSession() (session.Session, error) {
 }
 
 // ReportMPPTaskStatus implements tikv server interface
-func (s *rpcServer) ReportMPPTaskStatus(_ context.Context, req *mpp.ReportTaskStatusRequest) (resp *mpp.ReportTaskStatusResponse, err error) {
+func (*rpcServer) ReportMPPTaskStatus(_ context.Context, req *mpp.ReportTaskStatusRequest) (resp *mpp.ReportTaskStatusResponse, err error) {
 	resp = mppcoordmanager.InstanceMPPCoordinatorManager.ReportStatus(req)
 	return resp, nil
 }

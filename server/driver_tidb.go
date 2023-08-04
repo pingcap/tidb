@@ -408,7 +408,7 @@ func (tc *TiDBContext) EncodeSessionStates(_ context.Context, _ sessionctx.Conte
 }
 
 // DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
-func (tc *TiDBContext) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+func (tc *TiDBContext) DecodeSessionStates(ctx context.Context, _ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
 	if len(sessionStates.PreparedStmts) == 0 {
 		return nil
 	}
