@@ -158,38 +158,18 @@ type TableCacheItem interface {
 	MemoryUsage() CacheItemMemoryUsage
 	IsAllEvicted() bool
 
-	dropCMS()
-	dropTopN()
-	dropHist()
+	dropUnnecessaryData()
 	isStatsInitialized() bool
 	getEvictedStatus() int
 	statsVer() int64
-	isCMSExist() bool
 }
 
 // DropEvicted drop stats for table column/index
 func DropEvicted(item TableCacheItem) {
-	if !item.isStatsInitialized() {
+	if !item.isStatsInitialized() || item.getEvictedStatus() == allEvicted {
 		return
 	}
-	switch item.getEvictedStatus() {
-	case allLoaded:
-		if item.isCMSExist() && item.statsVer() < Version2 {
-			item.dropCMS()
-			return
-		}
-		// For stats version2, there is no cms thus we directly drop topn
-		item.dropTopN()
-		return
-	case onlyCmsEvicted:
-		item.dropTopN()
-		return
-	case onlyHistRemained:
-		item.dropHist()
-		return
-	default:
-		return
-	}
+	item.dropUnnecessaryData()
 }
 
 // CacheItemMemoryUsage indicates the memory usage of TableCacheItem
