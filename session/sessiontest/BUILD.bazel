@@ -9,7 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 50,
+    shard_count = 29,
     deps = [
         "//config",
         "//domain",
@@ -21,9 +21,7 @@ go_test(
         "//parser/mysql",
         "//parser/terror",
         "//session",
-        "//sessionctx",
         "//store/mockstore",
-        "//table/tables",
         "//testkit",
         "//testkit/testmain",
         "//testkit/testsetup",
