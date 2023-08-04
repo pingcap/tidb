@@ -2543,9 +2543,25 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		TblInfo:          ds.TableInfo(),
 		KeepOrder:        !prop.IsSortItemEmpty(),
 		Columns:          ds.Columns,
-		SinglePart:       ds.isPartition,
-		PartTblID:        ds.physicalTableID,
 		PartitionExpr:    getPartitionExpr(ds.SCtx(), ds.TableInfo()),
+	}
+	if ds.isPartition {
+		// static prune
+		batchPointGetPlan.PartTblID = make([]int64, 1)
+		batchPointGetPlan.PartTblID[0] = ds.physicalTableID
+	} else if ds.tableInfo.GetPartitionInfo() != nil {
+		// dynamic prune
+		idxs, err := PartitionPruning(ds.SCtx(), ds.table.GetPartitionedTable(), ds.allConds, ds.partitionNames, ds.TblCols, ds.names)
+		if err != nil || len(idxs) == 0 {
+			return invalidTask
+		}
+		if idxs[0] != FullRange {
+			batchPointGetPlan.PartTblID = make([]int64, len(idxs))
+			for i, idx := range idxs {
+				batchPointGetPlan.PartTblID[i] = ds.tableInfo.GetPartitionInfo().Definitions[idx].ID
+			}
+			slices.Sort(batchPointGetPlan.PartTblID)
+		}
 	}
 	if batchPointGetPlan.KeepOrder {
 		// TODO: support keepOrder for partition table with dynamic pruning

@@ -124,7 +124,6 @@ func (r *byteReader) next(n int) []byte {
 func (r *byteReader) reload() error {
 	nBytes, err := io.ReadFull(r.storageReader, r.buf[0:])
 	if err == io.EOF {
-		logutil.Logger(r.ctx).Error("unexpected EOF")
 		r.isEOF = true
 		return err
 	} else if err == io.ErrUnexpectedEOF {

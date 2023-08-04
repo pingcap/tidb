@@ -989,7 +989,11 @@ func TestCreateTableWithListPartition(t *testing.T) {
 			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{
-			"create table t (a int) partition by list (a) (partition p0 values in (null), partition p1 values in (NULL));",
+			"create table t (a int) partition by list (a) (partition p0 values in (null), partition p1 values in (NULL))",
+			dbterror.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t (a int, b varchar(33)) partition by list columns (a,b) (partition p0 values in ((1,null)), partition p1 values in ((1,NULL)))",
 			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{
@@ -1041,6 +1045,8 @@ func TestCreateTableWithListPartition(t *testing.T) {
 		"create table t (a datetime) partition by list (to_seconds(a)) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
 		"create table t (a int, b int generated always as (a+1) virtual) partition by list (b + 1) (partition p0 values in (1));",
 		"create table t(a binary) partition by list columns (a) (partition p0 values in (X'0C'));",
+		"create table t (a varchar(39)) partition by list columns (a) (partition pNull values in (null), partition pEmptyString values in (''))",
+		"create table t (a varchar(39), b varchar(44)) partition by list columns (a,b) (partition pNull values in (('1',null),('2','NULL'),('','1'),(null,null)), partition pEmptyString values in (('2',''),('1',''),(NULL,''),('','')))",
 		"create table t (a bigint) partition by list (a) (partition p0 values in (1, default),partition p1 values in (0, 22,3))",
 		generatePartitionTableByNum(mysql.PartitionCountLimit),
 	}
