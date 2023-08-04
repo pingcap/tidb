@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
+	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -1710,7 +1711,8 @@ func (rc *Client) execChecksum(
 			SetConcurrency(concurrency).
 			SetOldKeyspace(tbl.RewriteRule.OldKeyspace).
 			SetNewKeyspace(tbl.RewriteRule.NewKeyspace).
-			Build()
+			SetExplicitRequestSourceType(kvutil.ExplicitTypeBR)
+		Build()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1939,6 +1941,7 @@ func (rc *Client) FailpointDoChecksumForLogRestore(
 				SetConcurrency(4).
 				SetOldKeyspace(rewriteRule.OldKeyspace).
 				SetNewKeyspace(rewriteRule.NewKeyspace).
+				SetExplicitRequestSourceType(kvutil.ExplicitTypeBR).
 				Build()
 			if err != nil {
 				return errors.Trace(err)
