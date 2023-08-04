@@ -30,6 +30,8 @@ type KeyValueStore struct {
 
 	rc        *rangePropertiesCollector
 	ctx       context.Context
+	writerID  int
+	seq       int
 	offset    uint64
 	u64Buffer []byte
 }
@@ -41,11 +43,15 @@ func NewKeyValueStore(
 	ctx context.Context,
 	dataWriter storage.ExternalFileWriter,
 	rangePropertiesCollector *rangePropertiesCollector,
+	writerID int,
+	seq int,
 ) (*KeyValueStore, error) {
 	kvStore := &KeyValueStore{
 		dataWriter: dataWriter,
 		ctx:        ctx,
 		rc:         rangePropertiesCollector,
+		writerID:   writerID,
+		seq:        seq,
 		u64Buffer:  make([]byte, 8),
 	}
 	return kvStore, nil
@@ -54,8 +60,7 @@ func NewKeyValueStore(
 // AddKeyValue saves a key-value pair to the KeyValueStore. If the accumulated
 // size or key count exceeds the given distance, a new range property will be
 // appended to the rangePropertiesCollector with current status.
-// Caller should guarantee `writerID` and `seq` are not changed.
-func (s *KeyValueStore) AddKeyValue(key, value []byte, writerID, seq int) error {
+func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
 	kvLen := len(key) + len(value) + 16
 
 	// data layout: keyLen + key + valueLen + value
@@ -84,8 +89,8 @@ func (s *KeyValueStore) AddKeyValue(key, value []byte, writerID, seq int) error 
 
 	if len(s.rc.currProp.key) == 0 {
 		s.rc.currProp.key = key
-		s.rc.currProp.writerID = writerID
-		s.rc.currProp.dataSeq = seq
+		s.rc.currProp.writerID = s.writerID
+		s.rc.currProp.dataSeq = s.seq
 	}
 
 	s.offset += uint64(kvLen)

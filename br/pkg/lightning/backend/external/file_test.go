@@ -33,7 +33,7 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	}
 	rc.reset()
 	initRC := *rc
-	kvStore, err := NewKeyValueStore(ctx, writer, rc)
+	kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
 	require.NoError(t, err)
 
 	require.Equal(t, &initRC, rc)
@@ -41,14 +41,14 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	require.Len(t, encoded, 0)
 
 	k1, v1 := []byte("key1"), []byte("value1")
-	err = kvStore.AddKeyValue(k1, v1, 1, 1)
+	err = kvStore.AddKeyValue(k1, v1)
 	require.NoError(t, err)
 	// when not accumulated enough data, no range property will be added.
 	require.Equal(t, &initRC, rc)
 
 	// propKeysIdxDistance = 2, so after adding 2 keys, a new range property will be added.
 	k2, v2 := []byte("key2"), []byte("value2")
-	err = kvStore.AddKeyValue(k2, v2, 1, 1)
+	err = kvStore.AddKeyValue(k2, v2)
 	require.NoError(t, err)
 	require.Len(t, rc.props, 1)
 	expected := &rangeProperty{
@@ -65,7 +65,7 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 
 	// when not accumulated enough data, no range property will be added.
 	k3, v3 := []byte("key3"), []byte("value3")
-	err = kvStore.AddKeyValue(k3, v3, 1, 1)
+	err = kvStore.AddKeyValue(k3, v3)
 	require.NoError(t, err)
 	require.Len(t, rc.props, 1)
 
@@ -79,9 +79,9 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 		propKeysIdxDistance: 100,
 	}
 	rc.reset()
-	kvStore, err = NewKeyValueStore(ctx, writer, rc)
+	kvStore, err = NewKeyValueStore(ctx, writer, rc, 2, 2)
 	require.NoError(t, err)
-	err = kvStore.AddKeyValue(k1, v1, 2, 2)
+	err = kvStore.AddKeyValue(k1, v1)
 	require.NoError(t, err)
 	require.Len(t, rc.props, 1)
 	expected = &rangeProperty{
@@ -94,7 +94,7 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	}
 	require.Equal(t, expected, rc.props[0])
 
-	err = kvStore.AddKeyValue(k2, v2, 2, 2)
+	err = kvStore.AddKeyValue(k2, v2)
 	require.NoError(t, err)
 	require.Len(t, rc.props, 2)
 	expected = &rangeProperty{
