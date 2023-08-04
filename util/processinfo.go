@@ -57,6 +57,8 @@ type ProcessInfo struct {
 	Info                  string
 	Port                  string
 	PlanExplainRows       [][]string
+	TableIDs              []int64
+	IndexNames            []string
 	OOMAlarmVariablesInfo OOMAlarmVariablesInfo
 	ID                    uint64
 	CurTxnStartTS         uint64
