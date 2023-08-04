@@ -21,6 +21,7 @@ go_test(
         "//testkit",
         "//testkit/testmain",
         "//testkit/testsetup",
+        "//types",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",

@@ -15,6 +15,7 @@
 package common
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
