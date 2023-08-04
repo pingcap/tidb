@@ -32,6 +32,7 @@ import (
 	atomicutil "go.uber.org/atomic"
 )
 
+// SetBatchInsertDeleteRangeSize sets the batch insert/delete range size in the test
 func SetBatchInsertDeleteRangeSize(i int) {
 	batchInsertDeleteRangeSize = i
 }
