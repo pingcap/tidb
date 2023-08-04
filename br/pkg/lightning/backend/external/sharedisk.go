@@ -18,13 +18,14 @@ import (
 	"encoding/binary"
 )
 
+// rangeProperty describes some statistic of a range of a file.
 type rangeProperty struct {
-	key      []byte
-	offset   uint64
+	key      []byte // the first key in the range
+	offset   uint64 // the end offset of the range
 	writerID int
 	dataSeq  int
-	size     uint64
-	keys     uint64
+	size     uint64 // total KV size in the range, not considering the file format layout overhead
+	keys     uint64 // total KV count in the range
 }
 
 // rangePropertiesCollector collects range properties for each range. The zero
