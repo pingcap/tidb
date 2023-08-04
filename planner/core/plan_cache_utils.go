@@ -414,10 +414,13 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
 type PlanCacheStmt struct {
-	PreparedAst         *ast.Prepared
-	StmtDB              string // which DB the statement will be processed over
-	VisitInfos          []visitInfo
-	ColumnInfos         interface{}
+	PreparedAst *ast.Prepared
+	StmtDB      string // which DB the statement will be processed over
+	VisitInfos  []visitInfo
+	ColumnInfos interface{}
+	// Executor is only used for point get scene.
+	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
+	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
 	Executor            interface{}
 	NormalizedSQL       string
 	NormalizedPlan      string

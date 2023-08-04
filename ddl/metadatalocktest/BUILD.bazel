@@ -7,6 +7,7 @@ go_test(
         "mdl_test.go",
     ],
     flaky = True,
+    shard_count = 32,
     deps = [
         "//config",
         "//ddl",
@@ -14,6 +15,7 @@ go_test(
         "//server",
         "//testkit",
         "//testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

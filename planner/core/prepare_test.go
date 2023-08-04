@@ -1696,7 +1696,7 @@ func TestParamMarker4FastPlan(t *testing.T) {
 	tk.MustQuery("execute stmt using @a2, @a3;").Sort().Check(testkit.Rows("1 7", "1 8", "1 9"))
 	tk.MustExec(`set @a2=4, @a3=2`)
 	tk.MustQuery("execute stmt using @a2, @a3;").Sort().Check(testkit.Rows("1 10", "1 7", "1 8"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func TestIssue29565(t *testing.T) {
@@ -1940,7 +1940,7 @@ func TestPlanCachePointGetAndTableDual(t *testing.T) {
 	tk.MustQuery("execute s0 using @a0, @b0, @a0").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute s0 using @a0, @a0, @b0").Check(testkit.Rows("0000 7777 1"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	tk.MustExec("create table t1(c1 varchar(20), c2 varchar(20), c3 bigint(20), primary key(c1, c2))")
 	tk.MustExec("insert into t1 values('0000','7777',1)")
@@ -1959,7 +1959,7 @@ func TestPlanCachePointGetAndTableDual(t *testing.T) {
 	tk.MustQuery("execute s2 using @a2, @a2").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute s2 using @a2, @b2").Check(testkit.Rows("1 7777"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	tk.MustExec("create table t3(c1 int, c2 int, c3 int, unique key(c1), key(c2))")
 	tk.MustExec("insert into t3 values(2,1,1)")
@@ -2008,7 +2008,7 @@ func TestIssue26873(t *testing.T) {
 	tk.MustQuery("execute stmt using @p").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @p").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func TestIssue29511(t *testing.T) {

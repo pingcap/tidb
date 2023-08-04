@@ -67,7 +67,7 @@ const (
 // Backfilling is time consuming, to accelerate this process, TiDB has built some sub
 // workers to do this in the DDL owner node.
 //
-//                                DDL owner thread
+//                       DDL owner thread (also see comments before runReorgJob func)
 //                                      ^
 //                                      | (reorgCtx.doneCh)
 //                                      |
@@ -453,9 +453,10 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 		err = dc.isReorgRunnable(reorgInfo.Job)
 	}
 
+	// Update the reorg handle that has been processed.
+	err1 := reorgInfo.UpdateReorgMeta(nextKey, scheduler.sessPool)
+
 	if err != nil {
-		// Update the reorg handle that has been processed.
-		err1 := reorgInfo.UpdateReorgMeta(nextKey, scheduler.sessPool)
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
 		logutil.BgLogger().Warn("[ddl] backfill worker handle batch tasks failed",
 			zap.ByteString("element type", reorgInfo.currElement.TypeKey),
@@ -480,7 +481,8 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 		zap.String("start key", hex.EncodeToString(startKey)),
 		zap.String("next key", hex.EncodeToString(nextKey)),
 		zap.Int64("batch added count", taskAddedCount),
-		zap.String("take time", elapsedTime.String()))
+		zap.String("take time", elapsedTime.String()),
+		zap.NamedError("updateHandleError", err1))
 	return nil
 }
 
@@ -609,7 +611,12 @@ type backfillScheduler struct {
 	copReqSenderPool *copReqSenderPool // for add index in ingest way.
 }
 
-const backfillTaskChanSize = 1024
+var backfillTaskChanSize = 1024
+
+// SetBackfillTaskChanSizeForTest is only used for test.
+func SetBackfillTaskChanSizeForTest(n int) {
+	backfillTaskChanSize = n
+}
 
 func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sessionPool,
 	tp backfillWorkerType, tbl table.PhysicalTable, decColMap map[int64]decoder.Column,
@@ -648,6 +655,9 @@ func (b *backfillScheduler) newSessCtx() (sessionctx.Context, error) {
 	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
+	// Prevent initializing the mock context in the workers concurrently.
+	// For details, see https://github.com/pingcap/tidb/issues/40879.
+	_ = sessCtx.GetDomainInfoSchema()
 	return sessCtx, nil
 }
 
@@ -827,8 +837,11 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		if err != nil {
 			return errors.Trace(err)
 		}
-		scheduler.setMaxWorkerSize(len(kvRanges))
+		if len(kvRanges) == 0 {
+			break
+		}
 
+		scheduler.setMaxWorkerSize(len(kvRanges))
 		err = scheduler.adjustWorkerSize()
 		if err != nil {
 			return errors.Trace(err)
@@ -851,14 +864,18 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		if len(remains) == 0 {
-			if ingestBeCtx != nil {
-				ingestBeCtx.EngMgr.ResetWorkers(ingestBeCtx, job.ID, reorgInfo.currElement.ID)
-			}
+		if len(remains) > 0 {
+			startKey = remains[0].StartKey
+		} else {
+			rangeEndKey := kvRanges[len(kvRanges)-1].EndKey
+			startKey = rangeEndKey.Next()
+		}
+		if startKey.Cmp(endKey) >= 0 {
 			break
 		}
-		startKey = remains[0].StartKey
+	}
+	if ingestBeCtx != nil {
+		ingestBeCtx.EngMgr.ResetWorkers(ingestBeCtx, job.ID, reorgInfo.currElement.ID)
 	}
 	return nil
 }

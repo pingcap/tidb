@@ -150,14 +150,14 @@ func TestConvertType(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "10:11:12.1", vv.(Duration).String())
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	vd, err := ParseTime(sc, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2)
+	vd, err := ParseTime(sc, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2, nil)
 	require.Equal(t, "2010-10-10 10:11:11.12", vd.String())
 	require.NoError(t, err)
 	v, err = Convert(vd, ft)
 	require.NoError(t, err)
 	require.Equal(t, "10:11:11.1", v.(Duration).String())
 
-	vt, err := ParseTime(sc, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
+	vt, err := ParseTime(sc, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2, nil)
 	require.Equal(t, "2010-10-10 10:11:11.12", vt.String())
 	require.NoError(t, err)
 	v, err = Convert(vt, ft)
@@ -346,8 +346,7 @@ func TestConvertToString(t *testing.T) {
 	testToString(t, Enum{Name: "a", Value: 1}, "a")
 	testToString(t, Set{Name: "a", Value: 1}, "a")
 
-	t1, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC},
-		"2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
+	t1, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6, nil)
 	require.NoError(t, err)
 	testToString(t, t1, "2011-11-10 11:11:11.999999")
 
@@ -1276,8 +1275,9 @@ func TestConvertDecimalStrToUint(t *testing.T) {
 		{"9223372036854775807.4999", 9223372036854775807, true},
 		{"18446744073709551614.55", 18446744073709551615, true},
 		{"18446744073709551615.344", 18446744073709551615, true},
-		{"18446744073709551615.544", 0, false},
+		{"18446744073709551615.544", 18446744073709551615, false},
 		{"-111.111", 0, false},
+		{"-10000000000000000000.0", 0, false},
 	}
 	for _, ca := range cases {
 		result, err := convertDecimalStrToUint(&stmtctx.StatementContext{}, ca.input, math.MaxUint64, 0)
@@ -1285,7 +1285,15 @@ func TestConvertDecimalStrToUint(t *testing.T) {
 			require.Error(t, err)
 		} else {
 			require.NoError(t, err)
-			require.Equal(t, ca.result, result)
 		}
+		require.Equal(t, ca.result, result, "input=%v", ca.input)
 	}
+
+	result, err := convertDecimalStrToUint(&stmtctx.StatementContext{}, "-99.0", math.MaxUint8, 0)
+	require.Error(t, err)
+	require.Equal(t, uint64(0), result)
+
+	result, err = convertDecimalStrToUint(&stmtctx.StatementContext{}, "-100.0", math.MaxUint8, 0)
+	require.Error(t, err)
+	require.Equal(t, uint64(0), result)
 }

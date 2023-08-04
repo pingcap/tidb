@@ -44,6 +44,40 @@ type ActionOnExceed interface {
 	IsFinished() bool
 }
 
+var _ ActionOnExceed = &actionWithPriority{}
+
+type actionWithPriority struct {
+	ActionOnExceed
+	priority int64
+}
+
+// NewActionWithPriority wraps the action with a new priority
+func NewActionWithPriority(action ActionOnExceed, priority int64) *actionWithPriority {
+	return &actionWithPriority{
+		action,
+		priority,
+	}
+}
+
+func (a *actionWithPriority) GetPriority() int64 {
+	return a.priority
+}
+
+// ActionInvoker indicates the invoker of the Action.
+type ActionInvoker byte
+
+const (
+	// SingleQuery indicates the Action is invoked by a tidb_mem_quota_query.
+	SingleQuery ActionInvoker = iota
+	// Instance indicates the Action is invoked by a tidb_server_memory_limit.
+	Instance
+)
+
+// ActionCareInvoker is the interface for the Actions which need to be aware of the invoker.
+type ActionCareInvoker interface {
+	SetInvoker(invoker ActionInvoker)
+}
+
 // BaseOOMAction manages the fallback action for all Action.
 type BaseOOMAction struct {
 	fallbackAction ActionOnExceed
@@ -79,6 +113,9 @@ const (
 	DefPanicPriority = iota
 	DefLogPriority
 	DefSpillPriority
+	// DefCursorFetchSpillPriority is higher than normal disk spill, because it can release much more memory in the future.
+	// And the performance impaction of it is less than other disk-spill action, because it's write-only in execution stage.
+	DefCursorFetchSpillPriority
 	DefRateLimitPriority
 )
 
@@ -139,7 +176,7 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 	if !a.acted {
 		if a.logHook == nil {
 			logutil.BgLogger().Warn("memory exceeds quota",
-				zap.Uint64("connID", t.SessionID), zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.GetBytesLimit(), t.String())))
+				zap.Uint64("connID", t.SessionID.Load()), zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.GetBytesLimit(), t.String())))
 		} else {
 			a.logHook(a.ConnID)
 		}

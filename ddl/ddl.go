@@ -1806,6 +1806,19 @@ func (s *session) session() sessionctx.Context {
 	return s.Context
 }
 
+func (s *session) runInTxn(f func(*session) error) (err error) {
+	err = s.begin()
+	if err != nil {
+		return err
+	}
+	err = f(s)
+	if err != nil {
+		s.rollback()
+		return
+	}
+	return errors.Trace(s.commit())
+}
+
 // GetAllHistoryDDLJobs get all the done DDL jobs.
 func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 	iterator, err := GetLastHistoryDDLJobsIterator(m)

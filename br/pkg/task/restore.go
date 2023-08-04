@@ -198,6 +198,7 @@ type RestoreConfig struct {
 	VolumeIOPS          int64                 `json:"volume-iops" toml:"volume-iops"`
 	VolumeThroughput    int64                 `json:"volume-throughput" toml:"volume-throughput"`
 	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
+	TargetAZ            string                `json:"target-az" toml:"target-az"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -344,6 +345,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 			return errors.Trace(err)
 		}
 
+		cfg.TargetAZ, err = flags.GetString(flagTargetAZ)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		// iops: gp3 [3,000-16,000]; io1/io2 [100-32,000]
 		// throughput: gp3 [125, 1000]; io1/io2 cannot set throughput
 		// io1 and io2 volumes support up to 64,000 IOPS only on Instances built on the Nitro System.
@@ -474,10 +480,17 @@ func IsStreamRestore(cmdName string) bool {
 
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+	if err := checkTaskExists(c, cfg); err != nil {
+		return errors.Annotate(err, "failed to check task exits")
+	}
+
 	if IsStreamRestore(cmdName) {
 		return RunStreamRestore(c, g, cmdName, cfg)
 	}
+	return runRestore(c, g, cmdName, cfg)
+}
 
+func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
@@ -505,10 +518,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// according to https://github.com/pingcap/tidb/issues/34167.
 		// we should get the real config from tikv to adapt the dynamic region.
 		httpCli := httputil.NewClient(mgr.GetTLSConfig())
-		mergeRegionSize, mergeRegionCount, err = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		mergeRegionSize, mergeRegionCount = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
 	}
 
 	keepaliveCfg.PermitWithoutStream = true

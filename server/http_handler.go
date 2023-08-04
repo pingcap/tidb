@@ -228,7 +228,7 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 		return nil, err
 	}
 	idxData := &helper.MvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), RegionID: regionID, Value: data}
-	tablecodec.IndexKey2TempIndexKey(idx.Meta().ID, encodedKey)
+	tablecodec.IndexKey2TempIndexKey(encodedKey)
 	data, err = t.GetMvccByEncodedKey(encodedKey)
 	if err != nil {
 		return nil, err
@@ -2207,12 +2207,15 @@ func (h labelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	if len(labels) > 0 {
 		cfg := *config.GetGlobalConfig()
-		if cfg.Labels == nil {
-			cfg.Labels = make(map[string]string, len(labels))
+		// Be careful of data race. The key & value of cfg.Labels must not be changed.
+		if cfg.Labels != nil {
+			for k, v := range cfg.Labels {
+				if _, found := labels[k]; !found {
+					labels[k] = v
+				}
+			}
 		}
-		for k, v := range labels {
-			cfg.Labels[k] = v
-		}
+		cfg.Labels = labels
 		config.StoreGlobalConfig(&cfg)
 		logutil.BgLogger().Info("update server labels", zap.Any("labels", cfg.Labels))
 	}

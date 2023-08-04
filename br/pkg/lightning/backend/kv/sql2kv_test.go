@@ -17,7 +17,10 @@ package kv_test
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	lkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -31,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	_ "github.com/pingcap/tidb/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -430,6 +434,36 @@ func TestEncodeMissingAutoValue(t *testing.T) {
 	}
 }
 
+func TestEncodeExpressionColumn(t *testing.T) {
+	tblInfo := mockTableInfo(t, "create table t (id varchar(40) not null DEFAULT uuid(), unique key `u_id` (`id`));")
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
+	require.NoError(t, err)
+
+	encoder, err := lkv.NewTableKVEncoder(tbl, &lkv.SessionOptions{
+		SQLMode: mysql.ModeStrictAllTables,
+		SysVars: map[string]string{
+			"tidb_row_format_version": "2",
+		},
+	}, nil, log.L())
+	require.NoError(t, err)
+
+	strDatumForID := types.NewStringDatum("1")
+	actualDatum, err := lkv.GetActualDatum(encoder, 70, 0, &strDatumForID)
+	require.NoError(t, err)
+	require.Equal(t, strDatumForID, actualDatum)
+
+	actualDatum, err = lkv.GetActualDatum(encoder, 70, 0, nil)
+	require.NoError(t, err)
+	require.Equal(t, types.KindString, actualDatum.Kind())
+	require.Len(t, actualDatum.GetString(), 36) // uuid length
+
+	actualDatum2, err := lkv.GetActualDatum(encoder, 70, 0, nil)
+	require.NoError(t, err)
+	require.Equal(t, types.KindString, actualDatum2.Kind())
+	require.Len(t, actualDatum2.GetString(), 36)
+	require.NotEqual(t, actualDatum.GetString(), actualDatum2.GetString()) // check different uuid
+}
+
 func mockTableInfo(t *testing.T, createSQL string) *model.TableInfo {
 	parser := parser.New()
 	node, err := parser.ParseOneStmt(createSQL, "", "")
@@ -686,4 +720,38 @@ func BenchmarkSQL2KV(b *testing.B) {
 		l := reflect.ValueOf(rows).Elem().Field(0).Len()
 		require.Equal(b, l, 2)
 	}
+}
+
+func TestLogKVConvertFailed(t *testing.T) {
+	tempPath := filepath.Join(t.TempDir(), "/temp.txt")
+	logCfg := &log.Config{File: tempPath, FileMaxSize: 1}
+	err := log.InitLogger(logCfg, "info")
+	require.NoError(t, err)
+
+	modelName := model.NewCIStr("c1")
+	modelState := model.StatePublic
+	modelFieldType := *types.NewFieldType(mysql.TypeTiny)
+	c1 := &model.ColumnInfo{ID: 1, Name: modelName, State: modelState, Offset: 0, FieldType: modelFieldType}
+	cols := []*model.ColumnInfo{c1}
+	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
+	_, err = tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
+	require.NoError(t, err)
+
+	var newString strings.Builder
+	for i := 0; i < 100000; i++ {
+		newString.WriteString("test_test_test_test_")
+	}
+	newDatum := types.NewStringDatum(newString.String())
+	rows := []types.Datum{}
+	for i := 0; i <= 10; i++ {
+		rows = append(rows, newDatum)
+	}
+	err = lkv.LogKVConvertFailed(log.L(), rows, 6, c1, err)
+	require.NoError(t, err)
+
+	var content []byte
+	content, err = os.ReadFile(tempPath)
+	require.NoError(t, err)
+	require.LessOrEqual(t, 500, len(string(content)))
+	require.NotContains(t, content, "exceeds maximum file size")
 }

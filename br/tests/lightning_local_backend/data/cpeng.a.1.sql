@@ -1,1 +1,1 @@
-insert into a values (1);
+insert into a values ('0000001');

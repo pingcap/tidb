@@ -479,7 +479,15 @@ var defaultSysVars = []*SysVar{
 	}},
 
 	/* The system variables below have GLOBAL scope  */
-	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576},
+	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			num, err := strconv.ParseInt(val, 10, 64)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			MaxPreparedStmtCountValue.Store(num)
+			return nil
+		}},
 	{Scope: ScopeGlobal, Name: InitConnect, Value: "", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		p := parser.New()
 		p.SetSQLMode(vars.SQLMode)
@@ -1981,6 +1989,12 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIndexJoinDoubleReadPenaltyCostRate, Value: strconv.Itoa(0), Hidden: false, Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.IndexJoinDoubleReadPenaltyCostRate = tidbOptFloat64(s, 0)
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRCWriteCheckTs, Type: TypeBool, Value: BoolToOnOff(DefTiDBRcWriteCheckTs), SetSession: func(s *SessionVars, val string) error {
 		s.RcWriteCheckTS = TiDBOptOn(val)
 		return nil
@@ -2086,6 +2100,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptRangeMaxSize, Value: strconv.FormatInt(DefTiDBOptRangeMaxSize, 10), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.RangeMaxSize = TidbOptInt64(val, DefTiDBOptRangeMaxSize)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptAdvancedJoinHint, Value: BoolToOnOff(DefTiDBOptAdvancedJoinHint), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableAdvancedJoinHint = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzePartitionConcurrency, Value: strconv.FormatInt(DefTiDBAnalyzePartitionConcurrency, 10),
@@ -2235,6 +2253,43 @@ var defaultSysVars = []*SysVar{
 			return nil
 		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return strconv.Itoa(int(TTLDeleteWorkerCount.Load())), nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableINLJoinInnerMultiPattern, Value: BoolToOnOff(false), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableINLJoinInnerMultiPattern = TiDBOptOn(val)
+			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return BoolToOnOff(s.EnableINLJoinInnerMultiPattern), nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptFixControl, Value: "", Type: TypeStr, IsHintUpdatable: true,
+		SetSession: func(s *SessionVars, val string) error {
+			newMap := make(map[uint64]string)
+			for _, singleFixCtrl := range strings.Split(val, ",") {
+				if len(singleFixCtrl) == 0 {
+					continue
+				}
+				colonIdx := strings.Index(singleFixCtrl, ":")
+				if colonIdx < 0 {
+					return errors.New("invalid fix control: colon not found")
+				}
+				k := strings.TrimSpace(singleFixCtrl[0:colonIdx])
+				v := strings.TrimSpace(singleFixCtrl[colonIdx+1:])
+				num, err := strconv.ParseUint(k, 10, 64)
+				if err != nil {
+					return err
+				}
+				originalV, ok := newMap[num]
+				if ok {
+					s.StmtCtx.AppendWarning(
+						errors.Errorf("found repeated fix control: %d:%s is overwritten with %s", num, originalV, v))
+				}
+				newMap[num] = v
+			}
+			s.OptimizerFixControl = newMap
+			return nil
 		},
 	},
 }

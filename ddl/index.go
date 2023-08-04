@@ -682,6 +682,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
+		logutil.BgLogger().Info("[ddl] run add index job done",
+			zap.String("charset", job.Charset),
+			zap.String("collation", job.Collate))
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 	}
@@ -817,8 +820,14 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 			if err != nil {
+				if common.ErrFoundDuplicateKeys.Equal(err) {
+					err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
+					logutil.BgLogger().Warn("[ddl] found duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
+				} else {
+					err = tryFallbackToTxnMerge(job, err)
+				}
 				ingest.LitBackCtxMgr.Unregister(job.ID)
-				err = tryFallbackToTxnMerge(job, err)
 				return false, ver, errors.Trace(err)
 			}
 			if !done {
@@ -826,11 +835,11 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 			err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
 			if err != nil {
-				if kv.ErrKeyExists.Equal(err) || common.ErrFoundDuplicateKeys.Equal(err) {
+				if common.ErrFoundDuplicateKeys.Equal(err) {
+					err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
+				}
+				if kv.ErrKeyExists.Equal(err) {
 					logutil.BgLogger().Warn("[ddl] import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-					if common.ErrFoundDuplicateKeys.Equal(err) {
-						err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
-					}
 					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 				} else {
 					logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
@@ -890,7 +899,39 @@ func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *m
 func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo, mergingTmpIdx bool) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
-	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
+	var rh *reorgHandler
+	if w.concurrentDDL {
+		sctx, err1 := w.sessPool.get()
+		if err1 != nil {
+			err = err1
+			return
+		}
+		defer w.sessPool.put(sctx)
+		sess := newSession(sctx)
+		err = sess.begin()
+		if err != nil {
+			return
+		}
+		defer sess.rollback()
+		txn, err1 := sess.txn()
+		if err1 != nil {
+			err = err1
+			return
+		}
+		newMeta := meta.NewMeta(txn)
+		rh = newReorgHandler(newMeta, sess, w.concurrentDDL)
+	} else {
+		rh = newReorgHandler(t, w.sess, w.concurrentDDL)
+	}
+
+	failpoint.Inject("mockDMLExecutionStateMerging", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) && indexInfo.BackfillState == model.BackfillStateMerging &&
+			MockDMLExecutionStateMerging != nil {
+			MockDMLExecutionStateMerging()
+		}
+	})
+
 	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements, mergingTmpIdx)
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
@@ -1626,6 +1667,12 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 // MockDMLExecution is only used for test.
 var MockDMLExecution func()
+
+// MockDMLExecutionMerging is only used for test.
+var MockDMLExecutionMerging func()
+
+// MockDMLExecutionStateMerging is only used for test.
+var MockDMLExecutionStateMerging func()
 
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {

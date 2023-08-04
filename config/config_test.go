@@ -858,7 +858,7 @@ history-size=100`)
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
-	require.True(t, conf.EnableTelemetry)
+	require.False(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
 enable-table-lock = true
@@ -866,15 +866,15 @@ enable-table-lock = true
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
-	require.True(t, conf.EnableTelemetry)
+	require.False(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
-enable-telemetry = false
+enable-telemetry = true
 `)
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
-	require.False(t, conf.EnableTelemetry)
+	require.True(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
 [security]

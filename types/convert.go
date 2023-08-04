@@ -246,7 +246,7 @@ func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBoun
 	if intStr == "" {
 		intStr = "0"
 	}
-	if sc.ShouldClipToZero() && intStr[0] == '-' {
+	if intStr[0] == '-' {
 		return 0, overflow(str, tp)
 	}
 
@@ -255,8 +255,7 @@ func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBoun
 		round++
 	}
 
-	upperBound -= round
-	upperStr := strconv.FormatUint(upperBound, 10)
+	upperStr := strconv.FormatUint(upperBound-round, 10)
 	if len(intStr) > len(upperStr) ||
 		(len(intStr) == len(upperStr) && intStr > upperStr) {
 		return upperBound, overflow(str, tp)
@@ -301,7 +300,7 @@ func StrToUint(sc *stmtctx.StatementContext, str string, isFuncCast bool) (uint6
 
 // StrToDateTime converts str to MySQL DateTime.
 func StrToDateTime(sc *stmtctx.StatementContext, str string, fsp int) (Time, error) {
-	return ParseTime(sc, str, mysql.TypeDatetime, fsp)
+	return ParseTime(sc, str, mysql.TypeDatetime, fsp, nil)
 }
 
 // StrToDuration converts str to Duration. It returns Duration in normal case,

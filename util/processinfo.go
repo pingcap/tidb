@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -56,6 +57,8 @@ type ProcessInfo struct {
 	Info                  string
 	Port                  string
 	PlanExplainRows       [][]string
+	TableIDs              []int64
+	IndexNames            []string
 	OOMAlarmVariablesInfo OOMAlarmVariablesInfo
 	ID                    uint64
 	CurTxnStartTS         uint64
@@ -84,7 +87,7 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 	}
 	var host string
 	if pi.Port != "" {
-		host = fmt.Sprintf("%s:%s", pi.Host, pi.Port)
+		host = net.JoinHostPort(pi.Host, pi.Port)
 	} else {
 		host = pi.Host
 	}

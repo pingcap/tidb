@@ -145,7 +145,11 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		time.Sleep(time.Millisecond * time.Duration(ms))
 	})
 
-	e.memTracker = memory.NewTracker(e.id, -1)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.id, -1)
+	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	var err error

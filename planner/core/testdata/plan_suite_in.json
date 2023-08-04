@@ -629,6 +629,7 @@
   {
     "name": "TestSingleConsumerCTE",
     "cases": [
+      "with base1 as (WITH RECURSIVE cte(a) AS (with tmp as (select 1 as a) SELECT a from tmp UNION SELECT a+1 FROM cte) SELECT * FROM cte) select * from base1; -- issue #43318",
       "with cte as (select 1) select * from cte; -- inline cte",
       "with cte1 as (select 1), cte2 as (select 2) select * from cte1 union select * from cte2; -- inline cte1, cte2",
       "with cte as (select 1) select * from cte union select * from cte; -- cannot be inlined",
@@ -1125,6 +1126,20 @@
       "select count(1), count(a), count(b) from t -- keep count(1)",
       "select a, count(*) from t group by a -- shouldn't be rewritten",
       "select sum(a) from t -- sum shouldn't be rewritten"
+    ]
+  },
+  {
+    "name": "TestIndexMergeOrderPushDown",
+    "cases": [
+      "select * from t where a = 1 or b = 1 order by c limit 2",
+      "select * from t where a = 1 or b in (1, 2, 3) order by c limit 2",
+      "select * from t where a in (1, 2, 3) or b = 1 order by c limit 2",
+      "select * from t where a in (1, 2, 3) or b in (1, 2, 3) order by c limit 2",
+      "select * from t where (a = 1 and c = 2) or (b = 1) order by c limit 2",
+      "select * from t where (a = 1 and c = 2) or b in (1, 2, 3) order by c limit 2",
+      "select * from t where (a = 1 and c = 2) or (b in (1, 2, 3) and c = 3) order by c limit 2",
+      "select * from t where (a = 1 or b = 2) and c = 3 order by c limit 2",
+      "select * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by c limit 2"
     ]
   }
 ]

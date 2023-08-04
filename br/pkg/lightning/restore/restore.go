@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	tidbconfig "github.com/pingcap/tidb/config"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
@@ -63,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	regexprrouter "github.com/pingcap/tidb/util/regexpr-router"
 	"github.com/pingcap/tidb/util/set"
+	tikvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -353,6 +355,7 @@ func NewRestoreControllerWithPauser(
 			}
 		}
 
+		initGlobalConfig(tls.ToTiKVSecurityConfig())
 		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
@@ -1571,6 +1574,9 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 
 				needPostProcess, err := task.tr.restoreTable(ctx, rc, task.cp)
+				if err != nil && !common.IsContextCanceledError(err) {
+					task.tr.logger.Error("failed to import table", zap.Error(err))
+				}
 
 				err = common.NormalizeOrWrapErr(common.ErrRestoreTable, err, task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
@@ -1796,7 +1802,7 @@ func (tr *TableRestore) restoreTable(
 		web.BroadcastTableCheckpoint(tr.tableName, cp)
 
 		// rebase the allocator so it exceeds the number of rows.
-		if tr.tableInfo.Core.PKIsHandle && tr.tableInfo.Core.ContainsAutoRandomBits() {
+		if tr.tableInfo.Core.ContainsAutoRandomBits() {
 			cp.AllocBase = mathutil.Max(cp.AllocBase, tr.tableInfo.Core.AutoRandID)
 			if err := tr.alloc.Get(autoid.AutoRandomType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
 				return false, err
@@ -2503,7 +2509,7 @@ func saveCheckpoint(rc *Controller, t *TableRestore, engineID int32, chunk *chec
 	// or integer primary key), which can only be obtained by reading all data.
 
 	var base int64
-	if t.tableInfo.Core.PKIsHandle && t.tableInfo.Core.ContainsAutoRandomBits() {
+	if t.tableInfo.Core.ContainsAutoRandomBits() {
 		base = t.alloc.Get(autoid.AutoRandomType).Base() + 1
 	} else {
 		base = t.alloc.Get(autoid.RowIDAllocType).Base() + 1
@@ -2821,4 +2827,19 @@ func openReader(ctx context.Context, fileMeta mydump.SourceFileMeta, store stora
 		reader, err = store.Open(ctx, fileMeta.Path)
 	}
 	return
+}
+
+// check store liveness of tikv client-go requires GlobalConfig to work correctly, so we need to init it,
+// else tikv will report SSL error when tls is enabled.
+// and the SSL error seems affects normal logic of newer TiKV version, and cause the error "tikv: region is unavailable"
+// during checksum.
+// todo: DM relay on lightning physical mode too, but client-go doesn't support passing TLS data as bytes,
+func initGlobalConfig(secCfg tikvconfig.Security) {
+	if secCfg.ClusterSSLCA != "" || secCfg.ClusterSSLCert != "" {
+		conf := tidbconfig.GetGlobalConfig()
+		conf.Security.ClusterSSLCA = secCfg.ClusterSSLCA
+		conf.Security.ClusterSSLCert = secCfg.ClusterSSLCert
+		conf.Security.ClusterSSLKey = secCfg.ClusterSSLKey
+		tidbconfig.StoreGlobalConfig(conf)
+	}
 }

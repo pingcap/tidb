@@ -1,1 +1,1 @@
-create table a (c int);
+create table a (c VARCHAR(20) PRIMARY KEY);

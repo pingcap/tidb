@@ -953,9 +953,10 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 
 	core := info.Core
 	defaultCols := make(map[string]struct{})
+	autoRandomCol := common.GetAutoRandomColumn(core)
 	for _, col := range core.Columns {
 		// we can extend column the same with columns with default values
-		if _, isExtendCol := fullExtendColsSet[col.Name.O]; isExtendCol || hasDefault(col) || (info.Core.ContainsAutoRandomBits() && mysql.HasPriKeyFlag(col.GetFlag())) {
+		if _, isExtendCol := fullExtendColsSet[col.Name.O]; isExtendCol || hasDefault(col) || (autoRandomCol != nil && autoRandomCol.ID == col.ID) {
 			// this column has default value or it's auto random id, so we can ignore it
 			defaultCols[col.Name.L] = struct{}{}
 		}

@@ -137,7 +137,7 @@ type baseExecutor struct {
 
 const (
 	// globalPanicStorageExceed represents the panic message when out of storage quota.
-	globalPanicStorageExceed string = "Out Of Global Storage Quota!"
+	globalPanicStorageExceed string = "Out Of Quota For Local Temporary Space!"
 	// globalPanicMemoryExceed represents the panic message when out of memory limit.
 	globalPanicMemoryExceed string = "Out Of Global Memory Limit!"
 	// globalPanicAnalyzeMemoryExceed represents the panic message when out of analyze memory limit.
@@ -553,6 +553,9 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			schemaName = job.BinlogInfo.DBInfo.Name.L
 		}
 	}
+	if len(tableName) == 0 {
+		tableName = job.TableName
+	}
 	// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
 	if len(schemaName) == 0 {
 		schemaName = getSchemaName(e.is, job.SchemaID)
@@ -761,7 +764,7 @@ func (e *ShowDDLJobQueriesWithRangeExec) Next(ctx context.Context, req *chunk.Ch
 	if e.cursor >= len(e.jobs) {
 		return nil
 	}
-	if int(e.limit) > len(e.jobs) {
+	if int(e.offset) > len(e.jobs) {
 		return nil
 	}
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
@@ -1464,6 +1467,11 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
+		if pi, ok := sctx.(processinfoSetter); ok {
+			// Before executing the sub-query, we need update the processinfo to make the progress bar more accurate.
+			// because the sub-query may take a long time.
+			pi.UpdateProcessInfo()
+		}
 		chk := tryNewCacheChunk(exec)
 		err = Next(ctx, exec, chk)
 		if err != nil {
@@ -1537,7 +1545,11 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 }
 
 func (e *SelectionExec) open(ctx context.Context) error {
-	e.memTracker = memory.NewTracker(e.id, -1)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.id, -1)
+	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.childResult = tryNewCacheChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
@@ -1933,7 +1945,7 @@ func (e *UnionExec) Close() error {
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
 	var sc *stmtctx.StatementContext
-	if vars.TxnCtx.CouldRetry {
+	if vars.TxnCtx.CouldRetry || mysql.HasCursorExistsFlag(vars.Status) {
 		// Must construct new statement context object, the retry history need context for every statement.
 		// TODO: Maybe one day we can get rid of transaction retry, then this logic can be deleted.
 		sc = &stmtctx.StatementContext{}
@@ -1969,11 +1981,22 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.MemTracker.UnbindActions()
 	vars.MemTracker.SetBytesLimit(vars.MemQuotaQuery)
 	vars.MemTracker.ResetMaxConsumed()
+	vars.DiskTracker.Detach()
 	vars.DiskTracker.ResetMaxConsumed()
-	vars.MemTracker.SessionID = vars.ConnectionID
+	vars.MemTracker.SessionID.Store(vars.ConnectionID)
 	vars.StmtCtx.TableStats = make(map[int64]interface{})
 
-	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
+	isAnalyze := false
+	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
+		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
+		if err != nil {
+			return err
+		}
+		_, isAnalyze = prepareStmt.PreparedAst.Stmt.(*ast.AnalyzeTableStmt)
+	} else if _, ok := s.(*ast.AnalyzeTableStmt); ok {
+		isAnalyze = true
+	}
+	if isAnalyze {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
 		vars.MemTracker.SetBytesLimit(-1)
 		vars.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
@@ -1993,12 +2016,15 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		action.SetLogHook(logOnQueryExceedMemQuota)
 		vars.MemTracker.SetActionOnExceed(action)
 	}
-	sc.MemTracker.SessionID = vars.ConnectionID
+	sc.MemTracker.SessionID.Store(vars.ConnectionID)
 	sc.MemTracker.AttachTo(vars.MemTracker)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	globalConfig := config.GetGlobalConfig()
 	if variable.EnableTmpStorageOnOOM.Load() && sc.DiskTracker != nil {
 		sc.DiskTracker.AttachTo(vars.DiskTracker)
+		if GlobalDiskUsageTracker != nil {
+			vars.DiskTracker.AttachTo(GlobalDiskUsageTracker)
+		}
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
@@ -2168,6 +2194,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.ClearStmtVars()
 	vars.PrevFoundInBinding = vars.FoundInBinding
 	vars.FoundInBinding = false
+	vars.CurrInsertBatchExtraCols = nil
+	vars.CurrInsertValues = chunk.Row{}
 	return
 }
 
