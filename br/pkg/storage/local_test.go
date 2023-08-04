@@ -26,7 +26,7 @@ func TestDeleteFile(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, false, ret)
 
-	_, err = store.Create(context.Background(), name)
+	_, err = store.Create(context.Background(), name, nil)
 	require.NoError(t, err)
 
 	ret, err = store.FileExists(context.Background(), name)
