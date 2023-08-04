@@ -37,9 +37,6 @@ func newKVReader(ctx context.Context, name string, store storage.ExternalStorage
 }
 
 func (r *kvReader) nextKV() (key, val []byte, err error) {
-	if r.byteReader.eof() {
-		return nil, nil, nil
-	}
 	r.byteReader.reset()
 	lenBytes, err := r.byteReader.readNBytes(8)
 	if err != nil {

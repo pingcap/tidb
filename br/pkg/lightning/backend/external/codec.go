@@ -14,7 +14,9 @@
 
 package external
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+)
 
 type rangeProperty struct {
 	key    []byte
@@ -24,29 +26,26 @@ type rangeProperty struct {
 }
 
 // decodeMultiProps is only used for test.
-func decodeMultiProps(data []byte) ([]*rangeProperty, error) {
+func decodeMultiProps(data []byte) []*rangeProperty {
 	var ret []*rangeProperty
 	for len(data) > 0 {
 		propLen := int(binary.BigEndian.Uint32(data))
 		propBytes := data[4 : 4+propLen]
-		rp, err := decodeProp(propBytes)
-		if err != nil {
-			return nil, err
-		}
+		rp := decodeProp(propBytes)
 		ret = append(ret, rp)
 		data = data[4+propLen:]
 	}
-	return ret, nil
+	return ret
 }
 
-func decodeProp(data []byte) (*rangeProperty, error) {
+func decodeProp(data []byte) *rangeProperty {
 	rp := &rangeProperty{}
 	keyLen := binary.BigEndian.Uint32(data[0:4])
 	rp.key = data[4 : 4+keyLen]
 	rp.size = binary.BigEndian.Uint64(data[4+keyLen : 12+keyLen])
 	rp.keys = binary.BigEndian.Uint64(data[12+keyLen : 20+keyLen])
 	rp.offset = binary.BigEndian.Uint64(data[20+keyLen : 28+keyLen])
-	return rp, nil
+	return rp
 }
 
 // keyLen + p.size + p.keys + p.offset

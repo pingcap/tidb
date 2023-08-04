@@ -23,7 +23,6 @@ import (
 
 type statsReader struct {
 	byteReader *byteReader
-	propBytes  []byte
 }
 
 func newStatsReader(ctx context.Context, store storage.ExternalStorage, name string, bufSize int) (*statsReader, error) {
@@ -37,28 +36,21 @@ func newStatsReader(ctx context.Context, store storage.ExternalStorage, name str
 	}
 	return &statsReader{
 		byteReader: br,
-		propBytes:  nil,
 	}, nil
 }
 
 func (r *statsReader) nextProp() (*rangeProperty, error) {
-	if r.byteReader.eof() {
-		return nil, nil
-	}
 	r.byteReader.reset()
 	lenBytes, err := r.byteReader.readNBytes(4)
 	if err != nil {
 		return nil, err
 	}
 	propLen := int(binary.BigEndian.Uint32(*lenBytes))
-	if cap(r.propBytes) < propLen {
-		r.propBytes = make([]byte, propLen)
-	}
 	propBytes, err := r.byteReader.readNBytes(propLen)
 	if err != nil {
 		return nil, err
 	}
-	return decodeProp(*propBytes)
+	return decodeProp(*propBytes), nil
 }
 
 func (r *statsReader) Close() error {

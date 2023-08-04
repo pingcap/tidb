@@ -29,8 +29,7 @@ func TestRangePropertyCodec(t *testing.T) {
 		keys:   3,
 	}
 	buf := encodeProp(nil, prop)
-	prop2, err := decodeProp(buf)
-	require.NoError(t, err)
+	prop2 := decodeProp(buf)
 	require.EqualValues(t, prop, prop2)
 
 	p1, p2, p3 := &rangeProperty{}, &rangeProperty{}, &rangeProperty{}
@@ -41,7 +40,6 @@ func TestRangePropertyCodec(t *testing.T) {
 		p.keys = uint64(30 * i)
 	}
 	buf = encodeMultiProps(nil, []*rangeProperty{p1, p2, p3})
-	props, err := decodeMultiProps(buf)
-	require.NoError(t, err)
+	props := decodeMultiProps(buf)
 	require.EqualValues(t, []*rangeProperty{p1, p2, p3}, props)
 }

@@ -58,12 +58,6 @@ func TestByteReader(t *testing.T) {
 	require.Equal(t, 2, len(x))
 	require.Equal(t, byte('b'), x[0])
 	require.Equal(t, byte('c'), x[1])
-	require.NoError(t, br.reload())
-	require.False(t, br.eof())
-	require.Error(t, br.reload())
-	require.False(t, br.eof()) // Data in buffer is not consumed.
-	br.next(2)
-	require.True(t, br.eof())
 	require.NoError(t, br.Close())
 
 	// Test basic readNBytes() usage.
