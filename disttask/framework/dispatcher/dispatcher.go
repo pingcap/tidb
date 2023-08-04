@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
@@ -72,35 +71,27 @@ type TaskHandle interface {
 // Manage the lifetime of a task
 // including submitting subtasks and updating the status of a task.
 type dispatcher struct {
-	ctx        context.Context
-	gPool      *spool.Pool
-	taskMgr    *storage.TaskManager
-	task       *proto.Task
-	finishedCh chan *proto.Task
+	ctx     context.Context
+	taskMgr *storage.TaskManager
+	task    *proto.Task
 }
 
 // MockOwnerChange mock owner change in tests.
 var MockOwnerChange func()
 
-func newDispatcher(ctx context.Context, gPool *spool.Pool, taskMgr *storage.TaskManager, task *proto.Task, finishedCh chan *proto.Task) *dispatcher {
+func newDispatcher(ctx context.Context, taskMgr *storage.TaskManager, task *proto.Task) *dispatcher {
 	return &dispatcher{
 		ctx,
-		gPool,
 		taskMgr,
 		task,
-		finishedCh,
 	}
 }
 
 // ExecuteTask start to schedule a task
 func (d *dispatcher) ExecuteTask() {
-	// Using the pool with block, so it wouldn't return an error.
-	_ = d.gPool.Run(func() {
-		logutil.BgLogger().Info("execute one task", zap.Int64("task ID", d.task.ID),
-			zap.String("state", d.task.State), zap.Uint64("concurrency", d.task.Concurrency))
-		d.scheduleTask(d.task.ID)
-		d.finishedCh <- d.task
-	})
+	logutil.BgLogger().Info("execute one task", zap.Int64("task ID", d.task.ID),
+		zap.String("state", d.task.State), zap.Uint64("concurrency", d.task.Concurrency))
+	d.scheduleTask(d.task.ID)
 }
 
 // monitorTask checks whether the current step of one task is finished,
