@@ -28,12 +28,11 @@ import (
 type KeyValueStore struct {
 	dataWriter storage.ExternalFileWriter
 
-	rc        *rangePropertiesCollector
-	ctx       context.Context
-	writerID  int
-	seq       int
-	offset    uint64
-	u64Buffer [8]byte
+	rc       *rangePropertiesCollector
+	ctx      context.Context
+	writerID int
+	seq      int
+	offset   uint64
 }
 
 // NewKeyValueStore creates a new KeyValueStore. The data will be written to the
@@ -61,11 +60,12 @@ func NewKeyValueStore(
 // appended to the rangePropertiesCollector with current status.
 func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
 	kvLen := len(key) + len(value) + 16
+	var b [8]byte
 
 	// data layout: keyLen + key + valueLen + value
 	_, err := s.dataWriter.Write(
 		s.ctx,
-		binary.BigEndian.AppendUint64(s.u64Buffer[:], uint64(len(key))),
+		binary.BigEndian.AppendUint64(b[:], uint64(len(key))),
 	)
 	if err != nil {
 		return err
@@ -76,7 +76,7 @@ func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
 	}
 	_, err = s.dataWriter.Write(
 		s.ctx,
-		binary.BigEndian.AppendUint64(s.u64Buffer[:], uint64(len(value))),
+		binary.BigEndian.AppendUint64(b[:], uint64(len(value))),
 	)
 	if err != nil {
 		return err
