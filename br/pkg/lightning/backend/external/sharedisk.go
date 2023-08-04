@@ -37,8 +37,6 @@ type rangeProperty struct {
 type rangePropertiesCollector struct {
 	props               []*rangeProperty
 	currProp            *rangeProperty
-	lastOffsets         rangeOffsets
-	currentOffsets      rangeOffsets
 	propSizeIdxDistance uint64
 	propKeysIdxDistance uint64
 }
@@ -48,8 +46,6 @@ func (rc *rangePropertiesCollector) reset() {
 	rc.currProp = &rangeProperty{
 		rangeOffsets: rangeOffsets{},
 	}
-	rc.lastOffsets = rangeOffsets{}
-	rc.currentOffsets = rangeOffsets{}
 }
 
 // keyLen + p.size + p.keys + p.offset + p.WriterID + p.DataSeq
