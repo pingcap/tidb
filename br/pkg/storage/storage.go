@@ -92,6 +92,7 @@ type WriterOption struct {
 	Concurrency int
 }
 
+<<<<<<< HEAD
 type ReaderOption struct {
 	// StartOffset is inclusive. And it's incompatible with Seek.
 	StartOffset *int64
@@ -99,6 +100,8 @@ type ReaderOption struct {
 	EndOffset *int64
 }
 
+=======
+>>>>>>> 5309c2ff775 (*: support concurrent write for S3 writer (#45723))
 // ExternalStorage represents a kind of file system storage.
 type ExternalStorage interface {
 	// WriteFile writes a complete file to storage, similar to os.WriteFile, but WriteFile should be atomic

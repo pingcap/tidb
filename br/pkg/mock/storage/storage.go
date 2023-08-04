@@ -38,7 +38,11 @@ func (m *MockExternalStorage) EXPECT() *MockExternalStorageMockRecorder {
 }
 
 // Create mocks base method.
+<<<<<<< HEAD
 func (m *MockExternalStorage) Create(arg0 context.Context, arg1 string, arg2 *storage.WriterOption) (storage.ExternalFileWriter, error) {
+=======
+func (m *MockExternalStorage) Create(arg0 context.Context, arg1 string, _ *storage.WriterOption) (storage.ExternalFileWriter, error) {
+>>>>>>> 5309c2ff775 (*: support concurrent write for S3 writer (#45723))
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Create", arg0, arg1, arg2)
 	ret0, _ := ret[0].(storage.ExternalFileWriter)

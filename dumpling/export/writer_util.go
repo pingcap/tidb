@@ -453,7 +453,11 @@ func writeBytes(tctx *tcontext.Context, writer storage.ExternalFileWriter, p []b
 func buildFileWriter(tctx *tcontext.Context, s storage.ExternalStorage, fileName string, compressType storage.CompressType) (storage.ExternalFileWriter, func(ctx context.Context) error, error) {
 	fileName += compressFileSuffix(compressType)
 	fullPath := s.URI() + "/" + fileName
+<<<<<<< HEAD
 	writer, err := storage.WithCompression(s, compressType, storage.DecompressConfig{}).Create(tctx, fileName, nil)
+=======
+	writer, err := storage.WithCompression(s, compressType).Create(tctx, fileName, nil)
+>>>>>>> 5309c2ff775 (*: support concurrent write for S3 writer (#45723))
 	if err != nil {
 		tctx.L().Warn("fail to open file",
 			zap.String("path", fullPath),
@@ -486,7 +490,11 @@ func buildInterceptFileWriter(pCtx *tcontext.Context, s storage.ExternalStorage,
 	initRoutine := func() error {
 		// use separated context pCtx here to make sure context used in ExternalFile won't be canceled before close,
 		// which will cause a context canceled error when closing gcs's Writer
+<<<<<<< HEAD
 		w, err := storage.WithCompression(s, compressType, storage.DecompressConfig{}).Create(pCtx, fileName, nil)
+=======
+		w, err := storage.WithCompression(s, compressType).Create(pCtx, fileName, nil)
+>>>>>>> 5309c2ff775 (*: support concurrent write for S3 writer (#45723))
 		if err != nil {
 			pCtx.L().Warn("fail to open file",
 				zap.String("path", fullPath),

@@ -29,8 +29,21 @@ func WithCompression(inner ExternalStorage, compressionType CompressType, cfg De
 	}
 }
 
+<<<<<<< HEAD
 func (w *withCompression) Create(ctx context.Context, name string, o *WriterOption) (ExternalFileWriter, error) {
 	writer, err := w.ExternalStorage.Create(ctx, name, o)
+=======
+func (w *withCompression) Create(ctx context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
+	var (
+		writer ExternalFileWriter
+		err    error
+	)
+	if s3Storage, ok := w.ExternalStorage.(*S3Storage); ok {
+		writer, err = s3Storage.CreateUploader(ctx, name)
+	} else {
+		writer, err = w.ExternalStorage.Create(ctx, name, nil)
+	}
+>>>>>>> 5309c2ff775 (*: support concurrent write for S3 writer (#45723))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -209,6 +209,7 @@ func (f *localFile) GetFileSize() (int64, error) {
 
 // Create implements ExternalStorage interface.
 func (l *LocalStorage) Create(_ context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
+<<<<<<< HEAD
 	filename := filepath.Join(l.base, name)
 	dir := filepath.Dir(filename)
 	err := os.MkdirAll(dir, 0750)
@@ -216,6 +217,9 @@ func (l *LocalStorage) Create(_ context.Context, name string, _ *WriterOption) (
 		return nil, errors.Trace(err)
 	}
 	file, err := os.Create(filename)
+=======
+	file, err := os.Create(filepath.Join(l.base, name))
+>>>>>>> 5309c2ff775 (*: support concurrent write for S3 writer (#45723))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
