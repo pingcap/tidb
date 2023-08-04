@@ -2381,3 +2381,73 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
 		}
 	})
 }
+
+func (cli *testServerClient) runTestLoadDataReplace(t *testing.T) {
+	fp1, err := os.CreateTemp("", "a.dat")
+	require.NoError(t, err)
+	require.NotNil(t, fp1)
+	path1 := fp1.Name()
+	fp2, err := os.CreateTemp("", "b.dat")
+	require.NoError(t, err)
+	require.NotNil(t, fp2)
+	path2 := fp2.Name()
+	defer func() {
+		err = fp1.Close()
+		require.NoError(t, err)
+		err = os.Remove(path1)
+		require.NoError(t, err)
+
+		err = fp2.Close()
+		require.NoError(t, err)
+		err = os.Remove(path2)
+		require.NoError(t, err)
+	}()
+
+	_, err = fp1.WriteString(
+		"1,abc\n" +
+			"2,cdef\n" +
+			"3,asdf\n")
+	require.NoError(t, err)
+	_, err = fp2.WriteString(
+		"1,AAA\n" +
+			"2,BBB\n" +
+			"3,asdf\n" +
+			"4,444\n")
+	require.NoError(t, err)
+
+	expects := []struct {
+		col1 int64
+		col2 string
+	}{
+		{1, "AAA"},
+		{2, "BBB"},
+		{3, "asdf"},
+		{4, "444"},
+	}
+
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "LoadData", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create table t1(id int, name varchar(20), primary key(id) clustered);")
+		_, err = dbt.GetDB().Exec(fmt.Sprintf(`load data local infile '%s' replace into table t1 fields terminated by ',' enclosed by '' (id,name)`, path1))
+		require.NoError(t, err)
+		_, err = dbt.GetDB().Exec(fmt.Sprintf(`load data local infile '%s' replace into table t1 fields terminated by ',' enclosed by '' (id,name)`, path2))
+		require.NoError(t, err)
+		var (
+			a sql.NullInt64
+			b sql.NullString
+		)
+		rows := dbt.MustQuery("select * from t1 order by id asc")
+		for _, expect := range expects {
+			require.Truef(t, rows.Next(), "unexpected data")
+			err = rows.Scan(&a, &b)
+			require.NoError(t, err)
+			require.Equal(t, expect.col1, a.Int64)
+			require.Equal(t, expect.col2, b.String)
+			err = rows.Scan(&a, &b)
+			require.NoError(t, err)
+		}
+		require.Falsef(t, rows.Next(), "expect end")
+	})
+}
