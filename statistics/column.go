@@ -347,12 +347,10 @@ func (c *Column) ItemID() int64 {
 // DropEvicted implements TableCacheItem
 // DropEvicted drops evicted structures
 func (c *Column) DropEvicted() {
-	if !c.statsInitialized {
+	if !c.statsInitialized || c.evictedStatus == allEvicted {
 		return
 	}
-	if c.evictedStatus == allLoaded {
-		c.dropUnnecessaryData()
-	}
+	c.dropUnnecessaryData()
 }
 
 func (c *Column) dropUnnecessaryData() {

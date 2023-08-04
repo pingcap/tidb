@@ -166,12 +166,10 @@ type TableCacheItem interface {
 
 // DropEvicted drop stats for table column/index
 func DropEvicted(item TableCacheItem) {
-	if !item.isStatsInitialized() {
+	if !item.isStatsInitialized() || item.getEvictedStatus() == allEvicted {
 		return
 	}
-	if item.getEvictedStatus() == allLoaded {
-		item.dropUnnecessaryData()
-	}
+	item.dropUnnecessaryData()
 }
 
 // CacheItemMemoryUsage indicates the memory usage of TableCacheItem
