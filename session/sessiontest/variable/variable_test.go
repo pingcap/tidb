@@ -596,3 +596,15 @@ func TestIndexMergeRuntimeStats(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a").Check(testkit.Rows("1 1 1 1 1", "5 5 5 5 5"))
 }
+
+func TestSysdateIsNow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("show variables like '%tidb_sysdate_is_now%'").Check(testkit.Rows("tidb_sysdate_is_now OFF"))
+	require.False(t, tk.Session().GetSessionVars().SysdateIsNow)
+	tk.MustExec("set @@tidb_sysdate_is_now=true")
+	tk.MustQuery("show variables like '%tidb_sysdate_is_now%'").Check(testkit.Rows("tidb_sysdate_is_now ON"))
+	require.True(t, tk.Session().GetSessionVars().SysdateIsNow)
+}

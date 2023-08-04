@@ -180,18 +180,6 @@ func TestLoadSchemaFailed(t *testing.T) {
 	tk2.MustExec("commit")
 }
 
-func TestSysdateIsNow(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustQuery("show variables like '%tidb_sysdate_is_now%'").Check(testkit.Rows("tidb_sysdate_is_now OFF"))
-	require.False(t, tk.Session().GetSessionVars().SysdateIsNow)
-	tk.MustExec("set @@tidb_sysdate_is_now=true")
-	tk.MustQuery("show variables like '%tidb_sysdate_is_now%'").Check(testkit.Rows("tidb_sysdate_is_now ON"))
-	require.True(t, tk.Session().GetSessionVars().SysdateIsNow)
-}
-
 func TestWriteOnMultipleCachedTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
