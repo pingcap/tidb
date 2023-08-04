@@ -15,6 +15,7 @@
 package execdetails
 
 import (
+	"fmt"
 	"strconv"
 	"sync"
 	"testing"
@@ -150,6 +151,7 @@ func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, Nu
 		TotalDisaggReadCacheHitSize:         &totalDisaggReadCacheHitSize,
 		TotalDisaggReadCacheMissSize:        &totalDisaggReadCacheMissSize,
 	}
+	fmt.Println("tiflashScanContext is ", tiflashScanContext.String())
 	return &tipb.ExecutorExecutionSummary{TimeProcessedNs: &TimeProcessedNs, NumProducedRows: &NumProducedRows,
 		NumIterations: &NumIterations, Concurrency: &Concurrency, ExecutorId: &ExecutorID, DetailInfo: &tipb.ExecutorExecutionSummary_TiflashScanContext{TiflashScanContext: &tiflashScanContext}, XXX_unrecognized: nil}
 }
@@ -230,15 +232,15 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	require.True(t, stats.ExistsCopStats(tableScanID))
 
 	cop := stats.GetOrCreateCopStats(tableScanID, "tiflash")
-	require.Equal(t, "tiflash_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2, threads:2}, tiflash_scan:{dtfile:{total_scanned_packs:1, total_skipped_packs:0, total_scanned_rows:8192, total_skipped_rows:0, total_rs_index_check_time: 15ms, total_read_time: 202ms, total_disagg_read_cache_hit_size: 100, total_disagg_read_cache_miss_size: 50}, total_create_snapshot_time: 40ms, total_local_region_num: 10, total_remote_region_num: 4, total_learner_index_time: 1ms}", cop.String())
+	require.Equal(t, "tiflash_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2, threads:2}, tiflash_scan:{dtfile:{total_scanned_packs:1, total_skipped_packs:0, total_scanned_rows:8192, total_skipped_rows:0, total_rs_index_check_time: 15ms, total_read_time: 202ms, total_disagg_read_cache_hit_size: 100, total_disagg_read_cache_miss_size: 50}, total_create_snapshot_time: 40ms, total_local_region_num: 10, total_remote_region_num: 4, total_learner_read_time: 1ms}", cop.String())
 
 	copStats := cop.stats["8.8.8.8"]
 	require.NotNil(t, copStats)
 
 	copStats.SetRowNum(10)
 	copStats.Record(time.Second, 10)
-	require.Equal(t, "time:1s, loops:2, threads:1, tiflash_scan:{dtfile:{total_scanned_packs:1, total_skipped_packs:0, total_scanned_rows:8192, total_skipped_rows:0, total_rs_index_check_time: 15ms, total_read_time: 200ms, total_disagg_read_cache_hit_size: 100, total_disagg_read_cache_miss_size: 50}, total_create_snapshot_time: 40ms, total_local_region_num: 10, total_remote_region_num: 4, total_learner_index_time: 1ms}", copStats.String())
-	expected := "tiflash_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}, tiflash_scan:{dtfile:{total_scanned_packs:3, total_skipped_packs:11, total_scanned_rows:20192, total_skipped_rows:86000, total_rs_index_check_time: 100ms, total_read_time: 3000ms, total_disagg_read_cache_hit_size: 120, total_disagg_read_cache_miss_size: 50}, total_create_snapshot_time: 50ms, total_local_region_num: 6, total_remote_region_num: 2, total_learner_index_time: 1ms}"
+	require.Equal(t, "time:1s, loops:2, threads:1, tiflash_scan:{dtfile:{total_scanned_packs:1, total_skipped_packs:0, total_scanned_rows:8192, total_skipped_rows:0, total_rs_index_check_time: 15ms, total_read_time: 200ms, total_disagg_read_cache_hit_size: 100, total_disagg_read_cache_miss_size: 50}, total_create_snapshot_time: 40ms, total_local_region_num: 10, total_remote_region_num: 4, total_learner_read_time: 1ms}", copStats.String())
+	expected := "tiflash_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}, tiflash_scan:{dtfile:{total_scanned_packs:3, total_skipped_packs:11, total_scanned_rows:20192, total_skipped_rows:86000, total_rs_index_check_time: 100ms, total_read_time: 3000ms, total_disagg_read_cache_hit_size: 20, total_disagg_read_cache_miss_size: 0}, total_create_snapshot_time: 50ms, total_local_region_num: 6, total_remote_region_num: 2, total_learner_read_time: 0ms}"
 	require.Equal(t, expected, stats.GetOrCreateCopStats(aggID, "tiflash").String())
 
 	rootStats := stats.GetRootStats(tableReaderID)

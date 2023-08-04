@@ -751,7 +751,7 @@ func (context *TiFlashScanContext) Clone() TiFlashScanContext {
 	}
 }
 func (context *TiFlashScanContext) String() string {
-	return fmt.Sprintf("tiflash_scan:{dtfile:{total_scanned_packs:%d, total_skipped_packs:%d, total_scanned_rows:%d, total_skipped_rows:%d, total_rs_index_check_time: %dms, total_read_time: %dms, total_cache_read_size: %d, total_s3_read_size: %d}, total_create_snapshot_time: %dms, total_local_region_num: %d, total_remote_region_num: %d, total_wait_index_time: %dms}", context.totalDmfileScannedPacks, context.totalDmfileSkippedPacks, context.totalDmfileScannedRows, context.totalDmfileSkippedRows, context.totalDmfileRoughSetIndexCheckTimeMs, context.totalDmfileReadTimeMs, context.totalDisaggReadCacheHitSize, context.totalDisaggReadCacheMissSize, context.totalCreateSnapshotTimeMs, context.totalLocalRegionNum, context.totalRemoteRegionNum, context.totalLearnerReadMs)
+	return fmt.Sprintf("tiflash_scan:{dtfile:{total_scanned_packs:%d, total_skipped_packs:%d, total_scanned_rows:%d, total_skipped_rows:%d, total_rs_index_check_time: %dms, total_read_time: %dms, total_disagg_read_cache_hit_size: %d, total_disagg_read_cache_miss_size: %d}, total_create_snapshot_time: %dms, total_local_region_num: %d, total_remote_region_num: %d, total_learner_read_time: %dms}", context.totalDmfileScannedPacks, context.totalDmfileSkippedPacks, context.totalDmfileScannedRows, context.totalDmfileSkippedRows, context.totalDmfileRoughSetIndexCheckTimeMs, context.totalDmfileReadTimeMs, context.totalDisaggReadCacheHitSize, context.totalDisaggReadCacheMissSize, context.totalCreateSnapshotTimeMs, context.totalLocalRegionNum, context.totalRemoteRegionNum, context.totalLearnerReadMs)
 }
 
 // Merge make sum to merge the information in TiFlashScanContext
