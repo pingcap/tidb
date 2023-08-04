@@ -57,6 +57,9 @@ import (
 
 var (
 	_ exec.Executor = &IndexMergeReaderExecutor{}
+
+	// IndexMergeCancelFuncForTest is used just for test
+	IndexMergeCancelFuncForTest func()
 )
 
 const (
@@ -1119,13 +1122,16 @@ func (w *indexMergeProcessWorker) fetchLoopUnionWithOrderBy(ctx context.Context,
 			return
 		case <-finished:
 			return
-		case workCh <- task:
+		case resultCh <- task:
+			failpoint.Inject("testCancelContext", func() {
+				IndexMergeCancelFuncForTest()
+			})
 			select {
 			case <-ctx.Done():
 				return
 			case <-finished:
 				return
-			case resultCh <- task:
+			case workCh <- task:
 				continue
 			}
 		}
@@ -1241,13 +1247,16 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 			return
 		case <-finished:
 			return
-		case workCh <- task:
+		case resultCh <- task:
+			failpoint.Inject("testCancelContext", func() {
+				IndexMergeCancelFuncForTest()
+			})
 			select {
 			case <-ctx.Done():
 				return
 			case <-finished:
 				return
-			case resultCh <- task:
+			case workCh <- task:
 			}
 		}
 	}

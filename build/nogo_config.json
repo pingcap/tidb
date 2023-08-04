@@ -175,7 +175,7 @@
       ".*_test\\.go$": "ignore test code"
     },
     "only_files": {
-      "statistics/handle": "statistics/handle code",
+      "statistics/": "statistics/ code",
       "util/checksum": "util/checksum code",
       "util/processinfo.go": "util/processinfo.go code",
       "util/cpuprofile/": "util/cpuprofile/ code",
