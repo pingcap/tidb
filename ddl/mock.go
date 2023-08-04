@@ -32,6 +32,10 @@ import (
 	atomicutil "go.uber.org/atomic"
 )
 
+func SetBatchInsertDeleteRangeSize(i int) {
+	batchInsertDeleteRangeSize = i
+}
+
 var _ syncer.SchemaSyncer = &MockSchemaSyncer{}
 
 const mockCheckVersInterval = 2 * time.Millisecond
