@@ -33,7 +33,7 @@ type KeyValueStore struct {
 	writerID  int
 	seq       int
 	offset    uint64
-	u64Buffer []byte
+	u64Buffer [8]byte
 }
 
 // NewKeyValueStore creates a new KeyValueStore. The data will be written to the
@@ -52,7 +52,6 @@ func NewKeyValueStore(
 		rc:         rangePropertiesCollector,
 		writerID:   writerID,
 		seq:        seq,
-		u64Buffer:  make([]byte, 8),
 	}
 	return kvStore, nil
 }
@@ -66,7 +65,7 @@ func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
 	// data layout: keyLen + key + valueLen + value
 	_, err := s.dataWriter.Write(
 		s.ctx,
-		binary.BigEndian.AppendUint64(s.u64Buffer[:0], uint64(len(key))),
+		binary.BigEndian.AppendUint64(s.u64Buffer[:], uint64(len(key))),
 	)
 	if err != nil {
 		return err
@@ -77,7 +76,7 @@ func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
 	}
 	_, err = s.dataWriter.Write(
 		s.ctx,
-		binary.BigEndian.AppendUint64(s.u64Buffer[:0], uint64(len(value))),
+		binary.BigEndian.AppendUint64(s.u64Buffer[:], uint64(len(value))),
 	)
 	if err != nil {
 		return err
