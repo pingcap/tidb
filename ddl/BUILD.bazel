@@ -212,7 +212,6 @@ go_test(
         "rollingback_test.go",
         "schema_test.go",
         "sequence_test.go",
-        "serial_test.go",
         "stat_test.go",
         "table_modify_test.go",
         "table_split_test.go",
