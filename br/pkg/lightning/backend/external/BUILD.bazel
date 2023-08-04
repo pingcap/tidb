@@ -6,7 +6,6 @@ go_library(
         "byte_reader.go",
         "codec.go",
         "kv_reader.go",
-        "kv_writer.go",
         "stat_reader.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/lightning/backend/external",

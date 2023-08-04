@@ -17,6 +17,7 @@ package external
 import (
 	"context"
 	"encoding/binary"
+	"io"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
@@ -45,18 +46,25 @@ func (r *kvReader) nextKV() (key, val []byte, err error) {
 	keyLen := int(binary.BigEndian.Uint64(*lenBytes))
 	keyPtr, err := r.byteReader.readNBytes(keyLen)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, noEOF(err)
 	}
 	lenBytes, err = r.byteReader.readNBytes(8)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, noEOF(err)
 	}
 	valLen := int(binary.BigEndian.Uint64(*lenBytes))
 	valPtr, err := r.byteReader.readNBytes(valLen)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, noEOF(err)
 	}
 	return *keyPtr, *valPtr, nil
+}
+
+// noEOF converts the EOF error to io.ErrUnexpectedEOF.
+func noEOF(err error) error {
+	if err == io.EOF {
+		return io.ErrUnexpectedEOF
+	}
 }
 
 func (r *kvReader) Close() error {

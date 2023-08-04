@@ -48,7 +48,7 @@ func (r *statsReader) nextProp() (*rangeProperty, error) {
 	propLen := int(binary.BigEndian.Uint32(*lenBytes))
 	propBytes, err := r.byteReader.readNBytes(propLen)
 	if err != nil {
-		return nil, err
+		return nil, noEOF(err)
 	}
 	return decodeProp(*propBytes), nil
 }
