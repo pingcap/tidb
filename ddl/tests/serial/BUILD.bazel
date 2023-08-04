@@ -2,10 +2,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "serial_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "serial_test.go",
     ],
+    flaky = True,
+    shard_count = 24,
     deps = [
         "//config",
         "//ddl",
