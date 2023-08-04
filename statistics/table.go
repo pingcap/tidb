@@ -169,12 +169,8 @@ func DropEvicted(item TableCacheItem) {
 	if !item.isStatsInitialized() {
 		return
 	}
-	switch item.getEvictedStatus() {
-	case allLoaded:
+	if item.getEvictedStatus() == allLoaded {
 		item.dropUnnecessaryData()
-		return
-	default:
-		return
 	}
 }
 
