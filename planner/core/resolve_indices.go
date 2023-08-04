@@ -149,6 +149,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
 		if !p.schema.Columns[i].Equal(nil, mergedSchema.Columns[j]) {
 			j++
+			continue
 		}
 		p.schema.Columns[i] = p.schema.Columns[i].Clone().(*expression.Column)
 		p.schema.Columns[i].Index = j
@@ -234,6 +235,7 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
 		if !p.schema.Columns[i].Equal(nil, mergedSchema.Columns[j]) {
 			j++
+			continue
 		}
 		p.schema.Columns[i] = p.schema.Columns[i].Clone().(*expression.Column)
 		p.schema.Columns[i].Index = j
@@ -329,6 +331,7 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
 		if !p.schema.Columns[i].Equal(nil, mergedSchema.Columns[j]) {
 			j++
+			continue
 		}
 		p.schema.Columns[i] = p.schema.Columns[i].Clone().(*expression.Column)
 		p.schema.Columns[i].Index = j
@@ -732,6 +735,7 @@ func (p *PhysicalLimit) ResolveIndices() (err error) {
 	for i, j := 0, 0; i < p.schema.Len() && j < p.children[0].Schema().Len(); {
 		if !p.schema.Columns[i].Equal(nil, p.children[0].Schema().Columns[j]) {
 			j++
+			continue
 		}
 		p.schema.Columns[i] = p.schema.Columns[i].Clone().(*expression.Column)
 		p.schema.Columns[i].Index = j
