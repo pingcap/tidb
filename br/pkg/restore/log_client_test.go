@@ -303,6 +303,7 @@ func testReadFromMetadataWithVersion(t *testing.T, m metaMaker) {
 
 		meta := new(StreamMetadataSet)
 		meta.Helper = stream.NewMetadataHelper()
+		meta.MetadataDownloadBatchSize = 128
 		meta.LoadUntilAndCalculateShiftTS(ctx, loc, c.untilTS)
 
 		var metas []*backuppb.Metadata
