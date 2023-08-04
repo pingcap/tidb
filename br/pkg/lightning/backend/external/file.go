@@ -99,7 +99,8 @@ func (s *KeyValueStore) AddKeyValue(key, value []byte, writerID, seq int) error 
 
 		s.rc.currProp.key = nil
 		s.rc.currProp.offset = s.offset
-		s.rc.currProp.rangeOffsets = rangeOffsets{}
+		s.rc.currProp.keys = 0
+		s.rc.currProp.size = 0
 	}
 
 	return nil

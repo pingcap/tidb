@@ -18,17 +18,13 @@ import (
 	"encoding/binary"
 )
 
-type rangeOffsets struct {
-	size uint64
-	keys uint64
-}
-
 type rangeProperty struct {
 	key      []byte
 	offset   uint64
 	writerID int
 	dataSeq  int
-	rangeOffsets
+	size     uint64
+	keys     uint64
 }
 
 // rangePropertiesCollector collects range properties for each range. The zero
@@ -43,9 +39,7 @@ type rangePropertiesCollector struct {
 
 func (rc *rangePropertiesCollector) reset() {
 	rc.props = rc.props[:0]
-	rc.currProp = &rangeProperty{
-		rangeOffsets: rangeOffsets{},
-	}
+	rc.currProp = &rangeProperty{}
 }
 
 // keyLen + p.size + p.keys + p.offset + p.WriterID + p.DataSeq

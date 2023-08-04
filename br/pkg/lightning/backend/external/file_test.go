@@ -56,10 +56,8 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 		offset:   0,
 		writerID: 1,
 		dataSeq:  1,
-		rangeOffsets: rangeOffsets{
-			size: uint64(len(k1) + len(v1) + len(k2) + len(v2)),
-			keys: 2,
-		},
+		size:     uint64(len(k1) + len(v1) + len(k2) + len(v2)),
+		keys:     2,
 	}
 	require.Equal(t, expected, rc.props[0])
 	encoded = rc.encode()
@@ -91,10 +89,8 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 		offset:   0,
 		writerID: 2,
 		dataSeq:  2,
-		rangeOffsets: rangeOffsets{
-			size: uint64(len(k1) + len(v1)),
-			keys: 1,
-		},
+		size:     uint64(len(k1) + len(v1)),
+		keys:     1,
 	}
 	require.Equal(t, expected, rc.props[0])
 
@@ -106,10 +102,8 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 		offset:   uint64(len(k1) + len(v1) + 16),
 		writerID: 2,
 		dataSeq:  2,
-		rangeOffsets: rangeOffsets{
-			size: uint64(len(k2) + len(v2)),
-			keys: 1,
-		},
+		size:     uint64(len(k2) + len(v2)),
+		keys:     1,
 	}
 	require.Equal(t, expected, rc.props[1])
 	err = writer.Close(ctx)
