@@ -39,7 +39,6 @@ func (dm *Manager) setRunningTask(task *proto.Task, dispatcher *dispatcher) {
 	defer dm.runningTasks.Unlock()
 	dm.runningTasks.taskIDs[task.ID] = struct{}{}
 	dm.runningTasks.dispatchers[task.ID] = dispatcher
-	dispatcher.ExecuteTask()
 }
 
 func (dm *Manager) isRunningTask(taskID int64) bool {
@@ -104,13 +103,13 @@ func NewManager(ctx context.Context, taskTable *storage.TaskManager) (*Manager, 
 	return dispatcherManager, nil
 }
 
-// Start start the dispatcherManager, start the dispatchTaskLoop to start multiple dispatchers.
+// Start the dispatcherManager, start the dispatchTaskLoop to start multiple dispatchers.
 func (dm *Manager) Start() {
 	dm.wg.Run(dm.dispatchTaskLoop)
 	dm.inited = true
 }
 
-// Stop stop the dispatcherManager.
+// Stop the dispatcherManager.
 func (dm *Manager) Stop() {
 	dm.cancel()
 	dm.gPool.ReleaseAndWait()
@@ -134,8 +133,6 @@ func (dm *Manager) dispatchTaskLoop() {
 		case <-dm.ctx.Done():
 			logutil.BgLogger().Info("dispatch task loop exits", zap.Error(dm.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000))
 			return
-		case task := <-dm.finishedTaskCh:
-			dm.delRunningTask(task.ID)
 		case <-ticker.C:
 			cnt := dm.getRunningTaskCnt()
 			if dm.checkConcurrencyOverflow(cnt) {
@@ -185,11 +182,16 @@ func (*Manager) checkConcurrencyOverflow(cnt int) bool {
 }
 
 func (dm *Manager) startDispatcher(task *proto.Task) {
-	dispatcher := newDispatcher(dm.ctx, dm.gPool, dm.taskMgr, task, dm.finishedTaskCh)
-	dm.setRunningTask(task, dispatcher)
+	// Using the pool with block, so it wouldn't return an error.
+	_ = dm.gPool.Run(func() {
+		dispatcher := newDispatcher(dm.ctx, dm.taskMgr, task)
+		dm.setRunningTask(task, dispatcher)
+		dispatcher.ExecuteTask()
+		dm.delRunningTask(task.ID)
+	})
 }
 
 // MockDispatcher mock one dispatcher for one task, only used for tests.
 func (dm *Manager) MockDispatcher(task *proto.Task) *dispatcher {
-	return &dispatcher{dm.ctx, dm.gPool, dm.taskMgr, task, nil}
+	return &dispatcher{dm.ctx, dm.taskMgr, task}
 }
