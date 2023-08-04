@@ -154,7 +154,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 		p.schema.Columns[i].Index = j
 		i++
 		j++
-		foundCnt += 1
+		foundCnt++
 	}
 	if foundCnt < colsNeedResolving {
 		return errors.Errorf("Some columns of %v cannot find the reference from its child(ren)", p.ExplainID().String())
@@ -239,7 +239,7 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 		p.schema.Columns[i].Index = j
 		i++
 		j++
-		foundCnt += 1
+		foundCnt++
 	}
 	if foundCnt < colsNeedResolving {
 		return errors.Errorf("Some columns of %v cannot find the reference from its child(ren)", p.ExplainID().String())
@@ -334,7 +334,7 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 		p.schema.Columns[i].Index = j
 		i++
 		j++
-		foundCnt += 1
+		foundCnt++
 	}
 	if foundCnt < colsNeedResolving {
 		return errors.Errorf("Some columns of %v cannot find the reference from its child(ren)", p.ExplainID().String())
@@ -737,7 +737,7 @@ func (p *PhysicalLimit) ResolveIndices() (err error) {
 		p.schema.Columns[i].Index = j
 		i++
 		j++
-		foundCnt += 1
+		foundCnt++
 	}
 	if foundCnt < p.schema.Len() {
 		return errors.Errorf("Some columns of %v cannot find the reference from its child(ren)", p.ExplainID().String())
