@@ -1,0 +1,38 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "serial_test",
+    srcs = [
+        "main_test.go",
+        "serial_test.go",
+    ],
+    deps = [
+        "//config",
+        "//ddl",
+        "//ddl/util",
+        "//ddl/util/callback",
+        "//domain",
+        "//errno",
+        "//infoschema",
+        "//kv",
+        "//meta",
+        "//meta/autoid",
+        "//parser/model",
+        "//parser/mysql",
+        "//planner/core",
+        "//session",
+        "//sessionctx/variable",
+        "//sessiontxn",
+        "//store/mockstore",
+        "//tablecodec",
+        "//testkit",
+        "//testkit/external",
+        "//testkit/testsetup",
+        "//util/dbterror",
+        "//util/gcutil",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//testutils",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
