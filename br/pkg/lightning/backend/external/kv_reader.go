@@ -65,6 +65,7 @@ func noEOF(err error) error {
 	if err == io.EOF {
 		return io.ErrUnexpectedEOF
 	}
+	return err
 }
 
 func (r *kvReader) Close() error {
