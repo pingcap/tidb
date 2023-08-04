@@ -2843,7 +2843,7 @@ func upgradeToVer173(s Session, ver int64) {
 	SET u.x509_subject=p.Priv->>'$.ssl_subject' WHERE p.Priv->>'$.ssl_subject' IS NOT NULL`)
 
 	mustExecute(s,
-		`CREATE TABLE mysql.procs_priv (
+		`CREATE TABLE IF NOT EXISTS mysql.procs_priv (
            Host char(255) NOT NULL DEFAULT '',
            Db char(64) NOT NULL DEFAULT '',
            User char(32) NOT NULL DEFAULT '',
