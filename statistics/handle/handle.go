@@ -1072,12 +1072,9 @@ func (h *Handle) initStatsCache(newCache *cache.StatsCache) {
 // If it is in the COW mode. it overrides the global statsCache with a new one, it may fail
 // if the global statsCache has been modified by others already.
 // Callers should add retry loop if necessary.
-func (h *Handle) updateStatsCache(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64, opts ...cache.TableStatsOpt) (updated bool) {
-	if enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota; enableQuota {
-		h.statsCache.Load().Update(tables, deletedIDs, opts...)
-	} else {
-		h.statsCache.Replace(newCache.CopyAndUpdate(tables, deletedIDs, opts...))
-	}
+func (h *Handle) updateStatsCache(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64,
+	opts ...cache.TableStatsOpt) (updated bool) {
+	h.statsCache.UpdateStatsCache(newCache, tables, deletedIDs, opts...)
 	return true
 }
 

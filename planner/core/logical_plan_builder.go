@@ -98,6 +98,12 @@ const (
 	HintINLHJ = "inl_hash_join"
 	// HintINLMJ is hint enforce index nested loop merge join.
 	HintINLMJ = "inl_merge_join"
+	// HintNoIndexJoin is the hint to enforce the query not to use index join.
+	HintNoIndexJoin = "no_index_join"
+	// HintNoIndexHashJoin is the hint to enforce the query not to use index hash join.
+	HintNoIndexHashJoin = "no_index_hash_join"
+	// HintNoIndexMergeJoin is the hint to enforce the query not to use index merge join.
+	HintNoIndexMergeJoin = "no_index_merge_join"
 	// TiDBHashJoin is hint enforce hash join.
 	TiDBHashJoin = "tidb_hj"
 	// HintNoHashJoin is the hint to enforce the query not to use hash join.
@@ -216,17 +222,21 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 	for _, col := range projSchema.Columns {
 		proj.Exprs = append(proj.Exprs, col)
 	}
+	distinctGbyColNames := make(types.NameSlice, 0, len(distinctGbyExprs))
 	distinctGbyCols := make([]*expression.Column, 0, len(distinctGbyExprs))
 	for _, expr := range distinctGbyExprs {
 		// distinct group expr has been resolved in resolveGby.
 		proj.Exprs = append(proj.Exprs, expr)
 
 		// add the newly appended names.
+		var name *types.FieldName
 		if c, ok := expr.(*expression.Column); ok {
-			names = append(names, buildExpandFieldName(c, names[p.Schema().ColumnIndex(c)], ""))
+			name = buildExpandFieldName(c, names[p.Schema().ColumnIndex(c)], "")
 		} else {
-			names = append(names, buildExpandFieldName(expr, nil, ""))
+			name = buildExpandFieldName(expr, nil, "")
 		}
+		names = append(names, name)
+		distinctGbyColNames = append(distinctGbyColNames, name)
 
 		// since we will change the nullability of source col, proj it with a new col id.
 		col := &expression.Column{
@@ -257,11 +267,11 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 	expandSchema := proj.Schema().Clone()
 	expression.AdjustNullabilityFromGroupingSets(rollupGroupingSets, expandSchema)
 	expand := LogicalExpand{
-		rollupGroupingSets: rollupGroupingSets,
-		distinctGroupByCol: distinctGbyCols,
+		rollupGroupingSets:  rollupGroupingSets,
+		distinctGroupByCol:  distinctGbyCols,
+		distinctGbyColNames: distinctGbyColNames,
 		// for resolving grouping function args.
 		distinctGbyExprs: distinctGbyExprs,
-		gbyExprsRefPos:   gbyExprsRefPos,
 
 		// fill the gen col names when building level projections.
 	}.Init(b.ctx, b.getSelectOffset())
@@ -286,6 +296,7 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 	expandSchema.Append(gid)
 	expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gid.OrigName)
 	names = append(names, buildExpandFieldName(gid, nil, "gid_"))
+	expand.GIDName = names[len(names)-1]
 	if hasDuplicateGroupingSet {
 		// the last two col of the schema should be gid & gpos
 		gpos := &expression.Column{
@@ -297,6 +308,7 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 		expandSchema.Append(gpos)
 		expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gpos.OrigName)
 		names = append(names, buildExpandFieldName(gpos, nil, "gpos_"))
+		expand.GPosName = names[len(names)-1]
 	}
 	expand.SetChildren(proj)
 	expand.SetSchema(expandSchema)
@@ -788,6 +800,30 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if hintInfo.ifPreferINLMJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLMJInner
 		p.rightPreferJoinType |= preferINLMJ
+	}
+	if hintInfo.ifPreferNoIndexJoin(lhsAlias) {
+		p.preferJoinType |= preferNoIndexJoin
+		p.leftPreferJoinType |= preferNoIndexJoin
+	}
+	if hintInfo.ifPreferNoIndexJoin(rhsAlias) {
+		p.preferJoinType |= preferNoIndexJoin
+		p.rightPreferJoinType |= preferNoIndexJoin
+	}
+	if hintInfo.ifPreferNoIndexHashJoin(lhsAlias) {
+		p.preferJoinType |= preferNoIndexHashJoin
+		p.leftPreferJoinType |= preferNoIndexHashJoin
+	}
+	if hintInfo.ifPreferNoIndexHashJoin(rhsAlias) {
+		p.preferJoinType |= preferNoIndexHashJoin
+		p.rightPreferJoinType |= preferNoIndexHashJoin
+	}
+	if hintInfo.ifPreferNoIndexMergeJoin(lhsAlias) {
+		p.preferJoinType |= preferNoIndexMergeJoin
+		p.leftPreferJoinType |= preferNoIndexMergeJoin
+	}
+	if hintInfo.ifPreferNoIndexMergeJoin(rhsAlias) {
+		p.preferJoinType |= preferNoIndexMergeJoin
+		p.rightPreferJoinType |= preferNoIndexMergeJoin
 	}
 	if hintInfo.ifPreferHJBuild(lhsAlias) {
 		p.preferJoinType |= preferLeftAsHJBuild
@@ -1290,6 +1326,13 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 		if err != nil {
 			return nil, err
 		}
+		// for case: explain SELECT year+2 as y, SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP having y > 2002;
+		// currently, we succeed to resolve y to (year+2), but fail to resolve (year+2) to grouping col, and to base column function: plus(year, 2) instead.
+		// which will cause this selection being pushed down through Expand OP itself.
+		//
+		// In expand, we will additionally project (year+2) out as a new column, let's say grouping_col here, and we wanna it can substitute any upper layer's (year+2)
+		expr = b.replaceGroupingFunc(expr)
+
 		p = np
 		if expr == nil {
 			continue
@@ -1616,6 +1659,38 @@ func (b *PlanBuilder) replaceGroupingFunc(expr expression.Expression) expression
 	return expr.Traverse(traverseAction)
 }
 
+func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Schema, projNames []*types.FieldName, projExprs []expression.Expression) (*expression.Schema, []*types.FieldName, []expression.Expression) {
+	if b.currentBlockExpand == nil {
+		return projSchema, projNames, projExprs
+	}
+	m := make(map[int64]struct{}, len(b.currentBlockExpand.distinctGroupByCol))
+	for _, col := range projSchema.Columns {
+		m[col.UniqueID] = struct{}{}
+	}
+	for idx, gCol := range b.currentBlockExpand.distinctGroupByCol {
+		if _, ok := m[gCol.UniqueID]; ok {
+			// grouping col has been explicitly projected, not need to reserve it here for later order-by item (a+1)
+			// like: select a+1, b from t group by a+1 order by a+1.
+			continue
+		}
+		// project the grouping col out implicitly here. If it's not used by later OP, it will be cleaned in column pruner.
+		projSchema.Append(gCol)
+		projExprs = append(projExprs, gCol)
+		projNames = append(projNames, b.currentBlockExpand.distinctGbyColNames[idx])
+	}
+	// project GID.
+	projSchema.Append(b.currentBlockExpand.GID)
+	projExprs = append(projExprs, b.currentBlockExpand.GID)
+	projNames = append(projNames, b.currentBlockExpand.GIDName)
+	// project GPos if any.
+	if b.currentBlockExpand.GPos != nil {
+		projSchema.Append(b.currentBlockExpand.GPos)
+		projExprs = append(projExprs, b.currentBlockExpand.GPos)
+		projNames = append(projNames, b.currentBlockExpand.GPosName)
+	}
+	return projSchema, projNames, projExprs
+}
+
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
 	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (LogicalPlan, []expression.Expression, int, error) {
@@ -1685,6 +1760,9 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		schema.Append(col)
 		newNames = append(newNames, name)
 	}
+	// implicitly project expand grouping set cols, if not used later, it will being pruned out in logical column pruner.
+	schema, newNames, proj.Exprs = b.implicitProjectGroupingSetCols(schema, newNames, proj.Exprs)
+
 	proj.SetSchema(schema)
 	proj.names = newNames
 	if expandGenerateColumn {
@@ -2251,6 +2329,13 @@ func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byI
 		if err != nil {
 			return nil, err
 		}
+		// for case: select a+1, b, sum(b) from t group by a+1, b with rollup order by a+1.
+		// currently, we fail to resolve (a+1) in order-by to projection item (a+1), and adding
+		// another a' in the select fields instead, leading finally resolved expr is a'+1 here.
+		//
+		// Anyway, a and a' has the same column unique id, so we can do the replacement work like
+		// we did in build projection phase.
+		it = b.replaceGroupingFunc(it)
 
 		// check whether ORDER BY items show up in SELECT DISTINCT fields, see #12442
 		if hasDistinct && projExprs != nil {
@@ -2738,11 +2823,11 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 	}
 	havingAggMapper := extractor.aggMapper
 	extractor.aggMapper = make(map[*ast.AggregateFuncExpr]int)
-	extractor.inExpr = false
 	// Extract agg funcs from order by clause.
 	if sel.OrderBy != nil {
 		extractor.curClause = orderByClause
 		for _, item := range sel.OrderBy.Items {
+			extractor.inExpr = false
 			if ast.HasWindowFlag(item.Expr) {
 				continue
 			}
@@ -3468,6 +3553,13 @@ func checkExprInGroupByOrIsSingleValue(
 	if _, ok := expr.(*ast.AggregateFuncExpr); ok {
 		return
 	}
+	if f, ok := expr.(*ast.FuncCallExpr); ok {
+		if f.FnName.L == ast.Grouping {
+			// just skip grouping function check here, because later in building plan phase, we
+			// will do the grouping function valid check.
+			return
+		}
+	}
 	if _, ok := expr.(*ast.ColumnNameExpr); !ok {
 		for _, gbyExpr := range gbyExprs {
 			if ast.ExpressionDeepEqual(gbyExpr, expr) {
@@ -3934,6 +4026,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
 	var (
 		sortMergeTables, inljTables, inlhjTables, inlmjTables, hashJoinTables, bcTables []hintTableInfo
+		noIndexJoinTables, noIndexHashJoinTables, noIndexMergeJoinTables                []hintTableInfo
 		noHashJoinTables, noMergeJoinTables                                             []hintTableInfo
 		shuffleJoinTables                                                               []hintTableInfo
 		indexHintList, indexMergeHintList                                               []indexHintInfo
@@ -3976,6 +4069,12 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			noHashJoinTables = append(noHashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case HintNoMergeJoin:
 			noMergeJoinTables = append(noMergeJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+		case HintNoIndexJoin:
+			noIndexJoinTables = append(noIndexJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+		case HintNoIndexHashJoin:
+			noIndexHashJoinTables = append(noIndexHashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+		case HintNoIndexMergeJoin:
+			noIndexMergeJoinTables = append(noIndexMergeJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case HintMPP1PhaseAgg:
 			aggHints.preferAggType |= preferMPP1PhaseAgg
 		case HintMPP2PhaseAgg:
@@ -4085,6 +4184,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		broadcastJoinTables:       bcTables,
 		shuffleJoinTables:         shuffleJoinTables,
 		indexNestedLoopJoinTables: indexNestedLoopJoinTables{inljTables, inlhjTables, inlmjTables},
+		noIndexJoinTables:         indexNestedLoopJoinTables{noIndexJoinTables, noIndexHashJoinTables, noIndexMergeJoinTables},
 		hashJoinTables:            hashJoinTables,
 		noHashJoinTables:          noHashJoinTables,
 		noMergeJoinTables:         noMergeJoinTables,
@@ -7334,6 +7434,9 @@ func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 func containDifferentJoinTypes(preferJoinType uint) bool {
 	preferJoinType &= ^preferNoHashJoin
 	preferJoinType &= ^preferNoMergeJoin
+	preferJoinType &= ^preferNoIndexJoin
+	preferJoinType &= ^preferNoIndexHashJoin
+	preferJoinType &= ^preferNoIndexMergeJoin
 
 	inlMask := preferRightAsINLJInner ^ preferLeftAsINLJInner
 	inlhjMask := preferRightAsINLHJInner ^ preferLeftAsINLHJInner

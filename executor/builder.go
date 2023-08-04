@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/executor/internal/pdhelper"
 	"github.com/pingcap/tidb/executor/internal/querywatch"
+	"github.com/pingcap/tidb/executor/internal/vecgroupchecker"
 	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -1444,7 +1445,23 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
 		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *IndexMergeReaderExecutor:
-		// IndexMergeReader doesn't care order for now. So we will not set desc, useIndex and keepOrder.
+		if len(x.byItems) != 0 {
+			us.keepOrder = x.keepOrder
+			us.desc = x.byItems[0].Desc
+			for _, item := range x.byItems {
+				c, ok := item.Expr.(*expression.Column)
+				if !ok {
+					b.err = errors.Errorf("Not support non-column in orderBy pushed down")
+					return nil
+				}
+				for i, col := range x.columns {
+					if col.ID == c.ID {
+						us.usedIndex = append(us.usedIndex, i)
+						break
+					}
+				}
+			}
+		}
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
@@ -1807,7 +1824,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) exec.
 	}
 	e := &StreamAggExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
-		groupChecker: newVecGroupChecker(b.ctx, v.GroupByItems),
+		groupChecker: vecgroupchecker.NewVecGroupChecker(b.ctx, v.GroupByItems),
 		aggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
 	}
 
@@ -1919,6 +1936,8 @@ func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 	replicaReadType := sessVars.GetReplicaRead()
 	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
 	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
+	snapshot.SetOption(kv.ResourceGroupName, sessVars.ResourceGroupName)
+	snapshot.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
 
 	if replicaReadType.IsClosestRead() && b.readReplicaScope != kv.GlobalTxnScope {
 		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
@@ -2091,7 +2110,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableMemoryUsageOpsHistory),
 			strings.ToLower(infoschema.ClusterTableMemoryUsage),
 			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory),
-			strings.ToLower(infoschema.TableResourceGroups):
+			strings.ToLower(infoschema.TableResourceGroups),
+			strings.ToLower(infoschema.TableRunawayWatches):
 			return &MemTableReaderExec{
 				BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -4198,7 +4218,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		dataReaderBuilder:        readerBuilder,
 		feedbacks:                feedbacks,
 		paging:                   paging,
-		handleCols:               ts.HandleCols,
+		handleCols:               v.HandleCols,
 		isCorColInPartialFilters: isCorColInPartialFilters,
 		isCorColInTableFilter:    isCorColInTableFilter,
 		isCorColInPartialAccess:  isCorColInPartialAccess,
@@ -4953,7 +4973,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 	if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
 		exec := &PipelinedWindowExec{
 			BaseExecutor:   base,
-			groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
+			groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx, groupByItems),
 			numWindowFuncs: len(v.WindowFuncDescs),
 		}
 
@@ -5012,7 +5032,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 	}
 	return &WindowExec{BaseExecutor: base,
 		processor:      processor,
-		groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
+		groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx, groupByItems),
 		numWindowFuncs: len(v.WindowFuncDescs),
 	}
 }
@@ -5197,7 +5217,6 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		partExpr:     plan.PartitionExpr,
 		partPos:      plan.PartitionColPos,
 		planPhysIDs:  plan.PartitionIDs,
-		singlePart:   plan.SinglePart,
 		partTblID:    plan.PartTblID,
 		columns:      plan.Columns,
 	}
@@ -5210,7 +5229,6 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	if e.Ctx().GetSessionVars().IsReplicaReadClosestAdaptive() {
 		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.Ctx(), plan.GetAvgRowSize()))
 	}
-	e.snapshot.SetOption(kv.ResourceGroupName, b.ctx.GetSessionVars().ResourceGroupName)
 	if e.RuntimeStats() != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{

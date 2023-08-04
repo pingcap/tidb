@@ -186,15 +186,21 @@ func testInitStatsMemTrace(t *testing.T) {
 	require.Equal(t, h.GetMemConsumed(), memCostTot)
 }
 
-func TestInitStatsMemTrace(t *testing.T) {
+func TestInitStatsMemTraceWithLite(t *testing.T) {
+	testInitStatsMemTraceFunc(t, true)
+}
+
+func TestInitStatsMemTraceWithoutLite(t *testing.T) {
+	testInitStatsMemTraceFunc(t, false)
+}
+
+func testInitStatsMemTraceFunc(t *testing.T, liteInitStats bool) {
 	originValue := config.GetGlobalConfig().Performance.LiteInitStats
 	defer func() {
 		config.GetGlobalConfig().Performance.LiteInitStats = originValue
 	}()
-	for _, v := range []bool{false, true} {
-		config.GetGlobalConfig().Performance.LiteInitStats = v
-		testInitStatsMemTrace(t)
-	}
+	config.GetGlobalConfig().Performance.LiteInitStats = liteInitStats
+	testInitStatsMemTrace(t)
 }
 
 func TestInitStats(t *testing.T) {

@@ -19,12 +19,20 @@ go_library(
 go_test(
     name = "pdhelper_test",
     timeout = "short",
-    srcs = ["pd_test.go"],
+    srcs = [
+        "main_test.go",
+        "pd_test.go",
+    ],
     embed = [":pdhelper"],
     flaky = True,
     deps = [
+        "//config",
+        "//meta/autoid",
         "//sessionctx",
+        "//testkit/testsetup",
         "@com_github_jellydator_ttlcache_v3//:ttlcache",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
     ],
 )
