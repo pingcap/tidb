@@ -66,7 +66,7 @@ func (idx *Index) getEvictedStatus() int {
 }
 
 func (idx *Index) dropUnnecessaryData() {
-	if idx.isCMSExist() && idx.statsVer() < Version2 {
+	if idx.statsVer() < Version2 {
 		idx.CMSketch = nil
 	}
 	idx.TopN = nil

@@ -350,17 +350,13 @@ func (c *Column) DropEvicted() {
 	if !c.statsInitialized {
 		return
 	}
-	switch c.evictedStatus {
-	case allLoaded:
+	if c.evictedStatus == allLoaded {
 		c.dropUnnecessaryData()
-		return
-	default:
-		return
 	}
 }
 
 func (c *Column) dropUnnecessaryData() {
-	if c.CMSketch != nil && c.StatsVer < Version2 {
+	if c.StatsVer < Version2 {
 		c.CMSketch = nil
 	}
 	c.TopN = nil
