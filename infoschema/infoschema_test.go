@@ -842,3 +842,50 @@ func TestInfoSchemaRenameTable(t *testing.T) {
 	tk.MustQuery("SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA = 'mysql') AND (TABLE_NAME = 't3');").
 		Check(testkit.Rows("1"))
 }
+
+// TestInfoSchemaCreateTableLike tests the table's column ID and index ID for memory database.
+func TestInfoSchemaCreateTableLike(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table vi like information_schema.variables_info;")
+	tk.MustExec("alter table vi modify min_value varchar(32);")
+	tk.MustExec("create table u like metrics_schema.up;")
+	tk.MustExec("alter table u modify job int;")
+	tk.MustExec("create table so like performance_schema.setup_objects;")
+	tk.MustExec("alter table so modify object_name int;")
+
+	tk.MustExec("create table t1 like information_schema.variables_info;")
+	tk.MustExec("alter table t1 add column c varchar(32);")
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	require.Equal(t, tblInfo.Columns[8].Name.O, "c")
+	require.Equal(t, tblInfo.Columns[8].ID, int64(9))
+	tk.MustExec("alter table t1 add index idx(c);")
+	is = domain.GetDomain(tk.Session()).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	tblInfo = tbl.Meta()
+	require.Equal(t, tblInfo.Indices[0].Name.O, "idx")
+	require.Equal(t, tblInfo.Indices[0].ID, int64(1))
+
+	// metrics_schema
+	tk.MustExec("create table t2 like metrics_schema.up;")
+	tk.MustExec("alter table t2 add column c varchar(32);")
+	is = domain.GetDomain(tk.Session()).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	tblInfo = tbl.Meta()
+	require.Equal(t, tblInfo.Columns[4].Name.O, "c")
+	require.Equal(t, tblInfo.Columns[4].ID, int64(5))
+	tk.MustExec("alter table t2 add index idx(c);")
+	is = domain.GetDomain(tk.Session()).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	tblInfo = tbl.Meta()
+	require.Equal(t, tblInfo.Indices[0].Name.O, "idx")
+	require.Equal(t, tblInfo.Indices[0].ID, int64(1))
+}

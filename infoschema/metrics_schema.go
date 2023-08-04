@@ -49,6 +49,8 @@ func init() {
 		tableInfo.Comment = def.Comment
 		tableID++
 		metricTables = append(metricTables, tableInfo)
+		tableInfo.MaxColumnID = int64(len(tableInfo.Columns))
+		tableInfo.MaxIndexID = int64(len(tableInfo.Indices))
 	}
 	dbInfo := &model.DBInfo{
 		ID:      dbID,

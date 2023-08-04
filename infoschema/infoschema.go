@@ -378,6 +378,8 @@ func init() {
 		for i, c := range tableInfo.Columns {
 			c.ID = int64(i) + 1
 		}
+		tableInfo.MaxColumnID = int64(len(tableInfo.Columns))
+		tableInfo.MaxIndexID = int64(len(tableInfo.Indices))
 	}
 	infoSchemaDB := &model.DBInfo{
 		ID:      dbID,
