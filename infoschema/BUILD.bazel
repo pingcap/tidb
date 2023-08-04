@@ -68,6 +68,11 @@ go_test(
         "tables_test.go",
     ],
     embed = [":infoschema"],
+<<<<<<< HEAD
+=======
+    flaky = True,
+    shard_count = 11,
+>>>>>>> b6d92f59038 (infoschema: fix the value of `MaxColumnID` in memDB (#45764))
     deps = [
         "//config",
         "//ddl/placement",
