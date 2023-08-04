@@ -193,5 +193,5 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 
 // MockDispatcher mock one dispatcher for one task, only used for tests.
 func (dm *Manager) MockDispatcher(task *proto.Task) *dispatcher {
-	return &dispatcher{dm.ctx, dm.taskMgr, task}
+	return newDispatcher(dm.ctx, dm.taskMgr, task)
 }
