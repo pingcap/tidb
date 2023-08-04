@@ -54,6 +54,7 @@ func NewKeyValueStore(
 // AddKeyValue saves a key-value pair to the KeyValueStore. If the accumulated
 // size or key count exceeds the given distance, a new range property will be
 // appended to the rangePropertiesCollector with current status.
+// Caller should guarantee `writerID` and `seq` are not changed.
 func (s *KeyValueStore) AddKeyValue(key, value []byte, writerID, seq int) error {
 	kvLen := len(key) + len(value) + 16
 
@@ -81,23 +82,25 @@ func (s *KeyValueStore) AddKeyValue(key, value []byte, writerID, seq int) error 
 		return err
 	}
 
-	if s.offset == 0 ||
-		s.rc.currProp.size >= s.rc.propSizeIdxDistance ||
-		s.rc.currProp.keys >= s.rc.propKeysIdxDistance {
-		if s.offset != 0 {
-			newProp := *s.rc.currProp
-			s.rc.props = append(s.rc.props, &newProp)
-		}
+	if len(s.rc.currProp.key) == 0 {
 		s.rc.currProp.key = key
-		s.rc.currProp.offset = s.offset
 		s.rc.currProp.writerID = writerID
 		s.rc.currProp.dataSeq = seq
-		s.rc.currProp.rangeOffsets = rangeOffsets{}
 	}
 
 	s.offset += uint64(kvLen)
 	s.rc.currProp.size += uint64(len(key) + len(value))
 	s.rc.currProp.keys++
+
+	if s.rc.currProp.size >= s.rc.propSizeIdxDistance ||
+		s.rc.currProp.keys >= s.rc.propKeysIdxDistance {
+		newProp := *s.rc.currProp
+		s.rc.props = append(s.rc.props, &newProp)
+
+		s.rc.currProp.key = nil
+		s.rc.currProp.offset = s.offset
+		s.rc.currProp.rangeOffsets = rangeOffsets{}
+	}
 
 	return nil
 }

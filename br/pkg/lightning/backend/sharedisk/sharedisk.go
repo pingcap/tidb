@@ -31,7 +31,9 @@ type rangeProperty struct {
 	rangeOffsets
 }
 
-// rangePropertiesCollector collects range properties for each range.
+// rangePropertiesCollector collects range properties for each range. The zero
+// value of rangePropertiesCollector is not ready to use, should call reset()
+// first.
 type rangePropertiesCollector struct {
 	props               []*rangeProperty
 	currProp            *rangeProperty
