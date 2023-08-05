@@ -38,12 +38,12 @@ var defaultStatus = map[string]*variable.StatusVal{
 }
 
 // GetScope gets the Status variables scope.
-func (s *Server) GetScope(status string) variable.ScopeFlag {
+func (*Server) GetScope(_ string) variable.ScopeFlag {
 	return variable.DefaultStatusVarScopeFlag
 }
 
 // Stats returns the server statistics.
-func (s *Server) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
+func (s *Server) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{}, len(defaultStatus))
 
 	for name, v := range defaultStatus {

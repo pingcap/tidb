@@ -516,7 +516,7 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 	}
 }
 
-func (s *Server) checkAuditPlugin(clientConn *clientConn) error {
+func (*Server) checkAuditPlugin(clientConn *clientConn) error {
 	return plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent == nil {

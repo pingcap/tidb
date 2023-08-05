@@ -235,8 +235,7 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	vars.SetHashAggFinalConcurrency(1)
 	vars.StmtCtx.InitMemTracker(memory.LabelForSQLText, -1)
 	vars.StmtCtx.MemTracker.AttachTo(vars.MemTracker)
-	switch variable.OOMAction.Load() {
-	case variable.OOMActionCancel:
+	if variable.OOMAction.Load() == variable.OOMActionCancel {
 		action := &memory.PanicOnExceed{}
 		vars.MemTracker.SetActionOnExceed(action)
 	}
@@ -245,7 +244,7 @@ func (s *rpcServer) createSession() (session.Session, error) {
 }
 
 // ReportMPPTaskStatus implements tikv server interface
-func (s *rpcServer) ReportMPPTaskStatus(ctx context.Context, req *mpp.ReportTaskStatusRequest) (resp *mpp.ReportTaskStatusResponse, err error) {
+func (*rpcServer) ReportMPPTaskStatus(_ context.Context, req *mpp.ReportTaskStatusRequest) (resp *mpp.ReportTaskStatusResponse, err error) {
 	resp = mppcoordmanager.InstanceMPPCoordinatorManager.ReportStatus(req)
 	return resp, nil
 }
