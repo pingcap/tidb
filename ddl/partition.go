@@ -2415,9 +2415,13 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			ExchangePartitionID:    ptID,
 			ExchangePartitionDefID: defID,
 		}
+		// We need an interim schema version, so there are no rows inserted
+		// into the table using the schema version before the exchange is made.
+		//job.SchemaState = model.StateWriteOnly
 		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	}
 
+	//job.SchemaState = model.StatePublic
 	if d.lease > 0 {
 		delayForAsyncCommit()
 	}
@@ -2575,6 +2579,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
 
+	//job.SchemaState = model.StatePublic
 	nt.ExchangePartitionInfo = nil
 	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	if err != nil {

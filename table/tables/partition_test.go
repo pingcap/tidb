@@ -709,6 +709,140 @@ func TestIssue31629(t *testing.T) {
 	}
 }
 
+func TestExchangePartitionStates(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	dbName := "partSchemaVer"
+	tk.MustExec("create database " + dbName)
+	tk.MustExec("use " + dbName)
+	tk.MustExec(`set @@global.tidb_enable_metadata_lock = ON`)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use " + dbName)
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use " + dbName)
+	tk4 := testkit.NewTestKit(t, store)
+	tk4.MustExec("use " + dbName)
+	tk.MustExec(`create placement policy pp1 followers=1`)
+	tk.MustExec(`create placement policy pp2 followers=2`)
+	tk.MustExec(`create table t (a int primary key, b varchar(255), key (b)) placement policy pp1`)
+	tk.MustExec(`create table tp (a int primary key, b varchar(255), key (b)) placement policy pp2 partition by range (a) (partition p0 values less than (1000000), partition p1M values less than (2000000))`)
+	tk.MustExec(`insert into t values (1, "1")`)
+	tk.MustExec(`insert into tp values (2, "2")`)
+	tk.MustExec(`analyze table t,tp`)
+	tk.MustExec("BEGIN")
+	tk.MustQuery(`select * from tp`).Check(testkit.Rows("2 2"))
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 1"))
+	syncChan := make(chan bool)
+	go func() {
+		tk2.MustContainErrMsg(`alter table tp exchange partition p0 with table t`, "[ddl:1736]Tables have different definitions")
+		syncChan <- true
+	}()
+	jobID := int64(0)
+	waitFor := func(tableName, s string, pos int) {
+		for {
+			gotime.Sleep(2 * gotime.Second)
+			break
+			res := tk4.MustQuery(`admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'exchange partition'`).Rows()
+			r := make([]string, 0, 9)
+			if len(res) == 1 {
+				for j := range res[0] {
+					r = append(r, res[0][j].(string))
+				}
+				if jobID == 0 {
+					jobID, _ = strconv.ParseInt(r[0], 10, 64)
+				}
+			}
+			logutil.BgLogger().Info("checking admin show ddl", zap.String("Want", s), zap.Strings("Got", r), zap.Int("len(res)", len(res)))
+			if len(res) == 1 && res[0][pos] == s {
+				logutil.BgLogger().Info("Got state", zap.String("State", s))
+				break
+			}
+			if jobID != 0 {
+				res = tk4.MustQuery(`select * from mysql.tidb_ddl_job where job_id = ` + strconv.FormatInt(jobID, 10)).Rows()
+				r = r[:0]
+				if len(res) == 1 {
+					for j := range res[0] {
+						r = append(r, res[0][j].(string))
+					}
+				}
+				logutil.BgLogger().Info("tidb_ddl_job", zap.Strings("Got", r), zap.Int("len(res)", len(res)))
+				res = tk4.MustQuery(`select * from mysql.tidb_ddl_history where job_id = ` + strconv.FormatInt(jobID, 10)).Rows()
+				r = r[:0]
+				if len(res) == 1 {
+					for j := range res[0] {
+						r = append(r, res[0][j].(string))
+					}
+				}
+				logutil.BgLogger().Info("tidb_ddl_history", zap.Strings("Got", r), zap.Int("len(res)", len(res)))
+			}
+			res = tk4.MustQuery(`admin show ddl jobs`).Rows()
+			for k := range res {
+				r = r[:0]
+				for j := range res[k] {
+					r = append(r, res[k][j].(string))
+				}
+				logutil.BgLogger().Info("admin show ddl jobs", zap.Strings("Got", r), zap.Int("len(res)", len(res)))
+			}
+			gotime.Sleep(10 * gotime.Millisecond)
+		}
+	}
+	waitFor("t", "write only", 4)
+	tk3.MustExec(`BEGIN PESSIMISTIC`)
+	//tk3.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1"))
+	//tk.MustExec(`insert into t values (3,"3")`)
+	// Adding the line below will make the alter fail.
+	//tk.MustExec(`insert into t values (1000003,"1000003")`)
+	//tk3.MustExec(`insert into t values (4,"4")`)
+	tk3.MustContainErrMsg(`insert into t values (1000004,"1000004")`, "[table:1748]Found a row not matching the given partition set")
+	logutil.BgLogger().Info("tk3 failed insert 1000004")
+
+	tk.MustExec(`COMMIT`)
+	// done is before MDL has gone through, so not yet synced!
+	waitFor("t", "cancelled", 11)
+	tk.MustExec(`BEGIN`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1"))
+	tk3.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1"))
+	tk.MustExec(`insert into t values (5,"5")`)
+	// This is the actual bug to fix!!!
+	tk.MustContainErrMsg(`insert into t values (1000005,"1000005")`, "[table:1748]Found a row not matching the given partition set")
+	tk.MustExec(`insert into tp values (6,"6")`)
+	// This is the actual bug to fix!!!
+	tk.MustExec(`insert into tp values (1000006,"1000006")`)
+	// TODO: This is a bug to be fixed?!
+	tk3.MustContainErrMsg(`insert into t values (1000007,"1000007")`,
+		"[table:1748]Found a row not matching the given partition set")
+	tk3.MustExec(`insert into t values (7,"7")`)
+
+	tk3.MustExec(`COMMIT`)
+	<-syncChan
+	tk.MustQuery(`show create table tp`).Check(testkit.Rows("" +
+		"tp CREATE TABLE `tp` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`pp2` */\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (1000000),\n" +
+		" PARTITION `p1M` VALUES LESS THAN (2000000))"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`pp1` */"))
+	//tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1000005 1000005", "2 2", "5 5"))
+	// Is this is a bug?
+	//tk.MustQuery(`select * from tp`).Sort().Check(testkit.Rows("1 1"))
+	tk.MustExec(`commit`)
+	tk.MustExec(`insert into t values (8,"8")`)
+	tk.MustExec(`insert into tp values (9,"9")`)
+	tk.MustContainErrMsg(`insert into t values (1000010,"1000010")`,
+		"[table:1748]Found a row not matching the given partition set")
+	tk.MustExec(`insert into tp values (1000011,"1000011")`)
+}
+
 func TestAddKeyPartitionStates(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
