@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "common_test",
+    timeout = "short",
+    srcs = [
+        "common_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    shard_count = 24,
+    deps = [
+        "//config",
+        "//expression",
+        "//kv",
+        "//parser/model",
+        "//parser/mysql",
+        "//parser/terror",
+        "//sessionctx",
+        "//table/tables",
+        "//testkit",
+        "//testkit/testmain",
+        "//testkit/testsetup",
+        "//types",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

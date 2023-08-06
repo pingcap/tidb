@@ -19,6 +19,7 @@ import (
 	"reflect"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/metrics"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
+	"github.com/pingcap/tidb/types"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -137,4 +139,46 @@ func TestRecordTTLRows(t *testing.T) {
 	tk.MustExec("rollback to insert1")
 	tk.MustExec("commit")
 	require.Equal(t, 7.0, MustReadCounter(t, metrics.TTLInsertRowsCount))
+}
+
+func TestInformationSchemaCreateTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c int)")
+	tk.MustExec(`set @@time_zone = 'Asia/Shanghai'`)
+	ret := tk.MustQuery("select create_time from information_schema.tables where table_name='t';")
+	// Make sure t1 is greater than t.
+	time.Sleep(time.Second)
+	tk.MustExec("alter table t modify c int default 11")
+	ret1 := tk.MustQuery("select create_time from information_schema.tables where table_name='t';")
+	ret2 := tk.MustQuery("show table status like 't'")
+	require.Equal(t, ret2.Rows()[0][11].(string), ret1.Rows()[0][0].(string))
+	typ1, err := types.ParseDatetime(nil, ret.Rows()[0][0].(string))
+	require.NoError(t, err)
+	typ2, err := types.ParseDatetime(nil, ret1.Rows()[0][0].(string))
+	require.NoError(t, err)
+	r := typ2.Compare(typ1)
+	require.Equal(t, 1, r)
+	// Check that time_zone changes makes the create_time different
+	tk.MustExec(`set @@time_zone = 'Europe/Amsterdam'`)
+	ret = tk.MustQuery(`select create_time from information_schema.tables where table_name='t'`)
+	ret2 = tk.MustQuery(`show table status like 't'`)
+	require.Equal(t, ret2.Rows()[0][11].(string), ret.Rows()[0][0].(string))
+	typ3, err := types.ParseDatetime(nil, ret.Rows()[0][0].(string))
+	require.NoError(t, err)
+	// Asia/Shanghai 2022-02-17 17:40:05 > Europe/Amsterdam 2022-02-17 10:40:05
+	r = typ2.Compare(typ3)
+	require.Equal(t, 1, r)
+}
+
+// TestISColumns tests information_schema.columns.
+func TestISColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("select ORDINAL_POSITION from INFORMATION_SCHEMA.COLUMNS;")
+	tk.MustQuery("SELECT CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.CHARACTER_SETS WHERE CHARACTER_SET_NAME = 'utf8mb4'").Check(testkit.Rows("utf8mb4"))
 }
