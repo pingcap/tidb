@@ -895,9 +895,6 @@ func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 				if err != nil {
 					return errors.Trace(err)
 				}
-				if isPasswordVariable(v.Name) && value != "" {
-					value = "******"
-				}
 				e.appendRow([]interface{}{v.Name, value})
 			}
 		}
@@ -923,17 +920,9 @@ func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if isPasswordVariable(v.Name) && value != "" {
-			value = "******"
-		}
 		e.appendRow([]interface{}{v.Name, value})
 	}
 	return nil
-}
-
-func isPasswordVariable(name string) bool {
-	return name == variable.AuthenticationLDAPSimpleBindRootPWD ||
-		name == variable.AuthenticationLDAPSASLBindRootPWD
 }
 
 func (e *ShowExec) fetchShowStatus() error {
