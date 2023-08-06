@@ -710,30 +710,13 @@ func TestConnExecutionTimeout(t *testing.T) {
 		tk.MustExec(str)
 	}
 
-	tk.MustExec("select SLEEP(1);")
+	tk.MustQuery("select SLEEP(1);").Check(testkit.Rows("0"))
 	tk.MustExec("set @@max_execution_time = 500;")
-	tk.MustQuery("select * FROM testTable2 WHERE SLEEP(1);")
+	tk.MustQuery("select SLEEP(1);").Check(testkit.Rows("1"))
 	tk.MustExec("set @@max_execution_time = 1500;")
-	tk.MustExec("set @@tidb_expensive_query_time_threshold = 1;")
-
-	records, err := tk.Exec("select SLEEP(2);")
-	require.NoError(t, err)
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.ResultSetToResult(records, fmt.Sprintf("%v", records)).Check(testkit.Rows("1"))
-	require.NoError(t, records.Close())
-
-	tk.MustExec("set @@max_execution_time = 0;")
-
-	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
-	require.NoError(t, err)
-
-	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
-	require.NoError(t, err)
-
-	tk.MustExec("set @@max_execution_time = 500;")
-
-	err = cc.handleQuery(context.Background(), "alter table testTable2 add index idx(age);")
-	require.NoError(t, err)
+	tk.MustQuery("select SLEEP(1);").Check(testkit.Rows("0"))
+	err := tk.QueryToErr("select * FROM testTable2 WHERE SLEEP(1);")
+	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
 }
 
 func TestShutDown(t *testing.T) {

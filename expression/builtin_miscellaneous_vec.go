@@ -359,13 +359,11 @@ func doSleep(secs float64, sessVars *variable.SessionVars) (isKilled bool) {
 	for {
 		select {
 		case <-ticker.C:
-			// Regular kill
-			if atomic.LoadUint32(&sessVars.Killed) == 1 {
-				timer.Stop()
-				return true
-			}
-			// Killed because of max execution time
-			if atomic.LoadUint32(&sessVars.Killed) == 2 {
+			// Regular kill or Killed because of max execution time.
+			if atomic.LoadUint32(&sessVars.Killed) == 1 || atomic.LoadUint32(&sessVars.Killed) == 2 {
+				if len(sessVars.StmtCtx.TableIDs) == 0 {
+					atomic.StoreUint32(&sessVars.Killed, 0)
+				}
 				timer.Stop()
 				return true
 			}
