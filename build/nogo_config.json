@@ -627,6 +627,7 @@
       "executor/test/splittest": "executor/test/splittest",
       "executor/test/tiflashtest": "executor/test/tiflashtest",
       "executor/test/unstabletest": "executor/test/unstabletest",
+      "session/test": "session/test code",
       "ddl/tests": "ddl/tests code",
       "disttask/": "disttask code",
       "timer/": "timer code",
