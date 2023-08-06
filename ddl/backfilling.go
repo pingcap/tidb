@@ -815,7 +815,7 @@ func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, keyPre
 	return nil
 }
 
-// GetRegionEndKey gets the actual end key for the range of [startKey, endKey).
+// GetRangeEndKey gets the actual end key for the range of [startKey, endKey).
 func GetRangeEndKey(ctx *JobContext, store kv.Storage, priority int, keyPrefix kv.Key, startKey, endKey kv.Key) (kv.Key, error) {
 	snap := store.GetSnapshot(kv.MaxVersion)
 	snap.SetOption(kv.Priority, priority)
