@@ -25,7 +25,7 @@ import (
 func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
-	writer, err := memStore.Create(ctx, "/test")
+	writer, err := memStore.Create(ctx, "/test", nil)
 	require.NoError(t, err)
 	rc := &rangePropertiesCollector{
 		propSizeIdxDistance: 100,
@@ -72,7 +72,7 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	err = writer.Close(ctx)
 	require.NoError(t, err)
 
-	writer, err = memStore.Create(ctx, "/test2")
+	writer, err = memStore.Create(ctx, "/test2", nil)
 	require.NoError(t, err)
 	rc = &rangePropertiesCollector{
 		propSizeIdxDistance: 1,
