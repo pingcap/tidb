@@ -82,7 +82,12 @@ go_library(
         "@com_github_tikv_pd_client//:client",
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_google_grpc//:grpc",
+<<<<<<< HEAD:br/pkg/lightning/restore/BUILD.bazel
         "@org_golang_google_grpc//keepalive",
+=======
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+>>>>>>> dc5d5394dfd (lightning: make OpLevelOptional suppress the error of DoChecksum (#45486)):br/pkg/lightning/importer/BUILD.bazel
         "@org_golang_x_exp//maps",
         "@org_golang_x_exp//slices",
         "@org_golang_x_sync//errgroup",
