@@ -2256,11 +2256,13 @@ func (rc *Client) PreCheckTableClusterIndex(
 	return nil
 }
 
-func (rc *Client) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64) error {
+func (rc *Client) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint) error {
 	init := LogFileManagerInit{
 		StartTS:   startTS,
 		RestoreTS: restoreTS,
 		Storage:   rc.storage,
+
+		MetadataDownloadBatchSize: metadataDownloadBatchSize,
 	}
 	var err error
 	rc.logFileManager, err = CreateLogFileManager(ctx, init)

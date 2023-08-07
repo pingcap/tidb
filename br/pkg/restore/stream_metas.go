@@ -29,7 +29,8 @@ type StreamMetadataSet struct {
 
 	// keeps the meta-information of metadata as little as possible
 	// to save the memory
-	metadataInfos map[string]*MetadataInfo
+	metadataInfos             map[string]*MetadataInfo
+	MetadataDownloadBatchSize uint
 
 	// a parser of metadata
 	Helper *stream.MetadataHelper
@@ -62,7 +63,7 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(ctx context.Context, s
 	metadataMap.metas = make(map[string]*MetadataInfo)
 	// `shiftUntilTS` must be less than `until`
 	metadataMap.shiftUntilTS = until
-	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, raw []byte) error {
+	err := stream.FastUnmarshalMetaData(ctx, s, ms.MetadataDownloadBatchSize, func(path string, raw []byte) error {
 		m, err := ms.Helper.ParseToMetadataHard(raw)
 		if err != nil {
 			return err
@@ -154,7 +155,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context
 		item []string
 		sync.Mutex
 	}
-	worker := utils.NewWorkerPool(128, "delete files")
+	worker := utils.NewWorkerPool(ms.MetadataDownloadBatchSize, "delete files")
 	eg, cx := errgroup.WithContext(ctx)
 	for path, metaInfo := range ms.metadataInfos {
 		path := path

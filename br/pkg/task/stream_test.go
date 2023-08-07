@@ -139,68 +139,6 @@ func fakeMetaFiles(ctx context.Context, tempDir string, infos []fakeResolvedInfo
 	return nil
 }
 
-func TestGetGlobalResolvedTS(t *testing.T) {
-	ctx := context.Background()
-	tmpdir := t.TempDir()
-	s, err := storage.NewLocalStorage(tmpdir)
-	require.Nil(t, err)
-	helper := stream.NewMetadataHelper()
-
-	stores := []fakeResolvedInfo{
-		{
-			storeID:    1,
-			resolvedTS: 100,
-		},
-		{
-			storeID:    2,
-			resolvedTS: 101,
-		},
-		{
-			storeID:    1,
-			resolvedTS: 70,
-		},
-	}
-
-	err = fakeMetaFiles(ctx, tmpdir, stores)
-	require.Nil(t, err)
-	globalResolvedTS, err := getGlobalResolvedTS(ctx, s, helper)
-	require.Nil(t, err)
-	require.Equal(t, uint64(101), globalResolvedTS)
-}
-
-func TestGetGlobalResolvedTS2(t *testing.T) {
-	ctx := context.Background()
-	tmpdir := t.TempDir()
-	s, err := storage.NewLocalStorage(tmpdir)
-	require.Nil(t, err)
-	helper := stream.NewMetadataHelper()
-
-	stores := []fakeResolvedInfo{
-		{
-			storeID:    1,
-			resolvedTS: 95,
-		},
-		{
-			storeID:    1,
-			resolvedTS: 98,
-		},
-		{
-			storeID:    2,
-			resolvedTS: 90,
-		},
-		{
-			storeID:    2,
-			resolvedTS: 99,
-		},
-	}
-
-	err = fakeMetaFiles(ctx, tmpdir, stores)
-	require.Nil(t, err)
-	globalResolvedTS, err := getGlobalResolvedTS(ctx, s, helper)
-	require.Nil(t, err)
-	require.Equal(t, uint64(99), globalResolvedTS)
-}
-
 func fakeCheckpointFiles(
 	ctx context.Context,
 	tmpDir string,

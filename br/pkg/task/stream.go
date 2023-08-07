@@ -983,8 +983,9 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 
 	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
 	metas := restore.StreamMetadataSet{
-		Helper: stream.NewMetadataHelper(),
-		DryRun: cfg.DryRun,
+		MetadataDownloadBatchSize: cfg.MetadataDownloadBatchSize,
+		Helper:                    stream.NewMetadataHelper(),
+		DryRun:                    cfg.DryRun,
 	}
 	shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, storage, cfg.Until)
 	if err != nil {
@@ -1300,7 +1301,7 @@ func restoreStream(
 		}()
 	}
 
-	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS)
+	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS, cfg.MetadataDownloadBatchSize)
 	if err != nil {
 		return err
 	}
@@ -1626,43 +1627,6 @@ func getFullBackupTS(
 	}
 
 	return backupmeta.GetEndVersion(), backupmeta.GetClusterId(), nil
-}
-
-func getGlobalResolvedTS(
-	ctx context.Context,
-	s storage.ExternalStorage,
-	helper *stream.MetadataHelper,
-) (uint64, error) {
-	storeMap := struct {
-		sync.Mutex
-		resolvedTSMap map[int64]uint64
-	}{}
-	storeMap.resolvedTSMap = make(map[int64]uint64)
-	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, raw []byte) error {
-		m, err := helper.ParseToMetadata(raw)
-		if err != nil {
-			return err
-		}
-		storeMap.Lock()
-		if resolveTS, exist := storeMap.resolvedTSMap[m.StoreId]; !exist || resolveTS < m.ResolvedTs {
-			storeMap.resolvedTSMap[m.StoreId] = m.ResolvedTs
-		}
-		storeMap.Unlock()
-		return nil
-	})
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	var globalCheckpointTS uint64 = 0
-	// If V3 global-checkpoint advance, the maximum value in storeMap.resolvedTSMap as global-checkpoint-ts.
-	// If v2 global-checkpoint advance, it need the minimal value in storeMap.resolvedTSMap as global-checkpoint-ts.
-	// Because each of store maintains own checkpoint-ts only.
-	for _, resolveTS := range storeMap.resolvedTSMap {
-		if globalCheckpointTS < resolveTS {
-			globalCheckpointTS = resolveTS
-		}
-	}
-	return globalCheckpointTS, nil
 }
 
 func parseFullBackupTablesStorage(
