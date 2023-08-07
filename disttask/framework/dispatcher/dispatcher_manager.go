@@ -186,7 +186,7 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 	_ = dm.gPool.Run(func() {
 		dispatcher := newDispatcher(dm.ctx, dm.taskMgr, task)
 		dm.setRunningTask(task, dispatcher)
-		dispatcher.ExecuteTask()
+		dispatcher.executeTask()
 		dm.delRunningTask(task.ID)
 	})
 }

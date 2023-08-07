@@ -48,18 +48,6 @@ var (
 	retrySQLInterval           = 500 * time.Millisecond
 )
 
-// Dispatcher defines the interface for operations inside a dispatcher.
-type Dispatcher interface {
-	// Start enables dispatching and monitoring mechanisms.
-	Start()
-	// GetAllSchedulerIDs gets handles the task's all available instances.
-	GetAllSchedulerIDs(ctx context.Context, handle TaskFlowHandle, task *proto.Task) ([]string, error)
-	// Stop stops the dispatcher.
-	Stop()
-	// Inited check if the dispatcher Started.
-	Inited() bool
-}
-
 // TaskHandle provides the interface for operations needed by task flow handles.
 type TaskHandle interface {
 	// GetAllSchedulerIDs gets handles the task's all scheduler instances.
@@ -92,12 +80,13 @@ func newDispatcher(ctx context.Context, taskMgr *storage.TaskManager, task *prot
 }
 
 // ExecuteTask start to schedule a task.
-func (d *dispatcher) ExecuteTask() {
+func (d *dispatcher) executeTask() {
 	logutil.Logger(d.logCtx).Info("execute one task",
 		zap.String("state", d.task.State), zap.Uint64("concurrency", d.task.Concurrency))
 	d.scheduleTask()
 }
 
+// monitorTask fetch task state from tidb_global_task table.
 func (d *dispatcher) monitorTask() (err error) {
 	d.task, err = d.taskMgr.GetGlobalTaskByID(d.task.ID)
 	if err != nil {
@@ -156,12 +145,14 @@ func (d *dispatcher) scheduleTask() {
 	}
 }
 
+// handle task in cancelling state, dispatch revert subtasks.
 func (d *dispatcher) handleCancelling() error {
 	errs := []error{errors.New("cancel")}
 	logutil.Logger(d.logCtx).Info("handle cancelling state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
 	return d.processErrFlow(errs)
 }
 
+// handle task in reverting state, check all revert subtasks finished.
 func (d *dispatcher) handleReverting() error {
 	logutil.Logger(d.logCtx).Info("handle reverting state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
 	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.task.ID, proto.TaskStateRevertPending, proto.TaskStateReverting)
@@ -181,11 +172,14 @@ func (d *dispatcher) handleReverting() error {
 	return nil
 }
 
+// handle task in pending state, dispatch subtasks.
 func (d *dispatcher) handlePending() error {
 	logutil.Logger(d.logCtx).Info("handle pending state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
 	return d.processNormalFlow()
 }
 
+// handle task in running state, check all running subtasks finished.
+// If subtasks finished, run into the next stage.
 func (d *dispatcher) handleRunning() error {
 	logutil.Logger(d.logCtx).Info("handle running state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
 	subTaskErrs, err := d.taskMgr.CollectSubTaskError(d.task.ID)
