@@ -65,7 +65,7 @@ func (idx *Index) GetEvictedStatus() int {
 	return idx.evictedStatus
 }
 
-func (idx *Index) dropUnnecessaryData() {
+func (idx *Index) DropUnnecessaryData() {
 	if idx.GetStatsVer() < Version2 {
 		idx.CMSketch = nil
 	}

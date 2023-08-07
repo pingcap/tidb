@@ -108,18 +108,12 @@ func (s *LFU) Values() []*statistics.Table {
 	return result
 }
 
-// dropEvicted drop stats for table column/index
-func dropEvicted(item statistics.TableCacheItem) {
-	if !item.IsStatsInitialized() {
+// DropEvicted drop stats for table column/index
+func DropEvicted(item statistics.TableCacheItem) {
+	if !item.IsStatsInitialized() || item.GetEvictedStatus() == statistics.AllEvicted {
 		return
 	}
-	if item.IsCMSExist() && item.GetStatsVer() < statistics.Version2 {
-		item.DropCMS()
-	}
-	// For stats version2, there is no cms thus we directly drop topn
-	item.DropTopN()
-	item.DropTopN()
-	item.DropHist()
+	item.DropUnnecessaryData()
 }
 
 func (s *LFU) onEvict(item *ristretto.Item) {
@@ -129,10 +123,10 @@ func (s *LFU) onEvict(item *ristretto.Item) {
 	table := item.Value.(*statistics.Table)
 	before := table.MemoryUsage().TotalTrackingMemUsage()
 	for _, column := range table.Columns {
-		dropEvicted(column)
+		DropEvicted(column)
 	}
 	for _, indix := range table.Indices {
-		dropEvicted(indix)
+		DropEvicted(indix)
 	}
 	after := table.MemoryUsage().TotalTrackingMemUsage()
 	// why add before again? because the cost will be subtracted in onExit.

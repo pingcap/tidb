@@ -350,10 +350,10 @@ func (c *Column) DropEvicted() {
 	if !c.statsInitialized || c.evictedStatus == AllEvicted {
 		return
 	}
-	c.dropUnnecessaryData()
+	c.DropUnnecessaryData()
 }
 
-func (c *Column) dropUnnecessaryData() {
+func (c *Column) DropUnnecessaryData() {
 	if c.StatsVer < Version2 {
 		c.CMSketch = nil
 	}
