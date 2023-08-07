@@ -21,11 +21,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	readMetaConcurrency = 128
-	readMetaBatchSize   = 512
-)
-
 // MetaIter is the type of iterator of metadata files' content.
 type MetaIter = iter.TryNextor[*backuppb.Metadata]
 
@@ -64,6 +59,8 @@ type logFileManager struct {
 
 	storage storage.ExternalStorage
 	helper  *stream.MetadataHelper
+
+	metadataDownloadBatchSize uint
 }
 
 // LogFileManagerInit is the config needed for initializing the log file manager.
@@ -71,6 +68,8 @@ type LogFileManagerInit struct {
 	StartTS   uint64
 	RestoreTS uint64
 	Storage   storage.ExternalStorage
+
+	MetadataDownloadBatchSize uint
 }
 
 type DDLMetaGroup struct {
@@ -86,6 +85,8 @@ func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*logFil
 		restoreTS: init.RestoreTS,
 		storage:   init.Storage,
 		helper:    stream.NewMetadataHelper(),
+
+		metadataDownloadBatchSize: init.MetadataDownloadBatchSize,
 	}
 	err := fm.loadShiftTS(ctx)
 	if err != nil {
@@ -104,7 +105,7 @@ func (rc *logFileManager) loadShiftTS(ctx context.Context) error {
 		value  uint64
 		exists bool
 	}{}
-	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, raw []byte) error {
+	err := stream.FastUnmarshalMetaData(ctx, rc.storage, rc.metadataDownloadBatchSize, func(path string, raw []byte) error {
 		m, err := rc.helper.ParseToMetadata(raw)
 		if err != nil {
 			return err
@@ -173,8 +174,10 @@ func (rc *logFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 		}
 		return meta, nil
 	}
+	// TODO: maybe we need to be able to adjust the concurrency to download files,
+	// which currently is the same as the chunk size
 	reader := iter.Transform(namesIter, readMeta,
-		iter.WithChunkSize(readMetaBatchSize), iter.WithConcurrency(readMetaConcurrency))
+		iter.WithChunkSize(rc.metadataDownloadBatchSize), iter.WithConcurrency(rc.metadataDownloadBatchSize))
 	return reader, nil
 }
 
