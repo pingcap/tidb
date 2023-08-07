@@ -45,3 +45,13 @@ func TestIssue42732(t *testing.T) {
 	tk.MustExec("INSERT INTO t2 VALUES (1, 1)")
 	tk.MustQuery("SELECT one.a, one.b as b2 FROM t1 one ORDER BY (SELECT two.b FROM t2 two WHERE two.a = one.b)").Check(testkit.Rows("1 1"))
 }
+
+func TestIssue45758(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE tb1 (cid INT, code INT, class VARCHAR(10))")
+	tk.MustExec("CREATE TABLE tb2 (cid INT, code INT, class VARCHAR(10))")
+	// result ok
+	tk.MustExec("UPDATE tb1, (SELECT code AS cid, code, MAX(class) AS class FROM tb2 GROUP BY code) tb3 SET tb1.cid = tb3.cid, tb1.code = tb3.code, tb1.class = tb3.class")
+}
