@@ -2091,6 +2091,9 @@ func TestShowPasswordVariable(t *testing.T) {
 	rs, err := tk.Exec("show variables like 'authentication_ldap_sasl_bind_root_pwd'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], "")
+	rs, err = tk.Exec("SELECT current_value FROM information_schema.variables_info WHERE VARIABLE_NAME LIKE 'authentication_ldap_sasl_bind_root_pwd'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "")
 
 	tk.MustExec("SET GLOBAL authentication_ldap_sasl_bind_root_pwd = password")
 	defer func() {
@@ -2099,11 +2102,17 @@ func TestShowPasswordVariable(t *testing.T) {
 	rs, err = tk.Exec("show variables like 'authentication_ldap_sasl_bind_root_pwd'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], "******")
+	rs, err = tk.Exec("SELECT current_value FROM information_schema.variables_info WHERE VARIABLE_NAME LIKE 'authentication_ldap_sasl_bind_root_pwd'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "******")
 
 	tk.MustExec("SET GLOBAL authentication_ldap_simple_bind_root_pwd = ''")
 	rs, err = tk.Exec("show variables like 'authentication_ldap_simple_bind_root_pwd'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], "")
+	rs, err = tk.Exec("SELECT current_value FROM information_schema.variables_info WHERE VARIABLE_NAME LIKE 'authentication_ldap_simple_bind_root_pwd'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "")
 
 	tk.MustExec("SET GLOBAL authentication_ldap_simple_bind_root_pwd = password")
 	defer func() {
@@ -2113,4 +2122,8 @@ func TestShowPasswordVariable(t *testing.T) {
 	rs, err = tk.Exec("show variables like 'authentication_ldap_simple_bind_root_pwd'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], "******")
+	rs, err = tk.Exec("SELECT current_value FROM information_schema.variables_info WHERE VARIABLE_NAME LIKE 'authentication_ldap_simple_bind_root_pwd'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "******")
+
 }
