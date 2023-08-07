@@ -60,13 +60,52 @@ type CheckpointAdvancer struct {
 
 	// the cached last checkpoint.
 	// if no progress, this cache can help us don't to send useless requests.
-	lastCheckpoint uint64
+	lastCheckpoint checkpoint
 
 	checkpoints   *spans.ValueSortedFull
 	checkpointsMu sync.Mutex
 
 	subscriber   *FlushSubscriber
 	subscriberMu sync.Mutex
+}
+
+// checkpoint represents the TS with specific range.
+// it's only used in advancer.go.
+type checkpoint struct {
+	StartKey []byte
+	EndKey   []byte
+	TS       uint64
+
+	// It's better to use PD timestamp in future, for now
+	// use local time to decide the time to resolve lock is ok.
+	generateTime time.Time
+}
+
+func newCheckpointWithTS(ts uint64) checkpoint {
+	return checkpoint{
+		TS:           ts,
+		generateTime: time.Now(),
+	}
+}
+
+func newCheckpointWithSpan(s spans.Valued) checkpoint {
+	return checkpoint{
+		StartKey:     s.Key.StartKey,
+		EndKey:       s.Key.EndKey,
+		TS:           s.Value,
+		generateTime: time.Now(),
+	}
+}
+
+func (c checkpoint) safeTS() uint64 {
+	return c.TS - 1
+}
+
+// if a checkpoint stay in a time too long(1 min)
+// we should try to resolve lock for the range
+// to keep the RPO in a short value.
+func (c checkpoint) needResolveLocks() bool {
+	return time.Since(c.generateTime) > time.Minute
 }
 
 // NewCheckpointAdvancer creates a checkpoint advancer with the env.
@@ -180,7 +219,7 @@ func (c *CheckpointAdvancer) WithCheckpoints(f func(*spans.ValueSortedFull)) {
 }
 
 func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
-	threshold time.Duration) (uint64, error) {
+	threshold time.Duration) (spans.Valued, error) {
 	var targets []spans.Valued
 	var minValue spans.Valued
 	c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
@@ -194,13 +233,13 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
 		zap.Stringer("min", minValue), zap.Int("for-polling", len(targets)),
 		zap.String("min-ts", oracle.GetTimeFromTS(minValue.Value).Format(time.RFC3339)))
 	if len(targets) == 0 {
-		return minValue.Value, nil
+		return minValue, nil
 	}
 	err := c.tryAdvance(ctx, len(targets), func(i int) kv.KeyRange { return targets[i].Key })
 	if err != nil {
-		return 0, err
+		return minValue, err
 	}
-	return minValue.Value, nil
+	return minValue, nil
 }
 
 func (c *CheckpointAdvancer) consumeAllTask(ctx context.Context, ch <-chan TaskEvent) error {
@@ -293,7 +332,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		c.task = e.Info
 		c.taskRange = spans.Collapse(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
 		c.checkpoints = spans.Sorted(spans.NewFullWith(e.Ranges, 0))
-		c.lastCheckpoint = e.Info.StartTs
+		c.lastCheckpoint = newCheckpointWithTS(e.Info.StartTs)
 		p, err := c.env.BlockGCUntil(ctx, c.task.StartTs)
 		if err != nil {
 			log.Warn("failed to upload service GC safepoint, skipping.", logutil.ShortError(err))
@@ -323,23 +362,29 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	return nil
 }
 
-func (c *CheckpointAdvancer) setCheckpoint(cp uint64) bool {
-	if cp < c.lastCheckpoint {
+func (c *CheckpointAdvancer) setCheckpoint(s spans.Valued) bool {
+	cp := newCheckpointWithSpan(s)
+	if cp.TS < c.lastCheckpoint.TS {
 		log.Warn("failed to update global checkpoint: stale",
-			zap.Uint64("old", c.lastCheckpoint), zap.Uint64("new", cp))
+			zap.Uint64("old", c.lastCheckpoint.TS), zap.Uint64("new", cp.TS))
 		return false
 	}
-	if cp <= c.lastCheckpoint {
+	// lastCheckpoint is too long enough.
+	// assume the cluster has expired locks for whatever reasons.
+	if c.lastCheckpoint.needResolveLocks() {
+
+	}
+	if cp.TS <= c.lastCheckpoint.TS {
 		return false
 	}
 	c.lastCheckpoint = cp
-	metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint))
+	metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint.TS))
 	return true
 }
 
 // advanceCheckpointBy advances the checkpoint by a checkpoint getter function.
 func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context,
-	getCheckpoint func(context.Context) (uint64, error)) error {
+	getCheckpoint func(context.Context) (spans.Valued, error)) error {
 	start := time.Now()
 	cp, err := getCheckpoint(ctx)
 	if err != nil {
@@ -348,8 +393,8 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context,
 
 	if c.setCheckpoint(cp) {
 		log.Info("uploading checkpoint for task",
-			zap.Stringer("checkpoint", oracle.GetTimeFromTS(cp)),
-			zap.Uint64("checkpoint", cp),
+			zap.Stringer("checkpoint", oracle.GetTimeFromTS(cp.Value)),
+			zap.Uint64("checkpoint", cp.Value),
 			zap.String("task", c.task.Name),
 			zap.Stringer("take", time.Since(start)))
 	}
@@ -403,24 +448,24 @@ func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
 
 func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	c.checkpointsMu.Lock()
-	c.setCheckpoint(c.checkpoints.MinValue())
+	c.setCheckpoint(c.checkpoints.Min())
 	c.checkpointsMu.Unlock()
-	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint); err != nil {
+	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint.TS); err != nil {
 		return errors.Annotate(err, "failed to upload global checkpoint")
 	}
-	p, err := c.env.BlockGCUntil(ctx, c.lastCheckpoint-1)
+	p, err := c.env.BlockGCUntil(ctx, c.lastCheckpoint.safeTS())
 	if err != nil {
 		return errors.Annotatef(err,
 			"failed to update service GC safe point, current checkpoint is %d, target checkpoint is %d",
-			c.lastCheckpoint-1, p)
+			c.lastCheckpoint.safeTS(), p)
 	}
-	if p <= c.lastCheckpoint-1 {
+	if p <= c.lastCheckpoint.safeTS() {
 		log.Info("updated log backup GC safe point.",
-			zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint-1))
+			zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint.safeTS()))
 	}
-	if p > c.lastCheckpoint-1 {
+	if p > c.lastCheckpoint.safeTS() {
 		log.Warn("update log backup GC safe point failed: stale.",
-			zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint-1))
+			zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint.safeTS()))
 	}
 	return nil
 }
@@ -433,7 +478,7 @@ func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
 		threshold = c.Config().GetSubscriberErrorStartPollThreshold()
 	}
 
-	err := c.advanceCheckpointBy(cx, func(cx context.Context) (uint64, error) {
+	err := c.advanceCheckpointBy(cx, func(cx context.Context) (spans.Valued, error) {
 		return c.CalculateGlobalCheckpointLight(cx, threshold)
 	})
 	if err != nil {
