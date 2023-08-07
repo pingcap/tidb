@@ -61,10 +61,12 @@ func (idx *Index) IsAllEvicted() bool {
 	return idx.statsInitialized && idx.evictedStatus >= AllEvicted
 }
 
+// GetEvictedStatus returns the evicted status
 func (idx *Index) GetEvictedStatus() int {
 	return idx.evictedStatus
 }
 
+// DropUnnecessaryData drops unnecessary data for index.
 func (idx *Index) DropUnnecessaryData() {
 	if idx.GetStatsVer() < Version2 {
 		idx.CMSketch = nil
