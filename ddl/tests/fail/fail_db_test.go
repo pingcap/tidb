@@ -138,7 +138,6 @@ func TestHalfwayCancelOperations(t *testing.T) {
 	err = tk.ExecToErr("alter table pt exchange partition p1 with table nt")
 	require.Error(t, err)
 
-	tk.MustExec("insert into nt values(7)")
 	tk.MustQuery("select * from pt").Check(testkit.Rows("1", "3", "5"))
 	tk.MustQuery("select * from nt").Check(testkit.Rows("7"))
 	// Execute ddl statement reload schema.

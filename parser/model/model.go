@@ -1145,7 +1145,7 @@ type ExchangePartitionInfo struct {
 	ExchangePartitionID    int64 `json:"exchange_partition_id"`
 	ExchangePartitionDefID int64 `json:"exchange_partition_def_id"`
 	// Deprecated, not used
-	xxx_ExchangePartitionFlag bool `json:"exchange_partition_flag"`
+	XXXExchangePartitionFlag bool `json:"exchange_partition_flag"`
 }
 
 // PartitionInfo provides table partition info.
