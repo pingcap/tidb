@@ -10,7 +10,7 @@ set -eo pipefail
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 group=$1
 COV_DIR="/tmp/group_cover"
-rm -rn COV_DIR
+rm -rf COV_DIR
 mkdir $COV_DIR
 
 # Define groups
