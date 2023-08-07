@@ -306,4 +306,4 @@ replace (
 	github.com/pingcap/tidb/parser => ./parser
 )
 
-replace github.com/tikv/client-go/v2 => github.com/crazycs520/client-go/v2 v2.0.0-alpha.0.20230807054151-40e93167ac23
+replace github.com/tikv/client-go/v2 => github.com/crazycs520/client-go/v2 v2.0.0-alpha.0.20230807055359-1556c11f2597
