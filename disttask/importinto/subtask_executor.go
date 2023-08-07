@@ -120,21 +120,26 @@ func verifyChecksum(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostPr
 	}
 	remoteChecksum, err := checksumTable(ctx, globalTaskManager, taskMeta, logger)
 	if err != nil {
-		return err
-	}
-	if !remoteChecksum.IsEqual(&localChecksum) {
-		err2 := common.ErrChecksumMismatch.GenWithStackByArgs(
-			remoteChecksum.Checksum, localChecksum.Sum(),
-			remoteChecksum.TotalKVs, localChecksum.SumKVS(),
-			remoteChecksum.TotalBytes, localChecksum.SumSize(),
-		)
-		if taskMeta.Plan.Checksum == config.OpLevelOptional {
-			logger.Warn("verify checksum failed, but checksum is optional, will skip it", zap.Error(err2))
-			err2 = nil
+		if taskMeta.Plan.Checksum != config.OpLevelOptional {
+			return err
 		}
-		return err2
+		logger.Warn("checksumTable failed, will skip this error and go on", zap.Error(err))
 	}
-	logger.Info("checksum pass", zap.Object("local", &localChecksum))
+	if remoteChecksum != nil {
+		if !remoteChecksum.IsEqual(&localChecksum) {
+			err2 := common.ErrChecksumMismatch.GenWithStackByArgs(
+				remoteChecksum.Checksum, localChecksum.Sum(),
+				remoteChecksum.TotalKVs, localChecksum.SumKVS(),
+				remoteChecksum.TotalBytes, localChecksum.SumSize(),
+			)
+			if taskMeta.Plan.Checksum == config.OpLevelOptional {
+				logger.Warn("verify checksum failed, but checksum is optional, will skip it", zap.Error(err2))
+				err2 = nil
+			}
+			return err2
+		}
+		logger.Info("checksum pass", zap.Object("local", &localChecksum))
+	}
 	return nil
 }
 
