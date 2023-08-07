@@ -2412,6 +2412,21 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			return ver, errors.Trace(err)
 		}
 
+		err = checkExchangePartitionPlacementPolicy(t, partDef.PlacementPolicyRef, nt.PlacementPolicyRef)
+		if err != nil {
+			// Also check if it uses the table level default
+			if partDef.PlacementPolicyRef == nil {
+				err = checkExchangePartitionPlacementPolicy(t, pt.PlacementPolicyRef, nt.PlacementPolicyRef)
+				if err != nil {
+					job.State = model.JobStateCancelled
+					return ver, errors.Trace(err)
+				}
+			} else {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
+
 		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
 			ExchangePartitionID:    ptID,
 			ExchangePartitionDefID: defID,
@@ -2431,13 +2446,6 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	if d.lease > 0 {
 		delayForAsyncCommit()
-	}
-
-	// TODO: Move this to StateNone
-	err = checkExchangePartitionPlacementPolicy(t, partDef.PlacementPolicyRef, nt.PlacementPolicyRef)
-	if err != nil {
-		job.State = model.JobStateRollingback
-		return ver, errors.Trace(err)
 	}
 
 	if withValidation {

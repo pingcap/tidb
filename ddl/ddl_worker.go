@@ -940,7 +940,7 @@ func (w *worker) countForError(err error, job *model.Job) error {
 		logutil.Logger(w.logCtx).Info("DDL job is cancelled normally", zap.String("category", "ddl"), zap.Error(err))
 		return nil
 	}
-	logutil.Logger(w.logCtx).Warn("run DDL job error", zap.String("category", "ddl"), zap.Error(err))
+	logutil.Logger(w.logCtx).Warn("run DDL job error", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Error(err))
 
 	// Load global DDL variables.
 	if err1 := loadDDLVars(w); err1 != nil {
@@ -1383,9 +1383,9 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 			var (
 				ptSchemaID     int64
 				ptTableID      int64
-				ptDefID        int64 // Not needed, will reload the whole table
-				partName       string
-				withValidation bool
+				ptDefID        int64  // Not needed, will reload the whole table
+				partName       string // Not used
+				withValidation bool   // Not used
 			)
 			// See ddl.ExchangeTablePartition
 			err = job.DecodeArgs(&ptDefID, &ptSchemaID, &ptTableID, &partName, &withValidation)

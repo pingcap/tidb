@@ -3282,12 +3282,13 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestExchangePartitionConcurrent(t *testing.T) {
+func TestExchangePartitionValidation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec(`create schema ExchangeConcurrent`)
-	tk.MustExec(`use ExchangeConcurrent`)
+	dbName := "ExchangeValidation"
+	tk.MustExec(`create schema ` + dbName)
+	tk.MustExec(`use ` + dbName)
 	tk.MustExec(`CREATE TABLE t1 (
 		d date NOT NULL ,
 		name varchar(10)  NOT NULL,
@@ -3307,8 +3308,10 @@ func TestExchangePartitionConcurrent(t *testing.T) {
 	 PARTITION p202312 VALUES LESS THAN ('2024-01-01'),
 	 PARTITION pfuture VALUES LESS THAN (MAXVALUE))`)
 
-	tk.MustExec(`alter table t1p exchange partition p202307 with table t1`)
 	tk.MustExec(`insert into t1 values ("2023-08-06","0000")`)
+	tk.MustContainErrMsg(`alter table t1p exchange partition p202307 with table t1 with validation`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`insert into t1 values ("2023-08-06","0001")`)
 }
 
 func TestExchangePartitionPlacementPolicy(t *testing.T) {
@@ -3329,7 +3332,7 @@ func TestExchangePartitionPlacementPolicy(t *testing.T) {
 		d date NOT NULL ,
 		name varchar(10)  NOT NULL,
 		UNIQUE KEY (d,name)
-	) PLACEMENT POLICY="rule1"
+	) PLACEMENT POLICY="rule2"
 	PARTITION BY RANGE COLUMNS(d)
 	(PARTITION p202307 VALUES LESS THAN ('2023-08-01'),
 	 PARTITION p202308 VALUES LESS THAN ('2023-09-01'),

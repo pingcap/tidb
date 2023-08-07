@@ -722,18 +722,19 @@ func TestExchangePartitionStates(t *testing.T) {
 	tk3.MustExec("use " + dbName)
 	tk4 := testkit.NewTestKit(t, store)
 	tk4.MustExec("use " + dbName)
-	tk.MustExec(`create placement policy pp1 followers=1`)
-	tk.MustExec(`create placement policy pp2 followers=2`)
-	tk.MustExec(`create table t (a int primary key, b varchar(255), key (b)) placement policy pp1`)
-	tk.MustExec(`create table tp (a int primary key, b varchar(255), key (b)) placement policy pp2 partition by range (a) (partition p0 values less than (1000000), partition p1M values less than (2000000))`)
+	tk.MustExec(`create table t (a int primary key, b varchar(255), key (b))`)
+	tk.MustExec(`create table tp (a int primary key, b varchar(255), key (b)) partition by range (a) (partition p0 values less than (1000000), partition p1M values less than (2000000))`)
 	tk.MustExec(`insert into t values (1, "1")`)
+	// This will make the exchange partition fail!
+	tk.MustExec(`insert into t values (1000001, "1000001")`)
 	tk.MustExec(`insert into tp values (2, "2")`)
 	tk.MustExec(`analyze table t,tp`)
 	tk.MustExec("BEGIN")
 	tk.MustQuery(`select * from tp`).Check(testkit.Rows("2 2"))
-	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 1", "1000001 1000001"))
 	alterChan := make(chan error)
 	go func() {
+		// WITH VALIDATION is the default
 		err := tk2.ExecToErr(`alter table tp exchange partition p0 with table t`)
 		alterChan <- err
 	}()
@@ -811,13 +812,15 @@ func TestExchangePartitionStates(t *testing.T) {
 	tk.MustExec(`insert into t values (5,"5")`)
 	tk3.MustExec(`insert into t values (6,"6")`)
 	//tk3.MustExec(`insert into t values (1000006,"1000006")`)
-	tk3.MustContainErrMsg(`insert into t values (1000006,"1000006")`, "[table:1748]Found a row not matching the given partition set")
+	tk3.MustContainErrMsg(`insert into t values (1000006,"1000006")`,
+		"[table:1748]Found a row not matching the given partition set")
 	tk3.MustExec("COMMIT")
-	require.ErrorContains(t, <-alterChan, "[ddl:1736]Tables have different definitions")
+	require.ErrorContains(t, <-alterChan,
+		"[ddl:1737]Found a row that does not match the partition")
 	tk3.MustExec(`BEGIN`)
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "1000005 1000005", "5 5"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "1000001 1000001", "1000005 1000005", "5 5"))
 	tk.MustQuery(`select * from tp`).Sort().Check(testkit.Rows("2 2"))
-	tk3.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "4 4", "6 6"))
+	tk3.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "1000001 1000001", "4 4", "6 6"))
 	tk3.MustQuery(`select * from tp`).Sort().Check(testkit.Rows("2 2"))
 	tk.MustExec(`insert into t values (7,"7")`)
 	// This is the actual bug to fix!!!
@@ -838,7 +841,7 @@ func TestExchangePartitionStates(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`pp2` */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (1000000),\n" +
 		" PARTITION `p1M` VALUES LESS THAN (2000000))"))
@@ -848,7 +851,7 @@ func TestExchangePartitionStates(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`pp1` */"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	//tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1000005 1000005", "2 2", "5 5"))
 	// Is this is a bug?
 	//tk.MustQuery(`select * from tp`).Sort().Check(testkit.Rows("1 1"))
