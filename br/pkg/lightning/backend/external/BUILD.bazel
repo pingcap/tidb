@@ -7,7 +7,6 @@ go_library(
         "codec.go",
         "file.go",
         "kv_reader.go",
-        "kv_writer.go",
         "sharedisk.go",
         "stat_reader.go",
     ],
