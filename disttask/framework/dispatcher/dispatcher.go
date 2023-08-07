@@ -174,12 +174,11 @@ func (d *dispatcher) handleReverting() error {
 		// Finish the rollback step.
 		logutil.Logger(d.logCtx).Info("update the task to reverted state")
 		return d.updateTask(proto.TaskStateReverted, nil, retrySQLTimes)
-	} else {
-		// Wait all subtasks finished.
-		GetTaskFlowHandle(d.task.Type).OnTicker(d.ctx, d.task)
-		logutil.Logger(d.logCtx).Debug("handle reverting state, this task keeps current state", zap.String("state", d.task.State))
-		return nil
 	}
+	// Wait all subtasks in this stage finished.
+	GetTaskFlowHandle(d.task.Type).OnTicker(d.ctx, d.task)
+	logutil.Logger(d.logCtx).Debug("handle reverting state, this task keeps current state", zap.String("state", d.task.State))
+	return nil
 }
 
 func (d *dispatcher) handlePending() error {
@@ -209,11 +208,11 @@ func (d *dispatcher) handleRunning() error {
 	if prevStageFinished {
 		logutil.Logger(d.logCtx).Info("previous stage finished, generate dist plan", zap.Int64("stage", d.task.Step))
 		return d.processNormalFlow()
-	} else {
-		GetTaskFlowHandle(d.task.Type).OnTicker(d.ctx, d.task)
-		logutil.Logger(d.logCtx).Debug("handing running state, this task keeps current state", zap.String("state", d.task.State))
-		return nil
 	}
+	// Wait all subtasks in this stage finished.
+	GetTaskFlowHandle(d.task.Type).OnTicker(d.ctx, d.task)
+	logutil.Logger(d.logCtx).Debug("handing running state, this task keeps current state", zap.String("state", d.task.State))
+	return nil
 }
 
 func (d *dispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
