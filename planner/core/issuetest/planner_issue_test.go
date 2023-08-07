@@ -180,3 +180,13 @@ func TestIssue45036(t *testing.T) {
 		"    └─TableReader_9 10000.00 root partition:all data:TableRangeScan_8",
 		"      └─TableRangeScan_8 10000.00 cop[tikv] table:s range:[1,100000], keep order:false, stats:pseudo"))
 }
+
+func TestIssue45758(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE tb1 (cid INT, code INT, class VARCHAR(10))")
+	tk.MustExec("CREATE TABLE tb2 (cid INT, code INT, class VARCHAR(10))")
+	// result ok
+	tk.MustExec("UPDATE tb1, (SELECT code AS cid, code, MAX(class) AS class FROM tb2 GROUP BY code) tb3 SET tb1.cid = tb3.cid, tb1.code = tb3.code, tb1.class = tb3.class")
+}
