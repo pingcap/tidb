@@ -282,8 +282,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 		if consumer.shouldAbort() {
 			break
 		}
-		rangeEndKey := kvRanges[len(kvRanges)-1].EndKey
-		startKey = rangeEndKey.Next()
+		startKey = kvRanges[len(kvRanges)-1].EndKey
 		if startKey.Cmp(endKey) >= 0 {
 			break
 		}

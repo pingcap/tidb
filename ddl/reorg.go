@@ -666,16 +666,20 @@ func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshot
 		return startHandleKey, nil, errors.Trace(err)
 	}
 	if maxHandle != nil {
-		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle)
+		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle).Next()
 	}
-	if isEmptyTable || endHandleKey.Cmp(startHandleKey) < 0 {
+	if isEmptyTable || endHandleKey.Cmp(startHandleKey) <= 0 {
 		logutil.BgLogger().Info("get noop table range", zap.String("category", "ddl"),
 			zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
 			zap.Int64("table/partition ID", tbl.GetPhysicalID()),
 			zap.String("start key", hex.EncodeToString(startHandleKey)),
 			zap.String("end key", hex.EncodeToString(endHandleKey)),
 			zap.Bool("is empty table", isEmptyTable))
-		endHandleKey = startHandleKey
+		if startHandleKey == nil {
+			endHandleKey = nil
+		} else {
+			endHandleKey = startHandleKey.Next()
+		}
 	}
 	return
 }
