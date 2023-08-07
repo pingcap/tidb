@@ -2,6 +2,6 @@
 options:
   no_parent_owners: true
 filters:
-  "(OWNERS|config\\.toml\\.example)$":
+  "(OWNERS|config\\.go|config\\.toml\\.example)$":
     approvers:
       - sig-critical-approvers-tidb-server
