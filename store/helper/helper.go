@@ -198,6 +198,7 @@ type StoreHotRegionInfos struct {
 // HotRegionsStat records echo store's hot region.
 // it's the response of PD.
 type HotRegionsStat struct {
+	Count       int          `json:"regions_count"`
 	RegionsStat []RegionStat `json:"statistics"`
 }
 
@@ -238,7 +239,11 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	metric := make(map[uint64]RegionMetric, metricCnt)
 	for _, hotRegions := range regionResp.AsLeader {
 		for _, region := range hotRegions.RegionsStat {
-			metric[region.RegionID] = RegionMetric{FlowBytes: uint64(region.FlowBytes), MaxHotDegree: region.HotDegree}
+			metric[region.RegionID] = RegionMetric{
+				FlowBytes:    uint64(region.FlowBytes),
+				MaxHotDegree: region.HotDegree,
+				Count:        hotRegions.Count,
+			}
 		}
 	}
 	return metric, nil
@@ -286,6 +291,8 @@ type HotTableIndex struct {
 // FetchRegionTableIndex constructs a map that maps a table to its hot region information by the given raw hot RegionMetric metrics.
 func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchemas []*model.DBInfo) ([]HotTableIndex, error) {
 	hotTables := make([]HotTableIndex, 0, len(metrics))
+	schemas := h.FilterMemDBs(allSchemas)
+	tables := h.GetTablesInfoWithKeyRange(schemas)
 	for regionID, regionMetric := range metrics {
 		regionMetric := regionMetric
 		t := HotTableIndex{RegionID: regionID, RegionMetric: &regionMetric}
@@ -294,22 +301,36 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 			logutil.BgLogger().Error("locate region failed", zap.Error(err))
 			continue
 		}
+		regionsInfo := []*RegionInfo{
+			{
+				ID:       int64(regionID),
+				StartKey: bytesKeyToEncodeHex(region.StartKey),
+				EndKey:   bytesKeyToEncodeHex(region.EndKey),
+			}}
 
-		hotRange, err := NewRegionFrameRange(region)
-		if err != nil {
-			return nil, err
+		regionsTableInfos := h.ParseRegionsTableInfos(regionsInfo, tables)
+
+		if tableInfos, ok := regionsTableInfos[int64(regionID)]; ok {
+			if len(tableInfos) == 0 {
+				hotTables = append(hotTables, t)
+				continue
+			}
+			for _, tableInfo := range tableInfos {
+				t.DbName = tableInfo.DB.Name.String()
+				t.TableName = tableInfo.Table.Name.O
+				t.TableID = tableInfo.Table.ID
+				if tableInfo.IsIndex {
+					t.IndexName = tableInfo.Index.Name.O
+					t.IndexID = tableInfo.Index.ID
+				} else {
+					t.IndexName = ""
+					t.IndexID = 0
+				}
+
+				hotTables = append(hotTables, t)
+			}
 		}
-		f := h.FindTableIndexOfRegion(allSchemas, hotRange)
-		if f != nil {
-			t.DbName = f.DBName
-			t.TableName = f.TableName
-			t.TableID = f.TableID
-			t.IndexName = f.IndexName
-			t.IndexID = f.IndexID
-		}
-		hotTables = append(hotTables, t)
 	}
-
 	return hotTables, nil
 }
 
@@ -754,6 +775,10 @@ OutLoop:
 	}
 
 	return tableInfos
+}
+
+func bytesKeyToEncodeHex(key []byte) string {
+	return strings.ToUpper(hex.EncodeToString(codec.EncodeBytes(nil, key)))
 }
 
 // BytesKeyToHex converts bytes key to hex key, it is exported only for test.

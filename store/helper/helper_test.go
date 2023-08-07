@@ -64,6 +64,8 @@ func TestHotRegion(t *testing.T) {
 
 	dbInfo := &model.DBInfo{
 		Name: model.NewCIStr("test"),
+		Tables: []*model.TableInfo{
+			{ID: 1, Name: model.NewCIStr("t")}},
 	}
 	require.NoError(t, err)
 
