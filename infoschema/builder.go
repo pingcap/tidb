@@ -316,11 +316,16 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 	if diff.OldTableID == diff.TableID && diff.OldSchemaID == diff.SchemaID {
 		return b.applyTableUpdate(m, diff)
 	}
-	// The normal table needs to be updated first:
 	ntSchemaID := diff.OldSchemaID
 	ntID := diff.OldTableID
 	ptSchemaID := diff.SchemaID
 	ptID := diff.TableID
+	if len(diff.AffectedOpts) > 0 {
+		// From old version
+		ptID = diff.AffectedOpts[0].TableID
+		ptSchemaID = diff.AffectedOpts[0].SchemaID
+	}
+	// The normal table needs to be updated first:
 	// Just update the tables separately
 	currDiff := &model.SchemaDiff{
 		Version:  diff.Version,
