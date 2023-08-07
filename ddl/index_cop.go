@@ -132,7 +132,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 		zap.Int("id", task.id), zap.String("task", task.String()))
 
 	return wrapInBeginRollback(se, func(startTS uint64) error {
-		rs, err := p.copCtx.buildTableScan(p.ctx, startTS, task.startKey, task.excludedEndKey())
+		rs, err := p.copCtx.buildTableScan(p.ctx, startTS, task.startKey, task.endKey)
 		if err != nil {
 			return err
 		}

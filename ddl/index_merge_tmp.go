@@ -234,11 +234,7 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterate temporary index in merge process", 0)
 			oprStartTime = oprEndTime
 
-			if taskRange.endInclude {
-				taskDone = indexKey.Cmp(taskRange.endKey) > 0
-			} else {
-				taskDone = indexKey.Cmp(taskRange.endKey) >= 0
-			}
+			taskDone = indexKey.Cmp(taskRange.endKey) >= 0
 
 			if taskDone || len(w.tmpIdxRecords) >= w.batchCnt {
 				return false, nil
