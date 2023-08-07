@@ -88,8 +88,6 @@ func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
 
 	if len(s.rc.currProp.key) == 0 {
 		s.rc.currProp.key = key
-		s.rc.currProp.writerID = s.writerID
-		s.rc.currProp.dataSeq = s.seq
 	}
 
 	s.offset += uint64(kvLen)

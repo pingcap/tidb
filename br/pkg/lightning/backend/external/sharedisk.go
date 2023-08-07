@@ -14,20 +14,6 @@
 
 package external
 
-import (
-	"encoding/binary"
-)
-
-// rangeProperty describes some statistic of a range of a file.
-type rangeProperty struct {
-	key      []byte // the first key in the range
-	offset   uint64 // the end offset of the range
-	writerID int
-	dataSeq  int
-	size     uint64 // total KV size in the range, not considering the file format layout overhead
-	keys     uint64 // total KV count in the range
-}
-
 // rangePropertiesCollector collects range properties for each range. The zero
 // value of rangePropertiesCollector is not ready to use, should call reset()
 // first.
@@ -43,44 +29,8 @@ func (rc *rangePropertiesCollector) reset() {
 	rc.currProp = &rangeProperty{}
 }
 
-// keyLen + p.size + p.keys + p.offset + p.WriterID + p.DataSeq
-const propertyLengthExceptKey = 4 + 8 + 8 + 8 + 4 + 4
-
 // encode encodes rc.props to a byte slice.
 func (rc *rangePropertiesCollector) encode() []byte {
 	b := make([]byte, 0, 1024)
-	idx := 0
-	for _, p := range rc.props {
-		// Size.
-		b = append(b, 0, 0, 0, 0)
-		binary.BigEndian.PutUint32(b[idx:], uint32(propertyLengthExceptKey+len(p.key)))
-		idx += 4
-
-		b = append(b, 0, 0, 0, 0)
-		binary.BigEndian.PutUint32(b[idx:], uint32(len(p.key)))
-		idx += 4
-		b = append(b, p.key...)
-		idx += len(p.key)
-
-		b = append(b, 0, 0, 0, 0, 0, 0, 0, 0)
-		binary.BigEndian.PutUint64(b[idx:], p.size)
-		idx += 8
-
-		b = append(b, 0, 0, 0, 0, 0, 0, 0, 0)
-		binary.BigEndian.PutUint64(b[idx:], p.keys)
-		idx += 8
-
-		b = append(b, 0, 0, 0, 0, 0, 0, 0, 0)
-		binary.BigEndian.PutUint64(b[idx:], p.offset)
-		idx += 8
-
-		b = append(b, 0, 0, 0, 0)
-		binary.BigEndian.PutUint32(b[idx:], uint32(p.writerID))
-		idx += 4
-
-		b = append(b, 0, 0, 0, 0)
-		binary.BigEndian.PutUint32(b[idx:], uint32(p.dataSeq))
-		idx += 4
-	}
-	return b
+	return encodeMultiProps(b, rc.props)
 }
