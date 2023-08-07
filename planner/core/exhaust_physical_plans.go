@@ -1906,43 +1906,6 @@ func (*LogicalJoin) getIndexJoinSideAndMethod(join PhysicalPlan) (innerSide, joi
 
 // tryToGetIndexJoin returns all available index join plans, and the second returned value indicates whether this plan is enforced by hints.
 func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, canForced bool) {
-<<<<<<< HEAD
-	forceLeftOuter := p.preferAny(preferRightAsINLJInner, preferRightAsINLHJInner, preferRightAsINLMJInner) // left as outer == right as inner
-	forceRightOuter := p.preferAny(preferLeftAsINLJInner, preferLeftAsINLHJInner, preferLeftAsINLMJInner)   // right as outer == left as inner
-	needForced := forceLeftOuter || forceRightOuter
-
-	defer func() {
-		// Print warning message if any hints cannot work.
-		// If the required property is not empty, we will enforce it and try the hint again.
-		// So we only need to generate warning message when the property is empty.
-		if !canForced && needForced && prop.IsSortItemEmpty() {
-			// Construct warning message prefix.
-			var indexJoinTables, indexHashJoinTables, indexMergeJoinTables []hintTableInfo
-			if p.hintInfo != nil {
-				t := p.hintInfo.indexNestedLoopJoinTables
-				indexJoinTables, indexHashJoinTables, indexMergeJoinTables = t.inljTables, t.inlhjTables, t.inlmjTables
-			}
-			var errMsg string
-			switch {
-			case p.preferAny(preferLeftAsINLJInner, preferRightAsINLJInner): // prefer index join
-				errMsg = fmt.Sprintf("Optimizer Hint %s or %s is inapplicable", restore2JoinHint(HintINLJ, indexJoinTables), restore2JoinHint(TiDBIndexNestedLoopJoin, indexJoinTables))
-			case p.preferAny(preferLeftAsINLHJInner, preferRightAsINLHJInner): // prefer index hash join
-				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLHJ, indexHashJoinTables))
-			case p.preferAny(preferLeftAsINLMJInner, preferRightAsINLMJInner): // prefer index merge join
-				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLMJ, indexMergeJoinTables))
-			}
-			// Append inapplicable reason.
-			if len(p.EqualConditions) == 0 {
-				errMsg += " without column equal ON condition"
-			}
-			// Generate warning message to client.
-			warning := ErrInternal.GenWithStack(errMsg)
-			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-		}
-	}()
-
-=======
->>>>>>> 79f00016016 (planner: refactor `tryToGetIndexJoin` (#45617))
 	// supportLeftOuter and supportRightOuter indicates whether this type of join
 	// supports the left side or right side to be the outer side.
 	var supportLeftOuter, supportRightOuter bool
@@ -1956,23 +1919,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	}
 	candidates := make([]PhysicalPlan, 0, 2)
 	if supportLeftOuter {
-<<<<<<< HEAD
-		allLeftOuterJoins = p.getIndexJoinByOuterIdx(prop, 0)
-		forcedLeftOuterJoins = make([]PhysicalPlan, 0, len(allLeftOuterJoins))
-		for _, j := range allLeftOuterJoins {
-			if p.satisfyIndexJoinHint(j) {
-				forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
-			}
-		}
-		switch {
-		case len(forcedLeftOuterJoins) == 0 && !supportRightOuter:
-			return filterIndexJoinBySessionVars(p.ctx, allLeftOuterJoins), false
-		case len(forcedLeftOuterJoins) != 0 && (!supportRightOuter || (forceLeftOuter && !forceRightOuter)):
-			return forcedLeftOuterJoins, true
-		}
-=======
 		candidates = append(candidates, p.getIndexJoinByOuterIdx(prop, 0)...)
->>>>>>> 79f00016016 (planner: refactor `tryToGetIndexJoin` (#45617))
 	}
 	if supportRightOuter {
 		candidates = append(candidates, p.getIndexJoinByOuterIdx(prop, 1)...)
@@ -1999,13 +1946,6 @@ func (p *LogicalJoin) handleForceIndexJoinHints(prop *property.PhysicalProperty,
 		if !ok {
 			continue
 		}
-<<<<<<< HEAD
-		switch {
-		case len(forcedRightOuterJoins) == 0 && !supportLeftOuter:
-			return filterIndexJoinBySessionVars(p.ctx, allRightOuterJoins), false
-		case len(forcedRightOuterJoins) != 0 && (!supportLeftOuter || (forceRightOuter && !forceLeftOuter)):
-			return forcedRightOuterJoins, true
-=======
 		if (p.preferAny(preferLeftAsINLJInner) && innerSide == joinLeft && joinMethod == indexJoinMethod) ||
 			(p.preferAny(preferRightAsINLJInner) && innerSide == joinRight && joinMethod == indexJoinMethod) ||
 			(p.preferAny(preferLeftAsINLHJInner) && innerSide == joinLeft && joinMethod == indexHashJoinMethod) ||
@@ -2013,16 +1953,12 @@ func (p *LogicalJoin) handleForceIndexJoinHints(prop *property.PhysicalProperty,
 			(p.preferAny(preferLeftAsINLMJInner) && innerSide == joinLeft && joinMethod == indexMergeJoinMethod) ||
 			(p.preferAny(preferRightAsINLMJInner) && innerSide == joinRight && joinMethod == indexMergeJoinMethod) {
 			forced = append(forced, candidate)
->>>>>>> 79f00016016 (planner: refactor `tryToGetIndexJoin` (#45617))
 		}
 	}
 
 	if len(forced) > 0 {
 		return forced, true
 	}
-<<<<<<< HEAD
-	return filterIndexJoinBySessionVars(p.ctx, append(allLeftOuterJoins, allRightOuterJoins...)), false
-=======
 	// Cannot find any valid index join plan with these force hints.
 	// Print warning message if any hints cannot work.
 	// If the required property is not empty, we will enforce it and try the hint again.
@@ -2050,7 +1986,6 @@ func (p *LogicalJoin) handleForceIndexJoinHints(prop *property.PhysicalProperty,
 		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 	}
 	return candidates, false
->>>>>>> 79f00016016 (planner: refactor `tryToGetIndexJoin` (#45617))
 }
 
 func checkChildFitBC(p Plan) bool {
