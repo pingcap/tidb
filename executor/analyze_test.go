@@ -273,7 +273,6 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 }
 
 func TestAnalyzeIndexExtractTopN(t *testing.T) {
-	_ = checkHistogram
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
