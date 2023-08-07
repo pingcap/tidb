@@ -186,12 +186,12 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 	_ = dm.gPool.Run(func() {
 		dispatcher := newDispatcher(dm.ctx, dm.taskMgr, task)
 		dm.setRunningTask(task, dispatcher)
-		dispatcher.ExecuteTask()
+		dispatcher.executeTask()
 		dm.delRunningTask(task.ID)
 	})
 }
 
 // MockDispatcher mock one dispatcher for one task, only used for tests.
 func (dm *Manager) MockDispatcher(task *proto.Task) *dispatcher {
-	return &dispatcher{dm.ctx, dm.taskMgr, task}
+	return newDispatcher(dm.ctx, dm.taskMgr, task)
 }
