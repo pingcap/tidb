@@ -9,7 +9,7 @@ set -eo pipefail
 # Step 1
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 group=$1
-COV_DIR="/tmp/group_cover"
+export COV_DIR="/tmp/group_cover"
 rm -rf COV_DIR
 mkdir $COV_DIR
 
