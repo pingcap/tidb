@@ -147,14 +147,14 @@ func (d *dispatcher) scheduleTask() {
 
 // handle task in cancelling state, dispatch revert subtasks.
 func (d *dispatcher) handleCancelling() error {
+	logutil.Logger(d.logCtx).Debug("handle cancelling state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
 	errs := []error{errors.New("cancel")}
-	logutil.Logger(d.logCtx).Info("handle cancelling state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
 	return d.processErrFlow(errs)
 }
 
 // handle task in reverting state, check all revert subtasks finished.
 func (d *dispatcher) handleReverting() error {
-	logutil.Logger(d.logCtx).Info("handle reverting state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
+	logutil.Logger(d.logCtx).Debug("handle reverting state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
 	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.task.ID, proto.TaskStateRevertPending, proto.TaskStateReverting)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
@@ -174,14 +174,14 @@ func (d *dispatcher) handleReverting() error {
 
 // handle task in pending state, dispatch subtasks.
 func (d *dispatcher) handlePending() error {
-	logutil.Logger(d.logCtx).Info("handle pending state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
+	logutil.Logger(d.logCtx).Debug("handle pending state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
 	return d.processNormalFlow()
 }
 
 // handle task in running state, check all running subtasks finished.
 // If subtasks finished, run into the next stage.
 func (d *dispatcher) handleRunning() error {
-	logutil.Logger(d.logCtx).Info("handle running state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
+	logutil.Logger(d.logCtx).Debug("handle running state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
 	subTaskErrs, err := d.taskMgr.CollectSubTaskError(d.task.ID)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("collect subtask error failed", zap.Error(err))
