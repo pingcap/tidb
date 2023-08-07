@@ -725,114 +725,71 @@ func TestExchangePartitionStates(t *testing.T) {
 	tk.MustExec(`create table t (a int primary key, b varchar(255), key (b))`)
 	tk.MustExec(`create table tp (a int primary key, b varchar(255), key (b)) partition by range (a) (partition p0 values less than (1000000), partition p1M values less than (2000000))`)
 	tk.MustExec(`insert into t values (1, "1")`)
-	// This will make the exchange partition fail!
-	tk.MustExec(`insert into t values (1000001, "1000001")`)
 	tk.MustExec(`insert into tp values (2, "2")`)
 	tk.MustExec(`analyze table t,tp`)
 	tk.MustExec("BEGIN")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 1"))
 	tk.MustQuery(`select * from tp`).Check(testkit.Rows("2 2"))
-	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 1", "1000001 1000001"))
 	alterChan := make(chan error)
 	go func() {
 		// WITH VALIDATION is the default
 		err := tk2.ExecToErr(`alter table tp exchange partition p0 with table t`)
 		alterChan <- err
 	}()
-	jobID := int64(0)
 	waitFor := func(tableName, s string, pos int) {
 		for {
-			tick := gotime.Tick(100 * gotime.Millisecond)
 			select {
 			case alterErr := <-alterChan:
 				require.Fail(t, "Alter completed unexpectedly", "With error %v", alterErr)
-			case <-tick:
-				// just wait
+			default:
+				// Alter still running
 			}
-			//gotime.Sleep(2 * gotime.Second)
-			//break
 			res := tk4.MustQuery(`admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'exchange partition'`).Rows()
-			r := make([]string, 0, 9)
-			if len(res) == 1 {
-				for j := range res[0] {
-					r = append(r, res[0][j].(string))
-				}
-				if jobID == 0 {
-					jobID, _ = strconv.ParseInt(r[0], 10, 64)
-				}
-			}
-			logutil.BgLogger().Info("checking admin show ddl", zap.String("Want", s), zap.Strings("Got", r), zap.Int("len(res)", len(res)))
 			if len(res) == 1 && res[0][pos] == s {
 				logutil.BgLogger().Info("Got state", zap.String("State", s))
 				break
 			}
-			if jobID != 0 {
-				res = tk4.MustQuery(`select * from mysql.tidb_ddl_job where job_id = ` + strconv.FormatInt(jobID, 10)).Rows()
-				r = r[:0]
-				if len(res) == 1 {
-					for j := range res[0] {
-						r = append(r, res[0][j].(string))
-					}
-				}
-				logutil.BgLogger().Info("tidb_ddl_job", zap.Strings("Got", r), zap.Int("len(res)", len(res)))
-				res = tk4.MustQuery(`select * from mysql.tidb_ddl_history where job_id = ` + strconv.FormatInt(jobID, 10)).Rows()
-				r = r[:0]
-				if len(res) == 1 {
-					for j := range res[0] {
-						r = append(r, res[0][j].(string))
-					}
-				}
-				logutil.BgLogger().Info("tidb_ddl_history", zap.Strings("Got", r), zap.Int("len(res)", len(res)))
-			}
-			res = tk4.MustQuery(`admin show ddl jobs`).Rows()
-			for k := range res {
-				r = r[:0]
-				for j := range res[k] {
-					r = append(r, res[k][j].(string))
-				}
-				logutil.BgLogger().Info("admin show ddl jobs", zap.Strings("Got", r), zap.Int("len(res)", len(res)))
-			}
-			gotime.Sleep(10 * gotime.Millisecond)
+			gotime.Sleep(50 * gotime.Millisecond)
 		}
 	}
 	waitFor("t", "write only", 4)
-	tk3.MustExec(`BEGIN PESSIMISTIC`)
-	//tk3.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1"))
-	//tk.MustExec(`insert into t values (3,"3")`)
-	// Adding the line below will make the alter fail.
-	//tk.MustExec(`insert into t values (1000003,"1000003")`)
-	//tk3.MustExec(`insert into t values (1000003,"1000003")`)
+	tk3.MustExec(`BEGIN`)
 	tk3.MustExec(`insert into t values (4,"4")`)
-	//tk3.MustContainErrMsg(`insert into t values (1000004,"1000004")`, "[table:1748]Found a row not matching the given partition set")
+	tk3.MustContainErrMsg(`insert into t values (1000004,"1000004")`, "[table:1748]Found a row not matching the given partition set")
+	tk.MustExec(`insert into t values (5,"5")`)
+	// This should fail the alter table!
+	tk.MustExec(`insert into t values (1000005,"1000005")`)
 
+	// MDL will block the alter to not continue until all clients
+	// are in StateWriteOnly, which tk is blocking until it commits
 	tk.MustExec(`COMMIT`)
 	waitFor("t", "rollback done", 11)
-	// MDL will block the alter from finish, so still in the 'rollback' schema version
+	// MDL will block the alter from finish, tk is in 'rollbacked' schema version
+	// but the alter is still waiting for tk3 to commit, before continuing
 	tk.MustExec("BEGIN")
-	tk.MustExec(`insert into t values (1000005,"1000005")`)
-	tk.MustExec(`insert into t values (5,"5")`)
-	tk3.MustExec(`insert into t values (6,"6")`)
-	//tk3.MustExec(`insert into t values (1000006,"1000006")`)
-	tk3.MustContainErrMsg(`insert into t values (1000006,"1000006")`,
+	tk.MustExec(`insert into t values (1000006,"1000006")`)
+	tk.MustExec(`insert into t values (6,"6")`)
+	tk3.MustExec(`insert into t values (7,"7")`)
+	tk3.MustContainErrMsg(`insert into t values (1000007,"1000007")`,
 		"[table:1748]Found a row not matching the given partition set")
 	tk3.MustExec("COMMIT")
 	require.ErrorContains(t, <-alterChan,
 		"[ddl:1737]Found a row that does not match the partition")
 	tk3.MustExec(`BEGIN`)
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "1000001 1000001", "1000005 1000005", "5 5"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(
+		"1 1", "1000005 1000005", "1000006 1000006", "5 5", "6 6"))
 	tk.MustQuery(`select * from tp`).Sort().Check(testkit.Rows("2 2"))
-	tk3.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "1000001 1000001", "4 4", "6 6"))
+	tk3.MustQuery(`select * from t`).Sort().Check(testkit.Rows(
+		"1 1", "1000005 1000005", "4 4", "5 5", "7 7"))
 	tk3.MustQuery(`select * from tp`).Sort().Check(testkit.Rows("2 2"))
-	tk.MustExec(`insert into t values (7,"7")`)
-	// This is the actual bug to fix!!!
-	//tk.MustContainErrMsg(`insert into t values (1000007,"1000007")`, "[table:1748]Found a row not matching the given partition set")
-	tk.MustExec(`insert into t values (1000007,"1000007")`)
-	tk.MustExec(`insert into tp values (8,"8")`)
-	// This is the actual bug to fix!!!
-	tk.MustExec(`insert into tp values (1000008,"1000008")`)
-	// TODO: This is a bug to be fixed?!
-	tk3.MustExec(`insert into t values (1000009,"1000009")`)
-	//tk3.MustContainErrMsg(`insert into t values (1000009,"1000009")`, "[table:1748]Found a row not matching the given partition set")
-	tk3.MustExec(`insert into t values (9,"9")`)
+	tk.MustContainErrMsg(`insert into t values (7,"7")`,
+		"[kv:1062]Duplicate entry '7' for key 't.PRIMARY'")
+	tk.MustExec(`insert into t values (8,"8")`)
+	tk.MustExec(`insert into t values (1000008,"1000008")`)
+	tk.MustExec(`insert into tp values (9,"9")`)
+	tk.MustExec(`insert into tp values (1000009,"1000009")`)
+	tk3.MustExec(`insert into t values (10,"10")`)
+	tk3.MustExec(`insert into t values (1000010,"1000010")`)
 
 	tk3.MustExec(`COMMIT`)
 	tk.MustQuery(`show create table tp`).Check(testkit.Rows("" +
@@ -852,14 +809,11 @@ func TestExchangePartitionStates(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	//tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1000005 1000005", "2 2", "5 5"))
-	// Is this is a bug?
-	//tk.MustQuery(`select * from tp`).Sort().Check(testkit.Rows("1 1"))
 	tk.MustExec(`commit`)
-	tk.MustExec(`insert into t values (8,"8")`)
-	tk.MustExec(`insert into tp values (9,"9")`)
-	tk.MustExec(`insert into t values (1000010,"1000010")`)
-	tk.MustExec(`insert into tp values (1000011,"1000011")`)
+	tk.MustExec(`insert into t values (11,"11")`)
+	tk.MustExec(`insert into t values (1000011,"1000011")`)
+	tk.MustExec(`insert into tp values (12,"12")`)
+	tk.MustExec(`insert into tp values (1000012,"1000012")`)
 }
 
 func TestAddKeyPartitionStates(t *testing.T) {
