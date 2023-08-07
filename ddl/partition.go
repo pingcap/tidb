@@ -2459,13 +2459,11 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	// partition table auto IDs.
 	ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
 	if err != nil {
-		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
 	}
 	// non-partition table auto IDs.
 	ntAutoIDs, err := t.GetAutoIDAccessors(job.SchemaID, nt.ID).Get()
 	if err != nil {
-		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
 	}
 

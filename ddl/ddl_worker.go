@@ -940,7 +940,7 @@ func (w *worker) countForError(err error, job *model.Job) error {
 		logutil.Logger(w.logCtx).Info("DDL job is cancelled normally", zap.String("category", "ddl"), zap.Error(err))
 		return nil
 	}
-	logutil.Logger(w.logCtx).Warn("run DDL job error", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Error(err))
+	logutil.Logger(w.logCtx).Warn("run DDL job error", zap.String("category", "ddl"), zap.Error(err))
 
 	// Load global DDL variables.
 	if err1 := loadDDLVars(w); err1 != nil {
@@ -1146,7 +1146,6 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	if err != nil {
 		err = w.countForError(err, job)
 	}
-	logutil.Logger(d.ctx).Info("runDDLJob", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Error(err))
 	return ver, err
 }
 
