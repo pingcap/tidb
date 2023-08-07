@@ -338,6 +338,7 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 			logutil.BgLogger().Error("close data writer failed", zap.Error(err))
 		}
 		metrics.GlobalSortSharedDiskRate.WithLabelValues("write").Observe(float64(saveBytes) / 1024.0 / 1024.0 / (float64(time.Since(ts).Microseconds()) / 1000000.0))
+		metrics.GlobalSortSharedDiskThroughput.WithLabelValues("write").Add(float64(saveBytes) / 1024.0 / 1024.0)
 		logutil.BgLogger().Info("flush kv", zap.Any("time", time.Since(ts)), zap.Any("bytes", saveBytes), zap.Any("rate", float64(saveBytes)/1024.0/1024.0/time.Since(ts).Seconds()))
 	}()
 

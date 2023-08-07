@@ -61,9 +61,12 @@ var (
 	DDLJobTableDuration   *prometheus.HistogramVec
 	DDLRunningJobCount    *prometheus.GaugeVec
 
-	GlobalSortSharedDiskRate *prometheus.HistogramVec
-	GlobalSortMergeSortRate  *prometheus.HistogramVec
-	AddIndexScanRate         *prometheus.HistogramVec
+	GlobalSortSharedDiskRate       *prometheus.HistogramVec
+	GlobalSortMergeSortRate        *prometheus.HistogramVec
+	GlobalSortSharedDiskThroughput *prometheus.CounterVec
+	GlobalSortMergeSortThroughput  *prometheus.CounterVec
+	AddIndexScanRate               *prometheus.HistogramVec
+	AddIndexScanThroughput         *prometheus.CounterVec
 )
 
 // InitDDLMetrics initializes defines DDL metrics.
@@ -186,6 +189,22 @@ func InitDDLMetrics() {
 		Buckets:   prometheus.ExponentialBuckets(0.05, 2, 20),
 	}, []string{LblType})
 
+	GlobalSortSharedDiskThroughput = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "global_sort",
+			Name:      "shared_disk_throughput",
+			Help:      "shared disk throughput",
+		}, []string{LblType})
+
+	GlobalSortMergeSortThroughput = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "global_sort",
+			Name:      "merge_sort_throughput",
+			Help:      "merge sort throughput",
+		}, []string{LblType})
+
 	AddIndexScanRate = NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "add_index",
@@ -193,6 +212,14 @@ func InitDDLMetrics() {
 		Help:      "scan rate",
 		Buckets:   prometheus.ExponentialBuckets(0.05, 2, 20),
 	}, []string{LblType})
+
+	AddIndexScanThroughput = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "add_index",
+			Name:      "scan_throughput",
+			Help:      "scan throughput",
+		}, []string{LblType})
 }
 
 // Label constants.
