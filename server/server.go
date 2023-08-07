@@ -52,7 +52,6 @@ import (
 	autoid "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -62,11 +61,11 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege/privileges"
+	servererr "github.com/pingcap/tidb/server/err"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
@@ -97,21 +96,6 @@ func init() {
 		osVersion = ""
 	}
 }
-
-var (
-	errInvalidSequence         = dbterror.ClassServer.NewStd(errno.ErrInvalidSequence)
-	errInvalidType             = dbterror.ClassServer.NewStd(errno.ErrInvalidType)
-	errNotAllowedCommand       = dbterror.ClassServer.NewStd(errno.ErrNotAllowedCommand)
-	errAccessDenied            = dbterror.ClassServer.NewStd(errno.ErrAccessDenied)
-	errAccessDeniedNoPassword  = dbterror.ClassServer.NewStd(errno.ErrAccessDeniedNoPassword)
-	errConCount                = dbterror.ClassServer.NewStd(errno.ErrConCount)
-	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
-	errMultiStatementDisabled  = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
-	errNewAbortingConnection   = dbterror.ClassServer.NewStd(errno.ErrNewAbortingConnection)
-	errNotSupportedAuthMode    = dbterror.ClassServer.NewStd(errno.ErrNotSupportedAuthMode)
-	errNetPacketTooLarge       = dbterror.ClassServer.NewStd(errno.ErrNetPacketTooLarge)
-	errMustChangePassword      = dbterror.ClassServer.NewStd(errno.ErrMustChangePassword)
-)
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
 // When server is configured with SSL, the server will have extra capabilities compared to DefaultCapability.
@@ -150,6 +134,43 @@ type Server struct {
 	authTokenCancelFunc context.CancelFunc
 	wg                  sync.WaitGroup
 	printMDLLogTime     time.Time
+}
+
+// NewTestServer creates a new Server for test.
+func NewTestServer(cfg *config.Config) *Server {
+	return &Server{
+		cfg: cfg,
+	}
+}
+
+// Socket returns the server's socket file.
+func (s *Server) Socket() net.Listener {
+	return s.socket
+}
+
+// Listener returns the server's listener.
+func (s *Server) Listener() net.Listener {
+	return s.listener
+}
+
+// ListenAddr returns the server's listener's network address.
+func (s *Server) ListenAddr() net.Addr {
+	return s.listener.Addr()
+}
+
+// StatusListenerAddr returns the server's status listener's network address.
+func (s *Server) StatusListenerAddr() net.Addr {
+	return s.statusListener.Addr()
+}
+
+// BitwiseXorCapability gets the capability of the server.
+func (s *Server) BitwiseXorCapability(capability uint32) {
+	s.capability ^= capability
+}
+
+// BitwiseOrAssignCapability adds the capability to the server.
+func (s *Server) BitwiseOrAssignCapability(capability uint32) {
+	s.capability |= capability
 }
 
 // GetStatusServerAddr gets statusServer address for MppCoordinatorManager usage
@@ -495,7 +516,7 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 	}
 }
 
-func (s *Server) checkAuditPlugin(clientConn *clientConn) error {
+func (*Server) checkAuditPlugin(clientConn *clientConn) error {
 	return plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent == nil {
@@ -633,7 +654,7 @@ func (s *Server) onConn(conn *clientConn) {
 			// `EOF` means the connection is closed normally, we do not treat it as a noticeable error and log it in 'DEBUG' level.
 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 				Debug("EOF", zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
-		case errConCount:
+		case servererr.ErrConCount:
 			if err := conn.writeError(ctx, err); err != nil {
 				logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 					Warn("error in writing errConCount", zap.Error(err),
@@ -748,8 +769,8 @@ func (s *Server) checkConnectionCount() error {
 
 	if conns >= int(s.cfg.Instance.MaxConnections) {
 		logutil.BgLogger().Error("too many connections",
-			zap.Uint32("max connections", s.cfg.Instance.MaxConnections), zap.Error(errConCount))
-		return errConCount
+			zap.Uint32("max connections", s.cfg.Instance.MaxConnections), zap.Error(servererr.ErrConCount))
+		return servererr.ErrConCount
 	}
 	return nil
 }
@@ -851,7 +872,8 @@ func (s *Server) UpdateTLSConfig(cfg *tls.Config) {
 	atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(cfg))
 }
 
-func (s *Server) getTLSConfig() *tls.Config {
+// GetTLSConfig implements the SessionManager interface.
+func (s *Server) GetTLSConfig() *tls.Config {
 	return (*tls.Config)(atomic.LoadPointer(&s.tlsConfig))
 }
 

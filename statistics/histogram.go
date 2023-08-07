@@ -47,12 +47,6 @@ import (
 
 // Histogram represents statistics for a column or index.
 type Histogram struct {
-	ID        int64 // Column ID.
-	NDV       int64 // Number of distinct values.
-	NullCount int64 // Number of null values.
-	// LastUpdateVersion is the version that this histogram updated last time.
-	LastUpdateVersion uint64
-
 	Tp *types.FieldType
 
 	// Histogram elements.
@@ -69,7 +63,13 @@ type Histogram struct {
 
 	// Used for estimating fraction of the interval [lower, upper] that lies within the [lower, value].
 	// For some types like `Int`, we do not build it because we can get them directly from `Bounds`.
-	scalars []scalar
+	scalars   []scalar
+	ID        int64 // Column ID.
+	NDV       int64 // Number of distinct values.
+	NullCount int64 // Number of null values.
+	// LastUpdateVersion is the version that this histogram updated last time.
+	LastUpdateVersion uint64
+
 	// TotColSize is the total column size for the histogram.
 	// For unfixed-len types, it includes LEN and BYTE.
 	TotColSize int64
@@ -1623,8 +1623,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 
 const (
 	allLoaded = iota
-	onlyCmsEvicted
-	onlyHistRemained
 	allEvicted
 )
 
@@ -1673,16 +1671,6 @@ func (s StatsLoadedStatus) IsLoadNeeded() bool {
 // If the column/index was loaded, and at least histogram and topN still exists, the necessary statistics is still loaded.
 func (s StatsLoadedStatus) IsEssentialStatsLoaded() bool {
 	return s.statsInitialized && (s.evictedStatus < allEvicted)
-}
-
-// IsCMSEvicted indicates whether the cms got evicted now.
-func (s StatsLoadedStatus) IsCMSEvicted() bool {
-	return s.statsInitialized && s.evictedStatus >= onlyCmsEvicted
-}
-
-// IsTopNEvicted indicates whether the topn got evicted now.
-func (s StatsLoadedStatus) IsTopNEvicted() bool {
-	return s.statsInitialized && s.evictedStatus >= onlyHistRemained
 }
 
 // IsAllEvicted indicates whether all the stats got evicted or not.

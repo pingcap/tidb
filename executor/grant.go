@@ -65,7 +65,7 @@ type GrantExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}
@@ -196,7 +196,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		switch e.Level.Level {
 		case ast.GrantLevelDB:
-			err := checkAndInitDBPriv(internalSession, dbName, e.is, user.User.Username, user.User.Hostname)
+			err := checkAndInitDBPriv(internalSession, dbName, user.User.Username, user.User.Hostname)
 			if err != nil {
 				return err
 			}
@@ -273,7 +273,7 @@ func checkAndInitGlobalPriv(ctx sessionctx.Context, user string, host string) er
 
 // checkAndInitDBPriv checks if DB scope privilege entry exists in mysql.DB.
 // If unexists, insert a new one.
-func checkAndInitDBPriv(ctx sessionctx.Context, dbName string, is infoschema.InfoSchema, user string, host string) error {
+func checkAndInitDBPriv(ctx sessionctx.Context, dbName string, user string, host string) error {
 	ok, err := dbUserExists(ctx, user, host, dbName)
 	if err != nil {
 		return err
@@ -287,7 +287,7 @@ func checkAndInitDBPriv(ctx sessionctx.Context, dbName string, is infoschema.Inf
 
 // checkAndInitTablePriv checks if table scope privilege entry exists in mysql.Tables_priv.
 // If unexists, insert a new one.
-func checkAndInitTablePriv(ctx sessionctx.Context, dbName, tblName string, is infoschema.InfoSchema, user string, host string) error {
+func checkAndInitTablePriv(ctx sessionctx.Context, dbName, tblName string, _ infoschema.InfoSchema, user string, host string) error {
 	ok, err := tableUserExists(ctx, user, host, dbName, tblName)
 	if err != nil {
 		return err
@@ -495,7 +495,7 @@ func (e *GrantExec) grantDynamicPriv(privName string, user *ast.UserSpec, intern
 }
 
 // grantGlobalLevel manipulates mysql.user table.
-func (e *GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
+func (*GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET `, mysql.SystemDB, mysql.UserTable)
 	err := composeGlobalPrivUpdate(sql, priv.Priv, "Y")
@@ -709,13 +709,12 @@ func columnPrivEntryExists(ctx sessionctx.Context, name string, host string, db 
 
 // getTablePriv gets current table scope privilege set from mysql.Tables_priv.
 // Return Table_priv and Column_priv.
-func getTablePriv(sctx sessionctx.Context, name string, host string, db string, tbl string) (string, string, error) {
+func getTablePriv(sctx sessionctx.Context, name string, host string, db string, tbl string) (tPriv, cPriv string, err error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `SELECT Table_priv, Column_priv FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?`, mysql.SystemDB, mysql.TablePrivTable, name, host, db, tbl)
 	if err != nil {
 		return "", "", err
 	}
-	var tPriv, cPriv string
 	rows, fields, err := getRowsAndFields(sctx, rs)
 	if err != nil {
 		return "", "", errors.Errorf("get table privilege fail for %s %s %s %s: %v", name, host, db, tbl, err)

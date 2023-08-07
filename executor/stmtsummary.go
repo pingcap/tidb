@@ -35,7 +35,6 @@ const (
 )
 
 func buildStmtSummaryRetriever(
-	ctx sessionctx.Context,
 	table *model.TableInfo,
 	columns []*model.ColumnInfo,
 	extractor *plannercore.StatementsSummaryExtractor,
@@ -73,7 +72,7 @@ type dummyRetriever struct {
 	dummyCloser
 }
 
-func (e *dummyRetriever) retrieve(_ context.Context, _ sessionctx.Context) ([][]types.Datum, error) {
+func (*dummyRetriever) retrieve(_ context.Context, _ sessionctx.Context) ([][]types.Datum, error) {
 	return nil, nil
 }
 
@@ -87,7 +86,7 @@ type stmtSummaryRetriever struct {
 	rowsReader *rowsReader
 }
 
-func (e *stmtSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *stmtSummaryRetriever) retrieve(_ context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if err := e.ensureRowsReader(sctx); err != nil {
 		return nil, err
 	}
@@ -101,7 +100,7 @@ func (e *stmtSummaryRetriever) close() error {
 	return nil
 }
 
-func (e *stmtSummaryRetriever) getRuntimeStats() execdetails.RuntimeStats {
+func (*stmtSummaryRetriever) getRuntimeStats() execdetails.RuntimeStats {
 	return nil
 }
 
@@ -195,7 +194,7 @@ func (r *stmtSummaryRetrieverV2) close() error {
 	return nil
 }
 
-func (r *stmtSummaryRetrieverV2) getRuntimeStats() execdetails.RuntimeStats {
+func (*stmtSummaryRetrieverV2) getRuntimeStats() execdetails.RuntimeStats {
 	return nil
 }
 

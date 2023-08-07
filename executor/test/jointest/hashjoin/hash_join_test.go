@@ -669,3 +669,28 @@ func TestIndexLookupJoin(t *testing.T) {
 	tk.MustQuery("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;").Check(testkit.Rows("1 1 1"))
 	tk.MustQuery("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;").Check(testkit.Rows("1 1 1"))
 }
+
+func TestExplainAnalyzeIndexHashJoin(t *testing.T) {
+	// Issue 43597
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t (a int, index idx(a));")
+	sql := "insert into t values"
+	for i := 0; i <= 1024; i++ {
+		if i != 0 {
+			sql += ","
+		}
+		sql += fmt.Sprintf("(%d)", i)
+	}
+	tk.MustExec(sql)
+	for i := 0; i <= 10; i++ {
+		// Test for index lookup hash join.
+		rows := tk.MustQuery("explain analyze select /*+ INL_HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a=t2.a limit 1;").Rows()
+		require.Equal(t, 7, len(rows))
+		require.Regexp(t, "IndexHashJoin.*", rows[1][0])
+		// When innerWorkerRuntimeStats.join is negative, `join:` will not print.
+		require.Regexp(t, "time:.*, loops:.*, inner:{total:.*, concurrency:.*, task:.*, construct:.*, fetch:.*, build:.*, join:.*}", rows[1][5])
+	}
+}

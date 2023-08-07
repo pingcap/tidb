@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 
 	"github.com/ngaut/sync2"
 	"github.com/pingcap/tidb/util/logutil"
@@ -39,23 +40,31 @@ import (
 //
 //	 63 62                 41 40                                   1   0
 //	+--+---------------------+--------------------------------------+------+
-//	|  |      serverId       |             local connId             |markup|
+//	|  |      serverID       |             local connID             |markup|
 //	|=0|       (22b)         |                 (40b)                |  =1  |
 //	+--+---------------------+--------------------------------------+------+
+//
+// NOTE:
+// 1. `serverId“ in 64 bits version can be less than 2^11. This will happen when the 32 bits local connID has been used up, while `serverID` stay unchanged.
+// 2. The local connID of a 32 bits GCID can be the same with another 64 bits GCID. This will not violate the uniqueness of GCID.
 type GCID struct {
 	ServerID    uint64
 	LocalConnID uint64
 	Is64bits    bool
 }
 
-const (
+var (
+	// ServerIDBits32 is the number of bits of serverID for 32bits global connection ID.
+	ServerIDBits32 uint = 11
 	// MaxServerID32 is maximum serverID for 32bits global connection ID.
-	MaxServerID32 = 1<<11 - 1
+	MaxServerID32 uint64 = 1<<ServerIDBits32 - 1
 	// LocalConnIDBits32 is the number of bits of localConnID for 32bits global connection ID.
-	LocalConnIDBits32 = 20
+	LocalConnIDBits32 uint = 20
 	// MaxLocalConnID32 is maximum localConnID for 32bits global connection ID.
-	MaxLocalConnID32 = 1<<LocalConnIDBits32 - 1
+	MaxLocalConnID32 uint64 = 1<<LocalConnIDBits32 - 1
+)
 
+const (
 	// MaxServerID64 is maximum serverID for 64bits global connection ID.
 	MaxServerID64 = 1<<22 - 1
 	// LocalConnIDBits64 is the number of bits of localConnID for 64bits global connection ID.
@@ -198,28 +207,40 @@ type GlobalAllocator struct {
 	local64 AutoIncPool
 }
 
-// Is64 indicates allocate 64bits global connection ID or not.
-func (g *GlobalAllocator) Is64() bool {
+// is64 indicates allocate 64bits global connection ID or not.
+func (g *GlobalAllocator) is64() bool {
 	return g.is64bits.Get() != 0
 }
 
-// UpgradeTo64 upgrade allocator to 64bits.
-func (g *GlobalAllocator) UpgradeTo64() {
+// upgradeTo64 upgrade allocator to 64bits.
+func (g *GlobalAllocator) upgradeTo64() {
 	g.is64bits.Set(1)
+	logutil.BgLogger().Info("GlobalAllocator upgrade to 64 bits")
+}
+
+func (g *GlobalAllocator) downgradeTo32() {
+	g.is64bits.Set(0)
+	logutil.BgLogger().Info("GlobalAllocator downgrade to 32 bits")
 }
 
 // LocalConnIDAllocator64TryCount is the try count of 64bits local connID allocation.
 const LocalConnIDAllocator64TryCount = 10
 
 // NewGlobalAllocator creates a GlobalAllocator.
-func NewGlobalAllocator(serverIDGetter serverIDGetterFn) *GlobalAllocator {
+func NewGlobalAllocator(serverIDGetter serverIDGetterFn, enable32Bits bool) *GlobalAllocator {
 	g := &GlobalAllocator{
 		serverIDGetter: serverIDGetter,
 	}
 	g.local32.InitExt(1<<LocalConnIDBits32, math.MaxUint32)
 	g.local64.InitExt((1<<LocalConnIDBits64)-ReservedCount, true, LocalConnIDAllocator64TryCount)
 
-	g.is64bits.Set(1) // TODO: set 32bits as default, after 32bits logics is fully implemented and tested.
+	var is64 int32
+	if enable32Bits {
+		is64 = 0
+	} else {
+		is64 = 1
+	}
+	g.is64bits.Set(is64)
 	return g
 }
 
@@ -249,7 +270,7 @@ func (g *GlobalAllocator) Allocate() GCID {
 	serverID := g.serverIDGetter()
 
 	// 32bits.
-	if !g.Is64() {
+	if !g.is64() && serverID <= MaxServerID32 {
 		localConnID, ok := g.local32.Get()
 		if ok {
 			return GCID{
@@ -258,7 +279,7 @@ func (g *GlobalAllocator) Allocate() GCID {
 				Is64bits:    false,
 			}
 		}
-		g.UpgradeTo64() // go on to 64bits.
+		g.upgradeTo64() // go on to 64bits.
 	}
 
 	// 64bits.
@@ -285,8 +306,50 @@ func (g *GlobalAllocator) Release(connectionID uint64) {
 	if globalConnID.Is64bits {
 		g.local64.Put(globalConnID.LocalConnID)
 	} else {
-		if ok := g.local32.Put(globalConnID.LocalConnID); !ok {
+		if ok := g.local32.Put(globalConnID.LocalConnID); ok {
+			if g.local32.Len() < g.local32.Cap()/2 {
+				g.downgradeTo32()
+			}
+		} else {
 			logutil.BgLogger().Error("failed to release 32bits connection ID", zap.Uint64("connectionID", connectionID), zap.Uint64("localConnID", globalConnID.LocalConnID))
 		}
 	}
+}
+
+var (
+	ldflagIsGlobalKillTest  = "0"  // 1:Yes, otherwise:No.
+	ldflagServerIDBits32    = "11" // Bits of ServerID32.
+	ldflagLocalConnIDBits32 = "20" // Bits of LocalConnID32.
+)
+
+func initByLDFlagsForGlobalKill() {
+	if ldflagIsGlobalKillTest == "1" {
+		var (
+			i   int
+			err error
+		)
+
+		if i, err = strconv.Atoi(ldflagServerIDBits32); err != nil {
+			panic("invalid ldflagServerIDBits32")
+		}
+		ServerIDBits32 = uint(i)
+		MaxServerID32 = 1<<ServerIDBits32 - 1
+
+		if i, err = strconv.Atoi(ldflagLocalConnIDBits32); err != nil {
+			panic("invalid ldflagLocalConnIDBits32")
+		}
+		LocalConnIDBits32 = uint(i)
+		MaxLocalConnID32 = 1<<LocalConnIDBits32 - 1
+
+		logutil.BgLogger().Info("global_kill_test is enabled",
+			zap.Uint("ServerIDBits32", ServerIDBits32),
+			zap.Uint64("MaxServerID32", MaxServerID32),
+			zap.Uint("LocalConnIDBits32", LocalConnIDBits32),
+			zap.Uint64("MaxLocalConnID32", MaxLocalConnID32),
+		)
+	}
+}
+
+func init() {
+	initByLDFlagsForGlobalKill()
 }

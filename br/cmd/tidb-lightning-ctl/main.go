@@ -128,7 +128,7 @@ func compactCluster(ctx context.Context, cfg *config.Config, tls *common.TLS) er
 		tls.WithHost(cfg.TiDB.PdAddr),
 		tikv.StoreStateDisconnected,
 		func(c context.Context, store *tikv.Store) error {
-			return tikv.Compact(c, tls, store.Address, importer.FullLevelCompact)
+			return tikv.Compact(c, tls, store.Address, importer.FullLevelCompact, "")
 		},
 	)
 }

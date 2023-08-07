@@ -25,6 +25,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
@@ -752,6 +753,7 @@ region-cache-ttl=6000
 store-limit=0
 ttl-refreshed-txn-size=8192
 resolve-lock-lite-threshold = 16
+copr-req-timeout = "120s"
 [tikv-client.async-commit]
 keys-limit=123
 total-key-size-limit=1024
@@ -808,6 +810,7 @@ max_connections = 200
 	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)
 	require.True(t, conf.RepairMode)
 	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
+	require.Equal(t, 120*time.Second, conf.TiKVClient.CoprReqTimeout)
 	require.Equal(t, uint32(200), conf.Instance.MaxConnections)
 	require.Equal(t, uint32(10), conf.TiDBMaxReuseChunk)
 	require.Equal(t, uint32(20), conf.TiDBMaxReuseColumn)

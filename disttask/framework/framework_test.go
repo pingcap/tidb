@@ -47,6 +47,12 @@ func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHan
 			[]byte("task3"),
 		}, nil
 	}
+	if gTask.Step == proto.StepOne {
+		gTask.Step = proto.StepTwo
+		return [][]byte{
+			[]byte("task4"),
+		}, nil
+	}
 	return nil, nil
 }
 
@@ -91,7 +97,7 @@ func (t *testScheduler) CleanupSubtaskExecEnv(_ context.Context) error { return 
 
 func (t *testScheduler) Rollback(_ context.Context) error { return nil }
 
-func (t *testScheduler) SplitSubtask(_ context.Context, subtask []byte) ([]proto.MinimalTask, error) {
+func (t *testScheduler) SplitSubtask(_ context.Context, _ []byte) ([]proto.MinimalTask, error) {
 	return []proto.MinimalTask{
 		testMiniTask{},
 		testMiniTask{},
@@ -119,8 +125,14 @@ func RegisterTaskMeta(v *atomic.Int64) {
 	scheduler.RegisterTaskType(proto.TaskTypeExample)
 	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
 		return &testScheduler{}, nil
-	}, scheduler.WithConcurrentSubtask())
+	})
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepTwo, func(_ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+		return &testScheduler{}, nil
+	})
 	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
+		return &testSubtaskExecutor{v: v}, nil
+	})
+	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepTwo, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &testSubtaskExecutor{v: v}, nil
 	})
 }
@@ -154,7 +166,7 @@ func DispatchTaskAndCheckSuccess(taskKey string, t *testing.T, v *atomic.Int64) 
 	task := DispatchTask(taskKey, t)
 
 	require.Equal(t, proto.TaskStateSucceed, task.State)
-	require.Equal(t, int64(9), v.Load())
+	require.Equal(t, int64(12), v.Load())
 	v.Store(0)
 }
 
@@ -186,6 +198,9 @@ func TestFrameworkBasic(t *testing.T) {
 	time.Sleep(2 * time.Second) // make sure owner changed
 	DispatchTaskAndCheckSuccess("key3", t, &v)
 	DispatchTaskAndCheckSuccess("key4", t, &v)
+	distContext.SetOwner(1)
+	time.Sleep(2 * time.Second) // make sure owner changed
+	DispatchTaskAndCheckSuccess("key5", t, &v)
 	distContext.Close()
 }
 
@@ -273,7 +288,7 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
 	distContext := testkit.NewDistExecutionContext(t, 1)
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
 	}()
@@ -288,11 +303,26 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
 	distContext := testkit.NewDistExecutionContext(t, 1)
-	err := failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockExecSubtaskInitEnvErr", "return()")
-	require.NoError(t, err)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockExecSubtaskInitEnvErr", "return()"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockExecSubtaskInitEnvErr"))
 	}()
 	DispatchTaskAndCheckFail("key1", t, &v)
+	distContext.Close()
+}
+
+func TestOwnerChange(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+	var v atomic.Int64
+	RegisterTaskMeta(&v)
+
+	distContext := testkit.NewDistExecutionContext(t, 3)
+	dispatcher.MockOwnerChange = func() {
+		distContext.SetOwner(0)
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockOwnerChange", "1*return(true)"))
+	DispatchTaskAndCheckSuccess("😊", t, &v)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockOwnerChange"))
 	distContext.Close()
 }

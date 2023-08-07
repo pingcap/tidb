@@ -1,0 +1,54 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "calibrateresource",
+    srcs = ["calibrate_resource.go"],
+    importpath = "github.com/pingcap/tidb/executor/internal/calibrateresource",
+    visibility = ["//executor:__subpackages__"],
+    deps = [
+        "//domain",
+        "//executor/internal/exec",
+        "//infoschema",
+        "//kv",
+        "//parser/ast",
+        "//parser/duration",
+        "//parser/model",
+        "//sessionctx",
+        "//sessionctx/variable",
+        "//sessiontxn/staleread",
+        "//util/chunk",
+        "//util/mathutil",
+        "//util/sqlexec",
+        "@com_github_docker_go_units//:go-units",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_tikv_client_go_v2//oracle",
+    ],
+)
+
+go_test(
+    name = "calibrateresource_test",
+    timeout = "short",
+    srcs = [
+        "calibrate_resource_test.go",
+        "main_test.go",
+    ],
+    embed = [":calibrateresource"],
+    flaky = True,
+    deps = [
+        "//config",
+        "//domain",
+        "//meta/autoid",
+        "//parser/mysql",
+        "//testkit",
+        "//testkit/testsetup",
+        "//types",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//resource_group/controller",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
