@@ -136,7 +136,9 @@ func (tu *TestTableUser) insertStmt(tableName string, count int) string {
 
 func generateTblUser(tk *testkit.TestKit, rowCount int) error {
 	tk.MustExec(adminPauseTestTableStmt)
-
+	if rowCount == 0 {
+		return nil
+	}
 	tu := &TestTableUser{}
 	tk.MustExec(tu.insertStmt(adminPauseTestTable, rowCount))
 	return nil
@@ -144,6 +146,9 @@ func generateTblUser(tk *testkit.TestKit, rowCount int) error {
 
 func generateTblUserParition(tk *testkit.TestKit, rowCount int) error {
 	tk.MustExec(adminPauseTestPartitionTableStmt)
+	if rowCount == 0 {
+		return nil
+	}
 	tu := &TestTableUser{}
 	tk.MustExec(tu.insertStmt(adminPauseTestPartitionTable, rowCount))
 
