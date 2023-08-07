@@ -3291,7 +3291,7 @@ func TestExchangePartitionConcurrent(t *testing.T) {
 	tk.MustExec(`CREATE TABLE t1 (
 		d date NOT NULL ,
 		name varchar(10)  NOT NULL,
-		UNIQUE KEY (d,name))"`)
+		UNIQUE KEY (d,name))`)
 
 	tk.MustExec(`CREATE TABLE t1p (
 		d date NOT NULL ,
