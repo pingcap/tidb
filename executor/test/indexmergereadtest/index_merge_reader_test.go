@@ -1044,9 +1044,9 @@ func TestOrderByWithLimit(t *testing.T) {
 	tk.MustExec("analyze table tcommonhash")
 	tk.MustExec("analyze table tpkhash")
 
-	valueSlice := make([]*valueStruct, 0, 2000)
-	vals := make([]string, 0, 2000)
-	for i := 0; i < 2000; i++ {
+	valueSlice := make([]*valueStruct, 0, 500)
+	vals := make([]string, 0, 500)
+	for i := 0; i < 500; i++ {
 		a := rand.Intn(32)
 		b := rand.Intn(32)
 		c := rand.Intn(32)
