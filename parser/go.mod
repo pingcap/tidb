@@ -12,7 +12,7 @@ require (
 	go.uber.org/goleak v1.1.11
 	go.uber.org/zap v1.24.0
 	golang.org/x/exp v0.0.0-20230519143937-03e91628a987
-	golang.org/x/text v0.11.0
+	golang.org/x/text v0.12.0
 	modernc.org/parser v1.0.7
 	modernc.org/y v1.0.9
 )
