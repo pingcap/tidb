@@ -17,6 +17,7 @@ package sessiontest
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -247,29 +248,43 @@ func TestTidbKvReadTimeout(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int)")
 
+	rows := tk.MustQuery("select count(*) from information_schema.cluster_info where `type`='tikv';").Rows()
+	require.Len(t, rows, 1)
+	tikvCount, err := strconv.Atoi(rows[0][0].(string))
+	require.NoError(t, err)
+	if tikvCount < 3 {
+		t.Skip("skip test since it's only work for tikv with at least 3 node")
+	}
+
 	require.NoError(t, failpoint.Enable("tikvclient/mockBatchClientSendDelay", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("tikvclient/mockBatchClientSendDelay"))
 	}()
 
 	// Test for point_get request
-	rows := tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where a = 1").Rows()
+	rows = tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where a = 1").Rows()
 	require.Len(t, rows, 1)
 	explain := fmt.Sprintf("%v", rows[0])
-	require.NotContains(t, explain, "backoff")
-	require.Regexp(t, ".*Point_Get.* Get:{num_rpc:2, total_time:.*", explain)
+	// num_rpc is 4 because there are 3 replica, and first try all 3 replicas with specified timeout will failed, then try again with default timeout will success.
+	require.Regexp(t, ".*Point_Get.* Get:{num_rpc:4, total_time:.*", explain)
 
 	// Test for batch_point_get request
 	rows = tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where a in (1,2)").Rows()
 	require.Len(t, rows, 1)
 	explain = fmt.Sprintf("%v", rows[0])
-	require.NotContains(t, explain, "backoff")
-	require.Regexp(t, ".*Batch_Point_Get.* BatchGet:{num_rpc:2, total_time:.*", explain)
+	require.Regexp(t, ".*Batch_Point_Get.* BatchGet:{num_rpc:4, total_time:.*", explain)
 
 	// Test for cop request
 	rows = tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where b > 1").Rows()
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
-	require.NotContains(t, explain, "backoff")
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:1.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:1.* cop_task: {num: 1, .* rpc_num: 4.*", explain)
+
+	// Test for stale read.
+	tk.MustExec("set @a=now(6);")
+	tk.MustExec("set @@tidb_replica_read='closest-replicas';")
+	rows = tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t as of timestamp(@a) where b > 1").Rows()
+	require.Len(t, rows, 3)
+	explain = fmt.Sprintf("%v", rows[0])
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:1.* cop_task: {num: 1, .* rpc_num: 4.*", explain)
 }

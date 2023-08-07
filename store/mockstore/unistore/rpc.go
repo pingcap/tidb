@@ -82,9 +82,9 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			}
 		}
 	})
-	failpoint.Inject("unistoreRPCTimeout", func(val failpoint.Value) {
+	failpoint.Inject("unistoreRPCDeadlineExceeded", func(val failpoint.Value) {
 		if val.(bool) && timeout < time.Second {
-			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{Message: "execution timeout"}))
+			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{Message: "Deadline is exceeded"}))
 		}
 	})
 

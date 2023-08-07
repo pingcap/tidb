@@ -564,9 +564,9 @@ func TestTidbKvReadTimeout(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int)")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCTimeout", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCDeadlineExceeded", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCTimeout"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCDeadlineExceeded"))
 	}()
 	// Test for point_get request
 	rows := tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where a = 1").Rows()
@@ -582,6 +582,14 @@ func TestTidbKvReadTimeout(t *testing.T) {
 
 	// Test for cop request
 	rows = tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where b > 1").Rows()
+	require.Len(t, rows, 3)
+	explain = fmt.Sprintf("%v", rows[0])
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:1.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
+
+	// Test for stale read.
+	tk.MustExec("set @a=now(6);")
+	tk.MustExec("set @@tidb_replica_read='closest-replicas';")
+	rows = tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t as of timestamp(@a) where b > 1").Rows()
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
 	require.Regexp(t, ".*TableReader.* root  time:.*, loops:1.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
