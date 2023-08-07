@@ -84,13 +84,14 @@ func (d *dispatcher) executeTask() {
 	logutil.Logger(d.logCtx).Info("execute one task",
 		zap.String("state", d.task.State), zap.Uint64("concurrency", d.task.Concurrency))
 	d.scheduleTask()
+	// TODO: manage history task table.
 }
 
-// monitorTask fetch task state from tidb_global_task table.
-func (d *dispatcher) monitorTask() (err error) {
+// refreshTask fetch task state from tidb_global_task table.
+func (d *dispatcher) refreshTask() (err error) {
 	d.task, err = d.taskMgr.GetGlobalTaskByID(d.task.ID)
 	if err != nil {
-		logutil.Logger(d.logCtx).Error("monitor task failed", zap.Error(err))
+		logutil.Logger(d.logCtx).Error("refresh task failed", zap.Error(err))
 	}
 	return err
 }
@@ -105,11 +106,11 @@ func (d *dispatcher) scheduleTask() {
 			logutil.Logger(d.logCtx).Info("schedule task exits", zap.Error(d.ctx.Err()))
 			return
 		case <-ticker.C:
-			err := d.monitorTask()
+			err := d.refreshTask()
 			if err != nil {
 				continue
 			}
-			failpoint.Inject("cancelTaskAfterMonitorTask", func(val failpoint.Value) {
+			failpoint.Inject("cancelTaskAfterRefreshTask", func(val failpoint.Value) {
 				if val.(bool) && d.task.State == proto.TaskStateRunning {
 					err := d.taskMgr.CancelGlobalTask(d.task.ID)
 					if err != nil {
