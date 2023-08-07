@@ -732,16 +732,23 @@ func TestExchangePartitionStates(t *testing.T) {
 	tk.MustExec("BEGIN")
 	tk.MustQuery(`select * from tp`).Check(testkit.Rows("2 2"))
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 1"))
-	syncChan := make(chan bool)
+	alterChan := make(chan error)
 	go func() {
-		tk2.MustContainErrMsg(`alter table tp exchange partition p0 with table t`, "[ddl:1736]Tables have different definitions")
-		syncChan <- true
+		err := tk2.ExecToErr(`alter table tp exchange partition p0 with table t`)
+		alterChan <- err
 	}()
 	jobID := int64(0)
 	waitFor := func(tableName, s string, pos int) {
 		for {
-			gotime.Sleep(2 * gotime.Second)
-			break
+			tick := gotime.Tick(100 * gotime.Millisecond)
+			select {
+			case alterErr := <-alterChan:
+				require.Fail(t, "Alter completed unexpectedly", "With error %v", alterErr)
+			case <-tick:
+				// just wait
+			}
+			//gotime.Sleep(2 * gotime.Second)
+			//break
 			res := tk4.MustQuery(`admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'exchange partition'`).Rows()
 			r := make([]string, 0, 9)
 			if len(res) == 1 {
@@ -792,29 +799,39 @@ func TestExchangePartitionStates(t *testing.T) {
 	//tk.MustExec(`insert into t values (3,"3")`)
 	// Adding the line below will make the alter fail.
 	//tk.MustExec(`insert into t values (1000003,"1000003")`)
-	//tk3.MustExec(`insert into t values (4,"4")`)
-	tk3.MustContainErrMsg(`insert into t values (1000004,"1000004")`, "[table:1748]Found a row not matching the given partition set")
-	logutil.BgLogger().Info("tk3 failed insert 1000004")
+	//tk3.MustExec(`insert into t values (1000003,"1000003")`)
+	tk3.MustExec(`insert into t values (4,"4")`)
+	//tk3.MustContainErrMsg(`insert into t values (1000004,"1000004")`, "[table:1748]Found a row not matching the given partition set")
 
 	tk.MustExec(`COMMIT`)
-	// done is before MDL has gone through, so not yet synced!
-	waitFor("t", "cancelled", 11)
-	tk.MustExec(`BEGIN`)
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1"))
-	tk3.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1"))
+	waitFor("t", "rollback done", 11)
+	// MDL will block the alter from finish, so still in the 'rollback' schema version
+	tk.MustExec("BEGIN")
+	tk.MustExec(`insert into t values (1000005,"1000005")`)
 	tk.MustExec(`insert into t values (5,"5")`)
+	tk3.MustExec(`insert into t values (6,"6")`)
+	//tk3.MustExec(`insert into t values (1000006,"1000006")`)
+	tk3.MustContainErrMsg(`insert into t values (1000006,"1000006")`, "[table:1748]Found a row not matching the given partition set")
+	tk3.MustExec("COMMIT")
+	require.ErrorContains(t, <-alterChan, "[ddl:1736]Tables have different definitions")
+	tk3.MustExec(`BEGIN`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "1000005 1000005", "5 5"))
+	tk.MustQuery(`select * from tp`).Sort().Check(testkit.Rows("2 2"))
+	tk3.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "4 4", "6 6"))
+	tk3.MustQuery(`select * from tp`).Sort().Check(testkit.Rows("2 2"))
+	tk.MustExec(`insert into t values (7,"7")`)
 	// This is the actual bug to fix!!!
-	tk.MustContainErrMsg(`insert into t values (1000005,"1000005")`, "[table:1748]Found a row not matching the given partition set")
-	tk.MustExec(`insert into tp values (6,"6")`)
+	//tk.MustContainErrMsg(`insert into t values (1000007,"1000007")`, "[table:1748]Found a row not matching the given partition set")
+	tk.MustExec(`insert into t values (1000007,"1000007")`)
+	tk.MustExec(`insert into tp values (8,"8")`)
 	// This is the actual bug to fix!!!
-	tk.MustExec(`insert into tp values (1000006,"1000006")`)
+	tk.MustExec(`insert into tp values (1000008,"1000008")`)
 	// TODO: This is a bug to be fixed?!
-	tk3.MustContainErrMsg(`insert into t values (1000007,"1000007")`,
-		"[table:1748]Found a row not matching the given partition set")
-	tk3.MustExec(`insert into t values (7,"7")`)
+	tk3.MustExec(`insert into t values (1000009,"1000009")`)
+	//tk3.MustContainErrMsg(`insert into t values (1000009,"1000009")`, "[table:1748]Found a row not matching the given partition set")
+	tk3.MustExec(`insert into t values (9,"9")`)
 
 	tk3.MustExec(`COMMIT`)
-	<-syncChan
 	tk.MustQuery(`show create table tp`).Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
@@ -838,8 +855,7 @@ func TestExchangePartitionStates(t *testing.T) {
 	tk.MustExec(`commit`)
 	tk.MustExec(`insert into t values (8,"8")`)
 	tk.MustExec(`insert into tp values (9,"9")`)
-	tk.MustContainErrMsg(`insert into t values (1000010,"1000010")`,
-		"[table:1748]Found a row not matching the given partition set")
+	tk.MustExec(`insert into t values (1000010,"1000010")`)
 	tk.MustExec(`insert into tp values (1000011,"1000011")`)
 }
 

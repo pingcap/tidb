@@ -2380,6 +2380,9 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	if job.IsRollingback() {
+		return rollbackExchangeTablePartition(d, t, job, nt)
+	}
 	pt, err := getTableInfo(t, ptID, ptSchemaID)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
@@ -2388,40 +2391,49 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	if pt.State != model.StatePublic {
-		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", pt.Name, pt.State)
-	}
-
-	err = checkExchangePartition(pt, nt)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	err = checkTableDefCompatible(pt, nt)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
 	index, _, err := getPartitionDef(pt, partName)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if nt.ExchangePartitionInfo == nil || !nt.ExchangePartitionInfo.ExchangePartitionFlag {
-		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
-			ExchangePartitionFlag:  true,
-			ExchangePartitionID:    ptID,
-			ExchangePartitionDefID: defID,
+	if job.SchemaState == model.StateNone {
+		if pt.State != model.StatePublic {
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", pt.Name, pt.State)
 		}
-		// We need an interim schema version, so there are no rows inserted
-		// into the table using the schema version before the exchange is made.
-		//job.SchemaState = model.StateWriteOnly
-		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
-	}
+		err = checkExchangePartition(pt, nt)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 
-	//job.SchemaState = model.StatePublic
+		err = checkTableDefCompatible(pt, nt)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		if nt.ExchangePartitionInfo == nil || !nt.ExchangePartitionInfo.ExchangePartitionFlag {
+			nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
+				ExchangePartitionFlag:  true,
+				ExchangePartitionID:    ptID,
+				ExchangePartitionDefID: defID,
+			}
+			// We need an interim schema version,
+			// so there are no non-matching rows inserted
+			// into the table using the schema version
+			// before the exchange is made.
+			job.SchemaState = model.StateWriteOnly
+			return updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
+		} else {
+			return ver, dbterror.ErrInvalidDDLState
+		}
+	}
+	// From now on, nt (the non-partitioned table) has
+	// ExchangePartitionInfo set, meaning it is restricted
+	// to only allow writes that would match the
+	// partition to be exchange with.
+	// So we need to rollback that change, instead of just cancelling.
+
 	if d.lease > 0 {
 		delayForAsyncCommit()
 	}
@@ -2429,7 +2441,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	if withValidation {
 		err = checkExchangePartitionRecordValidation(w, pt, index, ntDbInfo.Name, nt.Name)
 		if err != nil {
-			job.State = model.JobStateCancelled
+			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
 	}
@@ -2437,19 +2449,19 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	// partition table auto IDs.
 	ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
 	if err != nil {
-		job.State = model.JobStateCancelled
+		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
 	}
 	// non-partition table auto IDs.
 	ntAutoIDs, err := t.GetAutoIDAccessors(job.SchemaID, nt.ID).Get()
 	if err != nil {
-		job.State = model.JobStateCancelled
+		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
 	}
 
 	_, partDef, err := getPartitionDef(pt, partName)
 	if err != nil {
-		job.State = model.JobStateCancelled
+		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
 	}
 
@@ -2465,31 +2477,22 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	// exchange table meta id
 	partDef.ID, nt.ID = nt.ID, partDef.ID
 
+	// From now on, we also need to rollback the transaction in case of errors,
+	// since we are already starting to modify both tables.
 	err = t.UpdateTable(ptSchemaID, pt)
 	if err != nil {
-		job.State = model.JobStateCancelled
+		job.State = model.JobStateRollingback
+		w.sess.Reset()
 		return ver, errors.Trace(err)
 	}
 
 	failpoint.Inject("exchangePartitionErr", func(val failpoint.Value) {
 		if val.(bool) {
-			job.State = model.JobStateCancelled
+			job.State = model.JobStateRollingback
+			w.sess.Reset()
 			failpoint.Return(ver, errors.New("occur an error after updating partition id"))
 		}
 	})
-
-	// recreate non-partition table meta info
-	err = t.DropTableOrView(job.SchemaID, partDef.ID)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	err = t.CreateTableOrView(job.SchemaID, nt)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
 
 	// Set both tables to the maximum auto IDs between normal table and partitioned table.
 	newAutoIDs := meta.AutoIDGroup{
@@ -2499,12 +2502,14 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 	err = t.GetAutoIDAccessors(ptSchemaID, pt.ID).Put(newAutoIDs)
 	if err != nil {
-		job.State = model.JobStateCancelled
+		job.State = model.JobStateRollingback
+		w.sess.Reset()
 		return ver, errors.Trace(err)
 	}
 	err = t.GetAutoIDAccessors(job.SchemaID, nt.ID).Put(newAutoIDs)
 	if err != nil {
-		job.State = model.JobStateCancelled
+		job.State = model.JobStateRollingback
+		w.sess.Reset()
 		return ver, errors.Trace(err)
 	}
 
@@ -2518,14 +2523,17 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			se := sess.NewSession(seCtx)
 			_, err = se.Execute(context.Background(), "insert ignore into test.pt values (40000000)", "exchange_partition_test")
 			if err != nil {
+				w.sess.Reset()
 				failpoint.Return(ver, err)
 			}
 		}
 	})
 
+	// TODO: Move this before the actual change!
 	err = checkExchangePartitionPlacementPolicy(t, partDef.PlacementPolicyRef, nt.PlacementPolicyRef)
 	if err != nil {
-		job.State = model.JobStateCancelled
+		job.State = model.JobStateRollingback
+		w.sess.Reset()
 		return ver, errors.Trace(err)
 	}
 
@@ -2534,12 +2542,14 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	bundles, err := bundlesForExchangeTablePartition(t, job, pt, partDef, nt)
 	if err != nil {
-		job.State = model.JobStateCancelled
+		job.State = model.JobStateRollingback
+		w.sess.Reset()
 		return ver, errors.Trace(err)
 	}
 
 	if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
-		job.State = model.JobStateCancelled
+		job.State = model.JobStateRollingback
+		w.sess.Reset()
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
@@ -2548,7 +2558,8 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	rules, err := infosync.GetLabelRules(context.TODO(), []string{ntrID, ptrID})
 	if err != nil {
-		job.State = model.JobStateCancelled
+		job.State = model.JobStateRollingback
+		w.sess.Reset()
 		return 0, errors.Wrapf(err, "failed to get PD the label rules")
 	}
 
@@ -2573,16 +2584,19 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	patch := label.NewRulePatch(setRules, deleteRules)
+	// TODO, will these be rolled back?
 	err = infosync.UpdateLabelRules(context.TODO(), patch)
 	if err != nil {
-		job.State = model.JobStateCancelled
+		job.State = model.JobStateRollingback
+		w.sess.Reset()
 		return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
 
-	//job.SchemaState = model.StatePublic
+	job.SchemaState = model.StatePublic
 	nt.ExchangePartitionInfo = nil
 	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	if err != nil {
+		w.sess.Reset()
 		return ver, errors.Trace(err)
 	}
 
