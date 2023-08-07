@@ -511,7 +511,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 			}
 		}
 		if substituted {
-			return true, hasFail, NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
+			return true, hasFail, v.NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
 		}
 	}
 	return false, false, expr
@@ -603,7 +603,7 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 		if x.FuncName.L == ast.Cast {
 			newSf = BuildCastFunction(x.GetCtx(), newArgs[0], x.RetType)
 		} else {
-			newSf = NewFunctionInternal(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
+			newSf = x.NewFunctionInternal(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
 		}
 		return newSf, nil
 	case *CorrelatedColumn:

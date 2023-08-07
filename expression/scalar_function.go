@@ -280,6 +280,19 @@ func NewFunctionInternal(ctx sessionctx.Context, funcName string, retType *types
 	return expr
 }
 
+// NewFunctionInternal is more normal portal for NewFunctionInternal.
+// Since normal function can be recreated with funcName，retType and Args; while for function with metadata, those metadata should also be passed through.
+func (sf *ScalarFunction) NewFunctionInternal(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) Expression {
+	expr, err := NewFunction(ctx, funcName, retType, args...)
+	terror.Log(err)
+	if funcName != ast.Grouping {
+		return expr
+	}
+	terror.Log(expr.(*ScalarFunction).Function.(*BuiltinGroupingImplSig).
+		SetMetadata(sf.Function.(*BuiltinGroupingImplSig).mode, sf.Function.(*BuiltinGroupingImplSig).groupingMarks))
+	return expr
+}
+
 // ScalarFuncs2Exprs converts []*ScalarFunction to []Expression.
 func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 	result := make([]Expression, 0, len(funcs))

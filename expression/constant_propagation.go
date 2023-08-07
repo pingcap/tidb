@@ -180,7 +180,7 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 		}
 	}
 	if replaced {
-		return true, false, NewFunctionInternal(ctx, sf.FuncName.L, sf.GetType(), args...)
+		return true, false, sf.NewFunctionInternal(ctx, sf.FuncName.L, sf.GetType(), args...)
 	}
 	return false, false, cond
 }
