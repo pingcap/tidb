@@ -933,8 +933,9 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 
 	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
 	metas := restore.StreamMetadataSet{
-		Helper: stream.NewMetadataHelper(),
-		DryRun: cfg.DryRun,
+		MetadataDownloadBatchSize: cfg.MetadataDownloadBatchSize,
+		Helper:                    stream.NewMetadataHelper(),
+		DryRun:                    cfg.DryRun,
 	}
 	shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, storage, cfg.Until)
 	if err != nil {
@@ -1146,7 +1147,52 @@ func restoreStream(
 	// mode or emptied schedulers
 	defer restorePostWork(ctx, client, restoreSchedulers)
 
+<<<<<<< HEAD
 	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS)
+=======
+	// It need disable GC in TiKV when PiTR.
+	// because the process of PITR is concurrent and kv events isn't sorted by tso.
+	restoreGc, oldRatio, err := KeepGcDisabled(g, mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	gcDisabledRestorable := false
+	defer func() {
+		// don't restore the gc-ratio-threshold if checkpoint mode is used and restored is not finished
+		if cfg.UseCheckpoint && !gcDisabledRestorable {
+			log.Info("skip restore the gc-ratio-threshold for next retry")
+			return
+		}
+
+		log.Info("start to restore gc", zap.String("ratio", oldRatio))
+		if err := restoreGc(oldRatio); err != nil {
+			log.Error("failed to set gc enabled", zap.Error(err))
+		}
+		log.Info("finish restoring gc")
+	}()
+
+	var taskName string
+	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
+	if cfg.UseCheckpoint {
+		taskName = cfg.generateLogRestoreTaskName(client.GetClusterID(ctx), cfg.StartTS, cfg.RestoreTS)
+		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, taskName, oldRatio)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		oldRatio = oldRatioFromCheckpoint
+
+		checkpointRunner, err = client.StartCheckpointRunnerForLogRestore(ctx, taskName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer func() {
+			log.Info("wait for flush checkpoint...")
+			checkpointRunner.WaitForFinish(ctx, !gcDisabledRestorable)
+		}()
+	}
+
+	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS, cfg.MetadataDownloadBatchSize)
+>>>>>>> 6ad49e79b17 (br: make download metadata concurrency adjustable (#45639))
 	if err != nil {
 		return err
 	}
@@ -1418,6 +1464,7 @@ func getFullBackupTS(
 	return backupmeta.GetEndVersion(), backupmeta.GetClusterId(), nil
 }
 
+<<<<<<< HEAD
 func getGlobalResolvedTS(
 	ctx context.Context,
 	s storage.ExternalStorage,
@@ -1456,6 +1503,9 @@ func getGlobalResolvedTS(
 }
 
 func initFullBackupTables(
+=======
+func parseFullBackupTablesStorage(
+>>>>>>> 6ad49e79b17 (br: make download metadata concurrency adjustable (#45639))
 	ctx context.Context,
 	cfg *RestoreConfig,
 ) (map[int64]*metautil.Table, error) {

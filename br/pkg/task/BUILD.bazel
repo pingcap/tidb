@@ -94,6 +94,10 @@ go_test(
     ],
     embed = [":task"],
     flaky = True,
+<<<<<<< HEAD
+=======
+    shard_count = 18,
+>>>>>>> 6ad49e79b17 (br: make download metadata concurrency adjustable (#45639))
     deps = [
         "//br/pkg/conn",
         "//br/pkg/errors",

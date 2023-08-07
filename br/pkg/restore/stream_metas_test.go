@@ -149,7 +149,8 @@ func TestTruncateLog(t *testing.T) {
 	require.NoError(t, fakeStreamBackup(l))
 
 	s := restore.StreamMetadataSet{
-		Helper: stream.NewMetadataHelper(),
+		Helper:                    stream.NewMetadataHelper(),
+		MetadataDownloadBatchSize: 128,
 	}
 	require.NoError(t, s.LoadFrom(ctx, l))
 
@@ -221,7 +222,8 @@ func TestTruncateLogV2(t *testing.T) {
 	require.NoError(t, fakeStreamBackupV2(l))
 
 	s := restore.StreamMetadataSet{
-		Helper: stream.NewMetadataHelper(),
+		Helper:                    stream.NewMetadataHelper(),
+		MetadataDownloadBatchSize: 128,
 	}
 	require.NoError(t, s.LoadFrom(ctx, l))
 
@@ -1188,7 +1190,8 @@ func TestTruncate1(t *testing.T) {
 			for _, until := range ts.until {
 				t.Logf("case %d, param %d, until %d", i, j, until)
 				metas := restore.StreamMetadataSet{
-					Helper: stream.NewMetadataHelper(),
+					Helper:                    stream.NewMetadataHelper(),
+					MetadataDownloadBatchSize: 128,
 				}
 				err := generateFiles(ctx, s, cs.metas, tmpDir)
 				require.NoError(t, err)
@@ -1703,7 +1706,8 @@ func TestTruncate2(t *testing.T) {
 			for _, until := range ts.until {
 				t.Logf("case %d, param %d, until %d", i, j, until)
 				metas := restore.StreamMetadataSet{
-					Helper: stream.NewMetadataHelper(),
+					Helper:                    stream.NewMetadataHelper(),
+					MetadataDownloadBatchSize: 128,
 				}
 				err := generateFiles(ctx, s, cs.metas, tmpDir)
 				require.NoError(t, err)
@@ -2086,7 +2090,8 @@ func TestTruncate3(t *testing.T) {
 			for _, until := range ts.until {
 				t.Logf("case %d, param %d, until %d", i, j, until)
 				metas := restore.StreamMetadataSet{
-					Helper: stream.NewMetadataHelper(),
+					Helper:                    stream.NewMetadataHelper(),
+					MetadataDownloadBatchSize: 128,
 				}
 				err := generateFiles(ctx, s, cs.metas, tmpDir)
 				require.NoError(t, err)
@@ -2298,7 +2303,8 @@ func TestCalculateShiftTS(t *testing.T) {
 			for _, until := range ts.until {
 				t.Logf("case %d, param %d, until %d", i, j, until)
 				metas := restore.StreamMetadataSet{
-					Helper: stream.NewMetadataHelper(),
+					Helper:                    stream.NewMetadataHelper(),
+					MetadataDownloadBatchSize: 128,
 				}
 				err := generateFiles(ctx, s, cs.metas, tmpDir)
 				require.NoError(t, err)
