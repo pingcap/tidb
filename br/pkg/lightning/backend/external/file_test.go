@@ -16,10 +16,13 @@ package external
 
 import (
 	"context"
+	"io"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/rand"
 )
 
 func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
@@ -104,4 +107,47 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TODO(lance6716): add more tests when the usage of other functions are merged into master.
+func TestKVReadWrite(t *testing.T) {
+	seed := time.Now().Unix()
+	rand.Seed(uint64(seed))
+	t.Logf("seed: %d", seed)
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+	writer, err := memStore.Create(ctx, "/test", nil)
+	require.NoError(t, err)
+	rc := &rangePropertiesCollector{
+		propSizeIdxDistance: 100,
+		propKeysIdxDistance: 2,
+	}
+	rc.reset()
+	kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
+	require.NoError(t, err)
+
+	kvCnt := rand.Intn(10) + 10
+	keys := make([][]byte, kvCnt)
+	values := make([][]byte, kvCnt)
+	for i := 0; i < kvCnt; i++ {
+		randLen := rand.Intn(10) + 1
+		keys[i] = make([]byte, randLen)
+		rand.Read(keys[i])
+		randLen = rand.Intn(10) + 1
+		values[i] = make([]byte, randLen)
+		rand.Read(values[i])
+		err = kvStore.AddKeyValue(keys[i], values[i])
+		require.NoError(t, err)
+	}
+	err = writer.Close(ctx)
+	require.NoError(t, err)
+
+	bufSize := rand.Intn(100) + 1
+	kvReader, err := newKVReader(ctx, "/test", memStore, 0, bufSize)
+	require.NoError(t, err)
+	for i := 0; i < kvCnt; i++ {
+		key, value, err := kvReader.nextKV()
+		require.NoError(t, err)
+		require.Equal(t, keys[i], key)
+		require.Equal(t, values[i], value)
+	}
+	_, _, err = kvReader.nextKV()
+	require.Equal(t, io.EOF, err)
+}
