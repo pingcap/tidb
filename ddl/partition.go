@@ -2414,14 +2414,13 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 		err = checkExchangePartitionPlacementPolicy(t, partDef.PlacementPolicyRef, nt.PlacementPolicyRef)
 		if err != nil {
+			if partDef.PlacementPolicyRef != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
 			// Also check if it uses the table level default
-			if partDef.PlacementPolicyRef == nil {
-				err = checkExchangePartitionPlacementPolicy(t, pt.PlacementPolicyRef, nt.PlacementPolicyRef)
-				if err != nil {
-					job.State = model.JobStateCancelled
-					return ver, errors.Trace(err)
-				}
-			} else {
+			err = checkExchangePartitionPlacementPolicy(t, pt.PlacementPolicyRef, nt.PlacementPolicyRef)
+			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
