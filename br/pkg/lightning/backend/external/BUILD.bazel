@@ -4,8 +4,11 @@ go_library(
     name = "external",
     srcs = [
         "byte_reader.go",
+        "codec.go",
         "file.go",
+        "kv_reader.go",
         "sharedisk.go",
+        "stat_reader.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/lightning/backend/external",
     visibility = ["//visibility:public"],
@@ -13,6 +16,7 @@ go_library(
         "//br/pkg/storage",
         "//util/logutil",
         "//util/mathutil",
+        "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -22,11 +26,12 @@ go_test(
     timeout = "short",
     srcs = [
         "byte_reader_test.go",
+        "codec_test.go",
         "file_test.go",
     ],
     embed = [":external"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 5,
     deps = [
         "//br/pkg/storage",
         "@com_github_pingcap_errors//:errors",
