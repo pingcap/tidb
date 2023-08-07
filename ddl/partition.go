@@ -2486,8 +2486,6 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	// exchange table meta id
 	partDef.ID, nt.ID = nt.ID, partDef.ID
 
-	// From now on, we also need to rollback the transaction in case of errors,
-	// since we are already starting to modify both tables.
 	err = t.UpdateTable(ptSchemaID, pt)
 	if err != nil {
 		return ver, errors.Trace(err)
