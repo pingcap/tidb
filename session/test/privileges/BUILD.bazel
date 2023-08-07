@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "privileges_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "privileges_test.go",
+    ],
+    flaky = True,
+    shard_count = 5,
+    deps = [
+        "//config",
+        "//parser/auth",
+        "//privilege/privileges",
+        "//testkit",
+        "//testkit/testmain",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -3928,3 +3928,131 @@ func (n *DynamicCalibrateResourceOption) Accept(v Visitor) (Node, bool) {
 	}
 	return v.Leave(n)
 }
+
+// DropQueryWatchStmt is a statement to drop a runaway watch item.
+type DropQueryWatchStmt struct {
+	stmtNode
+	IntValue int64
+}
+
+func (n *DropQueryWatchStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("QUERY WATCH REMOVE ")
+	ctx.WritePlainf("%d", n.IntValue)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DropQueryWatchStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*DropQueryWatchStmt)
+	return v.Leave(n)
+}
+
+// AddQueryWatchStmt is a statement to add a runaway watch item.
+type AddQueryWatchStmt struct {
+	stmtNode
+	QueryWatchOptionList []*QueryWatchOption
+}
+
+func (n *AddQueryWatchStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("QUERY WATCH ADD")
+	for i, option := range n.QueryWatchOptionList {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing QueryWatchOptionList: [%v]", i)
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *AddQueryWatchStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*AddQueryWatchStmt)
+	for _, val := range n.QueryWatchOptionList {
+		_, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+	}
+	return v.Leave(n)
+}
+
+type QueryWatchOptionType int
+
+const (
+	QueryWatchResourceGroup QueryWatchOptionType = iota
+	QueryWatchAction
+	QueryWatchType
+)
+
+// QueryWatchOption is used for parsing manual management of watching runaway queries option.
+type QueryWatchOption struct {
+	stmtNode
+	Tp        QueryWatchOptionType
+	StrValue  model.CIStr
+	IntValue  int32
+	ExprValue ExprNode
+	BoolValue bool
+}
+
+func (n *QueryWatchOption) Restore(ctx *format.RestoreCtx) error {
+	switch n.Tp {
+	case QueryWatchResourceGroup:
+		ctx.WriteKeyWord("RESOURCE GROUP ")
+		if n.ExprValue != nil {
+			if err := n.ExprValue.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while splicing ExprValue: [%v]", n.ExprValue)
+			}
+		} else {
+			ctx.WriteName(n.StrValue.O)
+		}
+	case QueryWatchAction:
+		ctx.WriteKeyWord("ACTION ")
+		ctx.WritePlain("= ")
+		ctx.WriteKeyWord(model.RunawayActionType(n.IntValue).String())
+	case QueryWatchType:
+		if n.BoolValue {
+			ctx.WriteKeyWord("SQL TEXT ")
+			ctx.WriteKeyWord(model.RunawayWatchType(n.IntValue).String())
+			ctx.WriteKeyWord(" TO ")
+		} else {
+			switch n.IntValue {
+			case int32(model.WatchSimilar):
+				ctx.WriteKeyWord("SQL DIGEST ")
+			case int32(model.WatchPlan):
+				ctx.WriteKeyWord("PLAN DIGEST ")
+			}
+		}
+		if err := n.ExprValue.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing ExprValue: [%v]", n.ExprValue)
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *QueryWatchOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*QueryWatchOption)
+	if n.ExprValue != nil {
+		node, ok := n.ExprValue.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ExprValue = node.(ExprNode)
+	}
+	return v.Leave(n)
+}
+
+func CheckQueryWatchAppend(ops []*QueryWatchOption, newOp *QueryWatchOption) bool {
+	for _, op := range ops {
+		if op.Tp == newOp.Tp {
+			return false
+		}
+	}
+	return true
+}

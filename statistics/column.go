@@ -35,20 +35,21 @@ import (
 
 // Column represents a column histogram.
 type Column struct {
-	Histogram
-	CMSketch   *CMSketch
-	TopN       *TopN
-	FMSketch   *FMSketch
-	PhysicalID int64
-	Info       *model.ColumnInfo
-	IsHandle   bool
-	ErrorRate
-	Flag           int64
 	LastAnalyzePos types.Datum
-	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
+	CMSketch       *CMSketch
+	TopN           *TopN
+	FMSketch       *FMSketch
+	Info           *model.ColumnInfo
+	Histogram
+	ErrorRate
 
 	// StatsLoadedStatus indicates the status of column statistics
 	StatsLoadedStatus
+	PhysicalID int64
+	Flag       int64
+	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
+
+	IsHandle bool
 }
 
 func (c *Column) String() string {
@@ -346,43 +347,17 @@ func (c *Column) ItemID() int64 {
 // DropEvicted implements TableCacheItem
 // DropEvicted drops evicted structures
 func (c *Column) DropEvicted() {
-	if !c.statsInitialized {
+	if !c.statsInitialized || c.evictedStatus == allEvicted {
 		return
 	}
-	switch c.evictedStatus {
-	case allLoaded:
-		if c.CMSketch != nil && c.StatsVer < Version2 {
-			c.dropCMS()
-			return
-		}
-		// For stats version2, there is no cms thus we directly drop topn
-		c.dropTopN()
-		return
-	case onlyCmsEvicted:
-		c.dropTopN()
-		return
-	default:
-		return
+	c.dropUnnecessaryData()
+}
+
+func (c *Column) dropUnnecessaryData() {
+	if c.StatsVer < Version2 {
+		c.CMSketch = nil
 	}
-}
-
-func (c *Column) dropCMS() {
-	c.CMSketch = nil
-	c.evictedStatus = onlyCmsEvicted
-}
-
-func (c *Column) dropTopN() {
-	originTopNNum := int64(c.TopN.Num())
 	c.TopN = nil
-	if len(c.Histogram.Buckets) == 0 && originTopNNum >= c.Histogram.NDV {
-		// This indicates column has topn instead of histogram
-		c.evictedStatus = allEvicted
-	} else {
-		c.evictedStatus = onlyHistRemained
-	}
-}
-
-func (c *Column) dropHist() {
 	c.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
 	c.Histogram.Buckets = make([]Bucket, 0)
 	c.Histogram.scalars = make([]scalar, 0)
@@ -501,10 +476,6 @@ func (s StatsLoadedStatus) StatusToString() string {
 	switch s.evictedStatus {
 	case allLoaded:
 		return "allLoaded"
-	case onlyCmsEvicted:
-		return "onlyCmsEvicted"
-	case onlyHistRemained:
-		return "onlyHistRemained"
 	case allEvicted:
 		return "allEvicted"
 	}

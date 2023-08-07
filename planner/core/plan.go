@@ -17,12 +17,11 @@ package core
 import (
 	"fmt"
 	"math"
-	"strconv"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core/internal/base"
 	fd "github.com/pingcap/tidb/planner/funcdep"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
@@ -31,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/size"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -55,13 +53,13 @@ type Plan interface {
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
 
-	// replaceExprColumns replace all the column reference in the plan's expression node.
-	replaceExprColumns(replace map[string]*expression.Column)
+	// ReplaceExprColumns replace all the column reference in the plan's expression node.
+	ReplaceExprColumns(replace map[string]*expression.Column)
 
 	SCtx() sessionctx.Context
 
-	// statsInfo will return the property.StatsInfo for this plan.
-	statsInfo() *property.StatsInfo
+	// StatsInfo will return the property.StatsInfo for this plan.
+	StatsInfo() *property.StatsInfo
 
 	// OutputNames returns the outputting names of each column.
 	OutputNames() types.NameSlice
@@ -71,7 +69,7 @@ type Plan interface {
 
 	SelectBlockOffset() int
 
-	buildPlanTrace() *tracing.PlanTrace
+	BuildPlanTrace() *tracing.PlanTrace
 }
 
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
@@ -96,7 +94,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 	sort := PhysicalSort{
 		ByItems:       make([]*util.ByItems, 0, len(p.SortItems)),
 		IsPartialSort: p.IsSortItemAllForPartition(),
-	}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
+	}.Init(ctx, tsk.plan().StatsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
 	for _, col := range p.SortItems {
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 	}
@@ -144,7 +142,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	for _, item := range pp.PartitionBy {
 		partitionBy = append(partitionBy, item.Col)
 	}
-	ndv, _ := getColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.statsInfo())
+	ndv, _ := getColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.StatsInfo())
 	if ndv <= 1 {
 		return nil
 	}
@@ -161,7 +159,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 		DataSources:  []PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{byItems},
-	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
+	}.Init(ctx, pp.StatsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
 }
 
@@ -185,7 +183,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 			partitionBy = append(partitionBy, col)
 		}
 	}
-	ndv, _ := getColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.statsInfo())
+	ndv, _ := getColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.StatsInfo())
 	if ndv <= 1 {
 		return nil
 	}
@@ -198,7 +196,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		DataSources:  []PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{util.CloneExprs(pp.GroupByItems)},
-	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
+	}.Init(ctx, pp.StatsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
 }
 
@@ -237,7 +235,7 @@ func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx sessionctx.Context) 
 		DataSources:  dataSources,
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{leftByItemArray, rightByItemArray},
-	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
+	}.Init(ctx, pp.StatsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
 }
 
@@ -371,8 +369,8 @@ type PhysicalPlan interface {
 	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 	ResolveIndices() error
 
-	// Stats returns the StatsInfo of the plan.
-	Stats() *property.StatsInfo
+	// StatsInfo returns the StatsInfo of the plan.
+	StatsInfo() *property.StatsInfo
 
 	// SetStats sets basePlan.stats inside the basePhysicalPlan.
 	SetStats(s *property.StatsInfo)
@@ -390,9 +388,9 @@ type PhysicalPlan interface {
 	// MemoryUsage return the memory usage of PhysicalPlan
 	MemoryUsage() int64
 
-	// Below three methods help to handle the inconsistency between row count in the statsInfo and the recorded
+	// Below three methods help to handle the inconsistency between row count in the StatsInfo and the recorded
 	// actual row count.
-	// For the children in the inner side (probe side) of Index Join and Apply, the row count in the statsInfo
+	// For the children in the inner side (probe side) of Index Join and Apply, the row count in the StatsInfo
 	// means the estimated row count for a single "probe", but the recorded actual row count is the total row
 	// count for all "probes".
 	// To handle this inconsistency without breaking anything else, we added a field `probeParents` of
@@ -403,7 +401,7 @@ type PhysicalPlan interface {
 
 	// setProbeParents sets the above stated `probeParents` field.
 	setProbeParents([]PhysicalPlan)
-	// getEstRowCountForDisplay uses the "single probe" row count in statsInfo and the probeParents to calculate
+	// getEstRowCountForDisplay uses the "single probe" row count in StatsInfo and the probeParents to calculate
 	// the "all probe" row count.
 	// All places that display the row count for a PhysicalPlan are expected to use this method.
 	getEstRowCountForDisplay() float64
@@ -444,7 +442,7 @@ func (op *PlanCostOption) WithOptimizeTracer(v *physicalOptimizeOp) *PlanCostOpt
 }
 
 type baseLogicalPlan struct {
-	basePlan
+	base.Plan
 
 	taskMap map[string]task
 	// taskMapBak forms a backlog stack of taskMap, used to roll back the taskMap.
@@ -489,7 +487,7 @@ func getEstimatedProbeCntFromProbeParents(probeParents []PhysicalPlan) float64 {
 		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *PhysicalIndexJoin:
 			if join, ok := pp.(interface{ getInnerChildIdx() int }); ok {
 				outer := pp.Children()[1-join.getInnerChildIdx()]
-				res *= outer.statsInfo().RowCount
+				res *= outer.StatsInfo().RowCount
 			}
 		}
 	}
@@ -519,7 +517,7 @@ func getActualProbeCntFromProbeParents(pps []PhysicalPlan, statsColl *execdetail
 }
 
 type basePhysicalPlan struct {
-	basePlan
+	base.Plan
 
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
@@ -542,7 +540,7 @@ type basePhysicalPlan struct {
 
 func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
 	base := &basePhysicalPlan{
-		basePlan:                             p.basePlan,
+		Plan:                                 p.Plan,
 		self:                                 newSelf,
 		TiFlashFineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
 		probeParents:                         p.probeParents,
@@ -593,7 +591,7 @@ func (p *basePhysicalPlan) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePlan.MemoryUsage() + size.SizeOfSlice + int64(cap(p.childrenReqProps))*size.SizeOfPointer +
+	sum = p.Plan.MemoryUsage() + size.SizeOfSlice + int64(cap(p.childrenReqProps))*size.SizeOfPointer +
 		size.SizeOfSlice + int64(cap(p.children)+1)*size.SizeOfInterface + size.SizeOfFloat64 +
 		size.SizeOfUint64 + size.SizeOfBool
 
@@ -610,7 +608,7 @@ func (p *basePhysicalPlan) getEstRowCountForDisplay() float64 {
 	if p == nil {
 		return 0
 	}
-	return p.statsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
+	return p.StatsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
 }
 
 func (p *basePhysicalPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
@@ -626,12 +624,12 @@ func (p *basePhysicalPlan) setProbeParents(probeParents []PhysicalPlan) {
 
 // GetLogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.
 func (p *baseLogicalPlan) GetLogicalTS4TaskMap() uint64 {
-	p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS++
-	return p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS
+	p.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS++
+	return p.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS
 }
 
 func (p *baseLogicalPlan) rollBackTaskMap(ts uint64) {
-	if !p.ctx.GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
+	if !p.SCtx().GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		return
 	}
 	if len(p.taskMapBak) > 0 {
@@ -665,7 +663,7 @@ func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) task {
 
 func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) {
 	key := prop.HashCode()
-	if p.ctx.GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
+	if p.SCtx().GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		// Empty string for useless change.
 		ts := p.GetLogicalTS4TaskMap()
 		p.taskMapBakTS = append(p.taskMapBakTS, ts)
@@ -730,30 +728,20 @@ func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, chil
 	}
 }
 
-func newBasePlan(ctx sessionctx.Context, tp string, offset int) basePlan {
-	id := ctx.GetSessionVars().PlanID.Add(1)
-	return basePlan{
-		tp:          tp,
-		id:          int(id),
-		ctx:         ctx,
-		blockOffset: offset,
-	}
-}
-
 func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan, offset int) baseLogicalPlan {
 	return baseLogicalPlan{
 		taskMap:      make(map[string]task),
 		taskMapBak:   make([]string, 0, 10),
 		taskMapBakTS: make([]uint64, 0, 10),
-		basePlan:     newBasePlan(ctx, tp, offset),
+		Plan:         base.NewBasePlan(ctx, tp, offset),
 		self:         self,
 	}
 }
 
 func newBasePhysicalPlan(ctx sessionctx.Context, tp string, self PhysicalPlan, offset int) basePhysicalPlan {
 	return basePhysicalPlan{
-		basePlan: newBasePlan(ctx, tp, offset),
-		self:     self,
+		Plan: base.NewBasePlan(ctx, tp, offset),
+		self: self,
 	}
 }
 
@@ -767,81 +755,6 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt 
 		return nil
 	}
 	return p.children[0].PruneColumns(parentUsedCols, opt)
-}
-
-// basePlan implements base Plan interface.
-// Should be used as embedded struct in Plan implementations.
-type basePlan struct {
-	tp          string
-	id          int
-	ctx         sessionctx.Context
-	stats       *property.StatsInfo
-	blockOffset int
-}
-
-// OutputNames returns the outputting names of each column.
-func (*basePlan) OutputNames() types.NameSlice {
-	return nil
-}
-
-func (*basePlan) SetOutputNames(_ types.NameSlice) {}
-
-func (*basePlan) replaceExprColumns(_ map[string]*expression.Column) {}
-
-// ID implements Plan ID interface.
-func (p *basePlan) ID() int {
-	return p.id
-}
-
-// property.StatsInfo implements the Plan interface.
-func (p *basePlan) statsInfo() *property.StatsInfo {
-	return p.stats
-}
-
-// ExplainInfo implements Plan interface.
-func (*basePlan) ExplainInfo() string {
-	return "N/A"
-}
-
-func (p *basePlan) ExplainID() fmt.Stringer {
-	return stringutil.MemoizeStr(func() string {
-		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
-			return p.tp
-		}
-		return p.tp + "_" + strconv.Itoa(p.id)
-	})
-}
-
-// TP implements Plan interface.
-func (p *basePlan) TP() string {
-	return p.tp
-}
-
-func (p *basePlan) SelectBlockOffset() int {
-	return p.blockOffset
-}
-
-// Stats implements Plan Stats interface.
-func (p *basePlan) Stats() *property.StatsInfo {
-	return p.stats
-}
-
-// SetStats sets basePlan.stats
-func (p *basePlan) SetStats(s *property.StatsInfo) {
-	p.stats = s
-}
-
-// basePlanSize is the size of basePlan.
-const basePlanSize = int64(unsafe.Sizeof(basePlan{}))
-
-// MemoryUsage return the memory usage of basePlan
-func (p *basePlan) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = basePlanSize + int64(len(p.tp))
-	return sum
 }
 
 // Schema implements Plan Schema interface.
@@ -892,13 +805,8 @@ func (p *basePhysicalPlan) SetChild(i int, child PhysicalPlan) {
 	p.children[i] = child
 }
 
-// Context implements Plan Context interface.
-func (p *basePlan) SCtx() sessionctx.Context {
-	return p.ctx
-}
-
-// buildPlanTrace implements Plan
-func (p *basePhysicalPlan) buildPlanTrace() *tracing.PlanTrace {
+// BuildPlanTrace implements Plan
+func (p *basePhysicalPlan) BuildPlanTrace() *tracing.PlanTrace {
 	tp := ""
 	info := ""
 	if p.self != nil {
@@ -908,23 +816,17 @@ func (p *basePhysicalPlan) buildPlanTrace() *tracing.PlanTrace {
 
 	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: tp, ExplainInfo: info}
 	for _, child := range p.Children() {
-		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
+		planTrace.Children = append(planTrace.Children, child.BuildPlanTrace())
 	}
 	return planTrace
 }
 
-// buildPlanTrace implements Plan
-func (p *baseLogicalPlan) buildPlanTrace() *tracing.PlanTrace {
+// BuildPlanTrace implements Plan
+func (p *baseLogicalPlan) BuildPlanTrace() *tracing.PlanTrace {
 	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo()}
 	for _, child := range p.Children() {
-		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
+		planTrace.Children = append(planTrace.Children, child.BuildPlanTrace())
 	}
-	return planTrace
-}
-
-// buildPlanTrace implements Plan
-func (p *basePlan) buildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP()}
 	return planTrace
 }
 

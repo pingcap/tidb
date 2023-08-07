@@ -1050,9 +1050,11 @@ type TikvImporter struct {
 	DiskQuota               ByteSize                     `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency        int                          `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateResolution     DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
-	IncrementalImport       bool                         `toml:"incremental-import" json:"incremental-import"`
-	KeyspaceName            string                       `toml:"keyspace-name" json:"keyspace-name"`
-	AddIndexBySQL           bool                         `toml:"add-index-by-sql" json:"add-index-by-sql"`
+	// deprecated, use ParallelImport instead.
+	IncrementalImport bool   `toml:"incremental-import" json:"incremental-import"`
+	ParallelImport    bool   `toml:"parallel-import" json:"parallel-import"`
+	KeyspaceName      string `toml:"keyspace-name" json:"keyspace-name"`
+	AddIndexBySQL     bool   `toml:"add-index-by-sql" json:"add-index-by-sql"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
@@ -1066,6 +1068,10 @@ func (t *TikvImporter) adjust() error {
 		return common.ErrInvalidConfig.GenWithStack("tikv-importer.backend must not be empty!")
 	}
 	t.Backend = strings.ToLower(t.Backend)
+	// only need to assign t.IncrementalImport to t.ParallelImport when t.ParallelImport is false and t.IncrementalImport is true
+	if !t.ParallelImport && t.IncrementalImport {
+		t.ParallelImport = t.IncrementalImport
+	}
 	switch t.Backend {
 	case BackendTiDB:
 		t.DuplicateResolution = DupeResAlgNone
@@ -1090,9 +1096,9 @@ func (t *TikvImporter) adjust() error {
 			t.LocalWriterMemCacheSize = DefaultLocalWriterMemCacheSize
 		}
 
-		if t.IncrementalImport && t.AddIndexBySQL {
+		if t.ParallelImport && t.AddIndexBySQL {
 			return common.ErrInvalidConfig.
-				GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
+				GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.parallel-import")
 		}
 
 		if len(t.SortedKVDir) == 0 {
@@ -1321,9 +1327,9 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 			"unsupported `%s` (%s)", strategyConfigFrom, c.Strategy)
 	}
 	if c.Strategy != "" {
-		if i.IncrementalImport {
+		if i.ParallelImport {
 			return common.ErrInvalidConfig.GenWithStack(
-				"%s cannot be used with tikv-importer.incremental-import",
+				"%s cannot be used with tikv-importer.parallel-import",
 				strategyConfigFrom)
 		}
 		if i.DuplicateResolution != DupeResAlgNone {

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/executor/internal/exec"
+	"github.com/pingcap/tidb/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
@@ -43,7 +44,7 @@ type PipelinedWindowExec struct {
 	partialResults     []aggfuncs.PartialResult
 	start              *core.FrameBound
 	end                *core.FrameBound
-	groupChecker       *vecGroupChecker
+	groupChecker       *vecgroupchecker.VecGroupChecker
 
 	// childResult stores the child chunk. Note that even if remaining is 0, e.rows might still references rows in data[0].chk after returned it to upper executor, since there is no guarantee what the upper executor will do to the returned chunk, it might destroy the data (as in the benchmark test, it reused the chunk to pull data, and it will be chk.Reset(), causing panicking). So dataIdx, accumulated and dropped are added to ensure that chunk will only be returned if there is no row reference.
 	childResult *chunk.Chunk
@@ -176,7 +177,7 @@ func (e *PipelinedWindowExec) getRowsInPartition(ctx context.Context) (err error
 		e.newPartition = false
 	}
 
-	if e.groupChecker.isExhausted() {
+	if e.groupChecker.IsExhausted() {
 		var drained, samePartition bool
 		drained, err = e.fetchChild(ctx)
 		if err != nil {
@@ -187,7 +188,7 @@ func (e *PipelinedWindowExec) getRowsInPartition(ctx context.Context) (err error
 			e.done = true
 			return nil
 		}
-		samePartition, err = e.groupChecker.splitIntoGroups(e.childResult)
+		samePartition, err = e.groupChecker.SplitIntoGroups(e.childResult)
 		if samePartition {
 			// the only case that when getRowsInPartition gets called, it is not a new partition.
 			e.newPartition = false
@@ -196,7 +197,7 @@ func (e *PipelinedWindowExec) getRowsInPartition(ctx context.Context) (err error
 			return errors.Trace(err)
 		}
 	}
-	begin, end := e.groupChecker.getNextGroup()
+	begin, end := e.groupChecker.GetNextGroup()
 	e.rowToConsume += uint64(end - begin)
 	for i := begin; i < end; i++ {
 		e.rows = append(e.rows, e.childResult.GetRow(i))

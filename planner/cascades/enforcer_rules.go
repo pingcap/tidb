@@ -65,7 +65,7 @@ func (*OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child memo.I
 	childPlan := child.GetPlan()
 	sort := plannercore.PhysicalSort{
 		ByItems: make([]*util.ByItems, 0, len(reqProp.SortItems)),
-	}.Init(childPlan.SCtx(), childPlan.Stats(), childPlan.SelectBlockOffset(), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
+	}.Init(childPlan.SCtx(), childPlan.StatsInfo(), childPlan.SelectBlockOffset(), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
 	for _, item := range reqProp.SortItems {
 		item := &util.ByItems{
 			Expr: item.Col,

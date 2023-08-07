@@ -16,13 +16,14 @@ package ttlworker
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	timerapi "github.com/pingcap/tidb/timer/api"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/types"
@@ -168,6 +169,17 @@ func (m *JobManager) RescheduleJobs(se session.Session, now time.Time) {
 	m.rescheduleJobs(se, now)
 }
 
+func (m *JobManager) SubmitJob(se session.Session, tableID, physicalID int64, requestID string) error {
+	ch := make(chan error, 1)
+	m.handleSubmitJobRequest(se, &SubmitTTLManagerJobRequest{
+		TableID:    tableID,
+		PhysicalID: physicalID,
+		RequestID:  requestID,
+		RespCh:     ch,
+	})
+	return <-ch
+}
+
 // TaskManager is an exported getter of task manager for test
 func (m *JobManager) TaskManager() *taskManager {
 	return m.taskManager
@@ -195,9 +207,9 @@ func newMockTTLJob(tbl *cache.PhysicalTable, status cache.JobStatus) *ttlJob {
 	return &ttlJob{tbl: tbl, status: status}
 }
 
-func TestReadyForNewJobTables(t *testing.T) {
+func TestReadyForLockHBTimeoutJobTables(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
-	m := NewJobManager("test-id", nil, nil, nil)
+	m := NewJobManager("test-id", nil, nil, nil, nil)
 	m.sessPool = newMockSessionPool(t, tbl)
 	se := newMockSession(t, tbl)
 
@@ -209,24 +221,23 @@ func TestReadyForNewJobTables(t *testing.T) {
 		infoSchemaTables []*cache.PhysicalTable
 		tableStatus      []*cache.TableStatus
 		shouldSchedule   bool
-		isCreate         bool
 	}{
-		// for a newly inserted table, it'll always be scheduled
-		{"newly created", []*cache.PhysicalTable{tbl}, []*cache.TableStatus{{TableID: tbl.ID, ParentTableID: tbl.ID}}, true, true},
+		// for a newly inserted table, it'll always not be scheduled because no job running
+		{"newly created", []*cache.PhysicalTable{tbl}, []*cache.TableStatus{{TableID: tbl.ID, ParentTableID: tbl.ID}}, false},
 		// table only in the table status cache will not be scheduled
-		{"proper subset", []*cache.PhysicalTable{}, []*cache.TableStatus{{TableID: tbl.ID, ParentTableID: tbl.ID}}, false, false},
+		{"proper subset", []*cache.PhysicalTable{}, []*cache.TableStatus{{TableID: tbl.ID, ParentTableID: tbl.ID}}, false},
 		// table whose current job owner id is not empty, and heart beat time is long enough will not be scheduled
-		{"current job not empty", []*cache.PhysicalTable{tbl}, []*cache.TableStatus{{TableID: tbl.ID, ParentTableID: tbl.ID, CurrentJobID: "job1", CurrentJobOwnerID: "test-another-id", CurrentJobOwnerHBTime: time.Now()}}, false, false},
+		{"current job not empty", []*cache.PhysicalTable{tbl}, []*cache.TableStatus{{TableID: tbl.ID, ParentTableID: tbl.ID, CurrentJobID: "job1", CurrentJobOwnerID: "test-another-id", CurrentJobOwnerHBTime: time.Now()}}, false},
 		// table whose current job owner id is not empty, but heart beat time is expired will be scheduled
-		{"hb time expired", []*cache.PhysicalTable{tbl}, []*cache.TableStatus{{TableID: tbl.ID, ParentTableID: tbl.ID, CurrentJobID: "job1", CurrentJobOwnerID: "test-another-id", CurrentJobOwnerHBTime: time.Now().Add(-time.Hour)}}, true, false},
-		// if the last start time is too near, it will also not be scheduled
-		{"last start time too near", []*cache.PhysicalTable{tbl}, []*cache.TableStatus{{TableID: tbl.ID, ParentTableID: tbl.ID, LastJobStartTime: time.Now()}}, false, false},
-		// if the last start time is expired, it will be scheduled
-		{"last start time expired", []*cache.PhysicalTable{tbl}, []*cache.TableStatus{{TableID: tbl.ID, ParentTableID: tbl.ID, LastJobStartTime: time.Now().Add(-time.Hour * 2)}}, true, true},
-		// if the interval is 24h, and the last start time is near, it will not be scheduled
-		{"last start time too near for 24h", []*cache.PhysicalTable{tblWithDailyInterval}, []*cache.TableStatus{{TableID: tblWithDailyInterval.ID, ParentTableID: tblWithDailyInterval.ID, LastJobStartTime: time.Now().Add(-time.Hour * 2)}}, false, false},
-		// if the interval is 24h, and the last start time is far enough, it will be scheduled
-		{"last start time far enough for 24h", []*cache.PhysicalTable{tblWithDailyInterval}, []*cache.TableStatus{{TableID: tblWithDailyInterval.ID, ParentTableID: tblWithDailyInterval.ID, LastJobStartTime: time.Now().Add(-time.Hour * 25)}}, true, true},
+		{"hb time expired", []*cache.PhysicalTable{tbl}, []*cache.TableStatus{{TableID: tbl.ID, ParentTableID: tbl.ID, CurrentJobID: "job1", CurrentJobOwnerID: "test-another-id", CurrentJobOwnerHBTime: time.Now().Add(-time.Hour)}}, true},
+		// if the last start time is too near, it will not be scheduled because no job running
+		{"last start time too near", []*cache.PhysicalTable{tbl}, []*cache.TableStatus{{TableID: tbl.ID, ParentTableID: tbl.ID, LastJobStartTime: time.Now()}}, false},
+		// if the last start time is expired, it will not be scheduled because no job running
+		{"last start time expired", []*cache.PhysicalTable{tbl}, []*cache.TableStatus{{TableID: tbl.ID, ParentTableID: tbl.ID, LastJobStartTime: time.Now().Add(-time.Hour * 2)}}, false},
+		// if the interval is 24h, and the last start time is near, it will not be scheduled because no job running
+		{"last start time too near for 24h", []*cache.PhysicalTable{tblWithDailyInterval}, []*cache.TableStatus{{TableID: tblWithDailyInterval.ID, ParentTableID: tblWithDailyInterval.ID, LastJobStartTime: time.Now().Add(-time.Hour * 2)}}, false},
+		// if the interval is 24h, and the last start time is far enough, it will not be scheduled because no job running
+		{"last start time far enough for 24h", []*cache.PhysicalTable{tblWithDailyInterval}, []*cache.TableStatus{{TableID: tblWithDailyInterval.ID, ParentTableID: tblWithDailyInterval.ID, LastJobStartTime: time.Now().Add(-time.Hour * 25)}}, false},
 	}
 
 	for _, c := range cases {
@@ -240,19 +251,112 @@ func TestReadyForNewJobTables(t *testing.T) {
 				m.tableStatusCache.Tables[st.TableID] = st
 			}
 
-			tables, isCreate := m.readyForLockJobTables(se.Now())
+			tables := m.readyForLockHBTimeoutJobTables(se.Now())
 			if c.shouldSchedule {
 				assert.Len(t, tables, 1)
 				assert.Equal(t, int64(0), tables[0].ID)
 				assert.Equal(t, int64(0), tables[0].TableInfo.ID)
-				assert.Len(t, isCreate, 1)
-				assert.Equal(t, c.isCreate, isCreate[0])
 			} else {
 				assert.Len(t, tables, 0)
-				assert.Len(t, isCreate, 0)
 			}
 		})
 	}
+}
+
+func TestOnTimerTick(t *testing.T) {
+	var leader atomic.Bool
+	m := NewJobManager("test-id", newMockSessionPool(t), nil, nil, func() bool {
+		return leader.Load()
+	})
+
+	tbl := newMockTTLTbl(t, "t1")
+	se := newMockSession(t)
+	se.sessionInfoSchema = newMockInfoSchemaWithVer(100, tbl.TableInfo)
+
+	timerStore := timerapi.NewMemoryTimerStore()
+	defer timerStore.Close()
+
+	a := &mockJobAdapter{}
+	a.On("CanSubmitJob").Return(false).Maybe()
+
+	rt := newTTLTimerRuntime(timerStore, a)
+	require.Nil(t, rt.rt)
+	defer rt.Pause()
+
+	now := time.UnixMilli(3600 * 24)
+	syncer := NewTTLTimerSyncer(m.sessPool, timerapi.NewDefaultTimerClient(timerStore))
+	syncer.nowFunc = func() time.Time {
+		return now
+	}
+
+	// pause after init
+	m.onTimerTick(se, rt, syncer, now)
+	require.Nil(t, rt.rt)
+	require.Equal(t, 0, len(syncer.key2Timers))
+	syncTime, syncVer := syncer.GetLastSyncInfo()
+	require.Zero(t, syncVer)
+	require.True(t, syncTime.IsZero())
+
+	// resume first time
+	leader.Store(true)
+	m.onTimerTick(se, rt, syncer, now)
+	innerRT := rt.rt
+	require.NotNil(t, innerRT)
+	require.True(t, innerRT.Running())
+	require.Equal(t, 1, len(syncer.key2Timers))
+	syncTime, syncVer = syncer.GetLastSyncInfo()
+	require.Equal(t, int64(100), syncVer)
+	require.Equal(t, now, syncTime)
+
+	// resume after a very short duration
+	now = now.Add(time.Second)
+	se.sessionInfoSchema = newMockInfoSchemaWithVer(101, tbl.TableInfo)
+	m.onTimerTick(se, rt, syncer, now)
+	require.Same(t, innerRT, rt.rt)
+	require.True(t, innerRT.Running())
+	require.Equal(t, 1, len(syncer.key2Timers))
+	syncTime, syncVer = syncer.GetLastSyncInfo()
+	require.Equal(t, int64(100), syncVer)
+	require.Equal(t, now.Add(-time.Second), syncTime)
+
+	// resume after a middle duration
+	now = now.Add(6 * time.Second)
+	m.onTimerTick(se, rt, syncer, now)
+	require.Same(t, innerRT, rt.rt)
+	require.True(t, innerRT.Running())
+	require.Equal(t, 1, len(syncer.key2Timers))
+	syncTime, syncVer = syncer.GetLastSyncInfo()
+	require.Equal(t, int64(101), syncVer)
+	require.Equal(t, now, syncTime)
+
+	// resume after a middle duration but infoschema not change
+	now = now.Add(6 * time.Second)
+	m.onTimerTick(se, rt, syncer, now)
+	require.Same(t, innerRT, rt.rt)
+	require.True(t, innerRT.Running())
+	require.Equal(t, 1, len(syncer.key2Timers))
+	syncTime, syncVer = syncer.GetLastSyncInfo()
+	require.Equal(t, int64(101), syncVer)
+	require.Equal(t, now.Add(-6*time.Second), syncTime)
+
+	// resume after a long duration
+	now = now.Add(3 * time.Minute)
+	m.onTimerTick(se, rt, syncer, now)
+	require.Same(t, innerRT, rt.rt)
+	require.True(t, innerRT.Running())
+	require.Equal(t, 1, len(syncer.key2Timers))
+	syncTime, syncVer = syncer.GetLastSyncInfo()
+	require.Equal(t, int64(101), syncVer)
+	require.Equal(t, now, syncTime)
+
+	// pause
+	leader.Store(false)
+	m.onTimerTick(se, rt, syncer, now)
+	require.Nil(t, rt.rt)
+	require.False(t, innerRT.Running())
+	syncTime, syncVer = syncer.GetLastSyncInfo()
+	require.Zero(t, syncVer)
+	require.True(t, syncTime.IsZero())
 }
 
 func TestLockTable(t *testing.T) {
@@ -482,7 +586,7 @@ func TestLockTable(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			m := NewJobManager("test-id", newMockSessionPool(t), nil, nil)
+			m := NewJobManager("test-id", newMockSessionPool(t), nil, nil, nil)
 			m.infoSchemaCache.Tables[c.table.ID] = c.table
 			sqlCounter := 0
 			se := newMockSession(t)
@@ -536,7 +640,7 @@ func TestLocalJobs(t *testing.T) {
 	tbl1.ID = 1
 	tbl2 := newMockTTLTbl(t, "t2")
 	tbl2.ID = 2
-	m := NewJobManager("test-id", nil, nil, nil)
+	m := NewJobManager("test-id", nil, nil, nil, nil)
 	m.sessPool = newMockSessionPool(t, tbl1, tbl2)
 
 	m.runningJobs = []*ttlJob{{tbl: tbl1, id: "1"}, {tbl: tbl2, id: "2"}}
@@ -550,58 +654,4 @@ func TestLocalJobs(t *testing.T) {
 	}
 	assert.Len(t, m.localJobs(), 1)
 	assert.Equal(t, m.localJobs()[0].id, "1")
-}
-
-func TestRescheduleJobsOutOfWindow(t *testing.T) {
-	// TODO: use failpoint to mock return job, and schedule
-
-	tbl := newMockTTLTbl(t, "t1")
-	se := newMockSession(t, tbl)
-
-	scanWorker1 := NewMockScanWorker(t)
-	scanWorker1.Start()
-	scanWorker1.setOneRowResult(tbl, 2022)
-	scanWorker2 := NewMockScanWorker(t)
-	scanWorker2.Start()
-	scanWorker2.setOneRowResult(tbl, 2022)
-
-	m := NewJobManager("test-id", nil, nil, nil)
-	m.sessPool = newMockSessionPool(t, tbl)
-	m.taskManager.SetScanWorkers4Test([]worker{
-		scanWorker1,
-		scanWorker2,
-	})
-
-	// jobs will not be scheduled
-	m.tableStatusCache.Tables = map[int64]*cache.TableStatus{
-		tbl.ID: {
-			CurrentJobOwnerID: m.id,
-		},
-	}
-	m.runningJobs = []*ttlJob{newMockTTLJob(tbl, cache.JobStatusWaiting)}
-	savedttlJobScheduleWindowStartTime := variable.TTLJobScheduleWindowStartTime.Load()
-	savedttlJobScheduleWindowEndTime := variable.TTLJobScheduleWindowEndTime.Load()
-	ttlJobScheduleWindowStartTime, _ := time.ParseInLocation(variable.FullDayTimeFormat, "12:00 +0000", time.UTC)
-	variable.TTLJobScheduleWindowStartTime.Store(ttlJobScheduleWindowStartTime)
-	ttlJobScheduleWindowEndTime, _ := time.ParseInLocation(variable.FullDayTimeFormat, "12:05 +0000", time.UTC)
-	variable.TTLJobScheduleWindowEndTime.Store(ttlJobScheduleWindowEndTime)
-	defer func() {
-		variable.TTLJobScheduleWindowStartTime.Store(savedttlJobScheduleWindowStartTime)
-		variable.TTLJobScheduleWindowEndTime.Store(savedttlJobScheduleWindowEndTime)
-	}()
-
-	now, _ := time.ParseInLocation(variable.FullDayTimeFormat, "12:06 +0000", time.UTC)
-	m.rescheduleJobs(se, now)
-	scanWorker1.checkWorkerStatus(workerStatusRunning, true, nil)
-	scanWorker1.checkPollResult(false, "")
-	scanWorker2.checkWorkerStatus(workerStatusRunning, true, nil)
-	scanWorker2.checkPollResult(false, "")
-
-	// jobs will be scheduled within the time window
-	now, _ = time.ParseInLocation(variable.FullDayTimeFormat, "12:02 +0000", time.UTC)
-	m.rescheduleJobs(se, now)
-	//scanWorker1.checkWorkerStatus(workerStatusRunning, false, m.runningJobs[0].tasks[0])
-	scanWorker1.checkPollResult(false, "")
-	scanWorker2.checkWorkerStatus(workerStatusRunning, true, nil)
-	scanWorker2.checkPollResult(false, "")
 }

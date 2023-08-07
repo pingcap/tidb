@@ -70,6 +70,49 @@ func TestGetJSONSecure(t *testing.T) {
 	require.Equal(t, "/dddd", result.Path)
 }
 
+func TestWithHost(t *testing.T) {
+	mockTLSServer := httptest.NewTLSServer(http.HandlerFunc(respondPathHandler))
+	defer mockTLSServer.Close()
+	mockServer := httptest.NewServer(http.HandlerFunc(respondPathHandler))
+	defer mockServer.Close()
+
+	testCases := []struct {
+		expected string
+		host     string
+		secure   bool
+	}{
+		{
+			"https://127.0.0.1:2379",
+			"http://127.0.0.1:2379",
+			true,
+		},
+		{
+			"http://127.0.0.1:2379",
+			"https://127.0.0.1:2379",
+			false,
+		},
+		{
+			"http://127.0.0.1:2379/pd/api/v1/stores",
+			"127.0.0.1:2379/pd/api/v1/stores",
+			false,
+		},
+		{
+			"https://127.0.0.1:2379",
+			"127.0.0.1:2379",
+			true,
+		},
+	}
+
+	for _, testCase := range testCases {
+		server := mockServer
+		if testCase.secure {
+			server = mockTLSServer
+		}
+		tls := common.NewTLSFromMockServer(server)
+		require.Equal(t, testCase.expected, common.GetMockTLSUrl(tls.WithHost(testCase.host)))
+	}
+}
+
 func TestInvalidTLS(t *testing.T) {
 	tempDir := t.TempDir()
 	caPath := filepath.Join(tempDir, "ca.pem")

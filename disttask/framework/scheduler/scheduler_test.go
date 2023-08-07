@@ -127,10 +127,10 @@ func TestSchedulerRun(t *testing.T) {
 	err = scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
 	require.NoError(t, err)
 
-	// 9. run subtask concurrently
+	// 9. run subtask one by one
 	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ int64, task []byte, step int64) (Scheduler, error) {
 		return mockScheduler, nil
-	}, WithConcurrentSubtask())
+	})
 	mockScheduler.On("InitSubtaskExecEnv", mock.Anything).Return(nil).Once()
 	mockPool.On("RunWithConcurrency", mock.Anything, mock.Anything).Return(nil).Once()
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending}).Return(&proto.Subtask{ID: 1, Type: tp}, nil).Once()
@@ -161,7 +161,6 @@ func TestSchedulerRun(t *testing.T) {
 	mockSubtaskExecutor.On("Run", mock.Anything).Return(nil).Once()
 	mockSubtaskExecutor.On("Run", mock.Anything).Return(context.Canceled).Once()
 	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateCanceled).Return(nil).Once()
-	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending}).Return(nil, nil).Once()
 	mockScheduler.On("CleanupSubtaskExecEnv", mock.Anything).Return(nil).Once()
 
 	var wg sync.WaitGroup
@@ -175,7 +174,7 @@ func TestSchedulerRun(t *testing.T) {
 	runCancel()
 	wg.Wait()
 
-	// 11. run subtask concurrently, on error, we should wait all minimal task finished before call CleanupSubtaskExecEnv
+	// 11. run subtask one by one, on error, we should wait all minimal task finished before call CleanupSubtaskExecEnv
 	syncCh := make(chan struct{})
 	lastMinimalTaskFinishTime, cleanupTime := time.Time{}, time.Time{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/waitUntilError", `return(true)`))

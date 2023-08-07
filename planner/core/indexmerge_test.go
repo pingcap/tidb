@@ -93,7 +93,7 @@ func TestIndexMergePathGeneration(t *testing.T) {
 				lp = lp.Children()[0]
 			}
 		}
-		ds.ctx.GetSessionVars().SetEnableIndexMerge(true)
+		ds.SCtx().GetSessionVars().SetEnableIndexMerge(true)
 		idxMergeStartIndex := len(ds.possibleAccessPaths)
 		_, err = lp.recursiveDeriveStats(nil)
 		require.NoError(t, err)

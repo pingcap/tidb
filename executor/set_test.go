@@ -866,6 +866,20 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set @@global.tidb_analyze_skip_column_types = ''")
 	tk.MustQuery("select @@global.tidb_analyze_skip_column_types").Check(testkit.Rows(""))
 	tk.MustGetErrMsg("set @@global.tidb_analyze_skip_column_types = 'int,json'", "[variable:1231]Variable 'tidb_analyze_skip_column_types' can't be set to the value of 'int,json'")
+
+	// test tidb_skip_missing_partition_stats
+	// global scope
+	tk.MustQuery("select @@global.tidb_skip_missing_partition_stats").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set global tidb_skip_missing_partition_stats = 0")
+	tk.MustQuery("select @@global.tidb_skip_missing_partition_stats").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_skip_missing_partition_stats = 1")
+	tk.MustQuery("select @@global.tidb_skip_missing_partition_stats").Check(testkit.Rows("1"))
+	// session scope
+	tk.MustQuery("select @@session.tidb_skip_missing_partition_stats").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set session tidb_skip_missing_partition_stats = 0")
+	tk.MustQuery("select @@session.tidb_skip_missing_partition_stats").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_skip_missing_partition_stats = 1")
+	tk.MustQuery("select @@session.tidb_skip_missing_partition_stats").Check(testkit.Rows("1"))
 }
 
 func TestGetSetNoopVars(t *testing.T) {

@@ -107,6 +107,7 @@ go_library(
         "//parser/terror",
         "//parser/types",
         "//planner/core/internal",
+        "//planner/core/internal/base",
         "//planner/core/metrics",
         "//planner/funcdep",
         "//planner/property",
