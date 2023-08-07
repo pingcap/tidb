@@ -82,7 +82,7 @@ require (
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20230607071926-bda24015c2d6
+	github.com/pingcap/tipb v0.0.0-20230802082933-256c189cd860
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.16.0
 	github.com/prometheus/client_model v0.4.0
@@ -100,7 +100,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.8-0.20230731032349-719e6456f7d5
-	github.com/tikv/pd/client v0.0.0-20230724080549-de985b8e0afc
+	github.com/tikv/pd/client v0.0.0-20230728033905-31343e006842
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -118,9 +118,9 @@ require (
 	go.uber.org/automaxprocs v1.5.3
 	go.uber.org/goleak v1.2.1
 	go.uber.org/multierr v1.11.0
-	go.uber.org/zap v1.24.0
+	go.uber.org/zap v1.25.0
 	golang.org/x/exp v0.0.0-20230711005742-c3f37128e5a4
-	golang.org/x/net v0.11.0
+	golang.org/x/net v0.13.0
 	golang.org/x/oauth2 v0.8.0
 	golang.org/x/sync v0.3.0
 	golang.org/x/sys v0.10.0

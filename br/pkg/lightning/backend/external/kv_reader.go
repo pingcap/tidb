@@ -19,7 +19,10 @@ import (
 	"encoding/binary"
 	"io"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 type kvReader struct {
@@ -63,6 +66,7 @@ func (r *kvReader) nextKV() (key, val []byte, err error) {
 // noEOF converts the EOF error to io.ErrUnexpectedEOF.
 func noEOF(err error) error {
 	if err == io.EOF {
+		logutil.BgLogger().Warn("unexpected EOF", zap.Error(errors.Trace(err)))
 		return io.ErrUnexpectedEOF
 	}
 	return err

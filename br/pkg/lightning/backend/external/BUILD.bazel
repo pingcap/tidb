@@ -5,7 +5,10 @@ go_library(
     srcs = [
         "byte_reader.go",
         "codec.go",
+        "file.go",
         "kv_reader.go",
+        "kv_writer.go",
+        "sharedisk.go",
         "stat_reader.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/lightning/backend/external",
@@ -24,11 +27,13 @@ go_test(
     srcs = [
         "byte_reader_test.go",
         "codec_test.go",
+        "file_test.go",
     ],
     embed = [":external"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 5,
     deps = [
+        "//br/pkg/storage",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],
