@@ -397,21 +397,20 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 				}
 			}
 			task := &copTask{
-				region:            loc.Location.Region,
-				bucketsVer:        loc.getBucketVersion(),
-				ranges:            loc.Ranges.Slice(i, nextI),
-				cmdType:           cmdType,
-				storeType:         req.StoreType,
-				eventCb:           eventCb,
-				paging:            req.Paging.Enable,
-				pagingSize:        pagingSize,
-				requestSource:     req.RequestSource,
-				RowCountHint:      hint,
-				busyThreshold:     req.StoreBusyThreshold,
-				tidbKvReadTimeout: req.TidbKvReadTimeout,
+				region:        loc.Location.Region,
+				bucketsVer:    loc.getBucketVersion(),
+				ranges:        loc.Ranges.Slice(i, nextI),
+				cmdType:       cmdType,
+				storeType:     req.StoreType,
+				eventCb:       eventCb,
+				paging:        req.Paging.Enable,
+				pagingSize:    pagingSize,
+				requestSource: req.RequestSource,
+				RowCountHint:  hint,
+				busyThreshold: req.StoreBusyThreshold,
 			}
-			if opt.ignoreTiDBKVReadTimeout {
-				task.tidbKvReadTimeout = 0
+			if !opt.ignoreTiDBKVReadTimeout {
+				task.tidbKvReadTimeout = req.TidbKvReadTimeout
 			}
 			// only keep-order need chan inside task.
 			// tasks by region error will reuse the channel of parent task.
