@@ -38,7 +38,7 @@ func (m *MockExternalStorage) EXPECT() *MockExternalStorageMockRecorder {
 }
 
 // Create mocks base method.
-func (m *MockExternalStorage) Create(arg0 context.Context, arg1 string) (storage.ExternalFileWriter, error) {
+func (m *MockExternalStorage) Create(arg0 context.Context, arg1 string, _ *storage.WriterOption) (storage.ExternalFileWriter, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Create", arg0, arg1)
 	ret0, _ := ret[0].(storage.ExternalFileWriter)

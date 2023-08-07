@@ -559,7 +559,7 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 		taskID := taskIDAlloc.alloc()
 		startKey := keyRange.StartKey
 		endKey := keyRange.EndKey
-		endK, err := getRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, prefix, keyRange.StartKey, endKey)
+		endK, err := GetRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, prefix, keyRange.StartKey, endKey)
 		if err != nil {
 			logutil.BgLogger().Info("get backfill range task, get reverse key failed", zap.String("category", "ddl"), zap.Error(err))
 		} else {
@@ -829,8 +829,8 @@ func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, keyPre
 	return nil
 }
 
-// getRegionEndKey gets the actual end key for the range of [startKey, endKey].
-func getRangeEndKey(ctx *JobContext, store kv.Storage, priority int, keyPrefix kv.Key, startKey, endKey kv.Key) (kv.Key, error) {
+// GetRangeEndKey gets the actual end key for the range of [startKey, endKey].
+func GetRangeEndKey(ctx *JobContext, store kv.Storage, priority int, keyPrefix kv.Key, startKey, endKey kv.Key) (kv.Key, error) {
 	snap := store.GetSnapshot(kv.MaxVersion)
 	snap.SetOption(kv.Priority, priority)
 	if tagger := ctx.getResourceGroupTaggerForTopSQL(); tagger != nil {

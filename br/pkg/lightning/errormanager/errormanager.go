@@ -84,7 +84,8 @@ const (
 			raw_value   mediumblob NOT NULL COMMENT 'the value of the conflicted key',
 			raw_handle  mediumblob NOT NULL COMMENT 'the data handle derived from the conflicted key or value',
 			raw_row     mediumblob NOT NULL COMMENT 'the data retrieved from the handle',
-			KEY (task_id, table_name)
+			KEY (task_id, table_name),
+			INDEX (index_name)
 		);
 	`
 
@@ -321,7 +322,7 @@ func (em *ErrorManager) RecordDataConflictError(
 	if em.conflictErrRemain.Sub(int64(len(conflictInfos))) < 0 {
 		threshold := em.configConflict.Threshold
 		// Still need to record this batch of conflict records, and then return this error at last.
-		// Otherwise, if the max-error.conflict is set a very small value, non of the conflict errors will be recorded
+		// Otherwise, if the max-error.conflict is set a very small value, none of the conflict errors will be recorded
 		gerr = errors.Errorf(
 			"The number of conflict errors exceeds the threshold configured by `conflict.threshold`: '%d'",
 			threshold)
