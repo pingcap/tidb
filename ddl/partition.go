@@ -2412,21 +2412,16 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			return ver, errors.Trace(err)
 		}
 
-		if nt.ExchangePartitionInfo == nil || !nt.ExchangePartitionInfo.ExchangePartitionFlag {
-			nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
-				ExchangePartitionFlag:  true,
-				ExchangePartitionID:    ptID,
-				ExchangePartitionDefID: defID,
-			}
-			// We need an interim schema version,
-			// so there are no non-matching rows inserted
-			// into the table using the schema version
-			// before the exchange is made.
-			job.SchemaState = model.StateWriteOnly
-			return updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
-		} else {
-			return ver, dbterror.ErrInvalidDDLState
+		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
+			ExchangePartitionID:    ptID,
+			ExchangePartitionDefID: defID,
 		}
+		// We need an interim schema version,
+		// so there are no non-matching rows inserted
+		// into the table using the schema version
+		// before the exchange is made.
+		job.SchemaState = model.StateWriteOnly
+		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	}
 	// From now on, nt (the non-partitioned table) has
 	// ExchangePartitionInfo set, meaning it is restricted

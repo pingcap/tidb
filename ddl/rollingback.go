@@ -278,7 +278,11 @@ func rollingbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
 	}
-	nt, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	var nt *model.TableInfo
+	nt, err = GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 	ver, err = rollbackExchangeTablePartition(d, t, job, nt)
 	return ver, errors.Trace(err)
 }
