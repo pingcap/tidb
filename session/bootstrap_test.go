@@ -1555,6 +1555,7 @@ func TestTiDBDowngradeTo65(t *testing.T) {
 	err = m.FinishBootstrap(currentBootstrapVersion)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
+	require.NoError(t, err)
 	txn, err = store.Begin()
 	require.NoError(t, err)
 	err = txn.Set([]byte("DDLTableVersion"), []byte("3"))
