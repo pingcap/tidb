@@ -406,6 +406,8 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Cont
 				// https://github.com/pingcap/tidb/issues/39949
 				panic(err)
 			}
+			pollTiFlashContext.UpdatingProgressTables.Remove(element)
+			element = element.Next()
 			continue
 		}
 		err = infosync.UpdateTiFlashProgressCache(availableTableID.ID, progress)
@@ -416,6 +418,8 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Cont
 				zap.Bool("IsPartition", availableTableID.IsPartition),
 				zap.Float64("progress", progress),
 			)
+			pollTiFlashContext.UpdatingProgressTables.Remove(element)
+			element = element.Next()
 			continue
 		}
 		next := element.Next()
