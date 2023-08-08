@@ -141,6 +141,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error
 
 func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	if p.stmtTSFuture != nil {
+		logutil.Logger(p.ctx).Info("RC prepare stmt ts, already prepared")
 		return
 	}
 	sessVars := p.sctx.GetSessionVars()
@@ -183,6 +184,7 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 		logutil.Logger(p.ctx).Info("RC get stmt ts", zap.Uint64("ts", ts))
 	}()
 	if p.stmtTS != 0 {
+		logutil.Logger(p.ctx).Info("RC get stmt ts, ts has been determined")
 		return p.stmtTS, nil
 	}
 

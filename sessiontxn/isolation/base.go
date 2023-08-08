@@ -188,7 +188,9 @@ func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
 		return snapshotTS, nil
 	}
-	return p.getStmtReadTSFunc()
+	ts, err := p.getStmtReadTSFunc()
+	logutil.Logger(p.ctx).Info("getStmtReadTS", zap.Uint64("ts", ts))
+	return ts, err
 }
 
 // GetStmtForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
@@ -200,7 +202,9 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
 		return snapshotTS, nil
 	}
-	return p.getStmtForUpdateTSFunc()
+	ts, err := p.getStmtForUpdateTSFunc()
+	logutil.Logger(p.ctx).Info("getStmtForUpdateTS", zap.Uint64("ts", ts))
+	return ts, err
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
