@@ -189,9 +189,9 @@ func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
 		return snapshotTS, nil
 	}
 	ts, err := p.getStmtReadTSFunc()
-	if p.sctx.GetSessionVars().ConnectionID > 0 {
-		logutil.Logger(p.ctx).Info("getStmtReadTS", zap.Uint64("ts", ts), zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID))
-	}
+	logutil.Logger(p.ctx).Info("[for debug]getStmtReadTS", zap.Uint64("ts", ts),
+		zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
+		zap.Uint64("startTS", p.sctx.GetSessionVars().TxnCtx.StartTS))
 	return ts, err
 }
 
@@ -205,9 +205,9 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 		return snapshotTS, nil
 	}
 	ts, err := p.getStmtForUpdateTSFunc()
-	if p.sctx.GetSessionVars().ConnectionID > 0 {
-		logutil.Logger(p.ctx).Info("getStmtForUpdateTS", zap.Uint64("ts", ts), zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID))
-	}
+	logutil.Logger(p.ctx).Info("[for debug]getStmtForUpdateTS", zap.Uint64("ts", ts),
+		zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
+		zap.Uint64("startTS", p.sctx.GetSessionVars().TxnCtx.StartTS))
 	return ts, err
 }
 
@@ -258,12 +258,11 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
 		return p.txn, nil
 	}
-	if p.sctx.GetSessionVars().ConnectionID > 0 {
-		logutil.Logger(p.ctx).Info("[for debug] baseTxnContextProvider.ActivateTxn",
-			zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
-			zap.Bool("isTxnPrepared", p.isTxnPrepared),
-			zap.Uint64("p.constStartTS", p.constStartTS))
-	}
+	logutil.Logger(p.ctx).Info("[for debug]baseTxnContextProvider.ActivateTxn",
+		zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
+		zap.Uint64("startTS", p.sctx.GetSessionVars().TxnCtx.StartTS),
+		zap.Bool("isTxnPrepared", p.isTxnPrepared),
+		zap.Uint64("p.constStartTS", p.constStartTS))
 
 	if err := p.prepareTxn(); err != nil {
 		return nil, err
@@ -340,9 +339,9 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 		return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(snapshotTS))
 	}
 
-	if p.sctx.GetSessionVars().ConnectionID > 0 {
-		logutil.Logger(p.ctx).Info("[for debug]prepare txn with oracle ts")
-	}
+	logutil.Logger(p.ctx).Info("[for debug]prepare txn with oracle ts",
+		zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
+		zap.Uint64("startTS", p.sctx.GetSessionVars().TxnCtx.StartTS))
 
 	future := newOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
 	return p.replaceTxnTsFuture(future)
@@ -420,9 +419,10 @@ func (p *baseTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error
 		return nil, err
 	}
 
-	if p.sctx.GetSessionVars().ConnectionID > 0 {
-		logutil.Logger(p.ctx).Info("[for debug]get snapshot with StmtReadTS", zap.Uint64("ts", ts))
-	}
+	logutil.Logger(p.ctx).Info("[for debug]get snapshot with StmtReadTS",
+		zap.Uint64("ts", ts),
+		zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
+		zap.Uint64("startTS", p.sctx.GetSessionVars().TxnCtx.StartTS))
 
 	return p.getSnapshotByTS(ts)
 }
@@ -434,9 +434,10 @@ func (p *baseTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, 
 		return nil, err
 	}
 
-	if p.sctx.GetSessionVars().ConnectionID > 0 {
-		logutil.Logger(p.ctx).Info("[for debug]get snapshot with StmtForUpdateTS", zap.Uint64("ts", ts))
-	}
+	logutil.Logger(p.ctx).Info("[for debug]get snapshot with StmtForUpdateTS",
+		zap.Uint64("ts", ts),
+		zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
+		zap.Uint64("startTS", p.sctx.GetSessionVars().TxnCtx.StartTS))
 
 	return p.getSnapshotByTS(ts)
 }
