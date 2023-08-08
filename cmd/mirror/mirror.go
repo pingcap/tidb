@@ -15,6 +15,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -196,6 +197,11 @@ func downloadZips(
 	}
 	cmd := exec.Command(gobin, downloadArgs...)
 	cmd.Dir = tmpdir
+	env := os.Environ()
+	env = append(env, fmt.Sprintf("GOPROXY=%s", "https://proxy.golang.org,direct"))
+	cmd.Env = env
+	var out bytes.Buffer
+	cmd.Stderr = &out
 	jsonBytes, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -223,6 +229,11 @@ func listAllModules(tmpdir string) (map[string]listedModule, error) {
 	}
 	cmd := exec.Command(gobin, "list", "-mod=readonly", "-m", "-json", "all")
 	cmd.Dir = tmpdir
+	env := os.Environ()
+	env = append(env, fmt.Sprintf("GOPROXY=%s", "https://proxy.golang.org,direct"))
+	cmd.Env = env
+	var out bytes.Buffer
+	cmd.Stderr = &out
 	jsonBytes, err := cmd.Output()
 	if err != nil {
 		return nil, err
