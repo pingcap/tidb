@@ -2755,10 +2755,12 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		count, ok, corr := ds.crossEstimateIndexRowCount(path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
 		if ok {
 			rowCount = count
-		} else if abs := math.Abs(corr); abs < 1 {
-			correlationFactor := math.Pow(1-abs, float64(ds.SCtx().GetSessionVars().CorrelationExpFactor))
-			selectivity := ds.StatsInfo().RowCount / rowCount
-			rowCount = math.Min(prop.ExpectedCnt/selectivity/correlationFactor, rowCount)
+		} else if corr > 0 {
+			if abs := math.Abs(corr); abs < 1 {
+					correlationFactor := math.Pow(1-abs, float64(ds.SCtx().GetSessionVars().CorrelationExpFactor))
+					selectivity := ds.StatsInfo().RowCount / rowCount
+					rowCount = math.Min(prop.ExpectedCnt/selectivity/correlationFactor, rowCount)
+			}
 		}
 	}
 	is.SetStats(ds.tableStats.ScaleByExpectCnt(rowCount))
