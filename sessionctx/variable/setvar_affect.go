@@ -14,8 +14,6 @@
 
 package variable
 
-import "fmt"
-
 var isHintUpdatable = map[string]struct{}{
 	"tidb_opt_agg_push_down":                           {},
 	"tidb_opt_derive_topn":                             {},
@@ -108,9 +106,6 @@ func setHintUpdatable(vars []*SysVar) {
 	for _, v := range vars {
 		if _, ok := isHintUpdatable[v.Name]; ok {
 			v.IsHintUpdatable = true
-			if v.Type == TypeStr || v.Type == TypeEnum || v.Type == TypeTime || v.Type == TypeDuration {
-				fmt.Println(v.Name)
-			}
 		}
 	}
 }
