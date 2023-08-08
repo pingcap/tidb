@@ -2474,6 +2474,7 @@ func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
 }
 
 func waitForDDLJobState(t *testing.T, tk *testkit.TestKit, errChan chan error, dbName, tableName, jobType, s string, pos int) {
+	count := 0
 	for {
 		select {
 		case alterErr := <-errChan:
@@ -2495,7 +2496,12 @@ func waitForDDLJobState(t *testing.T, tk *testkit.TestKit, errChan chan error, d
 				logutil.BgLogger().Info("admin show ddl jobs", zap.Strings("job", fields))
 			}
 		}
-		time.Sleep(50 * time.Millisecond)
+		if count > 100 {
+			// 10s wait
+			require.Fail(t, "time out while waiting for DDL JOB state")
+		}
+		time.Sleep(100 * time.Millisecond)
+		count++
 	}
 }
 
