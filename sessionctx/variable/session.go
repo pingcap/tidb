@@ -2517,6 +2517,23 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	return sv.SetSessionFromHook(s, val)
 }
 
+// SetSystemVar sets the value of a system variable for session scope.
+// Values are automatically normalized (i.e. oN / on / 1 => ON)
+// and the validation function is run. To set with less validation, see
+// SetSystemVarWithRelaxedValidation.
+func (s *SessionVars) SetSystemVarWithOldValAsRet(name string, val string) (string, error) {
+	sv := GetSysVar(name)
+	if sv == nil {
+		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	val, err := sv.Validate(s, val, ScopeSession)
+	if err != nil {
+		return "", err
+	}
+	oldV := sv.Value
+	return oldV, sv.SetSessionFromHook(s, val)
+}
+
 // SetSystemVarWithoutValidation sets the value of a system variable for session scope.
 // Deprecated: Values are NOT normalized or Validated.
 func (s *SessionVars) SetSystemVarWithoutValidation(name string, val string) error {

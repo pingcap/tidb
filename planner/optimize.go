@@ -155,15 +155,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
-	if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && sctx.GetSessionVars().StrictSQLMode && !IsReadOnly(node, sessVars) {
-		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
-		delete(sessVars.IsolationReadEngines, kv.TiFlash)
-		defer func() {
-			sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = false
-			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
-		}()
-	}
-
 	// handle the execute statement
 	if execAST, ok := node.(*ast.ExecuteStmt); ok {
 		p, names, err := OptimizeExecStmt(ctx, sctx, execAST, is)
@@ -196,11 +187,16 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}()
 
 	warns = warns[:0]
-	for name, val := range originStmtHints.SetVars {
-		err := sessVars.SetStmtVar(name, val)
+	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+		oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
 		if err != nil {
 			sessVars.StmtCtx.AppendWarning(err)
 		}
+		sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
+	}
+	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("SET_VAR is used in the SQL"))
+
 	}
 
 	txnManger := sessiontxn.GetTxnManager(sctx)
@@ -286,10 +282,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			sessVars.StmtCtx.StmtHints = curStmtHints
 			// update session var by hint /set_var/
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
-				err := sessVars.SetStmtVar(name, val)
+				oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
 				if err != nil {
 					sessVars.StmtCtx.AppendWarning(err)
 				}
+				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 			}
 			plan, curNames, cost, err := optimize(ctx, sctx, node, is)
 			if err != nil {
@@ -326,6 +323,16 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 		// Restore the hint to avoid changing the stmt node.
 		hint.BindHint(stmtNode, originHints)
+	}
+
+	// Should be later than parse hint since the SET_VAR hint might change its status.
+	if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && sctx.GetSessionVars().StrictSQLMode && !IsReadOnly(node, sessVars) {
+		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
+		delete(sessVars.IsolationReadEngines, kv.TiFlash)
+		defer func() {
+			sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = false
+			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+		}()
 	}
 
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace && bestPlanFromBind != nil {

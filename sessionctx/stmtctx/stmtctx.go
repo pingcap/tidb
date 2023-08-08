@@ -304,6 +304,8 @@ type StatementContext struct {
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
 
+	SetVarHintRestore map[string]string
+
 	// If the statement read from table cache, this flag is set.
 	ReadFromTableCache bool
 
@@ -1232,6 +1234,13 @@ func (sc *StatementContext) GetStaleTSO() (uint64, error) {
 	}
 	sc.StaleTSOProvider.value = &tso
 	return tso, nil
+}
+
+func (sc *StatementContext) AddSetVarHintRestore(name, val string) {
+	if sc.SetVarHintRestore == nil {
+		sc.SetVarHintRestore = make(map[string]string)
+	}
+	sc.SetVarHintRestore[name] = val
 }
 
 // CopTasksDetails collects some useful information of cop-tasks during execution.

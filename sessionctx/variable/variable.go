@@ -616,6 +616,11 @@ func GetSysVars() map[string]*SysVar {
 
 func init() {
 	sysVars = make(map[string]*SysVar)
+	setHintUpdatable(defaultSysVars)
+	// Clean the map
+	for k := range isHintUpdatable {
+		delete(isHintUpdatable, k)
+	}
 	for _, v := range defaultSysVars {
 		RegisterSysVar(v)
 	}
