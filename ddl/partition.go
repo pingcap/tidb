@@ -3054,11 +3054,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in reorgPartitionWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
 
-			if taskRange.endInclude {
-				taskDone = recordKey.Cmp(taskRange.endKey) > 0
-			} else {
-				taskDone = recordKey.Cmp(taskRange.endKey) >= 0
-			}
+			taskDone = recordKey.Cmp(taskRange.endKey) >= 0
 
 			if taskDone || len(w.rowRecords) >= w.batchCnt {
 				return false, nil

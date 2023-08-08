@@ -23,6 +23,11 @@ go_test(
     timeout = "short",
     srcs = ["ldap_common_test.go"],
     embed = [":ldap"],
+    embedsrcs = [
+        "test/ca.crt",
+        "test/ldap.crt",
+        "test/ldap.key",
+    ],
     flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )
