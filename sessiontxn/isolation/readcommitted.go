@@ -147,10 +147,13 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	var stmtTSFuture oracle.Future
 	switch {
 	case p.stmtUseStartTS:
+		logutil.Logger(p.ctx).Info("RC prepare stmt ts, using start ts", zap.Uint64("startTs", sessVars.TxnCtx.StartTS))
 		stmtTSFuture = funcFuture(p.getTxnStartTS)
 	case p.latestOracleTSValid && sessVars.StmtCtx.RCCheckTS:
+		logutil.Logger(p.ctx).Info("RC prepare stmt ts, using latest oracle ts")
 		stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)
 	default:
+		logutil.Logger(p.ctx).Info("RC prepare stmt ts, using oracle future")
 		stmtTSFuture = p.getOracleFuture()
 	}
 
@@ -176,6 +179,9 @@ func (p *PessimisticRCTxnContextProvider) getOracleFuture() funcFuture {
 }
 
 func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
+	defer func(){
+		logutil.Logger(p.ctx).Info("RC get stmt ts", zap.Uint64("ts", ts))
+	}()
 	if p.stmtTS != 0 {
 		return p.stmtTS, nil
 	}
@@ -239,6 +245,7 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 
 // AdviseWarmup provides warmup for inner state
 func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
+	logutil.Logger(p.ctx).Info("RC advise warmup")
 	if err := p.prepareTxn(); err != nil {
 		return err
 	}

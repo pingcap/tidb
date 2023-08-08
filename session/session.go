@@ -3773,6 +3773,9 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			zap.Bool("isPessimistic", vars.TxnCtx.IsPessimistic),
 			zap.String("sessionTxnMode", vars.GetReadableTxnMode()),
 			zap.String("sql", query))
+			zap.Bool("in-txn", vars.InTxn())
+			zap.Bool("explicit", vars.TxnCtx.IsExplicit)
+			zap.Bool("auto-commit", vars.IsAutocommit())
 	}
 }
 

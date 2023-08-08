@@ -31,7 +31,9 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/internal"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 // baseTxnContextProvider is a base class for the transaction context providers that implement `TxnContextProvider` in different isolation.
@@ -248,6 +250,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
 		return p.txn, nil
 	}
+	logutil.Logger(p.ctx).Info("activate txn")
 
 	if err := p.prepareTxn(); err != nil {
 		return nil, err
@@ -323,6 +326,8 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
 		return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(snapshotTS))
 	}
+
+	logutil.Logger(p.ctx).Info("prepare txn with oracle ts")
 
 	future := newOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
 	return p.replaceTxnTsFuture(future)
@@ -400,6 +405,8 @@ func (p *baseTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error
 		return nil, err
 	}
 
+	logutil.Logger(p.ctx).Info("get snapshot with StmtReadTS", zap.Uint64("ts", ts))
+
 	return p.getSnapshotByTS(ts)
 }
 
@@ -409,6 +416,8 @@ func (p *baseTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, 
 	if err != nil {
 		return nil, err
 	}
+
+	logutil.Logger(p.ctx).Info("get snapshot with StmtForUpdateTS", zap.Uint64("ts", ts))
 
 	return p.getSnapshotByTS(ts)
 }
