@@ -1241,3 +1241,81 @@ func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
 		conf.Labels = map[string]string{}
 	})
 }
+
+func TestUpgrade(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	// test /upgrade/start
+	resp, err := ts.FetchStatus("/upgrade/start")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	b, err := httputil.DumpResponse(resp, true)
+	require.NoError(t, err)
+	require.Greater(t, len(b), 0)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "\"success!\"", string(body))
+	// check the result
+	se, err := session.CreateSession(ts.store)
+	require.NoError(t, err)
+	isUpgrading, err := session.IsUpgrading(se)
+	require.NoError(t, err)
+	require.True(t, isUpgrading)
+
+	// Do start upgrade again.
+	resp, err = ts.FetchStatus("/upgrade/start")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	b, err = httputil.DumpResponse(resp, true)
+	require.NoError(t, err)
+	require.Greater(t, len(b), 0)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "\"Be upgrading.\"\"success!\"", string(body))
+	// check the result
+	se, err = session.CreateSession(ts.store)
+	require.NoError(t, err)
+	isUpgrading, err = session.IsUpgrading(se)
+	require.NoError(t, err)
+	require.True(t, isUpgrading)
+
+	// test /upgrade/finish
+	resp, err = ts.FetchStatus("/upgrade/finish")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	b, err = httputil.DumpResponse(resp, true)
+	require.NoError(t, err)
+	require.Greater(t, len(b), 0)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "\"success!\"", string(body))
+	// check the result
+	se, err = session.CreateSession(ts.store)
+	require.NoError(t, err)
+	isUpgrading, err = session.IsUpgrading(se)
+	require.NoError(t, err)
+	require.False(t, isUpgrading)
+
+	// Do finish upgrade again.
+	resp, err = ts.FetchStatus("/upgrade/finish")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	b, err = httputil.DumpResponse(resp, true)
+	require.NoError(t, err)
+	require.Greater(t, len(b), 0)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "\"Be normal.\"\"success!\"", string(body))
+	// check the result
+	se, err = session.CreateSession(ts.store)
+	require.NoError(t, err)
+	isUpgrading, err = session.IsUpgrading(se)
+	require.NoError(t, err)
+	require.False(t, isUpgrading)
+}
