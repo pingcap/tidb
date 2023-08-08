@@ -141,20 +141,28 @@ func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error
 
 func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	if p.stmtTSFuture != nil {
-		logutil.Logger(p.ctx).Info("RC prepare stmt ts, already prepared")
+		if p.sctx.GetSessionVars().ConnectionID > 0 {
+			logutil.Logger(p.ctx).Info("[for debug]RC prepare stmt ts, already prepared", zap.Uint64("StartTS", p.sctx.GetSessionVars().TxnCtx.StartTS))
+		}
 		return
 	}
 	sessVars := p.sctx.GetSessionVars()
 	var stmtTSFuture oracle.Future
 	switch {
 	case p.stmtUseStartTS:
-		logutil.Logger(p.ctx).Info("RC prepare stmt ts, using start ts", zap.Uint64("startTs", sessVars.TxnCtx.StartTS))
+		if p.sctx.GetSessionVars().ConnectionID > 0 {
+			logutil.Logger(p.ctx).Info("[for debug]RC prepare stmt ts, using start ts", zap.Uint64("startTs", sessVars.TxnCtx.StartTS))
+		}
 		stmtTSFuture = funcFuture(p.getTxnStartTS)
 	case p.latestOracleTSValid && sessVars.StmtCtx.RCCheckTS:
-		logutil.Logger(p.ctx).Info("RC prepare stmt ts, using latest oracle ts")
+		if p.sctx.GetSessionVars().ConnectionID > 0 {
+			logutil.Logger(p.ctx).Info("[for debug]RC prepare stmt ts, using latest oracle ts", zap.Uint64("latestOracleTS", p.latestOracleTS), zap.Uint64("StartTS", sessVars.TxnCtx.StartTS))
+		}
 		stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)
 	default:
-		logutil.Logger(p.ctx).Info("RC prepare stmt ts, using oracle future")
+		if p.sctx.GetSessionVars().ConnectionID > 0 {
+			logutil.Logger(p.ctx).Info("[for debug]RC prepare stmt ts, using oracle future", zap.Uint64("StartTS", sessVars.TxnCtx.StartTS))
+		}
 		stmtTSFuture = p.getOracleFuture()
 	}
 
@@ -180,11 +188,17 @@ func (p *PessimisticRCTxnContextProvider) getOracleFuture() funcFuture {
 }
 
 func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
-	defer func(){
-		logutil.Logger(p.ctx).Info("RC get stmt ts", zap.Uint64("ts", ts))
+	defer func() {
+		if p.sctx.GetSessionVars().ConnectionID > 0 {
+			logutil.Logger(p.ctx).Info("[for debug]RC get stmt ts", zap.Uint64("ts", ts))
+		}
 	}()
 	if p.stmtTS != 0 {
-		logutil.Logger(p.ctx).Info("RC get stmt ts, ts has been determined")
+		if p.sctx.GetSessionVars().ConnectionID > 0 {
+			logutil.Logger(p.ctx).Info("[for debug]RC get stmt ts, ts has been determined", zap.Uint64("ts", p.stmtTS),
+				zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
+				zap.Uint64("StartTS", p.sctx.GetSessionVars().TxnCtx.StartTS))
+		}
 		return p.stmtTS, nil
 	}
 
@@ -200,6 +214,11 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 
 	txn.SetOption(kv.SnapshotTS, ts)
 	p.stmtTS = ts
+	if p.sctx.GetSessionVars().ConnectionID > 0 {
+		logutil.Logger(p.ctx).Info("[for debug] set stmtTS", zap.Uint64("ts", p.stmtTS),
+			zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
+			zap.Uint64("StartTS", p.sctx.GetSessionVars().TxnCtx.StartTS))
+	}
 	return
 }
 
@@ -247,7 +266,10 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 
 // AdviseWarmup provides warmup for inner state
 func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
-	logutil.Logger(p.ctx).Info("RC advise warmup")
+	if p.sctx.GetSessionVars().ConnectionID > 0 {
+		logutil.Logger(p.ctx).Info("RC advise warmup",
+			zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID))
+	}
 	if err := p.prepareTxn(); err != nil {
 		return err
 	}
@@ -293,6 +315,11 @@ func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLock
 // 4. A DELETE statement whose sub execution plan is "PointGet".
 func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
+		if p.sctx.GetSessionVars().ConnectionID > 0 {
+			logutil.BgLogger().Warn("[for debug] PessimisticRCTxnContextProvider.AdviseOptimizeWithPlan return unexpectedly",
+				zap.Bool("isTidbSnapshotEnabled", p.isTidbSnapshotEnabled()),
+				zap.Bool("isBeginStmtWithStaleRead", p.isBeginStmtWithStaleRead()))
+		}
 		return nil
 	}
 	if p.stmtUseStartTS || !p.latestOracleTSValid {

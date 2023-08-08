@@ -189,7 +189,9 @@ func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
 		return snapshotTS, nil
 	}
 	ts, err := p.getStmtReadTSFunc()
-	logutil.Logger(p.ctx).Info("getStmtReadTS", zap.Uint64("ts", ts))
+	if p.sctx.GetSessionVars().ConnectionID > 0 {
+		logutil.Logger(p.ctx).Info("getStmtReadTS", zap.Uint64("ts", ts), zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID))
+	}
 	return ts, err
 }
 
@@ -203,7 +205,9 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 		return snapshotTS, nil
 	}
 	ts, err := p.getStmtForUpdateTSFunc()
-	logutil.Logger(p.ctx).Info("getStmtForUpdateTS", zap.Uint64("ts", ts))
+	if p.sctx.GetSessionVars().ConnectionID > 0 {
+		logutil.Logger(p.ctx).Info("getStmtForUpdateTS", zap.Uint64("ts", ts), zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID))
+	}
 	return ts, err
 }
 
@@ -254,7 +258,12 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
 		return p.txn, nil
 	}
-	logutil.Logger(p.ctx).Info("activate txn")
+	if p.sctx.GetSessionVars().ConnectionID > 0 {
+		logutil.Logger(p.ctx).Info("[for debug] baseTxnContextProvider.ActivateTxn",
+			zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
+			zap.Bool("isTxnPrepared", p.isTxnPrepared),
+			zap.Uint64("p.constStartTS", p.constStartTS))
+	}
 
 	if err := p.prepareTxn(); err != nil {
 		return nil, err
@@ -331,7 +340,9 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 		return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(snapshotTS))
 	}
 
-	logutil.Logger(p.ctx).Info("prepare txn with oracle ts")
+	if p.sctx.GetSessionVars().ConnectionID > 0 {
+		logutil.Logger(p.ctx).Info("[for debug]prepare txn with oracle ts")
+	}
 
 	future := newOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
 	return p.replaceTxnTsFuture(future)
@@ -409,7 +420,9 @@ func (p *baseTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error
 		return nil, err
 	}
 
-	logutil.Logger(p.ctx).Info("get snapshot with StmtReadTS", zap.Uint64("ts", ts))
+	if p.sctx.GetSessionVars().ConnectionID > 0 {
+		logutil.Logger(p.ctx).Info("[for debug]get snapshot with StmtReadTS", zap.Uint64("ts", ts))
+	}
 
 	return p.getSnapshotByTS(ts)
 }
@@ -421,7 +434,9 @@ func (p *baseTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, 
 		return nil, err
 	}
 
-	logutil.Logger(p.ctx).Info("get snapshot with StmtForUpdateTS", zap.Uint64("ts", ts))
+	if p.sctx.GetSessionVars().ConnectionID > 0 {
+		logutil.Logger(p.ctx).Info("[for debug]get snapshot with StmtForUpdateTS", zap.Uint64("ts", ts))
+	}
 
 	return p.getSnapshotByTS(ts)
 }
