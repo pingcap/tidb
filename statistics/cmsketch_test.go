@@ -332,9 +332,59 @@ func TestMergePartTopN2GlobalTopNWithoutHists(t *testing.T) {
 	}
 
 	// Test merge 2 topN.
-	globalTopN, leftTopN, _, err := MergePartTopN2GlobalTopN(loc, version, topNs, 2, nil, true, &isKilled)
+	globalTopN, leftTopN, _, err := MergePartTopN2GlobalTopN(loc, version, topNs, 2, nil, false, &isKilled)
 	require.NoError(t, err)
 	require.Len(t, globalTopN.TopN, 2, "should only have 2 topN")
 	require.Equal(t, uint64(50), globalTopN.TotalCount(), "should have 50 rows")
 	require.Len(t, leftTopN, 1, "should have 1 left topN")
+}
+
+func TestMergePartTopN2GlobalTopNWithHists(t *testing.T) {
+	loc := time.UTC
+	sc := &stmtctx.StatementContext{TimeZone: loc}
+	version := 1
+	isKilled := uint32(0)
+
+	// Prepare TopNs.
+	topNs := make([]*TopN, 0, 10)
+	for i := 0; i < 10; i++ {
+		// Construct TopN, should be 1 -> 2, 2 -> 2, 3 -> 3.
+		topN := NewTopN(3)
+		{
+			key1, err := codec.EncodeKey(sc, nil, types.NewIntDatum(1))
+			require.NoError(t, err)
+			topN.AppendTopN(key1, 2)
+			key2, err := codec.EncodeKey(sc, nil, types.NewIntDatum(2))
+			require.NoError(t, err)
+			topN.AppendTopN(key2, 2)
+			if i%2 == 0 {
+				key3, err := codec.EncodeKey(sc, nil, types.NewIntDatum(3))
+				require.NoError(t, err)
+				topN.AppendTopN(key3, 3)
+			}
+		}
+		topNs = append(topNs, topN)
+	}
+
+	// Prepare Hists.
+	hists := make([]*Histogram, 0, 10)
+	for i := 0; i < 10; i++ {
+		// Construct Hist
+		h := NewHistogram(1, 10, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0)
+		h.Bounds.AppendInt64(0, 1)
+		h.Buckets = append(h.Buckets, Bucket{Repeat: 10, Count: 20})
+		h.Bounds.AppendInt64(0, 2)
+		h.Buckets = append(h.Buckets, Bucket{Repeat: 10, Count: 30})
+		h.Bounds.AppendInt64(0, 3)
+		h.Buckets = append(h.Buckets, Bucket{Repeat: 10, Count: 30})
+		h.Bounds.AppendInt64(0, 4)
+		h.Buckets = append(h.Buckets, Bucket{Repeat: 10, Count: 40})
+		hists = append(hists, h)
+	}
+
+	// Test merge 2 topN.
+	globalTopN, _, _, err := MergePartTopN2GlobalTopN(loc, version, topNs, 2, hists, false, &isKilled)
+	require.NoError(t, err)
+	require.Len(t, globalTopN.TopN, 2, "should only have 2 topN")
+	require.Equal(t, uint64(55), globalTopN.TotalCount(), "should have 55")
 }
