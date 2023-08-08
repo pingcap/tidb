@@ -234,6 +234,11 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		lookup:        e,
 		memTracker:    memory.NewTracker(memory.LabelForIndexJoinInnerWorker, -1),
 	}
+	failpoint.Inject("inlNewInnerPanic", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("test inlNewInnerPanic")
+		}
+	})
 	iw.memTracker.AttachTo(e.memTracker)
 	if len(copiedRanges) != 0 {
 		// We should not consume this memory usage in `iw.memTracker`. The
