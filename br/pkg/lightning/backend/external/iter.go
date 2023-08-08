@@ -75,7 +75,8 @@ type MergeIter struct {
 
 	firstKey []byte
 
-	err error
+	err    error
+	logger *zap.Logger
 }
 
 // NewMergeIter creates a new MergeIter.
@@ -88,9 +89,11 @@ func NewMergeIter(
 	exStorage storage.ExternalStorage,
 	readBufferSize int,
 ) (*MergeIter, error) {
+	logger := logutil.Logger(ctx)
 	it := &MergeIter{
 		dataFilePaths: paths,
 		lastFileIndex: -1,
+		logger:        logger,
 	}
 	it.dataFileReader = make([]*kvReader, len(paths))
 	it.kvHeap = make([]*kvPair, 0, len(paths))
@@ -118,7 +121,14 @@ func NewMergeIter(
 			return nil, err
 		}
 		if len(k) == 0 {
-			rd.Close()
+			closeErr := rd.Close()
+			if closeErr != nil {
+				logger.Warn(
+					"failed to close file",
+					zap.String("path", paths[i]),
+					zap.Error(closeErr),
+				)
+			}
 			continue
 		}
 		pair := kvPair{key: k, value: v, fileIndex: i}
@@ -141,15 +151,21 @@ func (i *MergeIter) Next() bool {
 	// Populate the heap.
 	if i.lastFileIndex >= 0 {
 		k, v, err := i.dataFileReader[i.lastFileIndex].nextKV()
-		// TODO(lance6716): EOF
-		if err != nil {
+		if err != nil && err != io.EOF {
 			i.err = err
 			return false
 		}
 		if len(k) > 0 {
 			heap.Push(&i.kvHeap, &kvPair{k, v, i.lastFileIndex})
 		} else {
-			i.dataFileReader[i.lastFileIndex].Close()
+			closeErr := i.dataFileReader[i.lastFileIndex].Close()
+			if closeErr != nil {
+				i.logger.Warn(
+					"failed to close file",
+					zap.String("path", i.dataFilePaths[i.lastFileIndex]),
+					zap.Error(closeErr),
+				)
+			}
 		}
 	}
 	i.lastFileIndex = -1
@@ -240,7 +256,8 @@ type MergePropIter struct {
 	firstKey      []byte
 	lastFileIndex int
 
-	err error
+	err    error
+	logger *zap.Logger
 }
 
 func NewMergePropIter(
@@ -248,9 +265,11 @@ func NewMergePropIter(
 	paths []string,
 	exStorage storage.ExternalStorage,
 ) (*MergePropIter, error) {
+	logger := logutil.Logger(ctx)
 	it := &MergePropIter{
 		statFilePaths: paths,
 		lastFileIndex: -1,
+		logger:        logger,
 	}
 	it.propHeap = make([]*prop, 0, len(paths))
 	it.statFileReader = make([]*statsReader, len(paths))
@@ -279,7 +298,14 @@ func NewMergePropIter(
 			return nil, err
 		}
 		if p == nil {
-			rd.Close()
+			closeErr := rd.Close()
+			if closeErr != nil {
+				logger.Warn(
+					"failed to close file",
+					zap.String("path", paths[i]),
+					zap.Error(closeErr),
+				)
+			}
 			continue
 		}
 		pair := prop{p: *p, fileIndex: i}
@@ -289,8 +315,12 @@ func NewMergePropIter(
 	return it, nil
 }
 
-// TODO(lance6716): This is the only use of MergePropIter?
-func SeekPropsOffsets(ctx context.Context, start kv.Key, paths []string, exStorage storage.ExternalStorage) ([]uint64, error) {
+func SeekPropsOffsets(
+	ctx context.Context,
+	start kv.Key,
+	paths []string,
+	exStorage storage.ExternalStorage,
+) ([]uint64, error) {
 	iter, err := NewMergePropIter(ctx, paths, exStorage)
 	if err != nil {
 		return nil, err
@@ -328,15 +358,21 @@ func (i *MergePropIter) Next() bool {
 	i.currProp = nil
 	if i.lastFileIndex >= 0 {
 		p, err := i.statFileReader[i.lastFileIndex].nextProp()
-		// TODO(lance6716): EOF
-		if err != nil {
+		if err != nil && err != io.EOF {
 			i.err = err
 			return false
 		}
 		if p != nil {
 			heap.Push(&i.propHeap, &prop{*p, i.lastFileIndex})
 		} else {
-			i.statFileReader[i.lastFileIndex].Close()
+			closeErr := i.statFileReader[i.lastFileIndex].Close()
+			if closeErr != nil {
+				i.logger.Warn(
+					"failed to close file",
+					zap.String("path", i.statFilePaths[i.lastFileIndex]),
+					zap.Error(closeErr),
+				)
+			}
 		}
 	}
 	i.lastFileIndex = -1
