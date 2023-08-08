@@ -3646,6 +3646,11 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 		future = txnFailFuture{}
 	})
 
+	logutil.Logger(ctx).Info("[for debug] txn.changeToPending",
+		zap.Uint64("conn", s.sessionVars.ConnectionID),
+		zap.Bool("autocommit", s.sessionVars.IsAutocommit()),
+		zap.Bool("in-txn", s.sessionVars.InTxn()),
+		zap.Bool("isExplicit", s.sessionVars.TxnCtx.IsExplicit))
 	s.txn.changeToPending(&txnFuture{
 		future:   future,
 		store:    s.store,
@@ -3773,9 +3778,9 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			zap.Bool("isPessimistic", vars.TxnCtx.IsPessimistic),
 			zap.String("sessionTxnMode", vars.GetReadableTxnMode()),
 			zap.String("sql", query))
-			zap.Bool("in-txn", vars.InTxn())
-			zap.Bool("explicit", vars.TxnCtx.IsExplicit)
-			zap.Bool("auto-commit", vars.IsAutocommit())
+		zap.Bool("in-txn", vars.InTxn())
+		zap.Bool("explicit", vars.TxnCtx.IsExplicit)
+		zap.Bool("auto-commit", vars.IsAutocommit())
 		if vars.SnapshotTS != 0 {
 			logutil.BgLogger().Warn("snapshotTS is not 0",
 				zap.Uint64("conn", vars.ConnectionID),

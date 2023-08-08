@@ -308,6 +308,7 @@ func (txn *LazyTxn) changeToInvalid() {
 	lastStateChangeTime := txn.mu.TxnInfo.LastStateChangeTime
 	hasLock := !txn.mu.TxnInfo.BlockStartTime.IsZero()
 	if txn.mu.TxnInfo.StartTS != 0 {
+		logutil.BgLogger().Info("[for debug] txn.changeToInvalid", zap.Uint64("startTS", txn.mu.TxnInfo.StartTS))
 		txninfo.Recorder.OnTrxEnd(&txn.mu.TxnInfo)
 	}
 	txn.mu.TxnInfo = txninfo.TxnInfo{}
@@ -506,6 +507,12 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 			sctx.GetSessionVars().TxnCtx.StartTS = 0
 			return txn, err
 		}
+		logutil.Logger(ctx).Info("[for debug] txn.changePendingToValid",
+			zap.Uint64("conn", sctx.GetSessionVars().ConnectionID),
+			zap.Bool("autocommit", sctx.GetSessionVars().IsAutocommit()),
+			zap.Bool("in-txn", sctx.GetSessionVars().InTxn()),
+			zap.Bool("isExplicit", sctx.GetSessionVars().TxnCtx.IsExplicit),
+			zap.Uint64("startTS", sctx.GetSessionVars().TxnCtx.StartTS))
 		txn.lazyUniquenessCheckEnabled = !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic
 	}
 	return txn, nil
