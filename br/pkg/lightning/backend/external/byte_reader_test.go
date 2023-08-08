@@ -18,9 +18,11 @@ import (
 	"context"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/rand"
 )
 
 // mockExtStore is only used for test.
@@ -177,4 +179,45 @@ func TestByteReaderAuxBuf(t *testing.T) {
 	require.Equal(t, []byte("45"), *y4)
 	require.Equal(t, []byte("0"), *y1)
 	require.Equal(t, []byte("12"), *y2)
+}
+
+func TestReset(t *testing.T) {
+	seed := time.Now().Unix()
+	rand.Seed(uint64(seed))
+	t.Logf("seed: %d", seed)
+	src := make([]byte, 256)
+	for i := range src {
+		src[i] = byte(i)
+	}
+	ms := &mockExtStore{src: src}
+	bufSize := rand.Intn(256)
+	br, err := newByteReader(context.Background(), ms, bufSize)
+	require.NoError(t, err)
+	end := 0
+	toCheck := make([]*[]byte, 0, 10)
+	for end < len(src) {
+		n := rand.Intn(len(src) - end)
+		if n == 0 {
+			n = 1
+		}
+		y, err := br.readNBytes(n)
+		require.NoError(t, err)
+		toCheck = append(toCheck, y)
+		end += n
+
+		l := end
+		r := end
+		for i := len(toCheck) - 1; i >= 0; i-- {
+			l -= len(*toCheck[i])
+			require.Equal(t, src[l:r], *toCheck[i])
+			r = l
+		}
+
+		if rand.Intn(2) == 0 {
+			br.reset()
+			toCheck = toCheck[:0]
+		}
+	}
+	_, err = br.readNBytes(1)
+	require.Equal(t, io.EOF, err)
 }
