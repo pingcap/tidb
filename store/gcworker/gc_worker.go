@@ -75,20 +75,20 @@ type GCLockResolver interface {
 }
 
 type GCWorkerLockResolver struct {
-	tikvStore tikv.Storage
+	TiKvStore tikv.Storage
 }
 
 func (w *GCWorkerLockResolver) LocateKey(bo *tikv.Backoffer, key []byte) (*tikv.KeyLocation, error) {
-	return w.tikvStore.GetRegionCache().LocateKey(bo, key)
+	return w.TiKvStore.GetRegionCache().LocateKey(bo, key)
 }
 
 func (w *GCWorkerLockResolver) ResolveLocks(bo *tikv.Backoffer, tryLocks []*txnlock.Lock, forceLocks []*txnlock.Lock, loc tikv.RegionVerID) (bool, error) {
-	ok, err := w.tikvStore.GetLockResolver().BatchResolveLocks(bo, forceLocks, loc)
+	ok, err := w.TiKvStore.GetLockResolver().BatchResolveLocks(bo, forceLocks, loc)
 	if err != nil || !ok {
 		return ok, err
 	}
 	// callerStartTS is always 0. so no need to make it a parameter here.
-	_, err = w.tikvStore.GetLockResolver().ResolveLocks(bo, 0, tryLocks)
+	_, err = w.TiKvStore.GetLockResolver().ResolveLocks(bo, 0, tryLocks)
 	return err == nil, errors.Trace(err)
 }
 
@@ -97,7 +97,7 @@ func (w *GCWorkerLockResolver) ScanLocks(key []byte, regionID uint64, maxVersion
 }
 
 func (w *GCWorkerLockResolver) SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	return w.tikvStore.SendReq(bo, req, regionID, timeout)
+	return w.TiKvStore.SendReq(bo, req, regionID, timeout)
 }
 
 // GCWorker periodically triggers GC process on tikv server.

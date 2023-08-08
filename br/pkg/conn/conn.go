@@ -245,6 +245,11 @@ func (mgr *Mgr) GetTLSConfig() *tls.Config {
 	return mgr.StoreManager.TLSConfig()
 }
 
+// GetStore gets the tikvStore.
+func (mgr *Mgr) GetStore() tikv.Storage {
+	return mgr.tikvStore
+}
+
 // GetLockResolver gets the LockResolver.
 func (mgr *Mgr) GetLockResolver() *txnlock.LockResolver {
 	return mgr.tikvStore.GetLockResolver()

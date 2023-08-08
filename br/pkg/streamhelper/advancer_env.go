@@ -9,7 +9,9 @@ import (
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/util/engine"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
@@ -29,6 +31,8 @@ type Env interface {
 	LogBackupService
 	// StreamMeta connects to the metadata service (normally PD).
 	StreamMeta
+	// GCLockResolver try to resolve locks when region checkpoint stopped.
+	gcworker.GCLockResolver
 }
 
 // PDRegionScanner is a simple wrapper over PD
@@ -83,6 +87,7 @@ type clusterEnv struct {
 	clis *utils.StoreManager
 	*AdvancerExt
 	PDRegionScanner
+	*gcworker.GCWorkerLockResolver
 }
 
 // GetLogBackupClient gets the log backup client.
@@ -98,16 +103,17 @@ func (t clusterEnv) GetLogBackupClient(ctx context.Context, storeID uint64) (log
 }
 
 // CliEnv creates the Env for CLI usage.
-func CliEnv(cli *utils.StoreManager, etcdCli *clientv3.Client) Env {
+func CliEnv(cli *utils.StoreManager, tikvStore tikv.Storage, etcdCli *clientv3.Client) Env {
 	return clusterEnv{
-		clis:            cli,
-		AdvancerExt:     &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
-		PDRegionScanner: PDRegionScanner{cli.PDClient()},
+		clis:                 cli,
+		AdvancerExt:          &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
+		PDRegionScanner:      PDRegionScanner{cli.PDClient()},
+		GCWorkerLockResolver: &gcworker.GCWorkerLockResolver{TiKvStore: tikvStore},
 	}
 }
 
 // TiDBEnv creates the Env by TiDB config.
-func TiDBEnv(pdCli pd.Client, etcdCli *clientv3.Client, conf *config.Config) (Env, error) {
+func TiDBEnv(tikvStore tikv.Storage, pdCli pd.Client, etcdCli *clientv3.Client, conf *config.Config) (Env, error) {
 	tconf, err := conf.GetTiKVConfig().Security.ToTLSConfig()
 	if err != nil {
 		return nil, err
@@ -117,8 +123,9 @@ func TiDBEnv(pdCli pd.Client, etcdCli *clientv3.Client, conf *config.Config) (En
 			Time:    time.Duration(conf.TiKVClient.GrpcKeepAliveTime) * time.Second,
 			Timeout: time.Duration(conf.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
 		}, tconf),
-		AdvancerExt:     &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
-		PDRegionScanner: PDRegionScanner{Client: pdCli},
+		AdvancerExt:          &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
+		PDRegionScanner:      PDRegionScanner{Client: pdCli},
+		GCWorkerLockResolver: &gcworker.GCWorkerLockResolver{TiKvStore: tikvStore},
 	}, nil
 }
 
