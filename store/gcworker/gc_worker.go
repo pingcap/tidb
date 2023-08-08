@@ -63,22 +63,56 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+type GCLockResolver interface {
+	LocateKey(bo *tikv.Backoffer, key []byte) (*tikv.KeyLocation, error)
+
+	// Try batch resolve locks first. if not ok, fallback to normal resolve locks
+	ResolveLocks(bo *tikv.Backoffer, tryLocks []*txnlock.Lock, forceLocks []*txnlock.Lock, loc tikv.RegionVerID) (bool, error)
+
+	// only used for mock test
+	ScanLocks(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock
+
+	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
+}
+
+type GCWorkerLockResolver struct {
+	tikvStore tikv.Storage
+}
+
+func (w *GCWorkerLockResolver) LocateKey(bo *tikv.Backoffer, key []byte) (*tikv.KeyLocation, error) {
+	return w.tikvStore.GetRegionCache().LocateKey(bo, key)
+}
+
+func (w *GCWorkerLockResolver) ResolveLocks(bo *tikv.Backoffer, tryLocks []*txnlock.Lock, forceLocks []*txnlock.Lock, loc tikv.RegionVerID) (bool, error) {
+	ok, err := w.tikvStore.GetLockResolver().BatchResolveLocks(bo, forceLocks, loc)
+	if err != nil || !ok {
+		return ok, err
+	}
+	// callerStartTS is always 0. so no need to make it a parameter here.
+	_, err = w.tikvStore.GetLockResolver().ResolveLocks(bo, 0, tryLocks)
+	return err == nil, errors.Trace(err)
+}
+
+func (w *GCWorkerLockResolver) ScanLocks(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock {
+	return nil
+}
+
+func (w *GCWorkerLockResolver) SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
+	return w.tikvStore.SendReq(bo, req, regionID, timeout)
+}
+
 // GCWorker periodically triggers GC process on tikv server.
 type GCWorker struct {
-	uuid         string
-	desc         string
-	store        kv.Storage
-	tikvStore    tikv.Storage
-	pdClient     pd.Client
-	gcIsRunning  bool
-	lastFinish   time.Time
-	cancel       context.CancelFunc
-	done         chan error
-	testingKnobs struct {
-		scanLocks         func(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock
-		batchResolveLocks func(locks []*txnlock.Lock, regionID tikv.RegionVerID, safepoint uint64) (ok bool, err error)
-		resolveLocks      func(locks []*txnlock.Lock, lowResolutionTS uint64) (int64, error)
-	}
+	uuid             string
+	desc             string
+	store            kv.Storage
+	tikvStore        tikv.Storage
+	pdClient         pd.Client
+	gcIsRunning      bool
+	lastFinish       time.Time
+	cancel           context.CancelFunc
+	done             chan error
+	lockResolver     GCLockResolver
 	logBackupEnabled bool // check log-backup task existed.
 }
 
@@ -97,14 +131,15 @@ func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
 		return nil, errors.New("GC should run against TiKV storage")
 	}
 	worker := &GCWorker{
-		uuid:        strconv.FormatUint(ver.Ver, 16),
-		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
-		store:       store,
-		tikvStore:   tikvStore,
-		pdClient:    pdClient,
-		gcIsRunning: false,
-		lastFinish:  time.Now(),
-		done:        make(chan error),
+		uuid:         strconv.FormatUint(ver.Ver, 16),
+		desc:         fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
+		store:        store,
+		tikvStore:    tikvStore,
+		pdClient:     pdClient,
+		gcIsRunning:  false,
+		lastFinish:   time.Now(),
+		lockResolver: &GCWorkerLockResolver{tikvStore},
+		done:         make(chan error),
 	}
 	variable.RegisterStatistics(worker)
 	return worker, nil
@@ -1217,7 +1252,7 @@ func (w *GCWorker) legacyResolveLocks(
 	startTime := time.Now()
 
 	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-		return w.resolveLocksForRange(ctx, safePoint, tryResolveLocksTS, r.StartKey, r.EndKey)
+		return ResolveLocksForRange(ctx, w.uuid, w.lockResolver, safePoint, tryResolveLocksTS, r.StartKey, r.EndKey)
 	}
 
 	runner := rangetask.NewRangeTaskRunner("resolve-locks-runner", w.tikvStore, concurrency, handler)
@@ -1258,7 +1293,8 @@ func (w *GCWorker) getTryResolveLocksTS() (uint64, error) {
 // it will rollback the txn, no matter the lock is expired of not.
 // 2. If the ts of lock is larger than forceResolveLocksTS, it will check status of the txn.
 // Resolve the lock if txn is expired, Or do nothing.
-func (w *GCWorker) batchResolveExpiredLocks(
+func batchResolveExpiredLocks(
+	lockResolver GCLockResolver,
 	bo *tikv.Backoffer,
 	locks []*txnlock.Lock,
 	loc tikv.RegionVerID,
@@ -1285,29 +1321,13 @@ func (w *GCWorker) batchResolveExpiredLocks(
 		zap.Int("force-resolve-locks-count", len(forceResolveLocks)),
 		zap.Int("try-resolve-locks-count", len(tryResolveLocks)))
 
-	var (
-		ok  bool
-		err error
-	)
-	if w.testingKnobs.batchResolveLocks != nil {
-		ok, err = w.testingKnobs.batchResolveLocks(forceResolveLocks, loc, forceResolveLocksTS)
-	} else {
-		ok, err = w.tikvStore.GetLockResolver().BatchResolveLocks(bo, forceResolveLocks, loc)
-	}
-	if err != nil || !ok {
-		return ok, err
-	}
-
-	if w.testingKnobs.resolveLocks != nil {
-		_, err = w.testingKnobs.resolveLocks(tryResolveLocks, tryResolveLocksTS)
-	} else {
-		_, err = w.tikvStore.GetLockResolver().ResolveLocks(bo, 0, tryResolveLocks)
-	}
-	return err == nil, errors.Trace(err)
+	return lockResolver.ResolveLocks(bo, tryResolveLocks, forceResolveLocks, loc)
 }
 
-func (w *GCWorker) resolveLocksForRange(
+func ResolveLocksForRange(
 	ctx context.Context,
+	uuid string,
+	lockResolver GCLockResolver,
 	forceResolveLocksTS uint64,
 	tryResolveLocksTS uint64,
 	startKey []byte,
@@ -1346,12 +1366,12 @@ retryScanAndResolve:
 		}
 
 		req.ScanLock().StartKey = key
-		loc, err := w.tikvStore.GetRegionCache().LocateKey(bo, key)
+		loc, err := lockResolver.LocateKey(bo, key)
 		if err != nil {
 			return stat, errors.Trace(err)
 		}
 		req.ScanLock().EndKey = loc.EndKey
-		resp, err := w.tikvStore.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
+		resp, err := lockResolver.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
 		if err != nil {
 			return stat, errors.Trace(err)
 		}
@@ -1378,12 +1398,10 @@ retryScanAndResolve:
 		for _, li := range locksInfo {
 			locks = append(locks, txnlock.NewLock(li))
 		}
-		if w.testingKnobs.scanLocks != nil {
-			locks = append(locks, w.testingKnobs.scanLocks(key, loc.Region.GetID(), tryResolveLocksTS)...)
-		}
+		locks = append(locks, lockResolver.ScanLocks(key, loc.Region.GetID(), tryResolveLocksTS)...)
 		locForResolve := loc
 		for {
-			ok, err1 := w.batchResolveExpiredLocks(bo, locks, locForResolve.Region, forceResolveLocksTS, tryResolveLocksTS)
+			ok, err1 := batchResolveExpiredLocks(lockResolver, bo, locks, locForResolve.Region, forceResolveLocksTS, tryResolveLocksTS)
 			if err1 != nil {
 				return stat, errors.Trace(err1)
 			}
@@ -1392,7 +1410,7 @@ retryScanAndResolve:
 				if err != nil {
 					return stat, errors.Trace(err)
 				}
-				stillInSame, refreshedLoc, err := w.tryRelocateLocksRegion(bo, locks)
+				stillInSame, refreshedLoc, err := tryRelocateLocksRegion(bo, lockResolver, locks)
 				if err != nil {
 					return stat, errors.Trace(err)
 				}
@@ -1409,7 +1427,7 @@ retryScanAndResolve:
 			key = loc.EndKey
 		} else {
 			logutil.Logger(ctx).Info("region has more than limit locks", zap.String("category", "gc worker"),
-				zap.String("uuid", w.uuid),
+				zap.String("uuid", uuid),
 				zap.Uint64("region", locForResolve.Region.GetID()),
 				zap.Int("scan lock limit", gcScanLockLimit))
 			metrics.GCRegionTooManyLocksCounter.Inc()
@@ -1428,11 +1446,11 @@ retryScanAndResolve:
 	return stat, nil
 }
 
-func (w *GCWorker) tryRelocateLocksRegion(bo *tikv.Backoffer, locks []*txnlock.Lock) (stillInSameRegion bool, refreshedLoc *tikv.KeyLocation, err error) {
+func tryRelocateLocksRegion(bo *tikv.Backoffer, lockResolver GCLockResolver, locks []*txnlock.Lock) (stillInSameRegion bool, refreshedLoc *tikv.KeyLocation, err error) {
 	if len(locks) == 0 {
 		return
 	}
-	refreshedLoc, err = w.tikvStore.GetRegionCache().LocateKey(bo, locks[0].Key)
+	refreshedLoc, err = lockResolver.LocateKey(bo, locks[0].Key)
 	if err != nil {
 		return
 	}
