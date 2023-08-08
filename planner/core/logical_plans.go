@@ -120,6 +120,9 @@ const (
 	preferNoHashJoin
 	preferMergeJoin
 	preferNoMergeJoin
+	preferNoIndexJoin
+	preferNoIndexHashJoin
+	preferNoIndexMergeJoin
 	preferBCJoin
 	preferShuffleJoin
 	preferRewriteSemiJoin
