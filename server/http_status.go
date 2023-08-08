@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/server/handler"
 	"github.com/pingcap/tidb/server/handler/optimizor"
 	"github.com/pingcap/tidb/server/handler/tikvhandler"
 	"github.com/pingcap/tidb/server/handler/ttlhandler"
@@ -246,8 +247,8 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for get table tiflash replica info.
 	router.Handle("/tiflash/replica-deprecated", tikvhandler.NewFlashReplicaHandler(tikvHandlerTool))
 
-	//
-	router.Handle("/upgrade/{op}", NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
+	// HTTP path for upgrade operations.
+	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
 
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.

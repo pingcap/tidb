@@ -4,6 +4,7 @@ go_library(
     name = "handler",
     srcs = [
         "tikv_handler.go",
+        "upgradehandler.go",
         "util.go",
     ],
     importpath = "github.com/pingcap/tidb/server/handler",
@@ -22,6 +23,7 @@ go_library(
         "//tablecodec",
         "//types",
         "//util/codec",
+        "@com_github_gorilla_mux//:mux",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
