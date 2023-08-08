@@ -51,7 +51,8 @@ type BatchPointGetExec struct {
 	partExpr    *tables.PartitionExpr
 	partPos     int
 	planPhysIDs []int64
-	partTblID   []int64
+	singlePart  bool
+	partTblID   int64
 	idxVals     [][]types.Datum
 	txn         kv.Transaction
 	lock        bool
@@ -234,11 +235,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				}
 			}
 
-			// If this BatchPointGetExec is built only for the specific table partitions, skip those filters not matching those partitions.
-			if len(e.partTblID) >= 1 {
-				if _, found := slices.BinarySearch(e.partTblID, physID); !found {
-					continue
-				}
+			// If this BatchPointGetExec is built only for the specific table partition, skip those filters not matching this partition.
+			if e.singlePart && e.partTblID != physID {
+				continue
 			}
 			idxKey, err1 := EncodeUniqueIndexKey(e.Ctx(), e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
@@ -380,11 +379,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				}
 			}
 		}
-		// If this BatchPointGetExec is built only for the specific table partitions, skip those handles not matching those partitions.
-		if len(e.partTblID) >= 1 {
-			if _, found := slices.BinarySearch(e.partTblID, tID); !found {
-				continue
-			}
+		// If this BatchPointGetExec is built only for the specific table partition, skip those handles not matching this partition.
+		if e.singlePart && e.partTblID != tID {
+			continue
 		}
 		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
 		keys = append(keys, key)
