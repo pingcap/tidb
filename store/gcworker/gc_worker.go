@@ -71,7 +71,7 @@ func (w *GCWorkerLockResolver) LocateKey(bo *tikv.Backoffer, key []byte) (*tikv.
 	return w.TiKvStore.GetRegionCache().LocateKey(bo, key)
 }
 
-func (w *GCWorkerLockResolver) ResolveLocks(bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID, safePoint uint64) (bool, error) {
+func (w *GCWorkerLockResolver) ResolveLocks(bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID) (bool, error) {
 	return w.TiKvStore.GetLockResolver().BatchResolveLocks(bo, locks, loc)
 }
 
@@ -81,6 +81,10 @@ func (w *GCWorkerLockResolver) ScanLocks(key []byte, regionID uint64) []*txnlock
 
 func (w *GCWorkerLockResolver) SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 	return w.TiKvStore.SendReq(bo, req, regionID, timeout)
+}
+
+func (w *GCWorkerLockResolver) GetStore() tikv.Storage {
+	return w.TiKvStore
 }
 
 // GCWorker periodically triggers GC process on tikv server.
@@ -1223,18 +1227,6 @@ func (w *GCWorker) legacyResolveLocks(
 		zap.Int("regions", runner.CompletedRegions()))
 	metrics.GCHistogram.WithLabelValues("resolve_locks").Observe(time.Since(startTime).Seconds())
 	return nil
-}
-
-// getTryResolveLocksTS gets the TryResolveLocksTS
-// that is defined as `now() - gcTryResolveLocksIntervalFromNow`.
-func (w *GCWorker) getTryResolveLocksTS() (uint64, error) {
-	now, err := w.tikvStore.CurrentTimestamp(kv.GlobalTxnScope)
-	if err != nil {
-		return 0, err
-	}
-
-	gcTryResolveLockTS := oracle.ComposeTS(oracle.ExtractPhysical(now)-gcTryResolveLocksIntervalFromNow.Milliseconds(), oracle.ExtractLogical(now))
-	return gcTryResolveLockTS, nil
 }
 
 // resolveLocksPhysical uses TiKV's `PhysicalScanLock` to scan stale locks in the cluster and resolve them. It tries to

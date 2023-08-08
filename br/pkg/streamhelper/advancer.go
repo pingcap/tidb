@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/gcutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -365,19 +366,35 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	return nil
 }
 
-func (c *CheckpointAdvancer) setCheckpoint(s spans.Valued) bool {
+func (c *CheckpointAdvancer) setCheckpoint(ctx context.Context, s spans.Valued) bool {
 	cp := newCheckpointWithSpan(s)
 	if cp.TS < c.lastCheckpoint.TS {
 		log.Warn("failed to update global checkpoint: stale",
 			zap.Uint64("old", c.lastCheckpoint.TS), zap.Uint64("new", cp.TS))
 		return false
 	}
-	// lastCheckpoint is too long enough.
+	// lastCheckpoint is not increased too long enough.
 	// assume the cluster has expired locks for whatever reasons.
 	if c.lastCheckpoint.needResolveLocks() {
 		handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-			return gcutil.ResolveLocksForRange(ctx, "log backup advancer", c.env, safePoint, r.StartKey, r.EndKey)
+			// we will scan all lock before cp.TS and try to resolve them by check txn status.
+			return gcutil.ResolveLocksForRange(ctx, "log backup advancer", c.env, cp.TS, r.StartKey, r.EndKey)
 		}
+		runner := rangetask.NewRangeTaskRunner("advancer-resolve-locks-runner", c.env.GetStore(), config.DefaultMaxConcurrencyAdvance, handler)
+		// Run resolve lock on the whole TiKV cluster. it will use startKey/endKey to scan region in PD. so we need encode key here.
+		encodedStartKey := codec.EncodeBytes([]byte{}, []byte(c.lastCheckpoint.StartKey))
+		encodedEndKey := codec.EncodeBytes([]byte{}, []byte(c.lastCheckpoint.EndKey))
+		err := runner.RunOnRange(ctx, encodedStartKey, encodedEndKey)
+		if err != nil {
+			log.Error("resolve locks failed", zap.String("category", "advancer"),
+				zap.String("uuid", "log backup advancer"),
+				zap.Error(err))
+			return false
+		}
+		log.Info("finish resolve locks", zap.String("category", "advancer"),
+			zap.String("uuid", "log backup advancer"),
+			zap.Int("regions", runner.CompletedRegions()))
+		return false
 	}
 	if cp.TS <= c.lastCheckpoint.TS {
 		return false
@@ -396,7 +413,7 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context,
 		return err
 	}
 
-	if c.setCheckpoint(cp) {
+	if c.setCheckpoint(ctx, cp) {
 		log.Info("uploading checkpoint for task",
 			zap.Stringer("checkpoint", oracle.GetTimeFromTS(cp.Value)),
 			zap.Uint64("checkpoint", cp.Value),
@@ -453,7 +470,7 @@ func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
 
 func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	c.checkpointsMu.Lock()
-	c.setCheckpoint(c.checkpoints.Min())
+	c.setCheckpoint(ctx, c.checkpoints.Min())
 	c.checkpointsMu.Unlock()
 	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint.TS); err != nil {
 		return errors.Annotate(err, "failed to upload global checkpoint")

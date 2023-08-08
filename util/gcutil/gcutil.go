@@ -46,15 +46,22 @@ const (
 	GCScanLockLimit = txnlock.ResolvedCacheSize / 2
 )
 
+// GCLockResolver is used for GCWorker and log backup advancer to resolve locks.
+// #Note: Put it here to avoid cycle import
 type GCLockResolver interface {
-	LocateKey(bo *tikv.Backoffer, key []byte) (*tikv.KeyLocation, error)
+	LocateKey(*tikv.Backoffer, []byte) (*tikv.KeyLocation, error)
 
-	ResolveLocks(bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID, safePoint uint64) (bool, error)
+	ResolveLocks(*tikv.Backoffer, []*txnlock.Lock, tikv.RegionVerID) (bool, error)
 
-	// only used for mock test
-	ScanLocks(key []byte, regionID uint64) []*txnlock.Lock
+	// ScanLocks only used for mock test.
+	ScanLocks([]byte, uint64) []*txnlock.Lock
 
-	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
+	SendReq(*tikv.Backoffer, *tikvrpc.Request, tikv.RegionVerID, time.Duration) (*tikvrpc.Response, error)
+
+	// We need to get tikvStore to build rangerunner.
+	// FIXME: the most code is in client.go and the store is only used to locate end keys of a region.
+	// maybe we can move GCLockResolver into client.go.
+	GetStore() tikv.Storage
 }
 
 // CheckGCEnable is use to check whether GC is enable.
@@ -116,6 +123,7 @@ func GetGCSafePoint(sctx sessionctx.Context) (uint64, error) {
 	return ts, nil
 }
 
+// ResolveLocksForRange is used for GCWorker and log backup advancer.
 func ResolveLocksForRange(
 	ctx context.Context,
 	uuid string,
@@ -192,7 +200,7 @@ retryScanAndResolve:
 		locks = append(locks, lockResolver.ScanLocks(key, loc.Region.GetID())...)
 		locForResolve := loc
 		for {
-			ok, err1 := lockResolver.ResolveLocks(bo, locks, locForResolve.Region, safePoint)
+			ok, err1 := lockResolver.ResolveLocks(bo, locks, locForResolve.Region)
 			if err1 != nil {
 				return stat, errors.Trace(err1)
 			}

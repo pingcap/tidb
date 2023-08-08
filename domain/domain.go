@@ -1274,7 +1274,12 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 		log.Warn("pd / etcd client not provided, won't begin Advancer.")
 		return nil
 	}
-	env, err := streamhelper.TiDBEnv(do.Store, pdClient, do.etcdClient, cfg)
+	tikvStore, ok := do.Store().(tikv.Storage)
+	if !ok {
+		log.Warn("non tikv store, stop begin Advancer.")
+		return nil
+	}
+	env, err := streamhelper.TiDBEnv(tikvStore, pdClient, do.etcdClient, cfg)
 	if err != nil {
 		return err
 	}

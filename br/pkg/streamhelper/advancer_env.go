@@ -156,32 +156,14 @@ func (w *AdvancerLockResolver) LocateKey(bo *tikv.Backoffer, key []byte) (*tikv.
 	return w.TiKvStore.GetRegionCache().LocateKey(bo, key)
 }
 
-// ResolveLocks tries to resolve expired locks with batch method.
-// Travesal the given locks and check that:
-// 1. If the ts of lock is equal with or smaller than forceResolveLocksTS(acually equals safepoint),
-// it will rollback the txn, no matter the lock is expired of not.
-// 2. If the ts of lock is larger than forceResolveLocksTS, it will check status of the txn.
-// Resolve the lock if txn is expired, Or do nothing.
-func (w *AdvancerLockResolver) ResolveLocks(bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID, safePoint uint64) (bool, error) {
+// ResolveLocks tries to resolve expired locks with this method.
+// It will check status of the txn. Resolve the lock if txn is expired, Or do nothing.
+func (w *AdvancerLockResolver) ResolveLocks(bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID) (bool, error) {
 	if len(locks) == 0 {
 		return true, nil
 	}
 
-	forceResolveLocks := make([]*txnlock.Lock, 0, len(locks))
-	tryResolveLocks := make([]*txnlock.Lock, 0, len(locks))
-	for _, l := range locks {
-		if l.TxnID <= safePoint {
-			forceResolveLocks = append(forceResolveLocks, l)
-		} else {
-			tryResolveLocks = append(tryResolveLocks, l)
-		}
-	}
-
-	ok, err := w.TiKvStore.GetLockResolver().BatchResolveLocks(bo, forceResolveLocks, loc)
-	if err != nil || !ok {
-		return ok, err
-	}
-	_, err = w.TiKvStore.GetLockResolver().ResolveLocks(bo, 0, tryResolveLocks)
+	_, err := w.TiKvStore.GetLockResolver().ResolveLocks(bo, 0, locks)
 	return err == nil, errors.Trace(err)
 }
 
@@ -191,4 +173,8 @@ func (w *AdvancerLockResolver) ScanLocks(key []byte, regionID uint64) []*txnlock
 
 func (w *AdvancerLockResolver) SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 	return w.TiKvStore.SendReq(bo, req, regionID, timeout)
+}
+
+func (w *AdvancerLockResolver) GetStore() tikv.Storage {
+	return w.TiKvStore
 }
