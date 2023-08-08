@@ -204,6 +204,7 @@ func downloadZips(
 	cmd.Stderr = &out
 	jsonBytes, err := cmd.Output()
 	if err != nil {
+		fmt.Println(out.String())
 		return nil, err
 	}
 	var jsonBuilder strings.Builder
@@ -236,6 +237,7 @@ func listAllModules(tmpdir string) (map[string]listedModule, error) {
 	cmd.Stderr = &out
 	jsonBytes, err := cmd.Output()
 	if err != nil {
+		fmt.Println(out.String())
 		return nil, err
 	}
 	ret := make(map[string]listedModule)
