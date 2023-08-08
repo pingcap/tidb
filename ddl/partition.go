@@ -2412,18 +2412,10 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			return ver, errors.Trace(err)
 		}
 
-		err = checkExchangePartitionPlacementPolicy(t, partDef.PlacementPolicyRef, nt.PlacementPolicyRef)
+		err = checkExchangePartitionPlacementPolicy(t, nt.PlacementPolicyRef, pt.PlacementPolicyRef, partDef.PlacementPolicyRef)
 		if err != nil {
-			if partDef.PlacementPolicyRef != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			// Also check if it uses the table level default
-			err = checkExchangePartitionPlacementPolicy(t, pt.PlacementPolicyRef, nt.PlacementPolicyRef)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
 		}
 
 		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
@@ -3324,16 +3316,21 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	return nil
 }
 
-func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPlacementPolicyRef *model.PolicyRefInfo, ptPlacementPolicyRef *model.PolicyRefInfo) error {
-	if ntPlacementPolicyRef == nil && ptPlacementPolicyRef == nil {
+func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPPRef, ptPPRef, partPPRef *model.PolicyRefInfo) error {
+	partitionPPRef := partPPRef
+	if partitionPPRef == nil {
+		partitionPPRef = ptPPRef
+	}
+
+	if ntPPRef == nil && partitionPPRef == nil {
 		return nil
 	}
-	if ntPlacementPolicyRef == nil || ptPlacementPolicyRef == nil {
+	if ntPPRef == nil || partitionPPRef == nil {
 		return dbterror.ErrTablesDifferentMetadata
 	}
 
-	ptPlacementPolicyInfo, _ := getPolicyInfo(t, ptPlacementPolicyRef.ID)
-	ntPlacementPolicyInfo, _ := getPolicyInfo(t, ntPlacementPolicyRef.ID)
+	ptPlacementPolicyInfo, _ := getPolicyInfo(t, partitionPPRef.ID)
+	ntPlacementPolicyInfo, _ := getPolicyInfo(t, ntPPRef.ID)
 	if ntPlacementPolicyInfo == nil && ptPlacementPolicyInfo == nil {
 		return nil
 	}
