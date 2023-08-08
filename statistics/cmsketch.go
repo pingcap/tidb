@@ -42,7 +42,7 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-// topNThreshold is the minimum ratio of the number of topn elements in CMSketch, 10 means 1 / 10 = 10%.
+// topNThreshold is the minimum ratio of the number of topN elements in CMSketch, 10 means 1 / 10 = 10%.
 const topNThreshold = uint64(10)
 
 var (
@@ -786,9 +786,11 @@ func NewTopN(n int) *TopN {
 
 // MergePartTopN2GlobalTopN is used to merge the partition-level topN to global-level topN.
 // The input parameters:
-//  1. `topNs` are the partition-level topNs to be merged.
-//  2. `n` is the size of the global-level topN. Notice: This value can be 0 and has no default value, we must explicitly specify this value.
-//  3. `hists` are the partition-level histograms. Some values not in topN may be placed in the histogram. We need it here to make the value in the global-level TopN more accurate.
+//  1. `loc` is the time zone. We need it to decode the date time value.
+//  2. `version` indicates how TiDB collect and use analyzed statistics.
+//  3. `topNs` are the partition-level topNs to be merged.
+//  4. `n` is the size of the global-level topN. Notice: This value can be 0 and has no default value, we must explicitly specify this value.
+//  5. `hists` are the partition-level histograms. Some values not in topN may be placed in the histogram. We need it here to make the value in the global-level TopN more accurate.
 //
 // The output parameters:
 //  1. `*TopN` is the final global-level topN.
@@ -845,7 +847,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 					} else {
 						var err error
 						if types.IsTypeTime(hists[0].Tp.GetType()) {
-							// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
+							// Handle date time values specially since they are encoded to int and we'll get int values if using DecodeOne.
 							_, d, err = codec.DecodeAsDateTime(val.Encoded, hists[0].Tp.GetType(), loc)
 						} else if types.IsTypeFloat(hists[0].Tp.GetType()) {
 							_, d, err = codec.DecodeAsFloat32(val.Encoded, hists[0].Tp.GetType())
