@@ -754,11 +754,13 @@
           "1 1 1 1 1 1"
         ],
         "Plan": [
-          "HashJoin 2.00 root  inner join, equal:[eq(test_partition.t4.id, test_partition.t4.id)]",
-          "├─Selection(Build) 2.00 root  not(isnull(test_partition.t4.id))",
-          "│ └─Batch_Point_Get 2.00 root table:t4 handle:[1 4], keep order:false, desc:false",
-          "└─Selection(Probe) 4.00 root  not(isnull(test_partition.t4.id))",
-          "  └─Batch_Point_Get 4.00 root table:t4 handle:[1 3 9 100], keep order:false, desc:false"
+          "HashJoin 2.50 root  inner join, equal:[eq(test_partition.t4.id, test_partition.t4.id)]",
+          "├─TableReader(Build) 2.00 root partition:p0 data:Selection",
+          "│ └─Selection 2.00 cop[tikv]  not(isnull(test_partition.t4.id))",
+          "│   └─TableRangeScan 2.00 cop[tikv] table:t1 range:[1,1], [4,4], keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 4.00 root partition:p0,p1 data:Selection",
+          "  └─Selection 4.00 cop[tikv]  not(isnull(test_partition.t4.id))",
+          "    └─TableRangeScan 4.00 cop[tikv] table:t2 range:[1,1], [3,3], [9,9], [100,100], keep order:false, stats:pseudo"
         ]
       },
       {
