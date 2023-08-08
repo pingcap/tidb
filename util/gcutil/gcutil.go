@@ -128,7 +128,7 @@ func ResolveLocksForRange(
 	ctx context.Context,
 	uuid string,
 	lockResolver GCLockResolver,
-	safePoint uint64,
+	maxVersion uint64,
 	startKey []byte,
 	endKey []byte,
 ) (rangetask.TaskStat, error) {
@@ -136,7 +136,7 @@ func ResolveLocksForRange(
 	// by the same transaction. because gc worker need to make sure all locks have been
 	// cleaned.
 	req := tikvrpc.NewRequest(tikvrpc.CmdScanLock, &kvrpcpb.ScanLockRequest{
-		MaxVersion: safePoint,
+		MaxVersion: maxVersion,
 		Limit:      GCScanLockLimit,
 	}, kvrpcpb.Context{
 		RequestSource: util.RequestSourceFromCtx(ctx),

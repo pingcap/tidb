@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/oracle/oracles"
@@ -54,7 +55,7 @@ type mockGCWorkerLockResolver struct {
 	forceResolveLocksTS uint64
 	tryResolveLocksTS   uint64
 	scanLocks           func(key []byte, regionID uint64) []*txnlock.Lock
-	batchResolveLocks   func(locks []*txnlock.Lock, regionID tikv.RegionVerID, safepoint uint64) (ok bool, err error)
+	batchResolveLocks   func(locks []*txnlock.Lock, regionID tikv.RegionVerID) (ok bool, err error)
 	resolveLocks        func(locks []*txnlock.Lock, lowResolutionTS uint64) (int64, error)
 }
 
@@ -70,8 +71,13 @@ func (l *mockGCWorkerLockResolver) ScanLocks(key []byte, regionID uint64) []*txn
 	return l.scanLocks(key, regionID)
 }
 
-func (l *mockGCWorkerLockResolver) ResolveLocks(bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID, safePoint uint64) (bool, error) {
-	return l.batchResolveLocks(locks, loc, l.forceResolveLocksTS)
+func (l *mockGCWorkerLockResolver) ResolveLocks(bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID) (bool, error) {
+	return l.batchResolveLocks(locks, loc)
+}
+
+func (l *mockGCWorkerLockResolver) GetStore() tikv.Storage {
+	// no use for test
+	return l.tikvStore
 }
 
 type mockGCWorkerClient struct {
@@ -1036,13 +1042,13 @@ func TestResolveLockRangeInfine(t *testing.T) {
 	s := createGCWorkerSuite(t)
 
 	require.NoError(t, failpoint.Enable("tikvclient/invalidCacheAndRetry", "return(true)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff", "return(1)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/gcutil/setGcResolveMaxBackoff", "return(1)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("tikvclient/invalidCacheAndRetry"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/gcutil/setGcResolveMaxBackoff"))
 	}()
 
-	_, err := ResolveLocksForRange(gcContext(), s.gcWorker.uuid, s.gcWorker.lockResolver, 1, 3, []byte{0}, []byte{1})
+	_, err := gcutil.ResolveLocksForRange(gcContext(), s.gcWorker.uuid, s.gcWorker.lockResolver, 1, []byte{0}, []byte{1})
 	require.Error(t, err)
 }
 
@@ -1168,7 +1174,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 		tikvStore:           s.tikvStore,
 		forceResolveLocksTS: 1,
 		tryResolveLocksTS:   3,
-		scanLocks: func(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock {
+		scanLocks: func(key []byte, regionID uint64) []*txnlock.Lock {
 			if regionID == s.initRegion.regionID {
 				return []*txnlock.Lock{{Key: []byte("a")}, {Key: []byte("b")}}
 			}
@@ -1201,7 +1207,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 				[]*metapb.Region{regionMeta})
 			require.NoError(t, err)
 			// also let region1 contains all 4 locks
-			mockGCLockResolver.scanLocks = func(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock {
+			mockGCLockResolver.scanLocks = func(key []byte, regionID uint64) []*txnlock.Lock {
 				if regionID == s.initRegion.regionID {
 					locks := []*txnlock.Lock{
 						{Key: []byte("a")},
@@ -1224,7 +1230,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 		}
 		return true, nil
 	}
-	_, err := ResolveLocksForRange(gcContext(), s.gcWorker.uuid, mockGCLockResolver, 1, 3, []byte(""), []byte("z"))
+	_, err := gcutil.ResolveLocksForRange(gcContext(), s.gcWorker.uuid, mockGCLockResolver, 1, []byte(""), []byte("z"))
 	require.NoError(t, err)
 	require.Len(t, resolvedLock, 4)
 	expects := [][]byte{[]byte("a"), []byte("b"), []byte("o"), []byte("p")}

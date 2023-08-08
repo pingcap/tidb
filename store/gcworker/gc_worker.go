@@ -72,6 +72,7 @@ func (w *GCWorkerLockResolver) LocateKey(bo *tikv.Backoffer, key []byte) (*tikv.
 }
 
 func (w *GCWorkerLockResolver) ResolveLocks(bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID) (bool, error) {
+	// Resolve locks without check txn status. it's safe because it use safepoint to scan locks.
 	return w.TiKvStore.GetLockResolver().BatchResolveLocks(bo, locks, loc)
 }
 
@@ -170,8 +171,6 @@ const (
 	gcDefaultConcurrency = 2
 	gcMinConcurrency     = 1
 	gcMaxConcurrency     = 128
-
-	gcTryResolveLocksIntervalFromNow = time.Minute * 5
 
 	gcEnableKey          = "tikv_gc_enable"
 	gcDefaultEnableValue = true
