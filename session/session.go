@@ -3777,10 +3777,10 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			zap.String("currentDB", vars.CurrentDB),
 			zap.Bool("isPessimistic", vars.TxnCtx.IsPessimistic),
 			zap.String("sessionTxnMode", vars.GetReadableTxnMode()),
-			zap.String("sql", query))
-		zap.Bool("in-txn", vars.InTxn())
-		zap.Bool("explicit", vars.TxnCtx.IsExplicit)
-		zap.Bool("auto-commit", vars.IsAutocommit())
+			zap.String("sql", query)
+			zap.Bool("in-txn", vars.InTxn())
+			zap.Bool("explicit", vars.TxnCtx.IsExplicit)
+			zap.Bool("auto-commit", vars.IsAutocommit()))
 		if vars.SnapshotTS != 0 {
 			logutil.BgLogger().Warn("snapshotTS is not 0",
 				zap.Uint64("conn", vars.ConnectionID),
