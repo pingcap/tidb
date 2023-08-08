@@ -17,7 +17,6 @@ package expression
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/parser/terror"
 	"sort"
 	"unsafe"
 
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -761,9 +761,6 @@ func (sf *ScalarFunction) SetCharsetAndCollation(chs, coll string) {
 
 // Repertoire returns the repertoire value which is used to check collations.
 func (sf *ScalarFunction) Repertoire() Repertoire {
-	if sf.Function == nil {
-		fmt.Println(1)
-	}
 	return sf.Function.Repertoire()
 }
 
