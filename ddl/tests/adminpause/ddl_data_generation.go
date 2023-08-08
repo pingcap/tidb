@@ -127,8 +127,8 @@ func (tu *TestTableUser) insertStmt(tableName string, count int) string {
 		_ = tu.generateAttributes(n)
 		sql += fmt.Sprintf("('%s', '%s', %d, '%s', '%s', '%s', '%s', '%s')",
 			tu.tenant, tu.name, tu.age, tu.province, tu.city, tu.phone, tu.createdTime, tu.updatedTime)
-		if n != count && n != 0 {
-			sql += ","
+		if n != count {
+			sql += ", "
 		}
 	}
 	return sql
