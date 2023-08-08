@@ -3776,6 +3776,17 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			zap.Bool("in-txn", vars.InTxn())
 			zap.Bool("explicit", vars.TxnCtx.IsExplicit)
 			zap.Bool("auto-commit", vars.IsAutocommit())
+		if vars.SnapshotTS != 0 {
+			logutil.BgLogger().Warn("snapshotTS is not 0",
+				zap.Uint64("conn", vars.ConnectionID),
+				zap.Uint64("snapshotTS", vars.SnapshotTS),
+			)
+		}
+		if vars.LowResolutionTSO {
+			logutil.BgLogger().Warn("low resolution tso is enabled",
+				zap.Uint64("conn", vars.ConnectionID),
+			)
+		}
 	}
 }
 
