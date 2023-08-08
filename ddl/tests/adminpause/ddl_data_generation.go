@@ -123,7 +123,7 @@ func (tu *TestTableUser) generateAttributes(id int) (err error) {
 
 func (tu *TestTableUser) insertStmt(tableName string, count int) string {
 	sql := fmt.Sprintf("INSERT INTO %s(tenant, name, age, province, city, phone, created_time, updated_time) VALUES ", tableName)
-	for n := 0; n <= count; n++ {
+	for n := 0; n < count; n++ {
 		_ = tu.generateAttributes(n)
 		sql += fmt.Sprintf("('%s', '%s', %d, '%s', '%s', '%s', '%s', '%s')",
 			tu.tenant, tu.name, tu.age, tu.province, tu.city, tu.phone, tu.createdTime, tu.updatedTime)
@@ -144,13 +144,7 @@ func generateTblUser(tk *testkit.TestKit, rowCount int) error {
 	return nil
 }
 
-func generateTblUserParition(tk *testkit.TestKit, rowCount int) error {
+func generateTblUserParition(tk *testkit.TestKit) error {
 	tk.MustExec(adminPauseTestPartitionTableStmt)
-	if rowCount == 0 {
-		return nil
-	}
-	tu := &TestTableUser{}
-	tk.MustExec(tu.insertStmt(adminPauseTestPartitionTable, rowCount))
-
 	return nil
 }

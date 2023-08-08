@@ -224,7 +224,7 @@ func TestPauseCancelAndRerunPartitionTableStmt(t *testing.T) {
 
 	require.Nil(t, generateTblUser(stmtKit, 0))
 
-	require.Nil(t, generateTblUserParition(stmtKit, 0))
+	require.Nil(t, generateTblUserParition(stmtKit))
 	for _, stmtCase := range tablePartitionDDLStmtCase {
 		pauseAndCancelStmt(t, stmtKit, adminCommandKit, dom, &stmtCase)
 
