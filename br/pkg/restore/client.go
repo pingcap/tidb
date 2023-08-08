@@ -1862,6 +1862,7 @@ func ApplyKVFilesWithBatchMethod(
 	batchCount int,
 	batchSize uint64,
 	applyFunc func(files []*backuppb.DataFileInfo, kvCount int64, size uint64),
+	applyWg *sync.WaitGroup,
 ) error {
 	var (
 		tableMapFiles        = make(map[int64]*FilesInTable)
@@ -1940,6 +1941,7 @@ func ApplyKVFilesWithBatchMethod(
 		}
 	}
 
+	applyWg.Wait()
 	for _, fwt := range tableMapFiles {
 		for _, fs := range fwt.regionMapFiles {
 			for _, d := range fs.deleteFiles {
@@ -1970,6 +1972,7 @@ func ApplyKVFilesWithSingelMethod(
 	ctx context.Context,
 	files LogIter,
 	applyFunc func(file []*backuppb.DataFileInfo, kvCount int64, size uint64),
+	applyWg *sync.WaitGroup,
 ) error {
 	deleteKVFiles := make([]*backuppb.DataFileInfo, 0)
 
@@ -1986,6 +1989,7 @@ func ApplyKVFilesWithSingelMethod(
 		applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
 	}
 
+	applyWg.Wait()
 	log.Info("restore delete files", zap.Int("count", len(deleteKVFiles)))
 	for _, file := range deleteKVFiles {
 		f := file
@@ -2025,6 +2029,7 @@ func (rc *Client) RestoreKVFiles(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	var applyWg sync.WaitGroup
 	eg, ectx := errgroup.WithContext(ctx)
 	applyFunc := func(files []*backuppb.DataFileInfo, kvCount int64, size uint64) {
 		if len(files) == 0 {
@@ -2043,8 +2048,10 @@ func (rc *Client) RestoreKVFiles(
 			log.Debug("skip file due to table id not matched", zap.Int64("table-id", files[0].TableId))
 			skipFile += len(files)
 		} else {
+			applyWg.Add(1)
 			rc.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
 				fileStart := time.Now()
+				defer applyWg.Done()
 				defer func() {
 					onProgress(int64(len(files)))
 					updateStats(uint64(kvCount), size)
@@ -2067,9 +2074,9 @@ func (rc *Client) RestoreKVFiles(
 
 	rc.workerPool.ApplyOnErrorGroup(eg, func() error {
 		if supportBatch {
-			err = ApplyKVFilesWithBatchMethod(ectx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
+			err = ApplyKVFilesWithBatchMethod(ectx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc, &applyWg)
 		} else {
-			err = ApplyKVFilesWithSingelMethod(ectx, iter, applyFunc)
+			err = ApplyKVFilesWithSingelMethod(ectx, iter, applyFunc, &applyWg)
 		}
 		return errors.Trace(err)
 	})

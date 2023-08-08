@@ -168,6 +168,12 @@ func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer func() {
+		vars := gs.se.GetSessionVars()
+		vars.TxnCtxMu.Lock()
+		vars.TxnCtx.InfoSchema = nil
+		vars.TxnCtxMu.Unlock()
+	}()
 	// Some of SQLs (like ADMIN RECOVER INDEX) may lazily take effect
 	// when we polling the result set.
 	// At least call `next` once for triggering theirs side effect.

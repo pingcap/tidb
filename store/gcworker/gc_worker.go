@@ -2008,20 +2008,20 @@ func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr u
 		}
 	}
 
+	// Skip table ids that's already successfully handled.
+	tmp := physicalTableIDs[:0]
+	for _, id := range physicalTableIDs {
+		if _, ok := gcPlacementRuleCache[id]; !ok {
+			tmp = append(tmp, id)
+		}
+	}
+	physicalTableIDs = tmp
+
 	if len(physicalTableIDs) == 0 {
 		return
 	}
 
-	bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
 	for _, id := range physicalTableIDs {
-		bundles = append(bundles, placement.NewBundle(id))
-	}
-
-	for _, id := range physicalTableIDs {
-		// Skip table ids that's already successfully deleted.
-		if _, ok := gcPlacementRuleCache[id]; ok {
-			continue
-		}
 		// Delete pd rule
 		failpoint.Inject("gcDeletePlacementRuleCounter", func() {})
 		logutil.BgLogger().Info("try delete TiFlash pd rule",
@@ -2030,12 +2030,22 @@ func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr u
 		if err := infosync.DeleteTiFlashPlacementRule(context.Background(), "tiflash", ruleID); err != nil {
 			logutil.BgLogger().Error("delete TiFlash pd rule failed when gc",
 				zap.Error(err), zap.String("ruleID", ruleID), zap.Uint64("safePoint", safePoint))
-		} else {
-			// Cache the table id if its related rule are deleted successfully.
-			gcPlacementRuleCache[id] = struct{}{}
 		}
 	}
-	return infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
+	bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
+	for _, id := range physicalTableIDs {
+		bundles = append(bundles, placement.NewBundle(id))
+	}
+	err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
+	if err != nil {
+		return
+	}
+
+	// Cache the table id if its related rule are deleted successfully.
+	for _, id := range physicalTableIDs {
+		gcPlacementRuleCache[id] = struct{}{}
+	}
+	return nil
 }
 
 func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {

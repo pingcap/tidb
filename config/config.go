@@ -46,6 +46,8 @@ import (
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
+	// MaxTxnEntrySize is the max value of TxnEntrySizeLimit.
+	MaxTxnEntrySizeLimit = 120 * 1024 * 1024 // 120MB
 	// DefTxnEntrySizeLimit is the default value of TxnEntrySizeLimit.
 	DefTxnEntrySizeLimit = 6 * 1024 * 1024
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.

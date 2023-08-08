@@ -885,20 +885,27 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 		}
 	}
 
-	// If this happens, some Projection Operator must be inlined into this Limit. (issues/14428)
-	// For example, if the original plan is `IndexLookUp(col1, col2) -> Limit(col1, col2) -> Project(col1)`,
-	//  then after inlining the Project, it will be `IndexLookUp(col1, col2) -> Limit(col1)` here.
-	// If the Limit is sunk into the IndexLookUp, the IndexLookUp's schema needs to be updated as well,
-	//  but updating it here is not safe, so do not sink Limit into this IndexLookUp in this case now.
-	if p.Schema().Len() != reader.Schema().Len() {
-		return false
-	}
-
 	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
 	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
 	if !isTableScan {
 		return false
 	}
+
+	// If this happens, some Projection Operator must be inlined into this Limit. (issues/14428)
+	// For example, if the original plan is `IndexLookUp(col1, col2) -> Limit(col1, col2) -> Project(col1)`,
+	//  then after inlining the Project, it will be `IndexLookUp(col1, col2) -> Limit(col1)` here.
+	// If the Limit is sunk into the IndexLookUp, the IndexLookUp's schema needs to be updated as well,
+	// So we add an extra projection to solve the problem.
+	if p.Schema().Len() != reader.Schema().Len() {
+		extraProj := PhysicalProjection{
+			Exprs: expression.Column2Exprs(p.schema.Columns),
+		}.Init(p.SCtx(), p.statsInfo(), p.blockOffset, nil)
+		extraProj.SetSchema(p.schema)
+		// If the root.p is already a Projection. We left the optimization for the later Projection Elimination.
+		extraProj.SetChildren(root.p)
+		root.p = extraProj
+	}
+
 	reader.PushedLimit = &PushedDownLimit{
 		Offset: p.Offset,
 		Count:  p.Count,
@@ -1911,9 +1918,9 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
 		// We should not push agg down across double read, since the data of second read is ordered by handle instead of index.
-		// The `extraHandleCol` is added if the double read needs to keep order. So we just use it to decided
-		// whether the following plan is double read with order reserved.
-		if cop.extraHandleCol != nil || len(cop.rootTaskConds) > 0 || len(cop.idxMergePartPlans) > 0 {
+		// We use (cop.indexPlan != nil && cop.tablePlan != nil && cop.keepOrder) to decided whether the following plan is double
+		// read with order reserved.
+		if (cop.indexPlan != nil && cop.tablePlan != nil && cop.keepOrder) || len(cop.rootTaskConds) > 0 || len(cop.idxMergePartPlans) > 0 {
 			t = cop.convertToRootTask(p.ctx)
 			attachPlan2Task(p, t)
 		} else {

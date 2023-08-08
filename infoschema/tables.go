@@ -1213,7 +1213,7 @@ var tableDDLJobsCols = []columnInfo{
 	{name: "START_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "END_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
-	{name: "QUERY", tp: mysql.TypeVarchar, size: 64},
+	{name: "QUERY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
 
 var tableSequencesCols = []columnInfo{
@@ -1711,8 +1711,8 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	for _, node := range tidbNodes {
 		servers = append(servers, ServerInfo{
 			ServerType:     "tidb",
-			Address:        fmt.Sprintf("%s:%d", node.IP, node.Port),
-			StatusAddr:     fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
+			Address:        net.JoinHostPort(node.IP, strconv.Itoa(int(node.Port))),
+			StatusAddr:     net.JoinHostPort(node.IP, strconv.Itoa(int(node.StatusPort))),
 			Version:        FormatTiDBVersion(node.Version, isDefaultVersion),
 			GitHash:        node.GitHash,
 			StartTimestamp: node.StartTimestamp,

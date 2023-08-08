@@ -1370,7 +1370,7 @@ func TestFeedbackWithStatsVer2(t *testing.T) {
 
 func TestNeedAnalyzeTable(t *testing.T) {
 	columns := map[int64]*statistics.Column{}
-	columns[1] = &statistics.Column{Count: 1}
+	columns[1] = &statistics.Column{StatsVer: statistics.Version2}
 	tests := []struct {
 		tbl    *statistics.Table
 		ratio  float64

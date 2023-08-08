@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
@@ -50,6 +51,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
 
@@ -3579,4 +3581,186 @@ func TestLazyUniquenessCheckWithSavepoint(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	err := tk.ExecToErr("savepoint s1")
 	require.ErrorContains(t, err, "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled")
+}
+
+func mustExecAsync(tk *testkit.TestKit, sql string, args ...interface{}) <-chan struct{} {
+	ch := make(chan struct{})
+	go func() {
+		defer func() { ch <- struct{}{} }()
+		tk.MustExec(sql, args...)
+	}()
+	return ch
+}
+
+func mustTimeout[T interface{}](t *testing.T, ch <-chan T, timeout time.Duration) {
+	select {
+	case res := <-ch:
+		require.FailNow(t, fmt.Sprintf("received signal when not expected: %v", res))
+	case <-time.After(timeout):
+	}
+}
+
+func mustRecv[T interface{}](t *testing.T, ch <-chan T) T {
+	select {
+	case <-time.After(time.Second):
+	case res := <-ch:
+		return res
+	}
+	require.FailNow(t, "signal not received after waiting for one second")
+	panic("unreachable")
+}
+
+func TestIssue43243(t *testing.T) {
+	store, domain := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+
+	if *realtikvtest.WithRealTiKV {
+		// Disable in-memory pessimistic lock since it cannot be scanned in current implementation.
+		// TODO: Remove this after supporting scan lock for in-memory pessimistic lock.
+		tkcfg := testkit.NewTestKit(t, store)
+		res := tkcfg.MustQuery("show config where name = 'pessimistic-txn.in-memory' and type = 'tikv'").Rows()
+		if len(res) > 0 && res[0][3].(string) == "true" {
+			tkcfg.MustExec("set config tikv `pessimistic-txn.in-memory`=\"false\"")
+			tkcfg.MustQuery("show warnings").Check(testkit.Rows())
+			defer func() {
+				tkcfg.MustExec("set config tikv `pessimistic-txn.in-memory`=\"true\"")
+			}()
+			time.Sleep(time.Second)
+		} else {
+			t.Log("skip disabling in-memory pessimistic lock, current config:", res)
+		}
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key, v int)")
+	tk.MustExec("create table t2 (id int primary key, v int)")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2)")
+	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)")
+	tk.MustExec("set @@tidb_enable_async_commit=0")
+	tk.MustExec("set @@tidb_enable_1pc=0")
+
+	// Split region
+	{
+		tableID, err := strconv.ParseInt(tk.MustQuery(`select tidb_table_id from information_schema.tables where table_schema = "test" and table_name = "t2"`).Rows()[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		key := tablecodec.EncodeTablePrefix(tableID)
+		_, err = domain.GetPDClient().SplitRegions(context.Background(), [][]byte{key})
+		require.NoError(t, err)
+	}
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+
+	require.NoError(t, failpoint.Enable("tikvclient/beforeAsyncPessimisticRollback", `return("skip")`))
+	require.NoError(t, failpoint.Enable("tikvclient/beforeCommitSecondaries", `return("skip")`))
+	require.NoError(t, failpoint.Enable("tikvclient/twoPCRequestBatchSizeLimit", `return`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("tikvclient/beforeAsyncPessimisticRollback"))
+		require.NoError(t, failpoint.Disable("tikvclient/beforeCommitSecondaries"))
+		require.NoError(t, failpoint.Disable("tikvclient/twoPCRequestBatchSizeLimit"))
+	}()
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t2 set v = v + 1 where id = 2")
+	ch := make(chan struct{})
+	go func() {
+		tk.MustExec(`
+		with
+			c as (select /*+ MERGE() */ v from t1 where id in (1, 2))
+		update c join t2 on c.v = t2.id set t2.v = t2.v + 10`)
+		ch <- struct{}{}
+	}()
+	// tk blocked on row 2
+	mustTimeout(t, ch, time.Millisecond*100)
+	// Change the rows that should be locked by tk.
+	tk3.MustExec("update t1 set v = v + 3")
+	// Release row 2 and resume tk.
+	tk2.MustExec("commit")
+	mustRecv(t, ch)
+
+	// tk should have updated row 4 and row 5, and 4 should be the primary.
+	// At the same time row 1 should be the old primary, row2 points to row 1.
+	// Add another secondary that's smaller than the current primary.
+	tk.MustExec("update t2 set v = v + 10 where id = 3")
+	tk.MustExec("commit")
+
+	// Simulate a later GC that should resolve all stale lock produced in above steps.
+	currentTS, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	_, err = gcworker.RunResolveLocks(context.Background(), store.(tikv.Storage), domain.GetPDClient(), currentTS.Ver, "gc-worker-test-issue43243", 1, false)
+	require.NoError(t, err)
+
+	// Check data consistency
+	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 1", "2 3", "3 13", "4 14", "5 15"))
+}
+
+func TestIssue42937(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_async_commit = 0")
+	tk.MustExec("set @@tidb_enable_1pc = 0")
+	tk2.MustExec("use test")
+	tk2.MustExec("set @@tidb_enable_async_commit = 0")
+	tk2.MustExec("set @@tidb_enable_1pc = 0")
+	tk3.MustExec("use test")
+
+	tk.MustExec("create table t(id int primary key, v int unique)")
+	tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30), (4, 40)")
+	tk.MustExec("create table t2 (id int primary key, v int)")
+	tk.MustExec("insert into t2 values (1, 1), (2, 2)")
+
+	require.NoError(t, failpoint.Enable("tikvclient/beforeAsyncPessimisticRollback", `return("skip")`))
+	require.NoError(t, failpoint.Enable("tikvclient/twoPCRequestBatchSizeLimit", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("tikvclient/beforeAsyncPessimisticRollback"))
+		require.NoError(t, failpoint.Disable("tikvclient/twoPCRequestBatchSizeLimit"))
+	}()
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 1 where id = 2")
+
+	require.NoError(t, failpoint.Enable("tikvclient/twoPCShortLockTTL", "return"))
+	require.NoError(t, failpoint.Enable("tikvclient/shortPessimisticLockTTL", "return"))
+	ch := mustExecAsync(tk, `
+		with
+			c as (select /*+ MERGE() */ v from t2 where id = 1 or id = 2)
+		update c join t on c.v = t.id set t.v = t.v + 1`)
+	mustTimeout(t, ch, time.Millisecond*100)
+
+	tk3.MustExec("update t2 set v = v + 2")
+	tk2.MustExec("commit")
+	<-ch
+
+	tk.MustQuery("select id, v from t order by id").Check(testkit.Rows("1 10", "2 20", "3 31", "4 41"))
+	tk.MustExec("update t set v = 0 where id = 1")
+
+	require.NoError(t, failpoint.Enable("tikvclient/beforeCommit", `1*return("delay(500)")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("tikvclient/beforeCommit"))
+	}()
+
+	ch = mustExecAsync(tk, "commit")
+	mustTimeout(t, ch, time.Millisecond*100)
+
+	require.NoError(t, failpoint.Disable("tikvclient/twoPCShortLockTTL"))
+	require.NoError(t, failpoint.Disable("tikvclient/shortPessimisticLockTTL"))
+
+	tk2.MustExec("insert into t values (5, 11)")
+
+	mustRecv(t, ch)
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows(
+		"1 0",
+		"2 21",
+		"3 31",
+		"4 41",
+		"5 11",
+	))
 }

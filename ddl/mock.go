@@ -66,6 +66,11 @@ func (s *MockSchemaSyncer) WatchGlobalSchemaVer(context.Context) {}
 
 // UpdateSelfVersion implements SchemaSyncer.UpdateSelfVersion interface.
 func (s *MockSchemaSyncer) UpdateSelfVersion(ctx context.Context, jobID int64, version int64) error {
+	failpoint.Inject("mockUpdateMDLToETCDError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("mock update mdl to etcd error"))
+		}
+	})
 	if variable.EnableMDL.Load() {
 		s.mdlSchemaVersions.Store(jobID, version)
 	} else {
