@@ -42,5 +42,6 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@org_golang_x_exp//rand",
+        "@org_uber_go_atomic//:atomic",
     ],
 )
