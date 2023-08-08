@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 
-	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
@@ -138,14 +137,17 @@ func NewMergeIter(
 	return it, nil
 }
 
+// Error returns the error of the iterator.
 func (i *MergeIter) Error() error {
 	return i.err
 }
 
+// Valid returns whether the iterator is valid to be iterated.
 func (i *MergeIter) Valid() bool {
 	return i.err == nil && i.kvHeap.Len() > 0
 }
 
+// Next moves the iterator to the next position.
 func (i *MergeIter) Next() bool {
 	i.currKV = nil
 	// Populate the heap.
@@ -178,14 +180,17 @@ func (i *MergeIter) Next() bool {
 	return true
 }
 
+// Key returns the current key.
 func (i *MergeIter) Key() []byte {
 	return i.currKV.key
 }
 
+// Value returns the current value.
 func (i *MergeIter) Value() []byte {
 	return i.currKV.value
 }
 
+// Close closes the iterator.
 func (i *MergeIter) Close() error {
 	var firstErr error
 	if i.lastFileIndex >= 0 {
@@ -199,10 +204,6 @@ func (i *MergeIter) Close() error {
 	}
 
 	return firstErr
-}
-
-func (i *MergeIter) OpType() sst.Pair_OP {
-	return sst.Pair_Put
 }
 
 type prop struct {
@@ -260,6 +261,7 @@ type MergePropIter struct {
 	logger *zap.Logger
 }
 
+// NewMergePropIter creates a new MergePropIter.
 func NewMergePropIter(
 	ctx context.Context,
 	paths []string,
@@ -315,6 +317,8 @@ func NewMergePropIter(
 	return it, nil
 }
 
+// SeekPropsOffsets seeks the offsets of the range properties that are greater than the start key.
+// TODO(lance6716): check this function
 func SeekPropsOffsets(
 	ctx context.Context,
 	start kv.Key,
@@ -339,21 +343,23 @@ func SeekPropsOffsets(
 		propKey := kv.Key(p.key)
 		if propKey.Cmp(start) > 0 {
 			return offsets, nil
-		} else {
-			offsets[iter.currProp.fileIndex] = iter.currProp.p.offset
 		}
+		offsets[iter.currProp.fileIndex] = iter.currProp.p.offset
 	}
 	return offsets, nil
 }
 
+// Error returns the error of the iterator.
 func (i *MergePropIter) Error() error {
 	return i.err
 }
 
+// Valid returns whether the iterator is valid to be iterated.
 func (i *MergePropIter) Valid() bool {
 	return i.err == nil && i.propHeap.Len() > 0
 }
 
+// Next moves the iterator to the next position.
 func (i *MergePropIter) Next() bool {
 	i.currProp = nil
 	if i.lastFileIndex >= 0 {
@@ -389,6 +395,7 @@ func (i *MergePropIter) prop() *rangeProperty {
 	return &i.currProp.p
 }
 
+// Close closes the iterator.
 func (i *MergePropIter) Close() error {
 	var firstErr error
 	if i.lastFileIndex >= 0 {
