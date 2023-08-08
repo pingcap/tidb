@@ -748,6 +748,10 @@
     ]
   },
   {
+    "Name": "TestNoIndexJoinHint",
+    "Cases": []
+  },
+  {
     "Name": "TestNoMergeJoinHint",
     "Cases": [
       {
