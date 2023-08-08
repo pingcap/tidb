@@ -199,6 +199,7 @@ func downloadZips(
 	cmd.Dir = tmpdir
 	env := os.Environ()
 	env = append(env, fmt.Sprintf("GOPROXY=%s", "https://proxy.golang.org,direct"))
+	env = append(env, fmt.Sprintf("GOSUMDB=%s", "sum.golang.org"))
 	cmd.Env = env
 	var out bytes.Buffer
 	cmd.Stderr = &out
@@ -232,6 +233,7 @@ func listAllModules(tmpdir string) (map[string]listedModule, error) {
 	cmd.Dir = tmpdir
 	env := os.Environ()
 	env = append(env, fmt.Sprintf("GOPROXY=%s", "https://proxy.golang.org,direct"))
+	env = append(env, fmt.Sprintf("GOSUMDB=%s", "sum.golang.org"))
 	cmd.Env = env
 	var out bytes.Buffer
 	cmd.Stderr = &out
