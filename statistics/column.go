@@ -344,16 +344,8 @@ func (c *Column) ItemID() int64 {
 	return c.Info.ID
 }
 
-// DropEvicted implements TableCacheItem
-// DropEvicted drops evicted structures
-func (c *Column) DropEvicted() {
-	if !c.statsInitialized || c.evictedStatus == allEvicted {
-		return
-	}
-	c.dropUnnecessaryData()
-}
-
-func (c *Column) dropUnnecessaryData() {
+// DropUnnecessaryData drops the unnecessary data for the column.
+func (c *Column) DropUnnecessaryData() {
 	if c.StatsVer < Version2 {
 		c.CMSketch = nil
 	}
@@ -361,27 +353,31 @@ func (c *Column) dropUnnecessaryData() {
 	c.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
 	c.Histogram.Buckets = make([]Bucket, 0)
 	c.Histogram.scalars = make([]scalar, 0)
-	c.evictedStatus = allEvicted
+	c.evictedStatus = AllEvicted
 }
 
 // IsAllEvicted indicates whether all stats evicted
 func (c *Column) IsAllEvicted() bool {
-	return c.statsInitialized && c.evictedStatus >= allEvicted
+	return c.statsInitialized && c.evictedStatus >= AllEvicted
 }
 
-func (c *Column) getEvictedStatus() int {
+// GetEvictedStatus indicates the evicted status
+func (c *Column) GetEvictedStatus() int {
 	return c.evictedStatus
 }
 
-func (c *Column) isStatsInitialized() bool {
+// IsStatsInitialized indicates whether stats is initialized
+func (c *Column) IsStatsInitialized() bool {
 	return c.statsInitialized
 }
 
-func (c *Column) statsVer() int64 {
+// GetStatsVer indicates the stats version
+func (c *Column) GetStatsVer() int64 {
 	return c.StatsVer
 }
 
-func (c *Column) isCMSExist() bool {
+// IsCMSExist indicates whether CMSketch exists
+func (c *Column) IsCMSExist() bool {
 	return c.CMSketch != nil
 }
 
@@ -474,9 +470,9 @@ func (s StatsLoadedStatus) StatusToString() string {
 		return "unInitialized"
 	}
 	switch s.evictedStatus {
-	case allLoaded:
+	case AllLoaded:
 		return "allLoaded"
-	case allEvicted:
+	case AllEvicted:
 		return "allEvicted"
 	}
 	return "unknown"
@@ -485,7 +481,7 @@ func (s StatsLoadedStatus) StatusToString() string {
 // IsAnalyzed indicates whether the column is analyzed.
 // The set of IsAnalyzed columns is a subset of the set of StatsAvailable columns.
 func (c *Column) IsAnalyzed() bool {
-	return c.StatsVer != Version0
+	return c.GetStatsVer() != Version0
 }
 
 // StatsAvailable indicates whether the column stats are collected.

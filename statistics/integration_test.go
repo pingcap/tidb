@@ -57,10 +57,10 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	statsTblT := h.GetTableStats(tblT.Meta())
 	// Analyze table with version 1 success, all statistics are version 1.
 	for _, col := range statsTblT.Columns {
-		require.Equal(t, int64(1), col.StatsVer)
+		require.Equal(t, int64(1), col.GetStatsVer())
 	}
 	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(1), idx.StatsVer)
+		require.Equal(t, int64(1), idx.GetStatsVer())
 	}
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("analyze table t index idx")
@@ -68,23 +68,23 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(1), idx.StatsVer)
+		require.Equal(t, int64(1), idx.GetStatsVer())
 	}
 	tk.MustExec("analyze table t index")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(1), idx.StatsVer)
+		require.Equal(t, int64(1), idx.GetStatsVer())
 	}
 	tk.MustExec("analyze table t ")
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, col := range statsTblT.Columns {
-		require.Equal(t, int64(2), col.StatsVer)
+		require.Equal(t, int64(2), col.GetStatsVer())
 	}
 	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(2), idx.StatsVer)
+		require.Equal(t, int64(2), idx.GetStatsVer())
 	}
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("analyze table t index idx")
@@ -93,7 +93,7 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(2), idx.StatsVer)
+		require.Equal(t, int64(2), idx.GetStatsVer())
 	}
 	tk.MustExec("analyze table t index")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
@@ -101,16 +101,16 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(2), idx.StatsVer)
+		require.Equal(t, int64(2), idx.GetStatsVer())
 	}
 	tk.MustExec("analyze table t ")
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, col := range statsTblT.Columns {
-		require.Equal(t, int64(1), col.StatsVer)
+		require.Equal(t, int64(1), col.GetStatsVer())
 	}
 	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(1), idx.StatsVer)
+		require.Equal(t, int64(1), idx.GetStatsVer())
 	}
 }
 
@@ -136,10 +136,10 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	statsTblT := h.GetTableStats(tblT.Meta())
 	// Analyze table with version 1 success, all statistics are version 1.
 	for _, col := range statsTblT.Columns {
-		require.Equal(t, int64(1), col.StatsVer)
+		require.Equal(t, int64(1), col.GetStatsVer())
 	}
 	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(1), idx.StatsVer)
+		require.Equal(t, int64(1), idx.GetStatsVer())
 	}
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("analyze table t index idx")
@@ -147,23 +147,23 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(1), idx.StatsVer)
+		require.Equal(t, int64(1), idx.GetStatsVer())
 	}
 	tk.MustExec("analyze table t index")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(1), idx.StatsVer)
+		require.Equal(t, int64(1), idx.GetStatsVer())
 	}
 	tk.MustExec("analyze table t ")
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, col := range statsTblT.Columns {
-		require.Equal(t, int64(2), col.StatsVer)
+		require.Equal(t, int64(2), col.GetStatsVer())
 	}
 	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(2), idx.StatsVer)
+		require.Equal(t, int64(2), idx.GetStatsVer())
 	}
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("analyze table t index idx")
@@ -173,7 +173,7 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(2), idx.StatsVer)
+		require.Equal(t, int64(2), idx.GetStatsVer())
 	}
 	tk.MustExec("analyze table t index")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
@@ -182,16 +182,16 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(2), idx.StatsVer)
+		require.Equal(t, int64(2), idx.GetStatsVer())
 	}
 	tk.MustExec("analyze table t ")
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, col := range statsTblT.Columns {
-		require.Equal(t, int64(1), col.StatsVer)
+		require.Equal(t, int64(1), col.GetStatsVer())
 	}
 	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(1), idx.StatsVer)
+		require.Equal(t, int64(1), idx.GetStatsVer())
 	}
 }
 
@@ -215,10 +215,10 @@ func TestFastAnalyzeOnVer2(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	statsTblT := h.GetTableStats(tblT.Meta())
 	for _, col := range statsTblT.Columns {
-		require.Equal(t, int64(2), col.StatsVer)
+		require.Equal(t, int64(2), col.GetStatsVer())
 	}
 	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(2), idx.StatsVer)
+		require.Equal(t, int64(2), idx.GetStatsVer())
 	}
 	tk.MustExec("set @@session.tidb_enable_fast_analyze = 1")
 	err = tk.ExecToErr("analyze table t index idx")
@@ -235,10 +235,10 @@ func TestFastAnalyzeOnVer2(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, col := range statsTblT.Columns {
-		require.Equal(t, int64(1), col.StatsVer)
+		require.Equal(t, int64(1), col.GetStatsVer())
 	}
 	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(1), idx.StatsVer)
+		require.Equal(t, int64(1), idx.GetStatsVer())
 	}
 }
 

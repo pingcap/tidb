@@ -58,6 +58,9 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 		IgnoreInternalCost: intest.InTest,
 		Metrics:            intest.InTest,
 	})
+	if err != nil {
+		return nil, err
+	}
 	result.cache = cache
 	result.resultKeySet = newKeySetShard()
 	return result, err
@@ -67,7 +70,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
 	result, ok := s.cache.Get(tid)
 	if !ok {
-		return nil, ok
+		return s.resultKeySet.Get(tid)
 	}
 	return result.(*statistics.Table), ok
 }
@@ -76,10 +79,10 @@ func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
 func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
 	ok := s.cache.Set(tblID, tbl, tbl.MemoryUsage().TotalTrackingMemUsage())
 	if ok { // NOTE: `s.cache` and `s.resultKeySet` may be inconsistent since the update operation is not atomic, but it's acceptable for our scenario
-		s.resultKeySet.Add(tblID)
+		s.resultKeySet.AddKeyValue(tblID, tbl)
 		s.cost.Add(tbl.MemoryUsage().TotalTrackingMemUsage())
-		metrics.CostGauge.Set(float64(s.cost.Load()))
 	}
+	metrics.CostGauge.Set(float64(s.cost.Load()))
 	return ok
 }
 
@@ -105,11 +108,30 @@ func (s *LFU) Values() []*statistics.Table {
 	return result
 }
 
+// DropEvicted drop stats for table column/index
+func DropEvicted(item statistics.TableCacheItem) {
+	if !item.IsStatsInitialized() || item.GetEvictedStatus() == statistics.AllEvicted {
+		return
+	}
+	item.DropUnnecessaryData()
+}
+
 func (s *LFU) onEvict(item *ristretto.Item) {
 	// We do not need to calculate the cost during onEvict, because the onexit function
 	// is also called when the evict event occurs.
-	s.resultKeySet.Remove(int64(item.Key))
 	metrics.EvictCounter.Inc()
+	table := item.Value.(*statistics.Table)
+	before := table.MemoryUsage().TotalTrackingMemUsage()
+	for _, column := range table.Columns {
+		DropEvicted(column)
+	}
+	for _, indix := range table.Indices {
+		DropEvicted(indix)
+	}
+	after := table.MemoryUsage().TotalTrackingMemUsage()
+	// why add before again? because the cost will be subtracted in onExit.
+	// in fact, it is  -(before - after) + after = after + after - before
+	s.cost.Add(2*after - before)
 }
 
 func (s *LFU) onExit(val interface{}) {

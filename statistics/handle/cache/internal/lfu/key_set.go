@@ -17,24 +17,26 @@ package lfu
 import (
 	"sync"
 
+	"github.com/pingcap/tidb/statistics"
 	"golang.org/x/exp/maps"
 )
 
 type keySet struct {
-	set map[int64]struct{}
+	set map[int64]*statistics.Table
 	mu  sync.RWMutex
 }
 
-func (ks *keySet) Add(key int64) {
+func (ks *keySet) Remove(key int64) int64 {
+	var cost int64
 	ks.mu.Lock()
-	ks.set[key] = struct{}{}
+	if table, ok := ks.set[key]; ok {
+		if table != nil {
+			cost = table.MemoryUsage().TotalTrackingMemUsage()
+		}
+		delete(ks.set, key)
+	}
 	ks.mu.Unlock()
-}
-
-func (ks *keySet) Remove(key int64) {
-	ks.mu.Lock()
-	delete(ks.set, key)
-	ks.mu.Unlock()
+	return cost
 }
 
 func (ks *keySet) Keys() []int64 {
@@ -49,4 +51,26 @@ func (ks *keySet) Len() int {
 	result := len(ks.set)
 	ks.mu.RUnlock()
 	return result
+}
+
+func (ks *keySet) AddKeyValue(key int64, value *statistics.Table) (cost int64) {
+	ks.mu.Lock()
+	if v, ok := ks.set[key]; ok && v != nil {
+		cost = v.MemoryUsage().TotalTrackingMemUsage()
+	}
+	ks.set[key] = value
+	ks.mu.Unlock()
+	if value != nil {
+		cost = value.MemoryUsage().TotalTrackingMemUsage() - cost
+	} else {
+		cost = -cost
+	}
+	return cost
+}
+
+func (ks *keySet) Get(key int64) (*statistics.Table, bool) {
+	ks.mu.RLock()
+	value, ok := ks.set[key]
+	ks.mu.RUnlock()
+	return value, ok
 }
