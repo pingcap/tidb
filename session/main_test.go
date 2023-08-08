@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
@@ -65,20 +64,6 @@ func TestMain(m *testing.M) {
 		return i
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
-}
-
-func mustExec(t *testing.T, se Session, sql string, args ...interface{}) {
-	rs, err := exec(se, sql, args...)
-	require.NoError(t, err)
-	if rs != nil {
-		require.NoError(t, rs.Close())
-	}
-}
-
-func mustExecToRecodeSet(t *testing.T, se Session, sql string, args ...interface{}) sqlexec.RecordSet {
-	rs, err := exec(se, sql, args...)
-	require.NoError(t, err)
-	return rs
 }
 
 func match(t *testing.T, row []types.Datum, expected ...interface{}) {
