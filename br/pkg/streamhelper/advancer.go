@@ -17,7 +17,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/store/gcworker"
+	"github.com/pingcap/tidb/util/gcutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
@@ -376,7 +376,7 @@ func (c *CheckpointAdvancer) setCheckpoint(s spans.Valued) bool {
 	// assume the cluster has expired locks for whatever reasons.
 	if c.lastCheckpoint.needResolveLocks() {
 		handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-			return gcworker.ResolveLocksForRange(ctx, w.uuid, c.env, safePoint, tryResolveLocksTS, r.StartKey, r.EndKey)
+			return gcutil.ResolveLocksForRange(ctx, "log backup advancer", c.env, safePoint, r.StartKey, r.EndKey)
 		}
 	}
 	if cp.TS <= c.lastCheckpoint.TS {

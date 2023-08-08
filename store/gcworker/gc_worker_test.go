@@ -53,7 +53,7 @@ type mockGCWorkerLockResolver struct {
 	tikvStore           tikv.Storage
 	forceResolveLocksTS uint64
 	tryResolveLocksTS   uint64
-	scanLocks           func(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock
+	scanLocks           func(key []byte, regionID uint64) []*txnlock.Lock
 	batchResolveLocks   func(locks []*txnlock.Lock, regionID tikv.RegionVerID, safepoint uint64) (ok bool, err error)
 	resolveLocks        func(locks []*txnlock.Lock, lowResolutionTS uint64) (int64, error)
 }
@@ -66,18 +66,12 @@ func (l *mockGCWorkerLockResolver) SendReq(bo *tikv.Backoffer, req *tikvrpc.Requ
 	return l.tikvStore.SendReq(bo, req, regionID, timeout)
 }
 
-func (l *mockGCWorkerLockResolver) ScanLocks(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock {
-	return l.scanLocks(key, regionID, maxVersion)
+func (l *mockGCWorkerLockResolver) ScanLocks(key []byte, regionID uint64) []*txnlock.Lock {
+	return l.scanLocks(key, regionID)
 }
 
-func (l *mockGCWorkerLockResolver) ResolveLocks(bo *tikv.Backoffer, tryLocks []*txnlock.Lock, forceLocks []*txnlock.Lock, loc tikv.RegionVerID) (bool, error) {
-	ok, err := l.batchResolveLocks(forceLocks, loc, l.forceResolveLocksTS)
-	if err != nil || !ok {
-		return ok, err
-	}
-
-	_, err = l.resolveLocks(tryLocks, l.tryResolveLocksTS)
-	return err == nil, err
+func (l *mockGCWorkerLockResolver) ResolveLocks(bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID, safePoint uint64) (bool, error) {
+	return l.batchResolveLocks(locks, loc, l.forceResolveLocksTS)
 }
 
 type mockGCWorkerClient struct {
@@ -301,16 +295,6 @@ func TestGetOracleTime(t *testing.T) {
 	t2, err := s.gcWorker.getOracleTime()
 	require.NoError(t, err)
 	timeEqual(t, t2, t1.Add(time.Second*10), time.Millisecond*10)
-}
-
-func TestGetLowResolveTS(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
-	lowResolveTS, err := s.gcWorker.getTryResolveLocksTS()
-	require.NoError(t, err)
-
-	lowResolveTime := oracle.GetTimeFromTS(lowResolveTS)
-	timeEqual(t, time.Now(), lowResolveTime.Add(gcTryResolveLocksIntervalFromNow), time.Millisecond*10)
 }
 
 func TestMinStartTS(t *testing.T) {
@@ -1109,15 +1093,13 @@ func TestResolveLockRangeMeetRegionCacheMiss(t *testing.T) {
 		tikvStore:           s.tikvStore,
 		forceResolveLocksTS: safepointTS,
 		tryResolveLocksTS:   lowResolveTS,
-		scanLocks: func(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock {
+		scanLocks: func(key []byte, regionID uint64) []*txnlock.Lock {
 			*scanCntRef++
 
 			locks := make([]*txnlock.Lock, 0)
 			for _, l := range allLocks {
-				if l.TxnID <= maxVersion {
-					locks = append(locks, l)
-					scanLockCnt++
-				}
+				locks = append(locks, l)
+				scanLockCnt++
 			}
 			return locks
 		},

@@ -15,21 +15,47 @@
 package gcutil
 
 import (
+	"bytes"
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/txnkv/rangetask"
+	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
 )
 
 const (
 	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?`
+
+	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
+	GCScanLockLimit = txnlock.ResolvedCacheSize / 2
 )
+
+type GCLockResolver interface {
+	LocateKey(bo *tikv.Backoffer, key []byte) (*tikv.KeyLocation, error)
+
+	ResolveLocks(bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID, safePoint uint64) (bool, error)
+
+	// only used for mock test
+	ScanLocks(key []byte, regionID uint64) []*txnlock.Lock
+
+	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
+}
 
 // CheckGCEnable is use to check whether GC is enable.
 func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
@@ -88,4 +114,137 @@ func GetGCSafePoint(sctx sessionctx.Context) (uint64, error) {
 	}
 	ts := oracle.GoTimeToTS(safePointTime)
 	return ts, nil
+}
+
+func ResolveLocksForRange(
+	ctx context.Context,
+	uuid string,
+	lockResolver GCLockResolver,
+	safePoint uint64,
+	startKey []byte,
+	endKey []byte,
+) (rangetask.TaskStat, error) {
+	// for scan lock request, we must return all locks even if they are generated
+	// by the same transaction. because gc worker need to make sure all locks have been
+	// cleaned.
+	req := tikvrpc.NewRequest(tikvrpc.CmdScanLock, &kvrpcpb.ScanLockRequest{
+		MaxVersion: safePoint,
+		Limit:      GCScanLockLimit,
+	}, kvrpcpb.Context{
+		RequestSource: util.RequestSourceFromCtx(ctx),
+	})
+
+	failpoint.Inject("lowScanLockLimit", func() {
+		req.ScanLock().Limit = 3
+	})
+
+	var stat rangetask.TaskStat
+	key := startKey
+	bo := tikv.NewGcResolveLockMaxBackoffer(ctx)
+	failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
+		sleep := v.(int)
+		// cooperate with github.com/tikv/client-go/v2/locate/invalidCacheAndRetry
+		//nolint: SA1029
+		ctx = context.WithValue(ctx, "injectedBackoff", struct{}{})
+		bo = tikv.NewBackofferWithVars(ctx, sleep, nil)
+	})
+retryScanAndResolve:
+	for {
+		select {
+		case <-ctx.Done():
+			return stat, errors.New("[gc worker] gc job canceled")
+		default:
+		}
+
+		req.ScanLock().StartKey = key
+		loc, err := lockResolver.LocateKey(bo, key)
+		if err != nil {
+			return stat, errors.Trace(err)
+		}
+		req.ScanLock().EndKey = loc.EndKey
+		resp, err := lockResolver.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
+		if err != nil {
+			return stat, errors.Trace(err)
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return stat, errors.Trace(err)
+		}
+		if regionErr != nil {
+			err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
+			if err != nil {
+				return stat, errors.Trace(err)
+			}
+			continue
+		}
+		if resp.Resp == nil {
+			return stat, errors.Trace(tikverr.ErrBodyMissing)
+		}
+		locksResp := resp.Resp.(*kvrpcpb.ScanLockResponse)
+		if locksResp.GetError() != nil {
+			return stat, errors.Errorf("unexpected scanlock error: %s", locksResp)
+		}
+		locksInfo := locksResp.GetLocks()
+		locks := make([]*txnlock.Lock, 0, len(locksInfo))
+		for _, li := range locksInfo {
+			locks = append(locks, txnlock.NewLock(li))
+		}
+		locks = append(locks, lockResolver.ScanLocks(key, loc.Region.GetID())...)
+		locForResolve := loc
+		for {
+			ok, err1 := lockResolver.ResolveLocks(bo, locks, locForResolve.Region, safePoint)
+			if err1 != nil {
+				return stat, errors.Trace(err1)
+			}
+			if !ok {
+				err = bo.Backoff(tikv.BoTxnLock(), errors.Errorf("remain locks: %d", len(locks)))
+				if err != nil {
+					return stat, errors.Trace(err)
+				}
+				stillInSame, refreshedLoc, err := tryRelocateLocksRegion(bo, lockResolver, locks)
+				if err != nil {
+					return stat, errors.Trace(err)
+				}
+				if stillInSame {
+					locForResolve = refreshedLoc
+					continue
+				}
+				continue retryScanAndResolve
+			}
+			break
+		}
+		if len(locks) < GCScanLockLimit {
+			stat.CompletedRegions++
+			key = loc.EndKey
+		} else {
+			logutil.Logger(ctx).Info("region has more than limit locks", zap.String("category", "gc worker"),
+				zap.String("uuid", uuid),
+				zap.Uint64("region", locForResolve.Region.GetID()),
+				zap.Int("scan lock limit", GCScanLockLimit))
+			metrics.GCRegionTooManyLocksCounter.Inc()
+			key = locks[len(locks)-1].Key
+		}
+
+		if len(key) == 0 || (len(endKey) != 0 && bytes.Compare(key, endKey) >= 0) {
+			break
+		}
+		bo = tikv.NewGcResolveLockMaxBackoffer(ctx)
+		failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
+			sleep := v.(int)
+			bo = tikv.NewBackofferWithVars(ctx, sleep, nil)
+		})
+	}
+	return stat, nil
+}
+
+func tryRelocateLocksRegion(bo *tikv.Backoffer, lockResolver GCLockResolver, locks []*txnlock.Lock) (stillInSameRegion bool, refreshedLoc *tikv.KeyLocation, err error) {
+	if len(locks) == 0 {
+		return
+	}
+	refreshedLoc, err = lockResolver.LocateKey(bo, locks[0].Key)
+	if err != nil {
+		return
+	}
+	stillInSameRegion = refreshedLoc.Contains(locks[len(locks)-1].Key)
+	return
 }
