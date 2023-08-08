@@ -58,6 +58,7 @@ func NewKeyValueStore(
 // AddKeyValue saves a key-value pair to the KeyValueStore. If the accumulated
 // size or key count exceeds the given distance, a new range property will be
 // appended to the rangePropertiesCollector with current status.
+// `key` must be in strictly ascending order for invocations of a KeyValueStore.
 func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
 	kvLen := len(key) + len(value) + 16
 	var b [8]byte

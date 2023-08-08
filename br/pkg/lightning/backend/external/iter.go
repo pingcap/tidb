@@ -318,7 +318,6 @@ func NewMergePropIter(
 }
 
 // SeekPropsOffsets seeks the offsets of the range properties that are greater than the start key.
-// TODO(lance6716): check this function
 func SeekPropsOffsets(
 	ctx context.Context,
 	start kv.Key,
