@@ -292,6 +292,9 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 	tk.MustExec("create table tlist3(a int, b int, primary key(a)) partition by list(a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5))")
 	tk.MustExec("insert into tlist3 values(1,0),(2,0),(3,0),(4,0)")
 
+	tk.MustExec("create table issue45889(a int) partition by list(a) (partition p0 values in (0, 1), partition p1 values in (2, 3))")
+	tk.MustExec("insert into issue45889 values (0),(0),(1),(1),(2),(2),(3),(3)")
+
 	var input []string
 	var output []struct {
 		SQL         string

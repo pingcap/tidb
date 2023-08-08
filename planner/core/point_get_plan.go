@@ -329,8 +329,13 @@ type BatchPointGetPlan struct {
 	Columns          []*model.ColumnInfo
 	cost             float64
 
-	// PartTblID is the table IDs for the specific table partitions.
-	PartTblID []int64
+	// SinglePart indicates whether this BatchPointGetPlan is just for a single partition, instead of the whole partition table.
+	// If the BatchPointGetPlan is built in fast path, this value is false; if the plan is generated in physical optimization for a partition,
+	// this value would be true. This value would decide the behavior of BatchPointGetExec, i.e, whether to compute the table ID of the partition
+	// on the fly.
+	SinglePart bool
+	// PartTblID is the table ID for the specific table partition.
+	PartTblID int64
 
 	// required by cost model
 	planCostInit bool
@@ -1887,31 +1892,17 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 		return 0, nil
 	}
 
-	partitionColName := getPartitionColumnName(partitionExpr, tbl)
-	if partitionColName == nil {
-		return 0, errors.Errorf("unsupported partition type in BatchGet")
-	}
-
-	return getColumnPosInIndex(idx, partitionColName), nil
-}
-
-func getPartitionColumnName(partitionExpr *tables.PartitionExpr, tbl *model.TableInfo) *model.CIStr {
-	if partitionExpr == nil {
-		return nil
-	}
-
-	pi := tbl.GetPartitionInfo()
 	var partitionColName model.CIStr
 	switch pi.Type {
 	case model.PartitionTypeHash:
 		col, ok := partitionExpr.OrigExpr.(*ast.ColumnNameExpr)
 		if !ok {
-			return nil
+			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
 		partitionColName = col.Name.Name
 	case model.PartitionTypeKey:
 		if len(partitionExpr.KeyPartCols) != 1 {
-			return nil
+			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
 		colInfo := findColNameByColID(tbl.Columns, partitionExpr.KeyPartCols[0])
 		partitionColName = colInfo.Name
@@ -1919,7 +1910,7 @@ func getPartitionColumnName(partitionExpr *tables.PartitionExpr, tbl *model.Tabl
 		// left range columns partition for future development
 		col, ok := partitionExpr.Expr.(*expression.Column)
 		if !(ok && len(pi.Columns) == 0) {
-			return nil
+			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
 		colInfo := findColNameByColID(tbl.Columns, col)
 		partitionColName = colInfo.Name
@@ -1927,13 +1918,13 @@ func getPartitionColumnName(partitionExpr *tables.PartitionExpr, tbl *model.Tabl
 		// left list columns partition for future development
 		locateExpr, ok := partitionExpr.ForListPruning.LocateExpr.(*expression.Column)
 		if !(ok && partitionExpr.ForListPruning.ColPrunes == nil) {
-			return nil
+			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
 		colInfo := findColNameByColID(tbl.Columns, locateExpr)
 		partitionColName = colInfo.Name
 	}
 
-	return &partitionColName
+	return getColumnPosInIndex(idx, &partitionColName), nil
 }
 
 // getColumnPosInIndex gets the column's position in the index.
@@ -1964,6 +1955,36 @@ func getPartitionExpr(ctx sessionctx.Context, tbl *model.TableInfo) *tables.Part
 
 	// PartitionExpr don't need columns and names for hash partition.
 	return partTable.PartitionExpr()
+}
+
+func getHashOrKeyPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *model.CIStr {
+	pi := tbl.GetPartitionInfo()
+	if pi == nil {
+		return nil
+	}
+	if pi.Type != model.PartitionTypeHash && pi.Type != model.PartitionTypeKey {
+		return nil
+	}
+	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	table, ok := is.TableByID(tbl.ID)
+	if !ok {
+		return nil
+	}
+	// PartitionExpr don't need columns and names for hash partition.
+	partitionExpr := table.(partitionTable).PartitionExpr()
+	if pi.Type == model.PartitionTypeKey {
+		// used to judge whether the key partition contains only one field
+		if len(pi.Columns) != 1 {
+			return nil
+		}
+		return &pi.Columns[0]
+	}
+	expr := partitionExpr.OrigExpr
+	col, ok := expr.(*ast.ColumnNameExpr)
+	if !ok {
+		return nil
+	}
+	return &col.Name.Name
 }
 
 func findColNameByColID(cols []*model.ColumnInfo, col *expression.Column) *model.ColumnInfo {

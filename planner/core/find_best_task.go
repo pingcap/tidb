@@ -1136,12 +1136,19 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				}
 			}
 		}
-		var partColName *model.CIStr
+		var hashPartColName *model.CIStr
 		if tblInfo := ds.table.Meta(); canConvertPointGet && tblInfo.GetPartitionInfo() != nil {
+			// partition table with dynamic prune not support batchPointGet
+			if canConvertPointGet && len(path.Ranges) > 1 && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+				canConvertPointGet = false
+			}
 			if canConvertPointGet && len(path.Ranges) > 1 {
-				// not support some complex situation, like `by HASH( col DIV 80 )` etc.
-				partColName = getPartitionColumnName(getPartitionExpr(ds.SCtx(), tblInfo), tblInfo)
-				if partColName == nil {
+				// We can only build batch point get for hash partitions on a simple column now. This is
+				// decided by the current implementation of `BatchPointGetExec::initialize()`, specifically,
+				// the `getPhysID()` function. Once we optimize that part, we can come back and enable
+				// BatchPointGet plan for more cases.
+				hashPartColName = getHashOrKeyPartitionColumnName(ds.SCtx(), tblInfo)
+				if hashPartColName == nil {
 					canConvertPointGet = false
 				}
 			}
@@ -1170,7 +1177,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				if len(path.Ranges) == 1 {
 					pointGetTask = ds.convertToPointGet(prop, candidate)
 				} else {
-					pointGetTask = ds.convertToBatchPointGet(prop, candidate, partColName)
+					pointGetTask = ds.convertToBatchPointGet(prop, candidate, hashPartColName)
 				}
 
 				// Batch/PointGet plans may be over-optimized, like `a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1).
@@ -2526,7 +2533,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	return rTsk
 }
 
-func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath, partColName *model.CIStr) (task task) {
+func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath, hashPartColName *model.CIStr) (task task) {
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
@@ -2543,31 +2550,11 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		TblInfo:          ds.TableInfo(),
 		KeepOrder:        !prop.IsSortItemEmpty(),
 		Columns:          ds.Columns,
+		SinglePart:       ds.isPartition,
+		PartTblID:        ds.physicalTableID,
 		PartitionExpr:    getPartitionExpr(ds.SCtx(), ds.TableInfo()),
 	}
-	if ds.isPartition {
-		// static prune
-		batchPointGetPlan.PartTblID = make([]int64, 1)
-		batchPointGetPlan.PartTblID[0] = ds.physicalTableID
-	} else if ds.tableInfo.GetPartitionInfo() != nil {
-		// dynamic prune
-		idxs, err := PartitionPruning(ds.SCtx(), ds.table.GetPartitionedTable(), ds.allConds, ds.partitionNames, ds.TblCols, ds.names)
-		if err != nil || len(idxs) == 0 {
-			return invalidTask
-		}
-		if idxs[0] != FullRange {
-			batchPointGetPlan.PartTblID = make([]int64, len(idxs))
-			for i, idx := range idxs {
-				batchPointGetPlan.PartTblID[i] = ds.tableInfo.GetPartitionInfo().Definitions[idx].ID
-			}
-			slices.Sort(batchPointGetPlan.PartTblID)
-		}
-	}
 	if batchPointGetPlan.KeepOrder {
-		// TODO: support keepOrder for partition table with dynamic pruning
-		if ds.TableInfo().GetPartitionInfo() != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
-			return invalidTask
-		}
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
 	}
 	rTsk := &rootTask{}
@@ -2589,7 +2576,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		batchPointGetPlan.IndexInfo = candidate.path.Index
 		batchPointGetPlan.IdxCols = candidate.path.IdxCols
 		batchPointGetPlan.IdxColLens = candidate.path.IdxColLens
-		batchPointGetPlan.PartitionColPos = getColumnPosInIndex(candidate.path.Index, partColName)
+		batchPointGetPlan.PartitionColPos = getColumnPosInIndex(candidate.path.Index, hashPartColName)
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
 		}
