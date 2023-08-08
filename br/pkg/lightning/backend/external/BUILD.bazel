@@ -31,10 +31,11 @@ go_test(
     ],
     embed = [":external"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 7,
     deps = [
         "//br/pkg/storage",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
+        "@org_golang_x_exp//rand",
     ],
 )
