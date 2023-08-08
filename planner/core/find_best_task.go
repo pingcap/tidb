@@ -1138,6 +1138,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 		var hashPartColName *model.CIStr
 		if tblInfo := ds.table.Meta(); canConvertPointGet && tblInfo.GetPartitionInfo() != nil {
+			// partition table with dynamic prune not support batchPointGet
+			if canConvertPointGet && len(path.Ranges) > 1 && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+				canConvertPointGet = false
+			}
 			if canConvertPointGet && len(path.Ranges) > 1 {
 				// We can only build batch point get for hash partitions on a simple column now. This is
 				// decided by the current implementation of `BatchPointGetExec::initialize()`, specifically,
@@ -2551,10 +2555,6 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		PartitionExpr:    getPartitionExpr(ds.SCtx(), ds.TableInfo()),
 	}
 	if batchPointGetPlan.KeepOrder {
-		// TODO: support keepOrder for partition table with dynamic pruning
-		if ds.TableInfo().GetPartitionInfo() != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
-			return invalidTask
-		}
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
 	}
 	rTsk := &rootTask{}
