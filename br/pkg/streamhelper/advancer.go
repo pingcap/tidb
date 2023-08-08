@@ -17,11 +17,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/gcutil"
-	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -371,29 +367,6 @@ func (c *CheckpointAdvancer) setCheckpoint(ctx context.Context, s spans.Valued) 
 	if cp.TS < c.lastCheckpoint.TS {
 		log.Warn("failed to update global checkpoint: stale",
 			zap.Uint64("old", c.lastCheckpoint.TS), zap.Uint64("new", cp.TS))
-		return false
-	}
-	// lastCheckpoint is not increased too long enough.
-	// assume the cluster has expired locks for whatever reasons.
-	if c.lastCheckpoint.needResolveLocks() {
-		handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-			// we will scan all lock before cp.TS and try to resolve them by check txn status.
-			return gcutil.ResolveLocksForRange(ctx, "log backup advancer", c.env, cp.TS, r.StartKey, r.EndKey)
-		}
-		runner := rangetask.NewRangeTaskRunner("advancer-resolve-locks-runner", c.env.GetStore(), config.DefaultMaxConcurrencyAdvance, handler)
-		// Run resolve lock on the whole TiKV cluster. it will use startKey/endKey to scan region in PD. so we need encode key here.
-		encodedStartKey := codec.EncodeBytes([]byte{}, []byte(c.lastCheckpoint.StartKey))
-		encodedEndKey := codec.EncodeBytes([]byte{}, []byte(c.lastCheckpoint.EndKey))
-		err := runner.RunOnRange(ctx, encodedStartKey, encodedEndKey)
-		if err != nil {
-			log.Error("resolve locks failed", zap.String("category", "advancer"),
-				zap.String("uuid", "log backup advancer"),
-				zap.Error(err))
-			return false
-		}
-		log.Info("finish resolve locks", zap.String("category", "advancer"),
-			zap.String("uuid", "log backup advancer"),
-			zap.Int("regions", runner.CompletedRegions()))
 		return false
 	}
 	if cp.TS <= c.lastCheckpoint.TS {
