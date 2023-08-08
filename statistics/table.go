@@ -157,19 +157,11 @@ type TableCacheItem interface {
 	ItemID() int64
 	MemoryUsage() CacheItemMemoryUsage
 	IsAllEvicted() bool
+	GetEvictedStatus() int
 
-	dropUnnecessaryData()
-	isStatsInitialized() bool
-	getEvictedStatus() int
-	statsVer() int64
-}
-
-// DropEvicted drop stats for table column/index
-func DropEvicted(item TableCacheItem) {
-	if !item.isStatsInitialized() || item.getEvictedStatus() == allEvicted {
-		return
-	}
-	item.dropUnnecessaryData()
+	DropUnnecessaryData()
+	IsStatsInitialized() bool
+	GetStatsVer() int64
 }
 
 // CacheItemMemoryUsage indicates the memory usage of TableCacheItem

@@ -1622,8 +1622,10 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 }
 
 const (
-	allLoaded = iota
-	allEvicted
+	// AllLoaded indicates all statistics are loaded
+	AllLoaded = iota
+	// AllEvicted indicates all statistics are evicted
+	AllEvicted
 )
 
 // StatsLoadedStatus indicates the status of statistics
@@ -1636,17 +1638,17 @@ type StatsLoadedStatus struct {
 func NewStatsFullLoadStatus() StatsLoadedStatus {
 	return StatsLoadedStatus{
 		statsInitialized: true,
-		evictedStatus:    allLoaded,
+		evictedStatus:    AllLoaded,
 	}
 }
 
 // NewStatsAllEvictedStatus returns the status that only loads count/nullCount/NDV and doesn't load CMSketch/TopN/Histogram.
-// When we load table stats, column stats is in allEvicted status by default. CMSketch/TopN/Histogram of column is only
+// When we load table stats, column stats is in AllEvicted status by default. CMSketch/TopN/Histogram of column is only
 // loaded when we really need column stats.
 func NewStatsAllEvictedStatus() StatsLoadedStatus {
 	return StatsLoadedStatus{
 		statsInitialized: true,
-		evictedStatus:    allEvicted,
+		evictedStatus:    AllEvicted,
 	}
 }
 
@@ -1660,7 +1662,7 @@ func (s StatsLoadedStatus) IsStatsInitialized() bool {
 // If the column/index was loaded and any statistics of it is evicting, it also needs re-load statistics.
 func (s StatsLoadedStatus) IsLoadNeeded() bool {
 	if s.statsInitialized {
-		return s.evictedStatus > allLoaded
+		return s.evictedStatus > AllLoaded
 	}
 	// If statsInitialized is false, it means there is no stats for the column/index in the storage.
 	// Hence, we don't need to trigger the task of loading the column/index stats.
@@ -1670,15 +1672,15 @@ func (s StatsLoadedStatus) IsLoadNeeded() bool {
 // IsEssentialStatsLoaded indicates whether the essential statistics is loaded.
 // If the column/index was loaded, and at least histogram and topN still exists, the necessary statistics is still loaded.
 func (s StatsLoadedStatus) IsEssentialStatsLoaded() bool {
-	return s.statsInitialized && (s.evictedStatus < allEvicted)
+	return s.statsInitialized && (s.evictedStatus < AllEvicted)
 }
 
 // IsAllEvicted indicates whether all the stats got evicted or not.
 func (s StatsLoadedStatus) IsAllEvicted() bool {
-	return s.statsInitialized && s.evictedStatus >= allEvicted
+	return s.statsInitialized && s.evictedStatus >= AllEvicted
 }
 
 // IsFullLoad indicates whether the stats are full loaded
 func (s StatsLoadedStatus) IsFullLoad() bool {
-	return s.statsInitialized && s.evictedStatus == allLoaded
+	return s.statsInitialized && s.evictedStatus == AllLoaded
 }
