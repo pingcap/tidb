@@ -306,6 +306,7 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 		if hg.Buckets[midIdx].Count < 0 {
 			hg.Buckets[midIdx].Count = 0
 		}
+		break
 	}
 }
 
