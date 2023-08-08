@@ -20,7 +20,36 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 )
+
+type trackOpenMemStorage struct {
+	*storage.MemStorage
+	opened atomic.Int32
+}
+
+func (s *trackOpenMemStorage) Open(ctx context.Context, path string) (storage.ExternalFileReader, error) {
+	s.opened.Inc()
+	r, err := s.MemStorage.Open(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	return &trackOpenFileReader{r, s}, nil
+}
+
+type trackOpenFileReader struct {
+	storage.ExternalFileReader
+	store *trackOpenMemStorage
+}
+
+func (r *trackOpenFileReader) Close() error {
+	err := r.ExternalFileReader.Close()
+	if err != nil {
+		return err
+	}
+	r.store.opened.Dec()
+	return nil
+}
 
 func TestMergeIter(t *testing.T) {
 	ctx := context.Background()
@@ -49,8 +78,12 @@ func TestMergeIter(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	mergeIter, err := NewMergeIter(ctx, filenames, []uint64{0, 0, 0}, memStore, 5)
+	trackStore := &trackOpenMemStorage{MemStorage: memStore}
+	mergeIter, err := NewMergeIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
 	require.NoError(t, err)
+	// close one empty file immediately in NewMergeIter
+	require.EqualValues(t, 2, trackStore.opened.Load())
+
 	got := make([][2]string, 0)
 	for mergeIter.Valid() {
 		mergeIter.Next()
@@ -62,4 +95,7 @@ func TestMergeIter(t *testing.T) {
 		{"key3", "value3"},
 	}
 	require.Equal(t, expected, got)
+	err = mergeIter.Close()
+	require.NoError(t, err)
+	require.EqualValues(t, 0, trackStore.opened.Load())
 }
