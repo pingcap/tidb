@@ -139,7 +139,6 @@ require (
 
 require (
 	github.com/segmentio/asm v1.2.0 // indirect
-	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	k8s.io/utils v0.0.0-20230209194617-a36077c30491 // indirect
 )
 
