@@ -1467,7 +1467,8 @@
       {
         "SQL": "explain format = 'brief' select * from t where a = 1 OR a = 2",
         "DynamicPlan": [
-          "Batch_Point_Get 2.00 root table:t handle:[1 2], keep order:false, desc:false"
+          "TableReader 2.00 root partition:p1,P2 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:t range:[1,1], [2,2], keep order:false"
         ],
         "StaticPlan": [
           "PartitionUnion 2.00 root  ",
