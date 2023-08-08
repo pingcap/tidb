@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -103,17 +102,16 @@ func (w *GCWorkerLockResolver) SendReq(bo *tikv.Backoffer, req *tikvrpc.Request,
 
 // GCWorker periodically triggers GC process on tikv server.
 type GCWorker struct {
-	uuid             string
-	desc             string
-	store            kv.Storage
-	tikvStore        tikv.Storage
-	pdClient         pd.Client
-	gcIsRunning      bool
-	lastFinish       time.Time
-	cancel           context.CancelFunc
-	done             chan error
-	lockResolver     GCLockResolver
-	logBackupEnabled bool // check log-backup task existed.
+	uuid         string
+	desc         string
+	store        kv.Storage
+	tikvStore    tikv.Storage
+	pdClient     pd.Client
+	gcIsRunning  bool
+	lastFinish   time.Time
+	cancel       context.CancelFunc
+	done         chan error
+	lockResolver GCLockResolver
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -450,17 +448,6 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		metrics.GCJobFailureCounter.WithLabelValues("prepare").Inc()
 		return errors.Trace(err)
 	} else if !ok {
-		// If skip gc, it still needs to resolve locks with expired TTL, in order not to block log backup.
-		if w.logBackupEnabled {
-			tryResolveLocksTS, err := w.getTryResolveLocksTS()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			// Set 0 to safepoint, which means resolving locks with expired TTL only.
-			if err = w.legacyResolveLocks(ctx, 0, tryResolveLocksTS, concurrency); err != nil {
-				return errors.Trace(err)
-			}
-		}
 		return nil
 	}
 	// When the worker is just started, or an old GC job has just finished,
@@ -1214,8 +1201,6 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurren
 
 	if tryResolveLocksTS < safePoint {
 		tryResolveLocksTS = safePoint
-	} else if !w.logBackupEnabled {
-		tryResolveLocksTS = safePoint
 	}
 
 	if !usePhysical {
@@ -1947,7 +1932,6 @@ func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
 	se := createSession(w.store)
 	defer se.Close()
 
-	w.logBackupEnabled = utils.IsLogBackupInUse(se)
 	_, err := se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
