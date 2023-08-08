@@ -7398,7 +7398,7 @@ func TestIssue45898(t *testing.T) {
 	restoreCtx := NewRestoreCtx(DefaultRestoreFlags, &sb)
 	sb.Reset()
 	stmts[0].Restore(restoreCtx)
-	require.Equal(t, sb.String(), "SELECT COUNT(1) FROM `t`")
+	require.Equal(t, "SELECT COUNT(1) FROM `t`", sb.String())
 }
 
 func TestMultiStmt(t *testing.T) {
