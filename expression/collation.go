@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"fmt"
 	goatomic "sync/atomic"
 
 	"github.com/pingcap/tidb/parser/ast"
@@ -369,6 +370,9 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 		}
 	}
 
+	if exprs == nil {
+		fmt.Print(1)
+	}
 	repertoire := exprs[0].Repertoire()
 	coercibility := exprs[0].Coercibility()
 	dstCharset, dstCollation := exprs[0].GetType().GetCharset(), exprs[0].GetType().GetCollate()

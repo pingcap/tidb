@@ -17,6 +17,7 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/parser/terror"
 	"sort"
 	"unsafe"
 
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -176,7 +176,14 @@ func typeInferForNull(args []Expression) {
 // newFunctionImpl creates a new scalar function or constant.
 // fold: 1 means folding constants, while 0 means not,
 // -1 means try to fold constants if without errors/warnings, otherwise not.
-func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType *types.FieldType, checkOrInit ScalarFunctionCallBack, args ...Expression) (ret Expression, err error) {
+	defer func() {
+		if err == nil && ret != nil && checkOrInit != nil {
+			if sf, ok := ret.(*ScalarFunction); ok {
+				ret, err = checkOrInit(sf)
+			}
+		}
+	}()
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction")
 	}
@@ -258,38 +265,47 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	return sf, nil
 }
 
+type ScalarFunctionCallBack func(function *ScalarFunction) (Expression, error)
+
+func defaultScalarFunctionCheck(function *ScalarFunction) (Expression, error) {
+	// todo: more scalar function init actions can be added here, or setting up with customized init callback.
+	if function.FuncName.L == ast.Grouping {
+		if !function.Function.(*BuiltinGroupingImplSig).isMetaInited {
+			return function, errors.Errorf("grouping meta data hasn't been initialized, try use function clone instead")
+		}
+	}
+	return function, nil
+}
+
+// NewFunctionWithInit creates a new scalar function with callback init function.
+func NewFunctionWithInit(ctx sessionctx.Context, funcName string, retType *types.FieldType, init ScalarFunctionCallBack, args ...Expression) (Expression, error) {
+	return newFunctionImpl(ctx, 1, funcName, retType, init, args...)
+}
+
 // NewFunction creates a new scalar function or constant via a constant folding.
 func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, 1, funcName, retType, args...)
+	return newFunctionImpl(ctx, 1, funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
 // NewFunctionBase creates a new scalar function with no constant folding.
 func NewFunctionBase(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, 0, funcName, retType, args...)
+	return newFunctionImpl(ctx, 0, funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
 // NewFunctionTryFold creates a new scalar function with trying constant folding.
 func NewFunctionTryFold(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, -1, funcName, retType, args...)
+	return newFunctionImpl(ctx, -1, funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
-// NewFunctionInternal is similar to NewFunction, but do not returns error, should only be used internally.
+// Deprecated: use NewFunction instead, old logic here is for the convenience of go linter error check.
+// while for the new function creation, some errors can also be thrown out, for example, args verification
+// error, collation derivation error, special function with meta doesn't be initialized error and so on.
+// only threw the these internal error out, then we can debug and dig it out quickly rather than in a confusion
+// of index out of range / nil pointer error / function execution error.
+// NewFunctionInternal is similar to NewFunction, but do not return error, should only be used internally.
 func NewFunctionInternal(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) Expression {
 	expr, err := NewFunction(ctx, funcName, retType, args...)
 	terror.Log(err)
-	return expr
-}
-
-// NewFunctionInternal is more normal portal for NewFunctionInternal.
-// Since normal function can be recreated with funcName，retType and Args; while for function with metadata, those metadata should also be passed through.
-func (sf *ScalarFunction) NewFunctionInternal(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) Expression {
-	expr, err := NewFunction(ctx, funcName, retType, args...)
-	terror.Log(err)
-	if funcName != ast.Grouping {
-		return expr
-	}
-	terror.Log(expr.(*ScalarFunction).Function.(*BuiltinGroupingImplSig).
-		SetMetadata(sf.Function.(*BuiltinGroupingImplSig).mode, sf.Function.(*BuiltinGroupingImplSig).groupingMarks))
 	return expr
 }
 
@@ -745,6 +761,9 @@ func (sf *ScalarFunction) SetCharsetAndCollation(chs, coll string) {
 
 // Repertoire returns the repertoire value which is used to check collations.
 func (sf *ScalarFunction) Repertoire() Repertoire {
+	if sf.Function == nil {
+		fmt.Println(1)
+	}
 	return sf.Function.Repertoire()
 }
 
