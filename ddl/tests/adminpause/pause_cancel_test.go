@@ -189,7 +189,6 @@ func TestPauseCancelAndRerunSchemaStmt(t *testing.T) {
 			zap.String("DDL Statement", stmtCase.stmt))
 		stmtCase.simpleRunStmt(stmtKit)
 	}
-	Logger.Info("TestPauseCancelAndRerunSchemaStmt: all cases finished.")
 }
 
 func TestPauseCancelAndRerunIndexStmt(t *testing.T) {
@@ -204,7 +203,6 @@ func TestPauseCancelAndRerunIndexStmt(t *testing.T) {
 			zap.String("DDL Statement", stmtCase.stmt))
 		stmtCase.simpleRunStmt(stmtKit)
 	}
-	Logger.Info("TestPauseCancelAndRerunIndexStmt: all cases finished.")
 }
 
 func TestPauseCancelAndRerunColumnStmt(t *testing.T) {
@@ -219,8 +217,6 @@ func TestPauseCancelAndRerunColumnStmt(t *testing.T) {
 			zap.String("DDL Statement", stmtCase.stmt))
 		stmtCase.simpleRunStmt(stmtKit)
 	}
-
-	Logger.Info("TestPauseCancelAndRerunColumnStmt: all cases finished.")
 }
 
 func TestPauseCancelAndRerunPartitionTableStmt(t *testing.T) {
@@ -228,7 +224,7 @@ func TestPauseCancelAndRerunPartitionTableStmt(t *testing.T) {
 
 	require.Nil(t, generateTblUser(stmtKit, 0))
 
-	require.Nil(t, generateTblUserParition(stmtKit, 0))
+	require.Nil(t, generateTblUserParition(stmtKit))
 	for _, stmtCase := range tablePartitionDDLStmtCase {
 		pauseAndCancelStmt(t, stmtKit, adminCommandKit, dom, &stmtCase)
 
@@ -236,6 +232,4 @@ func TestPauseCancelAndRerunPartitionTableStmt(t *testing.T) {
 			zap.String("DDL Statement", stmtCase.stmt))
 		stmtCase.simpleRunStmt(stmtKit)
 	}
-
-	Logger.Info("TestPauseCancelAndRerunPartitionTableStmt: all cases finished.")
 }

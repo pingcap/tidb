@@ -256,7 +256,7 @@ func TestPauseAndResumePartitionTableStmt(t *testing.T) {
 
 	require.Nil(t, generateTblUser(stmtKit, 0))
 
-	require.Nil(t, generateTblUserParition(stmtKit, 0))
+	require.Nil(t, generateTblUserParition(stmtKit))
 	for _, stmtCase := range tablePartitionDDLStmtCase {
 		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, false)
 	}
@@ -326,7 +326,7 @@ func TestPauseResumeCancelAndRerunColumnStmt(t *testing.T) {
 	// fail. Just truncate the tuples here because we don't care about the partition itself but the DDL.
 	stmtKit.MustExec("truncate " + adminPauseTestTable)
 
-	require.Nil(t, generateTblUserParition(stmtKit, 0))
+	require.Nil(t, generateTblUserParition(stmtKit))
 	for _, stmtCase := range tablePartitionDDLStmtCase {
 		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, true)
 
@@ -343,7 +343,7 @@ func TestPauseResumeCancelAndRerunPartitionTableStmt(t *testing.T) {
 
 	require.Nil(t, generateTblUser(stmtKit, 0))
 
-	require.Nil(t, generateTblUserParition(stmtKit, 0))
+	require.Nil(t, generateTblUserParition(stmtKit))
 	for _, stmtCase := range tablePartitionDDLStmtCase {
 		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, true)
 
