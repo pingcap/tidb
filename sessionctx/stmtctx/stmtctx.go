@@ -1236,6 +1236,7 @@ func (sc *StatementContext) GetStaleTSO() (uint64, error) {
 	return tso, nil
 }
 
+// AddSetVarHintRestore records the variables which are affected by SET_VAR hint. And restore them to the old value later.
 func (sc *StatementContext) AddSetVarHintRestore(name, val string) {
 	if sc.SetVarHintRestore == nil {
 		sc.SetVarHintRestore = make(map[string]string)
