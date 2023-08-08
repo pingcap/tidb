@@ -15,7 +15,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -201,11 +200,8 @@ func downloadZips(
 	env = append(env, fmt.Sprintf("GOPROXY=%s", "https://proxy.golang.org,direct"))
 	env = append(env, fmt.Sprintf("GOSUMDB=%s", "sum.golang.org"))
 	cmd.Env = env
-	var out bytes.Buffer
-	cmd.Stderr = &out
 	jsonBytes, err := cmd.Output()
 	if err != nil {
-		fmt.Println(out.String())
 		return nil, err
 	}
 	var jsonBuilder strings.Builder
@@ -235,11 +231,8 @@ func listAllModules(tmpdir string) (map[string]listedModule, error) {
 	env = append(env, fmt.Sprintf("GOPROXY=%s", "https://proxy.golang.org,direct"))
 	env = append(env, fmt.Sprintf("GOSUMDB=%s", "sum.golang.org"))
 	cmd.Env = env
-	var out bytes.Buffer
-	cmd.Stderr = &out
 	jsonBytes, err := cmd.Output()
 	if err != nil {
-		fmt.Println(out.String())
 		return nil, err
 	}
 	ret := make(map[string]listedModule)
