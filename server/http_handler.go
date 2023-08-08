@@ -122,7 +122,7 @@ func (h ClusterUpgradeHandler) startUpgrade() (hasDone bool, err error) {
 	}
 	defer se.Close()
 
-	isUpgrading, err := session.IsUpgrading(se)
+	isUpgrading, err := session.IsUpgradingClusterState(se)
 	if err != nil {
 		return false, err
 	}
@@ -141,7 +141,7 @@ func (h ClusterUpgradeHandler) finishUpgrade() (hasDone bool, err error) {
 	}
 	defer se.Close()
 
-	isUpgrading, err := session.IsUpgrading(se)
+	isUpgrading, err := session.IsUpgradingClusterState(se)
 	if err != nil {
 		return false, err
 	}

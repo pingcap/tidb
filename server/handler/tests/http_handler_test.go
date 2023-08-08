@@ -1261,7 +1261,7 @@ func TestUpgrade(t *testing.T) {
 	// check the result
 	se, err := session.CreateSession(ts.store)
 	require.NoError(t, err)
-	isUpgrading, err := session.IsUpgrading(se)
+	isUpgrading, err := session.IsUpgradingClusterState(se)
 	require.NoError(t, err)
 	require.True(t, isUpgrading)
 
@@ -1279,7 +1279,7 @@ func TestUpgrade(t *testing.T) {
 	// check the result
 	se, err = session.CreateSession(ts.store)
 	require.NoError(t, err)
-	isUpgrading, err = session.IsUpgrading(se)
+	isUpgrading, err = session.IsUpgradingClusterState(se)
 	require.NoError(t, err)
 	require.True(t, isUpgrading)
 
@@ -1297,7 +1297,7 @@ func TestUpgrade(t *testing.T) {
 	// check the result
 	se, err = session.CreateSession(ts.store)
 	require.NoError(t, err)
-	isUpgrading, err = session.IsUpgrading(se)
+	isUpgrading, err = session.IsUpgradingClusterState(se)
 	require.NoError(t, err)
 	require.False(t, isUpgrading)
 
@@ -1315,7 +1315,7 @@ func TestUpgrade(t *testing.T) {
 	// check the result
 	se, err = session.CreateSession(ts.store)
 	require.NoError(t, err)
-	isUpgrading, err = session.IsUpgrading(se)
+	isUpgrading, err = session.IsUpgradingClusterState(se)
 	require.NoError(t, err)
 	require.False(t, isUpgrading)
 }

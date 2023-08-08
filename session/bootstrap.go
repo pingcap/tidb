@@ -1318,7 +1318,7 @@ func SyncNormalRunning(s Session) error {
 			dom := domain.GetDomain(s)
 			//nolint: errcheck
 			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), syncer.NewStateInfo(syncer.StateNormalRunning))
-			failpoint.Return()
+			failpoint.Return(nil)
 		}
 	})
 
@@ -1342,7 +1342,8 @@ func SyncNormalRunning(s Session) error {
 	return nil
 }
 
-func IsUpgrading(s Session) (bool, error) {
+// IsUpgradingClusterState checks whether the global state is upgrading.
+func IsUpgradingClusterState(s Session) (bool, error) {
 	dom := domain.GetDomain(s)
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancelFunc()
