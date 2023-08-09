@@ -112,7 +112,9 @@ test_part_br: br_unit_test br_integration_test
 test_part_dumpling: dumpling_unit_test dumpling_integration_test
 
 explaintest: server_check
-	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@cd cmd/explaintest && GOCOVERDIR=../../$(TEST_COVERAGE_DIR) ./run-tests.sh -s ../../bin/tidb-server
+	@$(GO) tool covdata textfmt -i=$(TEST_COVERAGE_DIR) -o=coverage.dat
 
 ddltest:
 	@cd cmd/ddltest && $(GO) test --tags=deadllock,intest -o ../../bin/ddltest -c
@@ -188,9 +190,9 @@ enterprise-server:
 
 server_check:
 ifeq ($(TARGET), "")
-	$(GOBUILD) $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o bin/tidb-server ./tidb-server
+	$(GOBUILD) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o bin/tidb-server ./tidb-server
 else
-	$(GOBUILD) $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o '$(TARGET)' ./tidb-server
+	$(GOBUILD) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o '$(TARGET)' ./tidb-server
 endif
 
 linux:
