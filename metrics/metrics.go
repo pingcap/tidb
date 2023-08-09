@@ -15,6 +15,8 @@
 package metrics
 
 import (
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
+	"github.com/pingcap/tidb/util/promutil"
 	"sync"
 
 	"github.com/pingcap/tidb/util/logutil"
@@ -270,6 +272,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
+	metric.NewMetrics(promutil.NewDefaultFactory()).RegisterTo(prometheus.DefaultRegisterer)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
 }
