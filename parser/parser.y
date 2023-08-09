@@ -1817,7 +1817,7 @@ DirectResourceGroupRunawayOption:
 		dur := strings.ToLower($4.(string))
 		if dur == "unlimited" {
 			dur = ""
-		} 
+		}
 		if len(dur) > 0 {
 			_, err := time.ParseDuration(dur)
 			if err != nil {
@@ -10034,13 +10034,19 @@ SubSelect:
 	}
 |	'(' SelectStmtWithClause ')'
 	{
-		rs := $2.(*ast.SelectStmt)
-		endOffset := parser.endOffset(&yyS[yypt])
-		parser.setLastSelectFieldText(rs, endOffset)
-		src := parser.src
-		// See the implementation of yyParse function
-		rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
-		$$ = &ast.SubqueryExpr{Query: rs}
+		switch rs := $2.(type) {
+		case *ast.SelectStmt:
+			endOffset := parser.endOffset(&yyS[yypt])
+			parser.setLastSelectFieldText(rs, endOffset)
+			src := parser.src
+			// See the implementation of yyParse function
+			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+			$$ = &ast.SubqueryExpr{Query: rs}
+		case *ast.SetOprStmt:
+			src := parser.src
+			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+			$$ = &ast.SubqueryExpr{Query: rs}
+		}
 	}
 |	'(' SubSelect ')'
 	{
