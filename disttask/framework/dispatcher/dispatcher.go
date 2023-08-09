@@ -217,7 +217,7 @@ func (d *dispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, 
 		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
 	}
 	for i := 0; i < retryTimes; i++ {
-		err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.task, newSubTasks)
+		err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.task, newSubTasks, prevState)
 		if err == nil {
 			break
 		}
