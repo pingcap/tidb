@@ -82,7 +82,7 @@ func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
 	if tbl == nil {
 		logutil.BgLogger().Fatal("table is nil", zap.Int64("tableID", tblID))
 	} else {
-		logutil.BgLogger().Info("table", zap.Int64("tableID", tblID))
+		logutil.BgLogger().Info("table", zap.Int64("tableID", tblID), zap.Stack("stack"))
 	}
 	ok := s.cache.Set(tblID, tbl, tbl.MemoryUsage().TotalTrackingMemUsage())
 	if ok { // NOTE: `s.cache` and `s.resultKeySet` may be inconsistent since the update operation is not atomic, but it's acceptable for our scenario
