@@ -409,6 +409,7 @@ func (d *dispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.Conte
 	return d.taskMgr.WithNewTxn(ctx, fn)
 }
 
+// VerifyTaskStateTransform verifies whether the task state transform is valid.
 func VerifyTaskStateTransform(oldState, newState string) bool {
 	rules := map[string][]string{
 		proto.TaskStatePending: {
