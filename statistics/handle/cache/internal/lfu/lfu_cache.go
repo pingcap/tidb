@@ -126,10 +126,10 @@ func DropEvicted(item statistics.TableCacheItem) {
 func (s *LFU) onEvict(item *ristretto.Item) {
 	// We do not need to calculate the cost during onEvict, because the onexit function
 	// is also called when the evict event occurs.
-	metrics.EvictCounter.Inc()
 	if item.Value == nil {
-		logutil.BgLogger().Error("item value is nil", zap.Any("item", item))
+		return
 	}
+	metrics.EvictCounter.Inc()
 	table := item.Value.(*statistics.Table)
 	before := table.MemoryUsage().TotalTrackingMemUsage()
 	for _, column := range table.Columns {
@@ -145,6 +145,9 @@ func (s *LFU) onEvict(item *ristretto.Item) {
 }
 
 func (s *LFU) onExit(val interface{}) {
+	if val == nil {
+		return
+	}
 	s.cost.Add(-1 * val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
 	metrics.CostGauge.Set(float64(s.cost.Load()))
 }
