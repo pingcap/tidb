@@ -59,14 +59,6 @@ type mockGCWorkerLockResolver struct {
 	resolveLocks        func(locks []*txnlock.Lock, lowResolutionTS uint64) (int64, error)
 }
 
-func (l *mockGCWorkerLockResolver) LocateKey(bo *tikv.Backoffer, key []byte) (*tikv.KeyLocation, error) {
-	return l.tikvStore.GetRegionCache().LocateKey(bo, key)
-}
-
-func (l *mockGCWorkerLockResolver) SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	return l.tikvStore.SendReq(bo, req, regionID, timeout)
-}
-
 func (l *mockGCWorkerLockResolver) ScanLocks(key []byte, regionID uint64) []*txnlock.Lock {
 	return l.scanLocks(key, regionID)
 }
@@ -76,7 +68,7 @@ func (l *mockGCWorkerLockResolver) ResolveLocks(bo *tikv.Backoffer, locks []*txn
 }
 
 func (l *mockGCWorkerLockResolver) GetStore() tikv.Storage {
-	// no use for test
+	// no use in test
 	return l.tikvStore
 }
 

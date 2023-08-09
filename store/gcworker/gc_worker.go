@@ -67,10 +67,6 @@ type GCWorkerLockResolver struct {
 	TiKvStore tikv.Storage
 }
 
-func (w *GCWorkerLockResolver) LocateKey(bo *tikv.Backoffer, key []byte) (*tikv.KeyLocation, error) {
-	return w.TiKvStore.GetRegionCache().LocateKey(bo, key)
-}
-
 func (w *GCWorkerLockResolver) ResolveLocks(bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID) (bool, error) {
 	// Resolve locks without check txn status. it's safe because it use safepoint to scan locks.
 	return w.TiKvStore.GetLockResolver().BatchResolveLocks(bo, locks, loc)
@@ -78,10 +74,6 @@ func (w *GCWorkerLockResolver) ResolveLocks(bo *tikv.Backoffer, locks []*txnlock
 
 func (w *GCWorkerLockResolver) ScanLocks(key []byte, regionID uint64) []*txnlock.Lock {
 	return nil
-}
-
-func (w *GCWorkerLockResolver) SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	return w.TiKvStore.SendReq(bo, req, regionID, timeout)
 }
 
 func (w *GCWorkerLockResolver) GetStore() tikv.Storage {

@@ -17,7 +17,6 @@ package gcutil
 import (
 	"bytes"
 	"context"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -49,17 +48,17 @@ const (
 // GCLockResolver is used for GCWorker and log backup advancer to resolve locks.
 // #Note: Put it here to avoid cycle import
 type GCLockResolver interface {
-	LocateKey(*tikv.Backoffer, []byte) (*tikv.KeyLocation, error)
-
+	// ResolveLocks tries to resolve expired locks.
+	// 1. For GCWorker it will scan locks for all regions before *safepoint*,
+	// and force remove locks. rollback the txn, no matter the lock is expired of not.
+	// 2. For log backup advancer, it will scan all locks for a small range.
+	// and it will check status of the txn. resolve the locks if txn is expired, Or do nothing.
 	ResolveLocks(*tikv.Backoffer, []*txnlock.Lock, tikv.RegionVerID) (bool, error)
 
 	// ScanLocks only used for mock test.
 	ScanLocks([]byte, uint64) []*txnlock.Lock
-
-	SendReq(*tikv.Backoffer, *tikvrpc.Request, tikv.RegionVerID, time.Duration) (*tikvrpc.Response, error)
-
 	// We need to get tikvStore to build rangerunner.
-	// FIXME: the most code is in client.go and the store is only used to locate end keys of a region.
+	// TODO: the most code is in client.go and the store is only used to locate end keys of a region.
 	// maybe we can move GCLockResolver into client.go.
 	GetStore() tikv.Storage
 }
@@ -165,12 +164,12 @@ retryScanAndResolve:
 		}
 
 		req.ScanLock().StartKey = key
-		loc, err := lockResolver.LocateKey(bo, key)
+		loc, err := lockResolver.GetStore().GetRegionCache().LocateKey(bo, key)
 		if err != nil {
 			return stat, errors.Trace(err)
 		}
 		req.ScanLock().EndKey = loc.EndKey
-		resp, err := lockResolver.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
+		resp, err := lockResolver.GetStore().SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
 		if err != nil {
 			return stat, errors.Trace(err)
 		}
@@ -249,7 +248,7 @@ func tryRelocateLocksRegion(bo *tikv.Backoffer, lockResolver GCLockResolver, loc
 	if len(locks) == 0 {
 		return
 	}
-	refreshedLoc, err = lockResolver.LocateKey(bo, locks[0].Key)
+	refreshedLoc, err = lockResolver.GetStore().GetRegionCache().LocateKey(bo, locks[0].Key)
 	if err != nil {
 		return
 	}

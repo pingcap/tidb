@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
@@ -26,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -576,6 +579,7 @@ func (f *fakeCluster) String() string {
 }
 
 type testEnv struct {
+	tikvStore tikv.Storage
 	*fakeCluster
 	checkpoint uint64
 	testCtx    *testing.T
@@ -634,4 +638,22 @@ func (t *testEnv) unregisterTask() {
 		Type: streamhelper.EventDel,
 		Name: "whole",
 	}
+}
+
+func (t *testEnv) ResolveLocks(
+	bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID) (bool, error) {
+	if len(locks) == 0 {
+		return true, nil
+	}
+
+	_, err := t.tikvStore.GetLockResolver().ResolveLocks(bo, 0, locks)
+	return err == nil, errors.Trace(err)
+}
+
+func (t *testEnv) ScanLocks(key []byte, regionID uint64) []*txnlock.Lock {
+	return nil
+}
+
+func (t *testEnv) GetStore() tikv.Storage {
+	return t.tikvStore
 }

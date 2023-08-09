@@ -13,7 +13,6 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -152,10 +151,6 @@ type AdvancerLockResolver struct {
 	TiKvStore tikv.Storage
 }
 
-func (w *AdvancerLockResolver) LocateKey(bo *tikv.Backoffer, key []byte) (*tikv.KeyLocation, error) {
-	return w.TiKvStore.GetRegionCache().LocateKey(bo, key)
-}
-
 // ResolveLocks tries to resolve expired locks with this method.
 // It will check status of the txn. Resolve the lock if txn is expired, Or do nothing.
 func (w *AdvancerLockResolver) ResolveLocks(
@@ -170,12 +165,6 @@ func (w *AdvancerLockResolver) ResolveLocks(
 
 func (w *AdvancerLockResolver) ScanLocks(key []byte, regionID uint64) []*txnlock.Lock {
 	return nil
-}
-
-func (w *AdvancerLockResolver) SendReq(
-	bo *tikv.Backoffer, req *tikvrpc.Request,
-	regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	return w.TiKvStore.SendReq(bo, req, regionID, timeout)
 }
 
 func (w *AdvancerLockResolver) GetStore() tikv.Storage {
