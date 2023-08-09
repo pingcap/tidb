@@ -141,7 +141,7 @@ const (
 		ORDER BY _tidb_rowid LIMIT ?;
 	`
 
-	selectConflictKeysReplace = `
+	selectIndexConflictKeysReplace = `
 		SELECT raw_key
 		FROM %s.` + ConflictErrorTableName + `
 		WHERE table_name = ? AND index_name = 'PRIMARY'
@@ -564,7 +564,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 	pool.ApplyOnErrorGroup(g, func() error {
 		// check index KV first
 		rawHandleRows, err := em.db.QueryContext(
-			gCtx, fmt.Sprintf(selectConflictKeysReplace, em.schemaEscaped),
+			gCtx, fmt.Sprintf(selectIndexConflictKeysReplace, em.schemaEscaped),
 			tableName)
 		if err != nil {
 			return errors.Trace(err)
@@ -660,7 +660,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			return errors.Trace(err)
 		}
 
-		// check data KV
+		// Todo: check data KV
 
 		return nil
 	})
@@ -681,7 +681,7 @@ func (em *ErrorManager) RecordDuplicateCount(cnt int64) error {
 }
 
 // RecordDuplicate records a "duplicate entry" error so user can query them later.
-// Currently the error will not be shared for multiple lightning instances.
+// Currently, the error will not be shared for multiple lightning instances.
 func (em *ErrorManager) RecordDuplicate(
 	ctx context.Context,
 	logger log.Logger,
