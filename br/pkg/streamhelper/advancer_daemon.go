@@ -61,10 +61,12 @@ func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 							// we will scan all locks and try to resolve them by check txn status.
 							return gcutil.ResolveLocksForRange(ctx, "log backup advancer", c.env, math.MaxUint64, r.StartKey, r.EndKey)
 						}
-						runner := rangetask.NewRangeTaskRunner("advancer-resolve-locks-runner", c.env.GetStore(), config.DefaultMaxConcurrencyAdvance, handler)
-						// Run resolve lock on the whole TiKV cluster. it will use startKey/endKey to scan region in PD. so we need encode key here.
-						encodedStartKey := codec.EncodeBytes([]byte{}, []byte(c.lastCheckpoint.StartKey))
-						encodedEndKey := codec.EncodeBytes([]byte{}, []byte(c.lastCheckpoint.EndKey))
+						runner := rangetask.NewRangeTaskRunner("advancer-resolve-locks-runner",
+							c.env.GetStore(), config.DefaultMaxConcurrencyAdvance, handler)
+						// Run resolve lock on the whole TiKV cluster.
+						// it will use startKey/endKey to scan region in PD. so we need encode key here.
+						encodedStartKey := codec.EncodeBytes([]byte{}, c.lastCheckpoint.StartKey)
+						encodedEndKey := codec.EncodeBytes([]byte{}, c.lastCheckpoint.EndKey)
 						err := runner.RunOnRange(ctx, encodedStartKey, encodedEndKey)
 						if err != nil {
 							// wait for next tick

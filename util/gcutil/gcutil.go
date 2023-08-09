@@ -42,7 +42,7 @@ import (
 const (
 	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?`
 
-	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
+	// GCScanLockLimit We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
 	GCScanLockLimit = txnlock.ResolvedCacheSize / 2
 )
 
@@ -153,7 +153,7 @@ func ResolveLocksForRange(
 		sleep := v.(int)
 		// cooperate with github.com/tikv/client-go/v2/locate/invalidCacheAndRetry
 		//nolint: SA1029
-		ctx = context.WithValue(ctx, "injectedBackoff", struct{}{})
+		ctx = context.WithValue(ctx, "injectedBackoff", struct{}{}) //nolint
 		bo = tikv.NewBackofferWithVars(ctx, sleep, nil)
 	})
 retryScanAndResolve:

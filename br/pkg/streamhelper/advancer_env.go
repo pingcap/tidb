@@ -158,7 +158,8 @@ func (w *AdvancerLockResolver) LocateKey(bo *tikv.Backoffer, key []byte) (*tikv.
 
 // ResolveLocks tries to resolve expired locks with this method.
 // It will check status of the txn. Resolve the lock if txn is expired, Or do nothing.
-func (w *AdvancerLockResolver) ResolveLocks(bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID) (bool, error) {
+func (w *AdvancerLockResolver) ResolveLocks(
+	bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID) (bool, error) {
 	if len(locks) == 0 {
 		return true, nil
 	}
@@ -171,7 +172,9 @@ func (w *AdvancerLockResolver) ScanLocks(key []byte, regionID uint64) []*txnlock
 	return nil
 }
 
-func (w *AdvancerLockResolver) SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
+func (w *AdvancerLockResolver) SendReq(
+	bo *tikv.Backoffer, req *tikvrpc.Request,
+	regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 	return w.TiKvStore.SendReq(bo, req, regionID, timeout)
 }
 
