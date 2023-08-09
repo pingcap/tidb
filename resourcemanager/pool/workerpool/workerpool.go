@@ -59,6 +59,35 @@ func (OptionSkipRegister[T]) Apply(pool *WorkerPool[T]) {
 	pool.skipRegister = true
 }
 
+// NewWorkerPoolWithoutCreateWorker creates a new worker pool without creating worker.
+func NewWorkerPoolWithoutCreateWorker[T any](name string, component util.Component,
+	numWorkers int, opts ...Option[T]) (*WorkerPool[T], error) {
+	if numWorkers <= 0 {
+		numWorkers = 1
+	}
+
+	p := &WorkerPool[T]{
+		name:          name,
+		numWorkers:    int32(numWorkers),
+		originWorkers: int32(numWorkers),
+		taskChan:      make(chan T),
+		quitChan:      make(chan struct{}),
+	}
+
+	for _, opt := range opts {
+		opt.Apply(p)
+	}
+
+	if !p.skipRegister {
+		err := resourcemanager.InstanceResourceManager.Register(p, name, component)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return p, nil
+}
+
 // NewWorkerPool creates a new worker pool.
 func NewWorkerPool[T any](name string, component util.Component, numWorkers int,
 	createWorker func() Worker[T], opts ...Option[T]) (*WorkerPool[T], error) {
@@ -86,12 +115,20 @@ func NewWorkerPool[T any](name string, component util.Component, numWorkers int,
 		}
 	}
 
+	p.Start()
+
+	return p, nil
+}
+
+func (p *WorkerPool[T]) SetCreateWorker(createWorker func() Worker[T]) {
+	p.createWorker = createWorker
+}
+
+func (p *WorkerPool[T]) Start() {
 	// Start default count of workers.
 	for i := 0; i < int(p.numWorkers); i++ {
 		p.runAWorker()
 	}
-
-	return p, nil
 }
 
 func (p *WorkerPool[T]) handleTaskWithRecover(w Worker[T], task T) {
