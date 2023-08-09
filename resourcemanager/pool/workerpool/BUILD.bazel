@@ -11,6 +11,7 @@ go_library(
         "//resourcemanager/util",
         "//util",
         "//util/syncutil",
+        "@com_github_pingcap_log//:log",
         "@org_uber_go_atomic//:atomic",
     ],
 )

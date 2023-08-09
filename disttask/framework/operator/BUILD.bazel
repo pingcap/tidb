@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "operator",
+    srcs = [
+        "async.go",
+        "asyncPipeline.go",
+        "async_example.go",
+        "data.go",
+    ],
+    importpath = "github.com/pingcap/tidb/disttask/framework/operator",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//resourcemanager/pool/workerpool",
+        "//resourcemanager/util",
+    ],
+)
+
+go_test(
+    name = "operator_test",
+    timeout = "short",
+    srcs = ["async_test.go"],
+    embed = [":operator"],
+    flaky = True,
+    deps = [
+        "//resourcemanager/util",
+        "@com_github_stretchr_testify//require",
+    ],
+)
