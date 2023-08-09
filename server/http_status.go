@@ -552,7 +552,7 @@ type Status struct {
 	GitHash     string `json:"git_hash"`
 }
 
-func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
+func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	// If the server is in the process of shutting down, return a non-200 status.
 	// It is important not to return Status{} as acquiring the s.ConnectionCount()

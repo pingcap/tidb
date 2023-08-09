@@ -1,0 +1,10 @@
+aliases:
+  sig-critical-approvers-tidb-server:
+    - yudongusa
+    - easonn7
+  sig-critical-approvers-tidb-lightning:
+    - yudongusa
+    - easonn7
+  sig-critical-approvers-parser:
+    - yudongusa
+    - easonn7
