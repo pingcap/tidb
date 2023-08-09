@@ -213,7 +213,7 @@ func (d *dispatcher) handleRunning() error {
 func (d *dispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
 	prevState := d.task.State
 	d.task.State = taskState
-	if !verifyTaskStateTransform(prevState, taskState) {
+	if !VerifyTaskStateTransform(prevState, taskState) {
 		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
 	}
 	for i := 0; i < retryTimes; i++ {
@@ -409,7 +409,7 @@ func (d *dispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.Conte
 	return d.taskMgr.WithNewTxn(ctx, fn)
 }
 
-func verifyTaskStateTransform(oldState, newState string) bool {
+func VerifyTaskStateTransform(oldState, newState string) bool {
 	rules := map[string][]string{
 		proto.TaskStatePending: {
 			proto.TaskStateRunning,
