@@ -4,11 +4,13 @@ package streamhelper
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -88,7 +90,7 @@ func newCheckpointWithTS(ts uint64) checkpoint {
 	}
 }
 
-func newCheckpointWithSpan(s spans.Valued) checkpoint {
+func NewCheckpointWithSpan(s spans.Valued) checkpoint {
 	return checkpoint{
 		StartKey:     s.Key.StartKey,
 		EndKey:       s.Key.EndKey,
@@ -105,6 +107,9 @@ func (c checkpoint) safeTS() uint64 {
 // we should try to resolve lock for the range
 // to keep the RPO in a short value.
 func (c checkpoint) needResolveLocks() bool {
+	failpoint.Inject("NeedResolveLocks", func(val failpoint.Value) {
+		failpoint.Return(val.(bool))
+	})
 	return time.Since(c.generateTime) > time.Minute
 }
 
@@ -129,6 +134,11 @@ func (c *CheckpointAdvancer) UpdateConfigWith(f func(*config.Config)) {
 	cfg := c.cfg
 	f(&cfg)
 	c.UpdateConfig(cfg)
+}
+
+// only used for test
+func (c *CheckpointAdvancer) UpdateLastCheckpoint(p checkpoint) {
+	c.lastCheckpoint = p
 }
 
 // Config returns the current config.
@@ -363,7 +373,8 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 }
 
 func (c *CheckpointAdvancer) setCheckpoint(ctx context.Context, s spans.Valued) bool {
-	cp := newCheckpointWithSpan(s)
+	fmt.Println("enter setCheckpoint")
+	cp := NewCheckpointWithSpan(s)
 	if cp.TS < c.lastCheckpoint.TS {
 		log.Warn("failed to update global checkpoint: stale",
 			zap.Uint64("old", c.lastCheckpoint.TS), zap.Uint64("new", cp.TS))

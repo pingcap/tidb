@@ -15,10 +15,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
-	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
@@ -28,7 +29,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -585,8 +588,10 @@ type testEnv struct {
 	ranges     []kv.KeyRange
 	taskCh     chan<- streamhelper.TaskEvent
 
-	scanLocks func(key []byte, regionID uint64) []*txnlock.Lock
-	mu        sync.Mutex
+	scanLocks    func(key []byte, regionID uint64) []*txnlock.Lock
+	resolveLocks func(locks []*txnlock.Lock, regionID tikv.RegionVerID) (ok bool, err error)
+
+	mu sync.Mutex
 }
 
 func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) error {
@@ -646,8 +651,7 @@ func (t *testEnv) ResolveLocks(
 		return true, nil
 	}
 
-	_, err := t.tikvStore.GetLockResolver().ResolveLocks(bo, 0, locks)
-	return err == nil, errors.Trace(err)
+	return t.resolveLocks(locks, loc)
 }
 
 func (t *testEnv) ScanLocks(key []byte, regionID uint64) []*txnlock.Lock {
@@ -655,5 +659,69 @@ func (t *testEnv) ScanLocks(key []byte, regionID uint64) []*txnlock.Lock {
 }
 
 func (t *testEnv) GetStore() tikv.Storage {
-	return nil
+	// only used for GetRegionCache once in resolve lock
+	return &mockTiKVStore{regionCache: tikv.NewRegionCache(&mockPDClient{})}
+}
+
+type mockKVStore struct {
+	kv.Storage
+}
+
+type mockTiKVStore struct {
+	mockKVStore
+	tikv.Storage
+	regionCache *tikv.RegionCache
+}
+
+func (s *mockTiKVStore) GetRegionCache() *tikv.RegionCache {
+	return s.regionCache
+}
+
+func (s *mockTiKVStore) SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
+	scanResp := kvrpcpb.ScanLockResponse{
+		// we don't need mock locks here, because we already have mock locks in testEnv.Scanlocks.
+		// this behaviour is align with gc_worker_test
+		Locks:       nil,
+		RegionError: nil,
+	}
+	return &tikvrpc.Response{Resp: &scanResp}, nil
+}
+
+type mockPDClient struct {
+	pd.Client
+}
+
+func (p *mockPDClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*pd.Region, error) {
+	return []*pd.Region{
+		newMockRegion(1, []byte("1"), []byte("3")),
+	}, nil
+}
+
+func (c *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Store, error) {
+	return &metapb.Store{
+		Id:      storeID,
+		Address: fmt.Sprintf("127.0.0.%d", storeID),
+	}, nil
+}
+
+func (c *mockPDClient) GetRegion(ctx context.Context, key []byte, opts ...pd.GetRegionOption) (*pd.Region, error) {
+	return newMockRegion(1, []byte("1"), []byte("3")), nil
+}
+
+func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
+	leader := &metapb.Peer{
+		Id:      regionID,
+		StoreId: 1,
+		Role:    metapb.PeerRole_Voter,
+	}
+
+	return &pd.Region{
+		Meta: &metapb.Region{
+			Id:       regionID,
+			StartKey: startKey,
+			EndKey:   endKey,
+			Peers:    []*metapb.Peer{leader},
+		},
+		Leader: leader,
+	}
 }

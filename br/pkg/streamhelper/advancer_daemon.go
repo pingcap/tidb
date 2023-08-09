@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -25,6 +26,14 @@ const (
 	ownerPrompt = "log-backup"
 	ownerPath   = "/tidb/br-stream/owner"
 )
+
+func resolveLockTickTime() time.Duration {
+	failpoint.Inject("ResolveLockTickTime", func(val failpoint.Value) {
+		t := time.Duration(val.(int))
+		failpoint.Return(t * time.Second)
+	})
+	return 30 * time.Second
+}
 
 // OnTick advances the inner logic clock for the advancer.
 // It's synchronous: this would only return after the events triggered by the clock has all been done.
@@ -45,7 +54,8 @@ func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 	metrics.AdvancerOwner.Set(1.0)
 	c.spawnSubscriptionHandler(ctx)
 	go func() {
-		tick := time.NewTicker(30 * time.Second)
+		t := resolveLockTickTime()
+		tick := time.NewTicker(t)
 		defer tick.Stop()
 		for {
 			select {

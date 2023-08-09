@@ -10,12 +10,15 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc/codes"
@@ -287,19 +290,61 @@ func TestResolveLock(t *testing.T) {
 			fmt.Println(c)
 		}
 	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/NeedResolveLocks", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/ResolveLockTickTime", `return(1)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/NeedResolveLocks"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/ResolveLockTickTime"))
+	}()
+
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx := context.Background()
 	minCheckpoint := c.advanceCheckpoints()
 	env := &testEnv{fakeCluster: c, testCtx: t}
+	allLocks := []*txnlock.Lock{
+		{
+			Key: []byte{1},
+			// TxnID == minCheckpoint
+			TxnID: minCheckpoint,
+		},
+		{
+			Key: []byte{2},
+			// TxnID > minCheckpoint
+			TxnID: minCheckpoint + 1,
+		},
+	}
 	env.scanLocks = func(key []byte, regionID uint64) []*txnlock.Lock {
-		return nil
+		return allLocks
+
+	}
+	// ensure resolve locks triggered and collect all locks from scan locks
+	resolveLockCnt := 0
+	resolveLockCntRef := &resolveLockCnt
+	env.resolveLocks = func(locks []*txnlock.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
+		*resolveLockCntRef += 1
+		require.ElementsMatch(t, locks, allLocks)
+		return true, nil
 	}
 	adv := streamhelper.NewCheckpointAdvancer(env)
+	// make lastCheckpoint stuck at 123
+	adv.UpdateLastCheckpoint(streamhelper.NewCheckpointWithSpan(spans.Valued{
+		Key: kv.KeyRange{
+			StartKey: kv.Key([]byte("1")),
+			EndKey:   kv.Key([]byte("2")),
+		},
+		Value: 123,
+	}))
+	adv.OnBecomeOwner(ctx)
 	coll := streamhelper.NewClusterCollector(ctx, env)
 	err := adv.GetCheckpointInRange(ctx, []byte{}, []byte{}, coll)
+
+	require.Eventually(t, func() bool { return *resolveLockCntRef > 0 },
+		8*time.Second, 50*time.Microsecond)
+
 	require.NoError(t, err)
 	r, err := coll.Finish(ctx)
 	require.NoError(t, err)
 	require.Len(t, r.FailureSubRanges, 0)
 	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
+
 }
