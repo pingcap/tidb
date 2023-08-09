@@ -18,42 +18,48 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
-	"encoding/hex"
-	"fmt"
 	"io"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
-type kvPair struct {
-	key       []byte
-	value     []byte
-	fileIndex int
+type heapElem interface {
+	sortKey() []byte
 }
 
-type kvPairHeap []*kvPair
+type sortedReader[T heapElem] interface {
+	path() string
+	next() (T, error)
+	close() error
+}
 
-func (h kvPairHeap) Len() int {
+type mergeHeapElem[T heapElem] struct {
+	elem      T
+	readerIdx int
+}
+
+type mergeHeap[T heapElem] []mergeHeapElem[T]
+
+func (h mergeHeap[T]) Len() int {
 	return len(h)
 }
 
-func (h kvPairHeap) Less(i, j int) bool {
-	return bytes.Compare(h[i].key, h[j].key) < 0
+func (h mergeHeap[T]) Less(i, j int) bool {
+	return bytes.Compare(h[i].elem.sortKey(), h[j].elem.sortKey()) < 0
 }
 
-func (h kvPairHeap) Swap(i, j int) {
+func (h mergeHeap[T]) Swap(i, j int) {
 	h[i], h[j] = h[j], h[i]
 }
 
-func (h *kvPairHeap) Push(x interface{}) {
-	*h = append(*h, x.(*kvPair))
+func (h *mergeHeap[T]) Push(x interface{}) {
+	*h = append(*h, x.(mergeHeapElem[T]))
 }
 
-func (h *kvPairHeap) Pop() interface{} {
+func (h *mergeHeap[T]) Pop() interface{} {
 	old := *h
 	n := len(old)
 	x := old[n-1]
@@ -61,21 +67,152 @@ func (h *kvPairHeap) Pop() interface{} {
 	return x
 }
 
+type mergeIter[T heapElem, R sortedReader[T]] struct {
+	h             mergeHeap[T]
+	readers       []*R
+	curr          T
+	lastReaderIdx int
+	err           error
+
+	logger *zap.Logger
+}
+
+// newMergeIter creates a merge iterator for multiple sorted readers. the
+// ownership of readers is transferred to the mergeIter. When newMergeIter
+// returns error, the reader will be closed.
+func newMergeIter[
+	T heapElem,
+	R sortedReader[T],
+](readers []*R, logger *zap.Logger) (*mergeIter[T, R], error) {
+	i := &mergeIter[T, R]{
+		h:             make(mergeHeap[T], 0, len(readers)),
+		readers:       readers,
+		lastReaderIdx: -1,
+		logger:        logger,
+	}
+	for j := range i.readers {
+		rd := *i.readers[j]
+		e, err := rd.next()
+		if err == io.EOF {
+			closeErr := rd.close()
+			if closeErr != nil {
+				i.logger.Warn("failed to close reader",
+					zap.String("path", rd.path()),
+					zap.Error(closeErr))
+			}
+			i.readers[j] = nil
+			continue
+		}
+		if err != nil && err != io.EOF {
+			i.close()
+			return nil, err
+		}
+		i.h = append(i.h, mergeHeapElem[T]{
+			elem:      e,
+			readerIdx: j,
+		})
+	}
+	heap.Init(&i.h)
+	return i, nil
+}
+
+// close must be called for a mergeIter when it is no longer used.
+func (i *mergeIter[T, R]) close() error {
+	var firstErr error
+	for idx, rdp := range i.readers {
+		if rdp != nil {
+			rd := *rdp
+			err := rd.close()
+			if err != nil {
+				i.logger.Warn("failed to close reader",
+					zap.String("path", rd.path()),
+					zap.Error(err))
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+			i.readers[idx] = nil
+		}
+	}
+	return firstErr
+}
+
+func (i *mergeIter[T, R]) currElem() T {
+	return i.curr
+}
+
+func (i *mergeIter[T, R]) valid() bool {
+	return i.err == nil && i.h.Len() > 0
+}
+
+func (i *mergeIter[T, R]) next() bool {
+	var zeroT T
+	i.curr = zeroT
+	if i.lastReaderIdx >= 0 {
+		rd := *i.readers[i.lastReaderIdx]
+		e, err := rd.next()
+		switch err {
+		case nil:
+			heap.Push(&i.h, mergeHeapElem[T]{elem: e, readerIdx: i.lastReaderIdx})
+		case io.EOF:
+			closeErr := rd.close()
+			if closeErr != nil {
+				i.logger.Warn("failed to close reader",
+					zap.String("path", rd.path()),
+					zap.Error(closeErr))
+			}
+			i.readers[i.lastReaderIdx] = nil
+		default:
+			i.err = err
+			return false
+		}
+	}
+	i.lastReaderIdx = -1
+
+	if i.h.Len() == 0 {
+		return false
+	}
+	currMergeElem := heap.Pop(&i.h).(mergeHeapElem[T])
+	i.curr = currMergeElem.elem
+	i.lastReaderIdx = currMergeElem.readerIdx
+	return true
+}
+
+// begin instantiations of mergeIter
+
+type kvPair struct {
+	key   []byte
+	value []byte
+}
+
+func (p kvPair) sortKey() []byte {
+	return p.key
+}
+
+type kvReaderProxy struct {
+	p string
+	r *kvReader
+}
+
+func (p kvReaderProxy) path() string {
+	return p.p
+}
+
+func (p kvReaderProxy) next() (kvPair, error) {
+	k, v, err := p.r.nextKV()
+	if err != nil {
+		return kvPair{}, err
+	}
+	return kvPair{key: k, value: v}, nil
+}
+
+func (p kvReaderProxy) close() error {
+	return p.r.Close()
+}
+
 // MergeIter is an iterator that merges multiple sorted KV pairs from different files.
 type MergeIter struct {
-	startKey       []byte
-	endKey         []byte
-	dataFilePaths  []string
-	dataFileReader []*kvReader
-	exStorage      storage.ExternalStorage
-	kvHeap         kvPairHeap
-	currKV         *kvPair
-	lastFileIndex  int
-
-	firstKey []byte
-
-	err    error
-	logger *zap.Logger
+	iter *mergeIter[kvPair, kvReaderProxy]
 }
 
 // NewMergeIter creates a new MergeIter.
@@ -89,13 +226,19 @@ func NewMergeIter(
 	readBufferSize int,
 ) (*MergeIter, error) {
 	logger := logutil.Logger(ctx)
-	it := &MergeIter{
-		dataFilePaths: paths,
-		lastFileIndex: -1,
-		logger:        logger,
+	kvReaders := make([]*kvReaderProxy, len(paths))
+	closeReaders := func() {
+		for _, r := range kvReaders {
+			if r.r != nil {
+				err := r.r.Close()
+				if err != nil {
+					logger.Warn("failed to close reader",
+						zap.String("path", r.path()),
+						zap.Error(err))
+				}
+			}
+		}
 	}
-	it.dataFileReader = make([]*kvReader, len(paths))
-	it.kvHeap = make([]*kvPair, 0, len(paths))
 
 	// Open all data files concurrently.
 	wg, wgCtx := errgroup.WithContext(ctx)
@@ -106,159 +249,74 @@ func NewMergeIter(
 			if err != nil {
 				return err
 			}
-			it.dataFileReader[i] = rd
+			kvReaders[i] = &kvReaderProxy{p: paths[i], r: rd}
 			return nil
 		})
 	}
 	if err := wg.Wait(); err != nil {
+		closeReaders()
 		return nil, err
 	}
 
-	for i, rd := range it.dataFileReader {
-		k, v, err := rd.nextKV()
-		if err != nil && err != io.EOF {
-			return nil, err
-		}
-		if len(k) == 0 {
-			closeErr := rd.Close()
-			if closeErr != nil {
-				logger.Warn(
-					"failed to close file",
-					zap.String("path", paths[i]),
-					zap.Error(closeErr),
-				)
-			}
-			continue
-		}
-		pair := kvPair{key: k, value: v, fileIndex: i}
-		it.kvHeap.Push(&pair)
-	}
-	heap.Init(&it.kvHeap)
-	return it, nil
+	it, err := newMergeIter[kvPair, kvReaderProxy](kvReaders, logger)
+	// if error happens in newMergeIter, newMergeIter itself will close readers
+	return &MergeIter{iter: it}, err
 }
 
 // Error returns the error of the iterator.
 func (i *MergeIter) Error() error {
-	return i.err
+	return i.iter.err
 }
 
 // Valid returns whether the iterator is valid to be iterated.
 func (i *MergeIter) Valid() bool {
-	return i.err == nil && i.kvHeap.Len() > 0
+	return i.iter.valid()
 }
 
 // Next moves the iterator to the next position.
 func (i *MergeIter) Next() bool {
-	i.currKV = nil
-	// Populate the heap.
-	if i.lastFileIndex >= 0 {
-		k, v, err := i.dataFileReader[i.lastFileIndex].nextKV()
-		if err != nil && err != io.EOF {
-			i.err = err
-			return false
-		}
-		if len(k) > 0 {
-			heap.Push(&i.kvHeap, &kvPair{k, v, i.lastFileIndex})
-		} else {
-			closeErr := i.dataFileReader[i.lastFileIndex].Close()
-			if closeErr != nil {
-				i.logger.Warn(
-					"failed to close file",
-					zap.String("path", i.dataFilePaths[i.lastFileIndex]),
-					zap.Error(closeErr),
-				)
-			}
-		}
-	}
-	i.lastFileIndex = -1
-
-	if i.kvHeap.Len() == 0 {
-		return false
-	}
-	i.currKV = heap.Pop(&i.kvHeap).(*kvPair)
-	i.lastFileIndex = i.currKV.fileIndex
-	return true
+	return i.iter.next()
 }
 
 // Key returns the current key.
 func (i *MergeIter) Key() []byte {
-	return i.currKV.key
+	return i.iter.curr.key
 }
 
 // Value returns the current value.
 func (i *MergeIter) Value() []byte {
-	return i.currKV.value
+	return i.iter.curr.value
 }
 
 // Close closes the iterator.
 func (i *MergeIter) Close() error {
-	var firstErr error
-	if i.lastFileIndex >= 0 {
-		firstErr = i.dataFileReader[i.lastFileIndex].Close()
-	}
-	for _, p := range i.kvHeap {
-		err := i.dataFileReader[p.fileIndex].Close()
-		if err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-
-	return firstErr
+	return i.iter.close()
 }
 
-type prop struct {
-	p         rangeProperty
-	fileIndex int
+func (p rangeProperty) sortKey() []byte {
+	return p.key
 }
 
-type propHeap []*prop
-
-func (h propHeap) Len() int {
-	return len(h)
+type statReaderProxy struct {
+	p string
+	r *statsReader
 }
 
-func (h propHeap) Less(i, j int) bool {
-	return bytes.Compare(h[i].p.key, h[j].p.key) < 0
+func (p statReaderProxy) path() string {
+	return p.p
 }
 
-func (h propHeap) Swap(i, j int) {
-	h[i], h[j] = h[j], h[i]
+func (p statReaderProxy) next() (*rangeProperty, error) {
+	return p.r.nextProp()
 }
 
-func (h *propHeap) Push(x interface{}) {
-	*h = append(*h, x.(*prop))
-}
-
-func (h *propHeap) Pop() interface{} {
-	old := *h
-	n := len(old)
-	x := old[n-1]
-	*h = old[0 : n-1]
-	return x
-}
-
-func (h *propHeap) Print() string {
-	var buf bytes.Buffer
-	for _, p := range *h {
-		fmt.Fprintf(&buf, "%s ", hex.EncodeToString(p.p.key))
-	}
-	return buf.String()
+func (p statReaderProxy) close() error {
+	return p.r.Close()
 }
 
 // MergePropIter is an iterator that merges multiple range properties from different files.
 type MergePropIter struct {
-	startKey       []byte
-	endKey         []byte
-	statFilePaths  []string
-	statFileReader []*statsReader
-	propHeap       propHeap
-	currProp       *prop
-
-	firstKey      []byte
-	lastFileIndex int
-
-	err    error
-	logger *zap.Logger
+	iter *mergeIter[*rangeProperty, statReaderProxy]
 }
 
 // NewMergePropIter creates a new MergePropIter.
@@ -268,15 +326,21 @@ func NewMergePropIter(
 	exStorage storage.ExternalStorage,
 ) (*MergePropIter, error) {
 	logger := logutil.Logger(ctx)
-	it := &MergePropIter{
-		statFilePaths: paths,
-		lastFileIndex: -1,
-		logger:        logger,
+	statReaders := make([]*statReaderProxy, len(paths))
+	closeReaders := func() {
+		for _, r := range statReaders {
+			if r.r != nil {
+				err := r.r.Close()
+				if err != nil {
+					logger.Warn("failed to close reader",
+						zap.String("path", r.path()),
+						zap.Error(err))
+				}
+			}
+		}
 	}
-	it.propHeap = make([]*prop, 0, len(paths))
-	it.statFileReader = make([]*statsReader, len(paths))
 
-	// Open all stat files concurrently.
+	// Open all data files concurrently.
 	wg, wgCtx := errgroup.WithContext(ctx)
 	for i := range paths {
 		i := i
@@ -285,126 +349,40 @@ func NewMergePropIter(
 			if err != nil {
 				return err
 			}
-			it.statFileReader[i] = rd
+			statReaders[i] = &statReaderProxy{p: paths[i], r: rd}
 			return nil
 		})
 	}
-
 	if err := wg.Wait(); err != nil {
+		closeReaders()
 		return nil, err
 	}
 
-	for i, rd := range it.statFileReader {
-		p, err := rd.nextProp()
-		if err != nil && err != io.EOF {
-			return nil, err
-		}
-		if p == nil {
-			closeErr := rd.Close()
-			if closeErr != nil {
-				logger.Warn(
-					"failed to close file",
-					zap.String("path", paths[i]),
-					zap.Error(closeErr),
-				)
-			}
-			continue
-		}
-		pair := prop{p: *p, fileIndex: i}
-		it.propHeap.Push(&pair)
-	}
-	heap.Init(&it.propHeap)
-	return it, nil
-}
-
-// SeekPropsOffsets seeks the offsets of the range properties that are greater than the start key.
-func SeekPropsOffsets(
-	ctx context.Context,
-	start kv.Key,
-	paths []string,
-	exStorage storage.ExternalStorage,
-) ([]uint64, error) {
-	iter, err := NewMergePropIter(ctx, paths, exStorage)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err := iter.Close(); err != nil {
-			logutil.BgLogger().Warn("failed to close merge prop iterator", zap.Error(err))
-		}
-	}()
-	offsets := make([]uint64, len(paths))
-	for iter.Next() {
-		if iter.Error() != nil {
-			return nil, iter.Error()
-		}
-		p := iter.prop()
-		propKey := kv.Key(p.key)
-		if propKey.Cmp(start) > 0 {
-			return offsets, nil
-		}
-		offsets[iter.currProp.fileIndex] = iter.currProp.p.offset
-	}
-	return offsets, nil
+	it, err := newMergeIter[*rangeProperty, statReaderProxy](statReaders, logger)
+	// if error happens in newMergeIter, newMergeIter itself will close readers
+	return &MergePropIter{iter: it}, err
 }
 
 // Error returns the error of the iterator.
 func (i *MergePropIter) Error() error {
-	return i.err
+	return i.iter.err
 }
 
 // Valid returns whether the iterator is valid to be iterated.
 func (i *MergePropIter) Valid() bool {
-	return i.err == nil && i.propHeap.Len() > 0
+	return i.iter.valid()
 }
 
 // Next moves the iterator to the next position.
 func (i *MergePropIter) Next() bool {
-	i.currProp = nil
-	if i.lastFileIndex >= 0 {
-		p, err := i.statFileReader[i.lastFileIndex].nextProp()
-		if err != nil && err != io.EOF {
-			i.err = err
-			return false
-		}
-		if p != nil {
-			heap.Push(&i.propHeap, &prop{*p, i.lastFileIndex})
-		} else {
-			closeErr := i.statFileReader[i.lastFileIndex].Close()
-			if closeErr != nil {
-				i.logger.Warn(
-					"failed to close file",
-					zap.String("path", i.statFilePaths[i.lastFileIndex]),
-					zap.Error(closeErr),
-				)
-			}
-		}
-	}
-	i.lastFileIndex = -1
-
-	if i.propHeap.Len() == 0 {
-		return false
-	}
-	i.currProp = heap.Pop(&i.propHeap).(*prop)
-	i.lastFileIndex = i.currProp.fileIndex
-	return true
+	return i.iter.next()
 }
 
 func (i *MergePropIter) prop() *rangeProperty {
-	return &i.currProp.p
+	return i.iter.curr
 }
 
 // Close closes the iterator.
 func (i *MergePropIter) Close() error {
-	var firstErr error
-	if i.lastFileIndex >= 0 {
-		firstErr = i.statFileReader[i.lastFileIndex].Close()
-	}
-	for _, p := range i.propHeap {
-		err := i.statFileReader[p.fileIndex].Close()
-		if err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
+	return i.iter.close()
 }

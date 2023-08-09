@@ -85,10 +85,17 @@ func TestMergeIter(t *testing.T) {
 	require.EqualValues(t, 2, trackStore.opened.Load())
 
 	got := make([][2]string, 0)
-	for mergeIter.Valid() {
-		mergeIter.Next()
-		got = append(got, [2]string{string(mergeIter.Key()), string(mergeIter.Value())})
-	}
+	require.True(t, mergeIter.Valid())
+	require.True(t, mergeIter.Next())
+	got = append(got, [2]string{string(mergeIter.Key()), string(mergeIter.Value())})
+	require.True(t, mergeIter.Valid())
+	require.True(t, mergeIter.Next())
+	got = append(got, [2]string{string(mergeIter.Key()), string(mergeIter.Value())})
+	require.True(t, mergeIter.Valid())
+	require.True(t, mergeIter.Next())
+	got = append(got, [2]string{string(mergeIter.Key()), string(mergeIter.Value())})
+	require.False(t, mergeIter.Valid())
+
 	expected := [][2]string{
 		{"key1", "value1"},
 		{"key2", "value2"},
