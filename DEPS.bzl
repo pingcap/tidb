@@ -1438,13 +1438,13 @@ def go_deps():
         name = "com_github_daixiang0_gci",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/daixiang0/gci",
-        sha256 = "045ee3c467bc9c4ade0964f4305a9917b1520c9c8bcd6878d0ed46f183734fcd",
-        strip_prefix = "github.com/daixiang0/gci@v0.10.2-0.20230809023447-096c58d8b6b4",
+        sha256 = "77a220852b41432c0b81aab22d95bc929c9c0092ac294b4dded0960a7705430e",
+        strip_prefix = "github.com/daixiang0/gci@v0.11.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/daixiang0/gci/com_github_daixiang0_gci-v0.10.2-0.20230809023447-096c58d8b6b4.zip",
-            "http://ats.apps.svc/gomod/github.com/daixiang0/gci/com_github_daixiang0_gci-v0.10.2-0.20230809023447-096c58d8b6b4.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/daixiang0/gci/com_github_daixiang0_gci-v0.10.2-0.20230809023447-096c58d8b6b4.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/daixiang0/gci/com_github_daixiang0_gci-v0.10.2-0.20230809023447-096c58d8b6b4.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/daixiang0/gci/com_github_daixiang0_gci-v0.11.0.zip",
+            "http://ats.apps.svc/gomod/github.com/daixiang0/gci/com_github_daixiang0_gci-v0.11.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/daixiang0/gci/com_github_daixiang0_gci-v0.11.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/daixiang0/gci/com_github_daixiang0_gci-v0.11.0.zip",
         ],
     )
     go_repository(
