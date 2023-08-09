@@ -177,6 +177,10 @@ func (p *PessimisticRRTxnContextProvider) OnStmtErrorForNextAction(point session
 // if write conflict is incurred.
 func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
+		logutil.Logger(p.ctx).Warn("[for debug] PessimisticRRTxnContextProvider isTidbSnapshotEnabled or isBeginStmtWithStaleRead is set",
+			zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
+			zap.Uint64("startTS", p.sctx.GetSessionVars().TxnCtx.StartTS),
+			zap.Stack("stack"))
 		return nil
 	}
 

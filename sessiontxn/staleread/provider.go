@@ -16,6 +16,8 @@ package staleread
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -70,6 +72,10 @@ func (p *StalenessTxnContextProvider) GetReadReplicaScope() string {
 
 // GetStmtReadTS returns the read timestamp
 func (p *StalenessTxnContextProvider) GetStmtReadTS() (uint64, error) {
+	logutil.Logger(p.ctx).Warn("[for debug] StalenessTxnContextProvider GetStmtReadTS is used",
+		zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
+		zap.Uint64("startTS", p.sctx.GetSessionVars().TxnCtx.StartTS),
+		zap.Stack("stack"))
 	return p.ts, nil
 }
 
@@ -203,6 +209,10 @@ func (p *StalenessTxnContextProvider) AdviseWarmup() error {
 
 // AdviseOptimizeWithPlan providers optimization according to the plan
 func (p *StalenessTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
+	logutil.Logger(p.ctx).Warn("[for debug] StalenessTxnContextProvider is used AdviseOptimizeWithPlan",
+		zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
+		zap.Uint64("start_ts", p.sctx.GetSessionVars().TxnCtx.StartTS),
+		zap.Stack("stack"))
 	return nil
 }
 

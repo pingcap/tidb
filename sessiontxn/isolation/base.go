@@ -186,10 +186,16 @@ func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
 	}
 
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		logutil.Logger(p.ctx).Warn("[for debug]getStmtReadTS, snapshotTS is used",
+			zap.Uint64("snapshotTS", snapshotTS),
+			zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
+			zap.Uint64("startTS", p.sctx.GetSessionVars().TxnCtx.StartTS),
+			zap.Stack("stack"))
 		return snapshotTS, nil
 	}
 	ts, err := p.getStmtReadTSFunc()
-	logutil.Logger(p.ctx).Info("[for debug]getStmtReadTS", zap.Uint64("ts", ts),
+	logutil.Logger(p.ctx).Info("[for debug]getStmtReadTS",
+		zap.Uint64("ts", ts),
 		zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
 		zap.Uint64("startTS", p.sctx.GetSessionVars().TxnCtx.StartTS))
 	return ts, err
@@ -336,10 +342,14 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 	}
 
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		logutil.Logger(p.ctx).Warn("[for debug] baseTxnContextProvider prepare txn with snapshot ts",
+			zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
+			zap.Uint64("snapshotTS", snapshotTS),
+			zap.Stack("stack"))
 		return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(snapshotTS))
 	}
 
-	logutil.Logger(p.ctx).Info("[for debug]prepare txn with oracle ts",
+	logutil.Logger(p.ctx).Info("[for debug] baseTxnContextProvider prepare txn with oracle ts",
 		zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
 		zap.Uint64("startTS", p.sctx.GetSessionVars().TxnCtx.StartTS))
 
@@ -400,6 +410,11 @@ func (p *baseTxnContextProvider) isBeginStmtWithStaleRead() bool {
 
 // AdviseWarmup provides warmup for inner state
 func (p *baseTxnContextProvider) AdviseWarmup() error {
+	if p.isBeginStmtWithStaleRead() {
+		logutil.Logger(p.ctx).Warn("baseTxnContextProvider isBeginStmtWithStaleRead is used",
+			zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
+			zap.Stack("stack"))
+	}
 	if p.isTxnPrepared || p.isBeginStmtWithStaleRead() {
 		// When executing `START TRANSACTION READ ONLY AS OF ...` no need to warmUp
 		return nil

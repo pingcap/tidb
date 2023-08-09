@@ -267,7 +267,8 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
 	logutil.Logger(p.ctx).Info("RC advise warmup",
 		zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
-		zap.Uint64("startTS", p.sctx.GetSessionVars().TxnCtx.StartTS))
+		zap.Uint64("startTS", p.sctx.GetSessionVars().TxnCtx.StartTS),
+		zap.Bool("isTidbSnapshotEnabled", p.isTidbSnapshotEnabled()))
 	if err := p.prepareTxn(); err != nil {
 		return err
 	}
