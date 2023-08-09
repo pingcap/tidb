@@ -2809,7 +2809,7 @@ func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsT
 	approxiCount, hasPD := b.getApproximateTableCountFromStorage(tid, task)
 	// If there's no stats meta and no pd, return the default rate.
 	if statsTbl == nil && !hasPD {
-		return defaultRate, fmt.Sprintf("statsTbl is nil and no pd info, use the default-rate=%v", defaultRate)
+		return defaultRate, fmt.Sprintf("TiDB cannot get the row count of the table, use the default-rate=%v", defaultRate)
 	}
 	// If the count in stats_meta is still 0 and there's no information from pd side, we scan all rows.
 	if statsTbl.RealtimeCount == 0 && !hasPD {
