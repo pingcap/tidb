@@ -4,8 +4,8 @@ go_library(
     name = "operator",
     srcs = [
         "async.go",
-        "asyncPipeline.go",
         "async_example.go",
+        "async_pipeline.go",
         "data.go",
     ],
     importpath = "github.com/pingcap/tidb/disttask/framework/operator",
