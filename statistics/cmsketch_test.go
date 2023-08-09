@@ -389,6 +389,7 @@ func TestMergePartTopN2GlobalTopNWithHists(t *testing.T) {
 	require.Equal(t, uint64(55), globalTopN.TotalCount(), "should have 55")
 }
 
+// cmd: go test -run=^$ -bench=BenchmarkMergePartTopN2GlobalTopNWithHists -benchmem github.com/pingcap/tidb/statistics
 func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
 	loc := time.UTC
 	sc := &stmtctx.StatementContext{TimeZone: loc}
