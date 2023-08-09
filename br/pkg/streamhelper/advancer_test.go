@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -277,4 +278,28 @@ func TestBlocked(t *testing.T) {
 		err = adv.OnTick(ctx)
 	})
 	req.ErrorIs(errors.Cause(err), context.DeadlineExceeded)
+}
+
+func TestResolveLock(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		if t.Failed() {
+			fmt.Println(c)
+		}
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx := context.Background()
+	minCheckpoint := c.advanceCheckpoints()
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	env.scanLocks = func(key []byte, regionID uint64) []*txnlock.Lock {
+		return nil
+	}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	coll := streamhelper.NewClusterCollector(ctx, env)
+	err := adv.GetCheckpointInRange(ctx, []byte{}, []byte{}, coll)
+	require.NoError(t, err)
+	r, err := coll.Finish(ctx)
+	require.NoError(t, err)
+	require.Len(t, r.FailureSubRanges, 0)
+	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
 }

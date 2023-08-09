@@ -579,14 +579,14 @@ func (f *fakeCluster) String() string {
 }
 
 type testEnv struct {
-	tikvStore tikv.Storage
 	*fakeCluster
 	checkpoint uint64
 	testCtx    *testing.T
 	ranges     []kv.KeyRange
 	taskCh     chan<- streamhelper.TaskEvent
 
-	mu sync.Mutex
+	scanLocks func(key []byte, regionID uint64) []*txnlock.Lock
+	mu        sync.Mutex
 }
 
 func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) error {
@@ -651,9 +651,9 @@ func (t *testEnv) ResolveLocks(
 }
 
 func (t *testEnv) ScanLocks(key []byte, regionID uint64) []*txnlock.Lock {
-	return nil
+	return t.scanLocks(key, regionID)
 }
 
 func (t *testEnv) GetStore() tikv.Storage {
-	return t.tikvStore
+	return nil
 }

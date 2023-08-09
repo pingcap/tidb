@@ -51,12 +51,9 @@ import (
 )
 
 type mockGCWorkerLockResolver struct {
-	tikvStore           tikv.Storage
-	forceResolveLocksTS uint64
-	tryResolveLocksTS   uint64
-	scanLocks           func(key []byte, regionID uint64) []*txnlock.Lock
-	batchResolveLocks   func(locks []*txnlock.Lock, regionID tikv.RegionVerID) (ok bool, err error)
-	resolveLocks        func(locks []*txnlock.Lock, lowResolutionTS uint64) (int64, error)
+	tikvStore         tikv.Storage
+	scanLocks         func(key []byte, regionID uint64) []*txnlock.Lock
+	batchResolveLocks func(locks []*txnlock.Lock, regionID tikv.RegionVerID) (ok bool, err error)
 }
 
 func (l *mockGCWorkerLockResolver) ScanLocks(key []byte, regionID uint64) []*txnlock.Lock {
@@ -1053,11 +1050,7 @@ func TestResolveLockRangeMeetRegionCacheMiss(t *testing.T) {
 		resolveCnt    int
 		resolveCntRef = &resolveCnt
 
-		scanLockCnt                   int
-		resolveBeforeSafepointLockCnt int
-		resolveAfterSafepointLockCnt  int
-		safepointTS                   uint64 = 434245550444904450
-		lowResolveTS                  uint64 = 434245550449098752
+		safepointTS uint64 = 434245550444904450
 	)
 
 	allLocks := []*txnlock.Lock{
@@ -1088,23 +1081,14 @@ func TestResolveLockRangeMeetRegionCacheMiss(t *testing.T) {
 	}
 
 	mockLockResolver := &mockGCWorkerLockResolver{
-		tikvStore:           s.tikvStore,
-		forceResolveLocksTS: safepointTS,
-		tryResolveLocksTS:   lowResolveTS,
+		tikvStore: s.tikvStore,
 		scanLocks: func(key []byte, regionID uint64) []*txnlock.Lock {
 			*scanCntRef++
-
-			locks := make([]*txnlock.Lock, 0)
-			for _, l := range allLocks {
-				locks = append(locks, l)
-				scanLockCnt++
-			}
-			return locks
+			return allLocks
 		},
 		batchResolveLocks: func(
 			locks []*txnlock.Lock,
 			regionID tikv.RegionVerID,
-			safepoint uint64,
 		) (ok bool, err error) {
 			*resolveCntRef++
 			if *resolveCntRef == 1 {
@@ -1112,33 +1096,13 @@ func TestResolveLockRangeMeetRegionCacheMiss(t *testing.T) {
 				// mock the region cache miss error
 				return false, nil
 			}
-
-			resolveBeforeSafepointLockCnt = len(locks)
-			for _, l := range locks {
-				require.True(t, l.TxnID <= safepoint)
-			}
 			return true, nil
 		},
-		resolveLocks: func(
-			locks []*txnlock.Lock,
-			lowResolutionTS uint64,
-		) (int64, error) {
-			for _, l := range locks {
-				expiredTS := oracle.ComposeTS(oracle.ExtractPhysical(l.TxnID)+int64(l.TTL), oracle.ExtractLogical(l.TxnID))
-				if expiredTS <= lowResolutionTS {
-					resolveAfterSafepointLockCnt++
-				}
-			}
-			return 0, nil
-		},
 	}
-	_, err := ResolveLocksForRange(gcContext(), s.gcWorker.uuid, mockLockResolver, safepointTS, lowResolveTS, []byte{0}, []byte{10})
+	_, err := gcutil.ResolveLocksForRange(gcContext(), s.gcWorker.uuid, mockLockResolver, safepointTS, []byte{0}, []byte{10})
 	require.NoError(t, err)
 	require.Equal(t, 2, resolveCnt)
 	require.Equal(t, 1, scanCnt)
-	require.Equal(t, 3, scanLockCnt)
-	require.Equal(t, 1, resolveBeforeSafepointLockCnt)
-	require.Equal(t, 1, resolveAfterSafepointLockCnt)
 }
 
 func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
@@ -1163,9 +1127,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 	s.cluster.Split(s.initRegion.regionID, region2, []byte("m"), newPeers, newPeers[0])
 
 	mockGCLockResolver := &mockGCWorkerLockResolver{
-		tikvStore:           s.tikvStore,
-		forceResolveLocksTS: 1,
-		tryResolveLocksTS:   3,
+		tikvStore: s.tikvStore,
 		scanLocks: func(key []byte, regionID uint64) []*txnlock.Lock {
 			if regionID == s.initRegion.regionID {
 				return []*txnlock.Lock{{Key: []byte("a")}, {Key: []byte("b")}}
@@ -1175,17 +1137,10 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 			}
 			return []*txnlock.Lock{}
 		},
-		resolveLocks: func(
-			locks []*txnlock.Lock,
-			lowResolutionTS uint64,
-		) (int64, error) {
-			return 0, nil
-		},
 	}
 	mockGCLockResolver.batchResolveLocks = func(
 		locks []*txnlock.Lock,
 		regionID tikv.RegionVerID,
-		safepoint uint64,
 	) (ok bool, err error) {
 		if regionID.GetID() == s.initRegion.regionID && *firstAccessRef {
 			*firstAccessRef = false
