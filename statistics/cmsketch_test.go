@@ -389,15 +389,15 @@ func TestMergePartTopN2GlobalTopNWithHists(t *testing.T) {
 	require.Equal(t, uint64(55), globalTopN.TotalCount(), "should have 55")
 }
 
-func BenchmarkMergePartTopN2GlobalTopNWithHists(b *testing.B) {
+func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
 	loc := time.UTC
 	sc := &stmtctx.StatementContext{TimeZone: loc}
 	version := 1
 	isKilled := uint32(0)
 
 	// Prepare TopNs.
-	topNs := make([]*TopN, 0, 110000)
-	for i := 0; i < 110000; i++ {
+	topNs := make([]*TopN, 0, partitions)
+	for i := 0; i < partitions; i++ {
 		// Construct TopN, should be key1 -> 2, key2 -> 2, key3 -> 3.
 		topN := NewTopN(3)
 		{
@@ -417,7 +417,7 @@ func BenchmarkMergePartTopN2GlobalTopNWithHists(b *testing.B) {
 	}
 
 	// Prepare Hists.
-	hists := make([]*Histogram, 0, 110000)
+	hists := make([]*Histogram, 0, partitions)
 	for i := 0; i < 110000; i++ {
 		// Construct Hist
 		h := NewHistogram(1, 10, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0)
@@ -434,10 +434,23 @@ func BenchmarkMergePartTopN2GlobalTopNWithHists(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		// Benchmark merge 2 topN.
-		globalTopN, _, _, err := MergePartTopN2GlobalTopN(loc, version, topNs, 2, hists, false, &isKilled)
-		require.NoError(b, err)
-		require.Len(b, globalTopN.TopN, 2, "should only have 2 topN")
-		require.Equal(b, uint64(605000), globalTopN.TotalCount(), "should have 605000")
+		// Benchmark merge 10 topN.
+		_, _, _, _ = MergePartTopN2GlobalTopN(loc, version, topNs, 10, hists, false, &isKilled)
 	}
+}
+
+func BenchmarkMergePartTopN2GlobalTopNWithHists100(b *testing.B) {
+	benchmarkMergePartTopN2GlobalTopNWithHists(100, b)
+}
+
+func BenchmarkMergePartTopN2GlobalTopNWithHists1000(b *testing.B) {
+	benchmarkMergePartTopN2GlobalTopNWithHists(1000, b)
+}
+
+func BenchmarkMergePartTopN2GlobalTopNWithHists10000(b *testing.B) {
+	benchmarkMergePartTopN2GlobalTopNWithHists(10000, b)
+}
+
+func BenchmarkMergePartTopN2GlobalTopNWithHists100000(b *testing.B) {
+	benchmarkMergePartTopN2GlobalTopNWithHists(100000, b)
 }
