@@ -295,7 +295,7 @@ func (s *mysqlSuite) TestFetchRemoteTableModels_4_0(c *C) {
 			AddRow("t", "id", "bigint(20) unsigned", "", "auto_increment"))
 	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
 		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID"}).
-			AddRow("test", "t", "id", int64(1)))
+			AddRow("test", "t", "id", "10942694589135710585"))
 	s.mockDB.ExpectCommit()
 
 	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
