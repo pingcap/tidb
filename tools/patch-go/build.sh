@@ -16,7 +16,7 @@
 set -xeuo pipefail
 
 # When updating to a new Go version, update all of these variables.
-GOVERS=1.20.5
+GOVERS=1.21.0
 GOLINK=https://go.dev/dl/go$GOVERS.src.tar.gz
 SRCSHASUM=9a15c133ba2cfafe79652f4815b62e7cfc267f68df1b9454c6ab2a3ca8b96a88
 
