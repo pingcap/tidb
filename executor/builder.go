@@ -2827,7 +2827,7 @@ func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsT
 	}
 	// If we don't go into the above if branch and we still detect the count is zero. Return 1 to prevent the dividing zero.
 	if statsTbl.RealtimeCount == 0 {
-		return 1, fmt.Sprintf("statsTbl.RealtimeCount is 0, use sample-rate=1")
+		return 1, fmt.Sprintf("TiDB assumes that the table is empty, use sample-rate=1")
 	}
 	// We are expected to scan about 100000 rows or so.
 	// Since there's tiny error rate around the count from the stats meta, we use 110000 to get a little big result
