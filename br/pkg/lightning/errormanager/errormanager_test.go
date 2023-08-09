@@ -18,6 +18,17 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	tidbkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/mock"
 	"io"
 	"math/rand"
 	"strconv"
@@ -166,7 +177,7 @@ func TestResolveAllConflictKeysRemove(t *testing.T) {
 	require.NoError(t, err)
 
 	resolved := atomic.NewInt64(0)
-	pool := utils.NewWorkerPool(16, "resolve duplicate rows")
+	pool := utils.NewWorkerPool(16, "resolve duplicate rows by remove")
 	err = em.RemoveAllConflictKeys(
 		ctx, "test", pool,
 		func(ctx context.Context, handleRows [][2][]byte) error {
@@ -179,7 +190,54 @@ func TestResolveAllConflictKeysRemove(t *testing.T) {
 }
 
 func TestResolveAllConflictKeysReplace(t *testing.T) {
+	var tbl table.Table
+	p := parser.New()
+	node, _, err := p.ParseSQL("create table t (a varchar(10) primary key, b int, index idx(b));")
+	require.NoError(t, err)
+	mockSctx := mock.NewContext()
+	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	var info *model.TableInfo
+	info, err = ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 1)
+	require.NoError(t, err)
+	info.State = model.StatePublic
+	require.True(t, info.IsCommonHandle)
+	tbl, err = tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), info)
+	require.NoError(t, err)
 
+	const totalRows = int64(1 << 18)
+	driverName := "errmgr-mock-" + strconv.Itoa(rand.Int())
+	sql.Register(driverName, mockDriver{totalRows: totalRows})
+	db, err := sql.Open(driverName, "")
+	require.NoError(t, err)
+	defer db.Close()
+
+	cfg := config.NewConfig()
+	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
+	cfg.App.TaskInfoSchemaName = "lightning_errors"
+	em := New(db, cfg, log.L())
+	ctx := context.Background()
+	err = em.Init(ctx)
+	require.NoError(t, err)
+
+	var decoder *tidbkv.TableKVDecoder
+	decoder, err = tidbkv.NewTableKVDecoder(tbl, "test", &encode.SessionOptions{
+		SQLMode: mysql.ModeStrictAllTables,
+	}, log.FromContext(ctx))
+	require.NoError(t, err)
+
+	resolved := atomic.NewInt64(0)
+	pool := utils.NewWorkerPool(16, "resolve duplicate rows by replace")
+	err = em.ReplaceConflictKeys(
+		ctx, tbl, "test", pool, decoder,
+		func(ctx context.Context, key []byte) ([]byte, error) {
+			return nil, nil
+		},
+		func(ctx context.Context, handleRows [2][]byte) error {
+			resolved.Add(1)
+			return nil
+		},
+	)
+	require.NoError(t, err)
 }
 
 func TestErrorMgrHasError(t *testing.T) {

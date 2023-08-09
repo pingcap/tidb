@@ -619,7 +619,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				var handle tidbkv.Handle
 				handle, err = decoder.DecodeHandleFromIndex(indexInfo, rawKey, rawValue)
 				rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, handle)
-				rowKeyByte := []byte(rowKey.String())
+				rowKeyByte := []byte(rowKey)
 				var overwrittenRow []byte
 				overwrittenRow, err = fnGetLatest(gCtx, rowKeyByte)
 				var decodedData []types.Datum
