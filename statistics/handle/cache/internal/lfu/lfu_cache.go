@@ -22,8 +22,10 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 	"github.com/pingcap/tidb/util/intest"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
 )
 
 // LFU is a LFU based on the ristretto.Cache
@@ -77,6 +79,11 @@ func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
 
 // Put implements statsCacheInner
 func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
+	if tbl == nil {
+		logutil.BgLogger().Fatal("table is nil", zap.Int64("tableID", tblID))
+	} else {
+		logutil.BgLogger().Info("table", zap.Int64("tableID", tblID))
+	}
 	ok := s.cache.Set(tblID, tbl, tbl.MemoryUsage().TotalTrackingMemUsage())
 	if ok { // NOTE: `s.cache` and `s.resultKeySet` may be inconsistent since the update operation is not atomic, but it's acceptable for our scenario
 		s.resultKeySet.AddKeyValue(tblID, tbl)
@@ -120,6 +127,9 @@ func (s *LFU) onEvict(item *ristretto.Item) {
 	// We do not need to calculate the cost during onEvict, because the onexit function
 	// is also called when the evict event occurs.
 	metrics.EvictCounter.Inc()
+	if item.Value == nil {
+		logutil.BgLogger().Error("item value is nil", zap.Any("item", item))
+	}
 	table := item.Value.(*statistics.Table)
 	before := table.MemoryUsage().TotalTrackingMemUsage()
 	for _, column := range table.Columns {
