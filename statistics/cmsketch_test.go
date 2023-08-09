@@ -418,7 +418,7 @@ func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
 
 	// Prepare Hists.
 	hists := make([]*Histogram, 0, partitions)
-	for i := 0; i < 110000; i++ {
+	for i := 0; i < partitions; i++ {
 		// Construct Hist
 		h := NewHistogram(1, 10, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0)
 		h.Bounds.AppendInt64(0, 1)
