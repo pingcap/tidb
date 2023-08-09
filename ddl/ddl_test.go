@@ -16,9 +16,13 @@ package ddl
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	tikv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -29,8 +33,10 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
@@ -292,4 +298,34 @@ func TestError(t *testing.T) {
 		require.NotEqual(t, mysql.ErrUnknown, code)
 		require.Equal(t, uint16(err.Code()), code)
 	}
+}
+
+func TestNewBaseKVEncoder(t *testing.T) {
+	tempPath := filepath.Join(t.TempDir(), "/temp.txt")
+	logCfg := &log.Config{File: tempPath, FileMaxSize: 1}
+	err := log.InitLogger(logCfg, "info")
+	require.NoError(t, err)
+
+	var tbl table.Table
+	p := parser.New()
+	node, _, err := p.ParseSQL("create table t (a varchar(10) primary key, b int, index idx(b));")
+	require.NoError(t, err)
+	mockSctx := mock.NewContext()
+	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	info, err := MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 1)
+	require.NoError(t, err)
+	info.State = model.StatePublic
+	require.True(t, info.IsCommonHandle)
+	tbl, err = tables.TableFromMeta(tikv.NewPanickingAllocators(0), info)
+	require.NoError(t, err)
+
+	_, err = tikv.NewBaseKVEncoder(&encode.EncodingConfig{
+		Table: tbl,
+		SessionOptions: encode.SessionOptions{
+			SQLMode:   mysql.ModeStrictAllTables,
+			Timestamp: 1234567890,
+		},
+		Logger: log.L(),
+	})
+	require.NoError(t, err)
 }

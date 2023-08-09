@@ -15,6 +15,7 @@
 package errormanager
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -25,11 +26,17 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
+	tidbtbl "github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -125,11 +132,30 @@ const (
 
 	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?)"
 
-	selectConflictKeys = `
+	selectConflictKeysRemove = `
 		SELECT _tidb_rowid, raw_handle, raw_row
 		FROM %s.` + ConflictErrorTableName + `
 		WHERE table_name = ? AND _tidb_rowid >= ? and _tidb_rowid < ?
 		ORDER BY _tidb_rowid LIMIT ?;
+	`
+
+	selectConflictKeysReplace = `
+		SELECT raw_key
+		FROM %s.` + ConflictErrorTableName + `
+		WHERE table_name = ? AND index_name = 'PRIMARY'
+		GROUP BY raw_key;
+	`
+
+	selectConflictKeyDataRows = `
+		SELECT key_data
+		FROM %s.` + ConflictErrorTableName + `
+		WHERE table_name = ? AND raw_key = ?;
+	`
+
+	selectConflictKeysReplaceByRawKey = `
+		SELECT index_name, raw_value
+		FROM %s.` + ConflictErrorTableName + `
+		WHERE table_name = ? AND raw_key = ?;
 	`
 
 	insertIntoDupRecord = `
@@ -424,9 +450,9 @@ func (em *ErrorManager) RecordIndexConflictError(
 	return gerr
 }
 
-// ResolveAllConflictKeys query all conflicting rows (handle and their
-// values) from the current error report and resolve them concurrently.
-func (em *ErrorManager) ResolveAllConflictKeys(
+// RemoveAllConflictKeys query all conflicting rows (handle and their
+// values) from the current error report and resolve them concurrently by removing all of them.
+func (em *ErrorManager) RemoveAllConflictKeys(
 	ctx context.Context,
 	tableName string,
 	pool *utils.WorkerPool,
@@ -458,7 +484,7 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 			var handleRows [][2][]byte
 			for start < end {
 				rows, err := em.db.QueryContext(
-					gCtx, fmt.Sprintf(selectConflictKeys, em.schemaEscaped),
+					gCtx, fmt.Sprintf(selectConflictKeysRemove, em.schemaEscaped),
 					tableName, start, end, rowLimit)
 				if err != nil {
 					return errors.Trace(err)
@@ -501,6 +527,109 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 			return nil
 		})
 	}
+	return errors.Trace(g.Wait())
+}
+
+// ReplaceConflictKeys query all conflicting rows (handle and their
+// values) from the current error report and resolve them concurrently
+// by replacing the necessary rows and reserving the others.
+func (em *ErrorManager) ReplaceConflictKeys(
+	ctx context.Context,
+	tbl tidbtbl.Table,
+	tableName string,
+	pool *utils.WorkerPool,
+	decoder *kv.TableKVDecoder,
+	fnGetLatest func(ctx context.Context, key []byte) ([]byte, error),
+	fnDeleteKey func(ctx context.Context, handleRows [][2][]byte) error,
+) error {
+	if em.db == nil {
+		return nil
+	}
+
+	baseKVEncoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
+		Table: tbl,
+		SessionOptions: encode.SessionOptions{
+			SQLMode: mysql.ModeStrictAllTables,
+		},
+		Logger: log.L(),
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	g, gCtx := errgroup.WithContext(ctx)
+	pool.ApplyOnErrorGroup(g, func() error {
+		rawHandleRows, err := em.db.QueryContext(
+			gCtx, fmt.Sprintf(selectConflictKeysReplace, em.schemaEscaped),
+			tableName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for rawHandleRows.Next() {
+			var rawKey []byte
+			if err := rawHandleRows.Scan(&rawKey); err != nil {
+				return errors.Trace(err)
+			}
+			ketDataRows, err := em.db.QueryContext(
+				gCtx, fmt.Sprintf(selectConflictKeyDataRows, em.schemaEscaped),
+				tableName, rawKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			var keyData []byte
+			for ketDataRows.Next() {
+				if err := ketDataRows.Scan(&keyData); err != nil {
+					return errors.Trace(err)
+				}
+			}
+			var value []byte
+			value, err = fnGetLatest(gCtx, keyData)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			rows, err := em.db.QueryContext(
+				gCtx, fmt.Sprintf(selectConflictKeysReplaceByRawKey, em.schemaEscaped),
+				tableName, rawKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			for rows.Next() {
+				var indexName string
+				var rawValue []byte
+				if err := rows.Scan(&indexName, &rawValue); err != nil {
+					return errors.Trace(err)
+				}
+				if bytes.Equal(rawValue, value) {
+					continue
+				}
+				indexInfo := tbl.Meta().FindIndexByName(indexName)
+				var h tidbkv.Handle
+				h, err = decoder.DecodeHandleFromIndex(indexInfo, rawKey, rawValue)
+				rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, h)
+				rowKeyByte := []byte(rowKey.String())
+				var overwrittenRow []byte
+				overwrittenRow, err = fnGetLatest(gCtx, rowKeyByte)
+				decodedRow, _, err := decoder.DecodeRawRowData(h, overwrittenRow)
+				if err != nil {
+					return err
+				}
+				// WIP
+				_ = baseKVEncoder
+				_ = decodedRow
+			}
+
+		}
+		if err := rawHandleRows.Err(); err != nil {
+			return errors.Trace(err)
+		}
+		if err := rawHandleRows.Close(); err != nil {
+			return errors.Trace(err)
+		}
+
+		return nil
+	})
+
 	return errors.Trace(g.Wait())
 }
 

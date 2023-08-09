@@ -990,6 +990,7 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 		logger.Warn("skipping resolution due to selected algorithm. this table will become inconsistent!", zap.String("category", "resolve-dupe"), zap.Stringer("algorithm", algorithm))
 		return nil
 	case config.DupeResAlgRemove:
+	case config.DupeResAlgReplace:
 	default:
 		panic(fmt.Sprintf("[resolve-dupe] unknown resolution algorithm %v", algorithm))
 	}
@@ -1009,31 +1010,107 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 
 	errLimiter := rate.NewLimiter(1, 1)
 	pool := utils.NewWorkerPool(uint(local.dupeConcurrency), "resolve duplicate rows")
-	err = local.errorMgr.ResolveAllConflictKeys(
-		ctx, tableName, pool,
-		func(ctx context.Context, handleRows [][2][]byte) error {
-			for {
-				err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder, keyInTable)
-				if err == nil {
-					return nil
+
+	switch algorithm {
+	case config.DupeResAlgRemove:
+		err = local.errorMgr.RemoveAllConflictKeys(
+			ctx, tableName, pool,
+			func(ctx context.Context, handleRows [][2][]byte) error {
+				for {
+					err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder, keyInTable)
+					if err == nil {
+						return nil
+					}
+					if types.ErrBadNumber.Equal(err) {
+						logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+						return common.ErrResolveDuplicateRows.Wrap(err).GenWithStackByArgs(tableName)
+					}
+					if log.IsContextCanceledError(err) {
+						return err
+					}
+					if !tikverror.IsErrWriteConflict(errors.Cause(err)) {
+						logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+					}
+					if err = errLimiter.Wait(ctx); err != nil {
+						return err
+					}
 				}
-				if types.ErrBadNumber.Equal(err) {
-					logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
-					return common.ErrResolveDuplicateRows.Wrap(err).GenWithStackByArgs(tableName)
+			},
+		)
+	case config.DupeResAlgReplace:
+		err = local.errorMgr.ReplaceConflictKeys(
+			ctx, tbl, tableName, pool, decoder,
+			func(ctx context.Context, key []byte) ([]byte, error) {
+				for {
+					value, err := local.getLatestValue(ctx, logger, key)
+					if err == nil {
+						return value, nil
+					}
+					if types.ErrBadNumber.Equal(err) {
+						logger.Warn("get latest value by key encounters error", log.ShortError(err))
+						return nil, common.ErrResolveDuplicateRows.Wrap(err).GenWithStackByArgs(tableName)
+					}
+					if log.IsContextCanceledError(err) {
+						return nil, err
+					}
+					if err = errLimiter.Wait(ctx); err != nil {
+						return nil, err
+					}
 				}
-				if log.IsContextCanceledError(err) {
-					return err
+			},
+			func(ctx context.Context, handleRows [][2][]byte) error {
+				for {
+					err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder, keyInTable)
+					if err == nil {
+						return nil
+					}
+					if types.ErrBadNumber.Equal(err) {
+						logger.Warn("delete duplicate rows encounters error", log.ShortError(err))
+						return common.ErrResolveDuplicateRows.Wrap(err).GenWithStackByArgs(tableName)
+					}
+					if log.IsContextCanceledError(err) {
+						return err
+					}
+					if !tikverror.IsErrWriteConflict(errors.Cause(err)) {
+						logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+					}
+					if err = errLimiter.Wait(ctx); err != nil {
+						return err
+					}
 				}
-				if !tikverror.IsErrWriteConflict(errors.Cause(err)) {
-					logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
-				}
-				if err = errLimiter.Wait(ctx); err != nil {
-					return err
-				}
-			}
-		},
-	)
+			},
+		)
+	}
+
 	return errors.Trace(err)
+}
+
+func (local *DupeController) getLatestValue(
+	ctx context.Context,
+	logger *log.Task,
+	key []byte,
+) ([]byte, error) {
+	// Starts a transaction.
+	txn, err := local.tikvCli.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err == nil {
+			err = txn.Commit(ctx)
+		} else {
+			if rollbackErr := txn.Rollback(); rollbackErr != nil {
+				logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))
+			}
+		}
+	}()
+
+	var value []byte
+	value, err = txn.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	return value, nil
 }
 
 func (local *DupeController) deleteDuplicateRows(

@@ -149,7 +149,7 @@ func (c mockConn) QueryContext(_ context.Context, query string, args []driver.Na
 	return &mockRows{start: start, end: end}, nil
 }
 
-func TestResolveAllConflictKeys(t *testing.T) {
+func TestResolveAllConflictKeysRemove(t *testing.T) {
 	const totalRows = int64(1 << 18)
 	driverName := "errmgr-mock-" + strconv.Itoa(rand.Int())
 	sql.Register(driverName, mockDriver{totalRows: totalRows})
@@ -167,7 +167,7 @@ func TestResolveAllConflictKeys(t *testing.T) {
 
 	resolved := atomic.NewInt64(0)
 	pool := utils.NewWorkerPool(16, "resolve duplicate rows")
-	err = em.ResolveAllConflictKeys(
+	err = em.RemoveAllConflictKeys(
 		ctx, "test", pool,
 		func(ctx context.Context, handleRows [][2][]byte) error {
 			resolved.Add(int64(len(handleRows)))
@@ -176,6 +176,10 @@ func TestResolveAllConflictKeys(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, totalRows, resolved.Load())
+}
+
+func TestResolveAllConflictKeysReplace(t *testing.T) {
+
 }
 
 func TestErrorMgrHasError(t *testing.T) {
