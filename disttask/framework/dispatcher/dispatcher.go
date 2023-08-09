@@ -307,7 +307,6 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, handle TaskFlowHandle, me
 		// TODO: Consider using TS.
 		nowTime := time.Now().UTC()
 		task.StartTime = nowTime
-		task.State = proto.TaskStateRunning
 		task.StateUpdateTime = nowTime
 		retryTimes = nonRetrySQLTime
 	}
@@ -342,7 +341,7 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, handle TaskFlowHandle, me
 		subTasks = append(subTasks, proto.NewSubtask(task.ID, task.Type, instanceID, meta))
 	}
 
-	return d.updateTask(task.State, subTasks, retrySQLTimes)
+	return d.updateTask(proto.TaskStateRunning, subTasks, retrySQLTimes)
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.
@@ -416,6 +415,7 @@ func VerifyTaskStateTransform(oldState, newState string) bool {
 			proto.TaskStateRunning,
 			proto.TaskStateCancelling,
 			proto.TaskStatePausing,
+			proto.TaskStateSucceed,
 		},
 		proto.TaskStateRunning: {
 			proto.TaskStateSucceed,
