@@ -86,11 +86,6 @@ func (d *ddl) RemoveReorgCtx(id int64) {
 // JobNeedGCForTest is only used for test.
 var JobNeedGCForTest = jobNeedGC
 
-// GetMaxRowID is used for test.
-func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
-	return getRangeEndKey(NewJobContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)
-}
-
 func createMockStore(t *testing.T) kv.Storage {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)

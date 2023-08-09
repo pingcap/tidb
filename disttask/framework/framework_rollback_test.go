@@ -82,7 +82,7 @@ func (t *rollbackScheduler) Rollback(_ context.Context) error {
 	return nil
 }
 
-func (t *rollbackScheduler) SplitSubtask(_ context.Context, subtask []byte) ([]proto.MinimalTask, error) {
+func (t *rollbackScheduler) SplitSubtask(_ context.Context, _ []byte) ([]proto.MinimalTask, error) {
 	return []proto.MinimalTask{
 		testRollbackMiniTask{},
 		testRollbackMiniTask{},
@@ -123,9 +123,9 @@ func TestFrameworkRollback(t *testing.T) {
 	var v atomic.Int64
 	RegisterRollbackTaskMeta(&v)
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskAfterMonitorTask", "2*return(true)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskAfterRefreshTask", "2*return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskAfterMonitorTask"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskAfterRefreshTask"))
 	}()
 
 	DispatchTaskAndCheckFail("key2", t, &v)
