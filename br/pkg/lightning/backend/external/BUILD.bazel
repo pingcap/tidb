@@ -15,7 +15,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/storage",
-        "//kv",
         "//util/logutil",
         "//util/mathutil",
         "@com_github_pingcap_errors//:errors",
@@ -35,7 +34,7 @@ go_test(
     ],
     embed = [":external"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 13,
     deps = [
         "//br/pkg/storage",
         "@com_github_pingcap_errors//:errors",
