@@ -1492,7 +1492,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		chk := tryNewCacheChunk(tableReader)
 		err = Next(ctx, tableReader, chk)
 		if err != nil {
-			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
+			logutil.Logger(ctx).Info("table reader fetch next chunk failed", zap.Error(err))
 			return err
 		}
 		if chk.NumRows() == 0 {

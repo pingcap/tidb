@@ -1767,7 +1767,7 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 		chk := tryNewCacheChunk(tableReader)
 		err = Next(ctx, tableReader, chk)
 		if err != nil {
-			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
+			logutil.Logger(ctx).Info("table reader fetch next chunk failed", zap.Error(err))
 			return err
 		}
 		if chk.NumRows() == 0 {
