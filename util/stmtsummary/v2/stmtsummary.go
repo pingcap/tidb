@@ -17,6 +17,7 @@ package stmtsummary
 import (
 	"context"
 	"errors"
+	"maps"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 const (
