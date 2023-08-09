@@ -53,7 +53,7 @@ func newExampleAsyncOperatorImpl() AsyncOperatorImpl {
 	return res
 }
 
-func (oi *exampleAsyncOperatorImpl) preExecute() error {
+func (*exampleAsyncOperatorImpl) preExecute() error {
 	return nil
 }
 
@@ -70,11 +70,11 @@ func (oi *exampleAsyncOperatorImpl) createWorker() workerpool.Worker[asyncChunk]
 	return &asyncWorker{oi.sink}
 }
 
-func (oi *exampleAsyncOperatorImpl) postExecute() error {
+func (*exampleAsyncOperatorImpl) postExecute() error {
 	return nil
 }
 
-func (oi *exampleAsyncOperatorImpl) display() string {
+func (*exampleAsyncOperatorImpl) display() string {
 	return "ExampleAsyncOperator"
 }
 
@@ -88,10 +88,12 @@ type simpleAsyncDataSink struct {
 	mu  sync.Mutex
 }
 
-func (sas *simpleAsyncDataSink) IsFull() bool {
+// IsFull check if it is full.
+func (*simpleAsyncDataSink) IsFull() bool {
 	return false
 }
 
+// Write data to sink.
 func (sas *simpleAsyncDataSink) Write(data any) error {
 	sas.mu.Lock()
 	defer sas.mu.Unlock()
@@ -101,10 +103,12 @@ func (sas *simpleAsyncDataSink) Write(data any) error {
 	return nil
 }
 
-func (sas *simpleAsyncDataSink) HasNext() bool {
+// HasNext check if it has next data.
+func (*simpleAsyncDataSink) HasNext() bool {
 	return true
 }
 
+// Read data from source.
 func (sas *simpleAsyncDataSink) Read() (any, error) {
 	sas.mu.Lock()
 	defer sas.mu.Unlock()
@@ -115,6 +119,7 @@ func (sas *simpleAsyncDataSink) Read() (any, error) {
 	return nil, nil
 }
 
-func (sas *simpleAsyncDataSink) Display() string {
+// Display show the name.
+func (*simpleAsyncDataSink) Display() string {
 	return "simpleAsyncDataSink"
 }

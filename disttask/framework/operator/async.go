@@ -90,10 +90,19 @@ type AsyncDataChannel[T any] struct {
 	channel *workerpool.WorkerPool[T]
 }
 
-func (c *AsyncDataChannel[T]) HasNext() bool      { return false }
-func (c *AsyncDataChannel[T]) Read() (any, error) { return nil, nil }
-func (c *AsyncDataChannel[T]) Display() string    { return "AsyncDataChannel" }
-func (c *AsyncDataChannel[T]) IsFull() bool       { return false }
+// HasNext check if it has next data.
+func (*AsyncDataChannel[T]) HasNext() bool { return false }
+
+// Read data from source.
+func (*AsyncDataChannel[T]) Read() (any, error) { return nil, nil }
+
+// Display show the name.
+func (*AsyncDataChannel[T]) Display() string { return "AsyncDataChannel" }
+
+// IsFull check if it is full.
+func (*AsyncDataChannel[T]) IsFull() bool { return false }
+
+// Write data to sink.
 func (c *AsyncDataChannel[T]) Write(data any) error {
 	c.channel.AddTask(data.(T))
 	return nil
