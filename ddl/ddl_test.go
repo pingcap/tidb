@@ -16,7 +16,7 @@ package ddl
 
 import (
 	"context"
-	"path/filepath"
+	"fmt"
 	"testing"
 	"time"
 
@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
@@ -301,9 +302,7 @@ func TestError(t *testing.T) {
 }
 
 func TestNewBaseKVEncoder(t *testing.T) {
-	tempPath := filepath.Join(t.TempDir(), "/temp.txt")
-	logCfg := &log.Config{File: tempPath, FileMaxSize: 1}
-	err := log.InitLogger(logCfg, "info")
+	err := log.InitLogger(&log.Config{}, "info")
 	require.NoError(t, err)
 
 	var tbl table.Table
@@ -319,13 +318,43 @@ func TestNewBaseKVEncoder(t *testing.T) {
 	tbl, err = tables.TableFromMeta(tikv.NewPanickingAllocators(0), info)
 	require.NoError(t, err)
 
-	_, err = tikv.NewBaseKVEncoder(&encode.EncodingConfig{
-		Table: tbl,
-		SessionOptions: encode.SessionOptions{
-			SQLMode:   mysql.ModeStrictAllTables,
-			Timestamp: 1234567890,
-		},
-		Logger: log.L(),
+	sessionOpts := encode.SessionOptions{
+		SQLMode:   mysql.ModeStrictAllTables,
+		Timestamp: 1234567890,
+	}
+	encoder, err := tikv.NewBaseKVEncoder(&encode.EncodingConfig{
+		Table:          tbl,
+		SessionOptions: sessionOpts,
+		Logger:         log.L(),
 	})
 	require.NoError(t, err)
+	data := []types.Datum{
+		types.NewStringDatum("a"),
+		types.NewIntDatum(1),
+	}
+	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data)
+	require.NoError(t, err)
+	kvPairs := encoder.SessionCtx.TakeKvPairs()
+	require.Equal(t, 2, len(kvPairs.Pairs))
+	fmt.Printf("key: %x, value: %x\n", kvPairs.Pairs[0].Key, kvPairs.Pairs[0].Val)
+	fmt.Printf("key: %x, value: %x\n", kvPairs.Pairs[1].Key, kvPairs.Pairs[1].Val)
+
+	rowKey := kvPairs.Pairs[0].Key
+	rowValue := kvPairs.Pairs[0].Val
+	indexKey := kvPairs.Pairs[1].Key
+	indexValue := kvPairs.Pairs[1].Val
+
+	handle, err := tablecodec.DecodeRowKey(rowKey)
+	require.NoError(t, err)
+	fmt.Printf("handle: %v\n", handle.String())
+	decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx, tbl.Meta(), handle, tbl.Cols(), rowValue)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
+	require.NoError(t, err)
+	kvPairs2 := encoder.SessionCtx.TakeKvPairs()
+	require.Equal(t, 2, len(kvPairs2.Pairs))
+	fmt.Printf("key: %x, value: %x\n", kvPairs2.Pairs[0].Key, kvPairs2.Pairs[0].Val)
+	fmt.Printf("key: %x, value: %x\n", kvPairs2.Pairs[1].Key, kvPairs2.Pairs[1].Val)
+	require.Equal(t, indexKey, kvPairs2.Pairs[1].Key)
+	require.Equal(t, indexValue, kvPairs2.Pairs[1].Val)
 }
