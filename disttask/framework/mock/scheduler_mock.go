@@ -35,6 +35,21 @@ func (m *MockTaskTable) EXPECT() *MockTaskTableMockRecorder {
 	return m.recorder
 }
 
+// IsSchedulerCanceled mocks base method.
+func (m *MockTaskTable) IsSchedulerCanceled(taskID int64, execID string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsSchedulerCanceled", taskID, execID)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[0].(error)
+	return ret0, ret1
+}
+
+// IsSchedulerCanceled indicates an expected call of IsSchedulerCanceled.
+func (mr *MockTaskTableMockRecorder) IsSchedulerCanceled(arg0 , arg1 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSchedulerCanceled", reflect.TypeOf((*MockTaskTable)(nil).IsSchedulerCanceled), arg0, arg1)
+}
+
 // FinishSubtask mocks base method.
 func (m *MockTaskTable) FinishSubtask(arg0 int64, arg1 []byte) error {
 	m.ctrl.T.Helper()
