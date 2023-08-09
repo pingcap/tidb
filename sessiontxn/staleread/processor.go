@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // enforce implement Processor interface
@@ -253,6 +255,10 @@ func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64) erro
 	ts, err := getTSFromExternalTS(p.ctx, p.sctx)
 	if err != nil {
 		return errAsOf.FastGenWithCause(err.Error())
+	} else if ts > 0 {
+		logutil.Logger(p.ctx).Warn("[for debug] getTSFromExternalTS", zap.Uint64("ts", ts),
+			zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
+			zap.Stack("stack"))
 	}
 	if ts > 0 {
 		return p.setEvaluatedTSWithoutEvaluator(ts)
