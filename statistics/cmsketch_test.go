@@ -454,3 +454,11 @@ func BenchmarkMergePartTopN2GlobalTopNWithHists10000(b *testing.B) {
 func BenchmarkMergePartTopN2GlobalTopNWithHists100000(b *testing.B) {
 	benchmarkMergePartTopN2GlobalTopNWithHists(100000, b)
 }
+
+func BenchmarkMergePartTopN2GlobalTopNWithHists1000000(b *testing.B) {
+	benchmarkMergePartTopN2GlobalTopNWithHists(1000000, b)
+}
+
+func BenchmarkMergePartTopN2GlobalTopNWithHists10000000(b *testing.B) {
+	benchmarkMergePartTopN2GlobalTopNWithHists(10000000, b)
+}
