@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"go.uber.org/zap"
@@ -256,13 +255,6 @@ func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (Resu
 			rs = newLogWrapped(
 				rs,
 				50,
-				zap.Uint64("conn", tc.GetSessionVars().ConnectionID),
-				zap.Uint64("txnStartTS", tc.GetSessionVars().TxnCtx.StartTS),
-				zap.Uint64("forUpdateTS", tc.GetSessionVars().TxnCtx.GetForUpdateTS()),
-				zap.String("sql", stmt.OriginalText()),
-			)
-		} else {
-			logutil.BgLogger().Info("execute statement finish",
 				zap.Uint64("conn", tc.GetSessionVars().ConnectionID),
 				zap.Uint64("txnStartTS", tc.GetSessionVars().TxnCtx.StartTS),
 				zap.Uint64("forUpdateTS", tc.GetSessionVars().TxnCtx.GetForUpdateTS()),

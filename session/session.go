@@ -2205,6 +2205,20 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Execute the physical plan.
 	logStmt(stmt, s)
+	defer func() {
+		vars := s.GetSessionVars()
+		logutil.Logger(ctx).Info(
+			"FINISH_LOG",
+			zap.String("sql", stmt.GetTextToLog()),
+			zap.Uint64("startTS", vars.TxnCtx.StartTS),
+			zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
+			zap.Bool("isPessimistic", vars.TxnCtx.IsPessimistic),
+			zap.String("sessionTxnMode", vars.GetReadableTxnMode()),
+			zap.Bool("in-txn", vars.InTxn()),
+			zap.Bool("explicit", vars.TxnCtx.IsExplicit),
+			zap.Bool("auto-commit", vars.IsAutocommit()),
+		)
+	}()
 
 	var recordSet sqlexec.RecordSet
 	if stmt.PsStmt != nil { // point plan short path
