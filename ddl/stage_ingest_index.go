@@ -61,7 +61,7 @@ func (i *ingestIndexStage) InitSubtaskExecEnv(_ context.Context) error {
 	return err
 }
 
-func (i *ingestIndexStage) SplitSubtask(_ context.Context, _ []byte) ([]proto.MinimalTask, error) {
+func (*ingestIndexStage) SplitSubtask(_ context.Context, _ []byte) ([]proto.MinimalTask, error) {
 	logutil.BgLogger().Info("ingest index stage split subtask", zap.String("category", "ddl"))
 	return nil, nil
 }
@@ -72,7 +72,7 @@ func (i *ingestIndexStage) CleanupSubtaskExecEnv(_ context.Context) error {
 	return nil
 }
 
-func (i *ingestIndexStage) OnSubtaskFinished(_ context.Context, subtask []byte) ([]byte, error) {
+func (*ingestIndexStage) OnSubtaskFinished(_ context.Context, subtask []byte) ([]byte, error) {
 	return subtask, nil
 }
 
