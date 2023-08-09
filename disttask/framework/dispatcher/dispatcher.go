@@ -447,6 +447,10 @@ func verifyTaskStateTransform(oldState, newState string) bool {
 		proto.TaskStateReverted:      {},
 	}
 
+	if oldState == newState {
+		return true
+	}
+
 	for _, state := range rules[oldState] {
 		if state == newState {
 			return true
