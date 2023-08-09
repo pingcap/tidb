@@ -140,6 +140,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(AddIndexScanRate)
 	prometheus.MustRegister(GlobalSortSharedDiskThroughput)
 	prometheus.MustRegister(GlobalSortMergeSortThroughput)
+	prometheus.MustRegister(GlobalSortMergeDuration)
 	prometheus.MustRegister(AddIndexScanThroughput)
 	prometheus.MustRegister(DeploySyncerHistogram)
 	prometheus.MustRegister(DistSQLPartialCountHistogram)

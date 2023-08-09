@@ -65,6 +65,7 @@ var (
 	GlobalSortMergeSortRate        *prometheus.HistogramVec
 	GlobalSortSharedDiskThroughput *prometheus.CounterVec
 	GlobalSortMergeSortThroughput  *prometheus.CounterVec
+	GlobalSortMergeDuration        *prometheus.HistogramVec
 	AddIndexScanRate               *prometheus.HistogramVec
 	AddIndexScanThroughput         *prometheus.CounterVec
 )
@@ -204,6 +205,14 @@ func InitDDLMetrics() {
 			Name:      "merge_sort_throughput",
 			Help:      "merge sort throughput",
 		}, []string{LblType})
+
+	GlobalSortMergeDuration = NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "tidb",
+		Subsystem: "global_sort",
+		Name:      "ingest_duration",
+		Help:      "ingest duration",
+		Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 30),
+	}, []string{LblType})
 
 	AddIndexScanRate = NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",

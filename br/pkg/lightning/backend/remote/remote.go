@@ -972,7 +972,10 @@ func (remote *Backend) executeJob(
 			return nil
 		}
 
+		startTime := time.Now()
 		err = remote.ingest(ctx, job)
+		metrics.GlobalSortMergeDuration.WithLabelValues("ingest").Observe(time.Since(startTime).Seconds())
+
 		if err != nil {
 			if !remote.isRetryableImportTiKVError(err) {
 				return err
@@ -1890,6 +1893,8 @@ func (remote *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		remainingStartKey: remainingStartKey,
 	}
 	j.convertStageTo(wrote)
+
+	metrics.GlobalSortMergeDuration.WithLabelValues("write").Observe(time.Since(startTime).Seconds())
 	return nil
 }
 
