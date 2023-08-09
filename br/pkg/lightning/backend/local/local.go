@@ -423,11 +423,12 @@ type BackendConfig struct {
 	// the scope when pause PD schedulers.
 	PausePDSchedulerScope     config.PausePDSchedulerScope
 	ResourceGroupName         string
+	TaskType                  string
 	RaftKV2SwitchModeDuration time.Duration
 }
 
 // NewBackendConfig creates a new BackendConfig.
-func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resourceGroupName string, raftKV2SwitchModeDuration time.Duration) BackendConfig {
+func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resourceGroupName, taskType string, raftKV2SwitchModeDuration time.Duration) BackendConfig {
 	return BackendConfig{
 		PDAddr:                    cfg.TiDB.PdAddr,
 		LocalStoreDir:             cfg.TikvImporter.SortedKVDir,
@@ -449,6 +450,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		KeyspaceName:              keyspaceName,
 		PausePDSchedulerScope:     cfg.TikvImporter.PausePDSchedulerScope,
 		ResourceGroupName:         resourceGroupName,
+		TaskType:                  taskType,
 		RaftKV2SwitchModeDuration: raftKV2SwitchModeDuration,
 	}
 }
@@ -1680,6 +1682,8 @@ func (local *Backend) GetDupeController(dupeConcurrency int, errorMgr *errormana
 		duplicateDB:         local.duplicateDB,
 		keyAdapter:          local.keyAdapter,
 		importClientFactory: local.importClientFactory,
+		resourceGroupName:   local.ResourceGroupName,
+		taskType:            local.TaskType,
 	}
 }
 

@@ -54,7 +54,7 @@ func TestBuildDupTask(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		dupMgr, err := local.NewDupeDetector(tbl, "t", nil, nil, keyspace.CodecV1, nil,
-			tc.sessOpt, 4, log.FromContext(context.Background()))
+			tc.sessOpt, 4, log.FromContext(context.Background()), "test", "lightning")
 		require.NoError(t, err)
 		tasks, err := local.BuildDuplicateTaskForTest(dupMgr)
 		require.NoError(t, err)

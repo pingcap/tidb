@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
+	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -775,6 +776,7 @@ func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, keyPre
 	snap.SetOption(kv.Priority, priority)
 	snap.SetOption(kv.RequestSourceInternal, true)
 	snap.SetOption(kv.RequestSourceType, ctx.ddlJobSourceType())
+	snap.SetOption(kv.ExplicitRequestSourceType, kvutil.ExplicitTypeDDL)
 	if tagger := ctx.getResourceGroupTaggerForTopSQL(); tagger != nil {
 		snap.SetOption(kv.ResourceGroupTagger, tagger)
 	}
@@ -824,6 +826,7 @@ func GetRangeEndKey(ctx *JobContext, store kv.Storage, priority int, keyPrefix k
 	}
 	snap.SetOption(kv.RequestSourceInternal, true)
 	snap.SetOption(kv.RequestSourceType, ctx.ddlJobSourceType())
+	snap.SetOption(kv.ExplicitRequestSourceType, kvutil.ExplicitTypeDDL)
 	it, err := snap.IterReverse(endKey, nil)
 	if err != nil {
 		return nil, errors.Trace(err)

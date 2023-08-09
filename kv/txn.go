@@ -204,6 +204,9 @@ func setRequestSourceForInnerTxn(ctx context.Context, txn Transaction) {
 			}
 			txn.SetOption(RequestSourceInternal, requestSource.RequestSourceInternal)
 			txn.SetOption(RequestSourceType, requestSource.RequestSourceType)
+			if requestSource.ExplicitRequestSourceType != "" {
+				txn.SetOption(ExplicitRequestSourceType, requestSource.ExplicitRequestSourceType)
+			}
 			return
 		}
 	}
