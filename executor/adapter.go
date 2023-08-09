@@ -1810,13 +1810,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 func (a *ExecStmt) GetTextToLog() string {
 	var sql string
 	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.EnableRedactLog {
-		sql, _ = sessVars.StmtCtx.SQLDigest()
-	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
-		sql = sensitiveStmt.SecureText()
-	} else {
-		sql = sessVars.StmtCtx.OriginalSQL + sessVars.PreparedParams.String()
-	}
+	sql = sessVars.StmtCtx.OriginalSQL + sessVars.PreparedParams.String()
 	return sql
 }
 
