@@ -125,3 +125,37 @@ func TestSetOperation(t *testing.T) {
 	rows := result.Rows()
 	require.Len(t, rows, 0)
 }
+
+func TestCompareIssue38361(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists TEST1")
+	tk.MustExec("create database TEST1")
+	tk.MustExec("use TEST1")
+	tk.MustExec("create table t(a datetime, b bigint)")
+	tk.MustExec("insert into t values(cast('2023-08-09 00:00:00' as datetime), 20230809)")
+
+	tk.MustQuery("select a > 20230809 from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select a = 20230809 from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select a < 20230810 from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select 20230809 < a from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select 20230809 = a from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select 20230810 > a from t").Check(testkit.Rows("1"))
+
+	// constant datetime cmp numeric constant should be compared as real data type
+	tk.MustQuery("select cast('2023-08-09 00:00:00' as datetime) > 20230809 from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select cast('2023-08-09 00:00:00' as datetime) = 20230809 from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select cast('2023-08-09 00:00:00' as datetime) < 20230810 from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select 20230809 < cast('2023-08-09 00:00:00' as datetime) from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select 20230809 = cast('2023-08-09 00:00:00' as datetime) from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select 20230810 > cast('2023-08-09 00:00:00' as datetime) from t").Check(testkit.Rows("0"))
+
+	// datetime column cmp numeric column should be compared as real data type
+	tk.MustQuery("select a > b from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select a = b from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select a < b + 1 from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select b < a from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select b = a from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select b > a from t").Check(testkit.Rows("0"))
+}
