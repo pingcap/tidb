@@ -21,7 +21,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"math"
 	"math/rand"
 	"net"
@@ -65,6 +64,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
 
