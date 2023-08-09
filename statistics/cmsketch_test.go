@@ -388,3 +388,56 @@ func TestMergePartTopN2GlobalTopNWithHists(t *testing.T) {
 	require.Len(t, globalTopN.TopN, 2, "should only have 2 topN")
 	require.Equal(t, uint64(55), globalTopN.TotalCount(), "should have 55")
 }
+
+func BenchmarkMergePartTopN2GlobalTopNWithHists(b *testing.B) {
+	loc := time.UTC
+	sc := &stmtctx.StatementContext{TimeZone: loc}
+	version := 1
+	isKilled := uint32(0)
+
+	// Prepare TopNs.
+	topNs := make([]*TopN, 0, 110000)
+	for i := 0; i < 110000; i++ {
+		// Construct TopN, should be key1 -> 2, key2 -> 2, key3 -> 3.
+		topN := NewTopN(3)
+		{
+			key1, err := codec.EncodeKey(sc, nil, types.NewIntDatum(1))
+			require.NoError(b, err)
+			topN.AppendTopN(key1, 2)
+			key2, err := codec.EncodeKey(sc, nil, types.NewIntDatum(2))
+			require.NoError(b, err)
+			topN.AppendTopN(key2, 2)
+			if i%2 == 0 {
+				key3, err := codec.EncodeKey(sc, nil, types.NewIntDatum(3))
+				require.NoError(b, err)
+				topN.AppendTopN(key3, 3)
+			}
+		}
+		topNs = append(topNs, topN)
+	}
+
+	// Prepare Hists.
+	hists := make([]*Histogram, 0, 110000)
+	for i := 0; i < 110000; i++ {
+		// Construct Hist
+		h := NewHistogram(1, 10, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0)
+		h.Bounds.AppendInt64(0, 1)
+		h.Buckets = append(h.Buckets, Bucket{Repeat: 10, Count: 20})
+		h.Bounds.AppendInt64(0, 2)
+		h.Buckets = append(h.Buckets, Bucket{Repeat: 10, Count: 30})
+		h.Bounds.AppendInt64(0, 3)
+		h.Buckets = append(h.Buckets, Bucket{Repeat: 10, Count: 30})
+		h.Bounds.AppendInt64(0, 4)
+		h.Buckets = append(h.Buckets, Bucket{Repeat: 10, Count: 40})
+		hists = append(hists, h)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Benchmark merge 2 topN.
+		globalTopN, _, _, err := MergePartTopN2GlobalTopN(loc, version, topNs, 2, hists, false, &isKilled)
+		require.NoError(b, err)
+		require.Len(b, globalTopN.TopN, 2, "should only have 2 topN")
+		require.Equal(b, uint64(605000), globalTopN.TotalCount(), "should have 605000")
+	}
+}
