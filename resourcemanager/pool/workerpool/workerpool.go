@@ -91,32 +91,12 @@ func NewWorkerPoolWithoutCreateWorker[T any](name string, component util.Compone
 // NewWorkerPool creates a new worker pool.
 func NewWorkerPool[T any](name string, component util.Component, numWorkers int,
 	createWorker func() Worker[T], opts ...Option[T]) (*WorkerPool[T], error) {
-	if numWorkers <= 0 {
-		numWorkers = 1
+	p, err := NewWorkerPoolWithoutCreateWorker[T](name, component, numWorkers, opts...)
+	if err != nil {
+		return nil, err
 	}
-
-	p := &WorkerPool[T]{
-		name:          name,
-		numWorkers:    int32(numWorkers),
-		originWorkers: int32(numWorkers),
-		taskChan:      make(chan T),
-		quitChan:      make(chan struct{}),
-		createWorker:  createWorker,
-	}
-
-	for _, opt := range opts {
-		opt.Apply(p)
-	}
-
-	if !p.skipRegister {
-		err := resourcemanager.InstanceResourceManager.Register(p, name, component)
-		if err != nil {
-			return nil, err
-		}
-	}
-
+	p.SetCreateWorker(createWorker)
 	p.Start()
-
 	return p, nil
 }
 
