@@ -315,7 +315,7 @@ func TestMergePartTopN2GlobalTopNWithoutHists(t *testing.T) {
 	// Prepare TopNs.
 	topNs := make([]*TopN, 0, 10)
 	for i := 0; i < 10; i++ {
-		// Construct TopN, should be (1, 1) -> 2, (1, 2) -> 2, (1, 3) -> 3.
+		// Construct TopN, should be key(1, 1) -> 2, key(1, 2) -> 2, key(1, 3) -> 3.
 		topN := NewTopN(3)
 		{
 			key1, err := codec.EncodeKey(sc, nil, types.NewIntDatum(1), types.NewIntDatum(1))
@@ -331,7 +331,7 @@ func TestMergePartTopN2GlobalTopNWithoutHists(t *testing.T) {
 		topNs = append(topNs, topN)
 	}
 
-	// Test merge 2 topN.
+	// Test merge 2 topN with nil hists.
 	globalTopN, leftTopN, _, err := MergePartTopN2GlobalTopN(loc, version, topNs, 2, nil, false, &isKilled)
 	require.NoError(t, err)
 	require.Len(t, globalTopN.TopN, 2, "should only have 2 topN")
@@ -348,7 +348,7 @@ func TestMergePartTopN2GlobalTopNWithHists(t *testing.T) {
 	// Prepare TopNs.
 	topNs := make([]*TopN, 0, 10)
 	for i := 0; i < 10; i++ {
-		// Construct TopN, should be 1 -> 2, 2 -> 2, 3 -> 3.
+		// Construct TopN, should be key1 -> 2, key2 -> 2, key3 -> 3.
 		topN := NewTopN(3)
 		{
 			key1, err := codec.EncodeKey(sc, nil, types.NewIntDatum(1))
