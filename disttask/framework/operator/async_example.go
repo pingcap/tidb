@@ -15,8 +15,9 @@
 package operator
 
 import (
-	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
 	"sync"
+
+	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
 )
 
 type asyncChunk struct {

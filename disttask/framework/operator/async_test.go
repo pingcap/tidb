@@ -15,10 +15,11 @@
 package operator
 
 import (
-	poolutil "github.com/pingcap/tidb/resourcemanager/util"
-	"github.com/stretchr/testify/require"
 	"sync"
 	"testing"
+
+	poolutil "github.com/pingcap/tidb/resourcemanager/util"
+	"github.com/stretchr/testify/require"
 )
 
 func NewAsyncPipeline() (*AsyncPipeline, any) {
