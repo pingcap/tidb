@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // RestrictedSQLExecutor is an interface provides executing restricted sql statement.
@@ -112,6 +114,10 @@ var ExecOptionUseSessionPool = func(option *ExecOption) {
 
 // ExecOptionWithSnapshot tells ExecRestrictedStmt/SQL to use a snapshot.
 func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
+	logutil.BgLogger().Warn(
+		"setting snapshot ts", zap.Uint64("snapshot ts", snapshot),
+		zap.Stack("stack"),
+	)
 	return func(option *ExecOption) {
 		option.SnapshotTS = snapshot
 	}

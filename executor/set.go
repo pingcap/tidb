@@ -165,6 +165,14 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	if err != nil {
 		return err
 	}
+	if name == variable.TiDBSnapshot || name == variable.TiDBTxnReadTS {
+		logutil.Logger(ctx).Warn(
+			"trying to set snapshot ts",
+			zap.String("variable", name),
+			zap.String("ts", valStr),
+			zap.Stack("stack"),
+		)
+	}
 	getSnapshotTSByName := func() uint64 {
 		if name == variable.TiDBSnapshot {
 			return sessionVars.SnapshotTS
