@@ -80,6 +80,8 @@ type mergeIter[T heapElem, R sortedReader[T]] struct {
 // newMergeIter creates a merge iterator for multiple sorted readers. the
 // ownership of readers is transferred to the mergeIter. When newMergeIter
 // returns error, the reader will be closed.
+// To reduce duplication, we tolerate caller passing nil readers which means
+// reader's source file is empty.
 func newMergeIter[
 	T heapElem,
 	R sortedReader[T],
@@ -91,6 +93,9 @@ func newMergeIter[
 		logger:        logger,
 	}
 	for j := range i.readers {
+		if i.readers[j] == nil {
+			continue
+		}
 		rd := *i.readers[j]
 		e, err := rd.next()
 		if err == io.EOF {
@@ -141,10 +146,8 @@ func (i *mergeIter[T, R]) currElem() T {
 	return i.curr
 }
 
-func (i *mergeIter[T, R]) valid() bool {
-	return i.err == nil && i.h.Len() > 0
-}
-
+// next forwards the iterator to the next element. It returns false if there is
+// no available element.
 func (i *mergeIter[T, R]) next() bool {
 	var zeroT T
 	i.curr = zeroT
@@ -210,26 +213,26 @@ func (p kvReaderProxy) close() error {
 	return p.r.Close()
 }
 
-// MergeIter is an iterator that merges multiple sorted KV pairs from different files.
-type MergeIter struct {
+// MergeKVIter is an iterator that merges multiple sorted KV pairs from different files.
+type MergeKVIter struct {
 	iter *mergeIter[kvPair, kvReaderProxy]
 }
 
-// NewMergeIter creates a new MergeIter.
-// readBufferSize is the buffer size for each file reader, which means the total memory usage is
-// readBufferSize * len(paths).
-func NewMergeIter(
+// NewMergeKVIter creates a new MergeKVIter. The KV can be accessed by calling
+// Next() then Key() or Values(). readBufferSize is the buffer size for each file
+// reader, which means the total memory usage is readBufferSize * len(paths).
+func NewMergeKVIter(
 	ctx context.Context,
 	paths []string,
 	pathsStartOffset []uint64,
 	exStorage storage.ExternalStorage,
 	readBufferSize int,
-) (*MergeIter, error) {
+) (*MergeKVIter, error) {
 	logger := logutil.Logger(ctx)
 	kvReaders := make([]*kvReaderProxy, len(paths))
 	closeReaders := func() {
 		for _, r := range kvReaders {
-			if r.r != nil {
+			if r != nil {
 				err := r.r.Close()
 				if err != nil {
 					logger.Warn("failed to close reader",
@@ -246,7 +249,11 @@ func NewMergeIter(
 		i := i
 		wg.Go(func() error {
 			rd, err := newKVReader(wgCtx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
-			if err != nil {
+			switch err {
+			case nil:
+			case io.EOF:
+				return nil
+			default:
 				return err
 			}
 			kvReaders[i] = &kvReaderProxy{p: paths[i], r: rd}
@@ -260,36 +267,31 @@ func NewMergeIter(
 
 	it, err := newMergeIter[kvPair, kvReaderProxy](kvReaders, logger)
 	// if error happens in newMergeIter, newMergeIter itself will close readers
-	return &MergeIter{iter: it}, err
+	return &MergeKVIter{iter: it}, err
 }
 
 // Error returns the error of the iterator.
-func (i *MergeIter) Error() error {
+func (i *MergeKVIter) Error() error {
 	return i.iter.err
 }
 
-// Valid returns whether the iterator is valid to be iterated.
-func (i *MergeIter) Valid() bool {
-	return i.iter.valid()
-}
-
-// Next moves the iterator to the next position.
-func (i *MergeIter) Next() bool {
+// Next moves the iterator to the next position. When it returns false, the iterator is not usable.
+func (i *MergeKVIter) Next() bool {
 	return i.iter.next()
 }
 
 // Key returns the current key.
-func (i *MergeIter) Key() []byte {
+func (i *MergeKVIter) Key() []byte {
 	return i.iter.curr.key
 }
 
 // Value returns the current value.
-func (i *MergeIter) Value() []byte {
+func (i *MergeKVIter) Value() []byte {
 	return i.iter.curr.value
 }
 
 // Close closes the iterator.
-func (i *MergeIter) Close() error {
+func (i *MergeKVIter) Close() error {
 	return i.iter.close()
 }
 
@@ -366,11 +368,6 @@ func NewMergePropIter(
 // Error returns the error of the iterator.
 func (i *MergePropIter) Error() error {
 	return i.iter.err
-}
-
-// Valid returns whether the iterator is valid to be iterated.
-func (i *MergePropIter) Valid() bool {
-	return i.iter.valid()
 }
 
 // Next moves the iterator to the next position.

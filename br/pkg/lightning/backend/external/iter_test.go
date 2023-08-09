@@ -16,6 +16,7 @@ package external
 
 import (
 	"context"
+	"io"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -51,7 +52,7 @@ func (r *trackOpenFileReader) Close() error {
 	return nil
 }
 
-func TestMergeIter(t *testing.T) {
+func TestMergeKVIter(t *testing.T) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 	filenames := []string{"/test1", "/test2", "/test3"}
@@ -79,22 +80,20 @@ func TestMergeIter(t *testing.T) {
 	}
 
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
-	mergeIter, err := NewMergeIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
+	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
 	require.NoError(t, err)
-	// close one empty file immediately in NewMergeIter
+	// close one empty file immediately in NewMergeKVIter
 	require.EqualValues(t, 2, trackStore.opened.Load())
 
 	got := make([][2]string, 0)
-	require.True(t, mergeIter.Valid())
-	require.True(t, mergeIter.Next())
-	got = append(got, [2]string{string(mergeIter.Key()), string(mergeIter.Value())})
-	require.True(t, mergeIter.Valid())
-	require.True(t, mergeIter.Next())
-	got = append(got, [2]string{string(mergeIter.Key()), string(mergeIter.Value())})
-	require.True(t, mergeIter.Valid())
-	require.True(t, mergeIter.Next())
-	got = append(got, [2]string{string(mergeIter.Key()), string(mergeIter.Value())})
-	require.False(t, mergeIter.Valid())
+	require.True(t, iter.Next())
+	got = append(got, [2]string{string(iter.Key()), string(iter.Value())})
+	require.True(t, iter.Next())
+	got = append(got, [2]string{string(iter.Key()), string(iter.Value())})
+	require.True(t, iter.Next())
+	got = append(got, [2]string{string(iter.Key()), string(iter.Value())})
+	require.False(t, iter.Next())
+	require.NoError(t, iter.Error())
 
 	expected := [][2]string{
 		{"key1", "value1"},
@@ -102,7 +101,139 @@ func TestMergeIter(t *testing.T) {
 		{"key3", "value3"},
 	}
 	require.Equal(t, expected, got)
-	err = mergeIter.Close()
+	err = iter.Close()
+	require.NoError(t, err)
+	require.EqualValues(t, 0, trackStore.opened.Load())
+}
+
+func TestOneUpstream(t *testing.T) {
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+	filenames := []string{"/test1"}
+	data := [][][2]string{
+		{{"key1", "value1"}, {"key2", "value2"}, {"key3", "value3"}},
+	}
+	for i, filename := range filenames {
+		writer, err := memStore.Create(ctx, filename, nil)
+		require.NoError(t, err)
+		rc := &rangePropertiesCollector{
+			propSizeIdxDistance: 100,
+			propKeysIdxDistance: 2,
+		}
+		rc.reset()
+		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
+		require.NoError(t, err)
+		for _, kv := range data[i] {
+			err = kvStore.AddKeyValue([]byte(kv[0]), []byte(kv[1]))
+			require.NoError(t, err)
+		}
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+
+	trackStore := &trackOpenMemStorage{MemStorage: memStore}
+	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, trackStore.opened.Load())
+
+	got := make([][2]string, 0)
+	require.True(t, iter.Next())
+	got = append(got, [2]string{string(iter.Key()), string(iter.Value())})
+	require.True(t, iter.Next())
+	got = append(got, [2]string{string(iter.Key()), string(iter.Value())})
+	require.True(t, iter.Next())
+	got = append(got, [2]string{string(iter.Key()), string(iter.Value())})
+	require.False(t, iter.Next())
+	require.NoError(t, iter.Error())
+
+	expected := [][2]string{
+		{"key1", "value1"},
+		{"key2", "value2"},
+		{"key3", "value3"},
+	}
+	require.Equal(t, expected, got)
+	err = iter.Close()
+	require.NoError(t, err)
+	require.EqualValues(t, 0, trackStore.opened.Load())
+}
+
+func TestAllEmpty(t *testing.T) {
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+	filenames := []string{"/test1", "/test2"}
+	for _, filename := range filenames {
+		writer, err := memStore.Create(ctx, filename, nil)
+		require.NoError(t, err)
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+
+	trackStore := &trackOpenMemStorage{MemStorage: memStore}
+	iter, err := NewMergeKVIter(ctx, []string{filenames[0]}, []uint64{0}, trackStore, 5)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, trackStore.opened.Load())
+	require.False(t, iter.Next())
+	require.NoError(t, iter.Error())
+	require.NoError(t, iter.Close())
+
+	iter, err = NewMergeKVIter(ctx, filenames, []uint64{0, 0}, trackStore, 5)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, trackStore.opened.Load())
+	require.False(t, iter.Next())
+	require.NoError(t, iter.Close())
+}
+
+func TestCorruptContent(t *testing.T) {
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+	filenames := []string{"/test1", "/test2"}
+	data := [][][2]string{
+		{{"key1", "value1"}, {"key3", "value3"}},
+		{{"key2", "value2"}},
+	}
+	for i, filename := range filenames {
+		writer, err := memStore.Create(ctx, filename, nil)
+		require.NoError(t, err)
+		rc := &rangePropertiesCollector{
+			propSizeIdxDistance: 100,
+			propKeysIdxDistance: 2,
+		}
+		rc.reset()
+		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
+		require.NoError(t, err)
+		for _, kv := range data[i] {
+			err = kvStore.AddKeyValue([]byte(kv[0]), []byte(kv[1]))
+			require.NoError(t, err)
+		}
+		if i == 0 {
+			_, err = writer.Write(ctx, []byte("corrupt"))
+		}
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+
+	trackStore := &trackOpenMemStorage{MemStorage: memStore}
+	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, trackStore.opened.Load())
+
+	got := make([][2]string, 0)
+	require.True(t, iter.Next())
+	got = append(got, [2]string{string(iter.Key()), string(iter.Value())})
+	require.True(t, iter.Next())
+	got = append(got, [2]string{string(iter.Key()), string(iter.Value())})
+	require.True(t, iter.Next())
+	got = append(got, [2]string{string(iter.Key()), string(iter.Value())})
+	require.False(t, iter.Next())
+	require.ErrorIs(t, iter.Error(), io.ErrUnexpectedEOF)
+
+	expected := [][2]string{
+		{"key1", "value1"},
+		{"key2", "value2"},
+		{"key3", "value3"},
+	}
+	require.Equal(t, expected, got)
+	err = iter.Close()
 	require.NoError(t, err)
 	require.EqualValues(t, 0, trackStore.opened.Load())
 }
