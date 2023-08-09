@@ -1058,9 +1058,9 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 					}
 				}
 			},
-			func(ctx context.Context, handleRows [][2][]byte) error {
+			func(ctx context.Context, handleRow [2][]byte) error {
 				for {
-					err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder, keyInTable)
+					err := local.deleteDuplicateRow(ctx, logger, handleRow, decoder, keyInTable)
 					if err == nil {
 						return nil
 					}
@@ -1111,6 +1111,61 @@ func (local *DupeController) getLatestValue(
 		return nil, err
 	}
 	return value, nil
+}
+
+func (local *DupeController) deleteDuplicateRow(
+	ctx context.Context,
+	logger *log.Task,
+	handleRow [2][]byte,
+	decoder *kv.TableKVDecoder,
+	keyInTable func(key []byte) bool,
+) (err error) {
+	// Starts a Delete transaction.
+	txn, err := local.tikvCli.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil {
+			err = txn.Commit(ctx)
+		} else {
+			if rollbackErr := txn.Rollback(); rollbackErr != nil {
+				logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))
+			}
+		}
+	}()
+
+	deleteKey := func(key []byte) error {
+		logger.Debug("will delete key", zap.String("category", "resolve-dupe"), logutil.Key("key", key))
+		return txn.Delete(key)
+	}
+
+	// Skip the row key if it's not in the table.
+	// This can happen if the table has been recreated or truncated,
+	// and the duplicate key is from the old table.
+	if !keyInTable(handleRow[0]) {
+		return nil
+	}
+	logger.Debug("found row to resolve", zap.String("category", "resolve-dupe"),
+		logutil.Key("handle", handleRow[0]),
+		logutil.Key("row", handleRow[1]))
+
+	if err := deleteKey(handleRow[0]); err != nil {
+		return err
+	}
+
+	handle, err := decoder.DecodeHandleFromRowKey(handleRow[0])
+	if err != nil {
+		return err
+	}
+
+	err = decoder.IterRawIndexKeys(handle, handleRow[1], deleteKey)
+	if err != nil {
+		return err
+	}
+
+	logger.Debug("number of KV pairs to be deleted", zap.String("category", "resolve-dupe"), zap.Int("count", txn.Len()))
+	return nil
 }
 
 func (local *DupeController) deleteDuplicateRows(

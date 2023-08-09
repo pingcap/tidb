@@ -19,6 +19,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
 	"math"
 	"strings"
 	"sync"
@@ -540,18 +542,19 @@ func (em *ErrorManager) ReplaceConflictKeys(
 	pool *utils.WorkerPool,
 	decoder *kv.TableKVDecoder,
 	fnGetLatest func(ctx context.Context, key []byte) ([]byte, error),
-	fnDeleteKey func(ctx context.Context, handleRows [][2][]byte) error,
+	fnDeleteKey func(ctx context.Context, handleRows [2][]byte) error,
 ) error {
 	if em.db == nil {
 		return nil
 	}
 
-	baseKVEncoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
-		Table: tbl,
-		SessionOptions: encode.SessionOptions{
-			SQLMode: mysql.ModeStrictAllTables,
-		},
-		Logger: log.L(),
+	sessionOpts := encode.SessionOptions{
+		SQLMode: mysql.ModeStrictAllTables,
+	}
+	encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
+		Table:          tbl,
+		SessionOptions: sessionOpts,
+		Logger:         log.L(),
 	})
 	if err != nil {
 		return errors.Trace(err)
@@ -559,6 +562,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 
 	g, gCtx := errgroup.WithContext(ctx)
 	pool.ApplyOnErrorGroup(g, func() error {
+		// check index KV first
 		rawHandleRows, err := em.db.QueryContext(
 			gCtx, fmt.Sprintf(selectConflictKeysReplace, em.schemaEscaped),
 			tableName)
@@ -582,13 +586,21 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					return errors.Trace(err)
 				}
 			}
+			if err := ketDataRows.Err(); err != nil {
+				return errors.Trace(err)
+			}
+			if err := ketDataRows.Close(); err != nil {
+				return errors.Trace(err)
+			}
+
 			var value []byte
 			value, err = fnGetLatest(gCtx, keyData)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			rows, err := em.db.QueryContext(
+			var rows *sql.Rows
+			rows, err = em.db.QueryContext(
 				gCtx, fmt.Sprintf(selectConflictKeysReplaceByRawKey, em.schemaEscaped),
 				tableName, rawKey)
 			if err != nil {
@@ -604,21 +616,42 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					continue
 				}
 				indexInfo := tbl.Meta().FindIndexByName(indexName)
-				var h tidbkv.Handle
-				h, err = decoder.DecodeHandleFromIndex(indexInfo, rawKey, rawValue)
-				rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, h)
+				var handle tidbkv.Handle
+				handle, err = decoder.DecodeHandleFromIndex(indexInfo, rawKey, rawValue)
+				rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, handle)
 				rowKeyByte := []byte(rowKey.String())
 				var overwrittenRow []byte
 				overwrittenRow, err = fnGetLatest(gCtx, rowKeyByte)
-				decodedRow, _, err := decoder.DecodeRawRowData(h, overwrittenRow)
+				var decodedData []types.Datum
+				decodedData, _, err = tables.DecodeRawRowData(encoder.SessionCtx, tbl.Meta(), handle, tbl.Cols(), overwrittenRow)
 				if err != nil {
-					return err
+					return errors.Trace(err)
 				}
-				// WIP
-				_ = baseKVEncoder
-				_ = decodedRow
+				_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				kvPairs := encoder.SessionCtx.TakeKvPairs()
+				for _, kvPair := range kvPairs.Pairs {
+					if bytes.Equal(kvPair.Key, rowKey) && bytes.Equal(kvPair.Val, rawValue) {
+						var handleRow [2][]byte
+						var kvHandle tidbkv.Handle
+						kvHandle, err = decoder.DecodeHandleFromRowKey(rowKeyByte)
+						handleRow[0] = kvHandle.Encoded()
+						rawRowData := decoder.DecodeRawRowDataAsStr(kvHandle, overwrittenRow)
+						handleRow[1] = []byte(rawRowData)
+						if err := fnDeleteKey(gCtx, handleRow); err != nil {
+							return errors.Trace(err)
+						}
+					}
+				}
 			}
-
+			if err := rows.Err(); err != nil {
+				return errors.Trace(err)
+			}
+			if err := rows.Close(); err != nil {
+				return errors.Trace(err)
+			}
 		}
 		if err := rawHandleRows.Err(); err != nil {
 			return errors.Trace(err)
@@ -627,6 +660,8 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			return errors.Trace(err)
 		}
 
+		// check data KV
+
 		return nil
 	})
 
@@ -634,7 +669,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 }
 
 // RecordDuplicateCount reduce the counter of "duplicate entry" errors.
-// Currently the count will not be shared for multiple lightning instances.
+// Currently, the count will not be shared for multiple lightning instances.
 func (em *ErrorManager) RecordDuplicateCount(cnt int64) error {
 	if em.conflictErrRemain.Sub(cnt) < 0 {
 		threshold := em.configConflict.Threshold

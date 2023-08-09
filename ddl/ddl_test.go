@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
-	tikv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	tidbkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -310,14 +310,15 @@ func TestNewBaseKVEncoder(t *testing.T) {
 	require.NoError(t, err)
 	info.State = model.StatePublic
 	require.True(t, info.IsCommonHandle)
-	tbl, err = tables.TableFromMeta(tikv.NewPanickingAllocators(0), info)
+	tbl, err = tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), info)
 	require.NoError(t, err)
 
 	sessionOpts := encode.SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
 	}
-	encoder, err := tikv.NewBaseKVEncoder(&encode.EncodingConfig{
+	var encoder *tidbkv.BaseKVEncoder
+	encoder, err = tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{
 		Table:          tbl,
 		SessionOptions: sessionOpts,
 		Logger:         log.L(),
@@ -342,7 +343,8 @@ func TestNewBaseKVEncoder(t *testing.T) {
 	handle, err := tablecodec.DecodeRowKey(rowKey)
 	require.NoError(t, err)
 	fmt.Printf("handle: %v\n", handle.String())
-	decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx, tbl.Meta(), handle, tbl.Cols(), rowValue)
+	var decodedData []types.Datum
+	decodedData, _, err = tables.DecodeRawRowData(encoder.SessionCtx, tbl.Meta(), handle, tbl.Cols(), rowValue)
 	require.NoError(t, err)
 	_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
 	require.NoError(t, err)
