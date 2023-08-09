@@ -75,13 +75,6 @@ func (r *readIndexToLocalStage) InitSubtaskExecEnv(ctx context.Context) error {
 		zap.String("category", "ddl"))
 	d := r.d
 
-	_, err := ingest.LitBackCtxMgr.Register(d.ctx, r.index.Unique, r.job.ID, d.etcdCli)
-	if err != nil {
-		logutil.BgLogger().Warn("read index stage register backend context error",
-			zap.String("category", "ddl"), zap.Error(err))
-		return err
-	}
-
 	ser, err := infosync.GetServerInfo()
 	if err != nil {
 		return err

@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"context"
 	"encoding/json"
 
 	"github.com/pingcap/errors"
@@ -41,7 +42,7 @@ type BackfillSubTaskMeta struct {
 }
 
 // NewBackfillSchedulerHandle creates a new backfill scheduler.
-func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl, stepForImport bool) (scheduler.Scheduler, error) {
+func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl, stepForImport bool) (scheduler.Scheduler, error) {
 	bgm := &BackfillGlobalMeta{}
 	err := json.Unmarshal(taskMeta, bgm)
 	if err != nil {
@@ -60,9 +61,9 @@ func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl, stepForImport bool) (sc
 		return nil, errors.New("index info not found")
 	}
 
-	bc, ok := ingest.LitBackCtxMgr.Load(jobMeta.ID)
-	if !ok {
-		return nil, errors.New("backend ctx not found")
+	bc, err := ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, jobMeta.ID, d.etcdCli)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	if !stepForImport {
