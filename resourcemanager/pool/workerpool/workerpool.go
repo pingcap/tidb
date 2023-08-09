@@ -100,12 +100,13 @@ func NewWorkerPool[T any](name string, component util.Component, numWorkers int,
 	return p, nil
 }
 
+// SetCreateWorker set createWorker.
 func (p *WorkerPool[T]) SetCreateWorker(createWorker func() Worker[T]) {
 	p.createWorker = createWorker
 }
 
+// Start start default count of workers.
 func (p *WorkerPool[T]) Start() {
-	// Start default count of workers.
 	for i := 0; i < int(p.numWorkers); i++ {
 		p.runAWorker()
 	}
