@@ -48,6 +48,9 @@ var (
 	retrySQLInterval           = 500 * time.Millisecond
 )
 
+// TestSyncChan is used to test.
+var TestSyncChan = make(chan struct{})
+
 // TaskHandle provides the interface for operations needed by task flow handles.
 type TaskHandle interface {
 	// GetAllSchedulerIDs gets handles the task's all scheduler instances.
@@ -216,6 +219,12 @@ func (d *dispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, 
 	if !VerifyTaskStateTransform(prevState, taskState) {
 		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
 	}
+	failpoint.Inject("syncInUpdateTask", func(_ failpoint.Value) {
+		logutil.Logger(d.logCtx).Info("syncInUpdateTask called")
+		TestSyncChan <- struct{}{}
+		<-TestSyncChan
+	})
+
 	for i := 0; i < retryTimes; i++ {
 		err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.task, newSubTasks, prevState)
 		if err == nil {
@@ -416,6 +425,7 @@ func VerifyTaskStateTransform(oldState, newState string) bool {
 			proto.TaskStateCancelling,
 			proto.TaskStatePausing,
 			proto.TaskStateSucceed,
+			proto.TaskStateReverted,
 		},
 		proto.TaskStateRunning: {
 			proto.TaskStateSucceed,
