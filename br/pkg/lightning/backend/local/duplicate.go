@@ -982,7 +982,7 @@ func (local *DupeController) CollectRemoteDuplicateRows(ctx context.Context, tbl
 func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) (err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate rows")
 	defer func() {
-		logger.End(zap.ErrorLevel, err)
+		logger.End(zap.ErrorLevel, errors.Trace(err))
 	}()
 
 	switch algorithm {
@@ -1000,7 +1000,7 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 		SQLMode: mysql.ModeStrictAllTables,
 	}, log.FromContext(ctx))
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	tableIDs := physicalTableIDs(tbl.Meta())
@@ -1023,16 +1023,16 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 					}
 					if types.ErrBadNumber.Equal(err) {
 						logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
-						return common.ErrResolveDuplicateRows.Wrap(err).GenWithStackByArgs(tableName)
+						return common.ErrResolveDuplicateRows.Wrap(errors.Trace(err)).GenWithStackByArgs(tableName)
 					}
 					if log.IsContextCanceledError(err) {
-						return err
+						return errors.Trace(err)
 					}
 					if !tikverror.IsErrWriteConflict(errors.Cause(err)) {
-						logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+						logger.Warn("delete duplicate rows encounter error", log.ShortError(errors.Trace(err)))
 					}
 					if err = errLimiter.Wait(ctx); err != nil {
-						return err
+						return errors.Trace(err)
 					}
 				}
 			},
@@ -1047,14 +1047,14 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 						return value, nil
 					}
 					if types.ErrBadNumber.Equal(err) {
-						logger.Warn("get latest value by key encounters error", log.ShortError(err))
-						return nil, common.ErrResolveDuplicateRows.Wrap(err).GenWithStackByArgs(tableName)
+						logger.Warn("get latest value by key encounters error", log.ShortError(errors.Trace(err)))
+						return nil, common.ErrResolveDuplicateRows.Wrap(errors.Trace(err)).GenWithStackByArgs(tableName)
 					}
-					if log.IsContextCanceledError(err) {
-						return nil, err
+					if log.IsContextCanceledError(errors.Trace(err)) {
+						return nil, errors.Trace(err)
 					}
 					if err = errLimiter.Wait(ctx); err != nil {
-						return nil, err
+						return nil, errors.Trace(err)
 					}
 				}
 			},
@@ -1065,17 +1065,17 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 						return nil
 					}
 					if types.ErrBadNumber.Equal(err) {
-						logger.Warn("delete duplicate rows encounters error", log.ShortError(err))
-						return common.ErrResolveDuplicateRows.Wrap(err).GenWithStackByArgs(tableName)
+						logger.Warn("delete duplicate rows encounters error", log.ShortError(errors.Trace(err)))
+						return common.ErrResolveDuplicateRows.Wrap(errors.Trace(err)).GenWithStackByArgs(tableName)
 					}
 					if log.IsContextCanceledError(err) {
-						return err
+						return errors.Trace(err)
 					}
 					if !tikverror.IsErrWriteConflict(errors.Cause(err)) {
-						logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+						logger.Warn("delete duplicate rows encounter error", log.ShortError(errors.Trace(err)))
 					}
 					if err = errLimiter.Wait(ctx); err != nil {
-						return err
+						return errors.Trace(err)
 					}
 				}
 			},

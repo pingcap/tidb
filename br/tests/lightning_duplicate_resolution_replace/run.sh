@@ -22,3 +22,11 @@ run_lightning
 
 # Ensure all tables are consistent.
 run_sql 'admin check table dup_resolve.a'
+
+run_sql 'select count(*) from dup_resolve.a'
+check_contains 'count(*): 2'
+
+run_sql 'select * from dup_resolve.a'
+check_contains 'a: 1'
+check_contains 'b: 6'
+check_contains 'c: 1.csv'

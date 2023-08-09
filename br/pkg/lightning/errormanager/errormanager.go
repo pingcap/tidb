@@ -144,7 +144,7 @@ const (
 	selectIndexConflictKeysReplace = `
 		SELECT raw_key
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND index_name = 'PRIMARY'
+		WHERE table_name = ? AND index_name <> 'PRIMARY'
 		GROUP BY raw_key;
 	`
 
@@ -660,7 +660,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			return errors.Trace(err)
 		}
 
-		// Todo: check data KV
+		// TODO: check data KV
 
 		return nil
 	})
