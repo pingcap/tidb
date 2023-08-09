@@ -213,6 +213,9 @@ func (d *dispatcher) handleRunning() error {
 func (d *dispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
 	prevState := d.task.State
 	d.task.State = taskState
+	if !verifyTaskStateTransform(prevState, taskState) {
+		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
+	}
 	for i := 0; i < retryTimes; i++ {
 		err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.task, newSubTasks)
 		if err == nil {
@@ -404,4 +407,50 @@ func (d *dispatcher) WithNewSession(fn func(se sessionctx.Context) error) error 
 // WithNewTxn executes the fn in a new transaction.
 func (d *dispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
 	return d.taskMgr.WithNewTxn(ctx, fn)
+}
+
+func verifyTaskStateTransform(oldState, newState string) bool {
+	rules := map[string][]string{
+		proto.TaskStatePending: {
+			proto.TaskStateRunning,
+			proto.TaskStateCancelling,
+			proto.TaskStatePausing,
+		},
+		proto.TaskStateRunning: {
+			proto.TaskStateSucceed,
+			proto.TaskStateReverting,
+			proto.TaskStateCancelling,
+			proto.TaskStatePausing,
+		},
+		proto.TaskStateSucceed: {},
+		proto.TaskStateReverting: {
+			proto.TaskStateReverted,
+			// no revert_failed now
+			// proto.TaskStateRevertFailed,
+		},
+		proto.TaskStateFailed:       {},
+		proto.TaskStateRevertFailed: {},
+		proto.TaskStateCancelling: {
+			proto.TaskStateCanceled,
+		},
+		proto.TaskStateCanceled: {},
+		proto.TaskStatePausing: {
+			proto.TaskStatePaused,
+		},
+		proto.TaskStatePaused: {
+			proto.TaskStateResuming,
+		},
+		proto.TaskStateResuming: {
+			proto.TaskStateRunning,
+		},
+		proto.TaskStateRevertPending: {},
+		proto.TaskStateReverted:      {},
+	}
+
+	for _, state := range rules[oldState] {
+		if state == newState {
+			return true
+		}
+	}
+	return false
 }
