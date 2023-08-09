@@ -18,7 +18,7 @@ set -xeuo pipefail
 # When updating to a new Go version, update all of these variables.
 GOVERS=1.21.0
 GOLINK=https://go.dev/dl/go$GOVERS.src.tar.gz
-SRCSHASUM=9a15c133ba2cfafe79652f4815b62e7cfc267f68df1b9454c6ab2a3ca8b96a88
+SRCSHASUM=818d46ede85682dd551ad378ef37a4d247006f12ec59b5b755601d2ce114369a
 
 update-alternatives --install /usr/bin/clang clang /usr/bin/clang-10 100 \
     --slave /usr/bin/clang++ clang++ /usr/bin/clang++-10
