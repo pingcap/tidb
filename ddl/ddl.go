@@ -681,13 +681,13 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 
 	scheduler.RegisterTaskType("backfill")
 	scheduler.RegisterSchedulerConstructor("backfill", proto.StepOne,
-		func(_ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
-			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
+		func(ctx context.Context, _ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+			return NewBackfillSchedulerHandle(ctx, taskMeta, d, step == proto.StepTwo)
 		})
 
 	scheduler.RegisterSchedulerConstructor("backfill", proto.StepTwo,
-		func(_ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
-			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
+		func(ctx context.Context, _ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+			return NewBackfillSchedulerHandle(ctx, taskMeta, d, step == proto.StepTwo)
 		})
 
 	dispatcher.RegisterTaskFlowHandle(BackfillTaskType, NewLitBackfillFlowHandle(d))

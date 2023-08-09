@@ -15,6 +15,7 @@
 package scheduler
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/disttask/framework/proto"
@@ -23,11 +24,11 @@ import (
 
 func mockSchedulerOptionFunc(op *schedulerRegisterOptions) {}
 
-func mockSchedulerConstructor(_ int64, task []byte, step int64) (Scheduler, error) {
+func mockSchedulerConstructor(_ context.Context, _ int64, task []byte, step int64) (Scheduler, error) {
 	return nil, nil
 }
 
-func mockSubtaskExectorConstructor(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error) {
+func mockSubtaskExecutorConstructor(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error) {
 	return nil, nil
 }
 
@@ -74,18 +75,18 @@ func TestRegisterSubtaskExectorConstructor(t *testing.T) {
 	RegisterSubtaskExectorConstructor("test1", proto.StepOne, nil)
 	require.Contains(t, subtaskExecutorConstructors, getKey("test1", proto.StepOne))
 	require.Contains(t, subtaskExecutorOptions, getKey("test1", proto.StepOne))
-	RegisterSubtaskExectorConstructor("test2", proto.StepOne, mockSubtaskExectorConstructor)
+	RegisterSubtaskExectorConstructor("test2", proto.StepOne, mockSubtaskExecutorConstructor)
 	require.Contains(t, subtaskExecutorConstructors, getKey("test2", proto.StepOne))
 	require.Contains(t, subtaskExecutorOptions, getKey("test2", proto.StepOne))
 
-	RegisterSubtaskExectorConstructor("test3", proto.StepOne, mockSubtaskExectorConstructor)
+	RegisterSubtaskExectorConstructor("test3", proto.StepOne, mockSubtaskExecutorConstructor)
 	require.Contains(t, subtaskExecutorConstructors, getKey("test3", proto.StepOne))
 	require.Contains(t, subtaskExecutorOptions, getKey("test3", proto.StepOne))
-	RegisterSubtaskExectorConstructor("test4", proto.StepOne, mockSubtaskExectorConstructor)
+	RegisterSubtaskExectorConstructor("test4", proto.StepOne, mockSubtaskExecutorConstructor)
 	require.Contains(t, subtaskExecutorConstructors, getKey("test4", proto.StepOne))
 	require.Contains(t, subtaskExecutorOptions, getKey("test4", proto.StepOne))
 
-	RegisterSubtaskExectorConstructor("test4", proto.StepTwo, mockSubtaskExectorConstructor)
+	RegisterSubtaskExectorConstructor("test4", proto.StepTwo, mockSubtaskExecutorConstructor)
 	require.Contains(t, subtaskExecutorConstructors, getKey("test4", proto.StepTwo))
 	require.Contains(t, subtaskExecutorOptions, getKey("test4", proto.StepTwo))
 }

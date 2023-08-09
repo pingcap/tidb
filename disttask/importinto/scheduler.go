@@ -228,7 +228,8 @@ func init() {
 	}
 	scheduler.RegisterTaskType(proto.ImportInto, scheduler.WithPoolSize(int32(runtime.GOMAXPROCS(0))))
 	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepImport,
-		func(taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
+		func(ctx context.Context, taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
+			// TODO(tangenta): use context for lifetime control.
 			taskMeta, logger, err := prepareFn(taskID, bs, step)
 			if err != nil {
 				return nil, err
@@ -241,7 +242,8 @@ func init() {
 		},
 	)
 	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepPostProcess,
-		func(taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
+		func(ctx context.Context, taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
+			// TODO(tangenta): use context for lifetime control.
 			taskMeta, logger, err := prepareFn(taskID, bs, step)
 			if err != nil {
 				return nil, err
