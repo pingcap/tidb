@@ -86,7 +86,7 @@ func (r *byteReader) readNBytes(n int) (*[]byte, error) {
 		switch err {
 		case nil:
 		case io.EOF:
-			if readLen > 0 && readLen < n {
+			if readLen > 0 {
 				return nil, io.ErrUnexpectedEOF
 			}
 			return nil, err
