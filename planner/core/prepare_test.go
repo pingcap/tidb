@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -720,7 +720,6 @@ func TestPrepareCacheNow(t *testing.T) {
 }
 
 func TestPrepareOverMaxPreparedStmtCount(t *testing.T) {
-	t.Skip("unstable, skip it and fix it before 20210705")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -752,18 +751,15 @@ func TestPrepareOverMaxPreparedStmtCount(t *testing.T) {
 	for i := 1; ; i++ {
 		prePrepared = readGaugeInt(metrics.PreparedStmtGauge)
 		if prePrepared >= 2 {
-			_, err := tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
-			require.True(t, terror.ErrorEqual(err, variable.ErrMaxPreparedStmtCountReached))
+			tk.MustGetErrCode(`prepare stmt`+strconv.Itoa(i)+` from "select 1"`, errno.ErrMaxPreparedStmtCountReached)
 			break
 		}
-		_, err := tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
-		require.NoError(t, err)
+		tk.MustExec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
 	}
 }
 
 // unit test for issue https://github.com/pingcap/tidb/issues/8518
 func TestPrepareTableAsNameOnGroupByWithCache(t *testing.T) {
-	t.Skip("unstable, skip it and fix it before 20210702")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
