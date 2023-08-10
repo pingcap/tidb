@@ -1149,6 +1149,7 @@ func updateSchemaVersion(_ *ddlCtx, t *meta.Meta, job *model.Job) (int64, error)
 		diff.OldSchemaID = oldSchemaIDs[0]
 		diff.AffectedOpts = affects
 	case model.ActionExchangeTablePartition:
+<<<<<<< HEAD
 		var (
 			ptSchemaID int64
 			ptTableID  int64
@@ -1157,14 +1158,30 @@ func updateSchemaVersion(_ *ddlCtx, t *meta.Meta, job *model.Job) (int64, error)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
+=======
+>>>>>>> c7c7000165a (ddl: Exchange partition rollback (#45877))
 		diff.OldTableID = job.TableID
-		affects := make([]*model.AffectedOption, 1)
-		affects[0] = &model.AffectedOption{
-			SchemaID:   ptSchemaID,
-			TableID:    ptTableID,
-			OldTableID: ptTableID,
+		diff.OldSchemaID = job.SchemaID
+		if job.SchemaState != model.StatePublic {
+			diff.TableID = job.TableID
+			diff.SchemaID = job.SchemaID
+		} else {
+			// Update the partitioned table (it is only done in the last state)
+			var (
+				ptSchemaID     int64
+				ptTableID      int64
+				ptDefID        int64  // Not needed, will reload the whole table
+				partName       string // Not used
+				withValidation bool   // Not used
+			)
+			// See ddl.ExchangeTablePartition
+			err = job.DecodeArgs(&ptDefID, &ptSchemaID, &ptTableID, &partName, &withValidation)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			diff.SchemaID = ptSchemaID
+			diff.TableID = ptTableID
 		}
-		diff.AffectedOpts = affects
 	case model.ActionTruncateTablePartition:
 		diff.TableID = job.TableID
 		if len(job.CtxVars) > 0 {
