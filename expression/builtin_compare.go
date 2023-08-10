@@ -1556,9 +1556,9 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	return con, false
 }
 
-func matchRefineRule3Pattern(constEvalType types.EvalType, columnEvalType types.EvalType) bool {
-	return (columnEvalType == types.ETDatetime || columnEvalType == types.ETTimestamp) &&
-		(constEvalType == types.ETReal || constEvalType == types.ETDecimal || constEvalType == types.ETInt)
+func matchRefineRule3Pattern(conEvalType types.EvalType, exprType *types.FieldType) bool {
+	return (exprType.GetType() == mysql.TypeTimestamp || exprType.GetType() == mysql.TypeDatetime) &&
+		(conEvalType == types.ETReal || conEvalType == types.ETDecimal || conEvalType == types.ETInt)
 }
 
 // Since the argument refining of cmp functions can bring some risks to the plan-cache, the optimizer
@@ -1592,9 +1592,9 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 
 		// case 2: int-expr <cmp> string/float/double/decimal-const
 		// refine `int_key < 1.1` to `int_key < 2` to generate RangeScan instead of FullScan.
-		conType := args[conIdx].GetType().EvalType()
+		conEvalType := args[conIdx].GetType().EvalType()
 		if exprEvalType == types.ETInt &&
-			(conType == types.ETString || conType == types.ETReal || conType == types.ETDecimal) {
+			(conEvalType == types.ETString || conEvalType == types.ETReal || conEvalType == types.ETDecimal) {
 			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
 			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
 			return true
@@ -1604,7 +1604,7 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		// try refine numeric-const to timestamp const
 		// see https://github.com/pingcap/tidb/issues/38361 for more details
 		_, exprIsCon := args[1-conIdx].(*Constant)
-		if !exprIsCon && matchRefineRule3Pattern(conType, exprEvalType) {
+		if !exprIsCon && matchRefineRule3Pattern(conEvalType, exprType) {
 			reason := errors.Errorf("'%v' may be converted to datetime", args[conIdx].String())
 			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
 			return true
@@ -1636,11 +1636,11 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	// We should remove the mutable constant for correctness, because its value may be changed.
 	RemoveMutableConst(ctx, args)
 
-	if arg0IsCon && !arg1IsCon && matchRefineRule3Pattern(arg0EvalType, arg1EvalType) {
+	if arg0IsCon && !arg1IsCon && matchRefineRule3Pattern(arg0EvalType, arg1Type) {
 		return c.refineNumericConstantCmpDatetime(ctx, args, arg0, 0)
 	}
 
-	if !arg0IsCon && arg1IsCon && matchRefineRule3Pattern(arg1EvalType, arg0EvalType) {
+	if !arg0IsCon && arg1IsCon && matchRefineRule3Pattern(arg1EvalType, arg0Type) {
 		return c.refineNumericConstantCmpDatetime(ctx, args, arg1, 1)
 	}
 
@@ -1734,7 +1734,6 @@ func (c *compareFunctionClass) refineNumericConstantCmpDatetime(ctx sessionctx.C
 		return args
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-
 	var timestampDatum types.Datum
 	targetFieldType := types.NewFieldType(mysql.TypeTimestamp)
 	timestampDatum, err = dt.ConvertTo(sc, targetFieldType)
