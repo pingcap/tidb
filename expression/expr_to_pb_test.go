@@ -1277,15 +1277,17 @@ func TestExprPushDownToFlash(t *testing.T) {
 	exprs = append(exprs, function)
 
 	// Grouping
-	function, err = NewFunction(mock.NewContext(), ast.Grouping, types.NewFieldType(mysql.TypeLonglong), uintColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-	if scalarFunc, ok := function.(*ScalarFunction); ok {
-		if scalarFunc.FuncName.L == ast.Grouping {
-			scalarFunc.Function.(*BuiltinGroupingImplSig).
+	init := func(groupingFunc *ScalarFunction) (Expression, error) {
+		var err error
+		if groupingFunc.FuncName.L == ast.Grouping {
+			err = groupingFunc.Function.(*BuiltinGroupingImplSig).
 				SetMetadata(tipb.GroupingMode_ModeBitAnd, []map[uint64]struct{}{})
 		}
+		return groupingFunc, err
 	}
+	function, err = NewFunctionWithInit(mock.NewContext(), ast.Grouping, types.NewFieldType(mysql.TypeLonglong), init, uintColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
 
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
 	require.Len(t, pushed, len(exprs))

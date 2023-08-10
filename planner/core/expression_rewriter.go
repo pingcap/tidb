@@ -2090,7 +2090,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 		// the first arg of grouping function should be rewritten as gid column defined/passed by Expand
 		// from the bottom up.
 		if er.rollExpand == nil {
-			er.err = errors.New("no rollup expand found")
+			er.err = ErrInvalidGroupFuncUse
 			er.ctxStackAppend(nil, types.EmptyName)
 		} else {
 			// whether there is some duplicate grouping sets, gpos is only be used in shuffle keys and group keys
