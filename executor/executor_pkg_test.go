@@ -124,8 +124,8 @@ func TestAggPartialResultMapperB(t *testing.T) {
 		},
 		{
 			rowNum:          100,
-			expectedB:       4,
-			expectedGrowing: false,
+			expectedB:       5,
+			expectedGrowing: true,
 		},
 		{
 			rowNum:          10000,
@@ -139,8 +139,8 @@ func TestAggPartialResultMapperB(t *testing.T) {
 		},
 		{
 			rowNum:          851968, // 6.5 * (1 << 17)
-			expectedB:       17,
-			expectedGrowing: false,
+			expectedB:       18,
+			expectedGrowing: true,
 		},
 		{
 			rowNum:          851969, // 6.5 * (1 << 17) + 1
@@ -149,8 +149,8 @@ func TestAggPartialResultMapperB(t *testing.T) {
 		},
 		{
 			rowNum:          425984, // 6.5 * (1 << 16)
-			expectedB:       16,
-			expectedGrowing: false,
+			expectedB:       17,
+			expectedGrowing: true,
 		},
 		{
 			rowNum:          425985, // 6.5 * (1 << 16) + 1

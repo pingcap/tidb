@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/tikv/client-go/v2/tikv"
+	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -2984,7 +2985,7 @@ func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.Physical
 
 func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
-	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
+	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
@@ -3054,11 +3055,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in reorgPartitionWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
 
-			if taskRange.endInclude {
-				taskDone = recordKey.Cmp(taskRange.endKey) > 0
-			} else {
-				taskDone = recordKey.Cmp(taskRange.endKey) >= 0
-			}
+			taskDone = recordKey.Cmp(taskRange.endKey) >= 0
 
 			if taskDone || len(w.rowRecords) >= w.batchCnt {
 				return false, nil

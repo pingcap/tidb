@@ -17,6 +17,7 @@ package statslock
 import (
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -98,11 +99,15 @@ func TestStatsLockAndUnlockTables(t *testing.T) {
 	handle := domain.GetDomain(tk.Session()).StatsHandle()
 	tbl1Stats := handle.GetTableStats(tbl1.Meta())
 	for _, col := range tbl1Stats.Columns {
-		require.True(t, col.IsStatsInitialized())
+		require.Eventually(t, func() bool {
+			return col.IsStatsInitialized()
+		}, 1*time.Second, 100*time.Millisecond)
 	}
 	tbl2Stats := handle.GetTableStats(tbl2.Meta())
 	for _, col := range tbl2Stats.Columns {
-		require.True(t, col.IsStatsInitialized())
+		require.Eventually(t, func() bool {
+			return col.IsStatsInitialized()
+		}, 1*time.Second, 100*time.Millisecond)
 	}
 
 	tk.MustExec("lock stats t1, t2")

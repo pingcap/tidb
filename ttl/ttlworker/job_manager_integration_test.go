@@ -801,7 +801,7 @@ func TestJobMetrics(t *testing.T) {
 }
 
 func TestDelayMetrics(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// disable ttl job to make test stable
 	tk.MustExec("set @@global.tidb_ttl_job_enable=0")

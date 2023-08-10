@@ -139,7 +139,7 @@ func expectedPasswordExpiration(t *testing.T, tk *testkit.TestKit, testuser, exp
 }
 
 func TestPasswordExpiration(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// CREATE USER

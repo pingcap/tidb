@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl_test
+package serial
 
 import (
 	"context"
@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
@@ -50,6 +51,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
+
+// GetMaxRowID is used for test.
+func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
+	return ddl.GetRangeEndKey(ddl.NewJobContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)
+}
 
 func TestTruncateAllPartitions(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -1334,24 +1340,24 @@ func TestGetReverseKey(t *testing.T) {
 	minKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(math.MinInt64))
 	maxKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(math.MaxInt64))
 	checkRet := func(startKey, endKey, retKey kv.Key) {
-		h, err := ddl.GetMaxRowID(store, 0, tbl, startKey, endKey)
+		h, err := GetMaxRowID(store, 0, tbl, startKey, endKey)
 		require.NoError(t, err)
 		require.Equal(t, 0, h.Cmp(retKey))
 	}
 
 	// [minInt64, minInt64]
-	checkRet(minKey, minKey, minKey)
+	checkRet(minKey, minKey.Next(), minKey.Next())
 	// [minInt64, 1<<64-1]
-	endKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(1<<61-1))
-	retKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(math.MinInt64+1))
+	endKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(1<<61-1)).Next()
+	retKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(math.MinInt64+1)).Next()
 	checkRet(minKey, endKey, retKey)
 	// [1<<64, 2<<64]
 	startKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(1<<61))
-	endKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(2<<61))
-	checkRet(startKey, endKey, startKey)
+	endKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(2<<61)).Next()
+	checkRet(startKey, endKey, startKey.Next())
 	// [3<<64, maxInt64]
 	startKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(3<<61))
-	endKey = maxKey
+	endKey = maxKey.Next()
 	checkRet(startKey, endKey, endKey)
 }
 
