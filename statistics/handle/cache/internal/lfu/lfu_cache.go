@@ -125,7 +125,7 @@ func DropEvicted(item statistics.TableCacheItem) {
 
 func (s *LFU) onEvict(item *ristretto.Item) {
 	if item.Value == nil {
-		// Sometimes the same key may be passed to the "onevict" function twice,
+		// Sometimes the same key may be passed to the "onEvict/onExit" function twice,
 		// and in the second invocation, the value is empty, so it should not be processed.
 		return
 	}
