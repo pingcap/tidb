@@ -1612,7 +1612,7 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 // refineArgs will rewrite the arguments if the compare expression is
 // 1. `int column <cmp> non-int constant` or `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`.
 // 2. It also handles comparing year type with int constant if the int constant falls into a sensible year representation.
-// 3. It also handles comparing datetime/timestamp column with numeric constant falls into a sensible datetime representation
+// 3. It also handles comparing datetime/timestamp column with numeric constant, try to cast numeric constant as timestamp type, do nothing if failed.
 // This refining operation depends on the values of these args, but these values can change when using plan-cache.
 // So we have to skip this operation or mark the plan as over-optimized when using plan-cache.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
