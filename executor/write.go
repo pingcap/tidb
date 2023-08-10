@@ -92,7 +92,34 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		}
 	}
 
+<<<<<<< HEAD
 	// 3. Compare datum, then handle some flags.
+=======
+	// Handle exchange partition
+	tbl := t.Meta()
+	if tbl.ExchangePartitionInfo != nil {
+		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
+		if !tableFound {
+			return false, errors.Errorf("exchange partition process table by id failed")
+		}
+		p, ok := pt.(table.PartitionedTable)
+		if !ok {
+			return false, errors.Errorf("exchange partition process assert table partition failed")
+		}
+		err := p.CheckForExchangePartition(
+			sctx,
+			pt.Meta().Partition,
+			newData,
+			tbl.ExchangePartitionInfo.ExchangePartitionDefID,
+		)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	// Compare datum, then handle some flags.
+>>>>>>> c7c7000165a (ddl: Exchange partition rollback (#45877))
 	for i, col := range t.Cols() {
 		// We should use binary collation to compare datum, otherwise the result will be incorrect.
 		cmp, err := newData[i].Compare(sc, &oldData[i], collate.GetBinaryCollator())

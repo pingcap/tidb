@@ -1830,6 +1830,7 @@ func (s *testDBSuite6) TestTruncatePartitionGCWithPlacement(c *C) {
 	c.Assert(ok, IsTrue)
 }
 
+<<<<<<< HEAD
 func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
@@ -1838,10 +1839,117 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 	tk.MustExec("drop table if exists t1, t2, tp")
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop placement policy if exists p2")
+=======
+func TestDropPartitionWithPlacement(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`))
+	defer func(originGC bool) {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
+		if originGC {
+			util.EmulatorGCEnable()
+		} else {
+			util.EmulatorGCDisable()
+		}
+	}(util.IsEmulatorGCEnable())
+	util.EmulatorGCDisable()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists tp")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
+	tk.MustExec("drop placement policy if exists p3")
 
 	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1'")
 	defer tk.MustExec("drop placement policy p1")
 
+	tk.MustExec("create placement policy p2 primary_region='r2' regions='r2'")
+	defer tk.MustExec("drop placement policy p2")
+
+	tk.MustExec("create placement policy p3 primary_region='r3' regions='r3'")
+	defer tk.MustExec("drop placement policy p3")
+
+	policy1, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
+	require.True(t, ok)
+
+	policy3, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p3"))
+	require.True(t, ok)
+
+	// test for partitioned table
+	tk.MustExec(`CREATE TABLE tp (id INT) placement policy p1 PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (100),
+        PARTITION p1 VALUES LESS THAN (1000) placement policy p2,
+        PARTITION p2 VALUES LESS THAN (10000) placement policy p3,
+        PARTITION p3 VALUES LESS THAN (100000)
+	);`)
+	defer tk.MustExec("drop table tp")
+
+	tp, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	require.NoError(t, err)
+
+	checkOldPartitions := make([]model.PartitionDefinition, 0, 2)
+	for _, p := range tp.Meta().Partition.Definitions {
+		switch p.Name.L {
+		case "p1":
+			checkOldPartitions = append(checkOldPartitions, p.Clone())
+		case "p3":
+			p.PlacementPolicyRef = tp.Meta().PlacementPolicyRef
+			checkOldPartitions = append(checkOldPartitions, p.Clone())
+		}
+	}
+
+	tk.MustExec("ALTER TABLE tp DROP partition p1,p3")
+	newTp, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	require.NoError(t, err)
+	require.Equal(t, tp.Meta().ID, newTp.Meta().ID)
+	require.Equal(t, policy1.ID, newTp.Meta().PlacementPolicyRef.ID)
+	require.Equal(t, 2, len(newTp.Meta().Partition.Definitions))
+	require.Nil(t, newTp.Meta().Partition.Definitions[0].PlacementPolicyRef)
+	require.Equal(t, policy3.ID, newTp.Meta().Partition.Definitions[1].PlacementPolicyRef.ID)
+	require.Equal(t, tp.Meta().Partition.Definitions[0].ID, newTp.Meta().Partition.Definitions[0].ID)
+	require.True(t, newTp.Meta().Partition.Definitions[1].ID == tp.Meta().Partition.Definitions[2].ID)
+	checkExistTableBundlesInPD(t, dom, "test", "tp")
+	checkWaitingGCPartitionBundlesInPD(t, dom, checkOldPartitions)
+
+	// add new partition will not override bundle waiting for GC
+	tk.MustExec("alter table tp add partition (partition p4 values less than(1000000))")
+	newTp2, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	require.NoError(t, err)
+	require.Equal(t, 3, len(newTp2.Meta().Partition.Definitions))
+	checkWaitingGCPartitionBundlesInPD(t, dom, checkOldPartitions)
+
+	// do GC
+	for _, par := range checkOldPartitions {
+		bundle, err := infosync.GetRuleBundle(context.TODO(), placement.GroupID(par.ID))
+		require.NoError(t, err)
+		require.False(t, bundle.IsEmpty())
+	}
+
+	gcWorker, err := gcworker.NewMockGCWorker(store)
+	require.NoError(t, err)
+	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+
+	checkExistTableBundlesInPD(t, dom, "test", "tp")
+	for _, par := range checkOldPartitions {
+		bundle, err := infosync.GetRuleBundle(context.TODO(), placement.GroupID(par.ID))
+		require.NoError(t, err)
+		require.True(t, bundle.IsEmpty())
+	}
+}
+
+func TestExchangePartitionWithPlacement(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	// clearAllBundles(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+>>>>>>> c7c7000165a (ddl: Exchange partition rollback (#45877))
+
+	tk.MustExec("create placement policy pp1 primary_region='r1' regions='r1'")
+	tk.MustExec("create placement policy pp2 primary_region='r2' regions='r2'")
+	tk.MustExec("create placement policy pp3 primary_region='r3' regions='r3'")
+
+<<<<<<< HEAD
 	tk.MustExec("create placement policy p2 primary_region='r2' regions='r2'")
 	defer tk.MustExec("drop placement policy p2")
 
@@ -1850,17 +1958,20 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 
 	policy2, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(model.NewCIStr("p2"))
 	c.Assert(ok, IsTrue)
+=======
+	policy1, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("pp1"))
+	require.True(t, ok)
+>>>>>>> c7c7000165a (ddl: Exchange partition rollback (#45877))
 
-	tk.MustExec(`CREATE TABLE t1 (id INT) placement policy p1`)
-	defer tk.MustExec("drop table t1")
-
+	tk.MustExec(`CREATE TABLE t1 (id INT) placement policy pp1`)
 	tk.MustExec(`CREATE TABLE t2 (id INT)`)
-	defer tk.MustExec("drop table t2")
+	tk.MustExec(`CREATE TABLE t3 (id INT) placement policy pp3`)
 
 	t1, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	t1ID := t1.Meta().ID
 
+<<<<<<< HEAD
 	t2, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
 	t2ID := t2.Meta().ID
@@ -1871,6 +1982,13 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
         PARTITION p2 VALUES LESS THAN (10000) primary_region="r1" regions="r1,r2"
 	);`)
 	defer tk.MustExec("drop table tp")
+=======
+	tk.MustExec(`CREATE TABLE tp (id INT) placement policy pp3 PARTITION BY RANGE (id) (
+        PARTITION p1 VALUES LESS THAN (100) placement policy pp1,
+        PARTITION p2 VALUES LESS THAN (1000) placement policy pp2,
+        PARTITION p3 VALUES LESS THAN (10000)
+	)`)
+>>>>>>> c7c7000165a (ddl: Exchange partition rollback (#45877))
 
 	tp, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
@@ -1879,15 +1997,16 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 	par1ID := tp.Meta().Partition.Definitions[1].ID
 	par2ID := tp.Meta().Partition.Definitions[2].ID
 
-	// exchange par0, t1
-	tk.MustExec("alter table tp exchange partition p0 with table t1")
+	// exchange par1, t1
+	tk.MustExec("alter table tp exchange partition p1 with table t1")
 	tk.MustQuery("show create table t1").Check(testkit.Rows("" +
 		"t1 CREATE TABLE `t1` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`pp1` */"))
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
+<<<<<<< HEAD
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1\" */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
@@ -1987,6 +2106,49 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 	c.Assert(t2.Meta().DirectPlacementOpts, IsNil)
 	c.Assert(t2.Meta().PlacementPolicyRef, IsNil)
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
+=======
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`pp3` */\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p1` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`pp1` */,\n" +
+		" PARTITION `p2` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`pp2` */,\n" +
+		" PARTITION `p3` VALUES LESS THAN (10000))"))
+	tp, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	require.NoError(t, err)
+	require.Equal(t, tpID, tp.Meta().ID)
+	require.Equal(t, t1ID, tp.Meta().Partition.Definitions[0].ID)
+	require.NotNil(t, tp.Meta().Partition.Definitions[0].PlacementPolicyRef)
+	t1, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	require.Equal(t, par0ID, t1.Meta().ID)
+	require.Equal(t, policy1.ID, t1.Meta().PlacementPolicyRef.ID)
+	checkExistTableBundlesInPD(t, dom, "test", "tp")
+
+	// exchange par2, t1
+	tk.MustGetErrCode("alter table tp exchange partition p2 with table t1", mysql.ErrTablesDifferentMetadata)
+
+	// exchange par3, t1
+	tk.MustGetErrCode("alter table tp exchange partition p3 with table t1", mysql.ErrTablesDifferentMetadata)
+
+	// exchange par1, t2
+	tk.MustGetErrCode("alter table tp exchange partition p1 with table t2", mysql.ErrTablesDifferentMetadata)
+
+	// exchange par2, t2
+	tk.MustGetErrCode("alter table tp exchange partition p2 with table t2", mysql.ErrTablesDifferentMetadata)
+
+	// exchange par3, t2
+	tk.MustGetErrCode("alter table tp exchange partition p3 with table t2", mysql.ErrTablesDifferentMetadata)
+
+	// exchange par1, t3
+	tk.MustGetErrCode("alter table tp exchange partition p1 with table t3", mysql.ErrTablesDifferentMetadata)
+
+	// exchange par2, t3
+	tk.MustGetErrCode("alter table tp exchange partition p2 with table t3", mysql.ErrTablesDifferentMetadata)
+
+	// exchange par3, t3
+	tk.MustExec("alter table tp exchange partition p3 with table t3")
+	checkExistTableBundlesInPD(t, dom, "test", "tp")
+	checkExistTableBundlesInPD(t, dom, "test", "t3")
+>>>>>>> c7c7000165a (ddl: Exchange partition rollback (#45877))
 }
 
 func (s *testDBSuite6) TestPDFail(c *C) {

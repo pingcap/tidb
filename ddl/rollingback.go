@@ -337,7 +337,48 @@ func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isP
 	return
 }
 
+<<<<<<< HEAD
 func convertAddTablePartitionJob2RollbackJob(t *meta.Meta, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
+=======
+func needNotifyAndStopReorgWorker(job *model.Job) bool {
+	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
+		// If the value of SnapshotVer isn't zero, it means the reorg workers have been started.
+		if job.MultiSchemaInfo != nil {
+			// However, if the sub-job is non-revertible, it means the reorg process is finished.
+			// We don't need to start another round to notify reorg workers to exit.
+			return job.MultiSchemaInfo.Revertible
+		}
+		return true
+	}
+	return false
+}
+
+// rollbackExchangeTablePartition will clear the non-partitioned
+// table's ExchangePartitionInfo state.
+func rollbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo) (int64, error) {
+	tblInfo.ExchangePartitionInfo = nil
+	job.State = model.JobStateRollbackDone
+	job.SchemaState = model.StatePublic
+	return updateVersionAndTableInfo(d, t, job, tblInfo, true)
+}
+
+func rollingbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	if job.SchemaState == model.StateNone {
+		// Nothing is changed
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+	var nt *model.TableInfo
+	nt, err = GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	ver, err = rollbackExchangeTablePartition(d, t, job, nt)
+	return ver, errors.Trace(err)
+}
+
+func convertAddTablePartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
+>>>>>>> c7c7000165a (ddl: Exchange partition rollback (#45877))
 	addingDefinitions := tblInfo.Partition.AddingDefinitions
 	partNames := make([]string, 0, len(addingDefinitions))
 	for _, pd := range addingDefinitions {
@@ -436,7 +477,36 @@ func rollingbackTruncateTable(t *meta.Meta, job *model.Job) (ver int64, err erro
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+<<<<<<< HEAD
 	return cancelOnlyNotHandledJob(job)
+=======
+	return cancelOnlyNotHandledJob(job, model.StateNone)
+}
+
+func rollingbackReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	if job.SchemaState == model.StateNone {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// addingDefinitions is also in tblInfo, here pass the tblInfo as parameter directly.
+	// TODO: Test this with reorganize partition p1 into (partition p1 ...)!
+	return convertAddTablePartitionJob2RollbackJob(d, t, job, dbterror.ErrCancelledDDLJob, tblInfo)
+}
+
+func pauseReorgWorkers(w *worker, d *ddlCtx, job *model.Job) (err error) {
+	if needNotifyAndStopReorgWorker(job) {
+		logutil.Logger(w.logCtx).Info("pausing the DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
+		d.notifyReorgWorkerJobStateChange(job)
+	}
+
+	return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
+>>>>>>> c7c7000165a (ddl: Exchange partition rollback (#45877))
 }
 
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -463,6 +533,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		err = rollingbackDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
 		ver, err = rollingbackDropTablePartition(t, job)
+	case model.ActionExchangeTablePartition:
+		ver, err = rollingbackExchangeTablePartition(d, t, job)
 	case model.ActionDropSchema:
 		err = rollingbackDropSchema(t, job)
 	case model.ActionRenameIndex:
@@ -476,8 +548,20 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
+<<<<<<< HEAD
 		model.ActionExchangeTablePartition, model.ActionModifySchemaDefaultPlacement:
 		ver, err = cancelOnlyNotHandledJob(job)
+=======
+		model.ActionModifySchemaDefaultPlacement,
+		model.ActionRecoverSchema, model.ActionAlterCheckConstraint:
+		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
+	case model.ActionMultiSchemaChange:
+		err = rollingBackMultiSchemaChange(job)
+	case model.ActionAddCheckConstraint:
+		ver, err = rollingBackAddConstraint(d, t, job)
+	case model.ActionDropCheckConstraint:
+		ver, err = rollingBackDropConstraint(t, job)
+>>>>>>> c7c7000165a (ddl: Exchange partition rollback (#45877))
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob
