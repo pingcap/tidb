@@ -751,13 +751,10 @@ func testAnalyzeIncremental(tk *testkit.TestKit, t *testing.T, dom *domain.Domai
 	tk.MustExec("set @@tidb_enable_paging = off")
 
 	tk.MustExec("insert into t values (3,3)")
-	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount.Load()
 	defer func() {
-		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount.Store(oriMinLogCount)
 	}()
-	statistics.FeedbackProbability.Store(1)
 	handle.MinLogScanCount.Store(0)
 	is := dom.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -767,8 +764,6 @@ func testAnalyzeIncremental(tk *testkit.TestKit, t *testing.T, dom *domain.Domai
 	tk.MustQuery("select * from t where a > 1")
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.NoError(t, h.DumpStatsFeedbackToKV())
-	require.NoError(t, h.HandleUpdateStats(is))
 	require.NoError(t, h.Update(is))
 	require.NoError(t, h.LoadNeededHistograms())
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 3 0 2 2147483647 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
