@@ -430,6 +430,7 @@ func VerifyTaskStateTransform(oldState, newState string) bool {
 		proto.TaskStateRunning: {
 			proto.TaskStateSucceed,
 			proto.TaskStateReverting,
+			proto.TaskStateReverted,
 			proto.TaskStateCancelling,
 			proto.TaskStatePausing,
 		},
