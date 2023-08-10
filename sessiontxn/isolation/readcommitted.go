@@ -318,7 +318,8 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 			zap.Uint64("conn", p.sctx.GetSessionVars().ConnectionID),
 			zap.Uint64("startTS", p.sctx.GetSessionVars().TxnCtx.StartTS),
 			zap.Bool("isTidbSnapshotEnabled", p.isTidbSnapshotEnabled()),
-			zap.Bool("isBeginStmtWithStaleRead", p.isBeginStmtWithStaleRead()))
+			zap.Bool("isBeginStmtWithStaleRead", p.isBeginStmtWithStaleRead()),
+			zap.Stack("stack"))
 		return nil
 	}
 	if p.stmtUseStartTS || !p.latestOracleTSValid {
