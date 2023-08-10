@@ -16,10 +16,12 @@ package external
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
@@ -236,4 +238,98 @@ func TestCorruptContent(t *testing.T) {
 	err = iter.Close()
 	require.NoError(t, err)
 	require.EqualValues(t, 0, trackStore.opened.Load())
+}
+
+func generateMockFileReader() *kvReader {
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+	filename := "/test1"
+	size := 100_000
+	writer, err := memStore.Create(ctx, filename, nil)
+	if err != nil {
+		panic(err)
+	}
+	rc := &rangePropertiesCollector{
+		propSizeIdxDistance: 100,
+		propKeysIdxDistance: 2,
+	}
+	rc.reset()
+	kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
+	if err != nil {
+		panic(err)
+	}
+	for i := 0; i < size; i++ {
+		key := fmt.Sprintf("key%09d", i)
+		val := fmt.Sprintf("value%09d", i)
+		err = kvStore.AddKeyValue([]byte(key), []byte(val))
+		if err != nil {
+			panic(err)
+		}
+	}
+	err = writer.Close(ctx)
+	if err != nil {
+		panic(err)
+	}
+	rd, err := newKVReader(ctx, filename, memStore, 0, 1_000)
+	if err != nil {
+		panic(err)
+	}
+	return rd
+}
+
+func BenchmarkValueT(b *testing.B) {
+	logger := logutil.BgLogger()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		rd := generateMockFileReader()
+		readerProxy := []*kvReaderProxy{{r: rd}}
+		it, err := newMergeIter[kvPair, kvReaderProxy](readerProxy, logger)
+		if err != nil {
+			panic(err)
+		}
+		b.StartTimer()
+		for it.next() {
+			e := it.currElem()
+			_ = e
+		}
+	}
+}
+
+type kvReaderPointerProxy struct {
+	p string
+	r *kvReader
+}
+
+func (p kvReaderPointerProxy) path() string {
+	return p.p
+}
+
+func (p kvReaderPointerProxy) next() (*kvPair, error) {
+	k, v, err := p.r.nextKV()
+	if err != nil {
+		return nil, err
+	}
+	return &kvPair{key: k, value: v}, nil
+}
+
+func (p kvReaderPointerProxy) close() error {
+	return p.r.Close()
+}
+
+func BenchmarkPointerT(b *testing.B) {
+	logger := logutil.BgLogger()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		rd := generateMockFileReader()
+		readerProxy := []*kvReaderPointerProxy{{r: rd}}
+		it, err := newMergeIter[*kvPair, kvReaderPointerProxy](readerProxy, logger)
+		if err != nil {
+			panic(err)
+		}
+		b.StartTimer()
+		for it.next() {
+			e := it.currElem()
+			_ = e
+		}
+	}
 }
