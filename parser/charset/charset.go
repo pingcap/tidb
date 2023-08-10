@@ -91,8 +91,8 @@ func GetSupportedCharsets() []*Charset {
 	}
 
 	// sort charset by name.
-	slices.SortFunc(charsets, func(i, j *Charset) bool {
-		return i.Name < j.Name
+	slices.SortFunc(charsets, func(i, j *Charset) int {
+		return strings.Compare(i.Name, j.Name)
 	})
 	return charsets
 }
