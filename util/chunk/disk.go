@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 )
 
-// ListInDisk represents a slice of chunks stored in temporary disk.
+// ListInDisk represents a slice of chunks storing in temporary disk.
 type ListInDisk struct {
 	fieldTypes                []*types.FieldType
 	numRowsOfEachChunk        []int
@@ -182,8 +182,6 @@ func (l *ListInDisk) GetChunk(chkIdx int) (*Chunk, error) {
 	// this channel is big enough and will never be blocked.
 	formatCh := make(chan rowInDisk, chkSize)
 	var formatChErr error
-	// TODO Creating goroutine each time we get a new chunk may be very slow, maybe we should create
-	// a goroutine in advance that specifically responsible for reading from disk.
 	go func() {
 		defer close(formatCh)
 
@@ -191,8 +189,6 @@ func (l *ListInDisk) GetChunk(chkIdx int) (*Chunk, error) {
 		// for longer rows.
 		r := bufio.NewReader(l.dataFile.getSectionReader(firstRowOffset))
 		format := rowInDisk{numCol: len(l.fieldTypes)}
-
-		// TODO One row per read from disk is very slow, may be we should get a bunch of rows per read
 		for rowIdx := 0; rowIdx < chkSize; rowIdx++ {
 			_, err = format.ReadFrom(r)
 			if err != nil {
@@ -347,16 +343,17 @@ func (row rowInDisk) WriteTo(w io.Writer) (written int64, err error) {
 	return
 }
 
-// ReadFrom reads data of r, deserializes it from the format of diskFormatRow into Row.
-func (row *rowInDisk) ReadFrom(reader io.Reader) (totalReadBytesNum int64, err error) {
-	buf := make([]byte, 8*row.numCol)
-	var readBytesNum int
-	readBytesNum, err = io.ReadFull(reader, buf)
-	totalReadBytesNum += int64(readBytesNum)
+// ReadFrom reads data of r, deserializes it from the format of diskFormatRow
+// into Row.
+func (row *rowInDisk) ReadFrom(r io.Reader) (n int64, err error) {
+	b := make([]byte, 8*row.numCol)
+	var n1 int
+	n1, err = io.ReadFull(r, b)
+	n += int64(n1)
 	if err != nil {
 		return
 	}
-	row.sizesOfColumns = bytesToI64Slice(buf)
+	row.sizesOfColumns = bytesToI64Slice(b)
 	row.cells = make([][]byte, 0, row.numCol)
 	for _, size := range row.sizesOfColumns {
 		if size == -1 {
@@ -364,8 +361,8 @@ func (row *rowInDisk) ReadFrom(reader io.Reader) (totalReadBytesNum int64, err e
 		}
 		cell := make([]byte, size)
 		row.cells = append(row.cells, cell)
-		readBytesNum, err = io.ReadFull(reader, cell)
-		totalReadBytesNum += int64(readBytesNum)
+		n1, err = io.ReadFull(r, cell)
+		n += int64(n1)
 		if err != nil {
 			return
 		}
