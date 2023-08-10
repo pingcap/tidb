@@ -3282,6 +3282,60 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestExchangePartitionMultiTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+
+	dbName := "ExchangeMultiTable"
+	tk1.MustExec(`create schema ` + dbName)
+	tk1.MustExec(`use ` + dbName)
+	tk1.MustExec(`CREATE TABLE t1 (a int)`)
+	tk1.MustExec(`CREATE TABLE t2 (a int)`)
+	tk1.MustExec(`CREATE TABLE tp (a int) partition by hash(a) partitions 3`)
+	tk1.MustExec(`insert into t1 values (0)`)
+	tk1.MustExec(`insert into t2 values (3)`)
+	tk1.MustExec(`insert into tp values (6)`)
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec(`use ` + dbName)
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec(`use ` + dbName)
+	tk4 := testkit.NewTestKit(t, store)
+	tk4.MustExec(`use ` + dbName)
+	waitFor := func(col int, tableName, s string) {
+		for {
+			tk4 := testkit.NewTestKit(t, store)
+			tk4.MustExec(`use test`)
+			sql := `admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'exchange partition'`
+			res := tk4.MustQuery(sql).Rows()
+			if len(res) == 1 && res[0][col] == s {
+				break
+			}
+			res = tk4.MustQuery(`admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `'`).Rows()
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	alterChan1 := make(chan error)
+	alterChan2 := make(chan error)
+	tk3.MustExec(`BEGIN`)
+	tk3.MustExec(`insert into tp values (1)`)
+	go func() {
+		alterChan1 <- tk1.ExecToErr(`alter table tp exchange partition p0 with table t1`)
+	}()
+	waitFor(11, "t1", "running")
+	go func() {
+		alterChan2 <- tk2.ExecToErr(`alter table tp exchange partition p0 with table t2`)
+	}()
+	waitFor(11, "t2", "queueing")
+	tk3.MustExec(`rollback`)
+	require.NoError(t, <-alterChan1)
+	err := <-alterChan2
+	tk3.MustQuery(`select * from t1`).Check(testkit.Rows("6"))
+	tk3.MustQuery(`select * from t2`).Check(testkit.Rows("0"))
+	tk3.MustQuery(`select * from tp`).Check(testkit.Rows("3"))
+	require.NoError(t, err)
+}
+
 func TestExchangePartitionValidation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
