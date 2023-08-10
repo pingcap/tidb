@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -2706,32 +2707,36 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		modifyCount = int64(val.(int))
 	})
 	sampleRate := new(float64)
+	var sampleRateReason string
 	if opts[ast.AnalyzeOptNumSamples] == 0 {
 		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
 		if *sampleRate < 0 {
-			*sampleRate = b.getAdjustedSampleRate(task)
+			*sampleRate, sampleRateReason = b.getAdjustedSampleRate(task)
 			if task.PartitionName != "" {
 				sc.AppendNote(errors.Errorf(
-					"Analyze use auto adjusted sample rate %f for table %s.%s's partition %s",
+					`Analyze use auto adjusted sample rate %f for table %s.%s's partition %s, reason to use this rate is "%s"`,
 					*sampleRate,
 					task.DBName,
 					task.TableName,
 					task.PartitionName,
+					sampleRateReason,
 				))
 			} else {
 				sc.AppendNote(errors.Errorf(
-					"Analyze use auto adjusted sample rate %f for table %s.%s",
+					`Analyze use auto adjusted sample rate %f for table %s.%s, reason to use this rate is "%s"`,
 					*sampleRate,
 					task.DBName,
 					task.TableName,
+					sampleRateReason,
 				))
 			}
 		}
 	}
 	job := &statistics.AnalyzeJob{
-		DBName:        task.DBName,
-		TableName:     task.TableName,
-		PartitionName: task.PartitionName,
+		DBName:           task.DBName,
+		TableName:        task.TableName,
+		PartitionName:    task.PartitionName,
+		SampleRateReason: sampleRateReason,
 	}
 
 	base := baseAnalyzeExec{
@@ -2788,11 +2793,11 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 // If we take n = 1e12, a 300*k sample still gives <= 0.66 bin size error with probability 0.99.
 // So if we don't consider the top-n values, we can keep the sample size at 300*256.
 // But we may take some top-n before building the histogram, so we increase the sample a little.
-func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsTask) float64 {
+func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsTask) (sampleRate float64, reason string) {
 	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
 	defaultRate := 0.001
 	if statsHandle == nil {
-		return defaultRate
+		return defaultRate, fmt.Sprintf("statsHandler is nil, use the default-rate=%v", defaultRate)
 	}
 	var statsTbl *statistics.Table
 	tid := task.TableID.GetStatisticsID()
@@ -2804,11 +2809,11 @@ func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsT
 	approxiCount, hasPD := b.getApproximateTableCountFromStorage(tid, task)
 	// If there's no stats meta and no pd, return the default rate.
 	if statsTbl == nil && !hasPD {
-		return defaultRate
+		return defaultRate, fmt.Sprintf("TiDB cannot get the row count of the table, use the default-rate=%v", defaultRate)
 	}
 	// If the count in stats_meta is still 0 and there's no information from pd side, we scan all rows.
 	if statsTbl.RealtimeCount == 0 && !hasPD {
-		return 1
+		return 1, "TiDB assumes that the table is empty and cannot get row count from PD, use sample-rate=1"
 	}
 	// we have issue https://github.com/pingcap/tidb/issues/29216.
 	// To do a workaround for this issue, we check the approxiCount from the pd side to do a comparison.
@@ -2817,15 +2822,17 @@ func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsT
 	if float64(statsTbl.RealtimeCount*5) < approxiCount {
 		// Confirmed by TiKV side, the experience error rate of the approximate count is about 20%.
 		// So we increase the number to 150000 to reduce this error rate.
-		return math.Min(1, 150000/approxiCount)
+		sampleRate = math.Min(1, 150000/approxiCount)
+		return sampleRate, fmt.Sprintf("Row count in stats_meta is much smaller compared with the row count got by PD, use min(1, 15000/%v) as the sample-rate=%v", approxiCount, sampleRate)
 	}
 	// If we don't go into the above if branch and we still detect the count is zero. Return 1 to prevent the dividing zero.
 	if statsTbl.RealtimeCount == 0 {
-		return 1
+		return 1, "TiDB assumes that the table is empty, use sample-rate=1"
 	}
 	// We are expected to scan about 100000 rows or so.
 	// Since there's tiny error rate around the count from the stats meta, we use 110000 to get a little big result
-	return math.Min(1, config.DefRowsForSampleRate/float64(statsTbl.RealtimeCount))
+	sampleRate = math.Min(1, config.DefRowsForSampleRate/float64(statsTbl.RealtimeCount))
+	return sampleRate, fmt.Sprintf("use min(1, %v/%v) as the sample-rate=%v", config.DefRowsForSampleRate, statsTbl.RealtimeCount, sampleRate)
 }
 
 func (b *executorBuilder) getApproximateTableCountFromStorage(tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {

@@ -242,7 +242,7 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("0"))
 	tk.MustExec("analyze table t partition p0 with 1 topn, 2 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
 		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
