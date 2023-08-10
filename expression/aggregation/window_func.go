@@ -60,10 +60,10 @@ func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Ex
 
 	base, err := newBaseFuncDesc(ctx, name, args)
 
-	// Some window functions' return column type must be nullable
+	// Some window functions' return column type must be nullable or not nullable
 	switch name {
 	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncCumeDist, ast.WindowFuncPercentRank:
-		break
+		base.RetTp.SetFlag(mysql.NotNullFlag)
 	default:
 		base.RetTp.DelFlag(mysql.NotNullFlag)
 	}
