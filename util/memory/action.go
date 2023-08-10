@@ -157,9 +157,10 @@ func (*LogOnExceed) GetPriority() int64 {
 type PanicOnExceed struct {
 	logHook func(uint64)
 	BaseOOMAction
-	ConnID uint64
-	mutex  sync.Mutex // For synchronization.
-	acted  bool
+	ConnID  uint64
+	mutex   sync.Mutex // For synchronization.
+	acted   bool
+	invoker ActionInvoker
 }
 
 // SetLogHook sets a hook for PanicOnExceed.
@@ -182,7 +183,10 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 		}
 	}
 	a.acted = true
-	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
+	if a.invoker == SingleQuery {
+		panic(PanicMemoryExceedWarnMsg + WarnMsgSuffixForSingleQuery + fmt.Sprintf("[conn=%d]", a.ConnID))
+	}
+	panic(PanicMemoryExceedWarnMsg + WarnMsgSuffixForInstance + fmt.Sprintf("[conn=%d]", a.ConnID))
 }
 
 // GetPriority get the priority of the Action
@@ -190,11 +194,20 @@ func (*PanicOnExceed) GetPriority() int64 {
 	return DefPanicPriority
 }
 
+// SetInvoker sets the invoker of the Action.
+func (a *PanicOnExceed) SetInvoker(invoker ActionInvoker) {
+	a.invoker = invoker
+}
+
 var (
 	errMemExceedThreshold = dbterror.ClassUtil.NewStd(errno.ErrMemExceedThreshold)
 )
 
 const (
-	// PanicMemoryExceed represents the panic message when out of memory quota.
-	PanicMemoryExceed string = "Out Of Memory Quota!"
+	// PanicMemoryExceedWarnMsg represents the panic message when out of memory quota.
+	PanicMemoryExceedWarnMsg string = "Your query has been cancelled due to exceeding the allowed memory limit"
+	// WarnMsgSuffixForSingleQuery represents the suffix of the warning message when out of memory quota for a single query.
+	WarnMsgSuffixForSingleQuery string = " for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again."
+	// WarnMsgSuffixForInstance represents the suffix of the warning message when out of memory quota for the tidb-server instance.
+	WarnMsgSuffixForInstance string = " for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."
 )
