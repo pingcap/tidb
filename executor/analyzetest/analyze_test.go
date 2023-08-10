@@ -3231,7 +3231,7 @@ func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 	_, err0 := tk0.Exec(sqlPrepare)
 	require.NoError(t, err0)
 	_, err1 := tk0.Exec(sqlExecute)
-	require.True(t, strings.Contains(err1.Error(), "Out Of Memory Quota!"))
+	require.True(t, strings.Contains(err1.Error(), "Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory."))
 	runtime.GC()
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))

@@ -6137,7 +6137,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 		func() {
 			tracker3.Consume(1)
 		}, func(r interface{}) {
-			require.True(t, strings.Contains(r.(string), "Out Of Memory Quota!"))
+			require.True(t, strings.Contains(r.(string), memory.PanicMemoryExceedWarnMsg))
 		})
 	tracker2.Consume(300 << 20) // Sum 500MB, Not Panic, Waiting t3 cancel finish.
 	time.Sleep(500 * time.Millisecond)
@@ -6156,7 +6156,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 		func() {
 			tracker2.Consume(1)
 		}, func(r interface{}) {
-			require.True(t, strings.Contains(r.(string), "Out Of Memory Quota!"))
+			require.True(t, strings.Contains(r.(string), memory.PanicMemoryExceedWarnMsg))
 		})
 	require.Equal(t, test[0], 0) // Keep 1GB HeapInUse
 }
