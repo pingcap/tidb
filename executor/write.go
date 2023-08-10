@@ -78,7 +78,7 @@ func updateRecord(
 
 	// Handle exchange partition
 	tbl := t.Meta()
-	if tbl.ExchangePartitionInfo != nil && tbl.ExchangePartitionInfo.ExchangePartitionFlag {
+	if tbl.ExchangePartitionInfo != nil {
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
 		if !tableFound {
