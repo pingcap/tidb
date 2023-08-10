@@ -154,7 +154,7 @@ func TestAnalyzeGlobalStatsWithOpts1(t *testing.T) {
 		{77, 219, false},
 		{-31, 222, true},
 		{10, -77, true},
-		{10000, 47, true},
+		{100000, 47, true},
 		{77, 47000, true},
 	}
 	for _, ca := range cases {
