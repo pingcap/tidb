@@ -4504,7 +4504,7 @@ func TestLeastGretestStringPushDownToTiFlash(t *testing.T) {
 }
 
 func TestPartitionTableFallBackStatic(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='static'")

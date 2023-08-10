@@ -149,6 +149,9 @@ type RequestSource = util.RequestSource
 // WithInternalSourceType create context with internal source.
 var WithInternalSourceType = util.WithInternalSourceType
 
+// WithInternalSourceAndTaskType create context with internal source and task name.
+var WithInternalSourceAndTaskType = util.WithInternalSourceAndTaskType
+
 // GetInternalSourceType get internal source
 func GetInternalSourceType(ctx context.Context) string {
 	v := ctx.Value(util.RequestSourceKey)
