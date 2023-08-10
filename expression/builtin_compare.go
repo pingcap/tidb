@@ -1556,6 +1556,11 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	return con, false
 }
 
+func matchRefineRule3Pattern(constEvalType types.EvalType, columnEvalType types.EvalType) bool {
+	return (columnEvalType == types.ETDatetime || columnEvalType == types.ETTimestamp) &&
+		(constEvalType == types.ETReal || constEvalType == types.ETDecimal || constEvalType == types.ETInt)
+}
+
 // Since the argument refining of cmp functions can bring some risks to the plan-cache, the optimizer
 // needs to decide to whether to skip the refining or skip plan-cache for safety.
 // For example, `unsigned_int_col > ?(-1)` can be refined to `True`, but the validation of this result
@@ -1578,6 +1583,7 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		// refine `year < 12` to `year < 2012` to guarantee the correctness.
 		// see https://github.com/pingcap/tidb/issues/41626 for more details.
 		exprType := args[1-conIdx].GetType()
+		exprEvalType := exprType.EvalType()
 		if exprType.GetType() == mysql.TypeYear {
 			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
 			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
@@ -1587,7 +1593,7 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		// case 2: int-expr <cmp> string/float/double/decimal-const
 		// refine `int_key < 1.1` to `int_key < 2` to generate RangeScan instead of FullScan.
 		conType := args[conIdx].GetType().EvalType()
-		if exprType.EvalType() == types.ETInt &&
+		if exprEvalType == types.ETInt &&
 			(conType == types.ETString || conType == types.ETReal || conType == types.ETDecimal) {
 			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
 			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
@@ -1598,8 +1604,7 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		// try refine numeric-const to timestamp const
 		// see https://github.com/pingcap/tidb/issues/38361 for more details
 		_, exprIsCon := args[1-conIdx].(*Constant)
-		if !exprIsCon && (exprType.EvalType() == types.ETDatetime || exprType.EvalType() == types.ETTimestamp) &&
-			(conType == types.ETReal || conType == types.ETDecimal || conType == types.ETInt) {
+		if !exprIsCon && matchRefineRule3Pattern(conType, exprEvalType) {
 			reason := errors.Errorf("'%v' may be converted to datetime", args[conIdx].String())
 			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
 			return true
@@ -1617,8 +1622,9 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 // So we have to skip this operation or mark the plan as over-optimized when using plan-cache.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
-	arg0IsInt := arg0Type.EvalType() == types.ETInt
-	arg1IsInt := arg1Type.EvalType() == types.ETInt
+	arg0EvalType, arg1EvalType := arg0Type.EvalType(), arg1Type.EvalType()
+	arg0IsInt := arg0EvalType == types.ETInt
+	arg1IsInt := arg1EvalType == types.ETInt
 	arg0, arg0IsCon := args[0].(*Constant)
 	arg1, arg1IsCon := args[1].(*Constant)
 	isExceptional, finalArg0, finalArg1 := false, args[0], args[1]
@@ -1630,11 +1636,11 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	// We should remove the mutable constant for correctness, because its value may be changed.
 	RemoveMutableConst(ctx, args)
 
-	if arg0IsCon && !arg1IsCon && (arg1Type.EvalType() == types.ETDatetime || arg1Type.EvalType() == types.ETTimestamp) {
+	if arg0IsCon && !arg1IsCon && matchRefineRule3Pattern(arg0EvalType, arg1EvalType) {
 		return c.refineNumericConstantCmpDatetime(ctx, args, arg0, 0)
 	}
 
-	if !arg0IsCon && arg1IsCon && (arg0Type.EvalType() == types.ETDatetime || arg0Type.EvalType() == types.ETTimestamp) {
+	if !arg0IsCon && arg1IsCon && matchRefineRule3Pattern(arg1EvalType, arg0EvalType) {
 		return c.refineNumericConstantCmpDatetime(ctx, args, arg1, 1)
 	}
 
@@ -1743,9 +1749,8 @@ func (c *compareFunctionClass) refineNumericConstantCmpDatetime(ctx sessionctx.C
 	}
 	if constArgIdx == 0 {
 		return []Expression{&finalArg, args[1]}
-	} else {
-		return []Expression{args[0], &finalArg}
 	}
+	return []Expression{args[0], &finalArg}
 }
 
 func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, args []Expression) []Expression {
