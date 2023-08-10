@@ -99,16 +99,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 			return
 		}
 		partNum := len(allTopNs)
-		checkNum := len(checkTopNs)
-		topNsNum := make([]int, checkNum)
 		removeVals := make([][]TopNMeta, partNum)
-		for i, topN := range checkTopNs {
-			if topN == nil {
-				topNsNum[i] = 0
-				continue
-			}
-			topNsNum[i] = len(topN.TopN)
-		}
 		// Different TopN structures may hold the same value, we have to merge them.
 		counter := make(map[hack.MutableString]float64)
 		// datumMap is used to store the mapping from the string type to datum type.
@@ -136,6 +127,11 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 				// 1. Check the topN first.
 				// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
 				for j := 0; j < partNum; j++ {
+					if atomic.LoadUint32(worker.killed) == 1 {
+						resp.Err = errors.Trace(ErrQueryInterrupted)
+						worker.respCh <- resp
+						return
+					}
 					if (j == i && version >= 2) || allTopNs[j].findTopN(val.Encoded) != -1 {
 						continue
 					}
