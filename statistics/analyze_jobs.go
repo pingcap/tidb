@@ -26,9 +26,15 @@ type AnalyzeJob struct {
 	TableName     string
 	PartitionName string
 	JobInfo       string
+<<<<<<< HEAD
 	StartTime     time.Time
 	EndTime       time.Time
 	Progress      AnalyzeProgress
+=======
+
+	SampleRateReason string // why this sample-rate is chosen
+	Progress         AnalyzeProgress
+>>>>>>> 6fb20c9d306 (planner: log the reason why the sample-rate is chosen when analyzing table (#45938))
 }
 
 // AnalyzeProgress represents the process of one analyze job.
