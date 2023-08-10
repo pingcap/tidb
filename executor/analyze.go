@@ -594,7 +594,8 @@ func finishJobWithLog(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 			zap.String("job info", job.JobInfo),
 			zap.Time("start time", job.StartTime),
 			zap.Time("end time", job.EndTime),
-			zap.String("cost", job.EndTime.Sub(job.StartTime).String()))
+			zap.String("cost", job.EndTime.Sub(job.StartTime).String()),
+			zap.String("sample rate reason", job.SampleRateReason))
 	}
 }
 
