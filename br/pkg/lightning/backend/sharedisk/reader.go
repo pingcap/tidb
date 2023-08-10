@@ -20,7 +20,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
@@ -263,7 +262,7 @@ func (r *byteReader) reload() error {
 	ReadByteForTest.Add(uint64(nBytes))
 	ReadTimeForTest.Add(uint64(elapsed))
 	readRate := float64(nBytes) / 1024.0 / 1024.0 / (float64(time.Since(startTime).Microseconds()) / 1000000.0)
-	log.Info("s3 read rate", zap.Any("res", readRate), zap.Any("bytes", nBytes), zap.Any("time", time.Since(startTime)))
+	//log.Info("s3 read rate", zap.Any("res", readRate), zap.Any("bytes", nBytes), zap.Any("time", time.Since(startTime)))
 	metrics.GlobalSortSharedDiskRate.WithLabelValues("read").Observe(readRate)
 	metrics.GlobalSortSharedDiskThroughput.WithLabelValues("read").Add(float64(nBytes) / 1024.0 / 1024.0)
 	ReadIOCnt.Add(1)
