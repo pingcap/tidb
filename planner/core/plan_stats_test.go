@@ -296,8 +296,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 }
 
 func TestPlanStatsStatusRecord(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = true
 	})
