@@ -2113,7 +2113,7 @@ func TestAnalyzeSampleRateReason(t *testing.T) {
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	tk.MustExec(`analyze table t`)
 	tk.MustQuery(`show warnings`).Sort().Check(testkit.Rows(
-		`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "statsTbl.RealtimeCount is 0, use sample-rate=1"`))
+		`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "TiDB assumes that the table is empty, use sample-rate=1"`))
 }
 
 func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
@@ -2165,7 +2165,7 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 				tk.MustExec("analyze table t predicate columns")
 			}
 			tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-				`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "statsTbl.RealtimeCount is 0, use sample-rate=1"`,
+				`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "TiDB assumes that the table is empty, use sample-rate=1"`,
 				"Warning 1105 Table test.t has version 1 statistics so all the columns must be analyzed to overwrite the current statistics",
 			))
 		}(val)
