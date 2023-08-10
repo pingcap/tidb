@@ -89,5 +89,4 @@ set names utf8mb4;
 set @@character_set_client=gbk;
 set @@character_set_connection=gbk;
 select hex('一a'), '一a';
-hex('涓?')	涓?
-E4B83F	涓?
+Error 1300: Invalid gbk character string: '8061'
