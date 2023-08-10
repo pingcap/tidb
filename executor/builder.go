@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
@@ -72,6 +73,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
@@ -1726,6 +1728,11 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 // Please notice that in RC isolation, the above two ts are the same
 func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 	if b.forDataReaderBuilder {
+		logutil.BgLogger().Info(
+			"builder get snapshot ts from dataReaderTS",
+			zap.Uint64("conn", b.ctx.GetSessionVars().ConnectionID),
+			zap.Uint64("ts", b.dataReaderTS),
+		)
 		return b.dataReaderTS, nil
 	}
 

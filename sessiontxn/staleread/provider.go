@@ -16,9 +16,10 @@ package staleread
 
 import (
 	"context"
+	"time"
+
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
@@ -227,6 +228,12 @@ func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, 
 	if txn.Valid() {
 		return txn.GetSnapshot(), nil
 	}
+
+	logutil.Logger(p.ctx).Warn(
+		"get snapshot with stmt read ts in stale read txn",
+		zap.Uint64("ts", p.ts),
+		zap.Stack("stack"),
+	)
 
 	sessVars := p.sctx.GetSessionVars()
 	snapshot := internal.GetSnapshotWithTS(
