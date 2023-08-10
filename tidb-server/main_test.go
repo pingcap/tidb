@@ -40,14 +40,6 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, opts...)
 }
 
-// TestRunMain is a dummy test case, which contains only the main function of tidb-server,
-// and it is used to generate coverage_server.
-func TestRunMain(t *testing.T) {
-	if isCoverageServer == "1" {
-		main()
-	}
-}
-
 func TestSetGlobalVars(t *testing.T) {
 	defer view.Stop()
 	require.Equal(t, "tikv,tiflash,tidb", variable.GetSysVar(variable.TiDBIsolationReadEngines).Value)
