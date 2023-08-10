@@ -435,11 +435,6 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 }
 
 func (cc *clientConn) writePacket(data []byte) error {
-	failpoint.Inject("FakeClientConn", func() {
-		if cc.pkt == nil {
-			failpoint.Return(nil)
-		}
-	})
 	return cc.pkt.WritePacket(data)
 }
 
@@ -1379,11 +1374,6 @@ func (cc *clientConn) flush(ctx context.Context) error {
 			}
 		}
 	}()
-	failpoint.Inject("FakeClientConn", func() {
-		if cc.pkt == nil {
-			failpoint.Return(nil)
-		}
-	})
 	return cc.pkt.Flush()
 }
 

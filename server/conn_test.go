@@ -671,14 +671,7 @@ func mapBelong(m1, m2 map[string]string) bool {
 
 func TestConnExecutionTimeout(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	// There is no underlying netCon, use failpoint to avoid panic
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"))
-	}()
 	tk := testkit.NewTestKit(t, store)
-
 	connID := uint64(1)
 	tk.Session().SetConnectionID(connID)
 	tc := &TiDBContext{
@@ -717,6 +710,16 @@ func TestConnExecutionTimeout(t *testing.T) {
 	tk.MustQuery("select SLEEP(1);").Check(testkit.Rows("0"))
 	err := tk.QueryToErr("select * FROM testTable2 WHERE SLEEP(1);")
 	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
+	// Killed because of max execution time, reset Killed to 0.
+	atomic.CompareAndSwapUint32(&tk.Session().GetSessionVars().Killed, 2, 0)
+	tk.MustExec("set @@max_execution_time = 0;")
+	tk.MustQuery("select * FROM testTable2 WHERE SLEEP(1);").Check(testkit.Rows())
+	err = tk.QueryToErr("select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
+	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
+	// Killed because of max execution time, reset Killed to 0.
+	atomic.CompareAndSwapUint32(&tk.Session().GetSessionVars().Killed, 2, 0)
+	tk.MustExec("alter table testTable2 add index idx(age);")
+	tk.MustExec("drop table testTable2;")
 }
 
 func TestShutDown(t *testing.T) {
