@@ -10,11 +10,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/gcutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
@@ -69,15 +69,14 @@ func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 					if c.lastCheckpoint.needResolveLocks() {
 						handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 							// we will scan all locks and try to resolve them by check txn status.
-							return gcutil.ResolveLocksForRange(ctx, "log backup advancer", c.env, math.MaxUint64, r.StartKey, r.EndKey)
+							return gcutil.ResolveLocksForRange(ctx, "log backup", "advancer", c.env, math.MaxUint64, r.StartKey, r.EndKey)
 						}
 						runner := rangetask.NewRangeTaskRunner("advancer-resolve-locks-runner",
 							c.env.GetStore(), config.DefaultMaxConcurrencyAdvance, handler)
 						// Run resolve lock on the whole TiKV cluster.
-						// it will use startKey/endKey to scan region in PD. so we need encode key here.
-						encodedStartKey := codec.EncodeBytes([]byte{}, c.lastCheckpoint.StartKey)
-						encodedEndKey := codec.EncodeBytes([]byte{}, c.lastCheckpoint.EndKey)
-						err := runner.RunOnRange(ctx, encodedStartKey, encodedEndKey)
+						// it will use startKey/endKey to scan region in PD.
+						// but regionCache already has a codecPDClient. so just use decode key here.
+						err := runner.RunOnRange(ctx, c.lastCheckpoint.StartKey, c.lastCheckpoint.EndKey)
 						if err != nil {
 							// wait for next tick
 							log.Error("resolve locks failed", zap.String("category", "advancer"),
@@ -86,6 +85,8 @@ func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 						}
 						log.Info("finish resolve locks", zap.String("category", "advancer"),
 							zap.String("uuid", "log backup advancer"),
+							logutil.Key("StartKey", c.lastCheckpoint.StartKey),
+							logutil.Key("EndKey", c.lastCheckpoint.EndKey),
 							zap.Int("regions", runner.CompletedRegions()))
 					}
 				}

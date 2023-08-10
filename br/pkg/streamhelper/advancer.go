@@ -3,8 +3,8 @@
 package streamhelper
 
 import (
+	"bytes"
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -101,6 +101,11 @@ func NewCheckpointWithSpan(s spans.Valued) checkpoint {
 
 func (c checkpoint) safeTS() uint64 {
 	return c.TS - 1
+}
+
+func (c checkpoint) equal(o checkpoint) bool {
+	return bytes.Equal(c.StartKey, o.StartKey) &&
+		bytes.Equal(c.EndKey, o.EndKey) && c.TS == o.TS
 }
 
 // if a checkpoint stay in a time too long(1 min)
@@ -373,14 +378,15 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 }
 
 func (c *CheckpointAdvancer) setCheckpoint(ctx context.Context, s spans.Valued) bool {
-	fmt.Println("enter setCheckpoint")
 	cp := NewCheckpointWithSpan(s)
 	if cp.TS < c.lastCheckpoint.TS {
 		log.Warn("failed to update global checkpoint: stale",
 			zap.Uint64("old", c.lastCheckpoint.TS), zap.Uint64("new", cp.TS))
 		return false
 	}
-	if cp.TS <= c.lastCheckpoint.TS {
+	// Need resolve lock for different range and same TS
+	// so check the range and TS here.
+	if cp.equal(c.lastCheckpoint) {
 		return false
 	}
 	c.lastCheckpoint = cp

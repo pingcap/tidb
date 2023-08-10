@@ -126,6 +126,7 @@ func GetGCSafePoint(sctx sessionctx.Context) (uint64, error) {
 func ResolveLocksForRange(
 	ctx context.Context,
 	uuid string,
+	category string,
 	lockResolver GCLockResolver,
 	maxVersion uint64,
 	startKey []byte,
@@ -224,7 +225,7 @@ retryScanAndResolve:
 			stat.CompletedRegions++
 			key = loc.EndKey
 		} else {
-			logutil.Logger(ctx).Info("region has more than limit locks", zap.String("category", "gc worker"),
+			logutil.Logger(ctx).Info("region has more than limit locks", zap.String("category", category),
 				zap.String("uuid", uuid),
 				zap.Uint64("region", locForResolve.Region.GetID()),
 				zap.Int("scan lock limit", GCScanLockLimit))

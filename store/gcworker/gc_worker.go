@@ -1198,7 +1198,7 @@ func (w *GCWorker) legacyResolveLocks(
 	startTime := time.Now()
 
 	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-		return gcutil.ResolveLocksForRange(ctx, w.uuid, w.lockResolver, safePoint, r.StartKey, r.EndKey)
+		return gcutil.ResolveLocksForRange(ctx, w.uuid, "gc worker", w.lockResolver, safePoint, r.StartKey, r.EndKey)
 	}
 
 	runner := rangetask.NewRangeTaskRunner("resolve-locks-runner", w.tikvStore, concurrency, handler)
