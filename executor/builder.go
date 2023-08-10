@@ -2813,7 +2813,7 @@ func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsT
 	}
 	// If the count in stats_meta is still 0 and there's no information from pd side, we scan all rows.
 	if statsTbl.RealtimeCount == 0 && !hasPD {
-		return 1, fmt.Sprintf("Tidb assumes that the table is empty, use sample-rate=1")
+		return 1, "TiDB assumes that the table is empty and cannot get row count from PD, use sample-rate=1"
 	}
 	// we have issue https://github.com/pingcap/tidb/issues/29216.
 	// To do a workaround for this issue, we check the approxiCount from the pd side to do a comparison.
@@ -2827,7 +2827,7 @@ func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsT
 	}
 	// If we don't go into the above if branch and we still detect the count is zero. Return 1 to prevent the dividing zero.
 	if statsTbl.RealtimeCount == 0 {
-		return 1, fmt.Sprintf("TiDB assumes that the table is empty, use sample-rate=1")
+		return 1, "TiDB assumes that the table is empty, use sample-rate=1"
 	}
 	// We are expected to scan about 100000 rows or so.
 	// Since there's tiny error rate around the count from the stats meta, we use 110000 to get a little big result
