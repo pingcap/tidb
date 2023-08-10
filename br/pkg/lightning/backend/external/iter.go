@@ -108,7 +108,7 @@ func newMergeIter[
 			i.readers[j] = nil
 			continue
 		}
-		if err != nil && err != io.EOF {
+		if err != nil {
 			i.close()
 			return nil, err
 		}
