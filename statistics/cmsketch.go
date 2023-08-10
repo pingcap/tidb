@@ -799,10 +799,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 	if checkEmptyTopNs(topNs) {
 		return nil, nil, hists, nil
 	}
-
 	partNum := len(topNs)
-	removeVals := make([][]TopNMeta, partNum)
-
 	// Different TopN structures may hold the same value, we have to merge them.
 	counter := make(map[hack.MutableString]float64)
 	// datumMap is used to store the mapping from the string type to datum type.
@@ -864,20 +861,9 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 				if count != 0 {
 					counter[encodedVal] += count
 					// Remove the value corresponding to encodedVal from the histogram.
-					removeVals[j] = append(removeVals[j], TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
+					hists[j].BinarySearchRemoveVal(TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
 				}
 			}
-		}
-	}
-	// Remove the value from the Hists.
-	for i := 0; i < partNum; i++ {
-		if len(removeVals[i]) > 0 {
-			tmp := removeVals[i]
-			slices.SortFunc(tmp, func(i, j TopNMeta) bool {
-				cmpResult := bytes.Compare(i.Encoded, j.Encoded)
-				return cmpResult < 0
-			})
-			hists[i].RemoveVals(tmp)
 		}
 	}
 	numTop := len(counter)
