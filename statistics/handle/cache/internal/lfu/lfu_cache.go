@@ -127,7 +127,9 @@ func (s *LFU) onEvict(item *ristretto.Item) {
 	// We do not need to calculate the cost during onEvict, because the onexit function
 	// is also called when the evict event occurs.
 	if item.Value == nil {
-		return
+		logutil.BgLogger().Error("item value is nil", zap.Any("item", item), zap.Stack("stack"))
+	} else {
+		logutil.BgLogger().Info("item value", zap.Any("item", item), zap.Stack("stack"))
 	}
 	metrics.EvictCounter.Inc()
 	table := item.Value.(*statistics.Table)
@@ -145,9 +147,6 @@ func (s *LFU) onEvict(item *ristretto.Item) {
 }
 
 func (s *LFU) onExit(val interface{}) {
-	if val == nil {
-		return
-	}
 	s.cost.Add(-1 * val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
 	metrics.CostGauge.Set(float64(s.cost.Load()))
 }
@@ -185,6 +184,7 @@ func (s *LFU) metrics() *ristretto.Metrics {
 
 // Close implements statsCacheInner
 func (s *LFU) Close() {
+	logutil.BgLogger().Info("close LFU cache")
 	s.cache.Close()
 	s.cache.Wait()
 }
