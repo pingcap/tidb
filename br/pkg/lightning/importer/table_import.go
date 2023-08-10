@@ -54,6 +54,8 @@ import (
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // TableImporter is a helper struct to import a table.
@@ -1034,15 +1036,26 @@ func (tr *TableImporter) postProcess(
 
 			var remoteChecksum *local.RemoteChecksum
 			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo)
+			failpoint.Inject("checksum-error", func() {
+				tr.logger.Info("failpoint checksum-error injected.")
+				remoteChecksum = nil
+				err = status.Error(codes.Unknown, "Checksum meets error.")
+			})
 			if err != nil {
-				return false, err
+				if rc.cfg.PostRestore.Checksum != config.OpLevelOptional {
+					return false, err
+				}
+				tr.logger.Warn("do checksum failed, will skip this error and go on", log.ShortError(err))
+				err = nil
 			}
-			err = tr.compareChecksum(remoteChecksum, localChecksum)
-			// with post restore level 'optional', we will skip checksum error
-			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
-				if err != nil {
-					tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
-					err = nil
+			if remoteChecksum != nil {
+				err = tr.compareChecksum(remoteChecksum, localChecksum)
+				// with post restore level 'optional', we will skip checksum error
+				if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
+					if err != nil {
+						tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
+						err = nil
+					}
 				}
 			}
 		} else {

@@ -28,13 +28,13 @@ type DispatcherManagerForTest interface {
 }
 
 // GetRunningGTaskCnt implements Dispatcher.GetRunningGTaskCnt interface.
-func (d *Manager) GetRunningTaskCnt() int {
-	return d.getRunningTaskCnt()
+func (dm *Manager) GetRunningTaskCnt() int {
+	return dm.getRunningTaskCnt()
 }
 
 // DelRunningGTask implements Dispatcher.DelRunningGTask interface.
-func (d *Manager) DelRunningTask(globalTaskID int64) {
-	d.delRunningTask(globalTaskID)
+func (dm *Manager) DelRunningTask(globalTaskID int64) {
+	dm.delRunningTask(globalTaskID)
 }
 
 func TestMain(m *testing.M) {

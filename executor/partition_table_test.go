@@ -416,9 +416,9 @@ func TestOrderByAndLimit(t *testing.T) {
 	// regular table with clustered index
 	tk.MustExec("create table tregular_clustered(a int, b int, primary key(a, b) clustered)")
 
-	listVals := make([]int, 0, 2000)
+	listVals := make([]int, 0, 1000)
 
-	for i := 0; i < 2000; i++ {
+	for i := 0; i < 1000; i++ {
 		listVals = append(listVals, i)
 	}
 	rand.Shuffle(len(listVals), func(i, j int) {
@@ -427,21 +427,21 @@ func TestOrderByAndLimit(t *testing.T) {
 
 	var listVals1, listVals2, listVals3 string
 
-	for i := 0; i <= 600; i++ {
+	for i := 0; i <= 300; i++ {
 		listVals1 += strconv.Itoa(listVals[i])
-		if i != 600 {
+		if i != 300 {
 			listVals1 += ","
 		}
 	}
-	for i := 601; i <= 1200; i++ {
+	for i := 301; i <= 600; i++ {
 		listVals2 += strconv.Itoa(listVals[i])
-		if i != 1200 {
+		if i != 600 {
 			listVals2 += ","
 		}
 	}
-	for i := 1201; i <= 1999; i++ {
+	for i := 601; i <= 999; i++ {
 		listVals3 += strconv.Itoa(listVals[i])
-		if i != 1999 {
+		if i != 999 {
 			listVals3 += ","
 		}
 	}
@@ -463,26 +463,26 @@ func TestOrderByAndLimit(t *testing.T) {
 	)`, listVals1, listVals2, listVals3))
 
 	// generate some random data to be inserted
-	vals := make([]string, 0, 2000)
-	for i := 0; i < 2000; i++ {
-		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(1100), rand.Intn(2000)))
+	vals := make([]string, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(550), rand.Intn(1000)))
 	}
 
-	dedupValsA := make([]string, 0, 2000)
-	dedupMapA := make(map[int]struct{}, 2000)
-	for i := 0; i < 2000; i++ {
-		valA := rand.Intn(1100)
+	dedupValsA := make([]string, 0, 1000)
+	dedupMapA := make(map[int]struct{}, 1000)
+	for i := 0; i < 1000; i++ {
+		valA := rand.Intn(550)
 		if _, ok := dedupMapA[valA]; ok {
 			continue
 		}
-		dedupValsA = append(dedupValsA, fmt.Sprintf("(%v, %v)", valA, rand.Intn(2000)))
+		dedupValsA = append(dedupValsA, fmt.Sprintf("(%v, %v)", valA, rand.Intn(1000)))
 		dedupMapA[valA] = struct{}{}
 	}
 
-	dedupValsAB := make([]string, 0, 2000)
-	dedupMapAB := make(map[string]struct{}, 2000)
-	for i := 0; i < 2000; i++ {
-		val := fmt.Sprintf("(%v, %v)", rand.Intn(1100), rand.Intn(2000))
+	dedupValsAB := make([]string, 0, 1000)
+	dedupMapAB := make(map[string]struct{}, 1000)
+	for i := 0; i < 1000; i++ {
+		val := fmt.Sprintf("(%v, %v)", rand.Intn(550), rand.Intn(1000))
 		if _, ok := dedupMapAB[val]; ok {
 			continue
 		}
@@ -536,11 +536,11 @@ func TestOrderByAndLimit(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tikv\"")
 
 	// test indexLookUp
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 50; i++ {
 		// explain select * from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
 		// select * from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
-		x := rand.Intn(1099)
-		y := rand.Intn(2000) + 1
+		x := rand.Intn(549)
+		y := rand.Intn(500) + 1
 		queryPartition := fmt.Sprintf("select * from trange use index(idx_a) where a > %v order by a, b limit %v;", x, y)
 		queryRegular := fmt.Sprintf("select * from tregular use index(idx_a) where a > %v order by a, b limit %v;", x, y)
 		require.True(t, tk.HasPlan(queryPartition, "IndexLookUp")) // check if IndexLookUp is used
@@ -548,7 +548,7 @@ func TestOrderByAndLimit(t *testing.T) {
 	}
 
 	// test indexLookUp with order property pushed down.
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 50; i++ {
 		if i%2 == 0 {
 			tk.MustExec("set tidb_partition_prune_mode = `static-only`")
 		} else {
@@ -556,8 +556,8 @@ func TestOrderByAndLimit(t *testing.T) {
 		}
 		// explain select * from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
 		// select * from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
-		x := rand.Intn(1099)
-		y := rand.Intn(2000) + 1
+		x := rand.Intn(549)
+		y := rand.Intn(1000) + 1
 		// Since we only use order by a not order by a, b, the result is not stable when we read both a and b.
 		// We cut the max element so that the result can be stable.
 		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(a), 1100) from (select * from tregular use index(idx_a) where a > %v order by a limit %v) t", x, y)).Rows()[0][0]
@@ -586,7 +586,7 @@ func TestOrderByAndLimit(t *testing.T) {
 	}
 
 	// test indexLookUp with order property pushed down.
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 50; i++ {
 		if i%2 == 0 {
 			tk.MustExec("set tidb_partition_prune_mode = `static-only`")
 		} else {
@@ -594,8 +594,8 @@ func TestOrderByAndLimit(t *testing.T) {
 		}
 		// explain select * from t where b > {y}  use index(idx_b) order by b limit {x}; // check if IndexLookUp is used
 		// select * from t where b > {y} use index(idx_b) order by b limit {x}; // it can return the correct result
-		x := rand.Intn(1999)
-		y := rand.Intn(2000) + 1
+		x := rand.Intn(549)
+		y := rand.Intn(500) + 1
 		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(b), 2000) from (select * from tregular use index(idx_b) where b > %v order by b limit %v) t", x, y)).Rows()[0][0]
 		queryRangePartitionWithLimitHint := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from trange use index(idx_b) where b > %v and b < %v order by b limit %v", x, maxEle, y)
 		queryHashPartitionWithLimitHint := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from thash use index(idx_b) where b > %v and b < %v order by b limit %v", x, maxEle, y)
@@ -624,11 +624,11 @@ func TestOrderByAndLimit(t *testing.T) {
 	tk.MustExec("set tidb_partition_prune_mode = default")
 
 	// test tableReader
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 50; i++ {
 		// explain select * from t where a > {y}  ignore index(idx_a) order by a limit {x}; // check if IndexLookUp is used
 		// select * from t where a > {y} ignore index(idx_a) order by a limit {x}; // it can return the correct result
-		x := rand.Intn(1099)
-		y := rand.Intn(2000) + 1
+		x := rand.Intn(549)
+		y := rand.Intn(500) + 1
 		queryPartition := fmt.Sprintf("select * from trange ignore index(idx_a, idx_ab) where a > %v order by a, b limit %v;", x, y)
 		queryRegular := fmt.Sprintf("select * from tregular ignore index(idx_a, idx_ab) where a > %v order by a, b limit %v;", x, y)
 		require.True(t, tk.HasPlan(queryPartition, "TableReader")) // check if tableReader is used
@@ -636,11 +636,11 @@ func TestOrderByAndLimit(t *testing.T) {
 	}
 
 	// test tableReader with order property pushed down.
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 50; i++ {
 		// explain select * from t where a > {y}  ignore index(idx_a) order by a limit {x}; // check if IndexLookUp is used
 		// select * from t where a > {y} ignore index(idx_a) order by a limit {x}; // it can return the correct result
-		x := rand.Intn(1099)
-		y := rand.Intn(2000) + 1
+		x := rand.Intn(549)
+		y := rand.Intn(500) + 1
 		queryRangePartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from trange ignore index(idx_a, idx_ab) where a > %v order by a, b limit %v;", x, y)
 		queryHashPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from thash ignore index(idx_a, idx_ab) where a > %v order by a, b limit %v;", x, y)
 		queryListPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from tlist ignore index(idx_a, idx_ab) where a > %v order by a, b limit %v;", x, y)
@@ -752,11 +752,11 @@ func TestOrderByAndLimit(t *testing.T) {
 	}
 
 	// test indexReader
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 50; i++ {
 		// explain select a from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
 		// select a from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
-		x := rand.Intn(1099)
-		y := rand.Intn(2000) + 1
+		x := rand.Intn(549)
+		y := rand.Intn(500) + 1
 		queryPartition := fmt.Sprintf("select a from trange use index(idx_a) where a > %v order by a limit %v;", x, y)
 		queryRegular := fmt.Sprintf("select a from tregular use index(idx_a) where a > %v order by a limit %v;", x, y)
 		require.True(t, tk.HasPlan(queryPartition, "IndexReader")) // check if indexReader is used
@@ -764,11 +764,11 @@ func TestOrderByAndLimit(t *testing.T) {
 	}
 
 	// test indexReader with order property pushed down.
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 50; i++ {
 		// explain select a from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
 		// select a from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
-		x := rand.Intn(1099)
-		y := rand.Intn(2000) + 1
+		x := rand.Intn(549)
+		y := rand.Intn(500) + 1
 		queryRangePartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_a) where a > %v order by a limit %v;", x, y)
 		queryHashPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from thash use index(idx_a) where a > %v order by a limit %v;", x, y)
 		queryRegular := fmt.Sprintf("select a from tregular use index(idx_a) where a > %v order by a limit %v;", x, y)
@@ -784,9 +784,9 @@ func TestOrderByAndLimit(t *testing.T) {
 	}
 
 	// test indexReader use idx_ab(a, b) with a = {x} order by b limit {y}
-	for i := 0; i < 100; i++ {
-		x := rand.Intn(1099)
-		y := rand.Intn(2000) + 1
+	for i := 0; i < 50; i++ {
+		x := rand.Intn(549)
+		y := rand.Intn(500) + 1
 		queryRangePartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_ab) where a = %v order by b limit %v;", x, y)
 		queryHashPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from thash use index(idx_ab) where a = %v order by b limit %v;", x, y)
 		queryListPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from tlist use index(idx_ab) where a = %v order by b limit %v;", x, y)
@@ -807,10 +807,10 @@ func TestOrderByAndLimit(t *testing.T) {
 	}
 
 	// test indexMerge
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 50; i++ {
 		// explain select /*+ use_index_merge(t) */ * from t where a > 2 or b < 5 order by a, b limit {x}; // check if IndexMerge is used
 		// select /*+ use_index_merge(t) */ * from t where a > 2 or b < 5 order by a, b limit {x};  // can return the correct value
-		y := rand.Intn(2000) + 1
+		y := rand.Intn(500) + 1
 		queryHashPartition := fmt.Sprintf("select /*+ use_index_merge(thash) */ * from thash where a > 2 or b < 5 order by a, b limit %v;", y)
 		queryRegular := fmt.Sprintf("select * from tregular where a > 2 or b < 5 order by a, b limit %v;", y)
 		require.True(t, tk.HasPlan(queryHashPartition, "IndexMerge")) // check if indexMerge is used

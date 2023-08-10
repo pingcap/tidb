@@ -310,7 +310,10 @@ if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     start_tidb_server
     sleep 5
     run_explain_test
-    kill -9 $SERVER_PID
+    kill -15 $SERVER_PID
+    while ps -p $SERVER_PID > /dev/null; do
+        sleep 1
+    done
     check_data_race
 fi
 
@@ -319,7 +322,10 @@ if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     start_tidb_server
     sleep 5
     run_explain_test
-    kill -9 $SERVER_PID
+    kill -15 $SERVER_PID
+    while ps -p $SERVER_PID > /dev/null; do
+        sleep 1
+    done
     check_data_race
 fi
 
