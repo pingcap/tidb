@@ -280,8 +280,8 @@ func writeMetaToFile(tctx *tcontext.Context, target, metaSQL string, s storage.E
 	}
 
 	err = WriteMeta(tctx, &metaData{
-		target:   target,
-		metaSQL:  metaSQL,
+		target:  target,
+		metaSQL: metaSQL,
 		specCmts: []string{
 			"/*!40101 SET NAMES binary*/;",
 		},
