@@ -3311,7 +3311,6 @@ func TestExchangePartitionMultiTable(t *testing.T) {
 			if len(res) == 1 && res[0][col] == s {
 				break
 			}
-			res = tk4.MustQuery(`admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `'`).Rows()
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
