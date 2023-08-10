@@ -128,8 +128,6 @@ run_dumpling --consistency lock -B "$DB_NAME" -L ${DUMPLING_OUTPUT_DIR}/dumpling
 cnt=$(grep -w "$DB_NAME" ${DUMPLING_OUTPUT_DIR}/${DB_NAME}-schema-create.sql|wc -l)
 echo "records count is ${cnt}"
 [ "$cnt" = 1 ]
-<<<<<<< HEAD
-=======
 
 echo "Test for recording network usage."
 run_sql "drop database if exists test_db;"
@@ -182,4 +180,3 @@ run_sql "create database test_db;"
 run_sql "create table test_db.test_table (a int primary key);"
 export GO_FAILPOINTS=""
 run_dumpling --sql "select * from test_db.test_table" --filetype csv > ${DUMPLING_OUTPUT_DIR}/dumpling.log
->>>>>>> aca44298814 (dumpling: fix dumpling ignore file writer close error (#45374))

@@ -278,21 +278,13 @@ func writeMetaToFile(tctx *tcontext.Context, target, metaSQL string, s storage.E
 	if err != nil {
 		return errors.Trace(err)
 	}
-<<<<<<< HEAD
-	defer tearDown(tctx)
 
-	return WriteMeta(tctx, &metaData{
-		target:  target,
-		metaSQL: metaSQL,
-		specCmts: []string{
-			"/*!40101 SET NAMES binary*/;",
-		},
-=======
 	err = WriteMeta(tctx, &metaData{
 		target:   target,
 		metaSQL:  metaSQL,
-		specCmts: getSpecialComments(w.conf.ServerInfo.ServerType),
->>>>>>> aca44298814 (dumpling: fix dumpling ignore file writer close error (#45374))
+		specCmts: []string{
+			"/*!40101 SET NAMES binary*/;",
+		},
 	}, fileWriter)
 	tearDownErr := tearDown(tctx)
 	if err == nil {
