@@ -439,7 +439,7 @@ func testNewContext(store kv.Storage) sessionctx.Context {
 }
 
 func TestIssue40150(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 

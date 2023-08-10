@@ -85,7 +85,7 @@ func TestKillStmt(t *testing.T) {
 }
 
 func TestUserAttributes(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	rootTK := testkit.NewTestKit(t, store)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 
@@ -136,7 +136,7 @@ func TestUserAttributes(t *testing.T) {
 }
 
 func TestSetResourceGroup(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("SET GLOBAL tidb_enable_resource_control='on'")

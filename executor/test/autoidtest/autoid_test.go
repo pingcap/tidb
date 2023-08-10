@@ -679,7 +679,7 @@ func TestAutoIDIncrementAndOffset(t *testing.T) {
 }
 
 func TestRenameTableForAutoIncrement(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
 	tk.MustExec("drop table if exists t1, t2, t3;")
@@ -706,7 +706,7 @@ func TestRenameTableForAutoIncrement(t *testing.T) {
 }
 
 func TestAlterTableAutoIDCache(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
 	tk.MustExec("drop table if exists t_473;")
