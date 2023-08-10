@@ -82,10 +82,14 @@ func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggF
 type HashAggPartialWorker struct {
 	baseHashAggWorker
 
-	inputCh           chan *chunk.Chunk
-	outputChs         []chan *HashAggIntermData
-	globalOutputCh    chan *AfFinalResult
-	giveBackCh        chan<- *HashAggInput
+	inputCh        chan *chunk.Chunk
+	outputChs      []chan *HashAggIntermData
+	globalOutputCh chan *AfFinalResult
+
+	// Partial worker transmit the HashAggInput by this channel,
+	// so that the data fetcher could get the partial worker's HashAggInput
+	giveBackCh chan<- *HashAggInput
+
 	partialResultsMap aggPartialResultMapper
 	groupByItems      []expression.Expression
 	groupKey          [][]byte
@@ -485,6 +489,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		if !ok {
 			return
 		}
+
 		execStart := time.Now()
 		if err := w.updatePartialResult(ctx, sc, w.chk, len(w.partialResultsMap)); err != nil {
 			w.globalOutputCh <- &AfFinalResult{err: err}
@@ -494,6 +499,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			w.stats.ExecTime += int64(time.Since(execStart))
 			w.stats.TaskNum++
 		}
+
 		// The intermData can be promised to be not empty if reaching here,
 		// so we set needShuffle to be true.
 		needShuffle = true
@@ -622,8 +628,8 @@ func (w *baseHashAggWorker) getPartialResult(_ *stmtctx.StatementContext, groupK
 			continue
 		}
 		partialResults[i] = make([]aggfuncs.PartialResult, partialResultSize)
-		for j, af := range w.aggFuncs {
-			partialResult, memDelta := af.AllocPartialResult()
+		for j, aggFunc := range w.aggFuncs {
+			partialResult, memDelta := aggFunc.AllocPartialResult()
 			partialResults[i][j] = partialResult
 			allMemDelta += memDelta // the memory usage of PartialResult
 		}
@@ -1046,7 +1052,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			}
 			partialResults := e.getPartialResults(groupKey)
 			for i, af := range e.PartialAggFuncs {
-				tmpBuf[0] = e.childResult.GetRow(j)
+				tmpBuf[0] = e.childResult.GetRow(j) // TODO maybe we can replace "GetRow" function with "GetRowNoSel"
 				memDelta, err := af.UpdatePartialResult(e.Ctx(), tmpBuf[:], partialResults[i])
 				if err != nil {
 					return err
@@ -1074,7 +1080,7 @@ func (e *HashAggExec) spillUnprocessedData(isFullChk bool) (err error) {
 		return e.listInDisk.Add(e.childResult)
 	}
 	for i := 0; i < e.childResult.NumRows(); i++ {
-		e.tmpChkForSpill.AppendRow(e.childResult.GetRow(i))
+		e.tmpChkForSpill.AppendRow(e.childResult.GetRowWithSel(i))
 		if e.tmpChkForSpill.IsFull() {
 			err = e.listInDisk.Add(e.tmpChkForSpill)
 			if err != nil {
@@ -1468,20 +1474,20 @@ type AggSpillDiskAction struct {
 }
 
 // Action set HashAggExec spill mode.
-func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
+func (a *AggSpillDiskAction) Action(tracker *memory.Tracker) {
 	// Guarantee that processed data is at least 20% of the threshold, to avoid spilling too frequently.
-	if atomic.LoadUint32(&a.e.inSpillMode) == 0 && a.spillTimes < maxSpillTimes && a.e.memTracker.BytesConsumed() >= t.GetBytesLimit()/5 {
+	if atomic.LoadUint32(&a.e.inSpillMode) == 0 && a.spillTimes < maxSpillTimes && a.e.memTracker.BytesConsumed() >= tracker.GetBytesLimit()/5 {
 		a.spillTimes++
 		logutil.BgLogger().Info("memory exceeds quota, set aggregate mode to spill-mode",
 			zap.Uint32("spillTimes", a.spillTimes),
-			zap.Int64("consumed", t.BytesConsumed()),
-			zap.Int64("quota", t.GetBytesLimit()))
+			zap.Int64("consumed", tracker.BytesConsumed()),
+			zap.Int64("quota", tracker.GetBytesLimit()))
 		atomic.StoreUint32(&a.e.inSpillMode, 1)
 		memory.QueryForceDisk.Add(1)
 		return
 	}
 	if fallback := a.GetFallback(); fallback != nil {
-		fallback.Action(t)
+		fallback.Action(tracker)
 	}
 }
 

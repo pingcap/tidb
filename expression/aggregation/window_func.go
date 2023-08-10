@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -58,6 +59,10 @@ func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Ex
 	}
 
 	base, err := newBaseFuncDesc(ctx, name, args)
+
+	// Window function's return column type must be nullable
+	base.RetTp.DelFlag(mysql.NotNullFlag)
+
 	if err != nil {
 		return nil, err
 	}
