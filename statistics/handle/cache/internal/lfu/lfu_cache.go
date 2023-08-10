@@ -124,13 +124,13 @@ func DropEvicted(item statistics.TableCacheItem) {
 }
 
 func (s *LFU) onEvict(item *ristretto.Item) {
+	if item.Value == nil {
+		// Sometimes the same key may be passed to the "onevict" function twice,
+		// and in the second invocation, the value is empty, so it should not be processed.
+		return
+	}
 	// We do not need to calculate the cost during onEvict, because the onexit function
 	// is also called when the evict event occurs.
-	if item.Value == nil {
-		logutil.BgLogger().Error("item value is nil", zap.Any("item", item), zap.Stack("stack"))
-	} else {
-		logutil.BgLogger().Info("item value", zap.Any("item", item), zap.Stack("stack"))
-	}
 	metrics.EvictCounter.Inc()
 	table := item.Value.(*statistics.Table)
 	before := table.MemoryUsage().TotalTrackingMemUsage()
@@ -147,6 +147,11 @@ func (s *LFU) onEvict(item *ristretto.Item) {
 }
 
 func (s *LFU) onExit(val interface{}) {
+	if val == nil {
+		// Sometimes the same key may be passed to the "onEvict/onExit" function twice,
+		// and in the second invocation, the value is empty, so it should not be processed.
+		return
+	}
 	s.cost.Add(-1 * val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
 	metrics.CostGauge.Set(float64(s.cost.Load()))
 }
