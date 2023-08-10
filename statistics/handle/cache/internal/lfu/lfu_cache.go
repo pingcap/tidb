@@ -189,7 +189,6 @@ func (s *LFU) metrics() *ristretto.Metrics {
 
 // Close implements statsCacheInner
 func (s *LFU) Close() {
-	logutil.BgLogger().Info("close LFU cache")
 	s.cache.Close()
 	s.cache.Wait()
 }
