@@ -442,6 +442,12 @@ bazel_ci_prepare:
 		--run_under="cd $(CURDIR) && " \
 		 //tools/tazel:tazel
 
+bazel_ci_simple_prepare:
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  \
+		--run_under="cd $(CURDIR) && " \
+		 //tools/tazel:tazel
+
 bazel_prepare:
 	bazel run //:gazelle
 	bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable -prune
@@ -471,7 +477,7 @@ bazel_test: failpoint-enable bazel_prepare
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
 
 
-bazel_coverage_test: check-bazel-prepare failpoint-enable bazel_ci_prepare
+bazel_coverage_test: check-bazel-prepare failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) --jobs=35 --build_tests_only --test_keep_going=false \
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
@@ -508,44 +514,44 @@ bazel_golangcilinter:
 		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
 	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.golangci.yaml
 
-bazel_brietest: failpoint-enable bazel_ci_prepare
+bazel_brietest: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 	--@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //tests/realtikvtest/brietest/...
 	./build/jenkins_collect_coverage.sh
 
-bazel_pessimistictest: failpoint-enable bazel_ci_prepare
+bazel_pessimistictest: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 	--@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //tests/realtikvtest/pessimistictest/...
 	./build/jenkins_collect_coverage.sh
 
-bazel_sessiontest: failpoint-enable bazel_ci_prepare
+bazel_sessiontest: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 	--@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //tests/realtikvtest/sessiontest/...
 	./build/jenkins_collect_coverage.sh
 
-bazel_statisticstest: failpoint-enable bazel_ci_prepare
+bazel_statisticstest: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 	--@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //tests/realtikvtest/statisticstest/...
 	./build/jenkins_collect_coverage.sh
 
-bazel_txntest: failpoint-enable bazel_ci_prepare
+bazel_txntest: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 	--@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //tests/realtikvtest/txntest/...
 	./build/jenkins_collect_coverage.sh
 
-bazel_addindextest: failpoint-enable bazel_ci_prepare
+bazel_addindextest: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 	--@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //tests/realtikvtest/addindextest/...
 	./build/jenkins_collect_coverage.sh
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
-bazel_importintotest: failpoint-enable bazel_ci_prepare
+bazel_importintotest: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 	--@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //tests/realtikvtest/importintotest/...
