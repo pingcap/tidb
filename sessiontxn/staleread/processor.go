@@ -173,6 +173,11 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 	if err != nil {
 		return err
 	}
+	logutil.BgLogger().Warn("[for debug] staleReadProcessor.OnSelectTable",
+		zap.Uint64("stmtAsOfTS", stmtAsOfTS),
+		zap.Bool("evaluated", p.evaluated),
+		zap.Bool("AsOf == nil", tn.AsOf == nil),
+		zap.Stack("stack"))
 
 	if p.evaluated {
 		// If the select statement is related to multi tables, we should guarantee that all tables use the same timestamp
