@@ -5,7 +5,9 @@ package storage
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/pingcap/errors"
@@ -27,6 +29,8 @@ const (
 	GetObject Permission = "GetObject"
 	// PutObject represents PutObject permission
 	PutObject Permission = "PutObject"
+
+	DefaultRequestConcurrency uint = 128
 )
 
 // WalkOption is the option of storage.WalkDir.
@@ -169,6 +173,9 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 	if opts == nil {
 		opts = &ExternalStorageOptions{}
 	}
+	if opts.HTTPClient == nil {
+		opts.HTTPClient = GetDefaultHttpClient(DefaultRequestConcurrency)
+	}
 	switch backend := backend.Backend.(type) {
 	case *backuppb.StorageBackend_Local:
 		if backend.Local == nil {
@@ -196,5 +203,31 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 		return newAzureBlobStorage(ctx, backend.AzureBlobStorage, opts)
 	default:
 		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "storage %T is not supported yet", backend)
+	}
+}
+
+// copy from `http.defaultTransportDialContext`
+func defaultTransportDialContext(dialer *net.Dialer) func(context.Context, string, string) (net.Conn, error) {
+	return dialer.DialContext
+}
+
+// Different from `http.DefaultTransport`, set the `MaxIdleConns` and `MaxIdleConnsPerHost`
+// to the actual request concurrency to reuse tcp connection as much as possible.
+func GetDefaultHttpClient(concurrency uint) *http.Client {
+	return &http.Client{
+		// copy from `http.DefaultTransport`
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: defaultTransportDialContext(&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}),
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          int(concurrency),
+			MaxIdleConnsPerHost:   int(concurrency),
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
 	}
 }
