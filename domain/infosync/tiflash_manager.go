@@ -960,7 +960,7 @@ func (tiflash *MockTiFlash) PdSwitch(enabled bool) {
 	tiflash.PdEnabled = enabled
 }
 
-// Set network error state.
+// SetNetworkError sets network error state.
 func (tiflash *MockTiFlash) SetNetworkError(e bool) {
 	tiflash.Lock()
 	defer tiflash.Unlock()
