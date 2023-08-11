@@ -928,30 +928,21 @@ func MergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wra
 		start = end
 	}
 	var wg util.WaitGroupWrapper
-	var removeWg util.WaitGroupWrapper
 	taskNum := len(tasks)
 	taskCh := make(chan *statistics.TopnStatsMergeTask, taskNum)
 	respCh := make(chan *statistics.TopnStatsMergeResponse, taskNum)
-	removeCh := make(chan *statistics.RemoveTopNTask, taskNum)
 	for i := 0; i < mergeConcurrency; i++ {
-		worker := statistics.NewTopnStatsMergeWorker(taskCh, respCh, removeCh, wrapper, killed)
+		worker := statistics.NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killed)
 		wg.Run(func() {
 			worker.Run(timeZone, isIndex, n, version)
 		})
 	}
-	removeWg.Run(func() {
-		for task := range removeCh {
-			wrapper.AllHg[task.GetPartition()].BinarySearchRemoveVal(task.GetTopN())
-		}
-	})
 	for _, task := range tasks {
 		taskCh <- task
 	}
 	close(taskCh)
 	wg.Wait()
 	close(respCh)
-	close(removeCh)
-	removeWg.Wait()
 	resps := make([]*statistics.TopnStatsMergeResponse, 0)
 
 	// handle Error

@@ -15,6 +15,7 @@
 package statistics
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -26,47 +27,28 @@ import (
 
 // StatsWrapper wrapper stats
 type StatsWrapper struct {
-	AllHg   []*Histogram
-	AllTopN []*TopN
-}
-
-// RemoveTopNTask indicates a task for remove topn
-type RemoveTopNTask struct {
-	topn      TopNMeta
-	partition int
-}
-
-// NewRemoveTopNTask returns task
-func NewRemoveTopNTask(partition int, topn TopNMeta) *RemoveTopNTask {
-	return &RemoveTopNTask{
-		partition: partition,
-		topn:      topn,
-	}
-}
-
-// GetPartition returns partition
-func (t *RemoveTopNTask) GetPartition() int {
-	return t.partition
-}
-
-// GetTopN returns topN
-func (t *RemoveTopNTask) GetTopN() TopNMeta {
-	return t.topn
+	AllHg      []*Histogram
+	AllHgMutex []sync.Mutex
+	AllTopN    []*TopN
 }
 
 // NewStatsWrapper returns wrapper
 func NewStatsWrapper(hg []*Histogram, topN []*TopN) *StatsWrapper {
+	allHgMutex := make([]sync.Mutex, 0, len(hg))
+	for i := range allHgMutex {
+		allHgMutex[i] = sync.Mutex{}
+	}
 	return &StatsWrapper{
-		AllHg:   hg,
-		AllTopN: topN,
+		AllHg:      hg,
+		AllHgMutex: allHgMutex,
+		AllTopN:    topN,
 	}
 }
 
 type topnStatsMergeWorker struct {
-	killed   *uint32
-	taskCh   <-chan *TopnStatsMergeTask
-	respCh   chan<- *TopnStatsMergeResponse
-	removeCh chan<- *RemoveTopNTask
+	killed *uint32
+	taskCh <-chan *TopnStatsMergeTask
+	respCh chan<- *TopnStatsMergeResponse
 	// the stats in the wrapper should only be read during the worker
 	statsWrapper *StatsWrapper
 }
@@ -75,13 +57,11 @@ type topnStatsMergeWorker struct {
 func NewTopnStatsMergeWorker(
 	taskCh <-chan *TopnStatsMergeTask,
 	respCh chan<- *TopnStatsMergeResponse,
-	removeCh chan<- *RemoveTopNTask,
 	wrapper *StatsWrapper,
 	killed *uint32) *topnStatsMergeWorker {
 	worker := &topnStatsMergeWorker{
-		taskCh:   taskCh,
-		respCh:   respCh,
-		removeCh: removeCh,
+		taskCh: taskCh,
+		respCh: respCh,
 	}
 	worker.statsWrapper = wrapper
 	worker.killed = killed
@@ -193,7 +173,9 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 					if count != 0 {
 						counter[encodedVal] += count
 						// Remove the value corresponding to encodedVal from the histogram.
-						worker.removeCh <- NewRemoveTopNTask(j, TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
+						worker.statsWrapper.AllHgMutex[j].Lock()
+						worker.statsWrapper.AllHg[j].BinarySearchRemoveVal(TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
+						worker.statsWrapper.AllHgMutex[j].Unlock()
 					}
 				}
 			}
