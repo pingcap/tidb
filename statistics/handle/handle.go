@@ -858,7 +858,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
 		var popedTopN []statistics.TopNMeta
 		wrapper := statistics.NewStatsWrapper(allHg[i], allTopN[i])
-		globalStats.TopN[i], popedTopN, allHg[i], err = h.mergeGlobalStatsTopN(sc, wrapper, sc.GetSessionVars().StmtCtx.TimeZone, sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex == 1)
+		globalStats.TopN[i], popedTopN, allHg[i], err = mergeGlobalStatsTopN(sc, wrapper, sc.GetSessionVars().StmtCtx.TimeZone, sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex == 1)
 		if err != nil {
 			return
 		}
@@ -890,7 +890,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 	return
 }
 
-func (h *Handle) mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics.StatsWrapper,
+func mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics.StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
