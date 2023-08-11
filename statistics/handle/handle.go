@@ -956,19 +956,15 @@ func MergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wra
 
 	// handle Error
 	hasErr := false
+	errMsg := make([]string, 0)
 	for resp := range respCh {
 		if resp.Err != nil {
 			hasErr = true
+			errMsg = append(errMsg, resp.Err.Error())
 		}
 		resps = append(resps, resp)
 	}
 	if hasErr {
-		errMsg := make([]string, 0)
-		for _, resp := range resps {
-			if resp.Err != nil {
-				errMsg = append(errMsg, resp.Err.Error())
-			}
-		}
 		return nil, nil, nil, errors.New(strings.Join(errMsg, ","))
 	}
 
