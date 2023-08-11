@@ -1,4 +1,5 @@
 set tidb_cost_model_version=1;
+set @@sql_mode='';
 # @@character_set_results = 'gbk', TiDB transforms row value into GBK charset.
 drop table if exists t;
 set names utf8mb4;
@@ -66,5 +67,6 @@ select * from t;
 set names utf8mb4;
 set @@character_set_client=gbk;
 set @@character_set_connection=gbk;
--- error 1300
 select hex('一a'), '一a';
+
+set @@sql_mode=default;
