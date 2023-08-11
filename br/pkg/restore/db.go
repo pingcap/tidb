@@ -405,7 +405,7 @@ func (db *DB) ensureTablePlacementPolicies(ctx context.Context, tableInfo *model
 func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs []*model.Job) {
 	// Sort the ddl jobs by schema version in descending order.
 	slices.SortFunc(allDDLJobs, func(i, j *model.Job) int {
-		return -cmp.Compare(i.BinlogInfo.SchemaVersion, j.BinlogInfo.SchemaVersion)
+		return cmp.Compare(j.BinlogInfo.SchemaVersion, i.BinlogInfo.SchemaVersion)
 	})
 	dbs := getDatabases(tables)
 	for _, db := range dbs {
