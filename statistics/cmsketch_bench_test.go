@@ -108,7 +108,6 @@ func benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(partitions int, b *test
 		topNs = append(topNs, topN)
 	}
 
-	return
 	// Prepare Hists.
 	hists := make([]*statistics.Histogram, 0, partitions)
 	for i := 0; i < partitions; i++ {
