@@ -17,7 +17,7 @@ TIDB_TEST_STORE_NAME=$TIDB_TEST_STORE_NAME
 TIKV_PATH=$TIKV_PATH
 
 build=1
-mysql_tester="./mysql-tester"
+mysql_tester="./mysql_tester"
 tidb_server=""
 portgenerator=""
 mysql_tester_log="./explain-test.out"
@@ -88,7 +88,7 @@ function build_mysql_tester()
 {
     echo "building mysql-tester binary: $mysql_tester"
     rm -rf $mysql_tester
-    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@latest
+    GOBIN=$PWD go install github.com/Defined2014/mysql-tester/src@0a8f45d756ec4c358388959ec8362d8aef0b122e
     mv src mysql_tester
 }
 
