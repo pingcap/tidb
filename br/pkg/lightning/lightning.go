@@ -962,7 +962,7 @@ func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta
 			}
 		}
 		slices.SortFunc(tableTotalSizes, func(i, j int64) int {
-			return -cmp.Compare(i, j)
+			return cmp.Compare(j, i)
 		})
 		topNTotalSize := int64(0)
 		for i := 0; i < len(tableTotalSizes) && i < cfg.App.TableConcurrency; i++ {
