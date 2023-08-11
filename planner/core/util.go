@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/size"
-	"golang.org/x/exp/slices"
 )
 
 // AggregateFuncExtractor visits Expr tree.
