@@ -530,6 +530,21 @@ func (tk *TestKit) CheckLastMessage(msg string) {
 	tk.require.Equal(tk.Session().LastMessage(), msg)
 }
 
+// RequireEqual checks if actual is equal to the expected
+func (tk *TestKit) RequireEqual(expected interface{}, actual interface{}, msgAndArgs ...interface{}) {
+	tk.require.Equal(expected, actual, msgAndArgs...)
+}
+
+// RequireNotEqual checks if actual is not equal to the expected
+func (tk *TestKit) RequireNotEqual(expected interface{}, actual interface{}, msgAndArgs ...interface{}) {
+	tk.require.NotEqual(expected, actual, msgAndArgs...)
+}
+
+// RequireNoError checks if error happens
+func (tk *TestKit) RequireNoError(err error, msgAndArgs ...interface{}) {
+	tk.require.NoError(err, msgAndArgs)
+}
+
 // RegionProperityClient is to get region properties.
 type RegionProperityClient struct {
 	tikv.Client

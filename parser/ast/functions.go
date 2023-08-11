@@ -895,8 +895,8 @@ const (
 type WindowFuncExpr struct {
 	funcNode
 
-	// F is the function name.
-	F string
+	// Name is the function name.
+	Name string
 	// Args is the function args.
 	Args []ExprNode
 	// Distinct cannot be true for most window functions, except `max` and `min`.
@@ -914,7 +914,7 @@ type WindowFuncExpr struct {
 
 // Restore implements Node interface.
 func (n *WindowFuncExpr) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord(n.F)
+	ctx.WriteKeyWord(n.Name)
 	ctx.WritePlain("(")
 	for i, v := range n.Args {
 		if i != 0 {
