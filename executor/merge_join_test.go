@@ -281,9 +281,7 @@ func TestShuffleMergeJoinInDisk(t *testing.T) {
 }
 
 func TestMergeJoinInDisk(t *testing.T) {
-	t.Skip("unstable, skip it and fix it before 20210618")
-	restore := config.RestoreFunc()
-	defer restore()
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = t.TempDir()
 	})

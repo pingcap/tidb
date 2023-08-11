@@ -39,7 +39,6 @@ import (
 )
 
 func TestInspectionTables(t *testing.T) {
-	t.Skip("unstable, skip it and fix it before 20210624")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	instances := []string{
