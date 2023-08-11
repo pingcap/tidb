@@ -6525,6 +6525,8 @@ func TestCompareIssue38361(t *testing.T) {
 	tk.MustQuery("select a > 20230809 from t").Check(testkit.Rows("0"))
 	tk.MustQuery("select a = 20230809 from t").Check(testkit.Rows("1"))
 	tk.MustQuery("select a < 20230810 from t").Check(testkit.Rows("1"))
+	// 20231310 can't be converted to valid datetime, thus should be compared using real date type,and datetime will be
+	// converted to something like 'YYYYMMDDHHMMSS', bigger than 20231310
 	tk.MustQuery("select a < 20231310 from t").Check(testkit.Rows("0"))
 	tk.MustQuery("select 20230809 < a from t").Check(testkit.Rows("0"))
 	tk.MustQuery("select 20230809 = a from t").Check(testkit.Rows("1"))

@@ -1730,7 +1730,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 // see https://github.com/pingcap/tidb/issues/38361 for more details
 func (c *compareFunctionClass) refineNumericConstantCmpDatetime(ctx sessionctx.Context, args []Expression, constArg *Constant, constArgIdx int) []Expression {
 	dt, err := constArg.Eval(chunk.Row{})
-	if err != nil {
+	if err != nil || dt.IsNull() {
 		return args
 	}
 	sc := ctx.GetSessionVars().StmtCtx
