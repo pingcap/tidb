@@ -40,6 +40,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type visit struct {
+	a1  unsafe.Pointer
+	a2  unsafe.Pointer
+	typ reflect.Type
+}
+
 func TestShow(t *testing.T) {
 	node := &ast.ShowStmt{}
 	tps := []ast.ShowStmtType{
@@ -536,8 +542,100 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 	return nil
 }
 
-type visit struct {
-	a1  unsafe.Pointer
-	a2  unsafe.Pointer
-	typ reflect.Type
+func TestHandleAnalyzeOptions(t *testing.T) {
+	require.Equal(t, len(analyzeOptionDefault), len(analyzeOptionDefaultV2), "analyzeOptionDefault and analyzeOptionDefaultV2 should have the same length")
+
+	tests := []struct {
+		name        string
+		opts        []ast.AnalyzeOpt
+		statsVer    int
+		ExpectedErr string
+	}{
+		{
+			name: "Too big TopN option",
+			opts: []ast.AnalyzeOpt{
+				{
+					Type:  ast.AnalyzeOptNumTopN,
+					Value: ast.NewValueExpr(16384+1, "", ""),
+				},
+			},
+			statsVer:    1,
+			ExpectedErr: "Value of analyze option TOPN should not be larger than 16384",
+		},
+		{
+			name: "Use SampleRate option in stats version 1",
+			opts: []ast.AnalyzeOpt{
+				{
+					Type:  ast.AnalyzeOptSampleRate,
+					Value: ast.NewValueExpr(1, "", ""),
+				},
+			},
+			statsVer:    1,
+			ExpectedErr: "Version 1's statistics doesn't support the SAMPLERATE option, please set tidb_analyze_version to 2",
+		},
+		{
+			name: "Too big SampleRate option",
+			opts: []ast.AnalyzeOpt{
+				{
+					Type:  ast.AnalyzeOptSampleRate,
+					Value: ast.NewValueExpr(2, "", ""),
+				},
+			},
+			statsVer:    2,
+			ExpectedErr: "Value of analyze option SAMPLERATE should not larger than 1.000000, and should be greater than 0",
+		},
+		{
+			name: "Too big NumBuckets option",
+			opts: []ast.AnalyzeOpt{
+				{
+					Type:  ast.AnalyzeOptNumBuckets,
+					Value: ast.NewValueExpr(1024+1, "", ""),
+				},
+			},
+			statsVer:    2,
+			ExpectedErr: "Value of analyze option BUCKETS should be positive and not larger than 1024",
+		},
+		{
+			name: "Set both sample num and sample rate",
+			opts: []ast.AnalyzeOpt{
+				{
+					Type:  ast.AnalyzeOptNumSamples,
+					Value: ast.NewValueExpr(100, "", ""),
+				},
+				{
+					Type:  ast.AnalyzeOptSampleRate,
+					Value: ast.NewValueExpr(0.1, "", ""),
+				},
+			},
+			statsVer:    2,
+			ExpectedErr: "ou can only either set the value of the sample num or set the value of the sample rate. Don't set both of them",
+		},
+		{
+			name: "Too big CMSketchDepth and CMSketchWidth option",
+			opts: []ast.AnalyzeOpt{
+				{
+					Type:  ast.AnalyzeOptCMSketchDepth,
+					Value: ast.NewValueExpr(1024, "", ""),
+				},
+				{
+					Type:  ast.AnalyzeOptCMSketchWidth,
+					Value: ast.NewValueExpr(2048, "", ""),
+				},
+			},
+			statsVer:    2,
+			ExpectedErr: "cm sketch size(depth * width) should not larger than 1258291",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := handleAnalyzeOptions(tt.opts, tt.statsVer)
+			if tt.ExpectedErr != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.ExpectedErr)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }
