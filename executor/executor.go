@@ -486,7 +486,9 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	if job.BinlogInfo != nil {
 		finishTS = job.BinlogInfo.FinishedTS
 		if job.BinlogInfo.TableInfo != nil {
-			tableName = job.BinlogInfo.TableInfo.Name.L
+			if job.Type != model.ActionExchangeTablePartition {
+				tableName = job.BinlogInfo.TableInfo.Name.L
+			}
 		}
 		if job.BinlogInfo.MultipleTableInfos != nil {
 			tablenames := new(strings.Builder)

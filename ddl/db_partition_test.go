@@ -2473,6 +2473,38 @@ func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
 	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("2 11 11", "12 12 12"))
 }
 
+func waitForDDLJobState(t *testing.T, tk *testkit.TestKit, errChan chan error, dbName, tableName, jobType, s string, pos int) {
+	count := 0
+	for {
+		select {
+		case alterErr := <-errChan:
+			require.Fail(t, "unexpected error", "With error %v", alterErr)
+		default:
+			// Alter still running
+		}
+		res := tk.MustQuery(`admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = '` + jobType + `'`).Rows()
+		if len(res) == 1 && res[0][pos] == s {
+			break
+		}
+		res = tk.MustQuery(`admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `'`).Rows()
+		if len(res) > 0 {
+			for i := range res {
+				fields := make([]string, len(res[i]))
+				for j := range res[i] {
+					fields[j] = res[i][j].(string)
+				}
+				logutil.BgLogger().Info("admin show ddl jobs", zap.Strings("job", fields))
+			}
+		}
+		if count > 100 {
+			// 10s wait
+			require.Fail(t, "time out while waiting for DDL JOB state")
+		}
+		time.Sleep(100 * time.Millisecond)
+		count++
+	}
+}
+
 func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -2499,23 +2531,13 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tk2.MustExec(`use test`)
 	tk2.MustExec(`begin`)
 	tk2.MustExec(`insert into test_global values (5,5,5)`)
-	syncChan := make(chan bool)
+	syncChan := make(chan error)
 	go func() {
-		tk.MustExec("alter table test_global truncate partition p2;")
-		syncChan <- true
+		syncChan <- tk.ExecToErr("alter table test_global truncate partition p2;")
 	}()
-	waitFor := func(i int, s string) {
-		for {
-			tk4 := testkit.NewTestKit(t, store)
-			tk4.MustExec(`use test`)
-			res := tk4.MustQuery(`admin show ddl jobs where db_name = 'test' and table_name = 'test_global' and job_type = 'truncate partition'`).Rows()
-			if len(res) == 1 && res[0][i] == s {
-				break
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-	waitFor(4, "delete only")
+	tk4 := testkit.NewTestKit(t, store)
+	tk4.MustExec(`use test`)
+	waitForDDLJobState(t, tk4, syncChan, "test", "test_global", "truncate partition", "delete only", 4)
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec(`begin`)
 	tk3.MustExec(`use test`)
@@ -2527,7 +2549,7 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	assert.NotNil(t, err)
 	tk2.MustExec(`commit`)
 	tk3.MustExec(`commit`)
-	<-syncChan
+	require.NoError(t, <-syncChan)
 	result := tk.MustQuery("select * from test_global;")
 	result.Sort().Check(testkit.Rows(`1 1 1`, `2 2 2`, `5 5 5`))
 
@@ -3495,6 +3517,41 @@ func TestTiDBEnableExchangePartition(t *testing.T) {
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
+}
+
+func TestExchangePartitionAdminShowDDLJobs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+	tk4 := testkit.NewTestKit(t, store)
+	tk4.MustExec("use test")
+
+	tk1.MustExec(`create table t (a int, b varchar(255))`)
+	tk1.MustExec(`create table tp (a int, b varchar(255)) partition by range (a) (partition p0 values less than (1000000), partition p1 values less than (2000000))`)
+
+	tk2.MustExec(`BEGIN`)
+	tk2.MustExec(`insert into t values (1,1)`)
+
+	alterChan := make(chan error)
+	go func() {
+		alterChan <- tk1.ExecToErr(`alter table tp exchange partition p0 with table t`)
+	}()
+
+	waitForDDLJobState(t, tk3, alterChan, "test", "t", "exchange partition", "none", 4)
+
+	tk4.MustExec(`BEGIN`)
+	tk4.MustExec(`insert into t values (2,2)`)
+	tk2.MustExec(`COMMIT`)
+	waitForDDLJobState(t, tk3, alterChan, "test", "t", "exchange partition", "none", 4)
+	waitForDDLJobState(t, tk3, alterChan, "test", "t", "exchange partition", "running", 11)
+	tk4.MustExec(`COMMIT`)
+	require.NoError(t, <-alterChan)
+	waitForDDLJobState(t, tk3, alterChan, "test", "t", "exchange partition", "none", 4)
+	waitForDDLJobState(t, tk3, alterChan, "test", "t", "exchange partition", "synced", 11)
 }
 
 func TestExchangePartitionExpressIndex(t *testing.T) {
