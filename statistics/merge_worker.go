@@ -30,11 +30,13 @@ type StatsWrapper struct {
 	AllTopN []*TopN
 }
 
+// RemoveTopNTask indicates a task for remove topn
 type RemoveTopNTask struct {
-	partition int
 	topn      TopNMeta
+	partition int
 }
 
+// NewRemoveTopNTask returns task
 func NewRemoveTopNTask(partition int, topn TopNMeta) *RemoveTopNTask {
 	return &RemoveTopNTask{
 		partition: partition,
@@ -42,10 +44,12 @@ func NewRemoveTopNTask(partition int, topn TopNMeta) *RemoveTopNTask {
 	}
 }
 
+// GetPartition returns partition
 func (t *RemoveTopNTask) GetPartition() int {
 	return t.partition
 }
 
+// GetTopN returns topN
 func (t *RemoveTopNTask) GetTopN() TopNMeta {
 	return t.topn
 }
