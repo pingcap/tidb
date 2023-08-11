@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	kvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -700,7 +701,7 @@ func (w *JobContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 		return
 	}
 	w.tp = getDDLRequestSource(jobType)
-	w.ddlJobCtx = kv.WithInternalSourceType(w.ddlJobCtx, w.ddlJobSourceType())
+	w.ddlJobCtx = kv.WithInternalSourceAndTaskType(w.ddlJobCtx, w.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 }
 
 func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
@@ -1372,24 +1373,28 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 		diff.OldSchemaID = oldSchemaIDs[0]
 		diff.AffectedOpts = affects
 	case model.ActionExchangeTablePartition:
-		var (
-			ptSchemaID     int64
-			ptTableID      int64
-			partName       string
-			withValidation bool
-		)
-		err = job.DecodeArgs(&diff.TableID, &ptSchemaID, &ptTableID, &partName, &withValidation)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
 		diff.OldTableID = job.TableID
-		affects := make([]*model.AffectedOption, 1)
-		affects[0] = &model.AffectedOption{
-			SchemaID:   ptSchemaID,
-			TableID:    ptTableID,
-			OldTableID: ptTableID,
+		diff.OldSchemaID = job.SchemaID
+		if job.SchemaState != model.StatePublic {
+			diff.TableID = job.TableID
+			diff.SchemaID = job.SchemaID
+		} else {
+			// Update the partitioned table (it is only done in the last state)
+			var (
+				ptSchemaID     int64
+				ptTableID      int64
+				ptDefID        int64  // Not needed, will reload the whole table
+				partName       string // Not used
+				withValidation bool   // Not used
+			)
+			// See ddl.ExchangeTablePartition
+			err = job.DecodeArgs(&ptDefID, &ptSchemaID, &ptTableID, &partName, &withValidation)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			diff.SchemaID = ptSchemaID
+			diff.TableID = ptTableID
 		}
-		diff.AffectedOpts = affects
 	case model.ActionTruncateTablePartition:
 		diff.TableID = job.TableID
 		if len(job.CtxVars) > 0 {

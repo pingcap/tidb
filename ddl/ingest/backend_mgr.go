@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
+	kvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -133,7 +134,7 @@ func createLocalBackend(ctx context.Context, cfg *Config) (*local.Backend, error
 	if cfg.IsRaftKV2 {
 		raftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
 	}
-	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName, "", raftKV2SwitchModeDuration)
+	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName, "", kvutil.ExplicitTypeDDL, raftKV2SwitchModeDuration)
 	return local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 }
 

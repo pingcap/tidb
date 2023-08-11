@@ -2634,7 +2634,10 @@ var defaultSysVars = []*SysVar{
 		ldap.LDAPSASLAuthImpl.SetBindRootPW(s)
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-		return ldap.LDAPSASLAuthImpl.GetBindRootPW(), nil
+		if ldap.LDAPSASLAuthImpl.GetBindRootPW() == "" {
+			return "", nil
+		}
+		return MaskPwd, nil
 	}},
 	// TODO: allow setting init_pool_size to 0 to disable pooling
 	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLInitPoolSize, Value: strconv.Itoa(DefAuthenticationLDAPSASLInitPoolSize), Type: TypeInt, MinValue: 1, MaxValue: 32767, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
@@ -2716,7 +2719,10 @@ var defaultSysVars = []*SysVar{
 		ldap.LDAPSimpleAuthImpl.SetBindRootPW(s)
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-		return ldap.LDAPSimpleAuthImpl.GetBindRootPW(), nil
+		if ldap.LDAPSimpleAuthImpl.GetBindRootPW() == "" {
+			return "", nil
+		}
+		return MaskPwd, nil
 	}},
 	// TODO: allow setting init_pool_size to 0 to disable pooling
 	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleInitPoolSize, Value: strconv.Itoa(DefAuthenticationLDAPSimpleInitPoolSize), Type: TypeInt, MinValue: 1, MaxValue: 32767, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
@@ -2813,6 +2819,11 @@ var SetCharsetVariables = []string{
 	CharacterSetClient,
 	CharacterSetResults,
 }
+
+const (
+	// MaskPwd is the mask of password for LDAP variables.
+	MaskPwd = "******"
+)
 
 const (
 	// CharacterSetConnection is the name for character_set_connection system variable.

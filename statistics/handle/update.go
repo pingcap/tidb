@@ -660,7 +660,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 				if !ok {
 					continue
 				}
-				if idx.StatsVer == statistics.Version1 {
+				if idx.GetStatsVer() == statistics.Version1 {
 					err = h.DumpFeedbackForIndex(fb, t)
 				} else {
 					err = h.DumpFeedbackToKV(fb)
@@ -729,13 +729,13 @@ OUTER:
 				}
 				newIdx := *idx
 				eqFB, ranFB := statistics.SplitFeedbackByQueryType(fb.Feedback)
-				if idx.StatsVer >= statistics.Version2 {
+				if idx.GetStatsVer() >= statistics.Version2 {
 					// // For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
 					// ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
 					continue OUTER
 				}
 				newIdx.CMSketch, newIdx.TopN = statistics.UpdateCMSketchAndTopN(idx.CMSketch, idx.TopN, eqFB)
-				newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB}, int(idx.StatsVer))
+				newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB}, int(idx.GetStatsVer()))
 				newIdx.Histogram.PreCalculateScalar()
 				newIdx.Flag = statistics.ResetAnalyzeFlag(newIdx.Flag)
 				newTblStats.Indices[fb.Hist.ID] = &newIdx
@@ -744,7 +744,7 @@ OUTER:
 				if !ok || col.Histogram.Len() == 0 {
 					continue
 				}
-				if col.StatsVer >= statistics.Version2 {
+				if col.GetStatsVer() >= statistics.Version2 {
 					// // For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
 					// ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
 					continue OUTER
@@ -872,7 +872,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	var statsVer int64 = statistics.Version1
 	if isIndex == 1 {
 		idx, ok := tbl.Indices[histID]
-		statsVer = idx.StatsVer
+		statsVer = idx.GetStatsVer()
 		if statsVer >= 2 {
 			logutil.BgLogger().Warn("Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
 				"Please consider setting feedback-probability to 0.0 in config file to disable query feedback.",
@@ -880,7 +880,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 			return err
 		}
 		if ok && idx.Histogram.Len() > 0 {
-			statsVer = idx.StatsVer
+			statsVer = idx.GetStatsVer()
 			idxHist := idx.Histogram
 			hist = &idxHist
 			cms = idx.CMSketch.Copy()
@@ -888,7 +888,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		}
 	} else {
 		col, ok := tbl.Columns[histID]
-		if ok && col.StatsVer >= 2 {
+		if ok && col.GetStatsVer() >= 2 {
 			logutil.BgLogger().Warn("Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
 				"Please consider setting feedback-probability to 0.0 in config file to disable query feedback.",
 				zap.String("category", "stats"), zap.Int64("table_id", physicalTableID), zap.Int64("hist_id", histID), zap.Int64("is_index", isIndex))
@@ -1366,7 +1366,7 @@ func logForIndexRange(idx *statistics.Index, ran *ranger.Range, actual int64, fa
 
 func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, ranges []*ranger.Range, actual []int64, factor float64) {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	if idx.CMSketch == nil || idx.StatsVer != statistics.Version1 {
+	if idx.CMSketch == nil || idx.GetStatsVer() != statistics.Version1 {
 		for i, ran := range ranges {
 			logutil.BgLogger().Debug(prefix, zap.String("index", idx.Info.Name.O), zap.String("rangeStr", logForIndexRange(idx, ran, actual[i], factor)))
 		}
@@ -1594,7 +1594,7 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 	}()
 	sc.TimeZone = time.UTC
 
-	if idx.CMSketch == nil || idx.StatsVer < statistics.Version1 {
+	if idx.CMSketch == nil || idx.GetStatsVer() < statistics.Version1 {
 		return h.DumpFeedbackToKV(q)
 	}
 	ranges, err := q.DecodeToRanges(true)
