@@ -735,8 +735,8 @@ func TestPrepareOverMaxPreparedStmtCount(t *testing.T) {
 
 	// test change global limit and make it affected in test session.
 	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("-1"))
-	tk.MustExec("set @@global.max_prepared_stmt_count = 3")
-	tk.MustQuery("select @@global.max_prepared_stmt_count").Check(testkit.Rows("3"))
+	tk.MustExec("set @@global.max_prepared_stmt_count = 2")
+	tk.MustQuery("select @@global.max_prepared_stmt_count").Check(testkit.Rows("2"))
 
 	// test close session to give up all prepared stmt
 	tk.MustExec(`prepare stmt2 from "select 1"`)
@@ -747,7 +747,7 @@ func TestPrepareOverMaxPreparedStmtCount(t *testing.T) {
 
 	// test meet max limit.
 	tk.RefreshSession()
-	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("3"))
+	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("2"))
 	for i := 1; ; i++ {
 		prePrepared = readGaugeInt(metrics.PreparedStmtGauge)
 		if prePrepared >= 2 {
