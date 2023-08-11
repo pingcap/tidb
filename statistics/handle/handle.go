@@ -57,8 +57,8 @@ const (
 	// TiDBGlobalStats represents the global-stats for a partitioned table.
 	TiDBGlobalStats = "global"
 
-	// maxPartitionMergeBatchSize indicates the max batch size for a worker to merge partition stats
-	maxPartitionMergeBatchSize = 256
+	// MaxPartitionMergeBatchSize indicates the max batch size for a worker to merge partition stats
+	MaxPartitionMergeBatchSize = 256
 )
 
 // Handle can update stats info periodically.
@@ -858,7 +858,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
 		var popedTopN []statistics.TopNMeta
 		wrapper := statistics.NewStatsWrapper(allHg[i], allTopN[i])
-		globalStats.TopN[i], popedTopN, allHg[i], err = h.mergeGlobalStatsTopN(sc, wrapper, sc.GetSessionVars().StmtCtx.TimeZone, sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex == 1)
+		globalStats.TopN[i], popedTopN, allHg[i], err = mergeGlobalStatsTopN(sc, wrapper, sc.GetSessionVars().StmtCtx.TimeZone, sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex == 1)
 		if err != nil {
 			return
 		}
@@ -890,7 +890,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 	return
 }
 
-func (h *Handle) mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics.StatsWrapper,
+func mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics.StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
@@ -902,17 +902,17 @@ func (h *Handle) mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics
 	batchSize := len(wrapper.AllTopN) / mergeConcurrency
 	if batchSize < 1 {
 		batchSize = 1
-	} else if batchSize > maxPartitionMergeBatchSize {
-		batchSize = maxPartitionMergeBatchSize
+	} else if batchSize > MaxPartitionMergeBatchSize {
+		batchSize = MaxPartitionMergeBatchSize
 	}
-	return h.mergeGlobalStatsTopNByConcurrency(mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killed)
+	return MergeGlobalStatsTopNByConcurrency(mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killed)
 }
 
-// mergeGlobalStatsTopNByConcurrency merge partition topN by concurrency
+// MergeGlobalStatsTopNByConcurrency merge partition topN by concurrency
 // To merge global stats topn by concurrency, we will separate the partition topn in concurrency part and deal it with different worker.
 // mergeConcurrency is used to control the total concurrency of the running worker, and mergeBatchSize is sued to control
 // the partition size for each worker to solve it
-func (*Handle) mergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wrapper *statistics.StatsWrapper,
+func MergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wrapper *statistics.StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool, killed *uint32) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	if len(wrapper.AllTopN) < mergeConcurrency {
