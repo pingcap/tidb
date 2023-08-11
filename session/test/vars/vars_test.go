@@ -336,6 +336,12 @@ func TestSetVarHint(t *testing.T) {
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 0)
 	tk.MustQuery("SELECT @@tidb_kv_read_timeout;").Check(testkit.Rows("0"))
 
+	tk.MustExec("set @@tidb_kv_read_timeout = 5")
+	tk.MustQuery("SELECT /*+ tidb_kv_read_timeout(1) */ @@tidb_kv_read_timeout;").Check(testkit.Rows("5"))
+	require.Equal(t, tk.Session().GetSessionVars().GetTidbKvReadTimeout(), uint64(1))
+	tk.MustQuery("SELECT @@tidb_kv_read_timeout;").Check(testkit.Rows("5"))
+	require.Equal(t, tk.Session().GetSessionVars().GetTidbKvReadTimeout(), uint64(5))
+
 	require.NoError(t, tk.Session().GetSessionVars().SetSystemVar("time_zone", "SYSTEM"))
 	tk.MustQuery("SELECT /*+ SET_VAR(time_zone='+12:00') */ @@time_zone;").Check(testkit.Rows("+12:00"))
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 0)
