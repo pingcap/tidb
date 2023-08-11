@@ -423,6 +423,7 @@ type StmtHints struct {
 	MemQuotaQuery           int64
 	ApplyCacheCapacity      int64
 	MaxExecutionTime        uint64
+	TidbKvReadTimeout       uint64
 	ReplicaRead             byte
 	AllowInSubqToJoinAndAgg bool
 	NoIndexMergeHint        bool
@@ -439,6 +440,7 @@ type StmtHints struct {
 	HasMemQuotaHint                bool
 	HasReplicaReadHint             bool
 	HasMaxExecutionTime            bool
+	HasTidbKvReadTimeout           bool
 	HasEnableCascadesPlannerHint   bool
 	HasResourceGroup               bool
 	SetVars                        map[string]string
