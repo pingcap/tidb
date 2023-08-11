@@ -681,11 +681,11 @@ func TestRuntimeHintsInEvolveTasks(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b), index idx_c(c))")
 
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 and c = 0 using select * from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
-	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(5000) */ * from t where a >= 4 and b >= 1 and c = 0")
+	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(5000), TIDB_KV_READ_TIMEOUT(20) */ * from t where a >= 4 and b >= 1 and c = 0")
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 2)
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), no_order_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000), tidb_kv_read_timeout(20)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
 }
 
 func TestDefaultSessionVars(t *testing.T) {
@@ -745,13 +745,15 @@ func TestStmtHints(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("create global binding for select * from t using select /*+ MAX_EXECUTION_TIME(100), MEMORY_QUOTA(2 GB) */ * from t use index(idx)")
+	tk.MustExec("create global binding for select * from t using select /*+ MAX_EXECUTION_TIME(100), TIDB_KV_READ_TIMEOUT(20), MEMORY_QUOTA(2 GB) */ * from t use index(idx)")
 	tk.MustQuery("select * from t")
 	require.Equal(t, int64(2147483648), tk.Session().GetSessionVars().MemTracker.GetBytesLimit())
 	require.Equal(t, uint64(100), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
+	require.Equal(t, uint64(20), tk.Session().GetSessionVars().StmtCtx.TidbKvReadTimeout)
 	tk.MustQuery("select a, b from t")
 	require.Equal(t, int64(1073741824), tk.Session().GetSessionVars().MemTracker.GetBytesLimit())
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().StmtCtx.TidbKvReadTimeout)
 }
 
 func TestPrivileges(t *testing.T) {
@@ -1284,6 +1286,7 @@ func TestBindSQLDigest(t *testing.T) {
 		// runtime hints
 		{"select * from t", "select /*+ memory_quota(1024 MB) */ * from t"},
 		{"select * from t", "select /*+ max_execution_time(1000) */ * from t"},
+		{"select * from t", "select /*+ tidb_kv_read_timeout(1000) */ * from t"},
 		// storage hints
 		{"select * from t", "select /*+ read_from_storage(tikv[t]) */ * from t"},
 		// others
@@ -1345,6 +1348,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		// runtime hints
 		{"select * from t", "select /*+ memory_quota(1024 MB) */ * from t"},
 		{"select * from t", "select /*+ max_execution_time(1000) */ * from t"},
+		{"select * from t", "select /*+ tidb_kv_read_timeout(1000) */ * from t"},
 		// storage hints
 		{"select * from t", "select /*+ read_from_storage(tikv[t]) */ * from t"},
 		// others

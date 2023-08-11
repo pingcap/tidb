@@ -151,6 +151,17 @@ const (
 	HintSemiJoinRewrite = "semi_join_rewrite"
 	// HintNoDecorrelate indicates a LogicalApply not to be decorrelated.
 	HintNoDecorrelate = "no_decorrelate"
+
+	// HintMemoryQuota sets the memory limit for a query
+	HintMemoryQuota = "memory_quota"
+	// HintUseToja is a hint to optimize `in (select ...)` subquery into `join`
+	HintUseToja = "use_toja"
+	// HintNoIndexMerge is a hint to disable index merge
+	HintNoIndexMerge = "no_index_merge"
+	// HintMaxExecutionTime specifies the max allowed execution time in milliseconds
+	HintMaxExecutionTime = "max_execution_time"
+	// HintTidbKvReadTimeout specifies timeout value for any readonly kv request in milliseconds
+	HintTidbKvReadTimeout = "tidb_kv_read_timeout"
 )
 
 const (

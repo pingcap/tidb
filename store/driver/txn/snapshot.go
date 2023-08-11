@@ -16,6 +16,7 @@ package txn
 
 import (
 	"context"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -135,6 +136,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		if size > 0 {
 			s.KVSnapshot.SetScanBatchSize(size)
 		}
+	case kv.TidbKvReadTimeout:
+		s.KVSnapshot.SetKVReadTimeout(time.Duration(val.(uint64) * uint64(time.Millisecond)))
 	}
 }
 

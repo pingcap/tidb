@@ -3698,6 +3698,10 @@ func TestHintError(t *testing.T) {
 	_, warns, err = p.Parse("create global binding for select /*+ max_execution_time(1) */ 1 using select /*+ max_execution_time(1) */ 1;\n", "", "")
 	require.NoError(t, err)
 	require.Len(t, warns, 0)
+
+	_, warns, err = p.Parse("create global binding for select /*+ tidb_kv_read_timeout(1) */ 1 using select /*+ tidb_kv_read_timeout(1) */ 1;\n", "", "")
+	require.NoError(t, err)
+	require.Len(t, warns, 0)
 }
 
 func TestErrorMsg(t *testing.T) {
@@ -4104,6 +4108,23 @@ func TestOptimizerHints(t *testing.T) {
 		require.Len(t, hints, 1)
 		require.Equal(t, "max_execution_time", hints[0].HintName.L, "case", i)
 		require.Equal(t, uint64(1000), hints[0].HintData.(uint64))
+	}
+
+	// Test TIDB_KV_READ_TIMEOUT
+	queries = []string{
+		"SELECT /*+ TIDB_KV_READ_TIMEOUT(200) */ * FROM t1 INNER JOIN t2 where t1.c1 = t2.c1",
+		"SELECT /*+ TIDB_KV_READ_TIMEOUT(200) */ 1",
+		"SELECT /*+ TIDB_KV_READ_TIMEOUT(200) */ SLEEP(20)",
+		"SELECT /*+ TIDB_KV_READ_TIMEOUT(200) */ 1 FROM DUAL",
+	}
+	for i, query := range queries {
+		stmt, _, err = p.Parse(query, "", "")
+		require.NoError(t, err)
+		selectStmt = stmt[0].(*ast.SelectStmt)
+		hints = selectStmt.TableHints
+		require.Len(t, hints, 1)
+		require.Equal(t, "tidb_kv_read_timeout", hints[0].HintName.L, "case", i)
+		require.Equal(t, uint64(200), hints[0].HintData.(uint64))
 	}
 
 	// Test NTH_PLAN
@@ -6727,6 +6748,7 @@ func TestCTE(t *testing.T) {
 		{"with cte(a) as (select 1) delete t from t, cte where t.a=cte.a;", true, "WITH `cte` (`a`) AS (SELECT 1) DELETE `t` FROM (`t`) JOIN `cte` WHERE `t`.`a`=`cte`.`a`"},
 		{"WITH cte1 AS (SELECT 1) SELECT * FROM (WITH cte2 AS (SELECT 2) SELECT * FROM cte2 JOIN cte1) AS dt;", true, "WITH `cte1` AS (SELECT 1) SELECT * FROM (WITH `cte2` AS (SELECT 2) SELECT * FROM `cte2` JOIN `cte1`) AS `dt`"},
 		{"WITH cte AS (SELECT 1) SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT 1) SELECT /*+ MAX_EXECUTION_TIME(1000)*/ * FROM `cte`"},
+		{"WITH cte AS (SELECT 1) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT 1) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000)*/ * FROM `cte`"},
 		{"with cte as (table t) table cte;", true, "WITH `cte` AS (TABLE `t`) TABLE `cte`"},
 		{"with cte as (select 1) select 1 union with cte as (select 1) select * from cte;", false, ""},
 		{"with cte as (select 1) (select 1);", true, "WITH `cte` AS (SELECT 1) (SELECT 1)"},
@@ -6751,6 +6773,7 @@ func TestCTEMerge(t *testing.T) {
 		{"with cte(a) as (select 1) delete t from t, cte where t.a=cte.a;", true, "WITH `cte` (`a`) AS (SELECT 1) DELETE `t` FROM (`t`) JOIN `cte` WHERE `t`.`a`=`cte`.`a`"},
 		{"WITH cte1 AS (SELECT 1) SELECT * FROM (WITH cte2 AS (SELECT 2) SELECT * FROM cte2 JOIN cte1) AS dt;", true, "WITH `cte1` AS (SELECT 1) SELECT * FROM (WITH `cte2` AS (SELECT 2) SELECT * FROM `cte2` JOIN `cte1`) AS `dt`"},
 		{"WITH cte AS (SELECT 1) SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT 1) SELECT /*+ MAX_EXECUTION_TIME(1000)*/ * FROM `cte`"},
+		{"WITH cte AS (SELECT 1) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT 1) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000)*/ * FROM `cte`"},
 		{"with cte as (table t) table cte;", true, "WITH `cte` AS (TABLE `t`) TABLE `cte`"},
 		{"with cte as (select 1) select 1 union with cte as (select 1) select * from cte;", false, ""},
 		{"with cte as (select 1) (select 1);", true, "WITH `cte` AS (SELECT 1) (SELECT 1)"},
@@ -6904,6 +6927,7 @@ func TestCTEBindings(t *testing.T) {
 		{"with cte(a) as (select * from t) delete t from t, cte where t.a=cte.a;", true, "WITH `cte` (`a`) AS (SELECT * FROM `test`.`t`) DELETE `test`.`t` FROM (`test`.`t`) JOIN `cte` WHERE `t`.`a` = `cte`.`a`"},
 		{"WITH cte1 AS (SELECT * from t) SELECT * FROM (WITH cte2 AS (SELECT * from cte1) SELECT * FROM cte2 JOIN cte1) AS dt;", true, "WITH `cte1` AS (SELECT * FROM `test`.`t`) SELECT * FROM (WITH `cte2` AS (SELECT * FROM `cte1`) SELECT * FROM `cte2` JOIN `cte1`) AS `dt`"},
 		{"WITH cte AS (SELECT * from t) SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT * FROM `test`.`t`) SELECT /*+ MAX_EXECUTION_TIME(1000)*/ * FROM `cte`"},
+		{"WITH cte AS (SELECT * from t) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT * FROM `test`.`t`) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000)*/ * FROM `cte`"},
 		{"with cte as (table t) table cte;", true, "WITH `cte` AS (TABLE `test`.`t`) TABLE `cte`"},
 		{"with cte as (select * from t) select 1 union with cte as (select * from t) select * from cte;", false, ""},
 		{"with cte as (select * from t) (select * from t);", true, "WITH `cte` AS (SELECT * FROM `test`.`t`) (SELECT * FROM `test`.`t`)"},

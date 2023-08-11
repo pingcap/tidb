@@ -17,6 +17,7 @@ package txn
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -266,6 +267,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetReplicaReadAdjuster(val.(txnkv.ReplicaReadAdjuster))
 	case kv.TxnSource:
 		txn.KVTxn.SetTxnSource(val.(uint64))
+	case kv.TidbKvReadTimeout:
+		txn.KVTxn.GetSnapshot().SetKVReadTimeout(time.Duration(val.(uint64) * uint64(time.Millisecond)))
 	}
 }
 

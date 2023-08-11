@@ -100,6 +100,8 @@ const (
 	// and the next 8 bits are reserved for Lossy DDL reorg Backfill job.
 	// The remaining 48 bits are reserved for extendability.
 	TxnSource
+	// TidbKvReadTimeout sets the timeout value for readonly kv request in milliseconds
+	TidbKvReadTimeout
 )
 
 // ReplicaReadType is the type of replica to read data from
