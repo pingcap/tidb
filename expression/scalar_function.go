@@ -265,6 +265,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	return sf, nil
 }
 
+// ScalarFunctionCallBack is the definition of callback of calling a newFunction.
 type ScalarFunctionCallBack func(function *ScalarFunction) (Expression, error)
 
 func defaultScalarFunctionCheck(function *ScalarFunction) (Expression, error) {
@@ -297,12 +298,12 @@ func NewFunctionTryFold(ctx sessionctx.Context, funcName string, retType *types.
 	return newFunctionImpl(ctx, -1, funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
+// NewFunctionInternal is similar to NewFunction, but do not return error, should only be used internally.
 // Deprecated: use NewFunction instead, old logic here is for the convenience of go linter error check.
 // while for the new function creation, some errors can also be thrown out, for example, args verification
 // error, collation derivation error, special function with meta doesn't be initialized error and so on.
 // only threw the these internal error out, then we can debug and dig it out quickly rather than in a confusion
 // of index out of range / nil pointer error / function execution error.
-// NewFunctionInternal is similar to NewFunction, but do not return error, should only be used internally.
 func NewFunctionInternal(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) Expression {
 	expr, err := NewFunction(ctx, funcName, retType, args...)
 	terror.Log(errors.Trace(err))
