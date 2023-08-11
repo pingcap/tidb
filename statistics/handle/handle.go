@@ -951,7 +951,7 @@ func MergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wra
 	wg.Wait()
 	close(respCh)
 	close(removeCh)
-	wg.Wait()
+	removeWg.Wait()
 	resps := make([]*statistics.TopnStatsMergeResponse, 0)
 
 	// handle Error
