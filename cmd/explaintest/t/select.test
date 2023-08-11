@@ -33,8 +33,6 @@ SELECT 1, @a as a;
 SELECT 1, @a, @@autocommit as a, c1 from t;
 SET @b = "123";
 SELECT @b + "123";
-# TODO: the field name for 1 + 1 should be "1 + 1", but now is 2
-# we may discuss whether to support it like in MySQL later.
 SELECT 1 + 1;
 
 SELECT 1 a, 1 as a, 1 + 1 a;
