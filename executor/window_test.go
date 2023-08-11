@@ -528,6 +528,7 @@ func TestIssue45964(t *testing.T) {
 	testReturnColumnNullableAttribute(tk, "lag(v)", true)
 	testReturnColumnNullableAttribute(tk, "ntile(2)", true)
 	testReturnColumnNullableAttribute(tk, "sum(v)", true)
+	testReturnColumnNullableAttribute(tk, "count(v)", false)
 	testReturnColumnNullableAttribute(tk, "row_number()", false)
 	testReturnColumnNullableAttribute(tk, "rank()", false)
 	testReturnColumnNullableAttribute(tk, "dense_rank()", false)
