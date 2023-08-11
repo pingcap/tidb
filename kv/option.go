@@ -108,6 +108,8 @@ const (
 	ResourceGroupName
 	// LoadBasedReplicaReadThreshold sets the TiKV wait duration threshold of enabling replica read automatically.
 	LoadBasedReplicaReadThreshold
+	// TidbKvReadTimeout sets the timeout value for readonly kv request in milliseconds
+	TidbKvReadTimeout
 )
 
 // ReplicaReadType is the type of replica to read data from
