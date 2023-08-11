@@ -231,9 +231,8 @@ const (
 	// Fast analyze is always Version1 currently.
 	Version1 = 1
 	// Version2 maintains the statistics in the following way.
-	// Column stats: CM Sketch is not used. TopN and Histogram are built from samples. TopN + Histogram represent all data.
-	// Index stats: CM SKetch is not used. TopN and Histograms are built from samples.
-	//    Then values covered by TopN is removed from Histogram. TopN + Histogram represent all data.
+	// Column stats: CM Sketch is not used. TopN and Histogram are built from samples. TopN + Histogram represent all data.(The values covered by TopN is removed from Histogram.)
+	// Index stats: CM SKetch is not used. TopN and Histograms are built from samples. TopN + Histogram represent all data.(The values covered by TopN is removed from Histogram.)
 	// Both Column and Index's NDVs are collected by full scan.
 	Version2 = 2
 )
