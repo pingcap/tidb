@@ -27,7 +27,7 @@ var (
 
 // Metrics
 var (
-	PacketIOCounter        *prometheus.CounterVec
+	PacketIOHistogram      *prometheus.HistogramVec
 	QueryDurationHistogram *prometheus.HistogramVec
 	QueryTotalCounter      *prometheus.CounterVec
 	AffectedRowsCounter    *prometheus.CounterVec
@@ -74,12 +74,13 @@ var (
 
 // InitServerMetrics initializes server metrics.
 func InitServerMetrics() {
-	PacketIOCounter = NewCounterVec(
-		prometheus.CounterOpts{
+	PacketIOHistogram = NewHistogramVec(
+		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "packet_io_bytes",
-			Help:      "Counters of packet IO bytes.",
+			Help:      "Bucketed histogram of packet IO bytes.",
+			Buckets:   prometheus.ExponentialBuckets(4, 4, 21), // 4Bytes ~ 4TB
 		}, []string{LblType})
 
 	QueryDurationHistogram = NewHistogramVec(

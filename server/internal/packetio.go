@@ -230,7 +230,7 @@ func (p *PacketIO) ReadPacket() ([]byte, error) {
 	}
 
 	if len(data) < mysql.MaxPayloadLen {
-		server_metrics.ReadPacketBytes.Add(float64(len(data)))
+		server_metrics.ReadPacketBytes.Observe(float64(len(data)))
 		return data, nil
 	}
 
@@ -248,14 +248,14 @@ func (p *PacketIO) ReadPacket() ([]byte, error) {
 		}
 	}
 
-	server_metrics.ReadPacketBytes.Add(float64(len(data)))
+	server_metrics.ReadPacketBytes.Observe(float64(len(data)))
 	return data, nil
 }
 
 // WritePacket writes data that already have header
 func (p *PacketIO) WritePacket(data []byte) error {
 	length := len(data) - 4
-	server_metrics.WritePacketBytes.Add(float64(len(data)))
+	server_metrics.WritePacketBytes.Observe(float64(len(data)))
 
 	maxPayloadLen := mysql.MaxPayloadLen
 	if p.compressionAlgorithm != mysql.CompressionNone {
