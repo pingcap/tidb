@@ -80,6 +80,7 @@ func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
 	}
 }
 
+// cmd: go test -run=^$ -bench=BenchmarkMergeGlobalStatsTopNByConcurrencyWithHists -benchmem github.com/pingcap/tidb/statistics
 func benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(partitions int, b *testing.B) {
 	loc := time.UTC
 	sc := &stmtctx.StatementContext{TimeZone: loc}
@@ -142,6 +143,7 @@ func benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(partitions int, b *test
 }
 
 var benchmarkSizes = []int{100, 1000, 10000, 100000, 1000000, 10000000}
+var benchmarkConcurrencySizes = []int{100, 1000, 10000, 100000, 1000000, 10000000, 100000000}
 
 func BenchmarkMergePartTopN2GlobalTopNWithHists(b *testing.B) {
 	for _, size := range benchmarkSizes {
@@ -152,7 +154,7 @@ func BenchmarkMergePartTopN2GlobalTopNWithHists(b *testing.B) {
 }
 
 func BenchmarkMergeGlobalStatsTopNByConcurrencyWithHists(b *testing.B) {
-	for _, size := range benchmarkSizes {
+	for _, size := range benchmarkConcurrencySizes {
 		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
 			benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(size, b)
 		})
