@@ -34,7 +34,7 @@ type StatsWrapper struct {
 
 // NewStatsWrapper returns wrapper
 func NewStatsWrapper(hg []*Histogram, topN []*TopN) *StatsWrapper {
-	allHgMutex := make([]sync.Mutex, 0, len(hg))
+	allHgMutex := make([]sync.Mutex, len(hg), len(hg))
 	for i := range allHgMutex {
 		allHgMutex[i] = sync.Mutex{}
 	}

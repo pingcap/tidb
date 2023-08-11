@@ -123,10 +123,7 @@ func benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(partitions int, b *test
 		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 40})
 		hists = append(hists, h)
 	}
-	wrapper := &statistics.StatsWrapper{
-		AllTopN: topNs,
-		AllHg:   hists,
-	}
+	wrapper := statistics.NewStatsWrapper(hists, topNs)
 	const mergeConcurrency = 4
 	batchSize := len(wrapper.AllTopN) / mergeConcurrency
 	if batchSize < 1 {
