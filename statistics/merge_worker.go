@@ -27,21 +27,15 @@ import (
 
 // StatsWrapper wrapper stats
 type StatsWrapper struct {
-	AllHg      []*Histogram
-	AllHgMutex []sync.Mutex
-	AllTopN    []*TopN
+	AllHg   []*Histogram
+	AllTopN []*TopN
 }
 
 // NewStatsWrapper returns wrapper
 func NewStatsWrapper(hg []*Histogram, topN []*TopN) *StatsWrapper {
-	allHgMutex := make([]sync.Mutex, len(hg), len(hg))
-	for i := range allHgMutex {
-		allHgMutex[i] = sync.Mutex{}
-	}
 	return &StatsWrapper{
-		AllHg:      hg,
-		AllHgMutex: allHgMutex,
-		AllTopN:    topN,
+		AllHg:   hg,
+		AllTopN: topN,
 	}
 }
 
@@ -51,6 +45,7 @@ type topnStatsMergeWorker struct {
 	respCh chan<- *TopnStatsMergeResponse
 	// the stats in the wrapper should only be read during the worker
 	statsWrapper *StatsWrapper
+	shardMutex   []sync.Mutex
 }
 
 // NewTopnStatsMergeWorker returns topn merge worker
@@ -64,6 +59,7 @@ func NewTopnStatsMergeWorker(
 		respCh: respCh,
 	}
 	worker.statsWrapper = wrapper
+	worker.shardMutex = make([]sync.Mutex, len(wrapper.AllHg))
 	worker.killed = killed
 	return worker
 }
@@ -173,9 +169,9 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 					if count != 0 {
 						counter[encodedVal] += count
 						// Remove the value corresponding to encodedVal from the histogram.
-						worker.statsWrapper.AllHgMutex[j].Lock()
+						worker.shardMutex[j].Lock()
 						worker.statsWrapper.AllHg[j].BinarySearchRemoveVal(TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
-						worker.statsWrapper.AllHgMutex[j].Unlock()
+						worker.shardMutex[j].Unlock()
 					}
 				}
 			}
