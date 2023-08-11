@@ -960,6 +960,13 @@ func (tiflash *MockTiFlash) PdSwitch(enabled bool) {
 	tiflash.PdEnabled = enabled
 }
 
+// Set network error state.
+func (tiflash *MockTiFlash) SetNetworkError(e bool) {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	tiflash.NetworkError = e
+}
+
 // CalculateTiFlashProgress return truncated string to avoid float64 comparison.
 func (m *mockTiFlashReplicaManagerCtx) CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (float64, error) {
 	return calculateTiFlashProgress(tikv.NullspaceID, tableID, replicaCount, tiFlashStores)
@@ -1103,13 +1110,6 @@ func (m *mockTiFlashReplicaManagerCtx) Close(ctx context.Context) {
 	if m.tiflash.StatusServer != nil {
 		m.tiflash.StatusServer.Close()
 	}
-}
-
-// Set network error state.
-func (m *MockTiFlash) SetNetworkError(e bool) {
-	m.Lock()
-	defer m.Unlock()
-	m.NetworkError = e
 }
 
 // MockTiFlashError represents MockTiFlash error
