@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -44,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"sourcegraph.com/sourcegraph/appdash"
 	traceImpl "sourcegraph.com/sourcegraph/appdash/opentracing"
 )
@@ -345,7 +345,7 @@ func dfsTree(t *appdash.Trace, prefix string, isLast bool, chk *chunk.Chunk) {
 	chk.AppendString(2, duration.String())
 
 	// Sort events by their start time
-	slices.SortFunc(t.Sub, func(i, j *appdash.Trace) bool {
+	slices.SortFunc(t.Sub, func(i, j *appdash.Trace) int {
 		var istart, jstart time.Time
 		if ievent, err := i.TimespanEvent(); err == nil {
 			istart = ievent.Start()
@@ -353,7 +353,7 @@ func dfsTree(t *appdash.Trace, prefix string, isLast bool, chk *chunk.Chunk) {
 		if jevent, err := j.TimespanEvent(); err == nil {
 			jstart = jevent.Start()
 		}
-		return istart.Before(jstart)
+		return istart.Compare(jstart)
 	})
 
 	for i, sp := range t.Sub {
