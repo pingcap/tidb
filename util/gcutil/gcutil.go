@@ -171,6 +171,7 @@ retryScanAndResolve:
 		}
 		req.ScanLock().EndKey = loc.EndKey
 		resp, err := lockResolver.GetStore().SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
+		logutil.Logger(ctx).Info("lockResolver resp", zap.Any("resp", resp))
 		if err != nil {
 			return stat, errors.Trace(err)
 		}

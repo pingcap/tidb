@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
@@ -32,7 +33,7 @@ func resolveLockTickTime() time.Duration {
 		t := time.Duration(val.(int))
 		failpoint.Return(t * time.Second)
 	})
-	return 30 * time.Second
+	return 10 * time.Second
 }
 
 // OnTick advances the inner logic clock for the advancer.
@@ -67,27 +68,44 @@ func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 					// lastCheckpoint is not increased too long enough.
 					// assume the cluster has expired locks for whatever reasons.
 					if c.lastCheckpoint.needResolveLocks() {
+						var targets []spans.Valued
+						c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
+							// when get locks here. assume these locks are not belong to same txn,
+							// but startTS close to 1 minute. try resolve these locks at one time
+							vsf.TraverseValuesLessThan(tsoAfter(c.lastCheckpoint.TS, time.Minute), func(v spans.Valued) bool {
+								targets = append(targets, v)
+								return true
+							})
+						})
 						handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 							// we will scan all locks and try to resolve them by check txn status.
 							return gcutil.ResolveLocksForRange(ctx, "log backup", "advancer", c.env, math.MaxUint64, r.StartKey, r.EndKey)
 						}
-						runner := rangetask.NewRangeTaskRunner("advancer-resolve-locks-runner",
-							c.env.GetStore(), config.DefaultMaxConcurrencyAdvance, handler)
-						// Run resolve lock on the whole TiKV cluster.
-						// it will use startKey/endKey to scan region in PD.
-						// but regionCache already has a codecPDClient. so just use decode key here.
-						err := runner.RunOnRange(ctx, c.lastCheckpoint.StartKey, c.lastCheckpoint.EndKey)
-						if err != nil {
-							// wait for next tick
-							log.Error("resolve locks failed", zap.String("category", "advancer"),
-								zap.String("uuid", "log backup advancer"),
-								zap.Error(err))
+						workerPool := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
+						for _, r := range targets {
+							targetRange := r
+							workerPool.Apply(func() {
+								// Run resolve lock on the whole TiKV cluster.
+								// it will use startKey/endKey to scan region in PD.
+								// but regionCache already has a codecPDClient. so just use decode key here.
+								// and it almost only include one region here. so set concurrency to 1.
+								runner := rangetask.NewRangeTaskRunner("advancer-resolve-locks-runner",
+									c.env.GetStore(), 1, handler)
+								err := runner.RunOnRange(ctx, targetRange.Key.StartKey, targetRange.Key.EndKey)
+								if err != nil {
+									// wait for next tick
+									log.Error("resolve locks failed", zap.String("category", "advancer"),
+										zap.String("uuid", "log backup advancer"),
+										zap.Error(err))
+								}
+							})
 						}
-						log.Info("finish resolve locks", zap.String("category", "advancer"),
+						log.Info("finish resolve locks for checkpoint", zap.String("category", "advancer"),
 							zap.String("uuid", "log backup advancer"),
 							logutil.Key("StartKey", c.lastCheckpoint.StartKey),
 							logutil.Key("EndKey", c.lastCheckpoint.EndKey),
-							zap.Int("regions", runner.CompletedRegions()))
+							zap.Int("targets", len(targets)))
+						c.lastCheckpoint.resolveLockTime = time.Now()
 					}
 				}
 			}

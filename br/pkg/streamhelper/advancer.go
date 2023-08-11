@@ -80,22 +80,22 @@ type checkpoint struct {
 
 	// It's better to use PD timestamp in future, for now
 	// use local time to decide the time to resolve lock is ok.
-	generateTime time.Time
+	resolveLockTime time.Time
 }
 
 func newCheckpointWithTS(ts uint64) checkpoint {
 	return checkpoint{
-		TS:           ts,
-		generateTime: time.Now(),
+		TS:              ts,
+		resolveLockTime: time.Now(),
 	}
 }
 
 func NewCheckpointWithSpan(s spans.Valued) checkpoint {
 	return checkpoint{
-		StartKey:     s.Key.StartKey,
-		EndKey:       s.Key.EndKey,
-		TS:           s.Value,
-		generateTime: time.Now(),
+		StartKey:        s.Key.StartKey,
+		EndKey:          s.Key.EndKey,
+		TS:              s.Value,
+		resolveLockTime: time.Now(),
 	}
 }
 
@@ -115,7 +115,7 @@ func (c checkpoint) needResolveLocks() bool {
 	failpoint.Inject("NeedResolveLocks", func(val failpoint.Value) {
 		failpoint.Return(val.(bool))
 	})
-	return time.Since(c.generateTime) > time.Minute
+	return time.Since(c.resolveLockTime) > time.Minute
 }
 
 // NewCheckpointAdvancer creates a checkpoint advancer with the env.
@@ -224,6 +224,10 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int,
 func tsoBefore(n time.Duration) uint64 {
 	now := time.Now()
 	return oracle.ComposeTS(now.UnixMilli()-n.Milliseconds(), 0)
+}
+
+func tsoAfter(ts uint64, n time.Duration) uint64 {
+	return oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(n))
 }
 
 func (c *CheckpointAdvancer) WithCheckpoints(f func(*spans.ValueSortedFull)) {
