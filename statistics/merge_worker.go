@@ -30,6 +30,26 @@ type StatsWrapper struct {
 	AllTopN []*TopN
 }
 
+type RemoveTopNTask struct {
+	partition int
+	topn      TopNMeta
+}
+
+func NewRemoveTopNTask(partition int, topn TopNMeta) *RemoveTopNTask {
+	return &RemoveTopNTask{
+		partition: partition,
+		topn:      topn,
+	}
+}
+
+func (t *RemoveTopNTask) GetPartition() int {
+	return t.partition
+}
+
+func (t *RemoveTopNTask) GetTopN() TopNMeta {
+	return t.topn
+}
+
 // NewStatsWrapper returns wrapper
 func NewStatsWrapper(hg []*Histogram, topN []*TopN) *StatsWrapper {
 	return &StatsWrapper{
@@ -39,9 +59,10 @@ func NewStatsWrapper(hg []*Histogram, topN []*TopN) *StatsWrapper {
 }
 
 type topnStatsMergeWorker struct {
-	killed *uint32
-	taskCh <-chan *TopnStatsMergeTask
-	respCh chan<- *TopnStatsMergeResponse
+	killed   *uint32
+	taskCh   <-chan *TopnStatsMergeTask
+	respCh   chan<- *TopnStatsMergeResponse
+	removeCh chan<- *RemoveTopNTask
 	// the stats in the wrapper should only be read during the worker
 	statsWrapper *StatsWrapper
 }
@@ -50,11 +71,13 @@ type topnStatsMergeWorker struct {
 func NewTopnStatsMergeWorker(
 	taskCh <-chan *TopnStatsMergeTask,
 	respCh chan<- *TopnStatsMergeResponse,
+	removeCh chan<- *RemoveTopNTask,
 	wrapper *StatsWrapper,
 	killed *uint32) *topnStatsMergeWorker {
 	worker := &topnStatsMergeWorker{
-		taskCh: taskCh,
-		respCh: respCh,
+		taskCh:   taskCh,
+		respCh:   respCh,
+		removeCh: removeCh,
 	}
 	worker.statsWrapper = wrapper
 	worker.killed = killed
@@ -77,10 +100,9 @@ func NewTopnStatsMergeTask(start, end int) *TopnStatsMergeTask {
 
 // TopnStatsMergeResponse indicates topn merge worker response
 type TopnStatsMergeResponse struct {
-	Err        error
-	TopN       *TopN
-	PopedTopn  []TopNMeta
-	RemoveVals [][]TopNMeta
+	Err       error
+	TopN      *TopN
+	PopedTopn []TopNMeta
 }
 
 // Run runs topn merge like statistics.MergePartTopN2GlobalTopN
@@ -99,7 +121,6 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 			return
 		}
 		partNum := len(allTopNs)
-		removeVals := make([][]TopNMeta, partNum)
 		// Different TopN structures may hold the same value, we have to merge them.
 		counter := make(map[hack.MutableString]float64)
 		// datumMap is used to store the mapping from the string type to datum type.
@@ -168,13 +189,11 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 					if count != 0 {
 						counter[encodedVal] += count
 						// Remove the value corresponding to encodedVal from the histogram.
-						removeVals[j] = append(removeVals[j], TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
+						worker.removeCh <- NewRemoveTopNTask(j, TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
 					}
 				}
 			}
 		}
-		// record remove values
-		resp.RemoveVals = removeVals
 
 		numTop := len(counter)
 		if numTop == 0 {
