@@ -614,6 +614,7 @@ type MockTiFlash struct {
 	TiflashDelay                time.Duration
 	StartTime                   time.Time
 	NotAvailable                bool
+	NetworkError                bool
 }
 
 func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
@@ -629,6 +630,10 @@ func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
 	router.HandleFunc("/tiflash/sync-status/keyspace/{keyspaceid:\\d+}/table/{tableid:\\d+}", func(w http.ResponseWriter, req *http.Request) {
 		tiflash.Lock()
 		defer tiflash.Unlock()
+		if tiflash.NetworkError {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		params := mux.Vars(req)
 		tableID, err := strconv.Atoi(params["tableid"])
 		if err != nil {
@@ -1098,6 +1103,13 @@ func (m *mockTiFlashReplicaManagerCtx) Close(ctx context.Context) {
 	if m.tiflash.StatusServer != nil {
 		m.tiflash.StatusServer.Close()
 	}
+}
+
+// Set network error state.
+func (m *MockTiFlash) SetNetworkError(e bool) {
+	m.Lock()
+	defer m.Unlock()
+	m.NetworkError = e
 }
 
 // MockTiFlashError represents MockTiFlash error
