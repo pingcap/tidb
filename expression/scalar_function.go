@@ -305,7 +305,7 @@ func NewFunctionTryFold(ctx sessionctx.Context, funcName string, retType *types.
 // NewFunctionInternal is similar to NewFunction, but do not return error, should only be used internally.
 func NewFunctionInternal(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) Expression {
 	expr, err := NewFunction(ctx, funcName, retType, args...)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return expr
 }
 
