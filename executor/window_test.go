@@ -505,11 +505,10 @@ func testReturnColumnNullableAttribute(tk *testkit.TestKit, funcName string, isN
 	rs, err := tk.ExecWithContext(context.Background(), fmt.Sprintf("select %s over (partition by p order by o rows between 1 preceding and 1 following) as a from agg;", funcName))
 	tk.RequireNoError(err, "testReturnColumnNullableAttribute get error")
 	retField := rs.Fields()[0]
-	comment := fmt.Sprintf("%s window function's return column should have nullable attribute", funcName)
 	if isNullable {
-		tk.RequireNotEqual(mysql.NotNullFlag, (retField.Column.FieldType.GetFlag() & mysql.NotNullFlag), comment)
+		tk.RequireNotEqual(mysql.NotNullFlag, (retField.Column.FieldType.GetFlag() & mysql.NotNullFlag), fmt.Sprintf("%s window function's return column should have nullable attribute", funcName))
 	} else {
-		tk.RequireEqual(mysql.NotNullFlag, (retField.Column.FieldType.GetFlag() & mysql.NotNullFlag), comment)
+		tk.RequireEqual(mysql.NotNullFlag, (retField.Column.FieldType.GetFlag() & mysql.NotNullFlag), fmt.Sprintf("%s window function's return column should not have nullable attribute", funcName))
 	}
 	rs.Close()
 }
