@@ -179,7 +179,6 @@ go_test(
         "db_change_test.go",
         "db_foreign_key_test.go",
         "db_integration_test.go",
-        "db_partition_test.go",
         "db_rename_test.go",
         "db_table_test.go",
         "db_test.go",
