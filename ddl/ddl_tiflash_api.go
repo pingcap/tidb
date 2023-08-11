@@ -351,6 +351,7 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 	return nil
 }
 
+// PollAvailableTableProgress will poll and check availability of available tables.
 func PollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
 	pollMaxCount := RefreshProgressMaxTableCount
 	failpoint.Inject("PollAvailableTableProgressMaxCount", func(val failpoint.Value) {
