@@ -1737,7 +1737,7 @@ func (c *compareFunctionClass) refineNumericConstantCmpDatetime(ctx sessionctx.C
 	var timestampDatum types.Datum
 	targetFieldType := types.NewFieldType(mysql.TypeTimestamp)
 	timestampDatum, err = dt.ConvertTo(sc, targetFieldType)
-	if err != nil {
+	if err != nil || timestampDatum.IsNull() {
 		return args
 	}
 	finalArg := Constant{
