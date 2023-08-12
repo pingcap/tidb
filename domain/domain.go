@@ -112,6 +112,7 @@ type Domain struct {
 	expensiveQueryHandle    *expensivequery.Handle
 	memoryUsageAlarmHandle  *memoryusagealarm.Handle
 	serverMemoryLimitHandle *servermemorylimit.Handle
+<<<<<<< HEAD
 	wg                      util.WaitGroupWrapper
 	statsUpdating           atomicutil.Int32
 	cancel                  context.CancelFunc
@@ -122,6 +123,29 @@ type Domain struct {
 	logBackupAdvancer       *daemon.OwnerDaemon
 	historicalStatsWorker   *HistoricalStatsWorker
 	ttlJobManager           *ttlworker.JobManager
+=======
+	// TODO: use Run for each process in future pr
+	wg                  *util.WaitGroupEnhancedWrapper
+	statsUpdating       atomicutil.Int32
+	cancel              context.CancelFunc
+	indexUsageSyncLease time.Duration
+	dumpFileGcChecker   *dumpFileGcChecker
+	planReplayerHandle  *planReplayerHandle
+	extractTaskHandle   *ExtractHandle
+	expiredTimeStamp4PC struct {
+		// let `expiredTimeStamp4PC` use its own lock to avoid any block across domain.Reload()
+		// and compiler.Compile(), see issue https://github.com/pingcap/tidb/issues/45400
+		sync.RWMutex
+		expiredTimeStamp types.Time
+	}
+
+	logBackupAdvancer        *daemon.OwnerDaemon
+	historicalStatsWorker    *HistoricalStatsWorker
+	ttlJobManager            atomic.Pointer[ttlworker.JobManager]
+	runawayManager           *resourcegroup.RunawayManager
+	runawaySyncer            *runawaySyncer
+	resourceGroupsController *rmclient.ResourceGroupsController
+>>>>>>> 29727caacb8 (domain: use dedicated lock for expiredTimeStamp4PC (#45802))
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -394,18 +418,18 @@ func (do *Domain) GetSnapshotMeta(startTS uint64) (*meta.Meta, error) {
 
 // ExpiredTimeStamp4PC gets expiredTimeStamp4PC from domain.
 func (do *Domain) ExpiredTimeStamp4PC() types.Time {
-	do.m.Lock()
-	defer do.m.Unlock()
+	do.expiredTimeStamp4PC.RLock()
+	defer do.expiredTimeStamp4PC.RUnlock()
 
-	return do.expiredTimeStamp4PC
+	return do.expiredTimeStamp4PC.expiredTimeStamp
 }
 
 // SetExpiredTimeStamp4PC sets the expiredTimeStamp4PC from domain.
 func (do *Domain) SetExpiredTimeStamp4PC(time types.Time) {
-	do.m.Lock()
-	defer do.m.Unlock()
+	do.expiredTimeStamp4PC.Lock()
+	defer do.expiredTimeStamp4PC.Unlock()
 
-	do.expiredTimeStamp4PC = time
+	do.expiredTimeStamp4PC.expiredTimeStamp = time
 }
 
 // DDL gets DDL from domain.
@@ -897,8 +921,12 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		infoCache:           infoschema.NewCache(16),
 		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
 		indexUsageSyncLease: idxUsageSyncLease,
+<<<<<<< HEAD
 		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
+=======
+		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
+>>>>>>> 29727caacb8 (domain: use dedicated lock for expiredTimeStamp4PC (#45802))
 		mdlCheckTableInfo: &mdlCheckTableInfo{
 			mu:         sync.Mutex{},
 			jobsVerMap: make(map[int64]int64),
@@ -913,6 +941,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
 	do.initDomainSysVars()
+	do.expiredTimeStamp4PC.expiredTimeStamp = types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
 	return do
 }
 
