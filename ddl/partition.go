@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -2376,6 +2377,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	ptDbInfo, err := t.GetDatabase(ptSchemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
 	nt, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -2444,6 +2451,14 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		err = checkExchangePartitionRecordValidation(w, pt, index, ntDbInfo.Name, nt.Name)
 		if err != nil {
 			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
+		}
+	}
+
+	if variable.EnableCheckConstraint.Load() {
+		err = verifyExchangePartitionRecordCheckConstraint(w, pt, nt, ptDbInfo.Name.L, ntDbInfo.Name.L, partName)
+		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 	}
@@ -3309,6 +3324,78 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	rowCount := len(rows)
 	if rowCount != 0 {
 		return errors.Trace(dbterror.ErrRowDoesNotMatchPartition)
+	}
+	return nil
+}
+
+func verifyExchangePartitionRecordCheckConstraint(w *worker, pt, nt *model.TableInfo, pschemaName, nschemaName, partitionName string) error {
+	getWriteableConstraintExpr := func(constraints []*model.ConstraintInfo) []string {
+		writeableConstraintExpr := make([]string, 0, len(constraints))
+		for _, con := range constraints {
+			if !con.Enforced {
+				continue
+			}
+			if con.State == model.StateDeleteOnly || con.State == model.StateDeleteReorganization {
+				continue
+			}
+			writeableConstraintExpr = append(writeableConstraintExpr, con.ExprString)
+		}
+		return writeableConstraintExpr
+	}
+
+	verifyFunc := func(schemaName, tableName, partitionName string, constraintExprs []string) error {
+		var sql string
+		paramList := make([]interface{}, 0, 3)
+		var buf strings.Builder
+		buf.WriteString("select 1 from %n.%n")
+		paramList = append(paramList, schemaName, tableName)
+		if len(partitionName) != 0 {
+			buf.WriteString(" partition(%n)")
+			paramList = append(paramList, partitionName)
+		}
+		buf.WriteString(" where not (")
+		for i, con := range constraintExprs {
+			if i == 0 {
+				buf.WriteString(con)
+			} else {
+				buf.WriteString(fmt.Sprintf(" and %s", con))
+			}
+		}
+		buf.WriteString(") limit 1")
+		sql = buf.String()
+
+		logutil.BgLogger().Error(fmt.Sprintf("jiyfsql:%s,args:%v", sql, paramList))
+
+		var ctx sessionctx.Context
+		ctx, err := w.sessPool.Get()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer w.sessPool.Put(ctx)
+
+		rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ctx, nil, sql, paramList...)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rowCount := len(rows)
+		if rowCount != 0 {
+			// TODO: return other error code
+			return errors.Trace(dbterror.ErrRowDoesNotMatchPartition)
+		}
+		return nil
+	}
+
+	pCons := getWriteableConstraintExpr(pt.Constraints)
+	nCons := getWriteableConstraintExpr(nt.Constraints)
+	if len(pCons) > 0 {
+		if err := verifyFunc(nschemaName, nt.Name.L, "", pCons); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if len(nCons) > 0 {
+		if err := verifyFunc(pschemaName, pt.Name.L, partitionName, nCons); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
