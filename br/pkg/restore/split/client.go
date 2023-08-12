@@ -134,6 +134,9 @@ func (c *pdClient) ScatterRegions(ctx context.Context, regionInfo []*RegionInfo)
 	if err != nil {
 		return err
 	}
+    if resp.FinishedPercentage != uint64(100) {
+         return errors.Annotatef(berrors.ErrPDInvalidResponse, "pd returns error during batch scattering");
+    }
 	if pbErr := resp.GetHeader().GetError(); pbErr.GetType() != pdpb.ErrorType_OK {
 		return errors.Annotatef(berrors.ErrPDInvalidResponse, "pd returns error during batch scattering: %s", pbErr)
 	}
