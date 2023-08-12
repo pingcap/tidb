@@ -25,7 +25,6 @@ type DataSource interface {
 // DataSink defines interface for sink of all operators.
 // Operator write processed data to DataSink.
 type DataSink interface {
-	IsFull() bool
 	Write(data any) error
 	Display() string
 }

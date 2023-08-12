@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
+	poolutil "github.com/pingcap/tidb/resourcemanager/util"
 )
 
 type asyncChunk struct {
@@ -35,9 +36,6 @@ type asyncWorker struct {
 // HandleTask define the basic running process for each operator.
 func (aw *asyncWorker) HandleTask(task asyncChunk) {
 	task.res.res++
-	for aw.sink.IsFull() {
-		continue
-	}
 	_ = aw.sink.Write(task)
 }
 
@@ -45,41 +43,37 @@ func (aw *asyncWorker) HandleTask(task asyncChunk) {
 func (*asyncWorker) Close() {}
 
 type exampleAsyncOperatorImpl struct {
-	AsyncOperator[asyncChunk]
+	BaseOperator
 }
 
-func newExampleAsyncOperatorImpl() AsyncOperatorImpl {
+// close implements BaseAsyncOperatorImpl.
+func (oi *exampleAsyncOperatorImpl) close() {
+	oi.Source.(*AsyncDataChannel[asyncChunk]).channel.ReleaseAndWait()
+}
+
+// open implements BaseAsyncOperatorImpl.
+func (oi *exampleAsyncOperatorImpl) open() error {
+	oi.Source.(*AsyncDataChannel[asyncChunk]).channel.SetCreateWorker(
+		func() workerpool.Worker[asyncChunk] {
+			return &asyncWorker{oi.Sink}
+		},
+	)
+	oi.Source.(*AsyncDataChannel[asyncChunk]).channel.Start()
+	return nil
+}
+
+func newExampleAsyncOperatorImpl(name string) *exampleAsyncOperatorImpl {
+	pool, _ := workerpool.NewWorkerPoolWithoutCreateWorker[asyncChunk](name, poolutil.DDL, 10)
+	source := &AsyncDataChannel[asyncChunk]{}
+
+	source.channel = pool
 	res := &exampleAsyncOperatorImpl{}
+	res.Source = source
 	return res
-}
-
-func (*exampleAsyncOperatorImpl) preExecute() error {
-	return nil
-}
-
-func (oi *exampleAsyncOperatorImpl) start() {
-	oi.pool.SetCreateWorker(oi.createWorker)
-	oi.pool.Start()
-}
-
-func (oi *exampleAsyncOperatorImpl) wait() {
-	oi.pool.ReleaseAndWait()
-}
-
-func (oi *exampleAsyncOperatorImpl) createWorker() workerpool.Worker[asyncChunk] {
-	return &asyncWorker{oi.sink}
-}
-
-func (*exampleAsyncOperatorImpl) postExecute() error {
-	return nil
 }
 
 func (*exampleAsyncOperatorImpl) display() string {
 	return "ExampleAsyncOperator"
-}
-
-func (oi *exampleAsyncOperatorImpl) addTask(data any) {
-	oi.pool.AddTask(data.(asyncChunk))
 }
 
 type simpleAsyncDataSink struct {

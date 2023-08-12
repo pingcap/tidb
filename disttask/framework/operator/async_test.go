@@ -18,36 +18,28 @@ import (
 	"sync"
 	"testing"
 
-	poolutil "github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/stretchr/testify/require"
 )
 
 func NewAsyncPipeline() (*AsyncPipeline, any) {
-	impl0 := NewAsyncOperatorImpl[asyncChunk]("impl0", newExampleAsyncOperatorImpl, poolutil.DDL, 10)
-	impl1 := NewAsyncOperatorImpl[asyncChunk]("impl1", newExampleAsyncOperatorImpl, poolutil.DDL, 10)
-	impl2 := NewAsyncOperatorImpl[asyncChunk]("impl2", newExampleAsyncOperatorImpl, poolutil.DDL, 10)
-	source0 := impl0.getSource()
-	source1 := impl1.getSource()
-	source2 := impl2.getSource()
+	impl0 := newExampleAsyncOperatorImpl("impl0")
+	impl1 := newExampleAsyncOperatorImpl("impl1")
+	impl0.Sink = impl1.Source.(DataSink)
 	sink := &simpleAsyncDataSink{0, 0, sync.Mutex{}}
 
-	impl0.setSink(source1.(DataSink))
-	impl1.setSink(source2.(DataSink))
-	impl2.setSink(sink)
-
+	impl1.Sink = sink
 	pipeline := &AsyncPipeline{}
 	pipeline.AddOperator(impl0)
 	pipeline.AddOperator(impl1)
-	pipeline.AddOperator(impl2)
-	return pipeline, source0
+	return pipeline, impl0.Source
 }
 
 func TestPipelineAsync(t *testing.T) {
 	pipeline, source := NewAsyncPipeline()
-	pipeline.AsyncExecute()
+	pipeline.Execute()
 	for i := 0; i < 10; i++ {
 		_ = source.(*AsyncDataChannel[asyncChunk]).Write(asyncChunk{&demoChunk{0}})
 	}
-	pipeline.Wait()
-	require.Equal(t, 30, pipeline.LastOperator().getSink().(*simpleAsyncDataSink).Res)
+	pipeline.Close()
+	require.Equal(t, 20, pipeline.LastOperator().(*exampleAsyncOperatorImpl).Sink.(*simpleAsyncDataSink).Res)
 }

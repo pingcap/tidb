@@ -14,40 +14,40 @@
 
 package operator
 
-// AsyncPipeline wraps a list of AsyncOperatorImpls.
+// AsyncPipeline wraps a list of BaseAsyncOperatorImpl.
 // The dataflow is from the first operator to the last operator.
 //
 //	Eg: op1.AddTask ---> op1.HandleTask  ---> op2.AddTask ---> op2.HandleTask
 type AsyncPipeline struct {
-	ops []AsyncOperatorImpl
+	ops []BaseAysncOperatorImpl
 }
 
 // AsyncExecute start all operators waiting to handle tasks.
-func (p *AsyncPipeline) AsyncExecute() {
+func (p *AsyncPipeline) Execute() {
 	// Start running each operator.
 	for _, op := range p.ops {
-		op.start()
+		op.open()
 	}
 }
 
-// Wait wait all tasks done.
-func (p *AsyncPipeline) Wait() {
+// Close wait all tasks done.
+func (p *AsyncPipeline) Close() {
 	for _, op := range p.ops {
-		op.wait()
+		op.close()
 	}
 }
 
 // AddOperator insert operator to the end of the list
-func (p *AsyncPipeline) AddOperator(op AsyncOperatorImpl) {
+func (p *AsyncPipeline) AddOperator(op BaseAysncOperatorImpl) {
 	p.ops = append(p.ops, op)
 }
 
 // FirstOperator get the first operator.
-func (p *AsyncPipeline) FirstOperator() AsyncOperatorImpl {
+func (p *AsyncPipeline) FirstOperator() BaseAysncOperatorImpl {
 	return p.ops[0]
 }
 
 // LastOperator get the last operator.
-func (p *AsyncPipeline) LastOperator() AsyncOperatorImpl {
+func (p *AsyncPipeline) LastOperator() BaseAysncOperatorImpl {
 	return p.ops[len(p.ops)-1]
 }
