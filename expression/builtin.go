@@ -25,6 +25,7 @@
 package expression
 
 import (
+	"slices"
 	"strings"
 	"sync"
 	"unsafe"
@@ -42,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/exp/slices"
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.

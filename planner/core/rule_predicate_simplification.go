@@ -17,11 +17,11 @@ package core
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
-	"golang.org/x/exp/slices"
 )
 
 // predicateSimplification consolidates different predcicates on a column and its equivalence classes.  Initial out is for
