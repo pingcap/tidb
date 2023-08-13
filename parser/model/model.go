@@ -518,7 +518,11 @@ type TableInfo struct {
 	// StatsOptions is used when do analyze/auto-analyze for each table
 	StatsOptions *StatsOptions `json:"stats_options"`
 
+	// Current table is non-partition table.
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
+	// Current table is partition table.
+	// Key: partID, value: non-partition tableID.
+	ExchangePartitionPartIDs map[int64]int64 `json:"exchange_partition_partids"`
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
 }

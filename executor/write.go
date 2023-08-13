@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -44,6 +45,71 @@ var (
 	_ exec.Executor = &ReplaceExec{}
 	_ exec.Executor = &LoadDataExec{}
 )
+
+func exchangePartitionCheckRow(sctx sessionctx.Context, row []types.Datum, t table.Table) error {
+	tbl := t.Meta()
+	if tbl.ExchangePartitionInfo != nil {
+		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
+		if !tableFound {
+			return errors.Errorf("exchange partition process table by id failed")
+		}
+		p, ok := pt.(table.PartitionedTable)
+		if !ok {
+			return errors.Errorf("exchange partition process assert table partition failed")
+		}
+		err := p.CheckForExchangePartition(
+			sctx,
+			pt.Meta().Partition,
+			row,
+			tbl.ExchangePartitionInfo.ExchangePartitionDefID,
+		)
+		if err != nil {
+			return err
+		}
+		if variable.EnableCheckConstraint.Load() {
+			cc, ok := pt.(table.CheckConstraintTable)
+			if !ok {
+				return errors.Errorf("exchange partition process assert check constraint failed")
+			}
+			err := cc.CheckRowConstraint(sctx, row)
+			if err != nil {
+				// TODO: make error include ExchangePartition info.
+				return err
+			}
+		}
+	} else if len(tbl.ExchangePartitionPartIDs) > 0 {
+		if variable.EnableCheckConstraint.Load() {
+			p, ok := t.(table.PartitionedTable)
+			if !ok {
+				return errors.Errorf("exchange partition process assert table partition failed")
+			}
+			physicalTable, err := p.GetPartitionByRow(sctx, row)
+			if err != nil {
+				return err
+			}
+			partId := physicalTable.GetPhysicalID()
+			ntId, ok := tbl.ExchangePartitionPartIDs[partId]
+			if ok {
+				is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+				nt, tableFound := is.TableByID(ntId)
+				if !tableFound {
+					return errors.Errorf("exchange partition process table by id failed")
+				}
+				cc, ok := nt.(table.CheckConstraintTable)
+				if !ok {
+					return errors.Errorf("exchange partition process assert check constraint failed")
+				}
+				err = cc.CheckRowConstraint(sctx, row)
+				if err != nil {
+					// TODO: make error include ExchangePartition info.
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
 
 // updateRecord updates the row specified by the handle `h`, from `oldData` to `newData`.
 // `modified` means which columns are really modified. It's used for secondary indices.
@@ -78,26 +144,9 @@ func updateRecord(
 	}
 
 	// Handle exchange partition
-	tbl := t.Meta()
-	if tbl.ExchangePartitionInfo != nil {
-		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
-		if !tableFound {
-			return false, errors.Errorf("exchange partition process table by id failed")
-		}
-		p, ok := pt.(table.PartitionedTable)
-		if !ok {
-			return false, errors.Errorf("exchange partition process assert table partition failed")
-		}
-		err := p.CheckForExchangePartition(
-			sctx,
-			pt.Meta().Partition,
-			newData,
-			tbl.ExchangePartitionInfo.ExchangePartitionDefID,
-		)
-		if err != nil {
-			return false, err
-		}
+	err := exchangePartitionCheckRow(sctx, newData, t)
+	if err != nil {
+		return false, err
 	}
 
 	// Compare datum, then handle some flags.
