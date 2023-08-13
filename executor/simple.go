@@ -2617,6 +2617,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 		err := errors.New("client returns nil response")
 		return err
 	}
+	resp.Close()
 
 	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", gcid.ServerID),
 		zap.Uint64("conn", gcid.ToConnID()), zap.Bool("query", query))
