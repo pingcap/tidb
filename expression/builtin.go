@@ -244,43 +244,43 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 	return b.args
 }
 
-func (b *baseBuiltinFunc) vecEvalInt(*chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalInt(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalInt() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) vecEvalReal(*chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalReal(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalReal() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) vecEvalString(*chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalString(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalString() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) vecEvalDecimal(*chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalDecimal(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalDecimal() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) vecEvalTime(*chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalTime(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalTime() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) vecEvalDuration(*chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalDuration(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalDuration() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) vecEvalJSON(*chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalJSON(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalJSON() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) evalInt(chunk.Row) (int64, bool, error) {
+func (*baseBuiltinFunc) evalInt(chunk.Row) (int64, bool, error) {
 	return 0, false, errors.Errorf("baseBuiltinFunc.evalInt() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) evalReal(chunk.Row) (float64, bool, error) {
+func (*baseBuiltinFunc) evalReal(chunk.Row) (float64, bool, error) {
 	return 0, false, errors.Errorf("baseBuiltinFunc.evalReal() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) evalString(chunk.Row) (string, bool, error) {
+func (*baseBuiltinFunc) evalString(chunk.Row) (string, bool, error) {
 	return "", false, errors.Errorf("baseBuiltinFunc.evalString() should never be called, please contact the TiDB team for help")
 }
 
@@ -321,7 +321,7 @@ func (b *baseBuiltinFunc) isChildrenReversed() bool {
 	return b.childrenReversed
 }
 
-func (b *baseBuiltinFunc) reverseEval(*stmtctx.StatementContext, types.Datum, types.RoundingType) (types.Datum, error) {
+func (*baseBuiltinFunc) reverseEval(*stmtctx.StatementContext, types.Datum, types.RoundingType) (types.Datum, error) {
 	return types.Datum{}, errors.Errorf("baseBuiltinFunc.reverseEvalInt() should never be called, please contact the TiDB team for help")
 }
 
@@ -339,8 +339,7 @@ func (b *baseBuiltinFunc) isChildrenVectorized() bool {
 }
 
 func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
-	switch b.tp.EvalType() {
-	case types.ETString:
+	if b.tp.EvalType() == types.ETString {
 		if b.tp.GetFlen() >= mysql.MaxBlobWidth {
 			b.tp.SetType(mysql.TypeLongBlob)
 		} else if b.tp.GetFlen() >= 65536 {
@@ -386,7 +385,7 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.ctor = from.ctor
 }
 
-func (b *baseBuiltinFunc) Clone() builtinFunc {
+func (*baseBuiltinFunc) Clone() builtinFunc {
 	panic("you should not call this method.")
 }
 
