@@ -832,7 +832,8 @@ func TestExchangePartitionCheckConstraintStates(t *testing.T) {
 	tk3.MustExec(`use check_constraint`)
 	tk4 := testkit.NewTestKit(t, store)
 	tk4.MustExec(`use check_constraint`)
-	errMsg := "Check constraint"
+	// TODO: error message to check.
+	errMsg := "[table:3819]Check constraint"
 
 	tk2.MustExec("begin")
 	// Get table mdl.
@@ -866,10 +867,16 @@ func TestExchangePartitionCheckConstraintStates(t *testing.T) {
 	tk.MustContainErrMsg(`insert into nt values (80, 60)`, errMsg)
 	// violate pt (b < 75)
 	tk.MustContainErrMsg(`insert into nt values (60, 80)`, errMsg)
+	// violate pt (a < 75)
+	tk.MustContainErrMsg(`update nt set a = 80 where a = 60`, errMsg)
+	// violate pt (b < 75)
+	tk.MustContainErrMsg(`update nt set b = 80 where b = 60`, errMsg)
 
 	tk.MustExec(`insert into pt values (60, 60)`)
 	// violate nt (b > 50)
-	// tk.MustContainErrMsg(`insert into pt values (60, 50)`, errMsg)
+	//tk.MustContainErrMsg(`insert into pt values (60, 50)`, errMsg)
+	// violate nt (b > 50)
+	//tk.MustContainErrMsg(`update pt set b = 50 where b = 60`, errMsg)
 	// row in partition p0(less than (50)), is ok.
 	tk.MustExec(`insert into pt values (30, 50)`)
 
@@ -877,7 +884,10 @@ func TestExchangePartitionCheckConstraintStates(t *testing.T) {
 	// The failed sql above, now will be success.
 	tk.MustExec(`insert into nt values (80, 60)`)
 	tk.MustExec(`insert into nt values (60, 80)`)
+	tk.MustExec(`update nt set a = 80 where a = 60`)
 	tk.MustExec(`insert into pt values (60, 50)`)
+	tk.MustExec(`update pt set b = 50 where b = 60`)
+
 	tk.MustExec(`set @@global.tidb_enable_check_constraint = 1`)
 
 	// Release table mdl.

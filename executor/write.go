@@ -46,6 +46,8 @@ var (
 	_ exec.Executor = &LoadDataExec{}
 )
 
+// exchangePartitionCheckRow is only used for ExchangePartition durating write only state.
+// It check if rowData inserted or updated violate partition definition or check constraints.
 func exchangePartitionCheckRow(sctx sessionctx.Context, row []types.Datum, t table.Table) error {
 	tbl := t.Meta()
 	if tbl.ExchangePartitionInfo != nil {
