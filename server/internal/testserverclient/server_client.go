@@ -404,7 +404,6 @@ func (cli *TestServerClient) RunTestLoadDataWithSelectIntoOutfile(t *testing.T) 
 }
 
 func (cli *TestServerClient) RunTestLoadDataForSlowLog(t *testing.T) {
-	t.Skip("unstable test")
 	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
 	require.NotNil(t, fp)
