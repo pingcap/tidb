@@ -127,7 +127,7 @@ require (
 	golang.org/x/term v0.11.0
 	golang.org/x/text v0.12.0
 	golang.org/x/time v0.3.0
-	golang.org/x/tools v0.10.0
+	golang.org/x/tools v0.12.0
 	google.golang.org/api v0.114.0
 	google.golang.org/grpc v1.54.0
 	gopkg.in/yaml.v2 v2.4.0
@@ -282,7 +282,7 @@ require (
 	go.opentelemetry.io/proto/otlp v0.7.0 // indirect
 	golang.org/x/crypto v0.12.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20230224173230-c95f2b4c22f2 // indirect
-	golang.org/x/mod v0.11.0 // indirect
+	golang.org/x/mod v0.12.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	gonum.org/v1/gonum v0.8.2 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
