@@ -511,7 +511,7 @@
       "types/json_binary_functions.go": "types/json_binary_functions.go",
       "types/json_binary_test.go": "types/json_binary_test.go",
       "ddl/": "ddl",
-      "expression/builtin_cast.go": "expression/builtin_cast code",
+      "expression/": "expression/ code",
       "server/": "server/ code",
       "distsql/": "distsql code",
       "disttask": "disttask code",
