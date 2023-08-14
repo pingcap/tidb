@@ -222,13 +222,13 @@ func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 func (e *LoadDataInfo) initColAssignExprs() error {
 	for _, assign := range e.ColumnAssignments {
 		newExpr, err := expression.RewriteAstExpr(e.Ctx, assign.Expr, nil, nil)
+		if err != nil {
+			return err
+		}
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
 		e.exprWarnings = append(e.exprWarnings, e.Ctx.GetSessionVars().StmtCtx.GetWarnings()...)
 		e.Ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
-		if err != nil {
-			return err
-		}
 		e.ColumnAssignmentExprs = append(e.ColumnAssignmentExprs, newExpr)
 	}
 	return nil
@@ -697,7 +697,9 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 		}
 		row = append(row, d)
 	}
-	e.Ctx.GetSessionVars().StmtCtx.AppendWarnings(e.exprWarnings)
+	if len(e.exprWarnings) > 0 {
+		e.Ctx.GetSessionVars().StmtCtx.AppendWarnings(e.exprWarnings)
+	}
 
 	// a new row buffer will be allocated in getRow
 	newRow, err := e.getRow(ctx, row)
