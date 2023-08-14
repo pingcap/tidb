@@ -16,8 +16,6 @@ package restore
 
 import (
 	"context"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"sort"
 	"strings"
 	"sync"
@@ -45,6 +43,8 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type TableRestore struct {
