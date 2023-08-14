@@ -1055,7 +1055,7 @@ func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]s
 	}
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
-			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids, printLog)
+			sessionapi.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids, printLog)
 		}
 	}
 }

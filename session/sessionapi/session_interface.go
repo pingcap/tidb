@@ -15,7 +15,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -72,4 +75,32 @@ type Session interface {
 
 	// SetExtensions sets the `*extension.SessionExtensions` object
 	SetExtensions(extensions *extension.SessionExtensions)
+}
+
+// RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
+func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]string, printLog bool) {
+	sv := s.GetSessionVars()
+	if sv.InRestrictedSQL {
+		return
+	}
+	sv.TxnCtxMu.Lock()
+	defer sv.TxnCtxMu.Unlock()
+	if sv.TxnCtx == nil {
+		return
+	}
+	sv.GetRelatedTableForMDL().Range(func(tblID, value any) bool {
+		for jobID, ver := range job2ver {
+			ids := util.Str2Int64Map(job2ids[jobID])
+			if _, ok := ids[tblID.(int64)]; ok && value.(int64) < ver {
+				delete(job2ver, jobID)
+				elapsedTime := time.Since(oracle.GetTimeFromTS(sv.TxnCtx.StartTS))
+				if elapsedTime > time.Minute && printLog {
+					logutil.BgLogger().Info("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
+				} else {
+					logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
+				}
+			}
+		}
+		return true
+	})
 }
