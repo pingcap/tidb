@@ -8,12 +8,8 @@ go_test(
         "show_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD:executor/showtest/BUILD.bazel
     race = "on",
     shard_count = 45,
-=======
-    shard_count = 39,
->>>>>>> 9885d1b2014 (planner: fix agg elimination logic after agg pushed down through a join (#44941)):executor/test/aggregate/BUILD.bazel
     deps = [
         "//config",
         "//executor",
