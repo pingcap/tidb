@@ -8,8 +8,12 @@ go_test(
         "merge_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD:ddl/indexmergetest/BUILD.bazel
     race = "on",
     shard_count = 20,
+=======
+    shard_count = 13,
+>>>>>>> c34f6fc83d6 (planner: store the hints of session variable (#45814)):session/test/vars/BUILD.bazel
     deps = [
         "//config",
         "//ddl",
@@ -19,9 +23,16 @@ go_test(
         "//domain",
         "//errno",
         "//kv",
+<<<<<<< HEAD:ddl/indexmergetest/BUILD.bazel
         "//meta/autoid",
         "//parser/model",
         "//tablecodec",
+=======
+        "//parser/mysql",
+        "//parser/terror",
+        "//sessionctx/stmtctx",
+        "//sessionctx/variable",
+>>>>>>> c34f6fc83d6 (planner: store the hints of session variable (#45814)):session/test/vars/BUILD.bazel
         "//testkit",
         "//testkit/testsetup",
         "@com_github_pingcap_failpoint//:failpoint",
