@@ -2473,7 +2473,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	rsOptionsMap map[int64]V2AnalyzeOptions,
 ) ([]AnalyzeColumnsTask, error) {
 	// Version 2 doesn't support incremental analyze.
-	// And incremental analyze will deprecated in the future.
+	// And incremental analyze will be deprecated in the future.
 	if as.Incremental {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
 	}
