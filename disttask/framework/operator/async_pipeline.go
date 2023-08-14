@@ -16,8 +16,6 @@ package operator
 
 // AsyncPipeline wraps a list of BaseAsyncOperatorImpl.
 // The dataflow is from the first operator to the last operator.
-//
-//	Eg: op1.channel.AddTask ---> op1.worker.HandleTask  ---> op2.channel.AddTask ---> op2.worker.HandleTask.
 type AsyncPipeline struct {
 	ops []AsyncOperator
 }
