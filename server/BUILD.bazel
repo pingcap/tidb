@@ -59,6 +59,7 @@ go_library(
         "//server/internal/util",
         "//server/metrics",
         "//session",
+        "//session/sessionapi",
         "//session/txninfo",
         "//sessionctx",
         "//sessionctx/sessionstates",

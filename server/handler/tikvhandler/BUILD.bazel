@@ -18,6 +18,7 @@ go_library(
         "//parser/terror",
         "//server/handler",
         "//session",
+        "//session/sessionapi",
         "//session/txninfo",
         "//sessionctx",
         "//sessionctx/binloginfo",

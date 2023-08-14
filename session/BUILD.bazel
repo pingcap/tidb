@@ -50,6 +50,7 @@ go_library(
         "//privilege/conn",
         "//privilege/privileges",
         "//session/metrics",
+        "//session/sessionapi",
         "//session/txninfo",
         "//sessionctx",
         "//sessionctx/binloginfo",

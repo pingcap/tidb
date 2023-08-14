@@ -18,6 +18,7 @@ go_library(
         "//parser/terror",
         "//privilege",
         "//session",
+        "//session/sessionapi",
         "//sessionctx/variable",
         "//tablecodec",
         "//util/codec",
