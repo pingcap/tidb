@@ -89,7 +89,7 @@
                                 "Version": 440930000000000000
                               },
                               "TableName": "t",
-                              "TblInfoID": 94,
+                              "TblInfoID": 98,
                               "Uninitialized": false,
                               "UsePartitionStats": false
                             }
@@ -329,7 +329,7 @@
                             "Version": 440930000000000000
                           },
                           "TableName": "t",
-                          "TblInfoID": 94,
+                          "TblInfoID": 98,
                           "Uninitialized": false,
                           "UsePartitionStats": false
                         }
@@ -518,7 +518,7 @@
                                 "Version": 440930000000000000
                               },
                               "TableName": "t",
-                              "TblInfoID": 94,
+                              "TblInfoID": 98,
                               "Uninitialized": false,
                               "UsePartitionStats": false
                             }

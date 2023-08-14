@@ -24,6 +24,7 @@ import (
 	"math"
 	"math/rand"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,7 +66,6 @@ import (
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 )
 
 var (
@@ -744,6 +744,9 @@ type SessionVars struct {
 	// PlanColumnID is the unique id for column when building plan.
 	PlanColumnID atomic.Int64
 
+	// MapScalarSubQ maps the scalar sub queries from its ID to its struct.
+	MapScalarSubQ []interface{}
+
 	// MapHashCode2UniqueID4ExtendedCol map the expr's hash code to specified unique ID.
 	MapHashCode2UniqueID4ExtendedCol map[string]int
 
@@ -822,6 +825,8 @@ type SessionVars struct {
 	// Enable3StageMultiDistinctAgg indicates whether to allow 3 stage multi distinct aggregate
 	Enable3StageMultiDistinctAgg bool
 
+	ExplainNonEvaledSubQuery bool
+
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
 
@@ -880,7 +885,7 @@ type SessionVars struct {
 	TiFlashMaxBytesBeforeExternalSort int64
 
 	// TiFlashEnablePipelineMode means if we should use pipeline model to execute query or not in tiflash.
-	// Default value is `false`, means never use pipeline model in tiflash.
+	// Default value is `true`, means never use pipeline model in tiflash.
 	// Value set to `true` means try to execute query with pipeline model in tiflash.
 	TiFlashEnablePipelineMode bool
 
@@ -1064,6 +1069,10 @@ type SessionVars struct {
 	// If the value is 0, timeouts are not enabled.
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
+
+	// TidbKvReadTimeout is the timeout for readonly kv request in milliseconds, 0 means using default value
+	// See https://github.com/pingcap/tidb/blob/7105505a78fc886c33258caa5813baf197b15247/docs/design/2023-06-30-configurable-kv-timeout.md?plain=1#L14-L15
+	TidbKvReadTimeout uint64
 
 	// Killed is a flag to indicate that this query is killed.
 	Killed uint32
@@ -1504,9 +1513,6 @@ type SessionVars struct {
 	// TiFlashReplicaRead indicates the policy of TiFlash node selection when the query needs the TiFlash engine.
 	TiFlashReplicaRead tiflash.ReplicaRead
 
-	// ConsiderRealtimeStats xxx
-	ConsiderRealtimeStats bool
-
 	// HypoTiFlashReplicas are for the Index Advisor.
 	HypoTiFlashReplicas map[string]map[string]struct{} // dbName -> tblName -> whether to have replicas
 
@@ -1523,6 +1529,17 @@ type SessionVars struct {
 
 	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
 	AnalyzeSkipColumnTypes map[string]struct{}
+
+	// SkipMissingPartitionStats controls how to handle missing partition stats when merging partition stats to global stats.
+	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
+	// When set to false, give up merging partition stats to global stats.
+	SkipMissingPartitionStats bool
+
+	// OptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
+	// For now, the possible values and corresponding behaviors are:
+	// OptObjectiveModerate: The default value. The optimizer considers the real-time stats (real-time row count, modify count).
+	// OptObjectiveDetermined: The optimizer doesn't consider the real-time stats.
+	OptObjective string
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -2105,12 +2122,6 @@ func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
 	s.EnablePseudoForOutdatedStats = val
 }
 
-// ConsiderRealtimeStatsForEstimation means whether the estimation
-// logic need to consider modify count and the realtime row count.
-func (s *SessionVars) ConsiderRealtimeStatsForEstimation() bool {
-	return s.ConsiderRealtimeStats
-}
-
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
 func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 	if s.StmtCtx.HasReplicaReadHint {
@@ -2156,6 +2167,11 @@ func (s *SessionVars) CleanBuffers() {
 // AllocPlanColumnID allocates column id for plan.
 func (s *SessionVars) AllocPlanColumnID() int64 {
 	return s.PlanColumnID.Add(1)
+}
+
+// RegisterScalarSubQ register a scalar sub query into the map. This will be used for EXPLAIN.
+func (s *SessionVars) RegisterScalarSubQ(scalarSubQ interface{}) {
+	s.MapScalarSubQ = append(s.MapScalarSubQ, scalarSubQ)
 }
 
 // GetCharsetInfo gets charset and collation for current context.
@@ -3494,6 +3510,14 @@ func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 	return s.runtimeFilterMode
 }
 
+// GetTidbKvReadTimeout returns readonly kv request timeout, prefer query hint over session variable
+func (s *SessionVars) GetTidbKvReadTimeout() uint64 {
+	if s.StmtCtx.HasTidbKvReadTimeout {
+		return s.StmtCtx.TidbKvReadTimeout
+	}
+	return s.TidbKvReadTimeout
+}
+
 // RuntimeFilterType type of runtime filter "IN"
 type RuntimeFilterType int64
 
@@ -3594,4 +3618,18 @@ func RuntimeFilterModeStringToMode(name string) (RuntimeFilterMode, bool) {
 	default:
 		return -1, false
 	}
+}
+
+const (
+	// OptObjectiveModerate is a possible value and the default value for TiDBOptObjective.
+	// Please see comments of SessionVars.OptObjective for details.
+	OptObjectiveModerate string = "moderate"
+	// OptObjectiveDetermined is a possible value for TiDBOptObjective.
+	OptObjectiveDetermined = "determined"
+)
+
+// GetOptObjective return the session variable "tidb_opt_objective".
+// Please see comments of SessionVars.OptObjective for details.
+func (s *SessionVars) GetOptObjective() string {
+	return s.OptObjective
 }

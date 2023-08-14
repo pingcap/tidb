@@ -77,6 +77,7 @@ import (
 	hintSemijoin            "SEMIJOIN"
 	hintNoSemijoin          "NO_SEMIJOIN"
 	hintMaxExecutionTime    "MAX_EXECUTION_TIME"
+	hintTidbKvReadTimeout   "TIDB_KV_READ_TIMEOUT"
 	hintSetVar              "SET_VAR"
 	hintResourceGroup       "RESOURCE_GROUP"
 	hintQBName              "QB_NAME"
@@ -88,15 +89,22 @@ import (
 	hintMpp1PhaseAgg          "MPP_1PHASE_AGG"
 	hintMpp2PhaseAgg          "MPP_2PHASE_AGG"
 	hintIgnoreIndex           "IGNORE_INDEX"
+	hintIndexJoin             "INDEX_JOIN"
+	hintNoIndexJoin           "NO_INDEX_JOIN"
 	hintInlHashJoin           "INL_HASH_JOIN"
+	hintIndexHashJoin         "INDEX_HASH_JOIN"
+	hintNoIndexHashJoin       "NO_INDEX_HASH_JOIN"
 	hintInlJoin               "INL_JOIN"
 	hintInlMergeJoin          "INL_MERGE_JOIN"
+	hintIndexMergeJoin        "INDEX_MERGE_JOIN"
+	hintNoIndexMergeJoin      "NO_INDEX_MERGE_JOIN"
 	hintMemoryQuota           "MEMORY_QUOTA"
 	hintNoSwapJoinInputs      "NO_SWAP_JOIN_INPUTS"
 	hintQueryType             "QUERY_TYPE"
 	hintReadConsistentReplica "READ_CONSISTENT_REPLICA"
 	hintReadFromStorage       "READ_FROM_STORAGE"
 	hintSMJoin                "MERGE_JOIN"
+	hintNoSMJoin              "NO_MERGE_JOIN"
 	hintBCJoin                "BROADCAST_JOIN"
 	hintShuffleJoin           "SHUFFLE_JOIN"
 	hintStreamAgg             "STREAM_AGG"
@@ -252,6 +260,14 @@ TableOptimizerHintOpt:
 		$$ = nil
 	}
 |	"MAX_EXECUTION_TIME" '(' QueryBlockOpt hintIntLit ')'
+	{
+		$$ = &ast.TableOptimizerHint{
+			HintName: model.NewCIStr($1),
+			QBName:   model.NewCIStr($3),
+			HintData: $4,
+		}
+	}
+|	"TIDB_KV_READ_TIMEOUT" '(' QueryBlockOpt hintIntLit ')'
 	{
 		$$ = &ast.TableOptimizerHint{
 			HintName: model.NewCIStr($1),
@@ -578,20 +594,27 @@ UnsupportedTableLevelOptimizerHintName:
 |	"BNL"
 |	"NO_BNL"
 /* HASH_JOIN is supported by TiDB */
-|	"NO_HASH_JOIN"
 |	"NO_MERGE"
 
 SupportedTableLevelOptimizerHintName:
 	"MERGE_JOIN"
+|	"NO_MERGE_JOIN"
 |	"BROADCAST_JOIN"
 |	"SHUFFLE_JOIN"
 |	"INL_JOIN"
+|	"INDEX_JOIN"
+|	"NO_INDEX_JOIN"
 |	"MERGE"
 |	"INL_HASH_JOIN"
+|	"INDEX_HASH_JOIN"
+|	"NO_INDEX_HASH_JOIN"
 |	"SWAP_JOIN_INPUTS"
 |	"NO_SWAP_JOIN_INPUTS"
 |	"INL_MERGE_JOIN"
+|	"INDEX_MERGE_JOIN"
+|	"NO_INDEX_MERGE_JOIN"
 |	"HASH_JOIN"
+|	"NO_HASH_JOIN"
 |	"HASH_JOIN_BUILD"
 |	"HASH_JOIN_PROBE"
 |	"LEADING"
@@ -691,14 +714,21 @@ Identifier:
 |	"MPP_2PHASE_AGG"
 |	"IGNORE_INDEX"
 |	"INL_HASH_JOIN"
+|	"INDEX_HASH_JOIN"
+|	"NO_INDEX_HASH_JOIN"
 |	"INL_JOIN"
+|	"INDEX_JOIN"
+|	"NO_INDEX_JOIN"
 |	"INL_MERGE_JOIN"
+|	"INDEX_MERGE_JOIN"
+|	"NO_INDEX_MERGE_JOIN"
 |	"MEMORY_QUOTA"
 |	"NO_SWAP_JOIN_INPUTS"
 |	"QUERY_TYPE"
 |	"READ_CONSISTENT_REPLICA"
 |	"READ_FROM_STORAGE"
 |	"MERGE_JOIN"
+|	"NO_MERGE_JOIN"
 |	"BROADCAST_JOIN"
 |	"SHUFFLE_JOIN"
 |	"STREAM_AGG"
@@ -717,6 +747,7 @@ Identifier:
 |	"LEADING"
 |	"SEMI_JOIN_REWRITE"
 |	"NO_DECORRELATE"
+|	"TIDB_KV_READ_TIMEOUT"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"

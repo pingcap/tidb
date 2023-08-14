@@ -38,6 +38,7 @@ import (
 	tmock "github.com/pingcap/tidb/util/mock"
 	router "github.com/pingcap/tidb/util/table-router"
 	"github.com/stretchr/testify/require"
+	tikvconfig "github.com/tikv/client-go/v2/config"
 )
 
 func TestNewTableRestore(t *testing.T) {
@@ -411,4 +412,30 @@ func TestFilterColumns(t *testing.T) {
 		require.Equal(t, tc.expectedFilteredColumns, filteredColumns)
 		require.Equal(t, expectedDatums, extendDatums)
 	}
+}
+
+func TestInitGlobalConfig(t *testing.T) {
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCA)
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCert)
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLKey)
+	initGlobalConfig(tikvconfig.Security{})
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCA)
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCert)
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLKey)
+
+	initGlobalConfig(tikvconfig.Security{
+		ClusterSSLCA: "ca",
+	})
+	require.NotEmpty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCA)
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCert)
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLKey)
+
+	initGlobalConfig(tikvconfig.Security{})
+	initGlobalConfig(tikvconfig.Security{
+		ClusterSSLCert: "cert",
+		ClusterSSLKey:  "key",
+	})
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCA)
+	require.NotEmpty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCert)
+	require.NotEmpty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLKey)
 }

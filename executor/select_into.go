@@ -71,7 +71,7 @@ func (s *SelectIntoExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (s *SelectIntoExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (s *SelectIntoExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	for {
 		if err := Next(ctx, s.Children(0), s.chk); err != nil {
 			return err
@@ -86,7 +86,7 @@ func (s *SelectIntoExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (s *SelectIntoExec) considerEncloseOpt(et types.EvalType) bool {
+func (*SelectIntoExec) considerEncloseOpt(et types.EvalType) bool {
 	return et == types.ETString || et == types.ETDuration ||
 		et == types.ETTimestamp || et == types.ETDatetime ||
 		et == types.ETJson

@@ -15,6 +15,7 @@
 package indexmergereadtest
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"regexp"
@@ -25,6 +26,8 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
@@ -694,7 +697,7 @@ func TestIntersectionWithDifferentConcurrency(t *testing.T) {
 		tk.MustExec(tblSchema)
 
 		const queryCnt int = 10
-		const rowCnt int = 1000
+		const rowCnt int = 500
 		curRowCnt := 0
 		insertStr := "insert into t1 values"
 		for i := 0; i < rowCnt; i++ {
@@ -806,7 +809,7 @@ func setupPartitionTableHelper(tk *testkit.TestKit) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3));")
 	insertStr := "insert into t1 values(0, 0, 0)"
-	for i := 1; i < 1000; i++ {
+	for i := 1; i < 500; i++ {
 		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
 	}
 	tk.MustExec(insertStr)
@@ -1163,4 +1166,99 @@ func TestProcessInfoRaceWithIndexScan(t *testing.T) {
 		tk.MustQuery("select /*+ use_index(t1, c1) */ c1 from t1 where c1 = 0 union all select /*+ use_index(t1, c2) */ c2 from t1 where c2 = 0 union all select /*+ use_index(t1, c3) */ c3 from t1 where c3 = 0 ")
 	}
 	wg.Wait()
+}
+
+func TestIndexMergeReaderIssue45279(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists reproduce;")
+	tk.MustExec("CREATE TABLE reproduce (c1 int primary key, c2 int, c3 int, key ci2(c2), key ci3(c3));")
+	tk.MustExec("insert into reproduce values (1, 1, 1), (2, 2, 2), (3, 3, 3);")
+	tk.MustQuery("explain select * from reproduce where c1 in (0, 1, 2, 3) or c2 in (0, 1, 2);").Check(testkit.Rows(
+		"IndexMerge_11 33.99 root  type: union",
+		"├─TableRangeScan_8(Build) 4.00 cop[tikv] table:reproduce range:[0,0], [1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+		"├─IndexRangeScan_9(Build) 30.00 cop[tikv] table:reproduce, index:ci2(c2) range:[0,0], [1,1], [2,2], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_10(Probe) 33.99 cop[tikv] table:reproduce keep order:false, stats:pseudo"))
+
+	// This function should return successfully
+	var ctx context.Context
+	ctx, executor.IndexMergeCancelFuncForTest = context.WithCancel(context.Background())
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testCancelContext", "return()"))
+	rs, _ := tk.ExecWithContext(ctx, "select * from reproduce where c1 in (0, 1, 2, 3) or c2 in (0, 1, 2);")
+	session.ResultSetToStringSlice(ctx, tk.Session(), rs)
+	failpoint.Disable("github.com/pingcap/tidb/br/pkg/checksum/testCancelContext")
+}
+
+func TestIndexMergeLimitNotPushedOnPartialSideButKeepOrder(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, index idx(a, c), index idx2(b, c), index idx3(a, b, c))")
+	valsInsert := make([]string, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		valsInsert = append(valsInsert, fmt.Sprintf("(%v, %v, %v)", rand.Intn(100), rand.Intn(100), rand.Intn(100)))
+	}
+	tk.MustExec("analyze table t")
+	tk.MustExec("insert into t values " + strings.Join(valsInsert, ","))
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceIndexMergeKeepOrder", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceIndexMergeKeepOrder")
+	for i := 0; i < 100; i++ {
+		valA, valB, valC, limit := rand.Intn(100), rand.Intn(100), rand.Intn(50), rand.Intn(100)+1
+		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(c), 100) from (select c from t use index(idx3) where (a = %d or b = %d) and c >= %d order by c limit %d) t", valA, valB, valC, limit)).Rows()[0][0]
+		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d", valA, valB, valC, valC+1, maxEle, limit)
+		queryWithNormalIndex := fmt.Sprintf("select * from t use index(idx3) where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d", valA, valB, valC, valC+1, maxEle, limit)
+		require.True(t, tk.HasPlan(queryWithIndexMerge, "IndexMerge"))
+		require.True(t, tk.HasPlan(queryWithIndexMerge, "Limit"))
+		normalResult := tk.MustQuery(queryWithNormalIndex).Sort().Rows()
+		tk.MustQuery(queryWithIndexMerge).Sort().Check(normalResult)
+	}
+	for i := 0; i < 100; i++ {
+		valA, valB, valC, limit, offset := rand.Intn(100), rand.Intn(100), rand.Intn(50), rand.Intn(100)+1, rand.Intn(20)
+		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(c), 100) from (select c from t use index(idx3) where (a = %d or b = %d) and c >= %d order by c limit %d offset %d) t", valA, valB, valC, limit, offset)).Rows()[0][0]
+		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ c from t where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d offset %d", valA, valB, valC, valC+1, maxEle, limit, offset)
+		queryWithNormalIndex := fmt.Sprintf("select c from t use index(idx3) where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d offset %d", valA, valB, valC, valC+1, maxEle, limit, offset)
+		require.True(t, tk.HasPlan(queryWithIndexMerge, "IndexMerge"))
+		require.True(t, tk.HasPlan(queryWithIndexMerge, "Limit"))
+		normalResult := tk.MustQuery(queryWithNormalIndex).Sort().Rows()
+		tk.MustQuery(queryWithIndexMerge).Sort().Check(normalResult)
+	}
+}
+
+func TestIndexMergeNoOrderLimitPushed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, index idx(a, c), index idx2(b, c))")
+	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2)")
+	sql := "select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a = 1 or b = 1 limit 1"
+	require.True(t, tk.HasPlan(sql, "IndexMerge"))
+	require.True(t, tk.HasPlan(sql, "Limit"))
+	// 6 means that IndexMerge(embedded limit){Limit->PartialIndexScan, Limit->PartialIndexScan, FinalTableScan}
+	require.Equal(t, 6, len(tk.MustQuery("explain "+sql).Rows()))
+	// The result is not stable. So we just check that it can run successfully.
+	tk.MustQuery(sql)
+}
+
+func TestIndexMergeKeepOrderDirtyRead(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, index idx1(a, c), index idx2(b, c))")
+	tk.MustExec("insert into t values(1, 1, 1), (1, 2, -1), (2, 1, -2)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values(1, 1, -3)")
+	querySQL := "select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 2"
+	tk.HasPlan(querySQL, "Limit")
+	tk.HasPlan(querySQL, "IndexMerge")
+	tk.MustQuery(querySQL).Check(testkit.Rows("1 1 -3", "2 1 -2"))
+	tk.MustExec("rollback")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values(1, 2, 4)")
+	querySQL = "select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c desc limit 2"
+	tk.HasPlan(querySQL, "Limit")
+	tk.HasPlan(querySQL, "IndexMerge")
+	tk.MustQuery(querySQL).Check(testkit.Rows("1 2 4", "1 1 1"))
+	tk.MustExec("rollback")
 }

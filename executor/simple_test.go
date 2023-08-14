@@ -74,7 +74,7 @@ func TestKillStmt(t *testing.T) {
 	result.Check(testkit.Rows("Warning 1105 Parse ConnectionID failed: unexpected connectionID exceeds int64"))
 
 	// local kill
-	connIDAllocator := globalconn.NewGlobalAllocator(dom.ServerID)
+	connIDAllocator := globalconn.NewGlobalAllocator(dom.ServerID, false)
 	killConnID := connIDAllocator.NextID()
 	tk.MustExec("kill " + strconv.FormatUint(killConnID, 10))
 	result = tk.MustQuery("show warnings")
@@ -85,7 +85,7 @@ func TestKillStmt(t *testing.T) {
 }
 
 func TestUserAttributes(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	rootTK := testkit.NewTestKit(t, store)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 
@@ -136,7 +136,7 @@ func TestUserAttributes(t *testing.T) {
 }
 
 func TestSetResourceGroup(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("SET GLOBAL tidb_enable_resource_control='on'")

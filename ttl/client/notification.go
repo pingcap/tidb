@@ -58,13 +58,41 @@ func NewMockNotificationClient() NotificationClient {
 }
 
 // Notify implements the NotificationClient
-func (c *mockClient) Notify(_ context.Context, typ string, data string) error {
+func (c *mockClient) Notify(ctx context.Context, typ string, data string) error {
 	c.Lock()
 	defer c.Unlock()
 
-	for _, ch := range c.notificationWatchers[typ] {
-		ch <- clientv3.WatchResponse{}
+	watchers, ok := c.notificationWatchers[typ]
+	if !ok {
+		return nil
 	}
+
+	var unsent []chan clientv3.WatchResponse
+loop:
+	for i, ch := range watchers {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case ch <- clientv3.WatchResponse{}:
+		default:
+			unsent = make([]chan clientv3.WatchResponse, len(watchers), 0)
+			copy(unsent, watchers[i:])
+			break loop
+		}
+	}
+
+	if len(unsent) > 0 {
+		go func() {
+			for _, ch := range unsent {
+				select {
+				case <-ctx.Done():
+					return
+				case ch <- clientv3.WatchResponse{}:
+				}
+			}
+		}()
+	}
+
 	return nil
 }
 

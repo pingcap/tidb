@@ -228,8 +228,7 @@ func TestJoinRestore(t *testing.T) {
 		{"(select * from t) t1 natural join t2", "(SELECT * FROM `t`) AS `t1` NATURAL JOIN `t2`"},
 		{"(select * from t) t1 cross join t2 on t1.a>t2.a", "(SELECT * FROM `t`) AS `t1` JOIN `t2` ON `t1`.`a`>`t2`.`a`"},
 		{"(select * from t union select * from t1) tb1, t2;", "(SELECT * FROM `t` UNION SELECT * FROM `t1`) AS `tb1`, `t2`"},
-		//todo: uncomment this after https://github.com/pingcap/parser/issues/1127 fixed
-		//{"(select a from t) t1 join t t2, t3;", "((SELECT `a` FROM `t`) AS `t1` JOIN `t` AS `t2`) JOIN `t3`"},
+		{"(select a from t) t1 join t t2, t3;", "((SELECT `a` FROM `t`) AS `t1` JOIN `t` AS `t2`) JOIN `t3`"},
 	}
 	testChangedCases := []NodeRestoreTestCase{
 		{"(a al left join b bl on al.a1 > bl.b1) join (a ar right join b br on ar.a1 > br.b1)", "(`a` AS `al` LEFT JOIN `b` AS `bl` ON `al`.`a1`>`bl`.`b1`) JOIN (`a` AS `ar` RIGHT JOIN `b` AS `br` ON `ar`.`a1`>`br`.`b1`)"},

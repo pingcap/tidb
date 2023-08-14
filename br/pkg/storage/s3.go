@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
@@ -912,11 +913,59 @@ func (rs *S3Storage) CreateUploader(ctx context.Context, name string) (ExternalF
 	}, nil
 }
 
-// Create creates multi upload request.
-func (rs *S3Storage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
-	uploader, err := rs.CreateUploader(ctx, name)
+type s3ObjectWriter struct {
+	wd  *io.PipeWriter
+	wg  *sync.WaitGroup
+	err error
+}
+
+// Write implement the io.Writer interface.
+func (s *s3ObjectWriter) Write(_ context.Context, p []byte) (int, error) {
+	return s.wd.Write(p)
+}
+
+// Close implement the io.Closer interface.
+func (s *s3ObjectWriter) Close(_ context.Context) error {
+	err := s.wd.Close()
 	if err != nil {
-		return nil, err
+		return err
+	}
+	s.wg.Wait()
+	return s.err
+}
+
+// Create creates multi upload request.
+func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOption) (ExternalFileWriter, error) {
+	var uploader ExternalFileWriter
+	var err error
+	if option == nil || option.Concurrency <= 1 {
+		uploader, err = rs.CreateUploader(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		up := s3manager.NewUploaderWithClient(rs.svc, func(u *s3manager.Uploader) {
+			u.Concurrency = option.Concurrency
+			u.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * 8 * 1024 * 1024)
+		})
+		rd, wd := io.Pipe()
+		upParams := &s3manager.UploadInput{
+			Bucket: aws.String(rs.options.Bucket),
+			Key:    aws.String(rs.options.Prefix + name),
+			Body:   rd,
+		}
+		s3Writer := &s3ObjectWriter{wd: wd, wg: &sync.WaitGroup{}}
+		s3Writer.wg.Add(1)
+		go func() {
+			_, err := up.UploadWithContext(ctx, upParams)
+			err1 := rd.Close()
+			if err != nil {
+				log.Warn("upload to s3 failed", zap.String("filename", name), zap.Error(err), zap.Error(err1))
+			}
+			s3Writer.err = err
+			s3Writer.wg.Done()
+		}()
+		uploader = s3Writer
 	}
 	uploaderWriter := newBufferedWriter(uploader, hardcodedS3ChunkSize, NoCompression)
 	return uploaderWriter, nil

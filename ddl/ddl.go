@@ -681,13 +681,13 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 
 	scheduler.RegisterTaskType("backfill")
 	scheduler.RegisterSchedulerConstructor("backfill", proto.StepOne,
-		func(_ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
-			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
+		func(ctx context.Context, _ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+			return NewBackfillSchedulerHandle(ctx, taskMeta, d, step == proto.StepTwo)
 		})
 
 	scheduler.RegisterSchedulerConstructor("backfill", proto.StepTwo,
-		func(_ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
-			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
+		func(ctx context.Context, _ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+			return NewBackfillSchedulerHandle(ctx, taskMeta, d, step == proto.StepTwo)
 		})
 
 	dispatcher.RegisterTaskFlowHandle(BackfillTaskType, NewLitBackfillFlowHandle(d))
@@ -802,7 +802,13 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
 
-	ingest.InitGlobalLightningEnv()
+	ctx, err := d.sessPool.Get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.Put(ctx)
+
+	ingest.InitGlobalLightningEnv(d.ctx, ctx)
 
 	return nil
 }

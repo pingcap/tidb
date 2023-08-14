@@ -17,7 +17,9 @@ package core_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
 
@@ -70,7 +72,7 @@ func TestJoinOrderHintWithBinding(t *testing.T) {
 }
 
 func TestAdditionOtherConditionsRemained4OuterJoin(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -82,21 +84,28 @@ func TestAdditionOtherConditionsRemained4OuterJoin(t *testing.T) {
 	tk.MustExec("INSERT  INTO queries_program(`id`, `identifier_id`) values(8, 13), (9, 14);")
 	tk.MustExec("INSERT  INTO queries_channel(`id`, `identifier_id`) values(5, 13);")
 
-	tk.MustQuery("SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;").Check(testkit.Rows("" +
-		"13 i1"))
-	tk.MustQuery("SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` RIGHT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;").Check(testkit.Rows("" +
-		"13 i1"))
-	tk.MustQuery("explain format = 'brief' SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;").Check(testkit.Rows(""+
-		"Sort 2.50 root  test.queries_identifier.id",
-		"└─Projection 2.50 root  test.queries_identifier.id, test.queries_identifier.name",
-		"  └─Selection 2.50 root  or(and(eq(test.queries_channel.id, 5), eq(test.queries_program.id, 9)), eq(test.queries_program.id, 8))",
-		"    └─IndexJoin 3.12 root  left outer join, inner:IndexReader, outer key:test.queries_identifier.id, inner key:test.queries_channel.identifier_id, equal cond:eq(test.queries_identifier.id, test.queries_channel.identifier_id)",
-		"      ├─IndexHashJoin(Build) 2.50 root  inner join, inner:TableReader, outer key:test.queries_program.identifier_id, inner key:test.queries_identifier.id, equal cond:eq(test.queries_program.identifier_id, test.queries_identifier.id)",
-		"      │ ├─Batch_Point_Get(Build) 2.00 root table:queries_program handle:[8 9], keep order:false, desc:false",
-		"      │ └─TableReader(Probe) 2.00 root  data:TableRangeScan",
-		"      │   └─TableRangeScan 2.00 cop[tikv] table:queries_identifier range: decided by [test.queries_program.identifier_id], keep order:false, stats:pseudo",
-		"      └─IndexReader(Probe) 2.50 root  index:IndexRangeScan",
-		"        └─IndexRangeScan 2.50 cop[tikv] table:queries_channel, index:identifier_id(identifier_id) range: decided by [eq(test.queries_channel.identifier_id, test.queries_identifier.id)], keep order:false, stats:pseudo"))
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int, c int)")
+	tk.MustExec("create table t3(a int, b int)")
+	tk.MustExec("create table t4(a int, b int)")
+
+	testData := core.GetJoinReorderData()
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Output []string
+		}
+	)
+	testData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Output = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+		})
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Output...))
+	}
 }
 
 func TestOuterJoinWIthEqCondCrossInnerJoin(t *testing.T) {

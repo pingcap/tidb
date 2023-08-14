@@ -23,8 +23,11 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
+	kvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -39,11 +42,12 @@ type BackendCtxMgr interface {
 
 type litBackendCtxMgr struct {
 	generic.SyncMap[int64, *litBackendCtx]
-	memRoot  MemRoot
-	diskRoot DiskRoot
+	memRoot   MemRoot
+	diskRoot  DiskRoot
+	isRaftKV2 bool
 }
 
-func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
+func newLitBackendCtxMgr(ctx context.Context, sctx sessionctx.Context, path string, memQuota uint64) BackendCtxMgr {
 	mgr := &litBackendCtxMgr{
 		SyncMap:  generic.NewSyncMap[int64, *litBackendCtx](10),
 		memRoot:  nil,
@@ -58,6 +62,11 @@ func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
 	if err != nil {
 		logutil.BgLogger().Warn("ingest backfill may not be available", zap.String("category", "ddl-ingest"), zap.Error(err))
 	}
+	isRaftKV2, err := util.IsRaftKv2(ctx, sctx)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get 'storage.engine'", zap.String("category", "ddl-ingest"), zap.Error(err))
+	}
+	mgr.isRaftKV2 = isRaftKV2
 	return mgr
 }
 
@@ -84,16 +93,16 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 		m.memRoot.RefreshConsumption()
 		ok := m.memRoot.CheckConsume(StructSizeBackendCtx)
 		if !ok {
-			return nil, genBackendAllocMemFailedErr(m.memRoot, jobID)
+			return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, jobID)
 		}
-		cfg, err := genConfig(m.memRoot, jobID, unique)
+		cfg, err := genConfig(ctx, m.memRoot, jobID, unique, m.isRaftKV2)
 		if err != nil {
-			logutil.BgLogger().Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
+			logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 			return nil, err
 		}
 		bd, err := createLocalBackend(ctx, cfg)
 		if err != nil {
-			logutil.BgLogger().Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
+			logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
 			return nil, err
 		}
 
@@ -101,7 +110,7 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 		m.Store(jobID, bcCtx)
 
 		m.memRoot.Consume(StructSizeBackendCtx)
-		logutil.BgLogger().Info(LitInfoCreateBackend, zap.Int64("job ID", jobID),
+		logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", jobID),
 			zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
 			zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()),
 			zap.Bool("is unique index", unique))
@@ -113,7 +122,7 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 func createLocalBackend(ctx context.Context, cfg *Config) (*local.Backend, error) {
 	tls, err := cfg.Lightning.ToTLS()
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCreateBackendFail, zap.Error(err))
+		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Error(err))
 		return nil, err
 	}
 
@@ -121,7 +130,11 @@ func createLocalBackend(ctx context.Context, cfg *Config) (*local.Backend, error
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{
 		DB: nil,
 	}
-	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName)
+	var raftKV2SwitchModeDuration time.Duration
+	if cfg.IsRaftKV2 {
+		raftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
+	}
+	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName, "", kvutil.ExplicitTypeDDL, raftKV2SwitchModeDuration)
 	return local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 }
 
@@ -159,7 +172,7 @@ func (m *litBackendCtxMgr) Unregister(jobID int64) {
 	m.memRoot.Release(StructSizeBackendCtx)
 	m.Delete(jobID)
 	m.memRoot.ReleaseWithTag(EncodeBackendTag(jobID))
-	logutil.BgLogger().Info(LitInfoCloseBackend, zap.Int64("job ID", jobID),
+	logutil.Logger(bc.ctx).Info(LitInfoCloseBackend, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()))
 }

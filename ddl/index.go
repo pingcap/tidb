@@ -59,6 +59,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
@@ -626,7 +627,10 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		var reorgTp model.ReorgType
 		reorgTp, err = pickBackfillType(w.ctx, job, indexInfo.Unique, d)
 		if err != nil {
-			break
+			if !errorIsRetryable(err, job) {
+				job.State = model.JobStateCancelled
+			}
+			return ver, err
 		}
 		if reorgTp.NeedMergeProcess() {
 			// Increase telemetryAddIndexIngestUsage
@@ -728,7 +732,8 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCt
 			return model.ReorgTypeNone, err
 		}
 		if available {
-			err = cleanupSortPath(job.ID)
+			ctx := logutil.WithCategory(ctx, "ddl-ingest")
+			err = cleanupSortPath(ctx, job.ID)
 			if err != nil {
 				return model.ReorgTypeNone, err
 			}
@@ -757,7 +762,7 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCt
 // cleanupSortPath is used to clean up the temp data of the previous jobs.
 // Because we don't remove all the files after the support of checkpoint,
 // there maybe some stale files in the sort path if TiDB is killed during the backfill process.
-func cleanupSortPath(currentJobID int64) error {
+func cleanupSortPath(ctx context.Context, currentJobID int64) error {
 	sortPath := ingest.ConfigSortPath()
 	err := os.MkdirAll(sortPath, 0700)
 	if err != nil {
@@ -765,7 +770,7 @@ func cleanupSortPath(currentJobID int64) error {
 	}
 	entries, err := os.ReadDir(sortPath)
 	if err != nil {
-		logutil.BgLogger().Warn("cannot read sort path", zap.String("category", "ddl-ingest"), zap.Error(err))
+		logutil.Logger(ctx).Warn(ingest.LitErrReadSortPath, zap.Error(err))
 		return errors.Trace(err)
 	}
 	for _, entry := range entries {
@@ -774,22 +779,22 @@ func cleanupSortPath(currentJobID int64) error {
 		}
 		jobID, err := ingest.DecodeBackendTag(entry.Name())
 		if err != nil {
-			logutil.BgLogger().Warn("cannot cleanup sort path", zap.String("category", "ddl-ingest"), zap.Error(err))
+			logutil.Logger(ctx).Warn(ingest.LitErrCleanSortPath, zap.Error(err))
 			continue
 		}
 		if _, ok := ingest.LitBackCtxMgr.Load(jobID); ok {
 			// The job is still running, skip it.
-			logutil.BgLogger().Warn("the job is still running, skip removing it", zap.String("category", "ddl-ingest"),
+			logutil.Logger(ctx).Warn("the job is still running, skip removing it",
 				zap.Int64("running job ID", jobID))
 			continue
 		}
 		// Remove all the temp data of the previous done jobs.
 		if jobID < currentJobID {
-			logutil.BgLogger().Info("remove stale temp index data", zap.String("category", "ddl-ingest"),
+			logutil.Logger(ctx).Info("remove stale temp index data",
 				zap.Int64("jobID", jobID), zap.Int64("currentJobID", currentJobID))
 			err := os.RemoveAll(filepath.Join(sortPath, entry.Name()))
 			if err != nil {
-				logutil.BgLogger().Warn("cannot cleanup sort path", zap.String("category", "ddl-ingest"), zap.Error(err))
+				logutil.Logger(ctx).Warn(ingest.LitErrCleanSortPath, zap.Error(err))
 				return nil
 			}
 		}
@@ -913,7 +918,8 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	if ok && bc.Done() {
 		return true, 0, nil
 	}
-	bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, nil)
+	ctx := logutil.WithCategory(w.ctx, "ddl-ingest")
+	bc, err = ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, job.ID, nil)
 	if err != nil {
 		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 		return false, ver, errors.Trace(err)
@@ -1411,9 +1417,6 @@ func (w *baseIndexWorker) getNextKey(taskRange reorgBackfillTask, taskDone bool)
 		recordKey := tablecodec.EncodeRecordKey(taskRange.physicalTable.RecordPrefix(), lastHandle)
 		return recordKey.Next()
 	}
-	if taskRange.endInclude {
-		return taskRange.endKey.Next()
-	}
 	return taskRange.endKey
 }
 
@@ -1443,11 +1446,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in baseIndexWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
 
-			if taskRange.endInclude {
-				taskDone = recordKey.Cmp(taskRange.endKey) > 0
-			} else {
-				taskDone = recordKey.Cmp(taskRange.endKey) >= 0
-			}
+			taskDone = recordKey.Cmp(taskRange.endKey) >= 0
 
 			if taskDone || len(w.idxRecords) >= w.batchCnt {
 				return false, nil
@@ -1607,6 +1606,7 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 }
 
 type addIndexIngestWorker struct {
+	ctx           context.Context
 	d             *ddlCtx
 	metricCounter prometheus.Counter
 	sessCtx       sessionctx.Context
@@ -1623,7 +1623,7 @@ type addIndexIngestWorker struct {
 	distribute bool
 }
 
-func newAddIndexIngestWorker(t table.PhysicalTable, d *ddlCtx, ei ingest.Engine,
+func newAddIndexIngestWorker(ctx context.Context, t table.PhysicalTable, d *ddlCtx, ei ingest.Engine,
 	resultCh chan *backfillResult, jobID int64, schemaName string, indexID int64, writerID int,
 	copReqSenderPool *copReqSenderPool, sessCtx sessionctx.Context,
 	checkpointMgr *ingest.CheckpointManager, distribute bool) (*addIndexIngestWorker, error) {
@@ -1635,6 +1635,7 @@ func newAddIndexIngestWorker(t table.PhysicalTable, d *ddlCtx, ei ingest.Engine,
 	}
 
 	return &addIndexIngestWorker{
+		ctx:     ctx,
 		d:       d,
 		sessCtx: sessCtx,
 		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
@@ -1732,7 +1733,7 @@ func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx
 
 	oprStartTime := time.Now()
 	jobID := handleRange.getJobID()
-	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
+	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
 		taskCtx.finishTS = txn.StartTS()
 		taskCtx.addedCount = 0
@@ -1827,7 +1828,8 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 				return errors.New("unexpected error, can't find index info")
 			}
 			if indexInfo.Unique {
-				bc, err := ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, reorgInfo.ID, nil)
+				ctx := logutil.WithCategory(w.ctx, "ddl-ingest")
+				bc, err := ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, reorgInfo.ID, nil)
 				if err != nil {
 					return err
 				}
@@ -2080,7 +2082,7 @@ func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 	})
 
 	oprStartTime := time.Now()
-	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
+	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0

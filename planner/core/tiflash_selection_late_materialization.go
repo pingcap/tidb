@@ -15,13 +15,15 @@
 package core
 
 import (
+	"cmp"
+	"slices"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // selectivity = (row count after filter) / (row count before filter), smaller is better
@@ -144,8 +146,11 @@ func groupByColumnsSortBySelectivity(sctx sessionctx.Context, conds []expression
 	}
 
 	// Sort exprGroups by selectivity in ascending order
-	slices.SortStableFunc(exprGroups, func(x, y expressionGroup) bool {
-		return x.selectivity < y.selectivity || (x.selectivity == y.selectivity && len(x.exprs) < len(y.exprs))
+	slices.SortStableFunc(exprGroups, func(x, y expressionGroup) int {
+		if x.selectivity == y.selectivity && len(x.exprs) < len(y.exprs) {
+			return -1
+		}
+		return cmp.Compare(x.selectivity, y.selectivity)
 	})
 
 	return exprGroups
@@ -217,7 +222,7 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	selectedColumnCount := 0
 	selectedSelectivity := 1.0
 	totalColumnCount := len(physicalTableScan.Columns)
-	tableRowCount := physicalTableScan.stats.RowCount
+	tableRowCount := physicalTableScan.StatsInfo().RowCount
 
 	for _, exprGroup := range sortedConds {
 		mergedConds := append(selectedConds, exprGroup.exprs...)
@@ -251,5 +256,5 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	// add the pushed down conditions to table scan
 	physicalTableScan.lateMaterializationFilterCondition = selectedConds
 	// Update the row count of table scan after pushing down the conditions.
-	physicalTableScan.stats.RowCount *= selectedSelectivity
+	physicalTableScan.StatsInfo().RowCount *= selectedSelectivity
 }
