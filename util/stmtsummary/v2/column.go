@@ -18,10 +18,9 @@ import (
 	"bytes"
 	"cmp"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
-
-	"slices"
 
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
