@@ -103,6 +103,7 @@ func (a *baseFuncDesc) TypeInfer(ctx sessionctx.Context) error {
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow,
 		ast.WindowFuncFirstValue, ast.WindowFuncLastValue, ast.WindowFuncNthValue:
 		a.typeInfer4MaxMin(ctx)
+		a.RetTp.DelFlag(mysql.NotNullFlag)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		a.typeInfer4BitFuncs(ctx)
 	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank:
@@ -307,12 +308,14 @@ func (a *baseFuncDesc) typeInfer4NumberFuncs() {
 	a.RetTp = types.NewFieldType(mysql.TypeLonglong)
 	a.RetTp.SetFlen(21)
 	types.SetBinChsClnFlag(a.RetTp)
+	a.RetTp.AddFlag(mysql.NotNullFlag)
 }
 
 func (a *baseFuncDesc) typeInfer4CumeDist() {
 	a.RetTp = types.NewFieldType(mysql.TypeDouble)
 	a.RetTp.SetFlen(mysql.MaxRealWidth)
 	a.RetTp.SetDecimal(mysql.NotFixedDec)
+	a.RetTp.AddFlag(mysql.NotNullFlag)
 }
 
 func (a *baseFuncDesc) typeInfer4Ntile() {
@@ -326,10 +329,11 @@ func (a *baseFuncDesc) typeInfer4PercentRank() {
 	a.RetTp = types.NewFieldType(mysql.TypeDouble)
 	a.RetTp.SetFlag(mysql.MaxRealWidth)
 	a.RetTp.SetDecimal(mysql.NotFixedDec)
+	a.RetTp.AddFlag(mysql.NotNullFlag)
 }
 
 func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
-	if len(a.Args) <= 2 {
+	if len(a.Args) < 3 {
 		a.typeInfer4MaxMin(ctx)
 	} else {
 		// Merge the type of first and third argument.

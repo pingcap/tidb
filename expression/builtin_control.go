@@ -85,9 +85,14 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 		resultFieldType.SetFlag(tempFlag)
 	} else {
 		resultFieldType = types.AggFieldType([]*types.FieldType{lhs, rhs})
+		hasNotNullFlag := (resultFieldType.GetFlag() & mysql.NotNullFlag) != 0
 		var tempFlag uint
 		evalType := types.AggregateEvalType([]*types.FieldType{lhs, rhs}, &tempFlag)
 		resultFieldType.SetFlag(tempFlag)
+		if hasNotNullFlag {
+			resultFieldType.AddFlag(mysql.NotNullFlag)
+		}
+
 		if evalType == types.ETInt {
 			resultFieldType.SetDecimal(0)
 		} else {
