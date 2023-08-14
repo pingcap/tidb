@@ -542,7 +542,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 	return nil
 }
 
-func TestHandleAnalyzeOptions(t *testing.T) {
+func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 	require.Equal(t, len(analyzeOptionDefault), len(analyzeOptionDefaultV2), "analyzeOptionDefault and analyzeOptionDefaultV2 should have the same length")
 
 	tests := []struct {
@@ -559,7 +559,7 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 					Value: ast.NewValueExpr(16384+1, "", ""),
 				},
 			},
-			statsVer:    1,
+			statsVer:    statistics.Version1,
 			ExpectedErr: "Value of analyze option TOPN should not be larger than 16384",
 		},
 		{
@@ -570,7 +570,7 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 					Value: ast.NewValueExpr(1, "", ""),
 				},
 			},
-			statsVer:    1,
+			statsVer:    statistics.Version1,
 			ExpectedErr: "Version 1's statistics doesn't support the SAMPLERATE option, please set tidb_analyze_version to 2",
 		},
 		{
@@ -581,7 +581,7 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 					Value: ast.NewValueExpr(2, "", ""),
 				},
 			},
-			statsVer:    2,
+			statsVer:    statistics.Version2,
 			ExpectedErr: "Value of analyze option SAMPLERATE should not larger than 1.000000, and should be greater than 0",
 		},
 		{
@@ -607,7 +607,7 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 					Value: ast.NewValueExpr(0.1, "", ""),
 				},
 			},
-			statsVer:    2,
+			statsVer:    statistics.Version2,
 			ExpectedErr: "ou can only either set the value of the sample num or set the value of the sample rate. Don't set both of them",
 		},
 		{
@@ -622,7 +622,7 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 					Value: ast.NewValueExpr(2048, "", ""),
 				},
 			},
-			statsVer:    2,
+			statsVer:    statistics.Version1,
 			ExpectedErr: "cm sketch size(depth * width) should not larger than 1258291",
 		},
 	}
@@ -635,6 +635,16 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 				require.Contains(t, err.Error(), tt.ExpectedErr)
 			} else {
 				require.NoError(t, err)
+			}
+
+			if tt.statsVer == statistics.Version2 {
+				_, err := handleAnalyzeOptionsV2(tt.opts)
+				if tt.ExpectedErr != "" {
+					require.Error(t, err)
+					require.Contains(t, err.Error(), tt.ExpectedErr)
+				} else {
+					require.NoError(t, err)
+				}
 			}
 		})
 	}

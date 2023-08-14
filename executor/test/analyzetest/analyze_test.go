@@ -2126,9 +2126,9 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 	// analyze version 1 doesn't support `ANALYZE COLUMNS c1, ..., cn`/`ANALYZE PREDICATE COLUMNS` currently
 	tk.MustExec("set @@tidb_analyze_version = 1")
 	err := tk.ExecToErr("analyze table t columns a")
-	require.Equal(t, "Only the analyze version 2 supports analyzing the specified columns", err.Error())
+	require.Equal(t, "Only the version 2 of analyze supports analyzing the specified columns", err.Error())
 	err = tk.ExecToErr("analyze table t predicate columns")
-	require.Equal(t, "Only the analyze version 2 supports analyzing predicate columns", err.Error())
+	require.Equal(t, "Only the version 2 of analyze supports analyzing predicate columns", err.Error())
 
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	// invalid column
