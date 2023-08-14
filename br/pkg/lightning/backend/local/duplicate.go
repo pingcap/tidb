@@ -982,7 +982,7 @@ func (local *DupeController) CollectRemoteDuplicateRows(ctx context.Context, tbl
 func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) (err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate rows")
 	defer func() {
-		logger.End(zap.ErrorLevel, errors.Trace(err))
+		logger.End(zap.ErrorLevel, err)
 	}()
 
 	switch algorithm {
@@ -1046,14 +1046,7 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 					if err == nil {
 						return value, nil
 					}
-					if types.ErrBadNumber.Equal(err) {
-						logger.Warn("get latest value by key encounters error", log.ShortError(errors.Trace(err)))
-						return nil, common.ErrResolveDuplicateRows.Wrap(errors.Trace(err)).GenWithStackByArgs(tableName)
-					}
 					if log.IsContextCanceledError(errors.Trace(err)) {
-						return nil, errors.Trace(err)
-					}
-					if err = errLimiter.Wait(ctx); err != nil {
 						return nil, errors.Trace(err)
 					}
 				}

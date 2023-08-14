@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"math"
 	"strings"
 	"sync"
@@ -148,16 +149,16 @@ const (
 		GROUP BY raw_key;
 	`
 
-	selectConflictKeyDataRows = `
-		SELECT key_data
-		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND raw_key = ?;
-	`
-
 	selectConflictKeysReplaceByRawKey = `
 		SELECT index_name, raw_value
 		FROM %s.` + ConflictErrorTableName + `
 		WHERE table_name = ? AND raw_key = ?;
+	`
+
+	selectConflictKeysReplaceByRawHandle = `
+		SELECT raw_row
+		FROM %s.` + ConflictErrorTableName + `
+		WHERE table_name = ? AND raw_handle = ?;
 	`
 
 	insertIntoDupRecord = `
@@ -549,6 +550,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 	}
 
 	sessionOpts := encode.SessionOptions{
+		// TODO: need to find the correct value for SQLMode
 		SQLMode: mysql.ModeStrictAllTables,
 	}
 	encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
@@ -574,27 +576,9 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			if err := rawHandleRows.Scan(&rawKey); err != nil {
 				return errors.Trace(err)
 			}
-			ketDataRows, err := em.db.QueryContext(
-				gCtx, fmt.Sprintf(selectConflictKeyDataRows, em.schemaEscaped),
-				tableName, rawKey)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			var keyData []byte
-			for ketDataRows.Next() {
-				if err := ketDataRows.Scan(&keyData); err != nil {
-					return errors.Trace(err)
-				}
-			}
-			if err := ketDataRows.Err(); err != nil {
-				return errors.Trace(err)
-			}
-			if err := ketDataRows.Close(); err != nil {
-				return errors.Trace(err)
-			}
 
 			var value []byte
-			value, err = fnGetLatest(gCtx, keyData)
+			value, err = fnGetLatest(gCtx, rawKey)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -619,9 +603,14 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				var handle tidbkv.Handle
 				handle, err = decoder.DecodeHandleFromIndex(indexInfo, rawKey, rawValue)
 				rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, handle)
-				rowKeyByte := []byte(rowKey)
 				var overwrittenRow []byte
-				overwrittenRow, err = fnGetLatest(gCtx, rowKeyByte)
+				overwrittenRow, err = fnGetLatest(gCtx, rowKey)
+				if tikverr.IsErrNotFound(err) {
+					continue
+				}
+				if err != nil {
+					return errors.Trace(err)
+				}
 				var decodedData []types.Datum
 				decodedData, _, err = tables.DecodeRawRowData(encoder.SessionCtx, tbl.Meta(), handle, tbl.Cols(), overwrittenRow)
 				if err != nil {
@@ -633,16 +622,40 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				}
 				kvPairs := encoder.SessionCtx.TakeKvPairs()
 				for _, kvPair := range kvPairs.Pairs {
-					if bytes.Equal(kvPair.Key, rowKey) && bytes.Equal(kvPair.Val, rawValue) {
+					if bytes.Equal(kvPair.Key, rawKey) && bytes.Equal(kvPair.Val, rawValue) {
 						var handleRow [2][]byte
-						var kvHandle tidbkv.Handle
-						kvHandle, err = decoder.DecodeHandleFromRowKey(rowKeyByte)
-						handleRow[0] = kvHandle.Encoded()
-						rawRowData := decoder.DecodeRawRowDataAsStr(kvHandle, overwrittenRow)
-						handleRow[1] = []byte(rawRowData)
+						rawHandle, err := tablecodec.DecodeRowKey(rowKey)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						rawHandleByte := []byte(rawHandle.String())
+
+						var deleteRows *sql.Rows
+						deleteRows, err = em.db.QueryContext(
+							gCtx, fmt.Sprintf(selectConflictKeysReplaceByRawHandle, em.schemaEscaped),
+							tableName, rawHandleByte)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						var rawRow []byte
+						for deleteRows.Next() {
+							if err := deleteRows.Scan(&rawRow); err != nil {
+								return errors.Trace(err)
+							}
+						}
+						if err := deleteRows.Err(); err != nil {
+							return errors.Trace(err)
+						}
+						if err := deleteRows.Close(); err != nil {
+							return errors.Trace(err)
+						}
+
+						handleRow[0] = rawHandleByte
+						handleRow[1] = rawRow
 						if err := fnDeleteKey(gCtx, handleRow); err != nil {
 							return errors.Trace(err)
 						}
+						break
 					}
 				}
 			}
