@@ -1656,6 +1656,8 @@ func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey 
 	oprStartTime := time.Now()
 	copCtx := w.copReqSenderPool.copCtx
 	vars := w.sessCtx.GetSessionVars()
+	restore := setUTCTimezone(vars)
+	defer restore()
 	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, copCtx, vars, rs.chunk)
 	if err != nil || cnt == 0 {
 		return 0, nil, err
@@ -1664,6 +1666,16 @@ func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey 
 	logSlowOperations(time.Since(oprStartTime), "writeChunkToLocal", 3000)
 	nextKey = tablecodec.EncodeRecordKey(w.tbl.RecordPrefix(), lastHandle)
 	return cnt, nextKey, nil
+}
+
+// setUTCTimezone sets the timezone to UTC for the session variable.
+// This is because the time value in coprocessor reader is in UTC.
+func setUTCTimezone(vars *variable.SessionVars) (restore func()) {
+	originTZ := vars.TimeZone
+	vars.TimeZone = time.UTC
+	return func() {
+		vars.TimeZone = originTZ
+	}
 }
 
 func writeChunkToLocal(writer ingest.Writer,

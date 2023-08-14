@@ -323,3 +323,16 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 	tk.MustExec("alter table t add index idx(b);")
 	tk.MustExec("admin check table t;")
 }
+
+func TestAddIndexIngestTimezone(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	defer injectMockBackendMgr(t, store)()
+
+	tk.MustExec("SET time_zone = '-06:00';")
+	tk.MustExec("create table t (`src` varchar(48),`t` timestamp,`timezone` varchar(100));")
+	tk.MustExec("insert into t values('2000-07-29 23:15:30 -0600','2000-07-29 23:15:30 -0600','-6:00');")
+	tk.MustExec("alter table t add index idx(t);")
+	tk.MustExec("admin check table t;")
+}
