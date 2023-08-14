@@ -27,6 +27,7 @@ import (
 	tikv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -614,4 +615,71 @@ func TestGetSysVariables(t *testing.T) {
 	tk.MustExec("select @@session.performance_schema_max_mutex_classes")
 	tk.MustExec("select @@local.performance_schema_max_mutex_classes")
 	tk.MustGetErrMsg("select @@global.last_insert_id", "[variable:1238]Variable 'last_insert_id' is a SESSION variable")
+}
+
+func TestPrepareExecuteWithSQLHints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	se.SetConnectionID(1)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key)")
+
+	type hintCheck struct {
+		hint  string
+		check func(*stmtctx.StmtHints)
+	}
+
+	hintChecks := []hintCheck{
+		{
+			hint: "MEMORY_QUOTA(1024 MB)",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasMemQuotaHint)
+				require.Equal(t, int64(1024*1024*1024), stmtHint.MemQuotaQuery)
+			},
+		},
+		{
+			hint: "READ_CONSISTENT_REPLICA()",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasReplicaReadHint)
+				require.Equal(t, byte(tikv.ReplicaReadFollower), stmtHint.ReplicaRead)
+			},
+		},
+		{
+			hint: "MAX_EXECUTION_TIME(1000)",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasMaxExecutionTime)
+				require.Equal(t, uint64(1000), stmtHint.MaxExecutionTime)
+			},
+		},
+		{
+			hint: "USE_TOJA(TRUE)",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasAllowInSubqToJoinAndAggHint)
+				require.True(t, stmtHint.AllowInSubqToJoinAndAgg)
+			},
+		},
+		{
+			hint: "RESOURCE_GROUP(rg1)",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasResourceGroup)
+				require.Equal(t, "rg1", stmtHint.ResourceGroup)
+			},
+		},
+	}
+
+	for i, check := range hintChecks {
+		// common path
+		tk.MustExec(fmt.Sprintf("prepare stmt%d from 'select /*+ %s */ * from t'", i, check.hint))
+		for j := 0; j < 10; j++ {
+			tk.MustQuery(fmt.Sprintf("execute stmt%d", i))
+			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
+		}
+		// fast path
+		tk.MustExec(fmt.Sprintf("prepare fast%d from 'select /*+ %s */ * from t where a = 1'", i, check.hint))
+		for j := 0; j < 10; j++ {
+			tk.MustQuery(fmt.Sprintf("execute fast%d", i))
+			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
+		}
+	}
 }
