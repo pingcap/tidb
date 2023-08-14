@@ -173,19 +173,20 @@ func newMergeIter[
 func (i *mergeIter[T, R]) close() error {
 	var firstErr error
 	for idx, rdp := range i.readers {
-		if rdp != nil {
-			rd := *rdp
-			err := rd.close()
-			if err != nil {
-				i.logger.Warn("failed to close reader",
-					zap.String("path", rd.path()),
-					zap.Error(err))
-				if firstErr == nil {
-					firstErr = err
-				}
-			}
-			i.readers[idx] = nil
+		if rdp == nil {
+			continue
 		}
+		rd := *rdp
+		err := rd.close()
+		if err != nil {
+			i.logger.Warn("failed to close reader",
+				zap.String("path", rd.path()),
+				zap.Error(err))
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+		i.readers[idx] = nil
 	}
 	return firstErr
 }
