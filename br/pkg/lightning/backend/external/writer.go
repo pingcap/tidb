@@ -22,6 +22,8 @@ import (
 	"strconv"
 	"time"
 
+	"slices"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -32,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // rangePropertiesCollector collects range properties for each range. The zero
@@ -217,7 +218,7 @@ func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
 		return status(false), err
 	}
 
-	logutil.BgLogger().Info("close writer",
+	logutil.Logger(ctx).Info("close writer",
 		zap.Int("writerID", w.writerID),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
 		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
@@ -250,7 +251,7 @@ func (s status) Flushed() bool {
 	return bool(s)
 }
 
-func (w *Writer) flushKVs(ctx context.Context) error {
+func (w *Writer) flushKVs(ctx context.Context) (err error) {
 	if len(w.writeBatch) == 0 {
 		return nil
 	}
@@ -265,22 +266,28 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 
 	defer func() {
 		w.currentSeq++
-		err := dataWriter.Close(w.ctx)
+		err1, err2 := dataWriter.Close(w.ctx), statWriter.Close(w.ctx)
 		if err != nil {
-			logutil.BgLogger().Error("close data writer failed", zap.Error(err))
+			return
 		}
-		err = statWriter.Close(w.ctx)
-		if err != nil {
-			logutil.BgLogger().Error("close stat writer failed", zap.Error(err))
+		if err1 != nil {
+			logutil.Logger(ctx).Error("close data writer failed", zap.Error(err))
+			err = err1
+			return
 		}
-		logutil.BgLogger().Info("flush kv",
+		if err2 != nil {
+			logutil.Logger(ctx).Error("close stat writer failed", zap.Error(err))
+			err = err2
+			return
+		}
+		logutil.Logger(ctx).Info("flush kv",
 			zap.Duration("time", time.Since(ts)),
 			zap.Uint64("bytes", saveBytes),
 			zap.Any("rate", float64(saveBytes)/1024.0/1024.0/time.Since(ts).Seconds()))
 	}()
 
-	slices.SortFunc(w.writeBatch[:], func(i, j common.KvPair) bool {
-		return bytes.Compare(i.Key, j.Key) < 0
+	slices.SortFunc(w.writeBatch[:], func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
 	})
 
 	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc, w.writerID, w.currentSeq)
