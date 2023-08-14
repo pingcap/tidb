@@ -16,9 +16,12 @@ package stmtsummary
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"strings"
 	"time"
+
+	"slices"
 
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -26,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // Statements summary table column name.
@@ -483,8 +485,8 @@ func formatBackoffTypes(backoffMap map[string]int) interface{} {
 	for backoffType, count := range backoffMap {
 		backoffArray = append(backoffArray, backoffStat{backoffType, count})
 	}
-	slices.SortFunc(backoffArray, func(i, j backoffStat) bool {
-		return i.count > j.count
+	slices.SortFunc(backoffArray, func(i, j backoffStat) int {
+		return cmp.Compare(j.count, i.count)
 	})
 
 	var buffer bytes.Buffer
