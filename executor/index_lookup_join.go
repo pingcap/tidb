@@ -18,13 +18,12 @@ import (
 	"bytes"
 	"context"
 	"runtime/trace"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
-
-	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
