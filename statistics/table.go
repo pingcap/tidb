@@ -1271,8 +1271,8 @@ func (coll *HistColl) getIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 const fakePhysicalID int64 = -1
 
 // PseudoTable creates a pseudo table statistics.
-// Usually, we don't want to trigger stats loading for pseudo table. But there are exceptional cases.
-// In such cases, pass the col/idx IDs that are allowed to trigger loading in allowTriggerLoading{Col,Idx}IDs.
+// Usually, we don't want to trigger stats loading for pseudo table.
+// But there are exceptional cases. In such cases, we should pass allowTriggerLoading as true.
 // Such case could possibly happen in getStatsTable().
 func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool) *Table {
 	pseudoHistColl := HistColl{
