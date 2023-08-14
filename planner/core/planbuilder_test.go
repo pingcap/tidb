@@ -622,7 +622,7 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 					Value: ast.NewValueExpr(2048, "", ""),
 				},
 			},
-			statsVer:    statistics.Version2,
+			statsVer:    statistics.Version1,
 			ExpectedErr: "cm sketch size(depth * width) should not larger than 1258291",
 		},
 	}
