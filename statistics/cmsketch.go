@@ -16,9 +16,11 @@ package statistics
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -39,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
-	"golang.org/x/exp/slices"
 )
 
 // topNThreshold is the minimum ratio of the number of topN elements in CMSketch, 10 means 1 / 10 = 10%.
@@ -265,12 +266,12 @@ func queryValue(sctx sessionctx.Context, c *CMSketch, t *TopN, val types.Datum) 
 	if sctx != nil {
 		sc = sctx.GetSessionVars().StmtCtx
 	}
-	bytes, err := tablecodec.EncodeValue(sc, nil, val)
+	rawData, err := tablecodec.EncodeValue(sc, nil, val)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	h1, h2 := murmur3.Sum128(bytes)
-	if ret, ok := t.QueryTopN(sctx, bytes); ok {
+	h1, h2 := murmur3.Sum128(rawData)
+	if ret, ok := t.QueryTopN(sctx, rawData); ok {
 		return ret, nil
 	}
 	return c.queryHashValue(sctx, h1, h2), nil
@@ -289,7 +290,7 @@ func (c *CMSketch) QueryBytes(d []byte) uint64 {
 func (c *CMSketch) queryHashValue(sctx sessionctx.Context, h1, h2 uint64) (result uint64) {
 	vals := make([]uint32, c.depth)
 	originVals := make([]uint32, c.depth)
-	min := uint32(math.MaxUint32)
+	minValue := uint32(math.MaxUint32)
 	useDefaultValue := false
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -309,8 +310,8 @@ func (c *CMSketch) queryHashValue(sctx sessionctx.Context, h1, h2 uint64) (resul
 	for i := range c.table {
 		j := (h1 + h2*uint64(i)) % uint64(c.width)
 		originVals[i] = c.table[i][j]
-		if min > c.table[i][j] {
-			min = c.table[i][j]
+		if minValue > c.table[i][j] {
+			minValue = c.table[i][j]
 		}
 		noise := (c.count - uint64(c.table[i][j])) / (uint64(c.width) - 1)
 		if uint64(c.table[i][j]) == 0 {
@@ -323,8 +324,8 @@ func (c *CMSketch) queryHashValue(sctx sessionctx.Context, h1, h2 uint64) (resul
 	}
 	slices.Sort(vals)
 	res := vals[(c.depth-1)/2] + (vals[c.depth/2]-vals[(c.depth-1)/2])/2
-	if res > min+temp {
-		res = min + temp
+	if res > minValue+temp {
+		res = minValue + temp
 	}
 	if res == 0 {
 		return uint64(0)
@@ -641,11 +642,11 @@ func (c *TopN) findTopN(d []byte) int {
 	}
 	match := false
 	idx := sort.Search(len(c.TopN), func(i int) bool {
-		cmp := bytes.Compare(c.TopN[i].Encoded, d)
-		if cmp == 0 {
+		cmpRst := bytes.Compare(c.TopN[i].Encoded, d)
+		if cmpRst == 0 {
 			match = true
 		}
-		return cmp >= 0
+		return cmpRst >= 0
 	})
 	if !match {
 		return -1
@@ -660,11 +661,11 @@ func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 		return 0, false
 	}
 	idx = sort.Search(len(c.TopN), func(i int) bool {
-		cmp := bytes.Compare(c.TopN[i].Encoded, d)
-		if cmp == 0 {
+		cmpRst := bytes.Compare(c.TopN[i].Encoded, d)
+		if cmpRst == 0 {
 			match = true
 		}
-		return cmp >= 0
+		return cmpRst >= 0
 	})
 	return idx, match
 }
@@ -699,8 +700,8 @@ func (c *TopN) Sort() {
 	if c == nil {
 		return
 	}
-	slices.SortFunc(c.TopN, func(i, j TopNMeta) bool {
-		return bytes.Compare(i.Encoded, j.Encoded) < 0
+	slices.SortFunc(c.TopN, func(i, j TopNMeta) int {
+		return bytes.Compare(i.Encoded, j.Encoded)
 	})
 }
 
@@ -919,11 +920,11 @@ func checkEmptyTopNs(topNs []*TopN) bool {
 
 // SortTopnMeta sort topnMeta
 func SortTopnMeta(topnMetas []TopNMeta) []TopNMeta {
-	slices.SortFunc(topnMetas, func(i, j TopNMeta) bool {
+	slices.SortFunc(topnMetas, func(i, j TopNMeta) int {
 		if i.Count != j.Count {
-			return i.Count > j.Count
+			return cmp.Compare(j.Count, i.Count)
 		}
-		return bytes.Compare(i.Encoded, j.Encoded) < 0
+		return bytes.Compare(i.Encoded, j.Encoded)
 	})
 	return topnMetas
 }
@@ -934,11 +935,11 @@ func GetMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMet
 }
 
 func getMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
-	slices.SortFunc(sorted, func(i, j TopNMeta) bool {
+	slices.SortFunc(sorted, func(i, j TopNMeta) int {
 		if i.Count != j.Count {
-			return i.Count > j.Count
+			return cmp.Compare(j.Count, i.Count)
 		}
-		return bytes.Compare(i.Encoded, j.Encoded) < 0
+		return bytes.Compare(i.Encoded, j.Encoded)
 	})
 	n = mathutil.Min(uint32(len(sorted)), n)
 

@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,7 +51,6 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -976,9 +976,8 @@ func MergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wra
 			// Remove the value from the Hists.
 			if len(removeTopn) > 0 {
 				tmp := removeTopn
-				slices.SortFunc(tmp, func(i, j statistics.TopNMeta) bool {
-					cmpResult := bytes.Compare(i.Encoded, j.Encoded)
-					return cmpResult < 0
+				slices.SortFunc(tmp, func(i, j statistics.TopNMeta) int {
+					return bytes.Compare(i.Encoded, j.Encoded)
 				})
 				wrapper.AllHg[i].RemoveVals(tmp)
 			}

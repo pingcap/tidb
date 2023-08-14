@@ -339,6 +339,18 @@ func TestMergePartTopN2GlobalTopNWithoutHists(t *testing.T) {
 	require.Len(t, leftTopN, 1, "should have 1 left topN")
 }
 
+func TestSortTopnMeta(t *testing.T) {
+	data := []TopNMeta{{
+		Encoded: []byte("a"),
+		Count:   1,
+	}, {
+		Encoded: []byte("b"),
+		Count:   2,
+	}}
+	sortedData := SortTopnMeta(data)
+	require.Equal(t, uint64(2), sortedData[0].Count)
+}
+
 func TestMergePartTopN2GlobalTopNWithHists(t *testing.T) {
 	loc := time.UTC
 	sc := &stmtctx.StatementContext{TimeZone: loc}

@@ -21,6 +21,7 @@ import (
 	"os"
 	"regexp"
 	"runtime/pprof"
+	"slices"
 	"testing"
 	"time"
 
@@ -44,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 )
 
 func TestCollationColumnEstimate(t *testing.T) {
