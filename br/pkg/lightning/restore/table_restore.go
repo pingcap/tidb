@@ -16,6 +16,8 @@ package restore
 
 import (
 	"context"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"sort"
 	"strings"
 	"sync"
@@ -800,11 +802,27 @@ func (tr *TableRestore) postProcess(
 				return false, err
 			}
 			err = tr.compareChecksum(remoteChecksum, localChecksum)
+			failpoint.Inject("compareChecksum-error", func() {
+				tr.logger.Info("failpoint compareChecksum-error injected.")
+				remoteChecksum = nil
+				err = status.Error(codes.Unknown, "Compare checksum meets error.")
+			})
 			// with post restore level 'optional', we will skip checksum error
-			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
-				if err != nil {
-					tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
-					err = nil
+			if err != nil {
+				if rc.cfg.PostRestore.Checksum != config.OpLevelOptional {
+					return false, err
+				}
+				tr.logger.Warn("do checksum failed, will skip this error and go on", log.ShortError(err))
+				err = nil
+			}
+			if remoteChecksum != nil {
+				err = tr.compareChecksum(remoteChecksum, localChecksum)
+				// with post restore level 'optional', we will skip checksum error
+				if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
+					if err != nil {
+						tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
+						err = nil
+					}
 				}
 			}
 		} else {
@@ -846,11 +864,12 @@ func (tr *TableRestore) postProcess(
 		case forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast:
 			err := tr.analyzeTable(ctx, rc.tidbGlue.GetSQLExecutor())
 			// witch post restore level 'optional', we will skip analyze error
-			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
-				if err != nil {
-					tr.logger.Warn("analyze table failed, will skip this error and go on", log.ShortError(err))
-					err = nil
+			if err != nil {
+				if rc.cfg.PostRestore.Analyze != config.OpLevelOptional {
+					return false, err
 				}
+				tr.logger.Warn("analyze table failed, will skip this error and go on", log.ShortError(err))
+				err = nil
 			}
 			saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAnalyzed)
 			if err = firstErr(err, saveCpErr); err != nil {
