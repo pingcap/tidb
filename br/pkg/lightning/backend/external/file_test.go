@@ -73,6 +73,14 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	err = writer.Close(ctx)
 	require.NoError(t, err)
 	kvStore.Close()
+	expected = &rangeProperty{
+		key:    k3,
+		offset: uint64(len(k1) + len(v1) + 16 + len(k2) + len(v2) + 16),
+		size:   uint64(len(k3) + len(v3)),
+		keys:   1,
+	}
+	require.Len(t, rc.props, 2)
+	require.Equal(t, expected, rc.props[1])
 
 	writer, err = memStore.Create(ctx, "/test2", nil)
 	require.NoError(t, err)
@@ -105,6 +113,8 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	}
 	require.Equal(t, expected, rc.props[1])
 	kvStore.Close()
+	// Length of properties should not change after close.
+	require.Len(t, rc.props, 2)
 	err = writer.Close(ctx)
 	require.NoError(t, err)
 }
