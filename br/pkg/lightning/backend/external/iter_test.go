@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
@@ -278,12 +277,14 @@ func generateMockFileReader() *kvReader {
 }
 
 func BenchmarkValueT(b *testing.B) {
-	logger := logutil.BgLogger()
+	ctx := context.Background()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		rd := generateMockFileReader()
-		readerProxy := []*kvReaderProxy{{r: rd}}
-		it, err := newMergeIter[kvPair, kvReaderProxy](readerProxy, logger)
+		opener := func(ctx context.Context) (*kvReaderProxy, error) {
+			return &kvReaderProxy{r: rd}, nil
+		}
+		it, err := newMergeIter[kvPair, kvReaderProxy](ctx, []readerOpenerFn[kvPair, kvReaderProxy]{opener})
 		if err != nil {
 			panic(err)
 		}
@@ -317,12 +318,14 @@ func (p kvReaderPointerProxy) close() error {
 }
 
 func BenchmarkPointerT(b *testing.B) {
-	logger := logutil.BgLogger()
+	ctx := context.Background()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		rd := generateMockFileReader()
-		readerProxy := []*kvReaderPointerProxy{{r: rd}}
-		it, err := newMergeIter[*kvPair, kvReaderPointerProxy](readerProxy, logger)
+		opener := func(ctx context.Context) (*kvReaderPointerProxy, error) {
+			return &kvReaderPointerProxy{r: rd}, nil
+		}
+		it, err := newMergeIter[*kvPair, kvReaderPointerProxy](ctx, []readerOpenerFn[*kvPair, kvReaderPointerProxy]{opener})
 		if err != nil {
 			panic(err)
 		}

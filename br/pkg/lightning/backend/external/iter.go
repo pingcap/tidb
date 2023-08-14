@@ -77,6 +77,9 @@ type mergeIter[T heapElem, R sortedReader[T]] struct {
 	logger *zap.Logger
 }
 
+// readerOpenerFn is a function that opens a sorted reader.
+type readerOpenerFn[T heapElem, R sortedReader[T]] func(ctx context.Context) (*R, error)
+
 // newMergeIter creates a merge iterator for multiple sorted readers. the
 // ownership of readers is transferred to the mergeIter. When newMergeIter
 // returns error, the reader will be closed.
@@ -85,7 +88,48 @@ type mergeIter[T heapElem, R sortedReader[T]] struct {
 func newMergeIter[
 	T heapElem,
 	R sortedReader[T],
-](readers []*R, logger *zap.Logger) (*mergeIter[T, R], error) {
+](ctx context.Context, readerOpeners []readerOpenerFn[T, R]) (*mergeIter[T, R], error) {
+	logger := logutil.Logger(ctx)
+	readers := make([]*R, len(readerOpeners))
+	closeReaders := func() {
+		for _, rp := range readers {
+			if rp == nil {
+				continue
+			}
+			r := *rp
+			err := r.close()
+			if err != nil {
+				logger.Warn("failed to close reader",
+					zap.String("path", r.path()),
+					zap.Error(err))
+			}
+		}
+	}
+
+	// Open readers in parallel.
+	wg, wgCtx := errgroup.WithContext(ctx)
+	for i, f := range readerOpeners {
+		i := i
+		f := f
+		wg.Go(func() error {
+			rd, err := f(wgCtx)
+			switch err {
+			case nil:
+			case io.EOF:
+				// will leave a nil reader in `readers`
+				return nil
+			default:
+				return err
+			}
+			readers[i] = rd
+			return nil
+		})
+	}
+	if err := wg.Wait(); err != nil {
+		closeReaders()
+		return nil, err
+	}
+
 	i := &mergeIter[T, R]{
 		h:             make(mergeHeap[T], 0, len(readers)),
 		readers:       readers,
@@ -109,7 +153,11 @@ func newMergeIter[
 			continue
 		}
 		if err != nil {
-			i.close()
+			closeErr := i.close()
+			if closeErr != nil {
+				i.logger.Warn("failed to close merge iterator",
+					zap.Error(closeErr))
+			}
 			return nil, err
 		}
 		i.h = append(i.h, mergeHeapElem[T]{
@@ -228,44 +276,20 @@ func NewMergeKVIter(
 	exStorage storage.ExternalStorage,
 	readBufferSize int,
 ) (*MergeKVIter, error) {
-	logger := logutil.Logger(ctx)
-	kvReaders := make([]*kvReaderProxy, len(paths))
-	closeReaders := func() {
-		for _, r := range kvReaders {
-			if r != nil {
-				err := r.r.Close()
-				if err != nil {
-					logger.Warn("failed to close reader",
-						zap.String("path", r.path()),
-						zap.Error(err))
-				}
-			}
-		}
-	}
+	readerOpeners := make([]readerOpenerFn[kvPair, kvReaderProxy], 0, len(paths))
 
-	// Open all data files concurrently.
-	wg, wgCtx := errgroup.WithContext(ctx)
 	for i := range paths {
 		i := i
-		wg.Go(func() error {
-			rd, err := newKVReader(wgCtx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
-			switch err {
-			case nil:
-			case io.EOF:
-				return nil
-			default:
-				return err
+		readerOpeners = append(readerOpeners, func(ctx context.Context) (*kvReaderProxy, error) {
+			rd, err := newKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
+			if err != nil {
+				return nil, err
 			}
-			kvReaders[i] = &kvReaderProxy{p: paths[i], r: rd}
-			return nil
+			return &kvReaderProxy{p: paths[i], r: rd}, nil
 		})
 	}
-	if err := wg.Wait(); err != nil {
-		closeReaders()
-		return nil, err
-	}
 
-	it, err := newMergeIter[kvPair, kvReaderProxy](kvReaders, logger)
+	it, err := newMergeIter[kvPair, kvReaderProxy](ctx, readerOpeners)
 	// if error happens in newMergeIter, newMergeIter itself will close readers
 	return &MergeKVIter{iter: it}, err
 }
@@ -327,40 +351,19 @@ func NewMergePropIter(
 	paths []string,
 	exStorage storage.ExternalStorage,
 ) (*MergePropIter, error) {
-	logger := logutil.Logger(ctx)
-	statReaders := make([]*statReaderProxy, len(paths))
-	closeReaders := func() {
-		for _, r := range statReaders {
-			if r.r != nil {
-				err := r.r.Close()
-				if err != nil {
-					logger.Warn("failed to close reader",
-						zap.String("path", r.path()),
-						zap.Error(err))
-				}
-			}
-		}
-	}
-
-	// Open all data files concurrently.
-	wg, wgCtx := errgroup.WithContext(ctx)
+	readerOpeners := make([]readerOpenerFn[*rangeProperty, statReaderProxy], 0, len(paths))
 	for i := range paths {
 		i := i
-		wg.Go(func() error {
-			rd, err := newStatsReader(wgCtx, exStorage, paths[i], 4096)
+		readerOpeners = append(readerOpeners, func(ctx context.Context) (*statReaderProxy, error) {
+			rd, err := newStatsReader(ctx, exStorage, paths[i], 4096)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			statReaders[i] = &statReaderProxy{p: paths[i], r: rd}
-			return nil
+			return &statReaderProxy{p: paths[i], r: rd}, nil
 		})
 	}
-	if err := wg.Wait(); err != nil {
-		closeReaders()
-		return nil, err
-	}
 
-	it, err := newMergeIter[*rangeProperty, statReaderProxy](statReaders, logger)
+	it, err := newMergeIter[*rangeProperty, statReaderProxy](ctx, readerOpeners)
 	// if error happens in newMergeIter, newMergeIter itself will close readers
 	return &MergePropIter{iter: it}, err
 }
