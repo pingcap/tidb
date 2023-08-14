@@ -20,10 +20,9 @@ import (
 	"context"
 	"encoding/json"
 	"math/rand"
+	"slices"
 	"sync"
 	"testing"
-
-	"slices"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/sstable"
