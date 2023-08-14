@@ -1067,11 +1067,12 @@ func (tr *TableImporter) postProcess(
 		case forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast:
 			err := tr.analyzeTable(ctx, rc.db)
 			// witch post restore level 'optional', we will skip analyze error
-			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
-				if err != nil {
-					tr.logger.Warn("analyze table failed, will skip this error and go on", log.ShortError(err))
-					err = nil
+			if err != nil {
+				if rc.cfg.PostRestore.Analyze != config.OpLevelOptional {
+					return false, err
 				}
+				tr.logger.Warn("analyze table failed, will skip this error and go on", log.ShortError(err))
+				err = nil
 			}
 			saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAnalyzed)
 			if err = firstErr(err, saveCpErr); err != nil {
