@@ -2792,6 +2792,25 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableCheckConstraint.Load()), nil
 	}},
+	{Scope: ScopeSession, Name: TiDBSessionAlias, Value: "", Type: TypeStr,
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			if len(originalValue) > 64 {
+				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimitSessMinSize, originalValue))
+				normalizedValue = originalValue[:64]
+			}
+
+			if len(normalizedValue) > 0 && normalizedValue[len(normalizedValue)-1] == ' ' {
+				return "", ErrWrongValueForVar.GenWithStack("incorrect value for variable @@%s '%s'", TiDBSessionAlias, normalizedValue)
+			}
+
+			return normalizedValue, nil
+		},
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.SessionAlias = s
+			return nil
+		}, GetSession: func(vars *SessionVars) (string, error) {
+			return vars.SessionAlias, nil
+		}},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

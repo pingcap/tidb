@@ -20,10 +20,15 @@ import (
 
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/tidb/parser/model"
 )
 
 // TiDBTrace is set as Baggage on traces which are used for tidb tracing.
 const TiDBTrace = "tr"
+
+type sqlTracingCtxKeyType struct{}
+
+var sqlTracingCtxKey = sqlTracingCtxKeyType{}
 
 // A CallbackRecorder immediately invokes itself on received trace spans.
 type CallbackRecorder func(sp basictracer.RawSpan)
@@ -109,4 +114,21 @@ func (r Region) End() {
 		r.Span.Finish()
 	}
 	r.Region.End()
+}
+
+// TraceInfoFromContext returns the `model.TraceInfo` in context
+func TraceInfoFromContext(ctx context.Context) *model.TraceInfo {
+	val := ctx.Value(sqlTracingCtxKey)
+	if info, ok := val.(*model.TraceInfo); ok {
+		return info
+	}
+	return nil
+}
+
+// ContextWithTraceInfo creates a new `model.TraceInfo` for context
+func ContextWithTraceInfo(ctx context.Context, info *model.TraceInfo) context.Context {
+	if info == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, sqlTracingCtxKey, info)
 }

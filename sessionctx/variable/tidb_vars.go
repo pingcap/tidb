@@ -1083,6 +1083,8 @@ const (
 	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
 	// When set to false, give up merging partition stats to global stats.
 	TiDBSkipMissingPartitionStats = "tidb_skip_missing_partition_stats"
+	// TiDBSessionAlias indicates the alias of a session which is used for tracing.
+	TiDBSessionAlias = "tidb_session_alias"
 )
 
 // TiDB intentional limits
