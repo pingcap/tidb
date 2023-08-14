@@ -306,8 +306,6 @@ func TestCMSketchCodingTopN(t *testing.T) {
 	_, _, err = DecodeCMSketchAndTopN([]byte{}, rows)
 	require.NoError(t, err)
 }
-<<<<<<< HEAD
-=======
 
 func TestMergePartTopN2GlobalTopNWithoutHists(t *testing.T) {
 	loc := time.UTC
@@ -392,4 +390,3 @@ func TestMergePartTopN2GlobalTopNWithHists(t *testing.T) {
 	require.Equal(t, uint64(55), globalTopN.TotalCount(), "should have 55")
 	require.Len(t, leftTopN, 1, "should have 1 left topN")
 }
->>>>>>> 9d517f6b83e (statistics: add bench for MergeGlobalStatsTopNByConcurrency (#45998))
