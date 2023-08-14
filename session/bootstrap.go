@@ -698,7 +698,7 @@ func bootstrap(s sessionapi.Session) {
 		// Actually only one server need to do the bootstrap. So we chose DDL owner to do this.
 		if dom.DDL().OwnerManager().IsOwner() {
 			doDDLWorks(s)
-			doDMLWorks(s)
+			DoDMLWorks(s)
 			runBootstrapSQLFile = true
 			logutil.BgLogger().Info("bootstrap successful",
 				zap.Duration("take time", time.Since(startTime)))
@@ -2955,9 +2955,9 @@ func doBootstrapSQLFile(s sessionapi.Session) error {
 	return nil
 }
 
-// doDMLWorks executes DML statements in bootstrap stage.
+// DoDMLWorks executes DML statements in bootstrap stage.
 // All the statements run in a single transaction.
-func doDMLWorks(s sessionapi.Session) {
+func DoDMLWorks(s sessionapi.Session) {
 	mustExecute(s, "BEGIN")
 	if config.GetGlobalConfig().Security.SecureBootstrap {
 		// If secure bootstrap is enabled, we create a root@localhost account which can login with auth_socket.

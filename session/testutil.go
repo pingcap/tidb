@@ -36,6 +36,8 @@ var (
 	CurrentBootstrapVersion = currentBootstrapVersion
 	// UnsetStoreBootstrapped is used in test
 	UnsetStoreBootstrapped = unsetStoreBootstrapped
+	// DoDDLWorks is used in test
+	DoDDLWorks = doDDLWorks
 )
 
 // CreateStoreAndBootstrap creates a mock store and bootstrap it.

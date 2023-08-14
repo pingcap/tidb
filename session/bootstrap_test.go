@@ -19,105 +19,18 @@ import (
 	"fmt"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/session/sessionapi"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/telemetry"
 	"github.com/stretchr/testify/require"
 )
-
-// This test file have many problem.
-// 1. Please use testkit to create dom, session and store.
-// 2. Don't use CreateStoreAndBootstrap and BootstrapSession together. It will cause data race.
-// Please do not add any test here. You can add test case at the bootstrap_update_test.go. After All problem fixed,
-// We will overwrite this file by update_test.go.
-func TestBootstrap(t *testing.T) {
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
-	se := CreateSessionAndSetID(t, store)
-	MustExec(t, se, "set global tidb_txn_mode=''")
-	MustExec(t, se, "use mysql")
-	r := MustExecToRecodeSet(t, se, "select * from user")
-	require.NotNil(t, r)
-
-	ctx := context.Background()
-	req := r.NewChunk(nil)
-	err := r.Next(ctx, req)
-	require.NoError(t, err)
-	require.NotEqual(t, 0, req.NumRows())
-
-	rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil)
-	r.Close()
-
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte(""), nil))
-
-	MustExec(t, se, "use test")
-
-	// Check privilege tables.
-	MustExec(t, se, "SELECT * from mysql.global_priv")
-	MustExec(t, se, "SELECT * from mysql.db")
-	MustExec(t, se, "SELECT * from mysql.tables_priv")
-	MustExec(t, se, "SELECT * from mysql.columns_priv")
-	MustExec(t, se, "SELECT * from mysql.global_grants")
-
-	// Check privilege tables.
-	r = MustExecToRecodeSet(t, se, "SELECT COUNT(*) from mysql.global_variables")
-	require.NotNil(t, r)
-
-	req = r.NewChunk(nil)
-	err = r.Next(ctx, req)
-	require.NoError(t, err)
-	require.Equal(t, globalVarsCount(), req.GetRow(0).GetInt64(0))
-	require.NoError(t, r.Close())
-
-	// Check a storage operations are default autocommit after the second start.
-	MustExec(t, se, "USE test")
-	MustExec(t, se, "drop table if exists t")
-	MustExec(t, se, "create table t (id int)")
-	unsetStoreBootstrapped(store.UUID())
-	se.Close()
-
-	se, err = CreateSession4Test(store)
-	require.NoError(t, err)
-	MustExec(t, se, "USE test")
-	MustExec(t, se, "insert t values (?)", 3)
-
-	se, err = CreateSession4Test(store)
-	require.NoError(t, err)
-	MustExec(t, se, "USE test")
-	r = MustExecToRecodeSet(t, se, "select * from t")
-	require.NotNil(t, r)
-
-	req = r.NewChunk(nil)
-	err = r.Next(ctx, req)
-	require.NoError(t, err)
-	rows = statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(t, rows, 3)
-	MustExec(t, se, "drop table if exists t")
-	se.Close()
-
-	// Try to do bootstrap dml jobs on an already bootstrapped TiDB system will not cause fatal.
-	// For https://github.com/pingcap/tidb/issues/1096
-	se, err = CreateSession4Test(store)
-	require.NoError(t, err)
-	doDMLWorks(se)
-	r = MustExecToRecodeSet(t, se, "select * from mysql.expr_pushdown_blacklist where name = 'date_add'")
-	req = r.NewChunk(nil)
-	err = r.Next(ctx, req)
-	require.NoError(t, err)
-	require.Equal(t, 0, req.NumRows())
-	se.Close()
-}
 
 func globalVarsCount() int64 {
 	var count int64
@@ -127,99 +40,6 @@ func globalVarsCount() int64 {
 		}
 	}
 	return count
-}
-
-// testBootstrapWithError :
-// When a session failed in bootstrap process (for example, the session is killed after doDDLWorks()).
-// We should make sure that the following session could finish the bootstrap process.
-func TestBootstrapWithError(t *testing.T) {
-	ctx := context.Background()
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-
-	// bootstrap
-	{
-		se := &session{
-			store:       store,
-			sessionVars: variable.NewSessionVars(nil),
-		}
-		se.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
-		se.txn.init()
-		se.mu.values = make(map[fmt.Stringer]interface{})
-		se.SetValue(sessionctx.Initing, true)
-		err := InitDDLJobTables(store, meta.BaseDDLTableVersion)
-		require.NoError(t, err)
-		err = InitMDLTable(store)
-		require.NoError(t, err)
-		err = InitDDLJobTables(store, meta.BackfillTableVersion)
-		require.NoError(t, err)
-		dom, err := domap.Get(store)
-		require.NoError(t, err)
-		domain.BindDomain(se, dom)
-		b, err := checkBootstrapped(se)
-		require.False(t, b)
-		require.NoError(t, err)
-		doDDLWorks(se)
-	}
-
-	dom, err := domap.Get(store)
-	require.NoError(t, err)
-	domap.Delete(store)
-	dom.Close()
-
-	dom1, err := BootstrapSession(store)
-	require.NoError(t, err)
-	defer dom1.Close()
-
-	se := CreateSessionAndSetID(t, store)
-	MustExec(t, se, "USE mysql")
-	r := MustExecToRecodeSet(t, se, `select * from user`)
-	req := r.NewChunk(nil)
-	err = r.Next(ctx, req)
-	require.NoError(t, err)
-	require.NotEqual(t, 0, req.NumRows())
-
-	row := req.GetRow(0)
-	rows := statistics.RowToDatums(row, r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil)
-	require.NoError(t, r.Close())
-
-	MustExec(t, se, "USE test")
-	// Check privilege tables.
-	MustExec(t, se, "SELECT * from mysql.global_priv")
-	MustExec(t, se, "SELECT * from mysql.db")
-	MustExec(t, se, "SELECT * from mysql.tables_priv")
-	MustExec(t, se, "SELECT * from mysql.columns_priv")
-	// Check role tables.
-	MustExec(t, se, "SELECT * from mysql.role_edges")
-	MustExec(t, se, "SELECT * from mysql.default_roles")
-	// Check global variables.
-	r = MustExecToRecodeSet(t, se, "SELECT COUNT(*) from mysql.global_variables")
-	req = r.NewChunk(nil)
-	err = r.Next(ctx, req)
-	require.NoError(t, err)
-	v := req.GetRow(0)
-	require.Equal(t, globalVarsCount(), v.GetInt64(0))
-	require.NoError(t, r.Close())
-
-	r = MustExecToRecodeSet(t, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped"`)
-	req = r.NewChunk(nil)
-	err = r.Next(ctx, req)
-	require.NoError(t, err)
-	require.NotEqual(t, 0, req.NumRows())
-	row = req.GetRow(0)
-	require.Equal(t, 1, row.Len())
-	require.Equal(t, []byte("True"), row.GetBytes(0))
-	require.NoError(t, r.Close())
-
-	MustExec(t, se, "SELECT * from mysql.tidb_background_subtask")
-	MustExec(t, se, "SELECT * from mysql.tidb_background_subtask_history")
-
-	// Check tidb_ttl_table_status table
-	MustExec(t, se, "SELECT * from mysql.tidb_ttl_table_status")
 }
 
 func TestDDLTableCreateBackfillTable(t *testing.T) {
@@ -331,41 +151,6 @@ func TestUpgrade(t *testing.T) {
 	require.Equal(t, "False", req.GetRow(0).GetString(0))
 	require.NoError(t, r.Close())
 	dom.Close()
-}
-
-func TestIssue17979_1(t *testing.T) {
-	ctx := context.Background()
-
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-	// test issue 20900, upgrade from v3.0 to v4.0.11+
-	seV3 := CreateSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	err = m.FinishBootstrap(int64(58))
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	MustExec(t, seV3, "update mysql.tidb set variable_value='58' where variable_name='tidb_server_version'")
-	MustExec(t, seV3, "delete from mysql.tidb where variable_name='default_oom_action'")
-	MustExec(t, seV3, "commit")
-	unsetStoreBootstrapped(store.UUID())
-	ver, err := getBootstrapVersion(seV3)
-	require.NoError(t, err)
-	require.Equal(t, int64(58), ver)
-	dom.Close()
-	domV4, err := BootstrapSession(store)
-	require.NoError(t, err)
-	seV4 := CreateSessionAndSetID(t, store)
-	ver, err = getBootstrapVersion(seV4)
-	require.NoError(t, err)
-	require.Equal(t, currentBootstrapVersion, ver)
-	r := MustExecToRecodeSet(t, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
-	req := r.NewChunk(nil)
-	require.NoError(t, r.Next(ctx, req))
-	require.Equal(t, variable.OOMActionLog, req.GetRow(0).GetString(0))
-	domV4.Close()
 }
 
 func TestIssue17979_2(t *testing.T) {
@@ -1849,7 +1634,7 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 	}()
 
 	ver139 := version139
-	resetTo139 := func(s Session) {
+	resetTo139 := func(s sessionapi.Session) {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		m := meta.NewMeta(txn)

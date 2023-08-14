@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "bootstrap_test",
+    timeout = "short",
+    srcs = [
+        "bootstrap_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//meta",
+        "//parser/auth",
+        "//session",
+        "//sessionctx/variable",
+        "//statistics",
+        "//types",
+        "@com_github_stretchr_testify//require",
+    ],
+)
