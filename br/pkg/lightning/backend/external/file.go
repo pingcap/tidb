@@ -94,8 +94,8 @@ func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
 	s.rc.currProp.size += uint64(len(key) + len(value))
 	s.rc.currProp.keys++
 
-	if s.rc.currProp.size >= s.rc.propSizeIdxDistance ||
-		s.rc.currProp.keys >= s.rc.propKeysIdxDistance {
+	if s.rc.currProp.size >= s.rc.propSizeDist ||
+		s.rc.currProp.keys >= s.rc.propKeysDist {
 		newProp := *s.rc.currProp
 		s.rc.props = append(s.rc.props, &newProp)
 
