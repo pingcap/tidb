@@ -2608,6 +2608,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 		SetFromInfoSchema(sctx.GetInfoSchema()).
 		SetStoreType(kv.TiDB).
 		SetTiDBServerID(gcid.ServerID).
+		SetStartTS(math.MaxUint64). // To make check visibility success.
 		Build()
 	if err != nil {
 		return err
@@ -2617,7 +2618,14 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 		err := errors.New("client returns nil response")
 		return err
 	}
-	resp.Close()
+
+	// Must consume & close the response, otherwise coprocessor task will leak.
+	defer func() {
+		_ = resp.Close()
+	}()
+	if _, err := resp.Next(ctx); err != nil {
+		return errors.Trace(err)
+	}
 
 	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", gcid.ServerID),
 		zap.Uint64("conn", gcid.ToConnID()), zap.Bool("query", query))
