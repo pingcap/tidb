@@ -4713,7 +4713,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 	// 1. tidb-server started and statistics handle has not been initialized.
 	if statsHandle == nil {
-		return statistics.PseudoTable(tblInfo, nil, nil)
+		return statistics.PseudoTable(tblInfo, false)
 	}
 
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
@@ -4723,8 +4723,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, cache.WithTableStatsByQuery())
 	}
 
-	availableStatsColIDs := make(map[int64]struct{})
-	availableStatsIdxIDs := make(map[int64]struct{})
+	allowPseudoTblTriggerLoading := false
 	// In OptObjectiveDetermined mode, we need to ignore the real-time stats.
 	// To achieve this, we copy the statsTbl and reset the real-time stats fields (ModifyCount and RealtimeCount).
 	if ctx.GetSessionVars().GetOptObjective() == variable.OptObjectiveDetermined {
@@ -4733,12 +4732,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 		if statsTbl.RealtimeCount != analyzeCount || statsTbl.ModifyCount != 0 {
 			// Here is a case that we need specially care about:
 			if !statsTbl.Pseudo && statsTbl.RealtimeCount > 0 && analyzeCount == 0 {
-				for id := range statsTbl.Columns {
-					availableStatsColIDs[id] = struct{}{}
-				}
-				for id := range statsTbl.Indices {
-					availableStatsIdxIDs[id] = struct{}{}
-				}
+				allowPseudoTblTriggerLoading = true
 			}
 			// Copy it so we can modify the ModifyCount and the RealtimeCount safely.
 			statsTbl = statsTbl.ShallowCopy()
@@ -4751,7 +4745,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	if statsTbl.RealtimeCount == 0 {
 		countIs0 = true
 		core_metrics.PseudoEstimationNotAvailable.Inc()
-		return statistics.PseudoTable(tblInfo, availableStatsColIDs, availableStatsIdxIDs)
+		return statistics.PseudoTable(tblInfo, allowPseudoTblTriggerLoading)
 	}
 
 	// 3. statistics is uninitialized or outdated.
