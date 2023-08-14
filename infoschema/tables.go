@@ -15,6 +15,7 @@
 package infoschema
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -2388,7 +2389,7 @@ func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, sctx sessi
 		}
 		results = append(results, result)
 	}
-	slices.SortFunc(results, func(i, j result) bool { return i.idx < j.idx })
+	slices.SortFunc(results, func(i, j result) int { return cmp.Compare(i.idx, j.idx) })
 	for _, result := range results {
 		finalRows = append(finalRows, result.rows...)
 	}
