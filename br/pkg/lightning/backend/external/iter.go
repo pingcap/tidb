@@ -80,11 +80,8 @@ type mergeIter[T heapElem, R sortedReader[T]] struct {
 // readerOpenerFn is a function that opens a sorted reader.
 type readerOpenerFn[T heapElem, R sortedReader[T]] func(ctx context.Context) (*R, error)
 
-// newMergeIter creates a merge iterator for multiple sorted readers. the
-// ownership of readers is transferred to the mergeIter. When newMergeIter
-// returns error, the reader will be closed.
-// To reduce duplication, we tolerate caller passing nil readers which means
-// reader's source file is empty.
+// newMergeIter creates a merge iterator for multiple sorted reader opener
+// functions.
 func newMergeIter[
 	T heapElem,
 	R sortedReader[T],
@@ -116,7 +113,7 @@ func newMergeIter[
 			switch err {
 			case nil:
 			case io.EOF:
-				// will leave a nil reader in `readers`
+				// will leave a nil reader in `readers` when reader is empty
 				return nil
 			default:
 				return err
@@ -291,7 +288,6 @@ func NewMergeKVIter(
 	}
 
 	it, err := newMergeIter[kvPair, kvReaderProxy](ctx, readerOpeners)
-	// if error happens in newMergeIter, newMergeIter itself will close readers
 	return &MergeKVIter{iter: it}, err
 }
 
@@ -365,7 +361,6 @@ func NewMergePropIter(
 	}
 
 	it, err := newMergeIter[*rangeProperty, statReaderProxy](ctx, readerOpeners)
-	// if error happens in newMergeIter, newMergeIter itself will close readers
 	return &MergePropIter{iter: it}, err
 }
 
