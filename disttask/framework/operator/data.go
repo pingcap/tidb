@@ -17,6 +17,7 @@ package operator
 // DataSource defines interface for source of all operators.
 // Operator read data from DataSource, then process the read data.
 type DataSource interface {
+	Start() error
 	HasNext() bool
 	Read() (any, error)
 	Display() string

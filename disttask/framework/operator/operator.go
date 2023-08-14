@@ -68,6 +68,8 @@ type AsyncDataChannel[T any] struct {
 	channel *workerpool.WorkerPool[T]
 }
 
+func (*AsyncDataChannel[T]) Start() error { return nil }
+
 // HasNext check if it has next data.
 func (*AsyncDataChannel[T]) HasNext() bool { return false }
 
@@ -86,21 +88,9 @@ func (c *AsyncDataChannel[T]) Write(data any) error {
 	return nil
 }
 
-func Connect(op1, op2 Operator, sink DataSink) {
-	source1 := op2.Source
-	op1.Sink = source1.(DataSink)
-	op2.Sink = sink
+func NewOperator(impl BaseAysncOperatorImpl, source DataSource, sink DataSink) *Operator {
+	res := &Operator{impl: impl}
+	res.Source = source
+	res.Sink = sink
+	return res
 }
-
-// // NewBaseOperatorImpl init an impl which use AsyncDataChannel as the DataSource.
-// func NewBaseOperatorImpl[T any](
-// 	name string,
-// 	newImpl func() BaseOperatorImpl,
-// 	component poolutil.Component,
-// 	workerCnt int) BaseOperatorImpl {
-// 	res := newImpl()
-// 	// pool, _ := workerpool.NewWorkerPoolWithoutCreateWorker[T](name, component, workerCnt)
-// 	// res.Pool = pool
-// 	// res.Source = &AsyncDataChannel[T]{pool}
-// 	return res
-// }

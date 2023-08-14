@@ -62,14 +62,14 @@ func (oi *exampleAsyncOperatorImpl) open() error {
 	return nil
 }
 
-func newExampleAsyncOperatorImpl(name string) *exampleAsyncOperatorImpl {
-	pool, _ := workerpool.NewWorkerPoolWithoutCreateWorker[asyncChunk](name, poolutil.DDL, 10)
+func newExampleAsyncOperatorImpl(name string, component poolutil.Component, concurrency int, sink DataSink) *exampleAsyncOperatorImpl {
+	pool, _ := workerpool.NewWorkerPoolWithoutCreateWorker[asyncChunk](name, component, concurrency)
 	source := &AsyncDataChannel[asyncChunk]{}
-
 	source.channel = pool
-	res := &exampleAsyncOperatorImpl{}
-	res.Source = source
-	return res
+	impl := &exampleAsyncOperatorImpl{}
+	impl.Source = source
+	impl.Sink = sink
+	return impl
 }
 
 func (*exampleAsyncOperatorImpl) display() string {

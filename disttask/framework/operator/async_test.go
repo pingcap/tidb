@@ -18,20 +18,21 @@ import (
 	"sync"
 	"testing"
 
+	poolutil "github.com/pingcap/tidb/resourcemanager/util"
+
 	"github.com/stretchr/testify/require"
 )
 
 func NewAsyncPipeline() (*AsyncPipeline, any) {
-	impl0 := newExampleAsyncOperatorImpl("impl0")
-	impl1 := newExampleAsyncOperatorImpl("impl1")
-	impl0.Sink = impl1.Source.(DataSink)
 	sink := &simpleAsyncDataSink{0, 0, sync.Mutex{}}
-
-	impl1.Sink = sink
+	impl1 := newExampleAsyncOperatorImpl("impl1", poolutil.DDL, 10, sink)
+	op1 := NewOperator(impl1, impl1.Source, sink)
+	impl0 := newExampleAsyncOperatorImpl("impl0", poolutil.DDL, 10, op1.Source.(DataSink))
+	op0 := NewOperator(impl0, impl0.Source, op1.Source.(DataSink))
 	pipeline := &AsyncPipeline{}
-	pipeline.AddOperator(impl0)
-	pipeline.AddOperator(impl1)
-	return pipeline, impl0.Source
+	pipeline.AddOperator(op0)
+	pipeline.AddOperator(op1)
+	return pipeline, op0.Source
 }
 
 func TestPipelineAsync(t *testing.T) {
@@ -41,5 +42,5 @@ func TestPipelineAsync(t *testing.T) {
 		_ = source.(*AsyncDataChannel[asyncChunk]).Write(asyncChunk{&demoChunk{0}})
 	}
 	pipeline.Close()
-	require.Equal(t, 20, pipeline.LastOperator().(*exampleAsyncOperatorImpl).Sink.(*simpleAsyncDataSink).Res)
+	require.Equal(t, 20, pipeline.LastOperator().Sink.(*simpleAsyncDataSink).Res)
 }

@@ -19,7 +19,7 @@ package operator
 //
 //	Eg: op1.AddTask ---> op1.HandleTask  ---> op2.AddTask ---> op2.HandleTask
 type AsyncPipeline struct {
-	ops []BaseAysncOperatorImpl
+	ops []*Operator
 }
 
 // AsyncExecute start all operators waiting to handle tasks.
@@ -38,16 +38,16 @@ func (p *AsyncPipeline) Close() {
 }
 
 // AddOperator insert operator to the end of the list
-func (p *AsyncPipeline) AddOperator(op BaseAysncOperatorImpl) {
+func (p *AsyncPipeline) AddOperator(op *Operator) {
 	p.ops = append(p.ops, op)
 }
 
 // FirstOperator get the first operator.
-func (p *AsyncPipeline) FirstOperator() BaseAysncOperatorImpl {
+func (p *AsyncPipeline) FirstOperator() *Operator {
 	return p.ops[0]
 }
 
 // LastOperator get the last operator.
-func (p *AsyncPipeline) LastOperator() BaseAysncOperatorImpl {
+func (p *AsyncPipeline) LastOperator() *Operator {
 	return p.ops[len(p.ops)-1]
 }
