@@ -72,6 +72,7 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 
 	err = writer.Close(ctx)
 	require.NoError(t, err)
+	kvStore.Close()
 
 	writer, err = memStore.Create(ctx, "/test2", nil)
 	require.NoError(t, err)
@@ -103,6 +104,7 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 		keys:   1,
 	}
 	require.Equal(t, expected, rc.props[1])
+	kvStore.Close()
 	err = writer.Close(ctx)
 	require.NoError(t, err)
 }
