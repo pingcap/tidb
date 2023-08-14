@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/kv"
-	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -37,8 +36,7 @@ func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 		return nil, nil
 	}
 
-	pdAddr := rc.cfg.TiDB.PdAddr
-	pdVersion, err := pdutil.FetchPDVersion(ctx, rc.tls, pdAddr)
+	pdVersion, err := pdutil.FetchPDVersion(ctx, rc.tls, rc.pdCli.GetLeaderAddr())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -46,12 +44,6 @@ func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 	// for v4.0.0 or upper, we can use the gc ttl api
 	var manager local.ChecksumManager
 	if pdVersion.Major >= 4 && !rc.cfg.PostRestore.ChecksumViaSQL {
-		tlsOpt := rc.tls.ToPDSecurityOption()
-		pdCli, err := pd.NewClientWithContext(ctx, []string{pdAddr}, tlsOpt)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
 		backoffWeight, err := common.GetBackoffWeightFromDB(ctx, rc.db)
 		// only set backoff weight when it's smaller than default value
 		if err == nil && backoffWeight >= local.DefaultBackoffWeight {
@@ -60,7 +52,8 @@ func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 			log.FromContext(ctx).Info("set tidb_backoff_weight to default", zap.Int("backoff_weight", local.DefaultBackoffWeight))
 			backoffWeight = local.DefaultBackoffWeight
 		}
-		manager = local.NewTiKVChecksumManager(store.GetClient(), pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency), backoffWeight)
+
+		manager = local.NewTiKVChecksumManager(store.GetClient(), rc.pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency), backoffWeight, rc.resourceGroupName, rc.taskType)
 	} else {
 		manager = local.NewTiDBChecksumExecutor(rc.db)
 	}

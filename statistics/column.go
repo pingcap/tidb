@@ -35,20 +35,21 @@ import (
 
 // Column represents a column histogram.
 type Column struct {
-	Histogram
-	CMSketch   *CMSketch
-	TopN       *TopN
-	FMSketch   *FMSketch
-	PhysicalID int64
-	Info       *model.ColumnInfo
-	IsHandle   bool
-	ErrorRate
-	Flag           int64
 	LastAnalyzePos types.Datum
-	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
+	CMSketch       *CMSketch
+	TopN           *TopN
+	FMSketch       *FMSketch
+	Info           *model.ColumnInfo
+	Histogram
+	ErrorRate
 
 	// StatsLoadedStatus indicates the status of column statistics
 	StatsLoadedStatus
+	PhysicalID int64
+	Flag       int64
+	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
+
+	IsHandle bool
 }
 
 func (c *Column) String() string {
@@ -343,70 +344,40 @@ func (c *Column) ItemID() int64 {
 	return c.Info.ID
 }
 
-// DropEvicted implements TableCacheItem
-// DropEvicted drops evicted structures
-func (c *Column) DropEvicted() {
-	if !c.statsInitialized {
-		return
+// DropUnnecessaryData drops the unnecessary data for the column.
+func (c *Column) DropUnnecessaryData() {
+	if c.StatsVer < Version2 {
+		c.CMSketch = nil
 	}
-	switch c.evictedStatus {
-	case allLoaded:
-		if c.CMSketch != nil && c.StatsVer < Version2 {
-			c.dropCMS()
-			return
-		}
-		// For stats version2, there is no cms thus we directly drop topn
-		c.dropTopN()
-		return
-	case onlyCmsEvicted:
-		c.dropTopN()
-		return
-	default:
-		return
-	}
-}
-
-func (c *Column) dropCMS() {
-	c.CMSketch = nil
-	c.evictedStatus = onlyCmsEvicted
-}
-
-func (c *Column) dropTopN() {
-	originTopNNum := int64(c.TopN.Num())
 	c.TopN = nil
-	if len(c.Histogram.Buckets) == 0 && originTopNNum >= c.Histogram.NDV {
-		// This indicates column has topn instead of histogram
-		c.evictedStatus = allEvicted
-	} else {
-		c.evictedStatus = onlyHistRemained
-	}
-}
-
-func (c *Column) dropHist() {
 	c.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
 	c.Histogram.Buckets = make([]Bucket, 0)
 	c.Histogram.scalars = make([]scalar, 0)
-	c.evictedStatus = allEvicted
+	c.evictedStatus = AllEvicted
 }
 
 // IsAllEvicted indicates whether all stats evicted
 func (c *Column) IsAllEvicted() bool {
-	return c.statsInitialized && c.evictedStatus >= allEvicted
+	return c.statsInitialized && c.evictedStatus >= AllEvicted
 }
 
-func (c *Column) getEvictedStatus() int {
+// GetEvictedStatus indicates the evicted status
+func (c *Column) GetEvictedStatus() int {
 	return c.evictedStatus
 }
 
-func (c *Column) isStatsInitialized() bool {
+// IsStatsInitialized indicates whether stats is initialized
+func (c *Column) IsStatsInitialized() bool {
 	return c.statsInitialized
 }
 
-func (c *Column) statsVer() int64 {
+// GetStatsVer indicates the stats version
+func (c *Column) GetStatsVer() int64 {
 	return c.StatsVer
 }
 
-func (c *Column) isCMSExist() bool {
+// IsCMSExist indicates whether CMSketch exists
+func (c *Column) IsCMSExist() bool {
 	return c.CMSketch != nil
 }
 
@@ -499,13 +470,9 @@ func (s StatsLoadedStatus) StatusToString() string {
 		return "unInitialized"
 	}
 	switch s.evictedStatus {
-	case allLoaded:
+	case AllLoaded:
 		return "allLoaded"
-	case onlyCmsEvicted:
-		return "onlyCmsEvicted"
-	case onlyHistRemained:
-		return "onlyHistRemained"
-	case allEvicted:
+	case AllEvicted:
 		return "allEvicted"
 	}
 	return "unknown"
@@ -514,7 +481,7 @@ func (s StatsLoadedStatus) StatusToString() string {
 // IsAnalyzed indicates whether the column is analyzed.
 // The set of IsAnalyzed columns is a subset of the set of StatsAvailable columns.
 func (c *Column) IsAnalyzed() bool {
-	return c.StatsVer != Version0
+	return c.GetStatsVer() != Version0
 }
 
 // StatsAvailable indicates whether the column stats are collected.

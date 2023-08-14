@@ -218,7 +218,7 @@ func TestSplitBatchCreateTableFailWithEntryTooLarge(t *testing.T) {
 
 func TestTheSessionIsoation(t *testing.T) {
 	req := require.New(t)
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	ctx := context.Background()
 
 	g := Glue{}

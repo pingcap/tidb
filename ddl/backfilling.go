@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
+	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -190,36 +191,24 @@ type reorgBackfillTask struct {
 	physicalTable table.PhysicalTable
 
 	// TODO: Remove the following fields after remove the function of run.
-	id         int
-	startKey   kv.Key
-	endKey     kv.Key
-	endInclude bool
-	jobID      int64
-	sqlQuery   string
-	priority   int
+	id       int
+	startKey kv.Key
+	endKey   kv.Key
+	jobID    int64
+	sqlQuery string
+	priority int
 }
 
 func (r *reorgBackfillTask) getJobID() int64 {
 	return r.jobID
 }
 
-func (r *reorgBackfillTask) excludedEndKey() kv.Key {
-	if r.endInclude {
-		return r.endKey.Next()
-	}
-	return r.endKey
-}
-
 func (r *reorgBackfillTask) String() string {
 	pID := r.physicalTable.GetPhysicalID()
 	start := hex.EncodeToString(r.startKey)
 	end := hex.EncodeToString(r.endKey)
-	inclusion := ")"
 	jobID := r.getJobID()
-	if r.endInclude {
-		inclusion = "]"
-	}
-	return fmt.Sprintf("taskID: %d, physicalTableID: %d, range: [%s, %s%s, jobID: %d", r.id, pID, start, end, inclusion, jobID)
+	return fmt.Sprintf("taskID: %d, physicalTableID: %d, range: [%s, %s), jobID: %d", r.id, pID, start, end, jobID)
 }
 
 // mergeBackfillCtxToResult merge partial result in taskCtx into result.
@@ -555,11 +544,17 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 	//nolint:forcetypeassert
 	phyTbl := t.(table.PhysicalTable)
 	jobCtx := reorgInfo.d.jobContext(job.ID)
-	for i, keyRange := range kvRanges {
+	for _, keyRange := range kvRanges {
 		taskID := taskIDAlloc.alloc()
 		startKey := keyRange.StartKey
+		if len(startKey) == 0 {
+			startKey = prefix
+		}
 		endKey := keyRange.EndKey
-		endK, err := getRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, prefix, keyRange.StartKey, endKey)
+		if len(endKey) == 0 {
+			endKey = prefix.PrefixNext()
+		}
+		endK, err := GetRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, prefix, startKey, endKey)
 		if err != nil {
 			logutil.BgLogger().Info("get backfill range task, get reverse key failed", zap.String("category", "ddl"), zap.Error(err))
 		} else {
@@ -567,12 +562,6 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 				zap.Int("id", taskID), zap.Int64("pTbl", phyTbl.GetPhysicalID()),
 				zap.String("end key", hex.EncodeToString(endKey)), zap.String("current end key", hex.EncodeToString(endK)))
 			endKey = endK
-		}
-		if len(startKey) == 0 {
-			startKey = prefix
-		}
-		if len(endKey) == 0 {
-			endKey = prefix.PrefixNext()
 		}
 
 		task := &reorgBackfillTask{
@@ -582,8 +571,7 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 			priority:      reorgInfo.Priority,
 			startKey:      startKey,
 			endKey:        endKey,
-			// If the boundaries overlap, we should ignore the preceding endKey.
-			endInclude: endK.Cmp(keyRange.EndKey) != 0 || i == len(kvRanges)-1}
+		}
 		batchTasks = append(batchTasks, task)
 	}
 	return batchTasks
@@ -732,8 +720,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.Physical
 		if consumer.shouldAbort() {
 			break
 		}
-		rangeEndKey := kvRanges[len(kvRanges)-1].EndKey
-		startKey = rangeEndKey.Next()
+		startKey = kvRanges[len(kvRanges)-1].EndKey
 		if startKey.Cmp(endKey) >= 0 {
 			break
 		}
@@ -789,6 +776,7 @@ func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, keyPre
 	snap.SetOption(kv.Priority, priority)
 	snap.SetOption(kv.RequestSourceInternal, true)
 	snap.SetOption(kv.RequestSourceType, ctx.ddlJobSourceType())
+	snap.SetOption(kv.ExplicitRequestSourceType, kvutil.ExplicitTypeDDL)
 	if tagger := ctx.getResourceGroupTaggerForTopSQL(); tagger != nil {
 		snap.SetOption(kv.ResourceGroupTagger, tagger)
 	}
@@ -829,8 +817,8 @@ func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, keyPre
 	return nil
 }
 
-// getRegionEndKey gets the actual end key for the range of [startKey, endKey].
-func getRangeEndKey(ctx *JobContext, store kv.Storage, priority int, keyPrefix kv.Key, startKey, endKey kv.Key) (kv.Key, error) {
+// GetRangeEndKey gets the actual end key for the range of [startKey, endKey).
+func GetRangeEndKey(ctx *JobContext, store kv.Storage, priority int, keyPrefix kv.Key, startKey, endKey kv.Key) (kv.Key, error) {
 	snap := store.GetSnapshot(kv.MaxVersion)
 	snap.SetOption(kv.Priority, priority)
 	if tagger := ctx.getResourceGroupTaggerForTopSQL(); tagger != nil {
@@ -838,20 +826,21 @@ func getRangeEndKey(ctx *JobContext, store kv.Storage, priority int, keyPrefix k
 	}
 	snap.SetOption(kv.RequestSourceInternal, true)
 	snap.SetOption(kv.RequestSourceType, ctx.ddlJobSourceType())
-	it, err := snap.IterReverse(endKey.Next())
+	snap.SetOption(kv.ExplicitRequestSourceType, kvutil.ExplicitTypeDDL)
+	it, err := snap.IterReverse(endKey, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	defer it.Close()
 
 	if !it.Valid() || !it.Key().HasPrefix(keyPrefix) {
-		return startKey, nil
+		return startKey.Next(), nil
 	}
 	if it.Key().Cmp(startKey) < 0 {
-		return startKey, nil
+		return startKey.Next(), nil
 	}
 
-	return it.Key(), nil
+	return it.Key().Next(), nil
 }
 
 func mergeWarningsAndWarningsCount(partWarnings, totalWarnings map[errors.ErrorID]*terror.Error, partWarningsCount, totalWarningsCount map[errors.ErrorID]int64) (map[errors.ErrorID]*terror.Error, map[errors.ErrorID]int64) {

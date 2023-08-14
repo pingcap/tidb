@@ -24,7 +24,7 @@ func WithCompression(inner ExternalStorage, compressionType CompressType) Extern
 	return &withCompression{ExternalStorage: inner, compressType: compressionType}
 }
 
-func (w *withCompression) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
+func (w *withCompression) Create(ctx context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
 	var (
 		writer ExternalFileWriter
 		err    error
@@ -32,7 +32,7 @@ func (w *withCompression) Create(ctx context.Context, name string) (ExternalFile
 	if s3Storage, ok := w.ExternalStorage.(*S3Storage); ok {
 		writer, err = s3Storage.CreateUploader(ctx, name)
 	} else {
-		writer, err = w.ExternalStorage.Create(ctx, name)
+		writer, err = w.ExternalStorage.Create(ctx, name, nil)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)

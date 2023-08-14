@@ -17,11 +17,11 @@ package core
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
-	"golang.org/x/exp/slices"
 )
 
 // predicateSimplification consolidates different predcicates on a column and its equivalence classes.  Initial out is for
@@ -156,8 +156,8 @@ func applyPredicateSimplification(sctx sessionctx.Context, predicates []expressi
 
 func (ds *DataSource) predicateSimplification(*logicalOptimizeOp) LogicalPlan {
 	p := ds.self.(*DataSource)
-	p.pushedDownConds = applyPredicateSimplification(p.ctx, p.pushedDownConds)
-	p.allConds = applyPredicateSimplification(p.ctx, p.allConds)
+	p.pushedDownConds = applyPredicateSimplification(p.SCtx(), p.pushedDownConds)
+	p.allConds = applyPredicateSimplification(p.SCtx(), p.allConds)
 	return p
 }
 

@@ -19,6 +19,7 @@ import (
 	"encoding/gob"
 	"math"
 	"math/rand"
+	"slices"
 	"sort"
 	goatomic "sync/atomic"
 	"time"
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // Feedback represents the total scan count in range [lower, upper).
@@ -95,8 +95,8 @@ type QueryFeedbackKey struct {
 
 // QueryFeedbackMap is the collection of feedbacks.
 type QueryFeedbackMap struct {
-	Size      int
 	Feedbacks map[QueryFeedbackKey][]*QueryFeedback
+	Size      int
 }
 
 // NewQueryFeedbackMap builds a feedback collection.
@@ -353,19 +353,19 @@ func NonOverlappedFeedbacks(sc *stmtctx.StatementContext, fbs []Feedback) ([]Fee
 	// Sort feedbacks by end point and start point incrementally, then pick every feedback that is not overlapped
 	// with the previous chosen feedbacks.
 	var existsErr bool
-	slices.SortFunc(fbs, func(i, j Feedback) bool {
+	slices.SortFunc(fbs, func(i, j Feedback) int {
 		res, err := i.Upper.Compare(sc, j.Upper, collate.GetBinaryCollator())
 		if err != nil {
 			existsErr = true
 		}
 		if existsErr || res != 0 {
-			return res < 0
+			return res
 		}
 		res, err = i.Lower.Compare(sc, j.Lower, collate.GetBinaryCollator())
 		if err != nil {
 			existsErr = true
 		}
-		return res < 0
+		return res
 	})
 	if existsErr {
 		return fbs, false
@@ -387,9 +387,9 @@ func NonOverlappedFeedbacks(sc *stmtctx.StatementContext, fbs []Feedback) ([]Fee
 
 // BucketFeedback stands for all the feedback for a bucket.
 type BucketFeedback struct {
-	feedback []Feedback   // All the feedback info in the same bucket.
 	lower    *types.Datum // The lower bound of the new bucket.
 	upper    *types.Datum // The upper bound of the new bucket.
+	feedback []Feedback   // All the feedback info in the same bucket.
 }
 
 // outOfRange checks if the `val` is between `min` and `max`.

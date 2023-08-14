@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Copyright 2019 PingCAP, Inc.
 #
@@ -18,7 +18,7 @@ set -eux
 
 cur_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-tidb-lightning-ctl.test -test.coverprofile="$TEST_DIR/cov.ctl.$TEST_NAME.$$.out" DEVEL \
+tidb-lightning-ctl.test -test.coverprofile="$COV_DIR/cov.ctl.$TEST_NAME.$$.out" DEVEL \
     --ca "$TEST_DIR/certs/ca.pem" \
     --cert "$TEST_DIR/certs/lightning.pem" \
     --key "$TEST_DIR/certs/lightning.key" \
