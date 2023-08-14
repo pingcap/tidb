@@ -55,6 +55,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 		BufferItems:        bufferItems,
 		OnEvict:            result.onEvict,
 		OnExit:             result.onExit,
+		OnReject:           result.onReject,
 		IgnoreInternalCost: intest.InTest,
 		Metrics:            intest.InTest,
 	})
@@ -114,6 +115,11 @@ func DropEvicted(item statistics.TableCacheItem) {
 		return
 	}
 	item.DropUnnecessaryData()
+}
+
+func (s *LFU) onReject(item *ristretto.Item) {
+	metrics.RejectCounter.Add(1.0)
+	s.onEvict(item)
 }
 
 func (s *LFU) onEvict(item *ristretto.Item) {
