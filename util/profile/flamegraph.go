@@ -96,7 +96,7 @@ func (n *flamegraphNode) sortedChildren() []flamegraphNodeWithLocation {
 	}
 	slices.SortFunc(children, func(i, j flamegraphNodeWithLocation) int {
 		if i.cumValue != j.cumValue {
-			return cmp.Compare(i.cumValue, j.cumValue)
+			return cmp.Compare(j.cumValue, i.cumValue)
 		}
 		return cmp.Compare(i.locID, j.locID)
 	})
