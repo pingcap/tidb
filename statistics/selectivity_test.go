@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
 )
@@ -121,7 +120,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
 	}
 	testKit.MustExec("analyze table t with 2000 samples")
-	testKit.MustExec("set @@tidb_opt_consider_realtime_stats = true")
+	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
 
 	h := dom.StatsHandle()
 	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -177,7 +176,7 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	}
 	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	testKit.MustExec("analyze table t with 1 samplerate, 0 topn")
-	testKit.MustExec("set @@tidb_opt_consider_realtime_stats = true")
+	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
 	testKit.MustExec("delete from t where a < 500")
 	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.Nil(t, h.Update(dom.InfoSchema()))
@@ -222,7 +221,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	require.NoError(t, err)
 	statsTbl := h.GetTableStats(table.Meta())
 
-	sctx := mock.NewContext()
+	sctx := testKit.Session()
 	colID := table.Meta().Columns[0].ID
 	count, err := statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(30, 30))
 	require.NoError(t, err)
@@ -288,7 +287,7 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 	require.NoError(t, err)
 	statsTbl := dom.StatsHandle().GetTableStats(table.Meta())
 
-	sctx := mock.NewContext()
+	sctx := testKit.Session()
 	idxID := table.Meta().Indices[0].ID
 	count, err := statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(7, 7))
 	require.NoError(t, err)
@@ -502,7 +501,7 @@ func TestSelectivity(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	statsTbl, err := prepareSelectivity(testKit, dom)
-	testKit.MustExec("set @@tidb_opt_consider_realtime_stats = true")
+	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
 	require.NoError(t, err)
 	longExpr := "0 < a and a = 1 "
 	for i := 1; i < 64; i++ {
@@ -775,7 +774,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl := h.GetTableStats(table.Meta())
-	sctx := mock.NewContext()
+	sctx := testKit.Session()
 	col := statsTbl.Columns[table.Meta().Columns[0].ID]
 
 	var input []struct {
@@ -1055,7 +1054,7 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 	h := dom.StatsHandle()
 	testKit.MustExec("use test")
 	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	testKit.MustExec("set @@tidb_opt_consider_realtime_stats = true")
+	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int unsigned) " +
 		"partition by range (a) " +
@@ -1121,7 +1120,7 @@ func TestIssue39593(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, index idx(a, b))")
-	testKit.MustExec("set @@tidb_opt_consider_realtime_stats = true")
+	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
 	is := dom.InfoSchema()
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)

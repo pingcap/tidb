@@ -1391,7 +1391,7 @@ const (
 	DefTiDBLockUnchangedKeys                          = true
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
-	DefTiDBOptObjective                               = OptObjectiveModerate
+	DefTiDBOptObjective                               = OptObjectiveDetermined
 )
 
 // Process global variables.

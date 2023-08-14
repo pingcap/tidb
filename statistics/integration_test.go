@@ -511,7 +511,7 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 	tk.MustExec("set session tidb_enable_pseudo_for_outdated_stats=1")
-	tk.MustExec("set @@tidb_opt_consider_realtime_stats = true")
+	tk.MustExec("set @@tidb_opt_objective = 'moderate'")
 
 	h := dom.StatsHandle()
 	tk.MustExec("use test")
@@ -589,7 +589,7 @@ func TestNotLoadedStatsOnAllNULLCol(t *testing.T) {
 	tk.MustExec("insert into t2 values(null), (null)")
 	tk.MustExec("analyze table t1;")
 	tk.MustExec("analyze table t2;")
-	tk.MustExec("set @@tidb_opt_consider_realtime_stats = true")
+	tk.MustExec("set @@tidb_opt_objective = 'moderate'")
 
 	res := tk.MustQuery("explain format = 'brief' select * from t1 left join t2 on t1.a=t2.a order by t1.a, t2.a")
 	res.Check(testkit.Rows(
