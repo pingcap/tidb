@@ -16,6 +16,7 @@ package core
 
 import (
 	"bytes"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"math"
 	"time"
 
@@ -181,6 +182,8 @@ type PlanCacheValue struct {
 	BinVarTypes       []byte     // variable types under binary protocol
 	IsBinProto        bool       // whether this plan is under binary protocol
 	BindSQL           string
+	// stmtHints stores the hints which set session variables, because the hints won't be processed using cached plan.
+	stmtHints *stmtctx.StmtHints
 }
 
 func (v *PlanCacheValue) varTypesUnchanged(binVarTps []byte, txtVarTps []*types.FieldType) bool {
@@ -192,7 +195,7 @@ func (v *PlanCacheValue) varTypesUnchanged(binVarTps []byte, txtVarTps []*types.
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
-	isBinProto bool, binVarTypes []byte, txtVarTps []*types.FieldType, bindSQL string) *PlanCacheValue {
+	isBinProto bool, binVarTypes []byte, txtVarTps []*types.FieldType, stmtCtx *stmtctx.StatementContext) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
@@ -208,7 +211,8 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 		TxtVarTypes:       userVarTypes,
 		BinVarTypes:       binVarTypes,
 		IsBinProto:        isBinProto,
-		BindSQL:           bindSQL,
+		BindSQL:           stmtCtx.BindSQL,
+		stmtHints:         stmtCtx.StmtHints.Clone(),
 	}
 }
 
