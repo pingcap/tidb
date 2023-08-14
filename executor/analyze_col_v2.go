@@ -432,18 +432,18 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 		}
 	}()
 	tasks := e.buildSubIndexJobForSpecialIndex(indexInfos)
-	statsConcurrncy, err := getBuildStatsConcurrency(e.ctx)
+	statsConcurrency, err := getBuildStatsConcurrency(e.ctx)
 	taskCh := make(chan *analyzeTask, len(tasks))
 	for _, task := range tasks {
 		AddNewAnalyzeJob(e.ctx, task.job)
 	}
 	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
-	if len(tasks) < statsConcurrncy {
-		statsConcurrncy = len(tasks)
+	if len(tasks) < statsConcurrency {
+		statsConcurrency = len(tasks)
 	}
 	var subIndexWorkerWg = NewAnalyzeResultsNotifyWaitGroupWrapper(resultsCh)
-	subIndexWorkerWg.Add(statsConcurrncy)
-	for i := 0; i < statsConcurrncy; i++ {
+	subIndexWorkerWg.Add(statsConcurrency)
+	for i := 0; i < statsConcurrency; i++ {
 		subIndexWorkerWg.Run(func() { e.subIndexWorkerForNDV(taskCh, resultsCh) })
 	}
 	for _, task := range tasks {
@@ -454,7 +454,7 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 	totalResult := analyzeIndexNDVTotalResult{
 		results: make(map[int64]*statistics.AnalyzeResults, len(indexInfos)),
 	}
-	for panicCnt < statsConcurrncy {
+	for panicCnt < statsConcurrency {
 		results, ok := <-resultsCh
 		if !ok {
 			break
