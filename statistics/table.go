@@ -1274,7 +1274,7 @@ const fakePhysicalID int64 = -1
 // Usually, we don't want to trigger stats loading for pseudo table. But there are exceptional cases.
 // In such cases, pass the col/idx IDs that are allowed to trigger loading in allowTriggerLoading{Col,Idx}IDs.
 // Such case could possibly happen in getStatsTable().
-func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoadingColIDs, allowTriggerLoadingIdxIDs map[int64]struct{}) *Table {
+func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool) *Table {
 	pseudoHistColl := HistColl{
 		RealtimeCount:  PseudoRowCount,
 		PhysicalID:     tblInfo.ID,
@@ -1297,7 +1297,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoadingColIDs, allowTrigg
 				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
 				Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
 			}
-			if _, ok := allowTriggerLoadingColIDs[col.ID]; ok {
+			if allowTriggerLoading {
 				t.Columns[col.ID].PhysicalID = tblInfo.ID
 			}
 		}
@@ -1309,7 +1309,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoadingColIDs, allowTrigg
 				Info:       idx,
 				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0),
 			}
-			if _, ok := allowTriggerLoadingIdxIDs[idx.ID]; ok {
+			if allowTriggerLoading {
 				t.Indices[idx.ID].PhysicalID = tblInfo.ID
 			}
 		}
