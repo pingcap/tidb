@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
@@ -70,12 +71,14 @@ func (dm *Manager) clearRunningTasks() {
 // Dispatcher schedule and monitor tasks.
 // The scheduling task number is limited by size of gPool.
 type Manager struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	taskMgr *storage.TaskManager
-	wg      tidbutil.WaitGroupWrapper
-	gPool   *spool.Pool
-	inited  bool
+	ctx          context.Context
+	cancel       context.CancelFunc
+	taskMgr      *storage.TaskManager
+	wg           tidbutil.WaitGroupWrapper
+	ownerManager owner.Manager
+
+	gPool  *spool.Pool
+	inited bool
 
 	runningTasks struct {
 		syncutil.RWMutex
@@ -86,10 +89,11 @@ type Manager struct {
 }
 
 // NewManager creates a dispatcher struct.
-func NewManager(ctx context.Context, taskTable *storage.TaskManager) (*Manager, error) {
+func NewManager(ctx context.Context, taskTable *storage.TaskManager, ownerManager owner.Manager) (*Manager, error) {
 	dispatcherManager := &Manager{
 		taskMgr:        taskTable,
 		finishedTaskCh: make(chan *proto.Task, DefaultDispatchConcurrency),
+		ownerManager:   ownerManager,
 	}
 	gPool, err := spool.NewPool("dispatch_pool", int32(DefaultDispatchConcurrency), util.DistTask, spool.WithBlocking(true))
 	if err != nil {
@@ -184,7 +188,7 @@ func (*Manager) checkConcurrencyOverflow(cnt int) bool {
 func (dm *Manager) startDispatcher(task *proto.Task) {
 	// Using the pool with block, so it wouldn't return an error.
 	_ = dm.gPool.Run(func() {
-		dispatcher := newDispatcher(dm.ctx, dm.taskMgr, task)
+		dispatcher := newDispatcher(dm.ctx, dm.taskMgr, dm.ownerManager, task)
 		dm.setRunningTask(task, dispatcher)
 		dispatcher.executeTask()
 		dm.delRunningTask(task.ID)
@@ -193,5 +197,5 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 
 // MockDispatcher mock one dispatcher for one task, only used for tests.
 func (dm *Manager) MockDispatcher(task *proto.Task) *dispatcher {
-	return newDispatcher(dm.ctx, dm.taskMgr, task)
+	return newDispatcher(dm.ctx, dm.taskMgr, dm.ownerManager, task)
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
@@ -60,20 +61,22 @@ type TaskHandle interface {
 // Manage the lifetime of a task
 // including submitting subtasks and updating the status of a task.
 type dispatcher struct {
-	ctx     context.Context
-	taskMgr *storage.TaskManager
-	task    *proto.Task
-	logCtx  context.Context
+	ctx          context.Context
+	taskMgr      *storage.TaskManager
+	ownerManager owner.Manager
+	task         *proto.Task
+	logCtx       context.Context
 }
 
 // MockOwnerChange mock owner change in tests.
 var MockOwnerChange func()
 
-func newDispatcher(ctx context.Context, taskMgr *storage.TaskManager, task *proto.Task) *dispatcher {
+func newDispatcher(ctx context.Context, taskMgr *storage.TaskManager, ownerManager owner.Manager, task *proto.Task) *dispatcher {
 	logPrefix := fmt.Sprintf("task_id: %d, task_type: %s", task.ID, task.Type)
 	return &dispatcher{
 		ctx,
 		taskMgr,
+		ownerManager,
 		task,
 		logutil.WithKeyValue(context.Background(), "dispatcher", logPrefix),
 	}
@@ -211,6 +214,9 @@ func (d *dispatcher) handleRunning() error {
 }
 
 func (d *dispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
+	if !d.ownerManager.IsOwner() {
+		return errors.New("dispatcher is not owner anymore")
+	}
 	prevState := d.task.State
 	d.task.State = taskState
 	for i := 0; i < retryTimes; i++ {

@@ -1472,7 +1472,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 			return
 		}
 		var err error
-		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager)
+		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager, do.ddl.OwnerManager())
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
 			return
