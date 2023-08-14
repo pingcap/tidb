@@ -542,7 +542,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 	return nil
 }
 
-func TestHandleAnalyzeOptions(t *testing.T) {
+func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 	require.Equal(t, len(analyzeOptionDefault), len(analyzeOptionDefaultV2), "analyzeOptionDefault and analyzeOptionDefaultV2 should have the same length")
 
 	tests := []struct {
@@ -635,6 +635,16 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 				require.Contains(t, err.Error(), tt.ExpectedErr)
 			} else {
 				require.NoError(t, err)
+			}
+
+			if tt.statsVer == 2 {
+				_, err := handleAnalyzeOptionsV2(tt.opts)
+				if tt.ExpectedErr != "" {
+					require.Error(t, err)
+					require.Contains(t, err.Error(), tt.ExpectedErr)
+				} else {
+					require.NoError(t, err)
+				}
 			}
 		})
 	}
