@@ -29,6 +29,40 @@ type demoChunk struct {
 	res int
 }
 
+type exampleAsyncOperator struct {
+	BaseOperator
+}
+
+// Close implements BaseAsyncOperatorImpl.
+func (oi *exampleAsyncOperator) Close() {
+	oi.Source.(*AsyncDataChannel[asyncChunk]).channel.ReleaseAndWait()
+}
+
+// Open implements BaseAsyncOperatorImpl.
+func (oi *exampleAsyncOperator) Open() error {
+	oi.Source.(*AsyncDataChannel[asyncChunk]).channel.SetCreateWorker(
+		func() workerpool.Worker[asyncChunk] {
+			return &asyncWorker{oi.Sink}
+		},
+	)
+	oi.Source.(*AsyncDataChannel[asyncChunk]).channel.Start()
+	return nil
+}
+
+func newExampleAsyncOperator(name string, component poolutil.Component, concurrency int, sink DataSink) *exampleAsyncOperator {
+	pool, _ := workerpool.NewWorkerPoolWithoutCreateWorker[asyncChunk](name, component, concurrency)
+	source := &AsyncDataChannel[asyncChunk]{}
+	source.channel = pool
+	impl := &exampleAsyncOperator{}
+	impl.Source = source
+	impl.Sink = sink
+	return impl
+}
+
+func (*exampleAsyncOperator) Display() string {
+	return "ExampleAsyncOperator"
+}
+
 type asyncWorker struct {
 	sink DataSink
 }
@@ -41,40 +75,6 @@ func (aw *asyncWorker) HandleTask(task asyncChunk) {
 
 // Close implement the Close interface for workerpool.
 func (*asyncWorker) Close() {}
-
-type exampleAsyncOperatorImpl struct {
-	BaseOperator
-}
-
-// close implements BaseAsyncOperatorImpl.
-func (oi *exampleAsyncOperatorImpl) close() {
-	oi.Source.(*AsyncDataChannel[asyncChunk]).channel.ReleaseAndWait()
-}
-
-// open implements BaseAsyncOperatorImpl.
-func (oi *exampleAsyncOperatorImpl) open() error {
-	oi.Source.(*AsyncDataChannel[asyncChunk]).channel.SetCreateWorker(
-		func() workerpool.Worker[asyncChunk] {
-			return &asyncWorker{oi.Sink}
-		},
-	)
-	oi.Source.(*AsyncDataChannel[asyncChunk]).channel.Start()
-	return nil
-}
-
-func newExampleAsyncOperatorImpl(name string, component poolutil.Component, concurrency int, sink DataSink) *exampleAsyncOperatorImpl {
-	pool, _ := workerpool.NewWorkerPoolWithoutCreateWorker[asyncChunk](name, component, concurrency)
-	source := &AsyncDataChannel[asyncChunk]{}
-	source.channel = pool
-	impl := &exampleAsyncOperatorImpl{}
-	impl.Source = source
-	impl.Sink = sink
-	return impl
-}
-
-func (*exampleAsyncOperatorImpl) display() string {
-	return "ExampleAsyncOperator"
-}
 
 type simpleAsyncDataSink struct {
 	Res int

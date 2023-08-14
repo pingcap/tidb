@@ -24,32 +24,13 @@ type BaseOperator struct {
 	Sink   DataSink
 }
 
-// BaseAysncOperatorImpl defines the interface for each operator.
-// BaseAysncOperatorImpl is the basic operation unit in the task execution.
-// In each BaseAysncOperatorImpl, it will use a `workerpool` to run several workers.
-type BaseAysncOperatorImpl interface {
-	open() error
-	close()
-	display() string
-}
-
-// AsyncOperator used in async mode.
-// Every operator will use a `workerpool` to run several workers.
-type AsyncOperator struct {
-	BaseOperator
-	impl BaseAysncOperatorImpl
-}
-
-func (op *AsyncOperator) open() error {
-	return op.impl.open()
-}
-
-func (op *AsyncOperator) close() {
-	op.impl.close()
-}
-
-func (op *AsyncOperator) display() string {
-	return op.impl.display()
+// AsyncOperator defines the interface for each operator.
+// AsyncOperator is the basic operation unit in the task execution.
+// In each AsyncOperator, it will use a `workerpool` to run several workers.
+type AsyncOperator interface {
+	Open() error
+	Close()
+	Display() string
 }
 
 // AsyncDataChannel can serve as DataSource and DataSink.
@@ -79,12 +60,4 @@ func (*AsyncDataChannel[T]) IsFull() bool { return false }
 func (c *AsyncDataChannel[T]) Write(data any) error {
 	c.channel.AddTask(data.(T))
 	return nil
-}
-
-// NewAsyncOperator generate an AsyncOperator.
-func NewAsyncOperator(impl BaseAysncOperatorImpl, source DataSource, sink DataSink) *AsyncOperator {
-	res := &AsyncOperator{impl: impl}
-	res.Source = source
-	res.Sink = sink
-	return res
 }

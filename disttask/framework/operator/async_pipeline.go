@@ -19,35 +19,35 @@ package operator
 //
 //	Eg: op1.channel.AddTask ---> op1.worker.HandleTask  ---> op2.channel.AddTask ---> op2.worker.HandleTask.
 type AsyncPipeline struct {
-	ops []*AsyncOperator
+	ops []AsyncOperator
 }
 
 // Execute start all operators waiting to handle tasks.
 func (p *AsyncPipeline) Execute() {
 	// Start running each operator.
 	for _, op := range p.ops {
-		op.open()
+		op.Open()
 	}
 }
 
 // Close wait all tasks done.
 func (p *AsyncPipeline) Close() {
 	for _, op := range p.ops {
-		op.close()
+		op.Close()
 	}
 }
 
 // AddOperator insert operator to the end of the list
-func (p *AsyncPipeline) AddOperator(op *AsyncOperator) {
+func (p *AsyncPipeline) AddOperator(op AsyncOperator) {
 	p.ops = append(p.ops, op)
 }
 
 // FirstOperator get the first operator.
-func (p *AsyncPipeline) FirstOperator() *AsyncOperator {
+func (p *AsyncPipeline) FirstOperator() AsyncOperator {
 	return p.ops[0]
 }
 
 // LastOperator get the last operator.
-func (p *AsyncPipeline) LastOperator() *AsyncOperator {
+func (p *AsyncPipeline) LastOperator() AsyncOperator {
 	return p.ops[len(p.ops)-1]
 }
