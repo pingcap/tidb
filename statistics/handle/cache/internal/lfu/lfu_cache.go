@@ -117,9 +117,8 @@ func DropEvicted(item statistics.TableCacheItem) {
 	item.DropUnnecessaryData()
 }
 
-func (s *LFU) onReject(item *ristretto.Item) {
+func (s *LFU) onReject(*ristretto.Item) {
 	metrics.RejectCounter.Add(1.0)
-	s.onEvict(item)
 }
 
 func (s *LFU) onEvict(item *ristretto.Item) {
