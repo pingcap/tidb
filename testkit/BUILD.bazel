@@ -24,6 +24,7 @@ go_library(
         "//planner/core",
         "//resourcemanager",
         "//session",
+        "//session/sessionapi",
         "//session/txninfo",
         "//sessionctx",
         "//sessionctx/variable",

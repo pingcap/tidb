@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/sessionapi"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
@@ -34,7 +34,7 @@ type MockSessionManager struct {
 	SerID    uint64
 	TxnInfo  []*txninfo.TxnInfo
 	Dom      *domain.Domain
-	Conn     map[uint64]session.Session
+	Conn     map[uint64]sessionapi.Session
 	mu       sync.Mutex
 	ConAttrs map[uint64]map[string]string
 
@@ -185,7 +185,7 @@ func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
 func (msm *MockSessionManager) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
 	msm.mu.Lock()
 	for _, se := range msm.Conn {
-		session.RemoveLockDDLJobs(se, job2ver, job2ids, false)
+		sessionapi.RemoveLockDDLJobs(se, job2ver, job2ids, false)
 	}
 	msm.mu.Unlock()
 }
