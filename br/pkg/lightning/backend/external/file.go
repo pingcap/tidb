@@ -108,6 +108,14 @@ func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
 	return nil
 }
 
+// Close closes the KeyValueStore and append the last range property.
+func (s *KeyValueStore) Close() {
+	if s.rc.currProp.keys > 0 {
+		newProp := *s.rc.currProp
+		s.rc.props = append(s.rc.props, &newProp)
+	}
+}
+
 var statSuffix = filepath.Join("_stat", "0")
 
 // GetAllFileNames returns a FilePathHandle that contains all data file paths

@@ -74,14 +74,11 @@ func DummyOnCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
-	ctx   context.Context
-	store storage.ExternalStorage
-
-	memSizeLimit   uint64
-	writeBatchSize uint64
-	propSizeDist   uint64
-	propKeysDist   uint64
-	onClose        OnCloseFunc
+	memSizeLimit    uint64
+	writeBatchCount uint64
+	propSizeDist    uint64
+	propKeysDist    uint64
+	onClose         OnCloseFunc
 
 	bufferPool *membuf.Pool
 }
@@ -89,11 +86,11 @@ type WriterBuilder struct {
 // NewWriterBuilder creates a WriterBuilder.
 func NewWriterBuilder() *WriterBuilder {
 	return &WriterBuilder{
-		memSizeLimit:   256 * size.MB,
-		writeBatchSize: 8 * 1024,
-		propSizeDist:   1 * size.MB,
-		propKeysDist:   8 * 1024,
-		onClose:        DummyOnCloseFunc,
+		memSizeLimit:    256 * size.MB,
+		writeBatchCount: 8 * 1024,
+		propSizeDist:    1 * size.MB,
+		propKeysDist:    8 * 1024,
+		onClose:         DummyOnCloseFunc,
 	}
 }
 
@@ -103,9 +100,9 @@ func (b *WriterBuilder) SetMemorySizeLimit(size uint64) *WriterBuilder {
 	return b
 }
 
-// SetWriterBatchSize sets the batch size of the writer.
-func (b *WriterBuilder) SetWriterBatchSize(size uint64) *WriterBuilder {
-	b.writeBatchSize = size
+// SetWriterBatchCount sets the batch count of the writer.
+func (b *WriterBuilder) SetWriterBatchCount(count uint64) *WriterBuilder {
+	b.writeBatchCount = count
 	return b
 }
 
@@ -135,7 +132,6 @@ func (b *WriterBuilder) SetBufferPool(bufferPool *membuf.Pool) *WriterBuilder {
 
 // Build builds a new Writer.
 func (b *WriterBuilder) Build(
-	ctx context.Context,
 	store storage.ExternalStorage,
 	writerID int,
 	filenamePrefix string,
@@ -145,7 +141,6 @@ func (b *WriterBuilder) Build(
 		bp = membuf.NewPool()
 	}
 	return &Writer{
-		ctx: ctx,
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
 			currProp:     &rangeProperty{},
@@ -155,7 +150,7 @@ func (b *WriterBuilder) Build(
 		memSizeLimit:   b.memSizeLimit,
 		store:          store,
 		kvBuffer:       bp.NewBuffer(),
-		writeBatch:     make([]common.KvPair, 0, b.writeBatchSize),
+		writeBatch:     make([]common.KvPair, 0, b.writeBatchCount),
 		currentSeq:     0,
 		filenamePrefix: filenamePrefix,
 		writerID:       writerID,
@@ -167,7 +162,6 @@ func (b *WriterBuilder) Build(
 
 // Writer is used to write data into external storage.
 type Writer struct {
-	ctx            context.Context
 	store          storage.ExternalStorage
 	writerID       int
 	currentSeq     int
@@ -197,13 +191,9 @@ type Writer struct {
 // Note that this method is NOT thread-safe.
 func (w *Writer) AppendRows(ctx context.Context, _ []string, rows encode.Rows) error {
 	kvs := kv.Rows2KvPairs(rows)
-	if len(kvs) == 0 {
-		return nil
-	}
 	for _, pair := range kvs {
 		w.batchSize += uint64(len(pair.Key) + len(pair.Val))
-		buf := w.kvBuffer.AllocBytes(len(pair.Key))
-		key := append(buf[:0], pair.Key...)
+		key := w.kvBuffer.AddBytes(pair.Key)
 		val := w.kvBuffer.AddBytes(pair.Val)
 		w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val})
 		if w.batchSize >= w.memSizeLimit {
@@ -271,17 +261,17 @@ func (w *Writer) flushKVs(ctx context.Context) (err error) {
 		return nil
 	}
 
-	dataWriter, statWriter, err := w.createStorageWriter()
+	dataWriter, statWriter, err := w.createStorageWriter(ctx)
 	if err != nil {
 		return err
 	}
 
 	ts := time.Now()
-	var saveBytes uint64
+	var savedBytes uint64
 
 	defer func() {
 		w.currentSeq++
-		err1, err2 := dataWriter.Close(w.ctx), statWriter.Close(w.ctx)
+		err1, err2 := dataWriter.Close(ctx), statWriter.Close(ctx)
 		if err != nil {
 			return
 		}
@@ -297,8 +287,8 @@ func (w *Writer) flushKVs(ctx context.Context) (err error) {
 		}
 		logutil.Logger(ctx).Info("flush kv",
 			zap.Duration("time", time.Since(ts)),
-			zap.Uint64("bytes", saveBytes),
-			zap.Any("rate", float64(saveBytes)/1024.0/1024.0/time.Since(ts).Seconds()))
+			zap.Uint64("bytes", savedBytes),
+			zap.Any("rate", float64(savedBytes)/1024.0/1024.0/time.Since(ts).Seconds()))
 	}()
 
 	slices.SortFunc(w.writeBatch[:], func(i, j common.KvPair) int {
@@ -319,11 +309,8 @@ func (w *Writer) flushKVs(ctx context.Context) (err error) {
 		kvSize += uint64(len(pair.Key)) + uint64(len(pair.Val))
 	}
 
-	if w.rc.currProp.keys > 0 {
-		newProp := *w.rc.currProp
-		w.rc.props = append(w.rc.props, &newProp)
-	}
-	_, err = statWriter.Write(w.ctx, w.rc.encode())
+	w.kvStore.Close()
+	_, err = statWriter.Write(ctx, w.rc.encode())
 	if err != nil {
 		return err
 	}
@@ -333,19 +320,19 @@ func (w *Writer) flushKVs(ctx context.Context) (err error) {
 	w.writeBatch = w.writeBatch[:0]
 	w.rc.reset()
 	w.kvBuffer.Reset()
-	saveBytes = w.batchSize
+	savedBytes = w.batchSize
 	w.batchSize = 0
 	return nil
 }
 
-func (w *Writer) createStorageWriter() (data, stats storage.ExternalFileWriter, err error) {
+func (w *Writer) createStorageWriter(ctx context.Context) (data, stats storage.ExternalFileWriter, err error) {
 	dataPath := filepath.Join(w.filenamePrefix, strconv.Itoa(w.currentSeq))
-	dataWriter, err := w.store.Create(w.ctx, dataPath, nil)
+	dataWriter, err := w.store.Create(ctx, dataPath, nil)
 	if err != nil {
 		return nil, nil, err
 	}
 	statPath := filepath.Join(w.filenamePrefix+"_stat", strconv.Itoa(w.currentSeq))
-	statsWriter, err := w.store.Create(w.ctx, statPath, nil)
+	statsWriter, err := w.store.Create(ctx, statPath, nil)
 	if err != nil {
 		return nil, nil, err
 	}

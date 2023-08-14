@@ -31,7 +31,7 @@ import (
 
 func TestWriter(t *testing.T) {
 	seed := time.Now().Unix()
-	rand.Seed(uint64(1))
+	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
@@ -39,7 +39,7 @@ func TestWriter(t *testing.T) {
 	writer := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
-		Build(ctx, memStore, 0, "/test")
+		Build(memStore, 0, "/test")
 
 	kvCnt := rand.Intn(10) + 10
 	kvs := make([]common.KvPair, kvCnt)
