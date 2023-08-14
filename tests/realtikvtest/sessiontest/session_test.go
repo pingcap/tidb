@@ -3817,6 +3817,13 @@ func TestPrepareExecuteWithSQLHints(t *testing.T) {
 			},
 		},
 		{
+			hint: "READ_CONSISTENT_REPLICA()",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasReplicaReadHint)
+				require.Equal(t, byte(kv.ReplicaReadFollower), stmtHint.ReplicaRead)
+			},
+		},
+		{
 			hint: "MAX_EXECUTION_TIME(1000)",
 			check: func(stmtHint *stmtctx.StmtHints) {
 				require.True(t, stmtHint.HasMaxExecutionTime)
