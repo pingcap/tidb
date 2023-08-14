@@ -147,14 +147,10 @@ func groupByColumnsSortBySelectivity(sctx sessionctx.Context, conds []expression
 
 	// Sort exprGroups by selectivity in ascending order
 	slices.SortStableFunc(exprGroups, func(x, y expressionGroup) int {
-		c := cmp.Compare(x.selectivity, y.selectivity)
-		if c < 0 {
-			return c
-		}
 		if x.selectivity == y.selectivity && len(x.exprs) < len(y.exprs) {
 			return -1
 		}
-		return c
+		return cmp.Compare(x.selectivity, y.selectivity)
 	})
 
 	return exprGroups
