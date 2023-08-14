@@ -17,6 +17,7 @@ package statistics
 import (
 	"bytes"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/failpoint"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/twmb/murmur3"
-	"golang.org/x/exp/slices"
 )
 
 // Index represents an index histogram.
