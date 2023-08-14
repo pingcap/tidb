@@ -618,16 +618,7 @@ func (p *PhysicalTopN) ResolveIndices() (err error) {
 			return err
 		}
 	}
-<<<<<<< HEAD
-=======
-	for i, item := range p.PartitionBy {
-		newCol, err := item.Col.ResolveIndices(p.children[0].Schema())
-		if err != nil {
-			return err
-		}
-		p.PartitionBy[i].Col = newCol.(*expression.Column)
-	}
-	return
+	return nil
 }
 
 // ResolveIndices implements Plan interface.
@@ -635,13 +626,6 @@ func (p *PhysicalLimit) ResolveIndices() (err error) {
 	err = p.basePhysicalPlan.ResolveIndices()
 	if err != nil {
 		return err
-	}
-	for i, item := range p.PartitionBy {
-		newCol, err := item.Col.ResolveIndices(p.children[0].Schema())
-		if err != nil {
-			return err
-		}
-		p.PartitionBy[i].Col = newCol.(*expression.Column)
 	}
 	// To avoid that two plan shares the same column slice.
 	shallowColSlice := make([]*expression.Column, p.schema.Len())
@@ -654,7 +638,6 @@ func (p *PhysicalLimit) ResolveIndices() (err error) {
 		}
 		p.schema.Columns[i] = newCol.(*expression.Column)
 	}
->>>>>>> a84c1e875b1 (planner, executor: fix the logic for inline projection of executors (#45158))
 	return
 }
 
