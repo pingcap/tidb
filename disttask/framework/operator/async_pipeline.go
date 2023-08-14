@@ -21,11 +21,15 @@ type AsyncPipeline struct {
 }
 
 // Execute start all operators waiting to handle tasks.
-func (p *AsyncPipeline) Execute() {
+func (p *AsyncPipeline) Execute() error {
 	// Start running each operator.
 	for _, op := range p.ops {
-		op.Open()
+		err := op.Open()
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // Close wait all tasks done.

@@ -34,7 +34,8 @@ func NewAsyncPipeline() (*AsyncPipeline, any) {
 
 func TestPipelineAsync(t *testing.T) {
 	pipeline, source := NewAsyncPipeline()
-	pipeline.Execute()
+	err := pipeline.Execute()
+	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
 		_ = source.(*AsyncDataChannel[asyncChunk]).Write(asyncChunk{&demoChunk{0}})
 	}

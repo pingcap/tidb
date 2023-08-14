@@ -42,9 +42,10 @@ type AsyncDataChannel[T any] struct {
 	channel *workerpool.WorkerPool[T]
 }
 
+// Start implement the DataSource Start.
 func (*AsyncDataChannel[T]) Start() error { return nil }
 
-// Read data from source.
+// Next read data from source.
 func (*AsyncDataChannel[T]) Next() (any, error) { return nil, nil }
 
 // Display show the name.
