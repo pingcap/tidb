@@ -16,7 +16,6 @@ package core
 
 import (
 	"bytes"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"math"
 	"time"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
