@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/server/internal/column"
 	"github.com/pingcap/tidb/server/internal/resultset"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/sessionapi"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -55,7 +56,7 @@ func NewTiDBDriver(store kv.Storage) *TiDBDriver {
 
 // TiDBContext implements QueryCtx.
 type TiDBContext struct {
-	session.Session
+	sessionapi.Session
 	stmts map[int]*TiDBStatement
 }
 

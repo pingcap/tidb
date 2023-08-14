@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/session/sessionapi"
 	"github.com/pingcap/tidb/util/logutil"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -74,7 +75,7 @@ var allDDLs = []string{
 
 var mockLatestVer = currentBootstrapVersion + 1
 
-func mockUpgradeToVerLatest(s Session, ver int64) {
+func mockUpgradeToVerLatest(s sessionapi.Session, ver int64) {
 	logutil.BgLogger().Info("mock upgrade to ver latest", zap.Int64("old ver", ver), zap.Int64("mock latest ver", mockLatestVer))
 	if ver >= mockLatestVer {
 		return
@@ -113,7 +114,7 @@ func mockUpgradeToVerLatest(s Session, ver int64) {
 }
 
 // mockSimpleUpgradeToVerLatest mocks a simple bootstrapVersion(make the test faster).
-func mockSimpleUpgradeToVerLatest(s Session, ver int64) {
+func mockSimpleUpgradeToVerLatest(s sessionapi.Session, ver int64) {
 	logutil.BgLogger().Info("mock upgrade to ver latest", zap.Int64("old ver", ver), zap.Int64("mock latest ver", mockLatestVer))
 	if ver >= mockLatestVer {
 		return
@@ -164,7 +165,7 @@ const (
 // MockUpgradeToVerLatestKind is used to indicate the use of different mock bootstrapVersion.
 var MockUpgradeToVerLatestKind = defaultMockUpgradeToVerLatest
 
-func addMockBootstrapVersionForTest(s Session) {
+func addMockBootstrapVersionForTest(s sessionapi.Session) {
 	if !*WithMockUpgrade {
 		return
 	}
@@ -181,51 +182,51 @@ func addMockBootstrapVersionForTest(s Session) {
 // Callback is used for Test.
 type Callback interface {
 	// OnBootstrapBefore is called before doing bootstrap.
-	OnBootstrapBefore(s Session)
+	OnBootstrapBefore(s sessionapi.Session)
 	// OnBootstrap is called doing bootstrap.
-	OnBootstrap(s Session)
+	OnBootstrap(s sessionapi.Session)
 	// OnBootstrapAfter is called after doing bootstrap.
-	OnBootstrapAfter(s Session)
+	OnBootstrapAfter(s sessionapi.Session)
 }
 
 // BaseCallback implements Callback interfaces.
 type BaseCallback struct{}
 
 // OnBootstrapBefore implements Callback interface.
-func (*BaseCallback) OnBootstrapBefore(Session) {}
+func (*BaseCallback) OnBootstrapBefore(sessionapi.Session) {}
 
 // OnBootstrap implements Callback interface.
-func (*BaseCallback) OnBootstrap(Session) {}
+func (*BaseCallback) OnBootstrap(sessionapi.Session) {}
 
 // OnBootstrapAfter implements Callback interface.
-func (*BaseCallback) OnBootstrapAfter(Session) {}
+func (*BaseCallback) OnBootstrapAfter(sessionapi.Session) {}
 
 // TestCallback is used to customize user callback themselves.
 type TestCallback struct {
 	*BaseCallback
 
 	Cnt                       *atomicutil.Int32
-	OnBootstrapBeforeExported func(s Session)
-	OnBootstrapExported       func(s Session)
-	OnBootstrapAfterExported  func(s Session)
+	OnBootstrapBeforeExported func(s sessionapi.Session)
+	OnBootstrapExported       func(s sessionapi.Session)
+	OnBootstrapAfterExported  func(s sessionapi.Session)
 }
 
 // OnBootstrapBefore mocks the same behavior with the main bootstrap hook.
-func (tc *TestCallback) OnBootstrapBefore(s Session) {
+func (tc *TestCallback) OnBootstrapBefore(s sessionapi.Session) {
 	if tc.OnBootstrapBeforeExported != nil {
 		tc.OnBootstrapBeforeExported(s)
 	}
 }
 
 // OnBootstrap mocks the same behavior with the main bootstrap hook.
-func (tc *TestCallback) OnBootstrap(s Session) {
+func (tc *TestCallback) OnBootstrap(s sessionapi.Session) {
 	if tc.OnBootstrapExported != nil {
 		tc.OnBootstrapExported(s)
 	}
 }
 
 // OnBootstrapAfter mocks the same behavior with the main bootstrap hook.
-func (tc *TestCallback) OnBootstrapAfter(s Session) {
+func (tc *TestCallback) OnBootstrapAfter(s sessionapi.Session) {
 	if tc.OnBootstrapAfterExported != nil {
 		tc.OnBootstrapAfterExported(s)
 	}

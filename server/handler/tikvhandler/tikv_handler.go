@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/server/handler"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/sessionapi"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -825,7 +826,7 @@ type SchemaTableStorage struct {
 }
 
 func getSchemaTablesStorageInfo(h *SchemaStorageHandler, schema *model.CIStr, table *model.CIStr) (messages []*SchemaTableStorage, err error) {
-	var s session.Session
+	var s sessionapi.Session
 	if s, err = session.CreateSession(h.Store); err != nil {
 		return
 	}

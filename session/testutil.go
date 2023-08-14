@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session/sessionapi"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit/testenv"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -50,7 +51,7 @@ func CreateStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
 var sessionKitIDGenerator atomicutil.Uint64
 
 // CreateSessionAndSetID creates a session and set connection ID.
-func CreateSessionAndSetID(t *testing.T, store kv.Storage) Session {
+func CreateSessionAndSetID(t *testing.T, store kv.Storage) sessionapi.Session {
 	se, err := CreateSession4Test(store)
 	se.SetConnectionID(sessionKitIDGenerator.Inc())
 	require.NoError(t, err)
@@ -58,7 +59,7 @@ func CreateSessionAndSetID(t *testing.T, store kv.Storage) Session {
 }
 
 // MustExec executes a sql statement and asserts no error occurs.
-func MustExec(t *testing.T, se Session, sql string, args ...interface{}) {
+func MustExec(t *testing.T, se sessionapi.Session, sql string, args ...interface{}) {
 	rs, err := exec(se, sql, args...)
 	require.NoError(t, err)
 	if rs != nil {
@@ -67,13 +68,13 @@ func MustExec(t *testing.T, se Session, sql string, args ...interface{}) {
 }
 
 // MustExecToRecodeSet executes a sql statement and asserts no error occurs.
-func MustExecToRecodeSet(t *testing.T, se Session, sql string, args ...interface{}) sqlexec.RecordSet {
+func MustExecToRecodeSet(t *testing.T, se sessionapi.Session, sql string, args ...interface{}) sqlexec.RecordSet {
 	rs, err := exec(se, sql, args...)
 	require.NoError(t, err)
 	return rs
 }
 
-func exec(se Session, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+func exec(se sessionapi.Session, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	ctx := context.Background()
 	if len(args) == 0 {
 		rs, err := se.Execute(ctx, sql)
