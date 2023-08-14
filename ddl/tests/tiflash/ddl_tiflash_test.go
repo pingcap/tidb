@@ -1126,7 +1126,6 @@ func TestTiFlashFailureProgressAfterAvailable(t *testing.T) {
 		ddl.PollAvailableTableProgress(s.dom.InfoSchema(), sctx, pollTiflashContext)
 	}()
 	time.Sleep(ddl.PollTiFlashInterval)
-	s.tiflash.SetNetworkError(false)
 
 	c := make(chan struct{})
 	go func() {
