@@ -1656,8 +1656,6 @@ func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey 
 	oprStartTime := time.Now()
 	copCtx := w.copReqSenderPool.copCtx
 	vars := w.sessCtx.GetSessionVars()
-	restore := setUTCTimezone(vars)
-	defer restore()
 	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, copCtx, vars, rs.chunk)
 	if err != nil || cnt == 0 {
 		return 0, nil, err
@@ -1670,7 +1668,7 @@ func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey 
 
 // setUTCTimezone sets the timezone to UTC for the session variable.
 // This is because the time value in coprocessor reader is in UTC.
-func setUTCTimezone(vars *variable.SessionVars) (restore func()) {
+func setUTCTimezone(vars *stmtctx.StatementContext) (restore func()) {
 	originTZ := vars.TimeZone
 	vars.TimeZone = time.UTC
 	return func() {
@@ -1682,6 +1680,8 @@ func writeChunkToLocal(writer ingest.Writer,
 	index table.Index, copCtx *copContext, vars *variable.SessionVars,
 	copChunk *chunk.Chunk) (int, kv.Handle, error) {
 	sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
+	restore := setUTCTimezone(sCtx)
+	defer restore()
 	iter := chunk.NewIterator4Chunk(copChunk)
 	idxDataBuf := make([]types.Datum, len(copCtx.idxColOutputOffsets))
 	handleDataBuf := make([]types.Datum, len(copCtx.handleOutputOffsets))
