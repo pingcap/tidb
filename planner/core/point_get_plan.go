@@ -87,6 +87,33 @@ type PointGetPlan struct {
 	planCost     float64
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
+<<<<<<< HEAD
+=======
+
+	// probeParents records the IndexJoins and Applys with this operator in their inner children.
+	// Please see comments in PhysicalPlan for details.
+	probeParents []PhysicalPlan
+	// stmtHints should restore in executing context.
+	stmtHints *stmtctx.StmtHints
+}
+
+func (p *PointGetPlan) getEstRowCountForDisplay() float64 {
+	if p == nil {
+		return 0
+	}
+	return p.StatsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
+}
+
+func (p *PointGetPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
+	if p == nil {
+		return 1
+	}
+	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
+}
+
+func (p *PointGetPlan) setProbeParents(probeParents []PhysicalPlan) {
+	p.probeParents = probeParents
+>>>>>>> c34f6fc83d6 (planner: store the hints of session variable (#45814))
 }
 
 type nameValuePair struct {
