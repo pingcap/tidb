@@ -33,7 +33,7 @@ func resolveLockTickTime() time.Duration {
 		t := time.Duration(val.(int))
 		failpoint.Return(t * time.Second)
 	})
-	return 10 * time.Second
+	return 5 * time.Second
 }
 
 // OnTick advances the inner logic clock for the advancer.
@@ -105,7 +105,7 @@ func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 							logutil.Key("StartKey", c.lastCheckpoint.StartKey),
 							logutil.Key("EndKey", c.lastCheckpoint.EndKey),
 							zap.Int("targets", len(targets)))
-						c.lastCheckpoint.resolveLockTime = time.Now()
+						//c.lastCheckpoint.resolveLockTime = time.Now()
 					}
 				}
 			}
