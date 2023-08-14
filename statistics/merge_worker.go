@@ -81,16 +81,9 @@ func NewTopnStatsMergeTask(start, end int) *TopnStatsMergeTask {
 
 // TopnStatsMergeResponse indicates topn merge worker response
 type TopnStatsMergeResponse struct {
-<<<<<<< HEAD
-	TopN       *TopN
-	PopedTopn  []TopNMeta
-	RemoveVals [][]TopNMeta
-	Err        error
-=======
 	Err       error
 	TopN      *TopN
 	PopedTopn []TopNMeta
->>>>>>> e9f4e31b41e (statistics: improve memory for mergeGlobalStatsTopNByConcurrency (#45993))
 }
 
 // Run runs topn merge like statistics.MergePartTopN2GlobalTopN
