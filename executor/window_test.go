@@ -513,7 +513,7 @@ func testReturnColumnNullableAttribute(tk *testkit.TestKit, funcName string, isN
 	rs.Close()
 }
 
-func TestIssue45964(t *testing.T) {
+func TestIssue45964And46050(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -525,7 +525,19 @@ func TestIssue45964(t *testing.T) {
 	testReturnColumnNullableAttribute(tk, "last_value(v)", true)
 	testReturnColumnNullableAttribute(tk, "nth_value(v, 2)", true)
 	testReturnColumnNullableAttribute(tk, "lead(v)", true)
+	testReturnColumnNullableAttribute(tk, "lead(v, 1)", true)
+	testReturnColumnNullableAttribute(tk, "lead(1, 1, 1)", false)
+	testReturnColumnNullableAttribute(tk, "lead(1, 1, null)", true)
+	testReturnColumnNullableAttribute(tk, "lead(null, 1, 1)", true)
+	testReturnColumnNullableAttribute(tk, "lead(v, 1, 1)", false)
+	testReturnColumnNullableAttribute(tk, "lead(v, 1, null)", true)
 	testReturnColumnNullableAttribute(tk, "lag(v)", true)
+	testReturnColumnNullableAttribute(tk, "lag(v, 1)", true)
+	testReturnColumnNullableAttribute(tk, "lag(1, 1, 1)", false)
+	testReturnColumnNullableAttribute(tk, "lag(1, 1, null)", true)
+	testReturnColumnNullableAttribute(tk, "lag(null, 1, 1)", true)
+	testReturnColumnNullableAttribute(tk, "lag(v, 1, 1)", false)
+	testReturnColumnNullableAttribute(tk, "lag(v, 1, null)", true)
 	testReturnColumnNullableAttribute(tk, "ntile(2)", true)
 	testReturnColumnNullableAttribute(tk, "sum(v)", true)
 	testReturnColumnNullableAttribute(tk, "count(v)", false)

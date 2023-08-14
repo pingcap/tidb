@@ -329,7 +329,7 @@ func (a *baseFuncDesc) typeInfer4PercentRank() {
 }
 
 func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
-	if len(a.Args) <= 2 {
+	if len(a.Args) < 3 {
 		a.typeInfer4MaxMin(ctx)
 	} else {
 		// Merge the type of first and third argument.
