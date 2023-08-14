@@ -57,6 +57,7 @@ func (rc *rangePropertiesCollector) encode() []byte {
 	return encodeMultiProps(b, rc.props)
 }
 
+// WriterSummary is the summary of a writer.
 type WriterSummary struct {
 	WriterID  int
 	Seq       int
@@ -65,10 +66,13 @@ type WriterSummary struct {
 	TotalSize uint64
 }
 
+// OnCloseFunc is the callback function when a writer is closed.
 type OnCloseFunc func(summary *WriterSummary)
 
+// DummyOnCloseFunc is a dummy OnCloseFunc.
 func DummyOnCloseFunc(*WriterSummary) {}
 
+// WriterBuilder builds a new Writer.
 type WriterBuilder struct {
 	ctx   context.Context
 	store storage.ExternalStorage
@@ -82,6 +86,7 @@ type WriterBuilder struct {
 	bufferPool *membuf.Pool
 }
 
+// NewWriterBuilder creates a WriterBuilder.
 func NewWriterBuilder() *WriterBuilder {
 	return &WriterBuilder{
 		memSizeLimit:   256 * size.MB,
@@ -92,36 +97,43 @@ func NewWriterBuilder() *WriterBuilder {
 	}
 }
 
+// SetMemorySizeLimit sets the memory size limit of the writer.
 func (b *WriterBuilder) SetMemorySizeLimit(size uint64) *WriterBuilder {
 	b.memSizeLimit = size
 	return b
 }
 
+// SetWriterBatchSize sets the batch size of the writer.
 func (b *WriterBuilder) SetWriterBatchSize(size uint64) *WriterBuilder {
 	b.writeBatchSize = size
 	return b
 }
 
+// SetPropSizeDistance sets the distance of range size for each property.
 func (b *WriterBuilder) SetPropSizeDistance(dist uint64) *WriterBuilder {
 	b.propSizeDist = dist
 	return b
 }
 
+// SetPropKeysDistance sets the distance of range keys for each property.
 func (b *WriterBuilder) SetPropKeysDistance(dist uint64) *WriterBuilder {
 	b.propKeysDist = dist
 	return b
 }
 
+// SetOnCloseFunc sets the callback function when a writer is closed.
 func (b *WriterBuilder) SetOnCloseFunc(onClose OnCloseFunc) *WriterBuilder {
 	b.onClose = onClose
 	return b
 }
 
+// SetBufferPool sets the buffer pool of the writer.
 func (b *WriterBuilder) SetBufferPool(bufferPool *membuf.Pool) *WriterBuilder {
 	b.bufferPool = bufferPool
 	return b
 }
 
+// Build builds a new Writer.
 func (b *WriterBuilder) Build(
 	ctx context.Context,
 	store storage.ExternalStorage,
@@ -203,10 +215,12 @@ func (w *Writer) AppendRows(ctx context.Context, _ []string, rows encode.Rows) e
 	return nil
 }
 
+// IsSynced implements the backend.EngineWriter interface.
 func (w *Writer) IsSynced() bool {
 	return false
 }
 
+// Close closes the writer.
 func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
 	if w.closed {
 		return status(true), nil
@@ -247,6 +261,7 @@ func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key, size uint64) {
 
 type status bool
 
+// Flushed implements the backend.ChunkFlushStatus interface.
 func (s status) Flushed() bool {
 	return bool(s)
 }
