@@ -20,11 +20,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	utilpc "github.com/pingcap/tidb/util/plancache"
 )
 
 // planCacheEntry wraps Key and Value. It's the value of list.Element.
@@ -94,13 +94,21 @@ func strHashKey(key kvcache.Key, deepCopy bool) string {
 }
 
 // Get tries to find the corresponding value according to the given key.
+<<<<<<< HEAD
 func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool) {
+=======
+func (l *LRUPlanCache) Get(key kvcache.Key, opts *utilpc.PlanCacheMatchOpts) (value kvcache.Value, ok bool) {
+>>>>>>> 12107e33d3 (planner: refactor plan cache LRU code (#41618))
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
 	bucket, bucketExist := l.buckets[strHashKey(key, false)]
 	if bucketExist {
+<<<<<<< HEAD
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
+=======
+		if element, exist := l.pickFromBucket(bucket, opts); exist {
+>>>>>>> 12107e33d3 (planner: refactor plan cache LRU code (#41618))
 			l.lruList.MoveToFront(element)
 			return element.Value.(*planCacheEntry).PlanValue, true
 		}
@@ -109,14 +117,22 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 }
 
 // Put puts the (key, value) pair into the LRU Cache.
+<<<<<<< HEAD
 func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType) {
+=======
+func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, opts *utilpc.PlanCacheMatchOpts) {
+>>>>>>> 12107e33d3 (planner: refactor plan cache LRU code (#41618))
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
 	hash := strHashKey(key, true)
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
+<<<<<<< HEAD
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
+=======
+		if element, exist := l.pickFromBucket(bucket, opts); exist {
+>>>>>>> 12107e33d3 (planner: refactor plan cache LRU code (#41618))
 			l.updateInstanceMetric(&planCacheEntry{PlanKey: key, PlanValue: value}, element.Value.(*planCacheEntry))
 			element.Value.(*planCacheEntry).PlanValue = value
 			l.lruList.MoveToFront(element)
@@ -252,12 +268,34 @@ func (l *LRUPlanCache) memoryControl() {
 }
 
 // PickPlanFromBucket pick one plan from bucket
+<<<<<<< HEAD
 func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.FieldType) (*list.Element, bool) {
 	for k := range bucket {
 		plan := k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue)
 		if plan.ParamTypes.CheckTypesCompatibility4PC(paramTypes) {
 			return k, true
 		}
+=======
+func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOpts *utilpc.PlanCacheMatchOpts) (*list.Element, bool) {
+	for k := range bucket {
+		plan := k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue)
+		// check param types' compatibility
+		ok1 := checkTypesCompatibility4PC(plan.matchOpts.ParamTypes, matchOpts.ParamTypes)
+		if !ok1 {
+			continue
+		}
+
+		// check limit offset and key if equal and check switch if enabled
+		ok2 := checkUint64SliceIfEqual(plan.matchOpts.LimitOffsetAndCount, matchOpts.LimitOffsetAndCount)
+		if !ok2 {
+			continue
+		}
+		if len(plan.matchOpts.LimitOffsetAndCount) > 0 && !l.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
+			// offset and key slice matched, but it is a plan with param limit and the switch is disabled
+			continue
+		}
+		return k, true
+>>>>>>> 12107e33d3 (planner: refactor plan cache LRU code (#41618))
 	}
 	return nil, false
 }

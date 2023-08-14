@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
+	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
@@ -54,8 +54,13 @@ type SessionStatesHandler interface {
 
 // PlanCache is an interface for prepare and general plan cache
 type PlanCache interface {
+<<<<<<< HEAD
 	Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool)
 	Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType)
+=======
+	Get(key kvcache.Key, opts *utilpc.PlanCacheMatchOpts) (value kvcache.Value, ok bool)
+	Put(key kvcache.Key, value kvcache.Value, opts *utilpc.PlanCacheMatchOpts)
+>>>>>>> 12107e33d3 (planner: refactor plan cache LRU code (#41618))
 	Delete(key kvcache.Key)
 	DeleteAll()
 	Size() int

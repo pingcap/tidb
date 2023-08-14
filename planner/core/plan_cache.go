@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
+	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
 )
@@ -151,14 +152,30 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
+<<<<<<< HEAD
 	paramTypes := parseParamTypes(sctx, params)
 
 	if stmtCtx.UseCache && stmtAst.CachedPlan != nil { // for point query plan
 		if plan, names, ok, err := getPointQueryPlan(stmtAst, sessVars, stmtCtx); ok {
+=======
+	if stmtCtx.UseCache && stmtAst.CachedPlan != nil { // special code path for fast point plan
+		if plan, names, ok, err := getCachedPointPlan(stmtAst, sessVars, stmtCtx); ok {
 			return plan, names, err
 		}
 	}
 
+	matchOpts, err := GetMatchOpts(sctx, stmt.PreparedAst.Stmt, params)
+	if err != nil {
+		return nil, nil, err
+	}
+	if stmtCtx.UseCache { // for non-point plans
+		if plan, names, ok, err := getCachedPlan(sctx, isNonPrepared, cacheKey, bindSQL, is, stmt, matchOpts); err != nil || ok {
+>>>>>>> 12107e33d3 (planner: refactor plan cache LRU code (#41618))
+			return plan, names, err
+		}
+	}
+
+<<<<<<< HEAD
 	if stmtCtx.UseCache { // for non-point plans
 		if plan, names, ok, err := getGeneralPlan(sctx, isGeneralPlanCache, cacheKey, bindSQL, is, stmt,
 			paramTypes); err != nil || ok {
@@ -167,6 +184,9 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	return generateNewPlan(ctx, sctx, isGeneralPlanCache, is, stmt, cacheKey, latestSchemaVersion, paramTypes, bindSQL)
+=======
+	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, latestSchemaVersion, bindSQL, matchOpts)
+>>>>>>> 12107e33d3 (planner: refactor plan cache LRU code (#41618))
 }
 
 // parseParamTypes get parameters' types in PREPARE statement
@@ -212,13 +232,22 @@ func getPointQueryPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmtC
 	return plan, names, true, nil
 }
 
+<<<<<<< HEAD
 func getGeneralPlan(sctx sessionctx.Context, isGeneralPlanCache bool, cacheKey kvcache.Key, bindSQL string,
 	is infoschema.InfoSchema, stmt *PlanCacheStmt, paramTypes []*types.FieldType) (Plan,
+=======
+func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache.Key, bindSQL string,
+	is infoschema.InfoSchema, stmt *PlanCacheStmt, matchOpts *utilpc.PlanCacheMatchOpts) (Plan,
+>>>>>>> 12107e33d3 (planner: refactor plan cache LRU code (#41618))
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 
+<<<<<<< HEAD
 	candidate, exist := sctx.GetPlanCache(isGeneralPlanCache).Get(cacheKey, paramTypes)
+=======
+	candidate, exist := sctx.GetPlanCache(isNonPrepared).Get(cacheKey, matchOpts)
+>>>>>>> 12107e33d3 (planner: refactor plan cache LRU code (#41618))
 	if !exist {
 		return nil, nil, false, nil
 	}
@@ -256,9 +285,15 @@ func getGeneralPlan(sctx sessionctx.Context, isGeneralPlanCache bool, cacheKey k
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
+<<<<<<< HEAD
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isGeneralPlanCache bool, is infoschema.InfoSchema,
 	stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, paramTypes []*types.FieldType,
 	bindSQL string) (Plan, []*types.FieldName, error) {
+=======
+func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema,
+	stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, bindSQL string,
+	matchOpts *utilpc.PlanCacheMatchOpts) (Plan, []*types.FieldName, error) {
+>>>>>>> 12107e33d3 (planner: refactor plan cache LRU code (#41618))
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -276,7 +311,15 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isGeneralPlan
 	}
 
 	// check whether this plan is cacheable.
+<<<<<<< HEAD
 	checkPlanCacheability(sctx, p, len(paramTypes))
+=======
+	if stmtCtx.UseCache {
+		if cacheable, reason := isPlanCacheable(sctx, p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount)); !cacheable {
+			stmtCtx.SetSkipPlanCache(errors.Errorf(reason))
+		}
+	}
+>>>>>>> 12107e33d3 (planner: refactor plan cache LRU code (#41618))
 
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache {
@@ -289,11 +332,19 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isGeneralPlan
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
+<<<<<<< HEAD
 		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, paramTypes)
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 		sctx.GetPlanCache(isGeneralPlanCache).Put(cacheKey, cached, paramTypes)
+=======
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, matchOpts)
+		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
+		stmtCtx.SetPlan(p)
+		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
+		sctx.GetPlanCache(isNonPrepared).Put(cacheKey, cached, matchOpts)
+>>>>>>> 12107e33d3 (planner: refactor plan cache LRU code (#41618))
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err
