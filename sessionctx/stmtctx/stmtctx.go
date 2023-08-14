@@ -472,6 +472,7 @@ func (sh *StmtHints) Clone() *StmtHints {
 	return &StmtHints{
 		MemQuotaQuery:                  sh.MemQuotaQuery,
 		MaxExecutionTime:               sh.MaxExecutionTime,
+		TidbKvReadTimeout:              sh.TidbKvReadTimeout,
 		ReplicaRead:                    sh.ReplicaRead,
 		AllowInSubqToJoinAndAgg:        sh.AllowInSubqToJoinAndAgg,
 		NoIndexMergeHint:               sh.NoIndexMergeHint,
@@ -483,6 +484,7 @@ func (sh *StmtHints) Clone() *StmtHints {
 		HasMemQuotaHint:                sh.HasMemQuotaHint,
 		HasReplicaReadHint:             sh.HasReplicaReadHint,
 		HasMaxExecutionTime:            sh.HasMaxExecutionTime,
+		HasTidbKvReadTimeout:           sh.HasTidbKvReadTimeout,
 		HasEnableCascadesPlannerHint:   sh.HasEnableCascadesPlannerHint,
 		HasResourceGroup:               sh.HasResourceGroup,
 		SetVars:                        vars,
