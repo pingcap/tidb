@@ -7,7 +7,11 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD:executor/issuetest/BUILD.bazel
     shard_count = 50,
+=======
+    shard_count = 13,
+>>>>>>> c34f6fc83d6 (planner: store the hints of session variable (#45814)):session/test/vars/BUILD.bazel
     deps = [
         "//config",
         "//kv",
@@ -15,7 +19,12 @@ go_test(
         "//parser/auth",
         "//parser/charset",
         "//parser/mysql",
+<<<<<<< HEAD:executor/issuetest/BUILD.bazel
         "//session",
+=======
+        "//parser/terror",
+        "//sessionctx/stmtctx",
+>>>>>>> c34f6fc83d6 (planner: store the hints of session variable (#45814)):session/test/vars/BUILD.bazel
         "//sessionctx/variable",
         "//statistics",
         "//testkit",

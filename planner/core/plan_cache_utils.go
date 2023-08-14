@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -350,8 +351,15 @@ type PlanCacheValue struct {
 	memoryUsage       int64
 }
 
+<<<<<<< HEAD
 func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
 	return v.ParamTypes.CheckTypesCompatibility4PC(txtVarTps)
+=======
+	// matchOpts stores some fields help to choose a suitable plan
+	matchOpts *utilpc.PlanCacheMatchOpts
+	// stmtHints stores the hints which set session variables, because the hints won't be processed using cached plan.
+	stmtHints *stmtctx.StmtHints
+>>>>>>> c34f6fc83d6 (planner: store the hints of session variable (#45814))
 }
 
 // unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later
@@ -395,7 +403,11 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
+<<<<<<< HEAD
 	paramTypes []*types.FieldType) *PlanCacheValue {
+=======
+	matchOpts *utilpc.PlanCacheMatchOpts, stmtHints *stmtctx.StmtHints) *PlanCacheValue {
+>>>>>>> c34f6fc83d6 (planner: store the hints of session variable (#45814))
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
@@ -408,7 +420,12 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 		Plan:              plan,
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
+<<<<<<< HEAD
 		ParamTypes:        userParamTypes,
+=======
+		matchOpts:         matchOpts,
+		stmtHints:         stmtHints.Clone(),
+>>>>>>> c34f6fc83d6 (planner: store the hints of session variable (#45814))
 	}
 }
 
