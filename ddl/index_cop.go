@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -506,10 +508,26 @@ func constructTableScanPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, col
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }
 
-func extractDatumByOffsets(row chunk.Row, offsets []int, expCols []*expression.Column, buf []types.Datum) []types.Datum {
+func extractDatumByOffsets(
+	row chunk.Row,
+	offsets []int,
+	expCols []*expression.Column,
+	vars *variable.SessionVars,
+	buf []types.Datum,
+) []types.Datum {
 	for _, offset := range offsets {
 		c := expCols[offset]
-		rowDt := row.GetDatum(offset, c.GetType())
+		ft := c.GetType()
+		rowDt := row.GetDatum(offset, ft)
+		if ft.GetType() == mysql.TypeTimestamp && vars.TimeZone != time.UTC {
+			// Convert from utc to current timezone.
+			t := rowDt.GetMysqlTime()
+			err := t.ConvertTimeZone(time.UTC, vars.TimeZone)
+			if err != nil {
+				logutil.BgLogger().Warn("convert timestamp timezone failed", zap.Error(err))
+			}
+			rowDt.SetMysqlTime(t)
+		}
 		buf = append(buf, rowDt)
 	}
 	return buf

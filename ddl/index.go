@@ -1666,22 +1666,10 @@ func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey 
 	return cnt, nextKey, nil
 }
 
-// setUTCTimezone sets the timezone to UTC for the session variable.
-// This is because the time value in coprocessor reader is in UTC.
-func setUTCTimezone(vars *stmtctx.StatementContext) (restore func()) {
-	originTZ := vars.TimeZone
-	vars.TimeZone = time.UTC
-	return func() {
-		vars.TimeZone = originTZ
-	}
-}
-
 func writeChunkToLocal(writer ingest.Writer,
 	index table.Index, copCtx *copContext, vars *variable.SessionVars,
 	copChunk *chunk.Chunk) (int, kv.Handle, error) {
 	sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
-	restore := setUTCTimezone(sCtx)
-	defer restore()
 	iter := chunk.NewIterator4Chunk(copChunk)
 	idxDataBuf := make([]types.Datum, len(copCtx.idxColOutputOffsets))
 	handleDataBuf := make([]types.Datum, len(copCtx.handleOutputOffsets))
@@ -1691,8 +1679,8 @@ func writeChunkToLocal(writer ingest.Writer,
 	defer unlock()
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		idxDataBuf, handleDataBuf = idxDataBuf[:0], handleDataBuf[:0]
-		idxDataBuf = extractDatumByOffsets(row, copCtx.idxColOutputOffsets, copCtx.expColInfos, idxDataBuf)
-		handleDataBuf := extractDatumByOffsets(row, copCtx.handleOutputOffsets, copCtx.expColInfos, handleDataBuf)
+		idxDataBuf = extractDatumByOffsets(row, copCtx.idxColOutputOffsets, copCtx.expColInfos, vars, idxDataBuf)
+		handleDataBuf := extractDatumByOffsets(row, copCtx.handleOutputOffsets, copCtx.expColInfos, vars, handleDataBuf)
 		handle, err := buildHandle(handleDataBuf, copCtx.tblInfo, copCtx.pkInfo, sCtx)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
