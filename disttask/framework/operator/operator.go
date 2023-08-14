@@ -33,6 +33,8 @@ type BaseAysncOperatorImpl interface {
 	display() string
 }
 
+// AsyncOperator used in async mode.
+// Every operator will use a `workerpool` to run several workers.
 type AsyncOperator struct {
 	BaseOperator
 	impl BaseAysncOperatorImpl
