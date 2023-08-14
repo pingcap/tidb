@@ -1110,6 +1110,7 @@ func TestTiFlashFailureProgressAfterAvailable(t *testing.T) {
 	s.tiflash.SetNetworkError(true)
 	pool := s.dom.SysSessionPool()
 	se, err := pool.Get()
+	require.NoError(t, err)
 	sctx := se.(sessionctx.Context)
 	defer pool.Put(se)
 	pollTiflashContext, err := ddl.NewTiFlashManagementContext()
