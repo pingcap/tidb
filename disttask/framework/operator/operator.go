@@ -44,17 +44,11 @@ type AsyncDataChannel[T any] struct {
 
 func (*AsyncDataChannel[T]) Start() error { return nil }
 
-// HasNext check if it has next data.
-func (*AsyncDataChannel[T]) HasNext() bool { return false }
-
 // Read data from source.
-func (*AsyncDataChannel[T]) Read() (any, error) { return nil, nil }
+func (*AsyncDataChannel[T]) Next() (any, error) { return nil, nil }
 
 // Display show the name.
 func (*AsyncDataChannel[T]) Display() string { return "AsyncDataChannel" }
-
-// IsFull check if it is full.
-func (*AsyncDataChannel[T]) IsFull() bool { return false }
 
 // Write data to sink.
 func (c *AsyncDataChannel[T]) Write(data any) error {

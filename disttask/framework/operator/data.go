@@ -18,8 +18,7 @@ package operator
 // Operator read data from DataSource, then process the read data.
 type DataSource interface {
 	Start() error
-	HasNext() bool
-	Read() (any, error)
+	Next() (any, error)
 	Display() string
 }
 

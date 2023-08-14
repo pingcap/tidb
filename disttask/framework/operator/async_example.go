@@ -78,7 +78,6 @@ func (*asyncWorker) Close() {}
 
 type simpleAsyncDataSink struct {
 	Res int
-	cnt int
 	mu  sync.Mutex
 }
 
@@ -93,24 +92,14 @@ func (sas *simpleAsyncDataSink) Write(data any) error {
 	defer sas.mu.Unlock()
 	innerVal := data.(asyncChunk)
 	sas.Res += innerVal.res.res
-	sas.cnt++
 	return nil
 }
 
-// HasNext check if it has next data.
-func (*simpleAsyncDataSink) HasNext() bool {
-	return true
-}
-
 // Read data from source.
-func (sas *simpleAsyncDataSink) Read() (any, error) {
+func (sas *simpleAsyncDataSink) Next() (any, error) {
 	sas.mu.Lock()
 	defer sas.mu.Unlock()
-	if sas.cnt > 0 {
-		sas.cnt--
-		return asyncChunk{&demoChunk{3}}, nil
-	}
-	return nil, nil
+	return asyncChunk{&demoChunk{3}}, nil
 }
 
 // Display show the name.
