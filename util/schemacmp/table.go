@@ -15,13 +15,14 @@
 package schemacmp
 
 import (
+	"cmp"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -294,8 +295,8 @@ func sortedMap(input map[string]interface{}) []kvPair {
 		res = append(res, kvPair{key: key, value: value})
 	}
 
-	slices.SortFunc(res, func(a, b kvPair) bool {
-		return a.key < b.key
+	slices.SortFunc(res, func(a, b kvPair) int {
+		return cmp.Compare(a.key, b.key)
 	})
 	return res
 }

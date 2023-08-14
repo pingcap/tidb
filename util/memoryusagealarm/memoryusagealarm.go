@@ -15,10 +15,12 @@
 package memoryusagealarm
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
 	rpprof "runtime/pprof"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -31,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"golang.org/x/exp/slices"
 )
 
 // Handle is the handler for expensive query.
@@ -263,7 +264,7 @@ func (record *memoryUsageAlarm) printTop10SqlInfo(pinfo []*util.ProcessInfo, f *
 	}
 }
 
-func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo) bool, pinfo []*util.ProcessInfo) strings.Builder {
+func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo) int, pinfo []*util.ProcessInfo) strings.Builder {
 	slices.SortFunc(pinfo, cmp)
 	list := pinfo
 	var buf strings.Builder
@@ -302,14 +303,14 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 }
 
 func (record *memoryUsageAlarm) getTop10SqlInfoByMemoryUsage(pinfo []*util.ProcessInfo) strings.Builder {
-	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) bool {
-		return i.MemTracker.MaxConsumed() > j.MemTracker.MaxConsumed()
+	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) int {
+		return cmp.Compare(j.MemTracker.MaxConsumed(), i.MemTracker.MaxConsumed())
 	}, pinfo)
 }
 
 func (record *memoryUsageAlarm) getTop10SqlInfoByCostTime(pinfo []*util.ProcessInfo) strings.Builder {
-	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) bool {
-		return i.Time.Before(j.Time)
+	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) int {
+		return i.Time.Compare(j.Time)
 	}, pinfo)
 }
 

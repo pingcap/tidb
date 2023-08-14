@@ -19,10 +19,10 @@ import (
 	"context"
 	"encoding/binary"
 	"math/rand"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -49,8 +49,8 @@ func runCommonTest(t *testing.T, sorter ExternalSorter) {
 	iter, err := sorter.NewIterator(ctx)
 	require.NoError(t, err)
 
-	slices.SortFunc(kvs, func(a, b keyValue) bool {
-		return bytes.Compare(a.key, b.key) < 0
+	slices.SortFunc(kvs, func(a, b keyValue) int {
+		return bytes.Compare(a.key, b.key)
 	})
 
 	kvCnt := 0
@@ -105,8 +105,8 @@ func runCommonParallelTest(t *testing.T, sorter ExternalSorter) {
 	close(kvCh)
 	require.NoError(t, g.Wait())
 
-	slices.SortFunc(kvs, func(a, b keyValue) bool {
-		return bytes.Compare(a.key, b.key) < 0
+	slices.SortFunc(kvs, func(a, b keyValue) int {
+		return bytes.Compare(a.key, b.key)
 	})
 
 	require.NoError(t, sorter.Sort(ctx))

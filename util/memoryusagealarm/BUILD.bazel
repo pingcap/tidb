@@ -12,7 +12,6 @@ go_library(
         "//util/disk",
         "//util/logutil",
         "//util/memory",
-        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
     ],
