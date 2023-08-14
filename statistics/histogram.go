@@ -980,11 +980,15 @@ func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum 
 	// There are some scenarios where we need to handle out-of-range estimation after both insert and delete happen.
 	// But we don't know how many increases are in the modifyCount. So we have to use this loose bound to ensure it
 	// can produce a reasonable results in this scenario.
-	if rowCount > float64(modifyCount) && sctx.GetSessionVars().ConsiderRealtimeStatsForEstimation() {
+	if rowCount > float64(modifyCount) && sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDetermined {
 		return float64(modifyCount)
 	}
 
-	if !sctx.GetSessionVars().ConsiderRealtimeStatsForEstimation() {
+	// In OptObjectiveDetermined mode, we can't rely on the modify count anymore.
+	// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
+	// But it's impossible to have a reliable upper bound in all cases.
+	// We use 1/NDV here (only the Histogram part is considered) and it seems reasonable and good enough for now.
+	if sctx.GetSessionVars().GetOptObjective() == variable.OptObjectiveDetermined {
 		histNDV := hg.NDV - topNNDV
 		var upperBound float64
 		if histNDV > 0 {

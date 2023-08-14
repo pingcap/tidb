@@ -42,7 +42,6 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -319,6 +318,7 @@ func (t *Table) Copy() *Table {
 }
 
 // ShallowCopy copies the current table.
+// It's different from Copy(). Only the struct Table (and also the embedded HistColl) is copied here.
 func (t *Table) ShallowCopy() *Table {
 	newHistColl := HistColl{
 		PhysicalID:     t.PhysicalID,
@@ -1271,7 +1271,10 @@ func (coll *HistColl) getIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 const fakePhysicalID int64 = -1
 
 // PseudoTable creates a pseudo table statistics.
-func PseudoTable(tblInfo *model.TableInfo, availableStatsColIDs, availableStatsIdxIDs map[int64]struct{}) *Table {
+// Usually, we don't want to trigger stats loading for pseudo table. But there are exceptional cases.
+// In such cases, pass the col/idx IDs that are allowed to trigger loading in allowTriggerLoading{Col,Idx}IDs.
+// Such case could possibly happen in getStatsTable().
+func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoadingColIDs, allowTriggerLoadingIdxIDs map[int64]struct{}) *Table {
 	pseudoHistColl := HistColl{
 		RealtimeCount:  PseudoRowCount,
 		PhysicalID:     tblInfo.ID,
@@ -1294,7 +1297,7 @@ func PseudoTable(tblInfo *model.TableInfo, availableStatsColIDs, availableStatsI
 				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
 				Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
 			}
-			if _, ok := availableStatsColIDs[col.ID]; ok {
+			if _, ok := allowTriggerLoadingColIDs[col.ID]; ok {
 				t.Columns[col.ID].PhysicalID = tblInfo.ID
 			}
 		}
@@ -1306,7 +1309,7 @@ func PseudoTable(tblInfo *model.TableInfo, availableStatsColIDs, availableStatsI
 				Info:       idx,
 				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0),
 			}
-			if _, ok := availableStatsIdxIDs[idx.ID]; ok {
+			if _, ok := allowTriggerLoadingIdxIDs[idx.ID]; ok {
 				t.Indices[idx.ID].PhysicalID = tblInfo.ID
 			}
 		}

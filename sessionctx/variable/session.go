@@ -1534,6 +1534,12 @@ type SessionVars struct {
 	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
 	// When set to false, give up merging partition stats to global stats.
 	SkipMissingPartitionStats bool
+
+	// OptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
+	// For now, the possible values and corresponding behaviors are:
+	// OptObjectiveModerate: The default value. The optimizer considers the real-time stats (real-time row count, modify count).
+	// OptObjectiveDetermined: The optimizer doesn't consider the real-time stats.
+	OptObjective string
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -2114,12 +2120,6 @@ func (s *SessionVars) GetEnablePseudoForOutdatedStats() bool {
 // SetEnablePseudoForOutdatedStats set SessionVars.EnablePseudoForOutdatedStats.
 func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
 	s.EnablePseudoForOutdatedStats = val
-}
-
-// ConsiderRealtimeStatsForEstimation means whether the estimation
-// logic need to consider modify count and the realtime row count.
-func (s *SessionVars) ConsiderRealtimeStatsForEstimation() bool {
-	return true
 }
 
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
@@ -3618,4 +3618,18 @@ func RuntimeFilterModeStringToMode(name string) (RuntimeFilterMode, bool) {
 	default:
 		return -1, false
 	}
+}
+
+const (
+	// OptObjectiveModerate is a possible value and the default value for TiDBOptObjective.
+	// Please see comments of SessionVars.OptObjective for details.
+	OptObjectiveModerate string = "moderate"
+	// OptObjectiveDetermined is a possible value for TiDBOptObjective.
+	OptObjectiveDetermined = "determined"
+)
+
+// GetOptObjective return the session variable "tidb_opt_objective".
+// Please see comments of SessionVars.OptObjective for details.
+func (s *SessionVars) GetOptObjective() string {
+	return s.OptObjective
 }

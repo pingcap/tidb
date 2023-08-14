@@ -4725,9 +4725,13 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 
 	availableStatsColIDs := make(map[int64]struct{})
 	availableStatsIdxIDs := make(map[int64]struct{})
-	if !ctx.GetSessionVars().ConsiderRealtimeStatsForEstimation() {
+	// In OptObjectiveDetermined mode, we need to ignore the real-time stats.
+	// To achieve this, we copy the statsTbl and reset the real-time stats fields (ModifyCount and RealtimeCount).
+	if ctx.GetSessionVars().GetOptObjective() == variable.OptObjectiveDetermined {
 		analyzeCount := mathutil.Max(int64(statsTbl.GetAnalyzeRowCount()), 0)
+		// If the two fields are already the values we want, we don't need a copy anymore.
 		if statsTbl.RealtimeCount != analyzeCount || statsTbl.ModifyCount != 0 {
+			// Here is a case that we need specially care about:
 			if !statsTbl.Pseudo && statsTbl.RealtimeCount > 0 && analyzeCount == 0 {
 				for id := range statsTbl.Columns {
 					availableStatsColIDs[id] = struct{}{}
@@ -4736,6 +4740,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 					availableStatsIdxIDs[id] = struct{}{}
 				}
 			}
+			// Copy it so we can modify the ModifyCount and the RealtimeCount safely.
 			statsTbl = statsTbl.ShallowCopy()
 			statsTbl.RealtimeCount = analyzeCount
 			statsTbl.ModifyCount = 0
@@ -4782,7 +4787,7 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 
 	// use pseudo stats if the row count is 0
 	realtimeRowCount := statsTbl.RealtimeCount
-	if !ctx.GetSessionVars().ConsiderRealtimeStatsForEstimation() {
+	if ctx.GetSessionVars().GetOptObjective() == variable.OptObjectiveDetermined {
 		realtimeRowCount = mathutil.Max(int64(statsTbl.GetAnalyzeRowCount()), 0)
 	}
 	if realtimeRowCount == 0 {

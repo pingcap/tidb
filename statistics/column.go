@@ -45,6 +45,8 @@ type Column struct {
 
 	// StatsLoadedStatus indicates the status of column statistics
 	StatsLoadedStatus
+	// PhysicalID is only for identifying the column id when triggering loading stats for now.
+	// Stats loading will not be triggered if it's a negative value, which is possible in a pseudo table.
 	PhysicalID int64
 	Flag       int64
 	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
@@ -135,7 +137,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) 
 	}
 	if sctx != nil {
 		stmtctx := sctx.GetSessionVars().StmtCtx
-		if (!c.isStatsInitialized() || c.IsLoadNeeded()) && stmtctx != nil {
+		if (!c.IsStatsInitialized() || c.IsLoadNeeded()) && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))

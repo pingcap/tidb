@@ -46,8 +46,10 @@ type Index struct {
 	Histogram
 	ErrorRate
 	StatsLoadedStatus
-	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
-	Flag       int64
+	StatsVer int64 // StatsVer is the version of the current stats, used to maintain compatibility
+	Flag     int64
+	// PhysicalID is only for identifying the index id when triggering loading stats for now.
+	// Stats loading will not be triggered if it's a negative value, which is possible in a pseudo table.
 	PhysicalID int64
 }
 

@@ -2792,6 +2792,17 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableCheckConstraint.Load()), nil
 	}},
+	{
+		Scope:          ScopeGlobal | ScopeSession,
+		Name:           TiDBOptObjective,
+		Value:          DefTiDBOptObjective,
+		Type:           TypeEnum,
+		PossibleValues: []string{OptObjectiveModerate, OptObjectiveDetermined},
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.OptObjective = s
+			return nil
+		},
+	},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {
