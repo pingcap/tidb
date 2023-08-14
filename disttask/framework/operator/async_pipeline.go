@@ -17,12 +17,12 @@ package operator
 // AsyncPipeline wraps a list of BaseAsyncOperatorImpl.
 // The dataflow is from the first operator to the last operator.
 //
-//	Eg: op1.AddTask ---> op1.HandleTask  ---> op2.AddTask ---> op2.HandleTask
+//	Eg: op1.channel.AddTask ---> op1.worker.HandleTask  ---> op2.channel.AddTask ---> op2.worker.HandleTask.
 type AsyncPipeline struct {
-	ops []*Operator
+	ops []*AsyncOperator
 }
 
-// AsyncExecute start all operators waiting to handle tasks.
+// Execute start all operators waiting to handle tasks.
 func (p *AsyncPipeline) Execute() {
 	// Start running each operator.
 	for _, op := range p.ops {
@@ -38,16 +38,16 @@ func (p *AsyncPipeline) Close() {
 }
 
 // AddOperator insert operator to the end of the list
-func (p *AsyncPipeline) AddOperator(op *Operator) {
+func (p *AsyncPipeline) AddOperator(op *AsyncOperator) {
 	p.ops = append(p.ops, op)
 }
 
 // FirstOperator get the first operator.
-func (p *AsyncPipeline) FirstOperator() *Operator {
+func (p *AsyncPipeline) FirstOperator() *AsyncOperator {
 	return p.ops[0]
 }
 
 // LastOperator get the last operator.
-func (p *AsyncPipeline) LastOperator() *Operator {
+func (p *AsyncPipeline) LastOperator() *AsyncOperator {
 	return p.ops[len(p.ops)-1]
 }

@@ -3,10 +3,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "operator",
     srcs = [
-        "async.go",
         "async_example.go",
         "async_pipeline.go",
         "data.go",
+        "operator.go",
     ],
     importpath = "github.com/pingcap/tidb/disttask/framework/operator",
     visibility = ["//visibility:public"],

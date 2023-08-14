@@ -26,9 +26,9 @@ import (
 func NewAsyncPipeline() (*AsyncPipeline, any) {
 	sink := &simpleAsyncDataSink{0, 0, sync.Mutex{}}
 	impl1 := newExampleAsyncOperatorImpl("impl1", poolutil.DDL, 10, sink)
-	op1 := NewOperator(impl1, impl1.Source, sink)
+	op1 := NewAsyncOperator(impl1, impl1.Source, sink)
 	impl0 := newExampleAsyncOperatorImpl("impl0", poolutil.DDL, 10, op1.Source.(DataSink))
-	op0 := NewOperator(impl0, impl0.Source, op1.Source.(DataSink))
+	op0 := NewAsyncOperator(impl0, impl0.Source, op1.Source.(DataSink))
 	pipeline := &AsyncPipeline{}
 	pipeline.AddOperator(op0)
 	pipeline.AddOperator(op1)
