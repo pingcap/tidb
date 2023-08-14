@@ -51,8 +51,7 @@ func (oi *exampleAsyncOperator) Open() error {
 
 func newExampleAsyncOperator(name string, component poolutil.Component, concurrency int, sink DataSink) *exampleAsyncOperator {
 	pool, _ := workerpool.NewWorkerPoolWithoutCreateWorker[asyncChunk](name, component, concurrency)
-	source := &AsyncDataChannel[asyncChunk]{}
-	source.channel = pool
+	source := &AsyncDataChannel[asyncChunk]{channel: pool}
 	impl := &exampleAsyncOperator{}
 	impl.Source = source
 	impl.Sink = sink
@@ -81,11 +80,6 @@ type simpleAsyncDataSink struct {
 	mu  sync.Mutex
 }
 
-// IsFull check if it is full.
-func (*simpleAsyncDataSink) IsFull() bool {
-	return false
-}
-
 // Write data to sink.
 func (sas *simpleAsyncDataSink) Write(data any) error {
 	sas.mu.Lock()
@@ -97,9 +91,7 @@ func (sas *simpleAsyncDataSink) Write(data any) error {
 
 // Read data from source.
 func (sas *simpleAsyncDataSink) Next() (any, error) {
-	sas.mu.Lock()
-	defer sas.mu.Unlock()
-	return asyncChunk{&demoChunk{3}}, nil
+	return nil, nil
 }
 
 // Display show the name.
