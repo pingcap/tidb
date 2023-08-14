@@ -2341,14 +2341,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 		if err != nil {
 			return nil, nil, err
 		}
-		colSet := make(map[int64]struct{}, len(predicate)+len(mustAnalyzed))
-		for colID := range predicate {
-			colSet[colID] = struct{}{}
-		}
-		for colID := range mustAnalyzed {
-			colSet[colID] = struct{}{}
-		}
-		colSet = combineColumnSets(predicate, mustAnalyzed)
+		colSet := combineColumnSets(predicate, mustAnalyzed)
 		return getColumnListFromSet(tbl.TableInfo.Columns, colSet), nil, nil
 	case model.ColumnList:
 		colSet := getColumnSetFromSpecifiedCols(specifiedCols)
