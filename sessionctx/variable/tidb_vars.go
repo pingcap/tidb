@@ -610,6 +610,9 @@ const (
 	// TiDBEnablePseudoForOutdatedStats indicates whether use pseudo for outdated stats
 	TiDBEnablePseudoForOutdatedStats = "tidb_enable_pseudo_for_outdated_stats"
 
+	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
+	TiDBOptFixControl = "tidb_opt_fix_control"
+
 	// TiDBRegardNULLAsPoint indicates whether regard NULL as point when optimizing
 	TiDBRegardNULLAsPoint = "tidb_regard_null_as_point"
 
