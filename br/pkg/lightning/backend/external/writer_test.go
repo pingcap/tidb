@@ -17,7 +17,9 @@ package external
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,4 +91,52 @@ func TestWriter(t *testing.T) {
 		keyCnt += p.keys
 	}
 	require.Equal(t, uint64(kvCnt), keyCnt)
+}
+
+func TestWriterFlushMultiFileNames(t *testing.T) {
+	seed := time.Now().Unix()
+	rand.Seed(uint64(seed))
+	t.Logf("seed: %d", seed)
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+
+	writer := NewWriterBuilder().
+		SetPropKeysDistance(2).
+		SetMemorySizeLimit(60).
+		Build(memStore, 0, "/test")
+
+	// 200 bytes key values.
+	kvCnt := 10
+	kvs := make([]common.KvPair, kvCnt)
+	for i := 0; i < kvCnt; i++ {
+		kvs[i].Key = make([]byte, 10)
+		_, err := rand.Read(kvs[i].Key)
+		require.NoError(t, err)
+		kvs[i].Val = make([]byte, 10)
+		_, err = rand.Read(kvs[i].Val)
+		require.NoError(t, err)
+	}
+	rows := kv.MakeRowsFromKvPairs(kvs)
+	err := writer.AppendRows(ctx, nil, rows)
+	require.NoError(t, err)
+
+	_, err = writer.Close(ctx)
+	require.NoError(t, err)
+
+	var dataFiles, statFiles []string
+	err = memStore.WalkDir(ctx, &storage.WalkOption{SubDir: "/test"}, func(path string, size int64) error {
+		if strings.Contains(path, "_stat") {
+			statFiles = append(statFiles, path)
+		} else {
+			dataFiles = append(dataFiles, path)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Len(t, dataFiles, 4)
+	require.Len(t, statFiles, 4)
+	for i := 0; i < 4; i++ {
+		require.Equal(t, dataFiles[i], fmt.Sprintf("/test/%d", i))
+		require.Equal(t, statFiles[i], fmt.Sprintf("/test_stat/%d", i))
+	}
 }
