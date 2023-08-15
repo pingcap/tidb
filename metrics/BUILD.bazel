@@ -27,6 +27,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//parser/terror",
+        "//timer/metrics",
         "//util/logutil",
         "//util/mathutil",
         "@com_github_pingcap_errors//:errors",

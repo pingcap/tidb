@@ -21,6 +21,7 @@ package expression
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/exp/slices"
 )
 
 var (

@@ -142,27 +142,27 @@ func TestGetFirstAndLastKey(t *testing.T) {
 	err = db.Set([]byte("e"), []byte("e"), nil)
 	require.NoError(t, err)
 
-	first, last, err := f.getFirstAndLastKey(nil, nil)
+	first, last, err := f.GetFirstAndLastKey(nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("a"), first)
 	require.Equal(t, []byte("e"), last)
 
-	first, last, err = f.getFirstAndLastKey([]byte("b"), []byte("d"))
+	first, last, err = f.GetFirstAndLastKey([]byte("b"), []byte("d"))
 	require.NoError(t, err)
 	require.Equal(t, []byte("c"), first)
 	require.Equal(t, []byte("c"), last)
 
-	first, last, err = f.getFirstAndLastKey([]byte("b"), []byte("f"))
+	first, last, err = f.GetFirstAndLastKey([]byte("b"), []byte("f"))
 	require.NoError(t, err)
 	require.Equal(t, []byte("c"), first)
 	require.Equal(t, []byte("e"), last)
 
-	first, last, err = f.getFirstAndLastKey([]byte("y"), []byte("z"))
+	first, last, err = f.GetFirstAndLastKey([]byte("y"), []byte("z"))
 	require.NoError(t, err)
 	require.Nil(t, first)
 	require.Nil(t, last)
 
-	first, last, err = f.getFirstAndLastKey([]byte("e"), []byte(""))
+	first, last, err = f.GetFirstAndLastKey([]byte("e"), []byte(""))
 	require.NoError(t, err)
 	require.Equal(t, []byte("e"), first)
 	require.Equal(t, []byte("e"), last)

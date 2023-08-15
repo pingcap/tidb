@@ -204,6 +204,9 @@ func setRequestSourceForInnerTxn(ctx context.Context, txn Transaction) {
 			}
 			txn.SetOption(RequestSourceInternal, requestSource.RequestSourceInternal)
 			txn.SetOption(RequestSourceType, requestSource.RequestSourceType)
+			if requestSource.ExplicitRequestSourceType != "" {
+				txn.SetOption(ExplicitRequestSourceType, requestSource.ExplicitRequestSourceType)
+			}
 			return
 		}
 	}
@@ -221,9 +224,9 @@ func setRequestSourceForInnerTxn(ctx context.Context, txn Transaction) {
 // SetTxnResourceGroup update the resource group name of target txn.
 func SetTxnResourceGroup(txn Transaction, name string) {
 	txn.SetOption(ResourceGroupName, name)
-	failpoint.Inject("TxnResouceGroupChecker", func(val failpoint.Value) {
+	failpoint.Inject("TxnResourceGroupChecker", func(val failpoint.Value) {
 		expectedRgName := val.(string)
-		validateRNameInteceptor := func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
+		validateRNameInterceptor := func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 				var rgName *string
 				switch r := req.Req.(type) {
@@ -240,6 +243,6 @@ func SetTxnResourceGroup(txn Transaction, name string) {
 				return next(target, req)
 			}
 		}
-		txn.SetOption(RPCInterceptor, interceptor.NewRPCInterceptor("test-validate-rg-name", validateRNameInteceptor))
+		txn.SetOption(RPCInterceptor, interceptor.NewRPCInterceptor("test-validate-rg-name", validateRNameInterceptor))
 	})
 }

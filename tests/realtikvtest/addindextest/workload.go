@@ -174,7 +174,7 @@ func insertWorker(ctx *suiteContext, tk *testkit.TestKit) error {
 	insStr := insertStr(wCtx.tableName, wCtx.insertID, wCtx.date)
 	rs, err := tk.Exec(insStr)
 	if !isSkippedError(err, ctx) {
-		logutil.BgLogger().Info("[add index test] workload insert failed", zap.String("sql", insStr), zap.Error(err))
+		logutil.BgLogger().Info("workload insert failed", zap.String("category", "add index test"), zap.String("sql", insStr), zap.Error(err))
 		return err
 	}
 	if rs != nil {
@@ -211,7 +211,7 @@ func updateWorker(ctx *suiteContext, tk *testkit.TestKit) error {
 	rs, err := tk.Exec(upStr)
 
 	if !isSkippedError(err, ctx) {
-		logutil.BgLogger().Info("[add index test] workload update failed", zap.String("sql", upStr), zap.Error(err))
+		logutil.BgLogger().Info("workload update failed", zap.String("category", "add index test"), zap.String("sql", upStr), zap.Error(err))
 		return err
 	}
 	if rs != nil {
@@ -233,7 +233,7 @@ func deleteWorker(ctx *suiteContext, wl *workload, tk *testkit.TestKit) error {
 	delStr := deleteStr(wl.tableName, id)
 	rs, err := tk.Exec(delStr)
 	if !isSkippedError(err, ctx) {
-		logutil.BgLogger().Info("[add index test] workload delete failed", zap.String("sql", delStr), zap.Error(err))
+		logutil.BgLogger().Info("workload delete failed", zap.String("category", "add index test"), zap.String("sql", delStr), zap.Error(err))
 		return err
 	}
 	if rs != nil {

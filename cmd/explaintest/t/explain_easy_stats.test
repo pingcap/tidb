@@ -1,5 +1,5 @@
 set tidb_cost_model_version=1;
-use test;
+set @@sql_mode='STRICT_TRANS_TABLES';
 drop table if exists t1, t2, t3;
 create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2));
 load stats 's/explain_easy_stats_t1.json';
@@ -68,3 +68,5 @@ drop table if exists tbl;
 create table tbl(column1 int, column2 int, index idx(column1, column2));
 load stats 's/explain_easy_stats_tbl_dnf.json';
 explain format = 'brief' select * from tbl where (column1=0 and column2=1) or (column1=1 and column2=3) or (column1=2 and column2=5);
+
+set @@sql_mode=default;

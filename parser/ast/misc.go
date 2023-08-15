@@ -265,9 +265,10 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 type PlanReplayerStmt struct {
 	stmtNode
 
-	Stmt    StmtNode
-	Analyze bool
-	Load    bool
+	Stmt                StmtNode
+	Analyze             bool
+	Load                bool
+	HistoricalStatsInfo *AsOfClause
 
 	// Capture indicates 'plan replayer capture <sql_digest> <plan_digest>'
 	Capture bool
@@ -281,6 +282,9 @@ type PlanReplayerStmt struct {
 	// 1. plan replayer load 'file';
 	// 2. plan replayer dump explain <analyze> 'file'
 	File string
+
+	// Fields below are currently useless.
+
 	// Where is the where clause in select statement.
 	Where ExprNode
 	// OrderBy is the ordering expression list.
@@ -311,9 +315,19 @@ func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 		return nil
 	}
 
-	ctx.WriteKeyWord("PLAN REPLAYER DUMP EXPLAIN ")
+	ctx.WriteKeyWord("PLAN REPLAYER DUMP ")
+
+	if n.HistoricalStatsInfo != nil {
+		ctx.WriteKeyWord("WITH STATS ")
+		if err := n.HistoricalStatsInfo.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore PlanReplayerStmt.HistoricalStatsInfo")
+		}
+		ctx.WriteKeyWord(" ")
+	}
 	if n.Analyze {
-		ctx.WriteKeyWord("ANALYZE ")
+		ctx.WriteKeyWord("EXPLAIN ANALYZE ")
+	} else {
+		ctx.WriteKeyWord("EXPLAIN ")
 	}
 	if n.Stmt == nil {
 		if len(n.File) > 0 {
@@ -358,6 +372,14 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 
 	if n.Load {
 		return v.Leave(n)
+	}
+
+	if n.HistoricalStatsInfo != nil {
+		info, ok := n.HistoricalStatsInfo.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.HistoricalStatsInfo = info.(*AsOfClause)
 	}
 
 	if n.Stmt == nil {
@@ -3660,6 +3682,8 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	switch n.HintName.L {
 	case "max_execution_time":
 		ctx.WritePlainf("%d", n.HintData.(uint64))
+	case "tidb_kv_read_timeout":
+		ctx.WritePlainf("%d", n.HintData.(uint64))
 	case "resource_group":
 		ctx.WriteName(n.HintData.(string))
 	case "nth_plan":
@@ -3834,6 +3858,12 @@ func (n *CalibrateResourceStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CalibrateResourceStmt)
+	for _, val := range n.DynamicCalibrateResourceOptionList {
+		_, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+	}
 	return v.Leave(n)
 }
 
@@ -3847,9 +3877,11 @@ const (
 )
 
 type DynamicCalibrateResourceOption struct {
+	stmtNode
 	Tp       DynamicCalibrateType
-	Ts       ExprNode
 	StrValue string
+	Ts       ExprNode
+	Unit     TimeUnitType
 }
 
 func (n *DynamicCalibrateResourceOption) Restore(ctx *format.RestoreCtx) error {
@@ -3866,9 +3898,163 @@ func (n *DynamicCalibrateResourceOption) Restore(ctx *format.RestoreCtx) error {
 		}
 	case CalibrateDuration:
 		ctx.WriteKeyWord("DURATION ")
-		ctx.WriteString(n.StrValue)
+		if len(n.StrValue) > 0 {
+			ctx.WriteString(n.StrValue)
+		} else {
+			ctx.WriteKeyWord("INTERVAL ")
+			if err := n.Ts.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore DynamicCalibrateResourceOption DURATION TS")
+			}
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord(n.Unit.String())
+		}
 	default:
 		return errors.Errorf("invalid DynamicCalibrateResourceOption: %d", n.Tp)
 	}
 	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DynamicCalibrateResourceOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DynamicCalibrateResourceOption)
+	if n.Ts != nil {
+		node, ok := n.Ts.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Ts = node.(ExprNode)
+	}
+	return v.Leave(n)
+}
+
+// DropQueryWatchStmt is a statement to drop a runaway watch item.
+type DropQueryWatchStmt struct {
+	stmtNode
+	IntValue int64
+}
+
+func (n *DropQueryWatchStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("QUERY WATCH REMOVE ")
+	ctx.WritePlainf("%d", n.IntValue)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DropQueryWatchStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*DropQueryWatchStmt)
+	return v.Leave(n)
+}
+
+// AddQueryWatchStmt is a statement to add a runaway watch item.
+type AddQueryWatchStmt struct {
+	stmtNode
+	QueryWatchOptionList []*QueryWatchOption
+}
+
+func (n *AddQueryWatchStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("QUERY WATCH ADD")
+	for i, option := range n.QueryWatchOptionList {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing QueryWatchOptionList: [%v]", i)
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *AddQueryWatchStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*AddQueryWatchStmt)
+	for _, val := range n.QueryWatchOptionList {
+		_, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+	}
+	return v.Leave(n)
+}
+
+type QueryWatchOptionType int
+
+const (
+	QueryWatchResourceGroup QueryWatchOptionType = iota
+	QueryWatchAction
+	QueryWatchType
+)
+
+// QueryWatchOption is used for parsing manual management of watching runaway queries option.
+type QueryWatchOption struct {
+	stmtNode
+	Tp        QueryWatchOptionType
+	StrValue  model.CIStr
+	IntValue  int32
+	ExprValue ExprNode
+	BoolValue bool
+}
+
+func (n *QueryWatchOption) Restore(ctx *format.RestoreCtx) error {
+	switch n.Tp {
+	case QueryWatchResourceGroup:
+		ctx.WriteKeyWord("RESOURCE GROUP ")
+		if n.ExprValue != nil {
+			if err := n.ExprValue.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while splicing ExprValue: [%v]", n.ExprValue)
+			}
+		} else {
+			ctx.WriteName(n.StrValue.O)
+		}
+	case QueryWatchAction:
+		ctx.WriteKeyWord("ACTION ")
+		ctx.WritePlain("= ")
+		ctx.WriteKeyWord(model.RunawayActionType(n.IntValue).String())
+	case QueryWatchType:
+		if n.BoolValue {
+			ctx.WriteKeyWord("SQL TEXT ")
+			ctx.WriteKeyWord(model.RunawayWatchType(n.IntValue).String())
+			ctx.WriteKeyWord(" TO ")
+		} else {
+			switch n.IntValue {
+			case int32(model.WatchSimilar):
+				ctx.WriteKeyWord("SQL DIGEST ")
+			case int32(model.WatchPlan):
+				ctx.WriteKeyWord("PLAN DIGEST ")
+			}
+		}
+		if err := n.ExprValue.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing ExprValue: [%v]", n.ExprValue)
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *QueryWatchOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*QueryWatchOption)
+	if n.ExprValue != nil {
+		node, ok := n.ExprValue.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ExprValue = node.(ExprNode)
+	}
+	return v.Leave(n)
+}
+
+func CheckQueryWatchAppend(ops []*QueryWatchOption, newOp *QueryWatchOption) bool {
+	for _, op := range ops {
+		if op.Tp == newOp.Tp {
+			return false
+		}
+	}
+	return true
 }

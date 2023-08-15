@@ -40,12 +40,13 @@ type InternalSchedulerImpl struct {
 	taskTable TaskTable
 	pool      Pool
 	wg        sync.WaitGroup
-	subtaskWg sync.WaitGroup
 	logCtx    context.Context
 
 	mu struct {
 		sync.RWMutex
 		err error
+		// handled indicates whether the error has been updated to one of the subtask.
+		handled bool
 		// runtimeCancel is used to cancel the Run/Rollback when error occurs.
 		runtimeCancel context.CancelFunc
 	}
@@ -78,7 +79,6 @@ func (*InternalSchedulerImpl) Start() {
 // Stop stops the scheduler.
 func (s *InternalSchedulerImpl) Stop() {
 	s.cancel()
-	s.subtaskWg.Wait()
 	s.wg.Wait()
 }
 
@@ -99,18 +99,29 @@ func (s *InternalSchedulerImpl) Stop() {
 
 // Run runs the scheduler task.
 func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error {
+	err := s.run(ctx, task)
+	if s.mu.handled {
+		return err
+	}
+	return s.taskTable.UpdateErrorToSubtask(s.id, err)
+}
+
+func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error {
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 	s.registerCancelFunc(runCancel)
 
 	s.resetError()
 	logutil.Logger(s.logCtx).Info("scheduler run a step", zap.Any("step", task.Step), zap.Any("concurrency", task.Concurrency))
-	scheduler, err := createScheduler(task)
+	scheduler, err := createScheduler(ctx, task)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
 	}
 
+	failpoint.Inject("mockExecSubtaskInitEnvErr", func() {
+		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))
+	})
 	if err := scheduler.InitSubtaskExecEnv(runCtx); err != nil {
 		s.onError(err)
 		return s.getError()
@@ -131,11 +142,6 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 		return s.getError()
 	}
 
-	concurrentSubtask := false
-	key := getKey(task.Type, task.Step)
-	if opts, ok := schedulerOptions[key]; ok && opts.ConcurrentSubtask {
-		concurrentSubtask = true
-	}
 	for {
 		// check if any error occurs
 		if err := s.getError(); err != nil {
@@ -154,13 +160,8 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 		if err := s.getError(); err != nil {
 			break
 		}
-		s.subtaskWg.Add(1)
 		s.runSubtask(runCtx, scheduler, subtask, task.Step, minimalTaskCh)
-		if !concurrentSubtask {
-			s.subtaskWg.Wait()
-		}
 	}
-	s.subtaskWg.Wait()
 	return s.getError()
 }
 
@@ -173,36 +174,18 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 		} else {
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError())
 		}
-		s.subtaskWg.Done()
+		s.markErrorHandled()
 		return
 	}
 	logutil.Logger(s.logCtx).Info("split subTask", zap.Int("cnt", len(minimalTasks)), zap.Int64("subtask-id", subtask.ID))
 
-	// fast path for ADD INDEX.
-	// ADD INDEX is a special case now, no minimal tasks will be generated.
-	// run it synchronously now.
-	if len(minimalTasks) == 0 {
-		s.onSubtaskFinished(ctx, scheduler, subtask)
-		s.subtaskWg.Done()
-		return
-	}
-
-	var mu sync.Mutex
-	var cnt int
+	var minimalTaskWg sync.WaitGroup
 	for _, minimalTask := range minimalTasks {
+		minimalTaskWg.Add(1)
 		j := minimalTask
 		minimalTaskCh <- func() {
-			defer func() {
-				mu.Lock()
-				defer mu.Unlock()
-				cnt++
-				// last minimal task should mark subtask as finished
-				if cnt == len(minimalTasks) {
-					s.onSubtaskFinished(ctx, scheduler, subtask)
-					s.subtaskWg.Done()
-				}
-			}()
 			s.runMinimalTask(ctx, j, subtask.Type, step)
+			minimalTaskWg.Done()
 		}
 	}
 	failpoint.Inject("waitUntilError", func() {
@@ -213,6 +196,8 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 			time.Sleep(500 * time.Millisecond)
 		}
 	})
+	minimalTaskWg.Wait()
+	s.onSubtaskFinished(ctx, scheduler, subtask)
 }
 
 func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask) {
@@ -228,6 +213,7 @@ func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler
 		} else {
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError())
 		}
+		s.markErrorHandled()
 		return
 	}
 	if err := s.taskTable.FinishSubtask(subtask.ID, subtaskMeta); err != nil {
@@ -306,7 +292,7 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 		}
 	}
 
-	scheduler, err := createScheduler(task)
+	scheduler, err := createScheduler(ctx, task)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -335,13 +321,13 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 	return s.getError()
 }
 
-func createScheduler(task *proto.Task) (Scheduler, error) {
+func createScheduler(ctx context.Context, task *proto.Task) (Scheduler, error) {
 	key := getKey(task.Type, task.Step)
 	constructor, ok := schedulerConstructors[key]
 	if !ok {
 		return nil, errors.Errorf("constructor of scheduler for key %s not found", key)
 	}
-	return constructor(task.ID, task.Meta, task.Step)
+	return constructor(ctx, task.ID, task.Meta, task.Step)
 }
 
 func createSubtaskExecutor(minimalTask proto.MinimalTask, tp string, step int64) (SubtaskExecutor, error) {
@@ -377,6 +363,12 @@ func (s *InternalSchedulerImpl) onError(err error) {
 	}
 }
 
+func (s *InternalSchedulerImpl) markErrorHandled() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.handled = true
+}
+
 func (s *InternalSchedulerImpl) getError() error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -387,6 +379,7 @@ func (s *InternalSchedulerImpl) resetError() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.err = nil
+	s.mu.handled = false
 }
 
 func (s *InternalSchedulerImpl) updateSubtaskStateAndError(id int64, state string, subTaskErr error) {

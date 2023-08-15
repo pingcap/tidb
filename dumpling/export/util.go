@@ -5,6 +5,7 @@ package export
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,7 +13,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"golang.org/x/exp/slices"
 )
 
 const tidbServerInformationPath = "/tidb/server/info"

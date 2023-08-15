@@ -22,11 +22,13 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -233,11 +235,16 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	vars.SetHashAggFinalConcurrency(1)
 	vars.StmtCtx.InitMemTracker(memory.LabelForSQLText, -1)
 	vars.StmtCtx.MemTracker.AttachTo(vars.MemTracker)
-	switch variable.OOMAction.Load() {
-	case variable.OOMActionCancel:
+	if variable.OOMAction.Load() == variable.OOMActionCancel {
 		action := &memory.PanicOnExceed{}
 		vars.MemTracker.SetActionOnExceed(action)
 	}
 	se.SetSessionManager(s.sm)
 	return se, nil
+}
+
+// ReportMPPTaskStatus implements tikv server interface
+func (*rpcServer) ReportMPPTaskStatus(_ context.Context, req *mpp.ReportTaskStatusRequest) (resp *mpp.ReportTaskStatusResponse, err error) {
+	resp = mppcoordmanager.InstanceMPPCoordinatorManager.ReportStatus(req)
+	return resp, nil
 }
