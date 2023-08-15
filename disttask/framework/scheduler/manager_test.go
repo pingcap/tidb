@@ -93,36 +93,36 @@ func TestOnRunnableTasks(t *testing.T) {
 	m.subtaskExecutorPools["type"] = mockPool
 
 	// get subtask failed
-	mockTaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(false, errors.New("get subtask failed")).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID, proto.StepOne, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(false, errors.New("get subtask failed")).Once()
 	m.onRunnableTasks(context.Background(), []*proto.Task{task})
 
 	// no subtask
-	mockTaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(false, nil).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID, proto.StepOne, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(false, nil).Once()
 	m.onRunnableTasks(context.Background(), []*proto.Task{task})
 
 	// pool error
-	mockTaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID, proto.StepOne, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
 	mockPool.On("Run", mock.Anything).Return(errors.New("pool error")).Once()
 	m.onRunnableTasks(context.Background(), []*proto.Task{task})
 
 	// step 0 succeed
-	mockTaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID, proto.StepOne, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
 	mockPool.On("Run", mock.Anything).Return(nil).Once()
 	mockInternalScheduler.On("Start").Once()
 	mockTaskTable.On("GetGlobalTaskByID", taskID).Return(task, nil).Once()
-	mockTaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID, proto.StepOne, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
 	mockInternalScheduler.On("Run", mock.Anything, task).Return(nil).Once()
 	m.onRunnableTasks(context.Background(), []*proto.Task{task})
 
 	// step 1 canceled
 	task1 := &proto.Task{ID: taskID, State: proto.TaskStateRunning, Step: proto.StepTwo}
 	mockTaskTable.On("GetGlobalTaskByID", taskID).Return(task1, nil).Once()
-	mockTaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
-	mockInternalScheduler.On("Run", mock.Anything, task1).Return(errors.New("run errr")).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID, proto.StepTwo, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockInternalScheduler.On("Run", mock.Anything, task1).Return(errors.New("run err")).Once()
 
 	task2 := &proto.Task{ID: taskID, State: proto.TaskStateReverting, Step: proto.StepTwo}
 	mockTaskTable.On("GetGlobalTaskByID", taskID).Return(task2, nil).Once()
-	mockTaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID, proto.StepTwo, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
 	mockInternalScheduler.On("Rollback", mock.Anything, task2).Return(nil).Once()
 
 	task3 := &proto.Task{ID: taskID, State: proto.TaskStateReverted, Step: proto.StepTwo}
@@ -161,22 +161,22 @@ func TestManager(t *testing.T) {
 	mockTaskTable.On("GetGlobalTasksInStates", proto.TaskStateRunning, proto.TaskStateReverting).Return([]*proto.Task{task1, task2}, nil)
 	mockTaskTable.On("GetGlobalTasksInStates", proto.TaskStateReverting).Return([]*proto.Task{task2}, nil)
 	// task1
-	mockTaskTable.On("HasSubtasksInStates", id, taskID1, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID1, proto.StepOne, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
 	mockPool.On("Run", mock.Anything).Return(nil).Once()
 	mockInternalScheduler.On("Start").Once()
 	mockTaskTable.On("GetGlobalTaskByID", taskID1).Return(task1, nil)
-	mockTaskTable.On("HasSubtasksInStates", id, taskID1, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID1, proto.StepOne, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
 	mockInternalScheduler.On("Run", mock.Anything, task1).Return(nil).Once()
-	mockTaskTable.On("HasSubtasksInStates", id, taskID1, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(false, nil)
+	mockTaskTable.On("HasSubtasksInStates", id, taskID1, proto.StepOne, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(false, nil)
 	mockInternalScheduler.On("Stop").Once()
 	// task2
-	mockTaskTable.On("HasSubtasksInStates", id, taskID2, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID2, proto.StepOne, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
 	mockPool.On("Run", mock.Anything).Return(nil).Once()
 	mockInternalScheduler.On("Start").Once()
 	mockTaskTable.On("GetGlobalTaskByID", taskID2).Return(task2, nil)
-	mockTaskTable.On("HasSubtasksInStates", id, taskID2, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID2, proto.StepOne, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
 	mockInternalScheduler.On("Rollback", mock.Anything, task2).Return(nil).Once()
-	mockTaskTable.On("HasSubtasksInStates", id, taskID2, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(false, nil)
+	mockTaskTable.On("HasSubtasksInStates", id, taskID2, proto.StepOne, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(false, nil)
 	mockInternalScheduler.On("Stop").Once()
 	// once for scheduler pool, once for subtask pool
 	mockPool.On("ReleaseAndWait").Twice()
