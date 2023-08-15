@@ -5,9 +5,7 @@ package storage
 import (
 	"context"
 	"io"
-	"net"
 	"net/http"
-	"time"
 
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/pingcap/errors"
@@ -206,28 +204,18 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 	}
 }
 
-// copy from `http.defaultTransportDialContext`
-func defaultTransportDialContext(dialer *net.Dialer) func(context.Context, string, string) (net.Conn, error) {
-	return dialer.DialContext
-}
-
 // Different from `http.DefaultTransport`, set the `MaxIdleConns` and `MaxIdleConnsPerHost`
 // to the actual request concurrency to reuse tcp connection as much as possible.
 func GetDefaultHttpClient(concurrency uint) *http.Client {
+	transport, _ := CloneDefaultHttpTransport()
+	transport.MaxIdleConns = int(concurrency)
+	transport.MaxIdleConnsPerHost = int(concurrency)
 	return &http.Client{
-		// copy from `http.DefaultTransport`
-		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			DialContext: defaultTransportDialContext(&net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}),
-			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          int(concurrency),
-			MaxIdleConnsPerHost:   int(concurrency),
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-		},
+		Transport: transport,
 	}
+}
+
+func CloneDefaultHttpTransport() (*http.Transport, bool) {
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	return transport.Clone(), ok
 }

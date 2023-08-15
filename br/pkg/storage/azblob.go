@@ -216,7 +216,7 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 	}
 
 	clientOptions := getDefaultClientOptions()
-	if opts.HTTPClient != nil {
+	if opts != nil && opts.HTTPClient != nil {
 		clientOptions.Transport = opts.HTTPClient
 	}
 
