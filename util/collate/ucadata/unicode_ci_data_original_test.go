@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package collate
+package ucadata
 
 /* Data from allkeys.txt(http://www.unicode.org/Public/UCA/4.0.0/allkeys-4.0.0.txt). Unicode version '4.0.0'. Do not EDIT */
 var (

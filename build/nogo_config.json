@@ -1238,6 +1238,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1245,6 +1246,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1252,6 +1254,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1260,6 +1263,7 @@
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   },
@@ -1268,6 +1272,7 @@
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   }

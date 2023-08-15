@@ -2708,7 +2708,7 @@ func TestCIWeightString(t *testing.T) {
 			}
 			res, err := result.ToString()
 			require.NoError(t, err)
-			require.Equal(t, test.expect, res)
+			require.Equal(t, test.expect, res, "test case: '%s' '%s' %d", test.str, test.padding, test.length)
 		}
 	}
 
@@ -2746,6 +2746,24 @@ func TestCIWeightString(t *testing.T) {
 		{"中", "BINARY", 5, "中\x00\x00"},
 	}
 
+	unicode0900Tests := []weightStringTest{
+		{"aAÁàãăâ", "NONE", 0, "\x1cG\x1cG\x1cG\x1cG\x1cG\x1cG\x1cG"},
+		{"中", "NONE", 0, "\xfb\x40\xce\x2d"},
+		{"a", "CHAR", 5, "\x1c\x47\x02\x09\x02\x09\x02\x09\x02\x09"},
+		{"a ", "CHAR", 5, "\x1c\x47\x02\x09\x02\x09\x02\x09\x02\x09"},
+		{"中", "CHAR", 5, "\xfb\x40\xce\x2d\x02\x09\x02\x09\x02\x09\x02\x09"},
+		{"中 ", "CHAR", 5, "\xfb\x40\xce\x2d\x02\x09\x02\x09\x02\x09\x02\x09"},
+		{"a", "BINARY", 1, "a"},
+		{"ab", "BINARY", 1, "a"},
+		{"a", "BINARY", 5, "a\x00\x00\x00\x00"},
+		{"a ", "BINARY", 5, "a \x00\x00\x00"},
+		{"中", "BINARY", 1, "\xe4"},
+		{"中", "BINARY", 2, "\xe4\xb8"},
+		{"中", "BINARY", 3, "中"},
+		{"中", "BINARY", 5, "中\x00\x00"},
+	}
+
 	checkResult("utf8mb4_general_ci", generalTests)
 	checkResult("utf8mb4_unicode_ci", unicodeTests)
+	checkResult("utf8mb4_0900_ai_ci", unicode0900Tests)
 }
