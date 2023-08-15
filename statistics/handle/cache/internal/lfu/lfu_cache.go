@@ -79,11 +79,9 @@ func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
 // Put implements statsCacheInner
 func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
 	cost := tbl.MemoryUsage().TotalTrackingMemUsage()
+	s.resultKeySet.AddKeyValue(tblID, tbl)
+	s.cost.Add(cost)
 	ok := s.cache.Set(tblID, tbl, cost)
-	if ok { // NOTE: `s.cache` and `s.resultKeySet` may be inconsistent since the update operation is not atomic, but it's acceptable for our scenario
-		s.resultKeySet.AddKeyValue(tblID, tbl)
-		s.cost.Add(cost)
-	}
 	metrics.CostGauge.Set(float64(s.cost.Load()))
 	return ok
 }
