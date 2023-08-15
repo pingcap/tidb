@@ -32,7 +32,7 @@ func (bf *bitAndFunction) CreateContext(sc *stmtctx.StatementContext) *AggEvalua
 	return evalCtx
 }
 
-func (bf bitAndFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+func (*bitAndFunction) ResetContext(_ *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
 	evalCtx.Value.SetUint64(math.MaxUint64)
 }
 
@@ -58,7 +58,7 @@ func (bf *bitAndFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 }
 
 // GetResult implements Aggregation interface.
-func (bf *bitAndFunction) GetResult(evalCtx *AggEvaluateContext) types.Datum {
+func (*bitAndFunction) GetResult(evalCtx *AggEvaluateContext) types.Datum {
 	return evalCtx.Value
 }
 

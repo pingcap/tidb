@@ -94,6 +94,6 @@ func (af *avgFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 }
 
 // GetPartialResult implements Aggregation interface.
-func (af *avgFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
+func (*avgFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
 	return []types.Datum{types.NewIntDatum(evalCtx.Count), evalCtx.Value}
 }

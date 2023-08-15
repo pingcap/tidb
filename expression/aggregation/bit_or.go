@@ -30,7 +30,7 @@ func (bf *bitOrFunction) CreateContext(sc *stmtctx.StatementContext) *AggEvaluat
 	return evalCtx
 }
 
-func (bf *bitOrFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+func (*bitOrFunction) ResetContext(_ *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
 	evalCtx.Value.SetUint64(0)
 }
 
@@ -56,7 +56,7 @@ func (bf *bitOrFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Stateme
 }
 
 // GetResult implements Aggregation interface.
-func (bf *bitOrFunction) GetResult(evalCtx *AggEvaluateContext) types.Datum {
+func (*bitOrFunction) GetResult(evalCtx *AggEvaluateContext) types.Datum {
 	return evalCtx.Value
 }
 
