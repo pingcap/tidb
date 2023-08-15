@@ -51,6 +51,11 @@ go_test(
         "mem_root_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
+=======
+    race = "on",
+    shard_count = 15,
+>>>>>>> 5a305400a94 (ddl: use the correct timezone to encode record for adding index (#46055))
     deps = [
         ":ingest",
         "//config",
