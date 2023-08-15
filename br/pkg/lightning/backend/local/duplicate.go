@@ -1057,6 +1057,7 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 					if err == nil {
 						return nil
 					}
+					logger.Debug("delete duplicate rows encounter error", zap.Error(err))
 					if types.ErrBadNumber.Equal(err) {
 						logger.Warn("delete duplicate rows encounters error", log.ShortError(errors.Trace(err)))
 						return common.ErrResolveDuplicateRows.Wrap(errors.Trace(err)).GenWithStackByArgs(tableName)
@@ -1100,6 +1101,10 @@ func (local *DupeController) getLatestValue(
 
 	var value []byte
 	value, err = txn.Get(ctx, key)
+	logger.Debug("getLatestValue",
+		logutil.Key("key", key),
+		zap.Binary("value", value),
+		zap.Error(err))
 	if err != nil {
 		return nil, err
 	}

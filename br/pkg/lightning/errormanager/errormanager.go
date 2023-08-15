@@ -19,12 +19,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
-	tikverr "github.com/tikv/client-go/v2/error"
 	"math"
 	"strings"
 	"sync"
+
+	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
+	tikverr "github.com/tikv/client-go/v2/error"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
@@ -596,12 +598,19 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err := rows.Scan(&indexName, &rawValue); err != nil {
 					return errors.Trace(err)
 				}
+				em.logger.Debug("got index_name, raw_value from table",
+					zap.String("index_name", indexName),
+					zap.Binary("raw_value", rawValue),
+					zap.Binary("latest value", value))
 				if bytes.Equal(rawValue, value) {
 					continue
 				}
 				indexInfo := tbl.Meta().FindIndexByName(indexName)
 				var handle tidbkv.Handle
 				handle, err = decoder.DecodeHandleFromIndex(indexInfo, rawKey, rawValue)
+				em.logger.Debug("got handle from index",
+					zap.String("handle", handle.String()),
+					zap.Error(err))
 				rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, handle)
 				var overwrittenRow []byte
 				overwrittenRow, err = fnGetLatest(gCtx, rowKey)
@@ -622,6 +631,11 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				}
 				kvPairs := encoder.SessionCtx.TakeKvPairs()
 				for _, kvPair := range kvPairs.Pairs {
+					em.logger.Debug("got encoded KV",
+						logutil.Key("key", kvPair.Key),
+						zap.Binary("value", kvPair.Val),
+						logutil.Key("rawKey", rowKey),
+						zap.Binary("rawValue", rawValue))
 					if bytes.Equal(kvPair.Key, rawKey) && bytes.Equal(kvPair.Val, rawValue) {
 						var handleRow [2][]byte
 						rawHandle, err := tablecodec.DecodeRowKey(rowKey)
@@ -652,6 +666,9 @@ func (em *ErrorManager) ReplaceConflictKeys(
 
 						handleRow[0] = rawHandleByte
 						handleRow[1] = rawRow
+						em.logger.Debug("will call fnDeleteKey",
+							zap.Binary("handle", handleRow[0]),
+							zap.Binary("row", handleRow[1]))
 						if err := fnDeleteKey(gCtx, handleRow); err != nil {
 							return errors.Trace(err)
 						}
