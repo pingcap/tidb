@@ -1,5 +1,6 @@
 set tidb_cost_model_version=1;
--- @@character_set_results = 'gbk', TiDB transforms row value into GBK charset.
+set @@sql_mode='';
+# @@character_set_results = 'gbk', TiDB transforms row value into GBK charset.
 drop table if exists t;
 set names utf8mb4;
 create table t (a varchar(255) charset utf8mb4);
@@ -8,12 +9,12 @@ select hex(a) from t;
 select a from t;
 set @@character_set_results = 'gbk';
 select a from t;
--- TiDB transforms table name and column name into GBK charset.
+# TiDB transforms table name and column name into GBK charset.
 drop table if exists 一;
 create table 一 (二 char(20));
 show create table 一;
 
--- @@character_set_results = null or binary.
+# @@character_set_results = null or binary.
 drop table if exists t;
 set names utf8mb4;
 create table t (a varchar(255) charset gbk, b varchar(255) charset utf8mb4, c varchar(255) charset binary);
@@ -28,7 +29,7 @@ set names utf8mb4;
 select * from t;
 set @@character_set_results = 'utf8mb4';
 
--- Test for @@character_set_client.
+# Test for @@character_set_client.
 drop table if exists t;
 create table t (a varchar(255) charset utf8mb4);
 set @@character_set_client = 'gbk';
@@ -67,3 +68,5 @@ set names utf8mb4;
 set @@character_set_client=gbk;
 set @@character_set_connection=gbk;
 select hex('一a'), '一a';
+
+set @@sql_mode=default;

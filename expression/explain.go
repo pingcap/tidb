@@ -17,12 +17,12 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"golang.org/x/exp/slices"
 )
 
 // ExplainInfo implements the Expression interface.

@@ -16,9 +16,11 @@ package core
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	gomath "math"
+	"slices"
 	"sort"
 	"strings"
 
@@ -37,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
-	"golang.org/x/exp/slices"
 )
 
 // FullRange represent used all partitions.
@@ -1973,8 +1974,8 @@ func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]
 	for _, def := range usedMap {
 		used = append(used, def)
 	}
-	slices.SortFunc(used, func(i, j model.PartitionDefinition) bool {
-		return i.ID < j.ID
+	slices.SortFunc(used, func(i, j model.PartitionDefinition) int {
+		return cmp.Compare(i.ID, j.ID)
 	})
 	if len(children) == 1 {
 		newDS := plan.(*DataSource)

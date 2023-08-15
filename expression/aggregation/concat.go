@@ -37,7 +37,7 @@ type concatFunction struct {
 	truncated bool
 }
 
-func (cf *concatFunction) writeValue(evalCtx *AggEvaluateContext, val types.Datum) {
+func (*concatFunction) writeValue(evalCtx *AggEvaluateContext, val types.Datum) {
 	if val.Kind() == types.KindBytes {
 		evalCtx.Buffer.Write(val.GetBytes())
 	} else {
@@ -45,7 +45,7 @@ func (cf *concatFunction) writeValue(evalCtx *AggEvaluateContext, val types.Datu
 	}
 }
 
-func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row chunk.Row) error {
+func (cf *concatFunction) initSeparator(_ *stmtctx.StatementContext, row chunk.Row) error {
 	sepArg := cf.Args[len(cf.Args)-1]
 	sepDatum, err := sepArg.Eval(row)
 	if err != nil {

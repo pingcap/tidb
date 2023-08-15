@@ -127,7 +127,7 @@ func (a *baseFuncDesc) TypeInfer(ctx sessionctx.Context) error {
 	return nil
 }
 
-func (a *baseFuncDesc) typeInfer4Count(ctx sessionctx.Context) {
+func (a *baseFuncDesc) typeInfer4Count(sessionctx.Context) {
 	a.RetTp = types.NewFieldType(mysql.TypeLonglong)
 	a.RetTp.SetFlen(21)
 	a.RetTp.SetDecimal(0)
@@ -182,7 +182,7 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error 
 
 // typeInfer4Sum should return a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
-func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
+func (a *baseFuncDesc) typeInfer4Sum(sessionctx.Context) {
 	switch a.Args[0].GetType().GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
@@ -216,7 +216,7 @@ func (a *baseFuncDesc) TypeInfer4AvgSum(avgRetType *types.FieldType) {
 
 // typeInfer4Avg should returns a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
-func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
+func (a *baseFuncDesc) typeInfer4Avg(sessionctx.Context) {
 	switch a.Args[0].GetType().GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
@@ -291,7 +291,7 @@ func (a *baseFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 	a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
 }
 
-func (a *baseFuncDesc) typeInfer4JsonArrayAgg(ctx sessionctx.Context) {
+func (a *baseFuncDesc) typeInfer4JsonArrayAgg(sessionctx.Context) {
 	a.RetTp = types.NewFieldType(mysql.TypeJSON)
 	types.SetBinChsClnFlag(a.RetTp)
 }
@@ -329,7 +329,7 @@ func (a *baseFuncDesc) typeInfer4PercentRank() {
 }
 
 func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
-	if len(a.Args) <= 2 {
+	if len(a.Args) < 3 {
 		a.typeInfer4MaxMin(ctx)
 	} else {
 		// Merge the type of first and third argument.
@@ -338,7 +338,7 @@ func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
 	}
 }
 
-func (a *baseFuncDesc) typeInfer4PopOrSamp(ctx sessionctx.Context) {
+func (a *baseFuncDesc) typeInfer4PopOrSamp(sessionctx.Context) {
 	// var_pop/std/var_samp/stddev_samp's return value type is double
 	a.RetTp = types.NewFieldType(mysql.TypeDouble)
 	a.RetTp.SetFlen(mysql.MaxRealWidth)

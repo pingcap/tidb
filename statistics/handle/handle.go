@@ -15,10 +15,10 @@
 package handle
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,7 +50,6 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -948,19 +947,15 @@ func MergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wra
 
 	// handle Error
 	hasErr := false
+	errMsg := make([]string, 0)
 	for resp := range respCh {
 		if resp.Err != nil {
 			hasErr = true
+			errMsg = append(errMsg, resp.Err.Error())
 		}
 		resps = append(resps, resp)
 	}
 	if hasErr {
-		errMsg := make([]string, 0)
-		for _, resp := range resps {
-			if resp.Err != nil {
-				errMsg = append(errMsg, resp.Err.Error())
-			}
-		}
 		return nil, nil, nil, errors.New(strings.Join(errMsg, ","))
 	}
 
@@ -972,17 +967,6 @@ func MergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wra
 			sorted = append(sorted, resp.TopN.TopN...)
 		}
 		leftTopn = append(leftTopn, resp.PopedTopn...)
-		for i, removeTopn := range resp.RemoveVals {
-			// Remove the value from the Hists.
-			if len(removeTopn) > 0 {
-				tmp := removeTopn
-				slices.SortFunc(tmp, func(i, j statistics.TopNMeta) bool {
-					cmpResult := bytes.Compare(i.Encoded, j.Encoded)
-					return cmpResult < 0
-				})
-				wrapper.AllHg[i].RemoveVals(tmp)
-			}
-		}
 	}
 
 	globalTopN, popedTopn := statistics.GetMergedTopNFromSortedSlice(sorted, n)

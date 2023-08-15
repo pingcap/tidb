@@ -328,6 +328,7 @@ func (c *mockClient) Command(ctx context.Context, cmdType string, request interf
 
 	responseKey := ttlCmdKeyResponsePrefix + reqID
 	for ctx.Err() == nil {
+		time.Sleep(time.Second)
 		c.Lock()
 		val, ok := c.store[responseKey]
 		c.Unlock()
