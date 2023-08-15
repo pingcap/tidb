@@ -17,10 +17,11 @@ package handler
 import (
 	"net/http"
 
-	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // ClusterUpgradeHandler is the handler for upgrading cluster.
@@ -35,12 +36,14 @@ func NewClusterUpgradeHandler(store kv.Storage) *ClusterUpgradeHandler {
 
 // ServeHTTP handles request of ddl server info.
 func (h ClusterUpgradeHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	// parse params
-	params := mux.Vars(req)
+	if req.Method != http.MethodPost {
+		WriteError(w, errors.Errorf("This API only support POST method"))
+		return
+	}
 
 	var err error
 	var hasDone bool
-	op := params[Operation]
+	op := req.FormValue("op")
 	switch op {
 	case "start":
 		hasDone, err = h.startUpgrade()
@@ -64,6 +67,8 @@ func (h ClusterUpgradeHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 		}
 	}
 	WriteData(w, "success!")
+	logutil.Logger(req.Context()).Info("[upgrading] upgrade op success",
+		zap.String("op", req.FormValue("op")), zap.Bool("hasDone", hasDone))
 }
 
 func (h ClusterUpgradeHandler) startUpgrade() (hasDone bool, err error) {

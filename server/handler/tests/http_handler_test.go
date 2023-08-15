@@ -1247,8 +1247,15 @@ func TestUpgrade(t *testing.T) {
 	ts.startServer(t)
 	defer ts.stopServer(t)
 
-	// test /upgrade/start
-	resp, err := ts.FetchStatus("/upgrade/start")
+	resp, err := ts.FetchStatus("/upgrade")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	// test upgrade start
+	resp, err = ts.PostStatus("/upgrade", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`op=start`)))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	b, err := httputil.DumpResponse(resp, true)
@@ -1266,7 +1273,7 @@ func TestUpgrade(t *testing.T) {
 	require.True(t, isUpgrading)
 
 	// Do start upgrade again.
-	resp, err = ts.FetchStatus("/upgrade/start")
+	resp, err = ts.PostStatus("/upgrade", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`op=start`)))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	b, err = httputil.DumpResponse(resp, true)
@@ -1283,8 +1290,8 @@ func TestUpgrade(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, isUpgrading)
 
-	// test /upgrade/finish
-	resp, err = ts.FetchStatus("/upgrade/finish")
+	// test upgrade finish
+	resp, err = ts.PostStatus("/upgrade", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`op=finish`)))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	b, err = httputil.DumpResponse(resp, true)
@@ -1302,7 +1309,7 @@ func TestUpgrade(t *testing.T) {
 	require.False(t, isUpgrading)
 
 	// Do finish upgrade again.
-	resp, err = ts.FetchStatus("/upgrade/finish")
+	resp, err = ts.PostStatus("/upgrade", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`op=finish`)))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	b, err = httputil.DumpResponse(resp, true)

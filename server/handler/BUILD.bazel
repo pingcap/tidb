@@ -23,11 +23,12 @@ go_library(
         "//tablecodec",
         "//types",
         "//util/codec",
-        "@com_github_gorilla_mux//:mux",
+        "//util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_zap//:zap",
     ],
 )
