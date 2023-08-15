@@ -173,6 +173,17 @@
           "      └─TableFullScan_25 10000.00 928000.00 batchCop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
+      },
+      {
+        "SQL": "explain select  /*+ READ_FROM_STORAGE(TIFLASH[s]) */ a from s where a = 10 and b is null; -- index path huristic rule will prune tiflash path",
+        "Plan": [
+          "TableReader_12 0.10 root  MppVersion: 2, data:ExchangeSender_11",
+          "└─ExchangeSender_11 0.10 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_5 0.10 mpp[tiflash]  test.s.a",
+          "    └─Selection_10 0.10 mpp[tiflash]  isnull(test.s.b)",
+          "      └─TableFullScan_9 10.00 mpp[tiflash] table:s pushed down filter:eq(test.s.a, 10), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
       }
     ]
   },
