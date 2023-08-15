@@ -305,5 +305,3 @@ replace (
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/parser => ./parser
 )
-
-replace github.com/pingcap/tipb => github.com/pingcap/tipb v0.0.0-20230616080414-aa19c2d12587
