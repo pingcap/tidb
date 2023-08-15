@@ -1058,15 +1058,8 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 						return nil
 					}
 					logger.Debug("delete duplicate rows encounter error", zap.Error(err))
-					if types.ErrBadNumber.Equal(err) {
-						logger.Warn("delete duplicate rows encounters error", log.ShortError(errors.Trace(err)))
-						return common.ErrResolveDuplicateRows.Wrap(errors.Trace(err)).GenWithStackByArgs(tableName)
-					}
 					if log.IsContextCanceledError(err) {
 						return errors.Trace(err)
-					}
-					if !tikverror.IsErrWriteConflict(errors.Cause(err)) {
-						logger.Warn("delete duplicate rows encounter error", log.ShortError(errors.Trace(err)))
 					}
 					if err = errLimiter.Wait(ctx); err != nil {
 						return errors.Trace(err)
