@@ -3905,8 +3905,8 @@
       {
         "SQL": "with recursive cte(a) as (select 1 union select a from cte) select * from cte; -- recursive cte cannot be inlined",
         "Plan": [
-          "CTEFullScan 1.00 root CTE:cte data:CTE_0",
-          "CTE_0 1.00 root  Recursive CTE",
+          "CTEFullScan 2.00 root CTE:cte data:CTE_0",
+          "CTE_0 2.00 root  Recursive CTE",
           "├─Projection(Seed Part) 1.00 root  1->Column#2",
           "│ └─TableDual 1.00 root  rows:1",
           "└─CTETable(Recursive Part) 1.00 root  Scan on CTE_0"
