@@ -26,7 +26,7 @@ type firstRowFunction struct {
 }
 
 // Update implements Aggregation interface.
-func (ff *firstRowFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
+func (ff *firstRowFunction) Update(evalCtx *AggEvaluateContext, _ *stmtctx.StatementContext, row chunk.Row) error {
 	if evalCtx.GotFirstRow {
 		return nil
 	}
@@ -47,7 +47,7 @@ func (*firstRowFunction) GetResult(evalCtx *AggEvaluateContext) types.Datum {
 	return evalCtx.Value
 }
 
-func (ff *firstRowFunction) ResetContext(_ *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+func (*firstRowFunction) ResetContext(_ *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
 	evalCtx.GotFirstRow = false
 }
 

@@ -30,7 +30,7 @@ func (bf *bitXorFunction) CreateContext(sc *stmtctx.StatementContext) *AggEvalua
 	return evalCtx
 }
 
-func (bf *bitXorFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+func (*bitXorFunction) ResetContext(_ *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
 	evalCtx.Value.SetUint64(0)
 }
 

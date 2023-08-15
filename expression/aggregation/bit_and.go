@@ -32,7 +32,7 @@ func (bf *bitAndFunction) CreateContext(sc *stmtctx.StatementContext) *AggEvalua
 	return evalCtx
 }
 
-func (bf bitAndFunction) ResetContext(_ *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+func (*bitAndFunction) ResetContext(_ *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
 	evalCtx.Value.SetUint64(math.MaxUint64)
 }
 
