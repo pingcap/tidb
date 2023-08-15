@@ -545,7 +545,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 	pool *utils.WorkerPool,
 	decoder *kv.TableKVDecoder,
 	fnGetLatest func(ctx context.Context, key []byte) ([]byte, error),
-	fnDeleteKey func(ctx context.Context, handleRows [2][]byte) error,
+	fnDeleteKey func(ctx context.Context, key []byte) error,
 ) error {
 	if em.db == nil {
 		return nil
@@ -612,6 +612,8 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					zap.String("handle", handle.String()),
 					zap.Error(err))
 				rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, handle)
+				em.logger.Debug("got rowKey from handle",
+					zap.String("rowKey", rowKey.String()))
 				var overwrittenRow []byte
 				overwrittenRow, err = fnGetLatest(gCtx, rowKey)
 				if tikverr.IsErrNotFound(err) {
@@ -637,39 +639,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 						logutil.Key("rawKey", rowKey),
 						zap.Binary("rawValue", rawValue))
 					if bytes.Equal(kvPair.Key, rawKey) && bytes.Equal(kvPair.Val, rawValue) {
-						var handleRow [2][]byte
-						rawHandle, err := tablecodec.DecodeRowKey(rowKey)
-						if err != nil {
-							return errors.Trace(err)
-						}
-						rawHandleByte := []byte(rawHandle.String())
-
-						var deleteRows *sql.Rows
-						deleteRows, err = em.db.QueryContext(
-							gCtx, fmt.Sprintf(selectConflictKeysReplaceByRawHandle, em.schemaEscaped),
-							tableName, rawHandleByte)
-						if err != nil {
-							return errors.Trace(err)
-						}
-						var rawRow []byte
-						for deleteRows.Next() {
-							if err := deleteRows.Scan(&rawRow); err != nil {
-								return errors.Trace(err)
-							}
-						}
-						if err := deleteRows.Err(); err != nil {
-							return errors.Trace(err)
-						}
-						if err := deleteRows.Close(); err != nil {
-							return errors.Trace(err)
-						}
-
-						handleRow[0] = rawHandleByte
-						handleRow[1] = rawRow
-						em.logger.Debug("will call fnDeleteKey",
-							zap.Binary("handle", handleRow[0]),
-							zap.Binary("row", handleRow[1]))
-						if err := fnDeleteKey(gCtx, handleRow); err != nil {
+						if err := fnDeleteKey(gCtx, rowKey); err != nil {
 							return errors.Trace(err)
 						}
 						break

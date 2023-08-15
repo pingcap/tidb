@@ -1051,9 +1051,9 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 					}
 				}
 			},
-			func(ctx context.Context, handleRow [2][]byte) error {
+			func(ctx context.Context, key []byte) error {
 				for {
-					err := local.deleteDuplicateRow(ctx, logger, handleRow, decoder, keyInTable)
+					err := local.deleteDuplicateRow(ctx, logger, key)
 					if err == nil {
 						return nil
 					}
@@ -1114,9 +1114,7 @@ func (local *DupeController) getLatestValue(
 func (local *DupeController) deleteDuplicateRow(
 	ctx context.Context,
 	logger *log.Task,
-	handleRow [2][]byte,
-	decoder *kv.TableKVDecoder,
-	keyInTable func(key []byte) bool,
+	key []byte,
 ) (err error) {
 	// Starts a Delete transaction.
 	txn, err := local.tikvCli.Begin()
@@ -1133,37 +1131,10 @@ func (local *DupeController) deleteDuplicateRow(
 		}
 	}()
 
-	deleteKey := func(key []byte) error {
-		logger.Debug("will delete key", zap.String("category", "resolve-dupe"), logutil.Key("key", key))
-		return txn.Delete(key)
-	}
+	logger.Debug("will delete key", zap.String("category", "resolve-dupe"), logutil.Key("key", key))
+	err = txn.Delete(key)
 
-	// Skip the row key if it's not in the table.
-	// This can happen if the table has been recreated or truncated,
-	// and the duplicate key is from the old table.
-	if !keyInTable(handleRow[0]) {
-		return nil
-	}
-	logger.Debug("found row to resolve", zap.String("category", "resolve-dupe"),
-		logutil.Key("handle", handleRow[0]),
-		logutil.Key("row", handleRow[1]))
-
-	if err := deleteKey(handleRow[0]); err != nil {
-		return err
-	}
-
-	handle, err := decoder.DecodeHandleFromRowKey(handleRow[0])
-	if err != nil {
-		return err
-	}
-
-	err = decoder.IterRawIndexKeys(handle, handleRow[1], deleteKey)
-	if err != nil {
-		return err
-	}
-
-	logger.Debug("number of KV pairs to be deleted", zap.String("category", "resolve-dupe"), zap.Int("count", txn.Len()))
-	return nil
+	return err
 }
 
 func (local *DupeController) deleteDuplicateRows(
