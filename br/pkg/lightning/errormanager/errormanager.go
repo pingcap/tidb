@@ -23,11 +23,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
-	tikverr "github.com/tikv/client-go/v2/error"
-
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/pingcap/errors"
@@ -36,12 +31,16 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	tidbtbl "github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -578,6 +577,8 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			if err := rawHandleRows.Scan(&rawKey); err != nil {
 				return errors.Trace(err)
 			}
+			em.logger.Debug("got rawKey from table",
+				zap.ByteString("rawKey", rawKey))
 
 			var value []byte
 			value, err = fnGetLatest(gCtx, rawKey)
