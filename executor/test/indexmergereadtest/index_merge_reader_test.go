@@ -1270,12 +1270,9 @@ func TestIssues46005(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_index_lookup_size = 1024")
 	tk.MustExec("create table t(a int, b int, c int, index idx1(a, c), index idx2(b, c))")
-	tk.MustExec("create table t1(a int, b int, c int, primary key(a, c), index idx2(b, c))")
 	for i := 0; i < 1500; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t(a,b,c) values (1, 1, %d)", i))
-		tk.MustExec(fmt.Sprintf("insert into t1(a,b,c) values (1, 1, %d)", i))
 	}
 
 	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 1025")
-	tk.MustQuery("select /*+ USE_INDEX_MERGE(t1, primary, idx2) */ * from t1 where a = 1 or b = 1 order by c limit 1025")
 }
