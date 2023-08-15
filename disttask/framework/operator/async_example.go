@@ -144,7 +144,10 @@ func (oi *exampleSourceOperator) Close() {
 
 // Open implements AsyncOperator.
 func (oi *exampleSourceOperator) Open() error {
-	oi.Source.Start()
+	err := oi.Source.Start()
+	if err != nil {
+		return err
+	}
 	oi.pool.SetCreateWorker(
 		func() workerpool.Worker[bool] {
 			return &asyncWorker1{oi.Source, oi.Sink}
@@ -181,7 +184,7 @@ type asyncWorker1 struct {
 }
 
 // HandleTask define the basic running process for each operator.
-func (aw *asyncWorker1) HandleTask(task bool) {
+func (aw *asyncWorker1) HandleTask(bool) {
 	for {
 		asyncChunk, err := aw.source.Next()
 		if err != nil {
