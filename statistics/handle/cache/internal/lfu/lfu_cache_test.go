@@ -196,5 +196,4 @@ func TestLFUReject(t *testing.T) {
 	for _, i := range v.Indices {
 		require.Equal(t, i.GetEvictedStatus(), statistics.AllEvicted)
 	}
-
 }
