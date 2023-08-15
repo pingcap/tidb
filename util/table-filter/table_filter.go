@@ -15,6 +15,7 @@
 package filter
 
 import (
+	"slices"
 	"strings"
 )
 
@@ -48,7 +49,7 @@ func Parse(args []string) (Filter, error) {
 		}
 	}
 
-	reverse(p.rules)
+	slices.Reverse(p.rules)
 
 	return tableFilter(p.rules), nil
 }
