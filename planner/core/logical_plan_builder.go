@@ -4466,6 +4466,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		for _, tName := range l.Tables {
+			// CTE has no *model.TableInfo, we need to skip it.
+			if tName.TableInfo == nil {
+				continue
+			}
 			b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tName.TableInfo.ID] = struct{}{}
 		}
 		p, err = b.buildSelectLock(p, l)
