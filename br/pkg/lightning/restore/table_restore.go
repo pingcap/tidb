@@ -802,8 +802,8 @@ func (tr *TableRestore) postProcess(
 				return false, err
 			}
 			err = tr.compareChecksum(remoteChecksum, localChecksum)
-			failpoint.Inject("compareChecksum-error", func() {
-				tr.logger.Info("failpoint compareChecksum-error injected.")
+			failpoint.Inject("checksum-error", func() {
+				tr.logger.Info("failpoint checksum-error injected.")
 				remoteChecksum = nil
 				err = status.Error(codes.Unknown, "Compare checksum meets error.")
 			})
