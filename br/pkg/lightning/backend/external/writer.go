@@ -24,6 +24,7 @@ import (
 
 	"slices"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -213,7 +214,7 @@ func (w *Writer) IsSynced() bool {
 // Close closes the writer.
 func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
 	if w.closed {
-		return status(true), nil
+		return status(false), errors.Errorf("writer %d has been closed", w.writerID)
 	}
 	w.closed = true
 	defer w.kvBuffer.Destroy()
