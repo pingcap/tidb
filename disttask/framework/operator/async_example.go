@@ -33,12 +33,12 @@ type exampleAsyncOperator struct {
 	BaseOperator
 }
 
-// Close implements BaseAsyncOperatorImpl.
+// Close implements AsyncOperator.
 func (oi *exampleAsyncOperator) Close() {
 	oi.Source.(*AsyncDataChannel[asyncChunk]).channel.ReleaseAndWait()
 }
 
-// Open implements BaseAsyncOperatorImpl.
+// Open implements AsyncOperator.
 func (oi *exampleAsyncOperator) Open() error {
 	oi.Source.(*AsyncDataChannel[asyncChunk]).channel.SetCreateWorker(
 		func() workerpool.Worker[asyncChunk] {
@@ -49,17 +49,21 @@ func (oi *exampleAsyncOperator) Open() error {
 	return nil
 }
 
-func newExampleAsyncOperator(name string, component poolutil.Component, concurrency int, sink DataSink) *exampleAsyncOperator {
+// Display implements AsyncOperator.
+func (oi *exampleAsyncOperator) Display() string {
+	return "ExampleAsyncOperator{ source: " + oi.Source.Display() + ", sink: " + oi.Sink.Display() + "}"
+}
+
+func newExampleAsyncOperator(name string,
+	component poolutil.Component,
+	concurrency int,
+	sink DataSink) *exampleAsyncOperator {
 	pool, _ := workerpool.NewWorkerPoolWithoutCreateWorker[asyncChunk](name, component, concurrency)
 	source := &AsyncDataChannel[asyncChunk]{channel: pool}
 	impl := &exampleAsyncOperator{}
 	impl.Source = source
 	impl.Sink = sink
 	return impl
-}
-
-func (*exampleAsyncOperator) Display() string {
-	return "ExampleAsyncOperator"
 }
 
 type asyncWorker struct {
@@ -90,11 +94,11 @@ func (sas *simpleAsyncDataSink) Write(data any) error {
 }
 
 // Read data from source.
-func (sas *simpleAsyncDataSink) Next() (any, error) {
+func (*simpleAsyncDataSink) Next() (any, error) {
 	return nil, nil
 }
 
-// Display show the name.
+// Display show the DataSink.
 func (*simpleAsyncDataSink) Display() string {
 	return "simpleAsyncDataSink"
 }

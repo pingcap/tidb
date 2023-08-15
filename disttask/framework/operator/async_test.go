@@ -40,5 +40,6 @@ func TestPipelineAsync(t *testing.T) {
 		_ = source.(*AsyncDataChannel[asyncChunk]).Write(asyncChunk{&demoChunk{0}})
 	}
 	pipeline.Close()
+	require.Equal(t, "ExampleAsyncOperator{ source: AsyncDataChannel, sink: AsyncDataChannel}\n ExampleAsyncOperator{ source: AsyncDataChannel, sink: simpleAsyncDataSink}", pipeline.Display())
 	require.Equal(t, 20, pipeline.LastOperator().(*exampleAsyncOperator).Sink.(*simpleAsyncDataSink).Res)
 }

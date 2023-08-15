@@ -53,3 +53,20 @@ func (p *AsyncPipeline) FirstOperator() AsyncOperator {
 func (p *AsyncPipeline) LastOperator() AsyncOperator {
 	return p.ops[len(p.ops)-1]
 }
+
+// Display show the pipeline.
+func (p *AsyncPipeline) Display() string {
+	level := 0
+	res := ""
+	for i, op := range p.ops {
+		for j := 0; j < level; j++ {
+			res += " "
+		}
+		res += op.Display()
+		if i != len(p.ops)-1 {
+			res += "\n"
+		}
+		level++
+	}
+	return res
+}
