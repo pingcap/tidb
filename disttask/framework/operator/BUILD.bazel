@@ -13,6 +13,7 @@ go_library(
     deps = [
         "//resourcemanager/pool/workerpool",
         "//resourcemanager/util",
+        "//util/logutil",
     ],
 )
 
@@ -22,6 +23,7 @@ go_test(
     srcs = ["async_test.go"],
     embed = [":operator"],
     flaky = True,
+    shard_count = 3,
     deps = [
         "//resourcemanager/util",
         "@com_github_stretchr_testify//require",

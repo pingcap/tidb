@@ -19,9 +19,9 @@ import (
 )
 
 // BaseOperator have DataSource and DataSink.
-type BaseOperator struct {
-	Source DataSource
-	Sink   DataSink
+type BaseOperator[T any, U any] struct {
+	Source DataSource[T]
+	Sink   DataSink[U]
 }
 
 // AsyncOperator defines the interface for each operator.
@@ -45,14 +45,17 @@ type AsyncDataChannel[T any] struct {
 // Start implement the DataSource Start.
 func (*AsyncDataChannel[T]) Start() error { return nil }
 
-// Next read data from source.
-func (*AsyncDataChannel[T]) Next() (any, error) { return nil, nil }
+// Next read data from source. Not used.
+func (*AsyncDataChannel[T]) Next() (T, error) {
+	var res T
+	return res, nil
+}
 
 // Display show the name.
 func (*AsyncDataChannel[T]) Display() string { return "AsyncDataChannel" }
 
 // Write data to sink.
-func (c *AsyncDataChannel[T]) Write(data any) error {
-	c.channel.AddTask(data.(T))
+func (c *AsyncDataChannel[T]) Write(data T) error {
+	c.channel.AddTask(data)
 	return nil
 }

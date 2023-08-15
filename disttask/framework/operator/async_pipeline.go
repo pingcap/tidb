@@ -44,11 +44,6 @@ func (p *AsyncPipeline) AddOperator(op AsyncOperator) {
 	p.ops = append(p.ops, op)
 }
 
-// FirstOperator get the first operator.
-func (p *AsyncPipeline) FirstOperator() AsyncOperator {
-	return p.ops[0]
-}
-
 // LastOperator get the last operator.
 func (p *AsyncPipeline) LastOperator() AsyncOperator {
 	return p.ops[len(p.ops)-1]
