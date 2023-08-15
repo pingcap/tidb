@@ -78,11 +78,15 @@ func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
 
 // Put implements statsCacheInner
 func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
-	ok := s.cache.Set(tblID, tbl, tbl.MemoryUsage().TotalTrackingMemUsage())
-	if ok { // NOTE: `s.cache` and `s.resultKeySet` may be inconsistent since the update operation is not atomic, but it's acceptable for our scenario
-		s.resultKeySet.AddKeyValue(tblID, tbl)
-		s.cost.Add(tbl.MemoryUsage().TotalTrackingMemUsage())
-	}
+	cost := tbl.MemoryUsage().TotalTrackingMemUsage()
+	// Here we need to insert resultKeySet first and then write to LFU,
+	// in order to prevent data race. If the LFU cost is already full,
+	// a rejection may occur, triggering the onEvict event.
+	// Both inserting into resultKeySet and evicting will modify the memory cost,
+	// so we need to stagger these two actions.
+	s.resultKeySet.AddKeyValue(tblID, tbl)
+	s.cost.Add(cost)
+	ok := s.cache.Set(tblID, tbl, cost)
 	metrics.CostGauge.Set(float64(s.cost.Load()))
 	return ok
 }
@@ -102,8 +106,8 @@ func (s *LFU) Cost() int64 {
 func (s *LFU) Values() []*statistics.Table {
 	result := make([]*statistics.Table, 0, 512)
 	for _, k := range s.resultKeySet.Keys() {
-		if value, ok := s.cache.Get(k); ok {
-			result = append(result, value.(*statistics.Table))
+		if value, ok := s.resultKeySet.Get(k); ok {
+			result = append(result, value)
 		}
 	}
 	return result
@@ -117,8 +121,9 @@ func DropEvicted(item statistics.TableCacheItem) {
 	item.DropUnnecessaryData()
 }
 
-func (*LFU) onReject(*ristretto.Item) {
+func (s *LFU) onReject(item *ristretto.Item) {
 	metrics.RejectCounter.Add(1.0)
+	s.onEvict(item)
 }
 
 func (s *LFU) onEvict(item *ristretto.Item) {
@@ -157,11 +162,6 @@ func (s *LFU) onExit(val interface{}) {
 // Len implements statsCacheInner
 func (s *LFU) Len() int {
 	return s.resultKeySet.Len()
-}
-
-// Front implements statsCacheInner
-func (*LFU) Front() int64 {
-	return 0
 }
 
 // Copy implements statsCacheInner

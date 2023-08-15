@@ -170,11 +170,6 @@ func (sc *StatsCache) Version() uint64 {
 	return sc.maxTblStatsVer.Load()
 }
 
-// Front returns the front element's owner tableID, only used for test.
-func (sc *StatsCache) Front() int64 {
-	return sc.c.Front()
-}
-
 // CopyAndUpdate copies a new cache and updates the new statistics table cache. It is only used in the COW mode.
 func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) *StatsCache {
 	option := &TableStatsOption{}
