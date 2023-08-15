@@ -1394,13 +1394,14 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 		// TODO: Update TiFlash, to handle StateWriteOnly
 		diff.AffectedOpts = []*model.AffectedOption{{
 			TableID: ptTableID,
-			// Keep this as Schema ID of non-partitioned table
-			// to avoid trigger early rename in TiFlash
-			SchemaID: job.SchemaID,
 		}}
 		if job.SchemaState != model.StatePublic {
-			// No change, just to a refresh of the non-partitioned table
+			// No change, just to refresh the non-partitioned table
+			// with its new ExchangePartitionInfo.
 			diff.TableID = job.TableID
+			// Keep this as Schema ID of non-partitioned table
+			// to avoid trigger early rename in TiFlash
+			diff.AffectedOpts[0].SchemaID = job.SchemaID
 		} else {
 			// Swap
 			diff.TableID = ptDefID
