@@ -3584,8 +3584,10 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 // attachStatsCollector attaches the stats collector in the dom for the session
 func attachStatsCollector(s *session, dom *domain.Domain) *session {
 	if dom.StatsHandle() != nil && dom.StatsUpdating() {
-		s.statsCollector = dom.StatsHandle().NewSessionStatsCollector()
-		if GetIndexUsageSyncLease() > 0 {
+		if s.statsCollector == nil {
+			s.statsCollector = dom.StatsHandle().NewSessionStatsCollector()
+		}
+		if s.idxUsageCollector == nil && GetIndexUsageSyncLease() > 0 {
 			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector()
 		}
 	}
@@ -3595,9 +3597,14 @@ func attachStatsCollector(s *session, dom *domain.Domain) *session {
 
 // detachStatsCollector removes the stats collector in the session
 func detachStatsCollector(s *session) *session {
-	s.statsCollector = nil
-	s.idxUsageCollector = nil
-
+	if s.statsCollector != nil {
+		s.statsCollector.Delete()
+		s.statsCollector = nil
+	}
+	if s.idxUsageCollector != nil {
+		s.idxUsageCollector.Delete()
+		s.idxUsageCollector = nil
+	}
 	return s
 }
 
