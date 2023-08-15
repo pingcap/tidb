@@ -17,6 +17,7 @@ package sharedisk
 import (
 	"context"
 	"encoding/binary"
+	"github.com/pingcap/errors"
 	"io"
 	"time"
 
@@ -33,42 +34,57 @@ type kvReader struct {
 	val        []byte
 }
 
-func newKVReader(ctx context.Context, name string, store storage.ExternalStorage, initFileOffset uint64, bufSize int) (*kvReader, error) {
-	br, err := newByteReader(ctx, store, name, initFileOffset, bufSize)
+func newKVReader(
+	ctx context.Context,
+	name string,
+	store storage.ExternalStorage,
+	initFileOffset uint64,
+	bufSize int,
+) (*kvReader, error) {
+	sr, err := openStoreReaderAndSeek(ctx, store, name, initFileOffset)
 	if err != nil {
+		return nil, err
+	}
+	br, err := newByteReader(ctx, sr, bufSize)
+	if err != nil {
+		br.Close()
 		return nil, err
 	}
 	return &kvReader{
 		byteReader: br,
-		key:        nil,
-		val:        nil,
 	}, nil
 }
 
 func (r *kvReader) nextKV() (key, val []byte, err error) {
-	if eof, err := r.byteReader.eof(); err != nil || eof {
-		return nil, nil, err
-	}
 	r.byteReader.reset()
-	lenBuf, err := r.byteReader.sliceNext(8)
+	lenBytes, err := r.byteReader.readNBytes(8)
 	if err != nil {
 		return nil, nil, err
 	}
-	keyLen := int(binary.BigEndian.Uint64(lenBuf.get()))
-	kBuf, err := r.byteReader.sliceNext(keyLen)
+	keyLen := int(binary.BigEndian.Uint64(*lenBytes))
+	keyPtr, err := r.byteReader.readNBytes(keyLen)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, noEOF(err)
 	}
-	lenBuf, err = r.byteReader.sliceNext(8)
+	lenBytes, err = r.byteReader.readNBytes(8)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, noEOF(err)
 	}
-	valLen := int(binary.BigEndian.Uint64(lenBuf.get()))
-	valBuf, err := r.byteReader.sliceNext(valLen)
+	valLen := int(binary.BigEndian.Uint64(*lenBytes))
+	valPtr, err := r.byteReader.readNBytes(valLen)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, noEOF(err)
 	}
-	return kBuf.get(), valBuf.get(), nil
+	return *keyPtr, *valPtr, nil
+}
+
+// noEOF converts the EOF error to io.ErrUnexpectedEOF.
+func noEOF(err error) error {
+	if err == io.EOF {
+		logutil.BgLogger().Warn("unexpected EOF", zap.Error(errors.Trace(err)))
+		return io.ErrUnexpectedEOF
+	}
+	return err
 }
 
 func (r *kvReader) Close() error {
@@ -81,34 +97,31 @@ type statsReader struct {
 }
 
 func newStatsReader(ctx context.Context, store storage.ExternalStorage, name string, bufSize int) (*statsReader, error) {
-	br, err := newByteReader(ctx, store, name, 0, bufSize)
+	sr, err := openStoreReaderAndSeek(ctx, store, name, 0)
+	if err != nil {
+		return nil, err
+	}
+	br, err := newByteReader(ctx, sr, bufSize)
 	if err != nil {
 		return nil, err
 	}
 	return &statsReader{
 		byteReader: br,
-		propBytes:  nil,
 	}, nil
 }
 
 func (r *statsReader) nextProp() (*RangeProperty, error) {
-	if eof, err := r.byteReader.eof(); err != nil || eof {
-		return nil, err
-	}
 	r.byteReader.reset()
-	lenBuf, err := r.byteReader.sliceNext(4)
+	lenBytes, err := r.byteReader.readNBytes(4)
 	if err != nil {
 		return nil, err
 	}
-	propLen := int(binary.BigEndian.Uint32(lenBuf.get()))
-	if cap(r.propBytes) < propLen {
-		r.propBytes = make([]byte, propLen)
-	}
-	propBytes, err := r.byteReader.sliceNext(propLen)
+	propLen := int(binary.BigEndian.Uint32(*lenBytes))
+	propBytes, err := r.byteReader.readNBytes(propLen)
 	if err != nil {
-		return nil, err
+		return nil, noEOF(err)
 	}
-	return decodeProp(propBytes.get())
+	return decodeProp(*propBytes)
 }
 
 func (r *statsReader) Close() error {
@@ -127,22 +140,25 @@ func decodeProp(data []byte) (*RangeProperty, error) {
 	return rp, nil
 }
 
+// byteReader provides structured reading on a byte stream of external storage.
 type byteReader struct {
 	ctx           context.Context
-	name          string
 	storageReader storage.ReadSeekCloser
 
 	buf       []byte
 	bufOffset int
 
-	fileStart uint64
+	isEOF bool
 
-	auxBuf   []byte
-	cowSlice [][]byte
-	isEOF    bool
+	retPointers []*[]byte
 }
 
-func newByteReader(ctx context.Context, store storage.ExternalStorage, name string, initFileOffset uint64, bufSize int) (*byteReader, error) {
+func openStoreReaderAndSeek(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	name string,
+	initFileOffset uint64,
+) (storage.ReadSeekCloser, error) {
 	storageReader, err := store.Open(ctx, name)
 	if err != nil {
 		return nil, err
@@ -151,49 +167,35 @@ func newByteReader(ctx context.Context, store storage.ExternalStorage, name stri
 	if err != nil {
 		return nil, err
 	}
-	br := &byteReader{
+	return storageReader, nil
+}
+
+func newByteReader(ctx context.Context, storageReader storage.ReadSeekCloser, bufSize int) (*byteReader, error) {
+	r := &byteReader{
 		ctx:           ctx,
-		name:          name,
 		storageReader: storageReader,
-		fileStart:     initFileOffset,
 		buf:           make([]byte, bufSize),
-		bufOffset:     bufSize,
+		bufOffset:     0,
 	}
-	return br, err
+	return r, r.reload()
 }
 
-type slice interface {
-	get() []byte
-}
-
-type commonSlice []byte
-
-func (c commonSlice) get() []byte {
-	return c
-}
-
-type lazySlice struct {
-	cowIdx     int
-	byteReader *byteReader
-}
-
-func (s lazySlice) get() []byte {
-	return s.byteReader.cowSlice[s.cowIdx]
-}
-
-// sliceNext reads the next n bytes from the reader and returns a buffer slice containing those bytes.
-// If the reader has fewer than n bytes remaining in current buffer, `auxBuf` is used as a container instead.
-func (r *byteReader) sliceNext(n int) (slice, error) {
+// readNBytes reads the next n bytes from the reader and returns a buffer slice containing those bytes.
+// The returned slice (pointer) can not be used after r.reset. In the same interval of r.reset,
+// byteReader guarantees that the returned slice (pointer) will point to the same content
+// though the slice may be changed.
+func (r *byteReader) readNBytes(n int) (*[]byte, error) {
 	b := r.next(n)
 	readLen := len(b)
 	if readLen == n {
-		return mkLazySlice(r, b), nil
+		ret := &b
+		r.retPointers = append(r.retPointers, ret)
+		return ret, nil
 	}
-	if cap(r.auxBuf) < n {
-		r.auxBuf = make([]byte, n)
-	}
-	r.auxBuf = r.auxBuf[:n]
-	copy(r.auxBuf, b)
+	// If the reader has fewer than n bytes remaining in current buffer,
+	// `auxBuf` is used as a container instead.
+	auxBuf := make([]byte, n)
+	copy(auxBuf, b)
 	for readLen < n {
 		r.cloneSlices()
 		err := r.reload()
@@ -201,41 +203,31 @@ func (r *byteReader) sliceNext(n int) (slice, error) {
 			return nil, err
 		}
 		b = r.next(n - readLen)
-		copy(r.auxBuf[readLen:], b)
+		copy(auxBuf[readLen:], b)
 		readLen += len(b)
 	}
-	return commonSlice(r.auxBuf), nil
-}
-
-func mkLazySlice(r *byteReader, s []byte) lazySlice {
-	r.cowSlice = append(r.cowSlice, s)
-	return lazySlice{
-		cowIdx:     len(r.cowSlice) - 1,
-		byteReader: r,
-	}
+	return &auxBuf, nil
 }
 
 func (r *byteReader) reset() {
-	r.cowSlice = r.cowSlice[:0]
+	for i := range r.retPointers {
+		r.retPointers[i] = nil
+	}
+	r.retPointers = r.retPointers[:0]
 }
 
 func (r *byteReader) cloneSlices() {
-	for i := range r.cowSlice {
-		r.cowSlice[i] = append([]byte(nil), r.cowSlice[i]...)
+	for i := range r.retPointers {
+		copied := make([]byte, len(*r.retPointers[i]))
+		copy(copied, *r.retPointers[i])
+		*r.retPointers[i] = copied
+		r.retPointers[i] = nil
 	}
+	r.retPointers = r.retPointers[:0]
 }
 
-func (r *byteReader) eof() (bool, error) {
-	if !r.isEOF && len(r.buf) == r.bufOffset {
-		err := r.reload()
-		if err == io.EOF {
-			return true, nil
-		} else if err != nil {
-			return true, err
-		}
-		return false, nil
-	}
-	return r.isEOF && len(r.buf) == r.bufOffset, nil
+func (r *byteReader) eof() bool {
+	return r.isEOF && len(r.buf) == r.bufOffset
 }
 
 func (r *byteReader) next(n int) []byte {
@@ -249,13 +241,12 @@ func (r *byteReader) reload() error {
 	startTime := time.Now()
 	nBytes, err := io.ReadFull(r.storageReader, r.buf[0:])
 	if err == io.EOF {
-		logutil.BgLogger().Warn("meet EOF", zap.String("file", r.name), zap.Uint64("start", r.fileStart))
 		r.isEOF = true
 		return err
-	} else if err != nil && err == io.ErrUnexpectedEOF {
+	} else if err == io.ErrUnexpectedEOF {
 		r.isEOF = true
 	} else if err != nil {
-		logutil.BgLogger().Warn("Other error during reading from external storage", zap.String("file", r.name), zap.Uint64("start", r.fileStart), zap.Error(err))
+		logutil.Logger(r.ctx).Warn("other error during reading from external storage", zap.Error(err))
 		return err
 	}
 	elapsed := time.Since(startTime).Microseconds()

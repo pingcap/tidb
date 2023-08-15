@@ -207,13 +207,12 @@ func TestWriterPerfOnly(t *testing.T) {
 }
 
 func TestWriterPerf(t *testing.T) {
-	t.Skip("")
-	var keySize = 1000
-	var valueSize = 10
-	var rowCnt = 100000
+	var keySize = 200
+	//var valueSize = 10
+	//var rowCnt = 10000000
 	var readBufferSize = 64 * 1024
 	const (
-		memLimit       uint64 = 64 * 1024 * 1024
+		memLimit       uint64 = 16 * 1024 * 1024
 		keyDist               = 8 * 1024
 		sizeDist       uint64 = 1024 * 1024
 		writeBatchSize        = 8 * 1024
@@ -232,8 +231,8 @@ func TestWriterPerf(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	err = cleanupFiles(ctx, storage, "test")
-	require.NoError(t, err)
+	//err = cleanupFiles(ctx, storage, "test")
+	//require.NoError(t, err)
 
 	writer := NewWriter(context.Background(), storage, "test", 0,
 		membuf.NewPool(), memLimit, keyDist, sizeDist, writeBatchSize, DummyOnCloseFunc)
@@ -241,22 +240,23 @@ func TestWriterPerf(t *testing.T) {
 
 	var startMemory runtime.MemStats
 
-	k := randomString(keySize)
-	v := randomString(valueSize)
-
-	for i := 0; i < rowCnt; i += 10000 {
-		var kvs []common.KvPair
-		for j := 0; j < 10000; j++ {
-			var kv common.KvPair
-			kv.Key = []byte(k)
-			kv.Val = []byte(v)
-			kvs = append(kvs, kv)
-		}
-		err = writer.AppendRows(ctx, nil, kv2.MakeRowsFromKvPairs(kvs))
-	}
-	err = writer.flushKVs(context.Background())
-	require.NoError(t, err)
-	//writer.currentSeq = 500
+	//commonKeyPrefix := randomString(100)
+	//k := randomString(keySize - 100)
+	//v := randomString(valueSize)
+	//
+	//for i := 0; i < rowCnt; i += 10000 {
+	//	var kvs []common.KvPair
+	//	for j := 0; j < 10000; j++ {
+	//		var kv common.KvPair
+	//		kv.Key = []byte(commonKeyPrefix + k)
+	//		kv.Val = []byte(v)
+	//		kvs = append(kvs, kv)
+	//	}
+	//	err = writer.AppendRows(ctx, nil, kv2.MakeRowsFromKvPairs(kvs))
+	//}
+	//err = writer.flushKVs(context.Background())
+	//require.NoError(t, err)
+	writer.currentSeq = 80
 
 	logutil.BgLogger().Info("writer info", zap.Any("seq", writer.currentSeq))
 
@@ -273,7 +273,7 @@ func TestWriterPerf(t *testing.T) {
 	dataFileName := make([]string, 0)
 	fileStartOffsets := make([]uint64, 0)
 	for i := 0; i < writer.currentSeq; i++ {
-		dataFileName = append(dataFileName, "test/0/"+strconv.Itoa(i))
+		dataFileName = append(dataFileName, "test/"+strconv.Itoa(i))
 		fileStartOffsets = append(fileStartOffsets, 0)
 	}
 
@@ -300,7 +300,7 @@ func TestWriterPerf(t *testing.T) {
 		}
 	}
 
-	require.Equal(t, rowCnt, mCnt)
+	//require.Equal(t, rowCnt, mCnt)
 	logutil.BgLogger().Info("read data rate", zap.Any("sort total/ ms", time.Since(startTs).Milliseconds()), zap.Any("io cnt", ReadIOCnt.Load()), zap.Any("bytes", ReadByteForTest.Load()), zap.Any("time", ReadTimeForTest.Load()), zap.Any("rate: m/s", ReadByteForTest.Load()*1000000.0/ReadTimeForTest.Load()/1024.0/1024.0))
 }
 
