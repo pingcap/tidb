@@ -218,7 +218,6 @@ func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 
 // initColAssignExprs creates the column assignment expressions using session context.
 // RewriteAstExpr will write ast node in place(due to xxNode.Accept), but it doesn't change node content,
-// so we sync it.
 func (e *LoadDataInfo) initColAssignExprs() error {
 	for _, assign := range e.ColumnAssignments {
 		newExpr, err := expression.RewriteAstExpr(e.Ctx, assign.Expr, nil, nil)
