@@ -143,10 +143,21 @@ func (d *ddl) CreateETL(ctx sessionctx.Context, s *ast.CreateETLStmt) error {
 	// 7. insert into demo_flink.t (select * from demo_flink.t_inc)
 
 	sb := new(strings.Builder)
-	sb = writeDemoFlinkTFile(sb, s)
+	sb = writePreprocess(sb, s)
 	sb = writeDemoHudiT(sb, s)
-	sb = writeDemoFlinkT(sb, s)
-	sb = writeDemoFlinkTInc(sb, s)
+	isJoin := len(s.DataSourceNames) > 1
+	if !isJoin {
+		sb = writeDemoFlinkTFile(sb, s)
+		sb = writeDemoFlinkT(sb, s)
+		sb = writeDemoFlinkTInc(sb, s)
+	} else {
+		// read t_build from jdbc
+		sb = writeDemoFlinkTBuild(sb, s)
+
+		sb = writeDemoFlinkTProbeFile(sb, s)
+		sb = writeDemoFlinkTProbeInc(sb, s)
+		sb = writeDemoFlinkTProbe(sb, s)
+	}
 	sb = writeDemoHudiTInsert(sb, tblInfo, s)
 	etlJobID := NewSHA1Hash()
 	tblInfo.ETLStoragePath = etlPathPrefix + "etl" + etlJobID + "-sink-5"
@@ -156,7 +167,11 @@ func (d *ddl) CreateETL(ctx sessionctx.Context, s *ast.CreateETLStmt) error {
 	logutil.BgLogger().Info("template file and etlJobID", zap.String("templateFilePath", templateFilePath), zap.String("etlJobID", etlJobID))
 
 	// hard code the table name
-	sinkTaskDesc, err := startSinkTask(etlJobID, s.Table.Schema.L, s.DataSourceNames[0], templateFilePath)
+	tblName := s.DataSourceNames[0]
+	if len(s.DataSourceNames) > 1 {
+		tblName = s.DataSourceNames[1]
+	}
+	sinkTaskDesc, err := startSinkTask(etlJobID, s.Table.Schema.L, tblName, templateFilePath)
 	if err != nil {
 		return err
 	}
@@ -221,11 +236,38 @@ func writeTableDefinition(sb *strings.Builder, stmt *ast.CreateETLStmt, engineTy
 		s := strings.Join(stmt.PKNamesForFlinkTable, ",")
 		sb.WriteString(fmt.Sprintf("  primary key (%s) not enforced\n", s))
 	}
+	if engineType == "DemoFlinkTProbe" {
+		for i, name := range stmt.DemoFlinkTProbeSchemaCols {
+			tpStr := stmt.DemoFlinkTProbeColsFieldTypes[i].CompactStr()
+			if strings.Contains(tpStr, "int") {
+				tpStr = "bigint"
+			}
 
+			s := fmt.Sprintf("  %s %s,\n", name, tpStr)
+			sb.WriteString(s)
+		}
+		sb.WriteString("`proctime` as PROCTIME(), \n")
+		s := strings.Join(stmt.PKNamesForFlinkTProbeTable, ",")
+		sb.WriteString(fmt.Sprintf("  primary key (%s) not enforced\n", s))
+	}
+
+	if engineType == "DemoFlinkTProbeFile" || engineType == "DemoFlinkTProbeInc" {
+		for i, name := range stmt.DemoFlinkTProbeSchemaCols {
+			tpStr := stmt.DemoFlinkTProbeColsFieldTypes[i].CompactStr()
+			if strings.Contains(tpStr, "int") {
+				tpStr = "bigint"
+			}
+
+			s := fmt.Sprintf("  %s %s,\n", name, tpStr)
+			sb.WriteString(s)
+		}
+		s := strings.Join(stmt.PKNamesForFlinkTProbeTable, ",")
+		sb.WriteString(fmt.Sprintf("  primary key (%s) not enforced\n", s))
+	}
 	return sb
 }
 
-func writeDemoFlinkTFile(sb *strings.Builder, stmt *ast.CreateETLStmt) *strings.Builder {
+func writePreprocess(sb *strings.Builder, stmt *ast.CreateETLStmt) *strings.Builder {
 	sb.WriteString("set execution.checkpointing.interval=1min;\n")
 	sb.WriteString("set state.backend = rocksdb;\n")
 	sb.WriteString("set state.checkpoints.dir = ${hdfs_address}/checkpoints;\n")
@@ -233,6 +275,10 @@ func writeDemoFlinkTFile(sb *strings.Builder, stmt *ast.CreateETLStmt) *strings.
 	sb.WriteString("set state.backend.incremental = true;\n")
 	sb.WriteString("create database demo_flink;\n")
 	sb.WriteString("create database demo_hudi;\n")
+	return sb
+}
+
+func writeDemoFlinkTFile(sb *strings.Builder, stmt *ast.CreateETLStmt) *strings.Builder {
 	sb.WriteString("create table demo_flink.t_file (\n")
 	sb = writeTableDefinition(sb, stmt, "DemoFlinkTInc")
 	sb.WriteString(")\n")
@@ -295,6 +341,64 @@ func writeDemoFlinkTInc(sb *strings.Builder, stmt *ast.CreateETLStmt) *strings.B
 	return sb
 }
 
+// read t_build from jdbc
+func writeDemoFlinkTBuild(sb *strings.Builder, stmt *ast.CreateETLStmt) *strings.Builder {
+	sb.WriteString("create table demo_flink.t_build (\n")
+	sb = writeTableDefinition(sb, stmt, "DemoFlinkT")
+	sb.WriteString(")\n")
+	sb.WriteString("with (\n")
+	sb.WriteString("  'connector' = 'jdbc',\n")
+	sb.WriteString(fmt.Sprintf("  'url' = 'jdbc:mysql://${tidb_address}/%s',\n", stmt.Table.Schema.O))
+	sb.WriteString(fmt.Sprintf("  'table-name' = '%s',\n", stmt.DataSourceNames[0]))
+	sb.WriteString("  'username' = 'root',\n")
+	sb.WriteString("  'password' = ''\n")
+	sb.WriteString(");\n")
+	return sb
+}
+
+func writeDemoFlinkTProbeFile(sb *strings.Builder, stmt *ast.CreateETLStmt) *strings.Builder {
+	sb.WriteString("create table demo_flink.t_probe_file (\n")
+	sb = writeTableDefinition(sb, stmt, "DemoFlinkTProbeFile")
+	sb.WriteString(")\n")
+	sb.WriteString("with (\n")
+	sb.WriteString("  'connector' = 'filesystem',\n")
+	sb.WriteString("  'path' = 'file://${csv_file_path}',\n")
+	sb.WriteString("  'format' = 'csv'\n")
+	sb.WriteString(");\n")
+	return sb
+}
+
+func writeDemoFlinkTProbe(sb *strings.Builder, stmt *ast.CreateETLStmt) *strings.Builder {
+	sb.WriteString("create table demo_flink.t_probe (\n")
+	sb = writeTableDefinition(sb, stmt, "DemoFlinkTProbe")
+	sb.WriteString(")\n")
+	sb.WriteString("with (\n")
+	sb.WriteString("  'connector' = 'kafka',\n")
+	sb.WriteString("  'topic' = '${kafka_topic}_base',\n")
+	sb.WriteString("  'properties.bootstrap.servers' = '${kafka_address}',\n")
+	sb.WriteString("  'properties.group.id' = 'pingcap-demo-group',\n")
+	sb.WriteString("  'format' = 'canal-json',\n")
+	sb.WriteString("  'scan.startup.mode' = 'earliest-offset'\n")
+	sb.WriteString(");\n")
+
+	return sb
+}
+
+func writeDemoFlinkTProbeInc(sb *strings.Builder, stmt *ast.CreateETLStmt) *strings.Builder {
+	sb.WriteString("create table demo_flink.t_probe_inc (\n")
+	sb = writeTableDefinition(sb, stmt, "DemoFlinkTProbeInc")
+	sb.WriteString(")\n")
+	sb.WriteString("with (\n")
+	sb.WriteString("  'connector' = 'kafka',\n")
+	sb.WriteString("  'topic' = '${kafka_topic}',\n")
+	sb.WriteString("  'properties.bootstrap.servers' = '${kafka_address}',\n")
+	sb.WriteString("  'properties.group.id' = 'pingcap-demo-group',\n")
+	sb.WriteString("  'format' = 'canal-json',\n")
+	sb.WriteString("  'scan.startup.mode' = 'earliest-offset'\n")
+	sb.WriteString(");\n")
+	return sb
+}
+
 // 1. read part of the columns: insert into demo_hudi.t(a, b) (select * from demo_flink.t);
 // 2.
 func writeDemoHudiTInsert(sb *strings.Builder, tblInfo *model.TableInfo, stmt *ast.CreateETLStmt) *strings.Builder {
@@ -310,20 +414,39 @@ func writeDemoHudiTInsert(sb *strings.Builder, tblInfo *model.TableInfo, stmt *a
 	fromOffset := strings.Index(strings.ToLower(tblInfo.ETLQuery), "from ")
 	extractTableName := tblInfo.ETLQuery[fromOffset+5+strings.Index(tblInfo.ETLQuery[fromOffset+5:], " "):]
 	query := tblInfo.ETLQuery[0:fromOffset+5] + "demo_flink.t" + extractTableName
+	if len(stmt.DataSourceNames) > 1 {
+		query = tblInfo.ETLQuery
+		query = strings.ReplaceAll(query, " "+stmt.DataSourceNames[0]+" join "+stmt.DataSourceNames[1]+" ", " "+stmt.DataSourceNames[1]+" join "+stmt.DataSourceNames[0]+" ")
+		query = strings.ReplaceAll(query, " "+stmt.DataSourceNames[0]+" ", " demo_flink.t_build ")
+		query = strings.ReplaceAll(query, " "+stmt.DataSourceNames[1]+" ", " demo_flink.t_probe as probe ")
+		query = strings.ReplaceAll(query, stmt.DataSourceNames[0]+".", "build.")
+		query = strings.ReplaceAll(query, stmt.DataSourceNames[1]+".", "probe.")
+		query = strings.ReplaceAll(query, " demo_flink.t_build ", " demo_flink.t_build FOR SYSTEM_TIME AS OF probe.proctime as build ")
+	}
 	sb.WriteString(fmt.Sprintf("insert into demo_hudi.t(%s) (%s);\n", demoHudiColNames, query))
 	// sb.WriteString("insert into demo_hudi.t (select * from demo_flink.t);\n")
 	sb.WriteString("SET table.dml-sync=true;\n")
 	demoFlinkTColNames := ""
-	for i, name := range stmt.DemoFlinkTSchemaCols {
-		if i == len(stmt.DemoFlinkTSchemaCols)-1 {
+	schemaCols := stmt.DemoFlinkTSchemaCols
+	if len(stmt.DataSourceNames) > 1 {
+		schemaCols = stmt.DemoFlinkTProbeSchemaCols
+	}
+	for i, name := range schemaCols {
+		if i == len(schemaCols)-1 {
 			demoFlinkTColNames += name
 		} else {
 			demoFlinkTColNames += name + ","
 		}
 	}
-	sb.WriteString(fmt.Sprintf("insert into demo_flink.t(%s) (select * from demo_flink.t_file);\n", demoFlinkTColNames))
-	sb.WriteString("RESET table.dml-sync;\n")
-	sb.WriteString(fmt.Sprintf("insert into demo_flink.t(%s) (select * from demo_flink.t_inc);\n", demoFlinkTColNames))
+	if len(stmt.DataSourceNames) > 1 {
+		sb.WriteString(fmt.Sprintf("insert into demo_flink.t_probe(%s) (select * from demo_flink.t_probe_file);\n", demoFlinkTColNames))
+		sb.WriteString("RESET table.dml-sync;\n")
+		sb.WriteString(fmt.Sprintf("insert into demo_flink.t_probe(%s) (select * from demo_flink.t_probe_inc);\n", demoFlinkTColNames))
+	} else {
+		sb.WriteString(fmt.Sprintf("insert into demo_flink.t(%s) (select * from demo_flink.t_file);\n", demoFlinkTColNames))
+		sb.WriteString("RESET table.dml-sync;\n")
+		sb.WriteString(fmt.Sprintf("insert into demo_flink.t(%s) (select * from demo_flink.t_inc);\n", demoFlinkTColNames))
+	}
 	return sb
 }
 

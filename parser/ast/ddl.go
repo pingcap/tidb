@@ -148,8 +148,17 @@ type CreateETLStmt struct {
 	// demo_flink.t_inc, demo_flink.t_file
 	DemoFlinkTIncSchemaCols []string
 	DemoFlinkTIncSchemaColsFiledTypes []*types.FieldType
+
+	DemoFlinkTBuildSchemaCols []string
+	DemoFlinkTBuildColsFieldTypes []*types.FieldType
+	DemoFlinkTProbeSchemaCols []string
+	DemoFlinkTProbeColsFieldTypes []*types.FieldType
+
 	DataSourceNames                []string
 	PKNamesForFlinkTable           []string
+	PKNamesForFlinkTBuildTable     []string
+	PKNamesForFlinkTProbeTable 	   []string
+
 	PKNamesForHudiTable                        []string
 }
 

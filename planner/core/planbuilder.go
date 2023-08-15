@@ -4634,12 +4634,6 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		for _, datasource := range ds {
 			v.DataSourceNames = append(v.DataSourceNames, datasource.tableInfo.Name.O)
 		}
-		// for _, name := range ds[0].OutputNames() {
-		// 	v.DemoFlinkTSchemaCols = append(v.DemoFlinkTSchemaCols, name.ColNameString())
-		// }
-		// for _, col := range ds[0].Schema().Columns {
-		// 	v.DemoFlinkTSchemaColsFiledTypes = append(v.DemoFlinkTSchemaColsFiledTypes, col.RetType)
-		// }
 
 		for _, col := range ds[0].tableInfo.Columns {
 			logutil.BgLogger().Warn("col name", zap.String("col name", col.Name.O))
@@ -4647,6 +4641,14 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			v.DemoFlinkTIncSchemaCols = append(v.DemoFlinkTIncSchemaCols, col.Name.O)
 			v.DemoFlinkTSchemaColsFiledTypes = append(v.DemoFlinkTSchemaColsFiledTypes, &col.FieldType)
 			v.DemoFlinkTIncSchemaColsFiledTypes = append(v.DemoFlinkTIncSchemaColsFiledTypes, &col.FieldType)
+		}
+		if len(ds) > 1 {
+			v.DemoFlinkTBuildColsFieldTypes = v.DemoFlinkTIncSchemaColsFiledTypes
+			v.DemoFlinkTBuildSchemaCols = v.DemoFlinkTIncSchemaCols
+			for _, col := range ds[1].tableInfo.Columns {
+				v.DemoFlinkTProbeSchemaCols = append(v.DemoFlinkTProbeSchemaCols, col.Name.O)
+				v.DemoFlinkTProbeColsFieldTypes = append(v.DemoFlinkTProbeColsFieldTypes, &col.FieldType)
+			}
 		}
 		logutil.BgLogger().Warn("len(indices)", zap.Int("len(indices)", len(ds[0].tableInfo.Indices)))
 		pkInfo := tables.FindPrimaryIndex(ds[0].tableInfo)
@@ -4661,6 +4663,22 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				v.PKNamesForFlinkTable = append(v.PKNamesForFlinkTable, col.Name.O)
 			}
 		}
+		if len(ds) > 1 {
+			v.PKNamesForFlinkTBuildTable = v.PKNamesForFlinkTable
+			pkInfo = tables.FindPrimaryIndex(ds[1].tableInfo)
+			if pkInfo == nil {
+				for _, col := range ds[1].tableInfo.Columns {
+					if mysql.HasPriKeyFlag(col.FieldType.GetFlag()) {
+						v.PKNamesForFlinkTProbeTable = append(v.PKNamesForFlinkTProbeTable, col.Name.O)
+					}
+				}
+			} else {
+				for _, col := range pkInfo.Columns {
+					v.PKNamesForFlinkTProbeTable = append(v.PKNamesForFlinkTProbeTable, col.Name.O)
+				}
+			}
+		}
+
 		if v.HudiTCols == nil {
 			v.PKNamesForHudiTable = v.PKNamesForFlinkTable
 		} else {
