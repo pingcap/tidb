@@ -510,7 +510,6 @@ func extractDatumByOffsets(
 	row chunk.Row,
 	offsets []int,
 	expCols []*expression.Column,
-	vars *variable.SessionVars,
 	buf []types.Datum,
 ) []types.Datum {
 	for _, offset := range offsets {
