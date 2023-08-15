@@ -125,3 +125,45 @@ func TestSetOperation(t *testing.T) {
 	rows := result.Rows()
 	require.Len(t, rows, 0)
 }
+
+func TestCompareIssue38361(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists TEST1")
+	tk.MustExec("create database TEST1")
+	tk.MustExec("use TEST1")
+	tk.MustExec("create table t(a datetime, b bigint, c bigint)")
+	tk.MustExec("insert into t values(cast('2023-08-09 00:00:00' as datetime), 20230809, 20231310)")
+
+	tk.MustQuery("select a > 20230809 from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select a = 20230809 from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select a < 20230810 from t").Check(testkit.Rows("1"))
+	// 20231310 can't be converted to valid datetime, thus should be compared using real date type,and datetime will be
+	// converted to something like 'YYYYMMDDHHMMSS', bigger than 20231310
+	tk.MustQuery("select a < 20231310 from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select 20230809 < a from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select 20230809 = a from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select 20230810 > a from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select 20231310 > a from t").Check(testkit.Rows("0"))
+
+	// constant datetime cmp numeric constant should be compared as real data type
+	tk.MustQuery("select cast('2023-08-09 00:00:00' as datetime) > 20230809 from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select cast('2023-08-09 00:00:00' as datetime) = 20230809 from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select cast('2023-08-09 00:00:00' as datetime) < 20230810 from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select cast('2023-08-09 00:00:00' as datetime) < 20231310 from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select 20230809 < cast('2023-08-09 00:00:00' as datetime) from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select 20230809 = cast('2023-08-09 00:00:00' as datetime) from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select 20230810 > cast('2023-08-09 00:00:00' as datetime) from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select 20231310 > cast('2023-08-09 00:00:00' as datetime) from t").Check(testkit.Rows("0"))
+
+	// datetime column cmp numeric column should be compared as real data type
+	tk.MustQuery("select a > b from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select a = b from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select a < b + 1 from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select a < c from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select b < a from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select b = a from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select b > a from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select c > a from t").Check(testkit.Rows("0"))
+}

@@ -1370,6 +1370,11 @@ var defaultSysVars = []*SysVar{
 		s.MaxExecutionTime = uint64(timeoutMS)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TidbKvReadTimeout, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, IsHintUpdatable: true, SetSession: func(s *SessionVars, val string) error {
+		timeoutMS := tidbOptPositiveInt32(val, 0)
+		s.TidbKvReadTimeout = uint64(timeoutMS)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationServer, Value: mysql.DefaultCollationName, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
 	}, SetSession: func(s *SessionVars, val string) error {
@@ -2629,7 +2634,10 @@ var defaultSysVars = []*SysVar{
 		ldap.LDAPSASLAuthImpl.SetBindRootPW(s)
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-		return ldap.LDAPSASLAuthImpl.GetBindRootPW(), nil
+		if ldap.LDAPSASLAuthImpl.GetBindRootPW() == "" {
+			return "", nil
+		}
+		return MaskPwd, nil
 	}},
 	// TODO: allow setting init_pool_size to 0 to disable pooling
 	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLInitPoolSize, Value: strconv.Itoa(DefAuthenticationLDAPSASLInitPoolSize), Type: TypeInt, MinValue: 1, MaxValue: 32767, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
@@ -2711,7 +2719,10 @@ var defaultSysVars = []*SysVar{
 		ldap.LDAPSimpleAuthImpl.SetBindRootPW(s)
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-		return ldap.LDAPSimpleAuthImpl.GetBindRootPW(), nil
+		if ldap.LDAPSimpleAuthImpl.GetBindRootPW() == "" {
+			return "", nil
+		}
+		return MaskPwd, nil
 	}},
 	// TODO: allow setting init_pool_size to 0 to disable pooling
 	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleInitPoolSize, Value: strconv.Itoa(DefAuthenticationLDAPSimpleInitPoolSize), Type: TypeInt, MinValue: 1, MaxValue: 32767, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
@@ -2808,6 +2819,11 @@ var SetCharsetVariables = []string{
 	CharacterSetClient,
 	CharacterSetResults,
 }
+
+const (
+	// MaskPwd is the mask of password for LDAP variables.
+	MaskPwd = "******"
+)
 
 const (
 	// CharacterSetConnection is the name for character_set_connection system variable.
@@ -3082,6 +3098,8 @@ const (
 	TxnIsolationOneShot = "tx_isolation_one_shot"
 	// MaxExecutionTime is the name of the 'max_execution_time' system variable.
 	MaxExecutionTime = "max_execution_time"
+	// TidbKvReadTimeout is the name of the 'tidb_kv_read_timeout' system variable.
+	TidbKvReadTimeout = "tidb_kv_read_timeout"
 	// ReadOnly is the name of the 'read_only' system variable.
 	ReadOnly = "read_only"
 	// DefaultAuthPlugin is the name of 'default_authentication_plugin' system variable.

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
+	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -699,6 +700,12 @@ func (importer *FileImporter) downloadSST(
 		StorageCacheId: importer.cacheKey,
 		// For the older version of TiDB, the request type will  be default to `import_sstpb.RequestType_Legacy`
 		RequestType: import_sstpb.DownloadRequestType_Keyspace,
+		Context: &kvrpcpb.Context{
+			ResourceControlContext: &kvrpcpb.ResourceControlContext{
+				ResourceGroupName: "", // TODO,
+			},
+			RequestSource: kvutil.BuildRequestSource(true, kv.InternalTxnBR, kvutil.ExplicitTypeBR),
+		},
 	}
 	log.Debug("download SST",
 		logutil.SSTMeta(sstMeta),
@@ -783,6 +790,12 @@ func (importer *FileImporter) downloadRawKVSST(
 		IsRawKv:        true,
 		CipherInfo:     cipher,
 		StorageCacheId: importer.cacheKey,
+		Context: &kvrpcpb.Context{
+			ResourceControlContext: &kvrpcpb.ResourceControlContext{
+				ResourceGroupName: "", // TODO,
+			},
+			RequestSource: kvutil.BuildRequestSource(true, kv.InternalTxnBR, kvutil.ExplicitTypeBR),
+		},
 	}
 	log.Debug("download SST", logutil.SSTMeta(sstMeta), logutil.Region(regionInfo.Region))
 
@@ -892,6 +905,10 @@ func (importer *FileImporter) ingestSSTs(
 		RegionId:    regionInfo.Region.GetId(),
 		RegionEpoch: regionInfo.Region.GetRegionEpoch(),
 		Peer:        leader,
+		ResourceControlContext: &kvrpcpb.ResourceControlContext{
+			ResourceGroupName: "", // TODO,
+		},
+		RequestSource: kvutil.BuildRequestSource(true, kv.InternalTxnBR, kvutil.ExplicitTypeBR),
 	}
 
 	if !importer.supportMultiIngest {
