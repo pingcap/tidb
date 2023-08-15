@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/hex"
 	"sync"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -29,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -486,7 +484,7 @@ func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo,
 
 func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
+	_, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
 	sc := sCtx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()
 	for i := range colInfos {
@@ -517,17 +515,7 @@ func extractDatumByOffsets(
 ) []types.Datum {
 	for _, offset := range offsets {
 		c := expCols[offset]
-		ft := c.GetType()
-		rowDt := row.GetDatum(offset, ft)
-		if ft.GetType() == mysql.TypeTimestamp && vars.TimeZone != time.UTC {
-			// Convert from utc to current timezone.
-			t := rowDt.GetMysqlTime()
-			err := t.ConvertTimeZone(time.UTC, vars.TimeZone)
-			if err != nil {
-				logutil.BgLogger().Warn("convert timestamp timezone failed", zap.Error(err))
-			}
-			rowDt.SetMysqlTime(t)
-		}
+		rowDt := row.GetDatum(offset, c.GetType())
 		buf = append(buf, rowDt)
 	}
 	return buf
