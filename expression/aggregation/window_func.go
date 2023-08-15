@@ -66,7 +66,9 @@ func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Ex
 		ast.AggFuncCount, ast.AggFuncApproxCountDistinct, ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		base.RetTp.SetFlag(mysql.NotNullFlag)
 	case ast.WindowFuncLead, ast.WindowFuncLag:
-		if len(args) == 3 && ((args[0].GetType().GetFlag() & mysql.NotNullFlag) != 0) {
+		if len(args) == 3 &&
+			((args[0].GetType().GetFlag() & mysql.NotNullFlag) != 0) &&
+			((args[2].GetType().GetFlag() & mysql.NotNullFlag) != 0) {
 			base.RetTp.SetFlag(mysql.NotNullFlag)
 			break
 		}
