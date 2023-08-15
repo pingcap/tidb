@@ -296,12 +296,11 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 }
 
 func TestPlanStatsStatusRecord(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = true
 	})
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect this ut

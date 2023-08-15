@@ -292,6 +292,7 @@ func TestTTLDeleteWithTimeZoneChange(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.time_zone='Asia/Shanghai'")
 	tk.MustExec("set @@time_zone='Asia/Shanghai'")
+	tk.MustExec("set @@global.tidb_ttl_running_tasks=32")
 
 	tk.MustExec("create table t1(id int primary key, t datetime) TTL=`t` + INTERVAL 1 DAY TTL_ENABLE='OFF'")
 	tbl1, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
@@ -801,7 +802,7 @@ func TestJobMetrics(t *testing.T) {
 }
 
 func TestDelayMetrics(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// disable ttl job to make test stable
 	tk.MustExec("set @@global.tidb_ttl_job_enable=0")

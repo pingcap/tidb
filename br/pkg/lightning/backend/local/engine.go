@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -46,7 +47,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -774,8 +774,8 @@ func (e *Engine) batchIngestSSTs(metas []*sstMeta) error {
 	if len(metas) == 0 {
 		return nil
 	}
-	slices.SortFunc(metas, func(i, j *sstMeta) bool {
-		return bytes.Compare(i.minKey, j.minKey) < 0
+	slices.SortFunc(metas, func(i, j *sstMeta) int {
+		return bytes.Compare(i.minKey, j.minKey)
 	})
 
 	// non overlapping sst is grouped, and ingested in that order
@@ -1218,8 +1218,8 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	if !w.isWriteBatchSorted {
-		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) bool {
-			return bytes.Compare(i.Key, j.Key) < 0
+		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) int {
+			return bytes.Compare(i.Key, j.Key)
 		})
 		w.isWriteBatchSorted = true
 	}

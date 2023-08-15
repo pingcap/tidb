@@ -108,6 +108,8 @@ const (
 	ResourceGroupName
 	// LoadBasedReplicaReadThreshold sets the TiKV wait duration threshold of enabling replica read automatically.
 	LoadBasedReplicaReadThreshold
+	// TidbKvReadTimeout sets the timeout value for readonly kv request in milliseconds
+	TidbKvReadTimeout
 )
 
 // ReplicaReadType is the type of replica to read data from
@@ -148,6 +150,9 @@ type RequestSource = util.RequestSource
 
 // WithInternalSourceType create context with internal source.
 var WithInternalSourceType = util.WithInternalSourceType
+
+// WithInternalSourceAndTaskType create context with internal source and task name.
+var WithInternalSourceAndTaskType = util.WithInternalSourceAndTaskType
 
 // GetInternalSourceType get internal source
 func GetInternalSourceType(ctx context.Context) string {

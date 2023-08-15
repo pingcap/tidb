@@ -28,7 +28,6 @@ go_library(
         "//util/profile",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@org_golang_x_exp//slices",
     ],
 )
 
