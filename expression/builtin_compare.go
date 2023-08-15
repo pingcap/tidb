@@ -1557,8 +1557,9 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 }
 
 func matchRefineRule3Pattern(conEvalType types.EvalType, exprType *types.FieldType) bool {
-	return (exprType.GetType() == mysql.TypeTimestamp || exprType.GetType() == mysql.TypeDatetime) &&
-		(conEvalType == types.ETReal || conEvalType == types.ETDecimal || conEvalType == types.ETInt)
+	//return (exprType.GetType() == mysql.TypeTimestamp || exprType.GetType() == mysql.TypeDatetime) &&
+	//	(conEvalType == types.ETReal || conEvalType == types.ETDecimal || conEvalType == types.ETInt)
+	return false
 }
 
 // Since the argument refining of cmp functions can bring some risks to the plan-cache, the optimizer
