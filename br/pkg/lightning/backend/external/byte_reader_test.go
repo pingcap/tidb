@@ -221,3 +221,17 @@ func TestReset(t *testing.T) {
 	_, err = br.readNBytes(1)
 	require.Equal(t, io.EOF, err)
 }
+
+func TestUnexpectedEOF(t *testing.T) {
+	ms := &mockExtStore{src: []byte("0123456789")}
+	br, err := newByteReader(context.Background(), ms, 3)
+	require.NoError(t, err)
+	_, err = br.readNBytes(100)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+}
+
+func TestEmptyContent(t *testing.T) {
+	ms := &mockExtStore{src: []byte{}}
+	_, err := newByteReader(context.Background(), ms, 100)
+	require.Equal(t, io.EOF, err)
+}
