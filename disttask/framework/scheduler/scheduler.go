@@ -82,21 +82,6 @@ func (s *InternalSchedulerImpl) Stop() {
 	s.wg.Wait()
 }
 
-//	func (s *InternalSchedulerImpl) heartbeat() {
-//		ticker := time.NewTicker(proto.HeartbeatInterval)
-//		for {
-//			select {
-//			case <-s.ctx.Done():
-//				return
-//			case <-ticker.C:
-//				if err := s.subtaskTable.UpdateHeartbeat(s.id, s.taskID, time.Now()); err != nil {
-//					s.onError(err)
-//					return
-//				}
-//			}
-//		}
-//	}
-
 // Run runs the scheduler task.
 func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error {
 	err := s.run(ctx, task)
@@ -107,6 +92,10 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 }
 
 func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error {
+	if ctx.Err() != nil {
+		s.onError(ctx.Err())
+		return s.getError()
+	}
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 	s.registerCancelFunc(runCancel)
@@ -143,12 +132,12 @@ func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error
 	}
 
 	for {
-		// check if any error occurs
+		// check if any error occurs.
 		if err := s.getError(); err != nil {
 			break
 		}
 
-		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStatePending)
+		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending)
 		if err != nil {
 			s.onError(err)
 			break
@@ -160,12 +149,12 @@ func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error
 		if err := s.getError(); err != nil {
 			break
 		}
-		s.runSubtask(runCtx, scheduler, subtask, task.Step, minimalTaskCh)
+		s.runSubtask(runCtx, scheduler, subtask, minimalTaskCh)
 	}
 	return s.getError()
 }
 
-func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask, step int64, minimalTaskCh chan func()) {
+func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask, minimalTaskCh chan func()) {
 	minimalTasks, err := scheduler.SplitSubtask(ctx, subtask.Meta)
 	if err != nil {
 		s.onError(err)
@@ -177,14 +166,21 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 		s.markErrorHandled()
 		return
 	}
-	logutil.Logger(s.logCtx).Info("split subTask", zap.Int("cnt", len(minimalTasks)), zap.Int64("subtask-id", subtask.ID))
+	if ctx.Err() != nil {
+		s.onError(ctx.Err())
+		return
+	}
+	logutil.Logger(s.logCtx).Info("split subTask",
+		zap.Int("cnt", len(minimalTasks)),
+		zap.Int64("subtask_id", subtask.ID),
+		zap.Int64("subtask_step", subtask.Step))
 
 	var minimalTaskWg sync.WaitGroup
 	for _, minimalTask := range minimalTasks {
 		minimalTaskWg.Add(1)
 		j := minimalTask
 		minimalTaskCh <- func() {
-			s.runMinimalTask(ctx, j, subtask.Type, step)
+			s.runMinimalTask(ctx, j, subtask.Type, subtask.Step)
 			minimalTaskWg.Done()
 		}
 	}
@@ -226,7 +222,7 @@ func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler
 }
 
 func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, minimalTask proto.MinimalTask, tp string, step int64) {
-	logutil.Logger(s.logCtx).Info("scheduler run a minimalTask", zap.Any("step", step), zap.Stringer("minimal-task", minimalTask))
+	logutil.Logger(s.logCtx).Info("scheduler run a minimalTask", zap.Any("step", step), zap.Stringer("minimal_task", minimalTask))
 	select {
 	case <-minimalTaskCtx.Done():
 		s.onError(minimalTaskCtx.Err())
@@ -276,7 +272,7 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 
 	// We should cancel all subtasks before rolling back
 	for {
-		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStatePending, proto.TaskStateRunning)
+		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRunning)
 		if err != nil {
 			s.onError(err)
 			return s.getError()
@@ -297,7 +293,7 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 		s.onError(err)
 		return s.getError()
 	}
-	subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStateRevertPending)
+	subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStateRevertPending)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
