@@ -466,9 +466,6 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 	if ds.StatsInfo() != nil && len(colGroups) == 0 {
 		return ds.StatsInfo(), nil
 	}
-	if strings.HasPrefix(ds.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain format='verbose' select count(*) from t where a=1") {
-		fmt.Println(1)
-	}
 	ds.initStats(colGroups)
 	if ds.StatsInfo() != nil {
 		// Just reload the GroupNDVs.
