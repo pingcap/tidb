@@ -506,12 +506,7 @@ func constructTableScanPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, col
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }
 
-func extractDatumByOffsets(
-	row chunk.Row,
-	offsets []int,
-	expCols []*expression.Column,
-	buf []types.Datum,
-) []types.Datum {
+func extractDatumByOffsets(row chunk.Row, offsets []int, expCols []*expression.Column, buf []types.Datum) []types.Datum {
 	for _, offset := range offsets {
 		c := expCols[offset]
 		rowDt := row.GetDatum(offset, c.GetType())
