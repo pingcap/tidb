@@ -39,3 +39,4 @@ server TestInternalSessionTxnStartTS
 executor TestPartitionTableIndexJoinIndexLookUp
 executor TestIssue20236
 executor TestSubqueries
+
