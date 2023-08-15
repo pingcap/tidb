@@ -70,7 +70,7 @@ type dispatcher struct {
 var MockOwnerChange func()
 
 func newDispatcher(ctx context.Context, taskMgr *storage.TaskManager, task *proto.Task) *dispatcher {
-	logPrefix := fmt.Sprintf("task_id: %d, task_type: %s", task.ID, task.Type)
+	logPrefix := fmt.Sprintf("task_id: %d, task_type: %s, server_id: %s", task.ID, task.Type, ctx.Value("serverID"))
 	return &dispatcher{
 		ctx,
 		taskMgr,

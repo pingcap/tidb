@@ -1437,6 +1437,7 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 	} else {
 		serverID = disttaskutil.GenerateSubtaskExecID(ctx, do.ddl.GetID())
 	}
+	ctx = context.WithValue(ctx, "serverID", serverID)
 
 	if serverID == "" {
 		errMsg := fmt.Sprintf("TiDB node ID( = %s ) not found in available TiDB nodes list", do.ddl.GetID())
