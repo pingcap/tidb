@@ -165,7 +165,7 @@ Projection	428.55	root		explain_complex_stats.dt.id, explain_complex_stats.dt.ai
     ├─TableReader(Build)	428.55	root		data:Selection
     │ └─Selection	428.55	cop[tikv]		eq(explain_complex_stats.dt.bm, 0), eq(explain_complex_stats.dt.pt, "ios"), gt(explain_complex_stats.dt.t, 1478185592), not(isnull(explain_complex_stats.dt.dic))
     │   └─TableFullScan	2000.00	cop[tikv]	table:dt	keep order:false
-    └─IndexLookUp(Probe)	428.55	root
+    └─IndexLookUp(Probe)	428.55	root		
       ├─IndexRangeScan(Build)	428.55	cop[tikv]	table:rr, index:PRIMARY(aid, dic)	range: decided by [eq(explain_complex_stats.rr.aid, explain_complex_stats.dt.aid) eq(explain_complex_stats.rr.dic, explain_complex_stats.dt.dic)], keep order:false
       └─Selection(Probe)	428.55	cop[tikv]		eq(explain_complex_stats.rr.pt, "ios"), gt(explain_complex_stats.rr.t, 1478185592)
         └─TableRowIDScan	428.55	cop[tikv]	table:rr	keep order:false
