@@ -81,7 +81,8 @@ func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
 	cost := tbl.MemoryUsage().TotalTrackingMemUsage()
 	ok := s.cache.Set(tblID, tbl, cost)
 	if ok { // NOTE: `s.cache` and `s.resultKeySet` may be inconsistent since the update operation is not atomic, but it's acceptable for our scenario
-		s.cost.Add(s.resultKeySet.AddKeyValue(tblID, tbl, cost))
+		s.resultKeySet.AddKeyValue(tblID, tbl)
+		s.cost.Add(cost)
 	}
 	metrics.CostGauge.Set(float64(s.cost.Load()))
 	return ok

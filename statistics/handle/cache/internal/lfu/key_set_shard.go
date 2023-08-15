@@ -38,8 +38,8 @@ func (kss *keySetShard) Get(key int64) (*statistics.Table, bool) {
 	return kss.resultKeySet[key%keySetCnt].Get(key)
 }
 
-func (kss *keySetShard) AddKeyValue(key int64, table *statistics.Table, cost int64) int64 {
-	return kss.resultKeySet[key%keySetCnt].AddKeyValue(key, table, cost)
+func (kss *keySetShard) AddKeyValue(key int64, table *statistics.Table) {
+	kss.resultKeySet[key%keySetCnt].AddKeyValue(key, table)
 }
 
 func (kss *keySetShard) Remove(key int64) {
