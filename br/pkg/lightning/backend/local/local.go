@@ -768,7 +768,7 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 	opt.Levels = []pebble.LevelOptions{
 		{
 			TargetFileSize: 16 * units.GiB,
-            BlockSize: 64 * units.KiB,
+			BlockSize:      128 * units.KiB,
 		},
 	}
 
@@ -1660,17 +1660,17 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 
 	needSplit := len(ranges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
 	for i := 0; i < maxRetryTimes; i++ {
-			err = local.SplitAndScatterRegionInBatches(ctx, ranges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
-			if err == nil || common.IsContextCanceledError(err) {
-				break
-			}
+		err = local.SplitAndScatterRegionInBatches(ctx, ranges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
+		if err == nil || common.IsContextCanceledError(err) {
+			break
+		}
 
-			log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
-				log.ShortError(err), zap.Int("retry", i))
+		log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
+			log.ShortError(err), zap.Int("retry", i))
 	}
 	if err != nil {
-			log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
-			return err
+		log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
+		return err
 	}
 	for {
 		unfinishedRanges := lf.unfinishedRanges(ranges)
