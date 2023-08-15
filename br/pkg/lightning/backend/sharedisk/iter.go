@@ -270,7 +270,7 @@ func NewMergePropIter(ctx context.Context, paths []string, exStorage storage.Ext
 
 	for i, rd := range it.statFileReader {
 		p, err := rd.nextProp()
-		if err != nil {
+		if err != nil && err != io.EOF {
 			return nil, err
 		}
 		if p == nil {
@@ -320,7 +320,7 @@ func (i *MergePropIter) Valid() bool {
 func (i *MergePropIter) Next() bool {
 	if i.lastFileIdx >= 0 {
 		p, err := i.statFileReader[i.lastFileIdx].nextProp()
-		if err != nil {
+		if err != nil && err != io.EOF {
 			i.err = err
 			return false
 		}
