@@ -1214,31 +1214,7 @@ func restoreStream(
 		}
 	}()
 
-<<<<<<< HEAD
-	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS)
-=======
-	var taskName string
-	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
-	if cfg.UseCheckpoint {
-		taskName = cfg.generateLogRestoreTaskName(client.GetClusterID(ctx), cfg.StartTS, cfg.RestoreTS)
-		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, taskName, oldRatio)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		oldRatio = oldRatioFromCheckpoint
-
-		checkpointRunner, err = client.StartCheckpointRunnerForLogRestore(ctx, taskName)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer func() {
-			log.Info("wait for flush checkpoint...")
-			checkpointRunner.WaitForFinish(ctx, !gcDisabledRestorable)
-		}()
-	}
-
 	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS, cfg.MetadataDownloadBatchSize)
->>>>>>> 6ad49e79b17 (br: make download metadata concurrency adjustable (#45639))
 	if err != nil {
 		return err
 	}
@@ -1508,48 +1484,7 @@ func getFullBackupTS(
 	return backupmeta.GetEndVersion(), backupmeta.GetClusterId(), nil
 }
 
-<<<<<<< HEAD
-func getGlobalResolvedTS(
-	ctx context.Context,
-	s storage.ExternalStorage,
-	helper *stream.MetadataHelper,
-) (uint64, error) {
-	storeMap := struct {
-		sync.Mutex
-		resolvedTSMap map[int64]uint64
-	}{}
-	storeMap.resolvedTSMap = make(map[int64]uint64)
-	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, raw []byte) error {
-		m, err := helper.ParseToMetadata(raw)
-		if err != nil {
-			return err
-		}
-		storeMap.Lock()
-		if resolveTS, exist := storeMap.resolvedTSMap[m.StoreId]; !exist || resolveTS < m.ResolvedTs {
-			storeMap.resolvedTSMap[m.StoreId] = m.ResolvedTs
-		}
-		storeMap.Unlock()
-		return nil
-	})
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	var globalCheckpointTS uint64 = 0
-	// If V3 global-checkpoint advance, the maximum value in storeMap.resolvedTSMap as global-checkpoint-ts.
-	// If v2 global-checkpoint advance, it need the minimal value in storeMap.resolvedTSMap as global-checkpoint-ts.
-	// Because each of store maintains own checkpoint-ts only.
-	for _, resolveTS := range storeMap.resolvedTSMap {
-		if globalCheckpointTS < resolveTS {
-			globalCheckpointTS = resolveTS
-		}
-	}
-	return globalCheckpointTS, nil
-}
-
 func initFullBackupTables(
-=======
-func parseFullBackupTablesStorage(
->>>>>>> 6ad49e79b17 (br: make download metadata concurrency adjustable (#45639))
 	ctx context.Context,
 	cfg *RestoreConfig,
 ) (map[int64]*metautil.Table, error) {

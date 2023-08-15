@@ -245,15 +245,9 @@ type Config struct {
 
 	// whether there's explicit filter
 	ExplicitFilter bool `json:"-" toml:"-"`
-<<<<<<< HEAD
-=======
-
-	// KeyspaceName is the name of the keyspace of the task
-	KeyspaceName string `json:"keyspace-name" toml:"keyspace-name"`
 
 	// Metadata download batch size, such as metadata for log restore
 	MetadataDownloadBatchSize uint `json:"metadata-download-batch-size" toml:"metadata-download-batch-size"`
->>>>>>> 6ad49e79b17 (br: make download metadata concurrency adjustable (#45639))
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
