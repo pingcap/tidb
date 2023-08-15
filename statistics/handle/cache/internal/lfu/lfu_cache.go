@@ -79,6 +79,11 @@ func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
 // Put implements statsCacheInner
 func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
 	cost := tbl.MemoryUsage().TotalTrackingMemUsage()
+	// Here we need to insert resultKeySet first and then write to LFU,
+	// in order to prevent data race. If the LFU cost is already full,
+	// a rejection may occur, triggering the onEvict event.
+	// Both inserting into resultKeySet and evicting will modify the memory cost,
+	// so we need to stagger these two actions.
 	s.resultKeySet.AddKeyValue(tblID, tbl)
 	s.cost.Add(cost)
 	ok := s.cache.Set(tblID, tbl, cost)
