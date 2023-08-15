@@ -191,13 +191,19 @@ func DispatchAndCancelTask(taskKey string, t *testing.T, m *sync.Map) {
 	}()
 	task := DispatchTask(taskKey, t)
 	require.Equal(t, proto.TaskStateReverted, task.State)
-	m = &sync.Map{}
+	m.Range(func(key, value interface{}) bool {
+		m.Delete(key)
+		return true
+	})
 }
 
 func DispatchTaskAndCheckFail(taskKey string, t *testing.T, m *sync.Map) {
 	task := DispatchTask(taskKey, t)
 	require.Equal(t, proto.TaskStateReverted, task.State)
-	m = &sync.Map{}
+	m.Range(func(key, value interface{}) bool {
+		m.Delete(key)
+		return true
+	})
 }
 
 func TestFrameworkBasic(t *testing.T) {
