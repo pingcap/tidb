@@ -84,6 +84,7 @@ func TestCreateTable(t *testing.T) {
 	tk.MustGetErrCode("create table t_enum (a enum('abc','Abc')) charset=utf8 collate=utf8_general_ci;", errno.ErrDuplicatedValueInType)
 	tk.MustGetErrCode("create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_unicode_ci;", errno.ErrDuplicatedValueInType)
 	tk.MustGetErrCode("create table t_enum (a enum('ss','ß')) charset=utf8 collate=utf8_unicode_ci;", errno.ErrDuplicatedValueInType)
+	tk.MustGetErrCode("create table t_enum (a enum('æ','ae')) charset=utf8mb4 collate=utf8mb4_0900_ai_ci;", errno.ErrDuplicatedValueInType)
 	// test for set column
 	tk.MustGetErrCode("create table t_enum (a set('e','e'));", errno.ErrDuplicatedValueInType)
 	tk.MustGetErrCode("create table t_enum (a set('e','E')) charset=utf8 collate=utf8_general_ci;", errno.ErrDuplicatedValueInType)
@@ -92,6 +93,7 @@ func TestCreateTable(t *testing.T) {
 	tk.MustGetErrCode("create table t_enum (a set('e','E')) charset=utf8 collate=utf8_unicode_ci;", errno.ErrDuplicatedValueInType)
 	tk.MustGetErrCode("create table t_enum (a set('ss','ß')) charset=utf8 collate=utf8_unicode_ci;", errno.ErrDuplicatedValueInType)
 	tk.MustGetErrMsg("create table t_enum (a enum('ss','ß')) charset=utf8 collate=utf8_unicode_ci;", "[types:1291]Column 'a' has duplicated value 'ß' in ENUM")
+	tk.MustGetErrCode("create table t_enum (a set('æ','ae')) charset=utf8mb4 collate=utf8mb4_0900_ai_ci;", errno.ErrDuplicatedValueInType)
 
 	// test for table option "union" not supported
 	tk.MustExec("use test")
