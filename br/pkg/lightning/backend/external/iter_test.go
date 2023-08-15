@@ -66,8 +66,8 @@ func TestMergeKVIter(t *testing.T) {
 		writer, err := memStore.Create(ctx, filename, nil)
 		require.NoError(t, err)
 		rc := &rangePropertiesCollector{
-			propSizeIdxDistance: 100,
-			propKeysIdxDistance: 2,
+			propSizeDist: 100,
+			propKeysDist: 2,
 		}
 		rc.reset()
 		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
@@ -118,8 +118,8 @@ func TestOneUpstream(t *testing.T) {
 		writer, err := memStore.Create(ctx, filename, nil)
 		require.NoError(t, err)
 		rc := &rangePropertiesCollector{
-			propSizeIdxDistance: 100,
-			propKeysIdxDistance: 2,
+			propSizeDist: 100,
+			propKeysDist: 2,
 		}
 		rc.reset()
 		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
@@ -196,8 +196,8 @@ func TestCorruptContent(t *testing.T) {
 		writer, err := memStore.Create(ctx, filename, nil)
 		require.NoError(t, err)
 		rc := &rangePropertiesCollector{
-			propSizeIdxDistance: 100,
-			propKeysIdxDistance: 2,
+			propSizeDist: 100,
+			propKeysDist: 2,
 		}
 		rc.reset()
 		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
@@ -249,8 +249,8 @@ func generateMockFileReader() *kvReader {
 		panic(err)
 	}
 	rc := &rangePropertiesCollector{
-		propSizeIdxDistance: 100,
-		propKeysIdxDistance: 2,
+		propSizeDist: 100,
+		propKeysDist: 2,
 	}
 	rc.reset()
 	kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)

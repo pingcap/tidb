@@ -31,8 +31,8 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	writer, err := memStore.Create(ctx, "/test", nil)
 	require.NoError(t, err)
 	rc := &rangePropertiesCollector{
-		propSizeIdxDistance: 100,
-		propKeysIdxDistance: 2,
+		propSizeDist: 100,
+		propKeysDist: 2,
 	}
 	rc.reset()
 	initRC := *rc
@@ -49,7 +49,7 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	// when not accumulated enough data, no range property will be added.
 	require.Equal(t, &initRC, rc)
 
-	// propKeysIdxDistance = 2, so after adding 2 keys, a new range property will be added.
+	// propKeysDist = 2, so after adding 2 keys, a new range property will be added.
 	k2, v2 := []byte("key2"), []byte("value2")
 	err = kvStore.AddKeyValue(k2, v2)
 	require.NoError(t, err)
@@ -72,12 +72,21 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 
 	err = writer.Close(ctx)
 	require.NoError(t, err)
+	kvStore.Close()
+	expected = &rangeProperty{
+		key:    k3,
+		offset: uint64(len(k1) + len(v1) + 16 + len(k2) + len(v2) + 16),
+		size:   uint64(len(k3) + len(v3)),
+		keys:   1,
+	}
+	require.Len(t, rc.props, 2)
+	require.Equal(t, expected, rc.props[1])
 
 	writer, err = memStore.Create(ctx, "/test2", nil)
 	require.NoError(t, err)
 	rc = &rangePropertiesCollector{
-		propSizeIdxDistance: 1,
-		propKeysIdxDistance: 100,
+		propSizeDist: 1,
+		propKeysDist: 100,
 	}
 	rc.reset()
 	kvStore, err = NewKeyValueStore(ctx, writer, rc, 2, 2)
@@ -103,6 +112,9 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 		keys:   1,
 	}
 	require.Equal(t, expected, rc.props[1])
+	kvStore.Close()
+	// Length of properties should not change after close.
+	require.Len(t, rc.props, 2)
 	err = writer.Close(ctx)
 	require.NoError(t, err)
 }
@@ -116,8 +128,8 @@ func TestKVReadWrite(t *testing.T) {
 	writer, err := memStore.Create(ctx, "/test", nil)
 	require.NoError(t, err)
 	rc := &rangePropertiesCollector{
-		propSizeIdxDistance: 100,
-		propKeysIdxDistance: 2,
+		propSizeDist: 100,
+		propKeysDist: 2,
 	}
 	rc.reset()
 	kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
