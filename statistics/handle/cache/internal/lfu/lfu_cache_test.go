@@ -17,7 +17,9 @@ package lfu
 import (
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
@@ -166,4 +168,33 @@ func TestLFUCachePutGetWithManyConcurrency2(t *testing.T) {
 	lfu.wait()
 	require.Equal(t, uint64(lfu.Cost()), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
 	require.Equal(t, 1000, len(lfu.Values()))
+}
+
+func TestLFUReject(t *testing.T) {
+	capacity := int64(100000000000)
+	lfu, err := NewLFU(capacity)
+	require.NoError(t, err)
+	t1 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
+	require.Equal(t, 2*mockCMSMemoryUsage+mockCMSMemoryUsage, t1.MemoryUsage().TotalTrackingMemUsage())
+	lfu.Put(1, t1)
+	lfu.wait()
+	require.Equal(t, lfu.Cost(), 2*mockCMSMemoryUsage+mockCMSMemoryUsage)
+
+	lfu.SetCapacity(2*mockCMSMemoryUsage + mockCMSMemoryUsage - 1)
+
+	t2 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
+	require.True(t, lfu.Put(2, t2))
+	lfu.wait()
+	time.Sleep(3 * time.Second)
+	require.Equal(t, int64(12), lfu.Cost())
+	require.Len(t, lfu.Values(), 2)
+	v, ok := lfu.Get(2, false)
+	require.True(t, ok)
+	for _, c := range v.Columns {
+		require.Equal(t, c.GetEvictedStatus(), statistics.AllEvicted)
+	}
+	for _, i := range v.Indices {
+		require.Equal(t, i.GetEvictedStatus(), statistics.AllEvicted)
+	}
+
 }

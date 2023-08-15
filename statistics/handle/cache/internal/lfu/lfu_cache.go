@@ -106,8 +106,8 @@ func (s *LFU) Cost() int64 {
 func (s *LFU) Values() []*statistics.Table {
 	result := make([]*statistics.Table, 0, 512)
 	for _, k := range s.resultKeySet.Keys() {
-		if value, ok := s.cache.Get(k); ok {
-			result = append(result, value.(*statistics.Table))
+		if value, ok := s.resultKeySet.Get(k); ok {
+			result = append(result, value)
 		}
 	}
 	return result
