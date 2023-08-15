@@ -30,6 +30,8 @@ var (
 	DelCounter prometheus.Counter
 	// EvictCounter is the counter of evicting cache.
 	EvictCounter prometheus.Counter
+	// RejectCounter is the counter of reject cache.
+	RejectCounter prometheus.Counter
 	// CostGauge is the gauge of cost time.
 	CostGauge prometheus.Gauge
 	// CapacityGauge is the gauge of capacity.
@@ -47,6 +49,7 @@ func initMetricsVars() {
 	UpdateCounter = metrics.StatsCacheCounter.WithLabelValues("update")
 	DelCounter = metrics.StatsCacheCounter.WithLabelValues("del")
 	EvictCounter = metrics.StatsCacheCounter.WithLabelValues("evict")
+	RejectCounter = metrics.StatsCacheCounter.WithLabelValues("reject")
 	CostGauge = metrics.StatsCacheGauge.WithLabelValues("track")
 	CapacityGauge = metrics.StatsCacheGauge.WithLabelValues("capacity")
 }
