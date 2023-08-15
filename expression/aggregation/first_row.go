@@ -43,7 +43,7 @@ func (ff *firstRowFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Stat
 }
 
 // GetResult implements Aggregation interface.
-func (ff *firstRowFunction) GetResult(evalCtx *AggEvaluateContext) types.Datum {
+func (*firstRowFunction) GetResult(evalCtx *AggEvaluateContext) types.Datum {
 	return evalCtx.Value
 }
 

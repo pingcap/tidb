@@ -68,7 +68,7 @@ func (cf *countFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *Agg
 }
 
 // GetResult implements Aggregation interface.
-func (cf *countFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
+func (*countFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 	d.SetInt64(evalCtx.Count)
 	return d
 }
