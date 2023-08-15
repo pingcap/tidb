@@ -1,5 +1,5 @@
 set tidb_cost_model_version=1;
--- http://www.tpc.org/tpc_documents_current_versions/pdf/tpc-h_v2.17.1.pdf
+# http://www.tpc.org/tpc_documents_current_versions/pdf/tpc-h_v2.17.1.pdf
 CREATE DATABASE IF NOT EXISTS TPCH;
 USE TPCH;
 CREATE TABLE IF NOT EXISTS nation  ( N_NATIONKEY  INTEGER NOT NULL,
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS lineitem ( L_ORDERKEY    INTEGER NOT NULL,
                              L_SHIPMODE     CHAR(10) NOT NULL,
                              L_COMMENT      VARCHAR(44) NOT NULL,
 			     PRIMARY KEY (L_ORDERKEY,L_LINENUMBER));
--- load stats.
+# load stats.
 load stats 's/tpch_stats/nation.json';
 load stats 's/tpch_stats/region.json';
 load stats 's/tpch_stats/part.json';

@@ -23,12 +23,6 @@ Usage: ./run-tests.sh [options]
 
     -v <vendor-path>: Add <vendor-path> to $GOPATH.
 
-    -c <test-name>|all: Create data according to creating statements in file "t/<test-name>.test" and save stats in "s/<test-name>_tableName.json".
-                    <test-name> must has a suffix of '_stats'.
-                    "all" for creating stats of all tests.
-
-    -i <importer-path>: Use importer in <importer-path> for creating data.
-
     -p <portgenerator-path>: Use port generator in <portgenerator-path> for generating port numbers.
 ```
 
@@ -55,13 +49,12 @@ make explaintest
 ```
 It will identify execute plan change.
 
-### Generate New Stats and Result from Execute
+### Generate New Result from Execute
 
 First, add new test query in `t/` folder.
 
 ```sh
 cd cmd/explaintest
 ./run-tests.sh -r [casename]
-./run-tests.sh -c [casename]
 ``
-It will generate result and stats base on last execution, and then we can reuse them or open editor to do some modify.
+It will generate result base on last execution, and then we can reuse them or open editor to do some modify.

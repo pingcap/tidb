@@ -1,4 +1,5 @@
 set tidb_cost_model_version=1;
+set @@sql_mode = 'strict_trans_tables';
 use test;
 drop table if exists t1, t2, t3, t4;
 create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2));
@@ -983,3 +984,4 @@ drop table if exists t;
 delete from mysql.opt_rule_blacklist where name="aggregation_push_down";
 admin reload opt_rule_blacklist;
 
+set @@sql_mode = default;
