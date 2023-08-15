@@ -39,10 +39,6 @@ type StatsCacheInner interface {
 	Copy() StatsCacheInner
 	// SetCapacity sets the capacity of the cache
 	SetCapacity(int64)
-
-	// Front returns the front element's owner tableID, only used for test
-	// TODO: this method is mainly for test, remove it in the future.
-	Front() int64
 	// Close stops the cache
 	Close()
 }

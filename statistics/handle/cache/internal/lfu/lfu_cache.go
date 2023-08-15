@@ -78,10 +78,10 @@ func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
 
 // Put implements statsCacheInner
 func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
-	ok := s.cache.Set(tblID, tbl, tbl.MemoryUsage().TotalTrackingMemUsage())
+	cost := tbl.MemoryUsage().TotalTrackingMemUsage()
+	ok := s.cache.Set(tblID, tbl, cost)
 	if ok { // NOTE: `s.cache` and `s.resultKeySet` may be inconsistent since the update operation is not atomic, but it's acceptable for our scenario
-		s.resultKeySet.AddKeyValue(tblID, tbl)
-		s.cost.Add(tbl.MemoryUsage().TotalTrackingMemUsage())
+		s.cost.Add(s.resultKeySet.AddKeyValue(tblID, tbl, cost))
 	}
 	metrics.CostGauge.Set(float64(s.cost.Load()))
 	return ok
@@ -117,8 +117,9 @@ func DropEvicted(item statistics.TableCacheItem) {
 	item.DropUnnecessaryData()
 }
 
-func (*LFU) onReject(*ristretto.Item) {
+func (s *LFU) onReject(item *ristretto.Item) {
 	metrics.RejectCounter.Add(1.0)
+	s.onEvict(item)
 }
 
 func (s *LFU) onEvict(item *ristretto.Item) {
@@ -157,11 +158,6 @@ func (s *LFU) onExit(val interface{}) {
 // Len implements statsCacheInner
 func (s *LFU) Len() int {
 	return s.resultKeySet.Len()
-}
-
-// Front implements statsCacheInner
-func (*LFU) Front() int64 {
-	return 0
 }
 
 // Copy implements statsCacheInner

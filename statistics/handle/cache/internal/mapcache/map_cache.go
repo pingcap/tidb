@@ -129,10 +129,5 @@ func (m *MapCache) Copy() internal.StatsCacheInner {
 // SetCapacity implements StatsCacheInner
 func (*MapCache) SetCapacity(int64) {}
 
-// Front implements StatsCacheInner
-func (*MapCache) Front() int64 {
-	return 0
-}
-
 // Close implements StatsCacheInner
 func (*MapCache) Close() {}
