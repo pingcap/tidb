@@ -189,3 +189,72 @@ func TestAddIndexCancelOnNoneState(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, available)
 }
+<<<<<<< HEAD
+=======
+
+func TestAddIndexIngestRecoverPartition(t *testing.T) {
+	port := config.GetGlobalConfig().Port
+	tc := testkit.NewDistExecutionContext(t, 3)
+	defer tc.Close()
+	defer injectMockBackendMgr(t, tc.Store)()
+	tk := testkit.NewTestKit(t, tc.Store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a int primary key, b int) partition by hash(a) partitions 8;")
+	tk.MustExec("insert into t values (2, 3), (3, 3), (5, 5);")
+
+	partCnt := 0
+	changeOwner0To1 := func(job *model.Job, _ int64) {
+		partCnt++
+		if partCnt == 3 {
+			tc.SetOwner(1)
+			// TODO(tangenta): mock multiple backends in a better way.
+			//nolint: forcetypeassert
+			ingest.LitBackCtxMgr.(*ingest.MockBackendCtxMgr).ResetSessCtx()
+			bc, _ := ingest.LitBackCtxMgr.Load(job.ID)
+			bc.GetCheckpointManager().Close()
+			bc.AttachCheckpointManager(nil)
+			config.GetGlobalConfig().Port = port + 1
+		}
+	}
+	changeOwner1To2 := func(job *model.Job, _ int64) {
+		partCnt++
+		if partCnt == 6 {
+			tc.SetOwner(2)
+			//nolint: forcetypeassert
+			ingest.LitBackCtxMgr.(*ingest.MockBackendCtxMgr).ResetSessCtx()
+			bc, _ := ingest.LitBackCtxMgr.Load(job.ID)
+			bc.GetCheckpointManager().Close()
+			bc.AttachCheckpointManager(nil)
+			config.GetGlobalConfig().Port = port + 2
+		}
+	}
+	tc.SetOwner(0)
+	hook0 := &callback.TestDDLCallback{}
+	hook0.OnUpdateReorgInfoExported = changeOwner0To1
+	hook1 := &callback.TestDDLCallback{}
+	hook1.OnUpdateReorgInfoExported = changeOwner1To2
+	tc.GetDomain(0).DDL().SetHook(hook0)
+	tc.GetDomain(1).DDL().SetHook(hook1)
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+}
+
+func TestAddIndexIngestTimezone(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	defer injectMockBackendMgr(t, store)()
+
+	tk.MustExec("SET time_zone = '-06:00';")
+	tk.MustExec("create table t (`src` varchar(48),`t` timestamp,`timezone` varchar(100));")
+	tk.MustExec("insert into t values('2000-07-29 23:15:30','2000-07-29 23:15:30','-6:00');")
+	tk.MustExec("alter table t add index idx(t);")
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("alter table t drop index idx;")
+	tk.MustExec("SET time_zone = 'Asia/Shanghai';")
+	tk.MustExec("insert into t values('2000-07-29 23:15:30','2000-07-29 23:15:30', '+8:00');")
+	tk.MustExec("alter table t add index idx(t);")
+	tk.MustExec("admin check table t;")
+}
+>>>>>>> 5a305400a94 (ddl: use the correct timezone to encode record for adding index (#46055))
