@@ -149,7 +149,7 @@ func (i *MergeIter) Next() bool {
 	// Populate the heap.
 	if i.lastFileOffset >= 0 {
 		k, v, err := i.dataFileReader[i.lastFileOffset].nextKV()
-		if err != nil {
+		if err != nil && err != io.EOF {
 			i.err = err
 			return false
 		}
