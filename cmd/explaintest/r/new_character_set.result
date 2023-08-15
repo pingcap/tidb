@@ -1,4 +1,5 @@
 set tidb_cost_model_version=1;
+set @@sql_mode='';
 drop table if exists t;
 set names utf8mb4;
 create table t (a varchar(255) charset utf8mb4);
@@ -91,3 +92,4 @@ set @@character_set_connection=gbk;
 select hex('一a'), '一a';
 hex('涓?')	涓?
 E4B83F	涓?
+set @@sql_mode=default;
