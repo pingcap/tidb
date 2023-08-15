@@ -21,6 +21,6 @@ func TestDefaultHttpClient(t *testing.T) {
 	var concurrency uint = 128
 	transport, ok := storage.GetDefaultHttpClient(concurrency).Transport.(*http.Transport)
 	require.True(t, ok)
-	require.Equal(t, transport.MaxIdleConnsPerHost, int(concurrency))
-	require.Equal(t, transport.MaxIdleConns, int(concurrency))
+	require.Equal(t, int(concurrency), transport.MaxIdleConnsPerHost)
+	require.Equal(t, int(concurrency), transport.MaxIdleConns)
 }
