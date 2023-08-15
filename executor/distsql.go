@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/trace"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -59,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 var (
@@ -383,8 +383,8 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
-	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
-		return bytes.Compare(i.StartKey, j.StartKey) < 0
+	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
+		return bytes.Compare(i.StartKey, j.StartKey)
 	})
 	// use sortedSelectResults only when byItems pushed down and partition numbers > 1
 	if e.byItems == nil || len(e.partitions) <= 1 {
@@ -747,8 +747,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 
 			// init kvReq, result and worker for this partition
 			// The key ranges should be ordered.
-			slices.SortFunc(kvRange, func(i, j kv.KeyRange) bool {
-				return bytes.Compare(i.StartKey, j.StartKey) < 0
+			slices.SortFunc(kvRange, func(i, j kv.KeyRange) int {
+				return bytes.Compare(i.StartKey, j.StartKey)
 			})
 			kvReq, err := builder.SetKeyRanges(kvRange).Build()
 			if err != nil {

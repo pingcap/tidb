@@ -40,7 +40,6 @@ go_library(
         "@com_github_lestrrat_go_jwx_v2//jwt",
         "@com_github_lestrrat_go_jwx_v2//jwt/openid",
         "@com_github_pingcap_errors//:errors",
-        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )
