@@ -16,6 +16,7 @@ package executor
 
 import (
 	"bytes"
+	"cmp"
 	"container/heap"
 	"context"
 	"fmt"
@@ -495,8 +496,8 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 				}
 
 				if len(e.prunedPartitions) != 0 && len(e.byItems) != 0 {
-					slices.SortFunc(worker.prunedPartitions, func(i, j table.PhysicalTable) bool {
-						return i.GetPhysicalID() < j.GetPhysicalID()
+					slices.SortFunc(worker.prunedPartitions, func(i, j table.PhysicalTable) int {
+						return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 					})
 					partialTableReader.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
 						sctx:       e.Ctx(),
