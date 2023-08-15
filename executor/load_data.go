@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -116,7 +117,11 @@ type LoadDataInfo struct {
 	rows        [][]types.Datum
 	Drained     bool
 
-	ColumnAssignments  []*ast.Assignment
+	ColumnAssignments     []*ast.Assignment
+	ColumnAssignmentExprs []expression.Expression
+	// sessionCtx generate warnings when rewrite AST node into expression.
+	// we should generate such warnings for each row encoded.
+	exprWarnings       []stmtctx.SQLWarn
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	FieldMappings      []*FieldMapping
 
@@ -208,6 +213,23 @@ func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 		return err
 	}
 
+	return nil
+}
+
+// initColAssignExprs creates the column assignment expressions using session context.
+// RewriteAstExpr will write ast node in place(due to xxNode.Accept), but it doesn't change node content,
+func (e *LoadDataInfo) initColAssignExprs() error {
+	for _, assign := range e.ColumnAssignments {
+		newExpr, err := expression.RewriteAstExpr(e.Ctx, assign.Expr, nil, nil)
+		if err != nil {
+			return err
+		}
+		// col assign expr warnings is static, we should generate it for each row processed.
+		// so we save it and clear it here.
+		e.exprWarnings = append(e.exprWarnings, e.Ctx.GetSessionVars().StmtCtx.GetWarnings()...)
+		e.Ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		e.ColumnAssignmentExprs = append(e.ColumnAssignmentExprs, newExpr)
+	}
 	return nil
 }
 
@@ -664,14 +686,18 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 
 		row = append(row, types.NewDatum(string(cols[i].str)))
 	}
-	for i := 0; i < len(e.ColumnAssignments); i++ {
+
+	for i := 0; i < len(e.ColumnAssignmentExprs); i++ {
 		// eval expression of `SET` clause
-		d, err := expression.EvalAstExpr(e.Ctx, e.ColumnAssignments[i].Expr)
+		d, err := e.ColumnAssignmentExprs[i].Eval(chunk.Row{})
 		if err != nil {
 			e.handleWarning(err)
 			return nil
 		}
 		row = append(row, d)
+	}
+	if len(e.exprWarnings) > 0 {
+		e.Ctx.GetSessionVars().StmtCtx.AppendWarnings(e.exprWarnings)
 	}
 
 	// a new row buffer will be allocated in getRow
