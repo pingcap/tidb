@@ -205,12 +205,8 @@ type Controller struct {
 	checksumWorks *worker.Pool
 	pauser        *common.Pauser
 	backend       backend.Backend
-<<<<<<< HEAD:br/pkg/lightning/restore/restore.go
 	tidbGlue      glue.Glue
-=======
-	db            *sql.DB
 	pdCli         pd.Client
->>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680)):br/pkg/lightning/importer/import.go
 
 	alterTableLock sync.Mutex
 	sysVars        map[string]string
@@ -333,13 +329,8 @@ func NewRestoreControllerWithPauser(
 		return nil, common.ErrInitErrManager.Wrap(err).GenWithStackByArgs()
 	}
 
-<<<<<<< HEAD:br/pkg/lightning/restore/restore.go
 	var backend backend.Backend
-=======
-	var encodingBuilder encode.EncodingBuilder
-	var backendObj backend.Backend
 	var pdCli pd.Client
->>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680)):br/pkg/lightning/importer/import.go
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
 		backend = tidb.NewTiDBBackend(ctx, db, cfg.TikvImporter.OnDuplicate, errorMgr)
@@ -360,16 +351,11 @@ func NewRestoreControllerWithPauser(
 		}
 
 		if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
-<<<<<<< HEAD:br/pkg/lightning/restore/restore.go
-			if err := tikv.CheckTiKVVersion(ctx, tls, cfg.TiDB.PdAddr, minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
+			if err := tikv.CheckTiKVVersion(ctx, tls, pdCli.GetLeaderAddr(), minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
 				if berrors.Is(err, berrors.ErrVersionMismatch) {
 					log.FromContext(ctx).Warn("TiKV version doesn't support duplicate resolution. The resolution algorithm will fall back to 'none'", zap.Error(err))
 					cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
 				} else {
-=======
-			if err := tikv.CheckTiKVVersion(ctx, tls, pdCli.GetLeaderAddr(), minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
-				if !berrors.Is(err, berrors.ErrVersionMismatch) {
->>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680)):br/pkg/lightning/importer/import.go
 					return nil, common.ErrCheckKVVersion.Wrap(err).GenWithStackByArgs()
 				}
 			}
@@ -406,29 +392,13 @@ func NewRestoreControllerWithPauser(
 	default:
 		metaBuilder = noopMetaMgrBuilder{}
 	}
-<<<<<<< HEAD:br/pkg/lightning/restore/restore.go
 	ioWorkers := worker.NewPool(ctx, cfg.App.IOConcurrency, "io")
 	targetInfoGetter := &TargetInfoGetterImpl{
 		cfg:          cfg,
 		targetDBGlue: p.Glue,
 		tls:          tls,
 		backend:      backend,
-=======
-
-	var wrapper backend.TargetInfoGetter
-	if cfg.TikvImporter.Backend == config.BackendLocal {
-		wrapper = local.NewTargetInfoGetter(tls, db, pdCli)
-	} else {
-		wrapper = tidb.NewTargetInfoGetter(db)
-	}
-	ioWorkers := worker.NewPool(ctx, cfg.App.IOConcurrency, "io")
-	targetInfoGetter := &TargetInfoGetterImpl{
-		cfg:     cfg,
-		db:      db,
-		tls:     tls,
-		backend: wrapper,
-		pdCli:   pdCli,
->>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680)):br/pkg/lightning/importer/import.go
+		pdCli:        pdCli,
 	}
 	preInfoGetter, err := NewPreRestoreInfoGetter(
 		cfg,
@@ -456,17 +426,10 @@ func NewRestoreControllerWithPauser(
 		ioWorkers:     ioWorkers,
 		checksumWorks: worker.NewPool(ctx, cfg.TiDB.ChecksumTableConcurrency, "checksum"),
 		pauser:        p.Pauser,
-<<<<<<< HEAD:br/pkg/lightning/restore/restore.go
 		backend:       backend,
+		pdCli:         pdCli,
 		tidbGlue:      p.Glue,
 		sysVars:       defaultImportantVariables,
-=======
-		engineMgr:     backend.MakeEngineManager(backendObj),
-		backend:       backendObj,
-		pdCli:         pdCli,
-		db:            db,
-		sysVars:       common.DefaultImportantVariables,
->>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680)):br/pkg/lightning/importer/import.go
 		tls:           tls,
 		checkTemplate: NewSimpleTemplate(),
 
@@ -485,14 +448,6 @@ func NewRestoreControllerWithPauser(
 
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: preCheckBuilder,
-<<<<<<< HEAD:br/pkg/lightning/restore/restore.go
-=======
-		encBuilder:          encodingBuilder,
-		tikvModeSwitcher:    local.NewTiKVModeSwitcher(tls, pdCli, log.FromContext(ctx).Logger),
-
-		keyspaceName:      p.KeyspaceName,
-		resourceGroupName: p.ResourceGroupName,
->>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680)):br/pkg/lightning/importer/import.go
 	}
 
 	return rc, nil
@@ -500,14 +455,10 @@ func NewRestoreControllerWithPauser(
 
 func (rc *Controller) Close() {
 	rc.backend.Close()
-<<<<<<< HEAD:br/pkg/lightning/restore/restore.go
 	rc.tidbGlue.GetSQLExecutor().Close()
-=======
-	_ = rc.db.Close()
 	if rc.pdCli != nil {
 		rc.pdCli.Close()
 	}
->>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680)):br/pkg/lightning/importer/import.go
 }
 
 func (rc *Controller) Run(ctx context.Context) error {

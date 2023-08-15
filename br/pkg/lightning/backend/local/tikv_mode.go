@@ -77,7 +77,7 @@ func (rc *switcher) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode, r
 		tls,
 		minState,
 		func(c context.Context, store *tikv.Store) error {
-			return tikv.SwitchMode(c, tls, store.Address, mode, ranges...)
+			return tikv.SwitchMode(c, tls, store.Address, mode)
 		},
 	)
 }

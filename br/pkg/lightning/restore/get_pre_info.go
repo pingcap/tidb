@@ -114,18 +114,11 @@ func WithPreInfoGetterDBMetas(ctx context.Context, dbMetas []*mydump.MDDatabaseM
 
 // TargetInfoGetterImpl implements the operations to get information from the target.
 type TargetInfoGetterImpl struct {
-<<<<<<< HEAD:br/pkg/lightning/restore/get_pre_info.go
 	cfg          *config.Config
 	targetDBGlue glue.Glue
 	tls          *common.TLS
 	backend      backend.TargetInfoGetter
-=======
-	cfg     *config.Config
-	db      *sql.DB
-	tls     *common.TLS
-	backend backend.TargetInfoGetter
-	pdCli   pd.Client
->>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680)):br/pkg/lightning/importer/get_pre_info.go
+	pdCli        pd.Client
 }
 
 // NewTargetInfoGetterImpl creates a TargetInfoGetterImpl object.
@@ -144,30 +137,19 @@ func NewTargetInfoGetterImpl(
 	case config.BackendTiDB:
 		backendTargetInfoGetter = tidb.NewTargetInfoGetter(targetDB)
 	case config.BackendLocal:
-<<<<<<< HEAD:br/pkg/lightning/restore/get_pre_info.go
-		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDBGlue, cfg.TiDB.PdAddr)
-=======
 		if pdCli == nil {
 			return nil, common.ErrUnknown.GenWithStack("pd client is required when using local backend")
 		}
-		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDB, pdCli)
->>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680)):br/pkg/lightning/importer/get_pre_info.go
+		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDBGlue, pdCli)
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
 	return &TargetInfoGetterImpl{
-<<<<<<< HEAD:br/pkg/lightning/restore/get_pre_info.go
 		cfg:          cfg,
 		targetDBGlue: targetDBGlue,
 		tls:          tls,
 		backend:      backendTargetInfoGetter,
-=======
-		cfg:     cfg,
-		tls:     tls,
-		db:      targetDB,
-		backend: backendTargetInfoGetter,
-		pdCli:   pdCli,
->>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680)):br/pkg/lightning/importer/get_pre_info.go
+		pdCli:        pdCli,
 	}, nil
 }
 
