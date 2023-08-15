@@ -191,15 +191,12 @@ type RestoreConfig struct {
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
 
-<<<<<<< HEAD
-=======
 	UseCheckpoint                     bool   `json:"use-checkpoint" toml:"use-checkpoint"`
 	checkpointSnapshotRestoreTaskName string `json:"-" toml:"-"`
 	checkpointLogRestoreTaskName      string `json:"-" toml:"-"`
 	checkpointTaskInfoClusterID       uint64 `json:"-" toml:"-"`
 	WaitTiflashReady                  bool   `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
 
->>>>>>> 0f20315681d (br: pipeline wait tiflash synced (#43726))
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
 	Prepare             bool                  `json:"prepare" toml:"prepare"`
@@ -756,12 +753,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 	manager := restore.NewBRContextManager(client)
-<<<<<<< HEAD
-	batcher, afterRestoreStream := restore.NewBatcher(ctx, sender, manager, errCh)
-=======
-	batcher, afterTableRestoredCh := restore.NewBatcher(ctx, sender, manager, errCh, updateCh)
-	batcher.SetCheckpoint(checkpointSetWithTableID)
->>>>>>> 0f20315681d (br: pipeline wait tiflash synced (#43726))
+	batcher, afterTableRestoredCh := restore.NewBatcher(ctx, sender, manager, errCh)
 	batcher.SetThreshold(batchSize)
 	batcher.EnableAutoCommit(ctx, cfg.BatchFlushInterval)
 	go restoreTableStream(ctx, rangeStream, batcher, errCh)

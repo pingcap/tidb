@@ -103,14 +103,8 @@ func NewBatcher(
 	sender BatchSender,
 	manager ContextManager,
 	errCh chan<- error,
-<<<<<<< HEAD
-) (*Batcher, <-chan CreatedTable) {
-	output := make(chan CreatedTable, defaultChannelSize)
-=======
-	updateCh glue.Progress,
 ) (*Batcher, chan *CreatedTable) {
 	outCh := DefaultOutputTableChan()
->>>>>>> 0f20315681d (br: pipeline wait tiflash synced (#43726))
 	sendChan := make(chan SendType, 2)
 	b := &Batcher{
 		rewriteRules:       EmptyRewriteRule(),
