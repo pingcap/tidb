@@ -48,8 +48,9 @@ type Index struct {
 	StatsLoadedStatus
 	StatsVer int64 // StatsVer is the version of the current stats, used to maintain compatibility
 	Flag     int64
-	// PhysicalID is only for identifying the index id when triggering loading stats for now.
-	// Stats loading will not be triggered if it's a negative value, which is possible in a pseudo table.
+	// PhysicalID is the physical table id,
+	// or it could possibly be -1, which means "stats not available".
+	// The -1 case could happen in a pseudo stats table, and in this case, this stats should not trigger stats loading.
 	PhysicalID int64
 }
 
@@ -459,8 +460,9 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 }
 
 func (idx *Index) checkStats() {
-	// When we are using stats from PseudoTable(), all column/index ID will be -1.
-	if idx.IsFullLoad() || idx.PhysicalID <= 0 || idx.Info == nil || idx.Info.ID < 0 {
+	// When we are using stats from PseudoTable(), the table ID will possibly be -1.
+	// In this case, we don't trigger stats loading.
+	if idx.IsFullLoad() || idx.PhysicalID <= 0 {
 		return
 	}
 	HistogramNeededItems.insert(model.TableItemID{TableID: idx.PhysicalID, ID: idx.Info.ID, IsIndex: true})

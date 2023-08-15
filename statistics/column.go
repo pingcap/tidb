@@ -45,8 +45,9 @@ type Column struct {
 
 	// StatsLoadedStatus indicates the status of column statistics
 	StatsLoadedStatus
-	// PhysicalID is only for identifying the column id when triggering loading stats for now.
-	// Stats loading will not be triggered if it's a negative value, which is possible in a pseudo table.
+	// PhysicalID is the physical table id,
+	// or it could possibly be -1, which means "stats not available".
+	// The -1 case could happen in a pseudo stats table, and in this case, this stats should not trigger stats loading.
 	PhysicalID int64
 	Flag       int64
 	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
@@ -143,7 +144,9 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) 
 					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
 			}
 			// In some tests, the c.Info is not set, so we add this check here.
-			if c.Info != nil && c.PhysicalID > 0 && c.Info.ID > 0 {
+			// When we are using stats from PseudoTable(), the table ID will possibly be -1.
+			// In this case, we don't trigger stats loading.
+			if c.Info != nil && c.PhysicalID > 0 {
 				HistogramNeededItems.insert(model.TableItemID{TableID: c.PhysicalID, ID: c.Info.ID, IsIndex: false})
 			}
 		}
