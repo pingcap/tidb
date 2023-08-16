@@ -102,17 +102,8 @@ func isSingleRetryableError(err error) bool {
 		if nerr.Timeout() {
 			return true
 		}
-<<<<<<< HEAD
-		switch cause := nerr.(type) {
-		case *net.OpError:
-			syscallErr, ok := cause.Unwrap().(*os.SyscallError)
-			if ok {
-				return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET
-			}
-=======
 		if syscallErr, ok := goerrors.Unwrap(err).(*os.SyscallError); ok {
 			return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET
->>>>>>> 0b1144488f4 (lightning: fix pd retry and add ut for it (#43432))
 		}
 		return false
 	case *mysql.MySQLError:
