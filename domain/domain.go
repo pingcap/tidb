@@ -899,12 +899,8 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 			jobsIdsMap: make(map[int64]string),
 		},
 	}
-<<<<<<< HEAD
 
-=======
 	do.stopAutoAnalyze.Store(false)
-	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
->>>>>>> af7fe50b3d (domain, tidb-server: stop launching new auto analyze job when shutting down (#41346))
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
