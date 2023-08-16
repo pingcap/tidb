@@ -94,6 +94,7 @@ func TestSeekPropsOffsets(t *testing.T) {
 	require.Equal(t, []uint64{30, 20}, got)
 	got, err = seekPropsOffsets(ctx, []byte("key0"), []string{file1, file2}, store)
 	require.NoError(t, err)
+	// TODO(lance6716): maybe return an error?
 	require.Equal(t, []uint64{0, 0}, got)
 	got, err = seekPropsOffsets(ctx, []byte("key999"), []string{file1, file2}, store)
 	require.NoError(t, err)
@@ -140,7 +141,7 @@ func TestGetAllFileNames(t *testing.T) {
 	_, err = w3.Close(ctx)
 	require.NoError(t, err)
 
-	fileHandle, statFiles, err := GetAllFileNames(ctx, store, "/subtask")
+	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "/subtask")
 	require.NoError(t, err)
 	require.Equal(t, []string{
 		"/subtask/0_stat/0", "/subtask/0_stat/1", "/subtask/0_stat/2",
@@ -151,5 +152,5 @@ func TestGetAllFileNames(t *testing.T) {
 		"/subtask/0/0", "/subtask/0/1", "/subtask/0/2",
 		"/subtask/12/0", "/subtask/12/1", "/subtask/12/2",
 		"/subtask/3/0", "/subtask/3/1", "/subtask/3/2",
-	}, fileHandle.FlatSlice())
+	}, dataFiles)
 }

@@ -15,15 +15,16 @@
 package external
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -64,9 +65,8 @@ func seekPropsOffsets(
 		propKey := kv.Key(p.key)
 		if propKey.Cmp(start) > 0 {
 			return offsets, nil
-		} else {
-			offsets[iter.readerIndex()] = p.offset
 		}
+		offsets[iter.readerIndex()] = p.offset
 	}
 	if iter.Error() != nil {
 		return nil, iter.Error()
@@ -74,80 +74,39 @@ func seekPropsOffsets(
 	return offsets, nil
 }
 
-// GetAllFileNames returns a FilePathHandle that contains all data file paths
-// and a slice of stat file paths. The stat file paths is sorted.
+// GetAllFileNames returns data file paths and stat file paths. Both paths are
+// sorted.
 func GetAllFileNames(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	subDir string,
-) (FilePathHandle, []string, error) {
-	var dataFilePaths FilePathHandle
+) ([]string, []string, error) {
+	var data []string
 	var stats []string
 
 	err := store.WalkDir(ctx,
 		&storage.WalkOption{SubDir: subDir},
 		func(path string, size int64) error {
-			dir, fileSeq := filepath.Split(path)
-			// remove the trailing slash
-			dir = dir[:len(dir)-1]
-			if strings.HasSuffix(dir, statSuffix) {
+			// path example: /subtask/0_stat/0
+
+			// extract the parent dir
+			bs := hack.Slice(path)
+			lastIdx := bytes.LastIndexByte(bs, '/')
+			secondLastIdx := bytes.LastIndexByte(bs[:lastIdx], '/')
+			parentDir := path[secondLastIdx+1 : lastIdx]
+
+			if strings.HasSuffix(parentDir, statSuffix) {
 				stats = append(stats, path)
 			} else {
-				writerID, err := strconv.Atoi(filepath.Base(dir))
-				if err != nil {
-					return err
-				}
-				seq, err := strconv.Atoi(fileSeq)
-				if err != nil {
-					return err
-				}
-				dataFilePaths.set(writerID, seq, path)
+				data = append(data, path)
 			}
 			return nil
 		})
 	if err != nil {
-		return dataFilePaths, nil, err
+		return nil, nil, err
 	}
 	// in case the external storage does not guarantee the order of walk
+	sort.Strings(data)
 	sort.Strings(stats)
-	return dataFilePaths, stats, nil
-}
-
-// FilePathHandle handles data file paths under a prefix path.
-type FilePathHandle struct {
-	paths [][]string
-}
-
-func (p *FilePathHandle) set(writerID, seq int, path string) {
-	if writerID >= len(p.paths) {
-		p.paths = append(p.paths, make([][]string, writerID-len(p.paths)+1)...)
-	}
-	if seq >= len(p.paths[writerID]) {
-		p.paths[writerID] = append(p.paths[writerID], make([]string, seq-len(p.paths[writerID])+1)...)
-	}
-	p.paths[writerID][seq] = path
-}
-
-// Get returns the path of the data file with the given writerID and seq.
-func (p *FilePathHandle) Get(writerID, seq int) string {
-	return p.paths[writerID][seq]
-}
-
-// ForEach applies the given function to each data file path.
-func (p *FilePathHandle) ForEach(f func(writerID, seq int, path string)) {
-	for writerID, paths := range p.paths {
-		for seq, path := range paths {
-			f(writerID, seq, path)
-		}
-	}
-}
-
-// FlatSlice returns a flat slice of all data file paths in sorted order.
-func (p *FilePathHandle) FlatSlice() []string {
-	var paths []string
-	p.ForEach(func(writerID, seq int, path string) {
-		paths = append(paths, path)
-	})
-	sort.Strings(paths)
-	return paths
+	return data, stats, nil
 }
