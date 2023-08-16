@@ -1090,7 +1090,7 @@ var _ tableMetaMgr = &singleTableMetaMgr{}
 // target table should be empty, we don't do checksum here.
 // for TiDB version >= 6.5.0, a table might have separate allocators for auto_increment column and _tidb_rowid,
 // especially when a table has auto_increment non-clustered PK, it will use both allocators.
-// And ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
+// And in this case, ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
 // not for allocator of _tidb_rowid.
 // So we need to allocate IDs for those 2 allocators explicitly.
 func (s *singleTableMetaMgr) AllocTableRowIDs(ctx context.Context, rowIDMax int64) (*verify.KVChecksum, int64, error) {
