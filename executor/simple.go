@@ -2592,12 +2592,8 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 		SetFromSessionVars(sctx.GetSessionVars()).
 		SetFromInfoSchema(sctx.GetInfoSchema()).
 		SetStoreType(kv.TiDB).
-<<<<<<< HEAD
 		SetTiDBServerID(connID.ServerID).
-=======
-		SetTiDBServerID(gcid.ServerID).
 		SetStartTS(math.MaxUint64). // To make check visibility success.
->>>>>>> 9232aac873b (executor: Fix coroutine leak after kill remote connection (#46035))
 		Build()
 	if err != nil {
 		return err
@@ -2608,10 +2604,6 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 		return err
 	}
 
-<<<<<<< HEAD
-	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", connID.ServerID),
-		zap.Uint64("connID", connID.ID()), zap.Bool("query", query))
-=======
 	// Must consume & close the response, otherwise coprocessor task will leak.
 	defer func() {
 		_ = resp.Close()
@@ -2620,9 +2612,8 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 		return errors.Trace(err)
 	}
 
-	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", gcid.ServerID),
-		zap.Uint64("conn", gcid.ToConnID()), zap.Bool("query", query))
->>>>>>> 9232aac873b (executor: Fix coroutine leak after kill remote connection (#46035))
+	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", connID.ServerID),
+		zap.Uint64("connID", connID.ID()), zap.Bool("query", query))
 	return err
 }
 
