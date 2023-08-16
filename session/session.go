@@ -2838,7 +2838,185 @@ func loadCollationParameter(se *session) (bool, error) {
 
 var errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 
+<<<<<<< HEAD
 // BootstrapSession runs the first time when the TiDB server start.
+=======
+var (
+	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
+	// DDLJobTables is a list of tables definitions used in concurrent DDL.
+	DDLJobTables = []tableBasicInfo{
+		{ddl.JobTableSQL, ddl.JobTableID},
+		{ddl.ReorgTableSQL, ddl.ReorgTableID},
+		{ddl.HistoryTableSQL, ddl.HistoryTableID},
+	}
+	// BackfillTables is a list of tables definitions used in dist reorg DDL.
+	BackfillTables = []tableBasicInfo{
+		{ddl.BackgroundSubtaskTableSQL, ddl.BackgroundSubtaskTableID},
+		{ddl.BackgroundSubtaskHistoryTableSQL, ddl.BackgroundSubtaskHistoryTableID},
+	}
+	mdlTable = "create table mysql.tidb_mdl_info(job_id BIGINT NOT NULL PRIMARY KEY, version BIGINT NOT NULL, table_ids text(65535));"
+)
+
+func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
+	if s, ok := store.(kv.SplittableStore); ok && atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1 {
+		ctxWithTimeout, cancel := context.WithTimeout(context.Background(), variable.DefWaitSplitRegionTimeout*time.Second)
+		var regionIDs []uint64
+		for _, id := range tableIDs {
+			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, id, id, variable.DefTiDBScatterRegion))
+		}
+		if variable.DefTiDBScatterRegion {
+			ddl.WaitScatterRegionFinish(ctxWithTimeout, s, regionIDs...)
+		}
+		cancel()
+	}
+}
+
+// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history, or tidb_background_subtask and tidb_background_subtask_history.
+func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
+	targetTables := DDLJobTables
+	if targetVer == meta.BackfillTableVersion {
+		targetTables = BackfillTables
+	}
+	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		tableVer, err := t.CheckDDLTableVersion()
+		if err != nil || tableVer >= targetVer {
+			return errors.Trace(err)
+		}
+		dbID, err := t.CreateMySQLDatabaseIfNotExists()
+		if err != nil {
+			return err
+		}
+		if err = createAndSplitTables(store, t, dbID, targetTables); err != nil {
+			return err
+		}
+		return t.SetDDLTables(targetVer)
+	})
+}
+
+func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []tableBasicInfo) error {
+	tableIDs := make([]int64, 0, len(tables))
+	for _, tbl := range tables {
+		tableIDs = append(tableIDs, tbl.id)
+	}
+	splitAndScatterTable(store, tableIDs)
+	p := parser.New()
+	for _, tbl := range tables {
+		stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tblInfo.State = model.StatePublic
+		tblInfo.ID = tbl.id
+		tblInfo.UpdateTS = t.StartTS
+		err = t.CreateTableOrView(dbID, tblInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.
+func InitMDLTable(store kv.Storage) error {
+	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		ver, err := t.CheckDDLTableVersion()
+		if err != nil || ver >= meta.MDLTableVersion {
+			return errors.Trace(err)
+		}
+		dbID, err := t.CreateMySQLDatabaseIfNotExists()
+		if err != nil {
+			return err
+		}
+		splitAndScatterTable(store, []int64{ddl.MDLTableID})
+		p := parser.New()
+		stmt, err := p.ParseOneStmt(mdlTable, "", "")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tblInfo.State = model.StatePublic
+		tblInfo.ID = ddl.MDLTableID
+		tblInfo.UpdateTS = t.StartTS
+		err = t.CreateTableOrView(dbID, tblInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		return t.SetDDLTables(meta.MDLTableVersion)
+	})
+}
+
+// InitMDLVariableForBootstrap initializes the metadata lock variable.
+func InitMDLVariableForBootstrap(store kv.Storage) error {
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		return t.SetMetadataLock(true)
+	})
+	if err != nil {
+		return err
+	}
+	variable.EnableMDL.Store(true)
+	return nil
+}
+
+// InitMDLVariableForUpgrade initializes the metadata lock variable.
+func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
+	isNull := false
+	enable := false
+	var err error
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		enable, isNull, err = t.GetMetadataLock()
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if isNull || !enable {
+		variable.EnableMDL.Store(false)
+	} else {
+		variable.EnableMDL.Store(true)
+	}
+	return isNull, err
+}
+
+// InitMDLVariable initializes the metadata lock variable.
+func InitMDLVariable(store kv.Storage) error {
+	isNull := false
+	enable := false
+	var err error
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		enable, isNull, err = t.GetMetadataLock()
+		if err != nil {
+			return err
+		}
+		if isNull {
+			// Workaround for version: nightly-2022-11-07 to nightly-2022-11-17.
+			enable = true
+			logutil.BgLogger().Warn("metadata lock is null")
+			err = t.SetMetadataLock(true)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	variable.EnableMDL.Store(enable)
+	return err
+}
+
+// BootstrapSession bootstrap session and domain.
+>>>>>>> 4fc7970f216 (ddl, session: using table ID instead of partition ID when calling `SplitRegions` (#46156))
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	cfg := config.GetGlobalConfig()
 	if len(cfg.Instance.PluginLoad) > 0 {
