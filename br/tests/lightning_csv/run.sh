@@ -55,7 +55,7 @@ function run_with() {
     check_contains 'count(*): 4'
   done
 
-  for table in clustered nonclustered clustered_cache1 nonclustered_cache1 no_pk; do
+  for table in clustered nonclustered clustered_cache1 nonclustered_cache1 no_pk no_pk_cache1; do
     run_sql "select count(*) from no_auto_incr_id.$table"
     check_contains 'count(*): 3'
     # insert should work
