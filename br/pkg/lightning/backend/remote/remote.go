@@ -1072,8 +1072,12 @@ func (remote *Backend) createMergeIter(ctx context.Context, start kv.Key) (*shar
 }
 
 func (remote *Backend) fillJobKVs(j *regionJob, iter *sharedisk.MergeIter) {
+	ts := time.Now()
 	j.writeBatch = remote.kvPairSlicePool.get()
 	memBuf := remote.bufferPool.NewBuffer()
+
+	log.FromContext(context.Background()).Info("", zap.Duration("duration for prepare", time.Since(ts)))
+	ts = time.Now()
 	//var prevKey kv.Key
 	for iter.Valid() {
 		k, v := iter.Key(), iter.Value()
@@ -1114,6 +1118,7 @@ func (remote *Backend) fillJobKVs(j *regionJob, iter *sharedisk.MergeIter) {
 			break
 		}
 	}
+	log.FromContext(context.Background()).Info("", zap.Duration("duration for a job", time.Since(ts)))
 	j.memBuffer = memBuf
 }
 
