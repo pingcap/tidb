@@ -1205,6 +1205,7 @@ func (remote *Backend) generateAndSendJob(
 			return err
 		}
 		for _, job := range jobs {
+			log.FromContext(ctx).Info("fillJobKVs", zap.Time("time", time.Now()))
 			remote.fillJobKVs(job, iter)
 			if len(job.writeBatch) == 0 {
 				continue
