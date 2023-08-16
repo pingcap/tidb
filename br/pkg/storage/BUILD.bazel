@@ -72,11 +72,7 @@ go_test(
     ],
     embed = [":storage"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 43,
-=======
-    shard_count = 47,
->>>>>>> 88225787f3c (br: configure the httpclient for external storage (#46040))
+    shard_count = 45,
     deps = [
         "//br/pkg/mock",
         "@com_github_aws_aws_sdk_go//aws",
