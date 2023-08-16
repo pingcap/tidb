@@ -444,7 +444,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			index, ok = er.windowMap[v]
 		}
 		if !ok {
-			er.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(strings.ToLower(v.F))
+			er.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(strings.ToLower(v.Name))
 			return inNode, true
 		}
 		er.ctxStackAppend(er.schema.Columns[index], er.names[index])

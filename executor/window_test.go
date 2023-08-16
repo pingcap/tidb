@@ -15,9 +15,11 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
 )
 
@@ -497,4 +499,51 @@ func TestIssue29947(t *testing.T) {
 	result := tk.MustQuery("select * from (select count(*) over (partition by ref_0.c_0b6nxb order by ref_0.c_3pcik) as c0 from t_tir89b as ref_0) as subq_0 where subq_0.c0 <> 1;")
 	result.Check(testkit.Rows("2", "3"))
 	tk.MustExec("commit")
+}
+
+func testReturnColumnNullableAttribute(tk *testkit.TestKit, funcName string, isNullable bool) {
+	rs, err := tk.ExecWithContext(context.Background(), fmt.Sprintf("select %s over (partition by p order by o rows between 1 preceding and 1 following) as a from agg;", funcName))
+	tk.RequireNoError(err, "testReturnColumnNullableAttribute get error")
+	retField := rs.Fields()[0]
+	if isNullable {
+		tk.RequireNotEqual(mysql.NotNullFlag, (retField.Column.FieldType.GetFlag() & mysql.NotNullFlag), fmt.Sprintf("%s window function's return column should have nullable attribute", funcName))
+	} else {
+		tk.RequireEqual(mysql.NotNullFlag, (retField.Column.FieldType.GetFlag() & mysql.NotNullFlag), fmt.Sprintf("%s window function's return column should not have nullable attribute", funcName))
+	}
+	rs.Close()
+}
+
+func TestIssue45964And46050(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists agg;`)
+	tk.MustExec("create table agg(p int not null, o int not null, v int not null);")
+	tk.MustExec(`INSERT INTO agg VALUES (0, 0, 1), (1, 1, 2), (1, 2, 3), (1, 3, 4), (1, 4, 5), (2, 5, 6), (2, 6, 7);`)
+
+	testReturnColumnNullableAttribute(tk, "first_value(v)", true)
+	testReturnColumnNullableAttribute(tk, "last_value(v)", true)
+	testReturnColumnNullableAttribute(tk, "nth_value(v, 2)", true)
+	testReturnColumnNullableAttribute(tk, "lead(v)", true)
+	testReturnColumnNullableAttribute(tk, "lead(v, 1)", true)
+	testReturnColumnNullableAttribute(tk, "lead(1, 1, 1)", false)
+	testReturnColumnNullableAttribute(tk, "lead(1, 1, null)", true)
+	testReturnColumnNullableAttribute(tk, "lead(null, 1, 1)", true)
+	testReturnColumnNullableAttribute(tk, "lead(v, 1, 1)", false)
+	testReturnColumnNullableAttribute(tk, "lead(v, 1, null)", true)
+	testReturnColumnNullableAttribute(tk, "lag(v)", true)
+	testReturnColumnNullableAttribute(tk, "lag(v, 1)", true)
+	testReturnColumnNullableAttribute(tk, "lag(1, 1, 1)", false)
+	testReturnColumnNullableAttribute(tk, "lag(1, 1, null)", true)
+	testReturnColumnNullableAttribute(tk, "lag(null, 1, 1)", true)
+	testReturnColumnNullableAttribute(tk, "lag(v, 1, 1)", false)
+	testReturnColumnNullableAttribute(tk, "lag(v, 1, null)", true)
+	testReturnColumnNullableAttribute(tk, "ntile(2)", true)
+	testReturnColumnNullableAttribute(tk, "sum(v)", true)
+	testReturnColumnNullableAttribute(tk, "count(v)", false)
+	testReturnColumnNullableAttribute(tk, "row_number()", false)
+	testReturnColumnNullableAttribute(tk, "rank()", false)
+	testReturnColumnNullableAttribute(tk, "dense_rank()", false)
+	testReturnColumnNullableAttribute(tk, "cume_dist()", false)
+	testReturnColumnNullableAttribute(tk, "percent_rank()", false)
 }

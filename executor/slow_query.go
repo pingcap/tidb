@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -49,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 type signalsKey struct{}
@@ -941,8 +941,8 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		}
 	}
 	// Sort by start time
-	slices.SortFunc(logFiles, func(i, j logFile) bool {
-		return i.start.Before(j.start)
+	slices.SortFunc(logFiles, func(i, j logFile) int {
+		return i.start.Compare(j.start)
 	})
 	return logFiles, err
 }

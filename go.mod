@@ -30,7 +30,7 @@ require (
 	github.com/coocood/freecache v1.2.1
 	github.com/coreos/go-semver v0.3.0
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
-	github.com/daixiang0/gci v0.10.1
+	github.com/daixiang0/gci v0.11.0
 	github.com/danjacques/gofslock v0.0.0-20191023191349-0a45f885bc37
 	github.com/dgraph-io/ristretto v0.1.1
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
@@ -99,7 +99,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20230731032349-719e6456f7d5
+	github.com/tikv/client-go/v2 v2.0.8-0.20230811033710-8a214402da13
 	github.com/tikv/pd/client v0.0.0-20230728033905-31343e006842
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6
@@ -120,11 +120,11 @@ require (
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.25.0
 	golang.org/x/exp v0.0.0-20230711005742-c3f37128e5a4
-	golang.org/x/net v0.13.0
+	golang.org/x/net v0.14.0
 	golang.org/x/oauth2 v0.8.0
 	golang.org/x/sync v0.3.0
-	golang.org/x/sys v0.10.0
-	golang.org/x/term v0.10.0
+	golang.org/x/sys v0.11.0
+	golang.org/x/term v0.11.0
 	golang.org/x/text v0.12.0
 	golang.org/x/time v0.3.0
 	golang.org/x/tools v0.10.0
@@ -280,7 +280,7 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v0.20.0 // indirect
 	go.opentelemetry.io/otel/trace v0.20.0 // indirect
 	go.opentelemetry.io/proto/otlp v0.7.0 // indirect
-	golang.org/x/crypto v0.11.0 // indirect
+	golang.org/x/crypto v0.12.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20230224173230-c95f2b4c22f2 // indirect
 	golang.org/x/mod v0.11.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect

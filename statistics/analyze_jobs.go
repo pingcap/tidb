@@ -28,7 +28,9 @@ type AnalyzeJob struct {
 	TableName     string
 	PartitionName string
 	JobInfo       string
-	Progress      AnalyzeProgress
+
+	SampleRateReason string // why this sample-rate is chosen
+	Progress         AnalyzeProgress
 }
 
 // AnalyzeProgress represents the process of one analyze job.

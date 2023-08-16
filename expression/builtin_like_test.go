@@ -100,37 +100,40 @@ func TestRegexp(t *testing.T) {
 func TestCILike(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
-		input        string
-		pattern      string
-		generalMatch int
-		unicodeMatch int
+		input            string
+		pattern          string
+		generalMatch     int
+		unicodeMatch     int
+		unicode0900Match int
 	}{
-		{"a", "", 0, 0},
-		{"a", "a", 1, 1},
-		{"a", "á", 1, 1},
-		{"a", "b", 0, 0},
-		{"aA", "Aa", 1, 1},
-		{"áAb", `Aa%`, 1, 1},
-		{"áAb", `%ab%`, 1, 1},
-		{"áAb", `%ab`, 1, 1},
-		{"ÀAb", "aA_", 1, 1},
-		{"áééá", "a_%a", 1, 1},
-		{"áééá", "a%_a", 1, 1},
-		{"áéá", "a_%a", 1, 1},
-		{"áéá", "a%_a", 1, 1},
-		{"áá", "a_%a", 0, 0},
-		{"áá", "a%_a", 0, 0},
-		{"áééáííí", "a_%a%", 1, 1},
+		{"a", "", 0, 0, 0},
+		{"a", "a", 1, 1, 1},
+		{"a", "á", 1, 1, 1},
+		{"a", "b", 0, 0, 0},
+		{"aA", "Aa", 1, 1, 1},
+		{"áAb", `Aa%`, 1, 1, 1},
+		{"áAb", `%ab%`, 1, 1, 1},
+		{"áAb", `%ab`, 1, 1, 1},
+		{"ÀAb", "aA_", 1, 1, 1},
+		{"áééá", "a_%a", 1, 1, 1},
+		{"áééá", "a%_a", 1, 1, 1},
+		{"áéá", "a_%a", 1, 1, 1},
+		{"áéá", "a%_a", 1, 1, 1},
+		{"áá", "a_%a", 0, 0, 0},
+		{"áá", "a%_a", 0, 0, 0},
+		{"áééáííí", "a_%a%", 1, 1, 1},
+		{"数汉据字库", "数%据_库", 1, 1, 1},
 
 		// performs matching on a per-character basis
 		// https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html#operator_like
-		{"ß", "s%", 1, 0},
-		{"ß", "%s", 1, 0},
-		{"ß", "ss", 0, 0},
-		{"ß", "s", 1, 0},
-		{"ss", "%ß%", 1, 0},
-		{"ß", "_", 1, 1},
-		{"ß", "__", 0, 0},
+		{"ß", "s%", 1, 0, 0},
+		{"ß", "%s", 1, 0, 0},
+		{"ß", "ss", 0, 0, 0},
+		{"ß", "s", 1, 0, 0},
+		{"ss", "%ß%", 1, 0, 0},
+		{"ß", "_", 1, 1, 1},
+		{"ß", "__", 0, 0, 0},
+		{"Ⱕ", "ⱕ", 0, 0, 1},
 	}
 	for _, tt := range tests {
 		comment := fmt.Sprintf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
@@ -154,5 +157,17 @@ func TestCILike(t *testing.T) {
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err, comment)
 		testutil.DatumEqual(t, types.NewDatum(tt.unicodeMatch), r, comment)
+	}
+
+	for _, tt := range tests {
+		comment := fmt.Sprintf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
+		fc := funcs[ast.Like]
+		inputs := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
+		f, err := fc.getFunction(ctx, inputs)
+		require.NoError(t, err, comment)
+		f.setCollator(collate.GetCollator("utf8mb4_0900_ai_ci"))
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err, comment)
+		testutil.DatumEqual(t, types.NewDatum(tt.unicode0900Match), r, comment)
 	}
 }

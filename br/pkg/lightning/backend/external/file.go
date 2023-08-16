@@ -58,6 +58,7 @@ func NewKeyValueStore(
 // AddKeyValue saves a key-value pair to the KeyValueStore. If the accumulated
 // size or key count exceeds the given distance, a new range property will be
 // appended to the rangePropertiesCollector with current status.
+// `key` must be in strictly ascending order for invocations of a KeyValueStore.
 func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
 	kvLen := len(key) + len(value) + 16
 	var b [8]byte
@@ -94,8 +95,8 @@ func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
 	s.rc.currProp.size += uint64(len(key) + len(value))
 	s.rc.currProp.keys++
 
-	if s.rc.currProp.size >= s.rc.propSizeIdxDistance ||
-		s.rc.currProp.keys >= s.rc.propKeysIdxDistance {
+	if s.rc.currProp.size >= s.rc.propSizeDist ||
+		s.rc.currProp.keys >= s.rc.propKeysDist {
 		newProp := *s.rc.currProp
 		s.rc.props = append(s.rc.props, &newProp)
 
@@ -106,6 +107,14 @@ func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
 	}
 
 	return nil
+}
+
+// Close closes the KeyValueStore and append the last range property.
+func (s *KeyValueStore) Close() {
+	if s.rc.currProp.keys > 0 {
+		newProp := *s.rc.currProp
+		s.rc.props = append(s.rc.props, &newProp)
+	}
 }
 
 var statSuffix = filepath.Join("_stat", "0")

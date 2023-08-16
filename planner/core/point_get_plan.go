@@ -97,6 +97,8 @@ type PointGetPlan struct {
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in PhysicalPlan for details.
 	probeParents []PhysicalPlan
+	// stmtHints should restore in executing context.
+	stmtHints *stmtctx.StmtHints
 }
 
 func (p *PointGetPlan) getEstRowCountForDisplay() float64 {

@@ -17,16 +17,13 @@ TIDB_TEST_STORE_NAME=$TIDB_TEST_STORE_NAME
 TIKV_PATH=$TIKV_PATH
 
 build=1
-explain_test="./explain_test"
-importer=""
+mysql_tester="./mysql_tester"
 tidb_server=""
 portgenerator=""
-explain_test_log="./explain-test.out"
+mysql_tester_log="./explain-test.out"
 tests=""
 record=0
 record_case=""
-create=0
-create_case=""
 stats="s"
 collation_opt=2
 
@@ -61,23 +58,9 @@ function help_message()
                     This option will be ignored if \"-r <test-name>\" is provided.
                     Run all tests if this option is not provided.
 
-    -c <test-name>|all: Create data according to creating statements in file \"t/<test-name>.test\" and save stats in \"s/<test-name>_tableName.json\".
-                    <test-name> must has a suffix of '_stats'.
-                    \"all\" for creating stats of all tests.
-
-    -i <importer-path>: Use importer in <importer-path> for creating data.
-
     -p <portgenerator-path>: Use port generator in <portgenerator-path> for generating port numbers.
 
 "
-}
-
-function build_importer()
-{
-    importer="./importer"
-    echo "building importer binary: $importer"
-    rm -rf $importer
-    GO111MODULE=on go build -o $importer github.com/pingcap/tidb/cmd/importer
 }
 
 function build_portgenerator()
@@ -101,11 +84,12 @@ function build_tidb_server()
     fi
 }
 
-function build_explain_test()
+function build_mysql_tester()
 {
-    echo "building explain-test binary: $explain_test"
-    rm -rf $explain_test
-    GO111MODULE=on go build -o $explain_test
+    echo "building mysql-tester binary: $mysql_tester"
+    rm -rf $mysql_tester
+    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@d8e560cf13cdca9e23bf6e6a717efae83b844863
+    mv src mysql_tester
 }
 
 function extract_stats()
@@ -159,13 +143,6 @@ while getopts "t:s:r:b:d:c:i:h:p" opt; do
             help_message
             exit 0
             ;;
-        c)
-            create=1
-            create_case="$OPTARG"
-            ;;
-        i)
-            importer="$OPTARG"
-            ;;
         p)  
             portgenerator="$OPTARG"
             ;;
@@ -189,12 +166,7 @@ if [ $build -eq 1 ]; then
     else
         echo "skip building portgenerator, using existing binary: $portgenerator"
     fi
-    if [[ -z "$importer" && $create -eq 1 ]]; then
-        build_importer
-    elif [[ -n "$importer" ]]; then
-        echo "skip building importer, using existing binary: $importer"
-    fi
-    build_explain_test
+    build_mysql_tester
 else
     if [ -z "$tidb_server" ]; then
         tidb_server="./explaintest_tidb-server"
@@ -204,20 +176,12 @@ else
             echo "skip building tidb-server, using existing binary: $tidb_server"
         fi
     fi
-    if [ -z "$explain_test" ]; then
-        explain_test="./explain_test"
-        if [[ ! -f "$explain_test" ]]; then
-            build_explain_test
+    if [ -z "$mysql_tester" ]; then
+        mysql_tester="./mysql_tester"
+        if [[ ! -f "$mysql_tester" ]]; then
+            build_mysql_tester
         else
-            echo "skip building explaintest, using existing binary: $explain_test"
-        fi
-    fi
-    if [ -z "$importer" ]; then
-        importer="./importer"
-        if [[ ! -f "$importer" ]]; then
-            build_importer
-        else
-            echo "skip building importer, using existing binary: $importer"
+            echo "skip building mysql-tester, using existing binary: $mysql_tester"
         fi
     fi
     if [ -z "$portgenerator" ]; then
@@ -230,7 +194,7 @@ else
     fi
 fi
 
-rm -rf $explain_test_log
+rm -rf $mysql_tester_log
 
 ports=()
 for port in $($portgenerator -count 2); do
@@ -246,18 +210,18 @@ function start_tidb_server()
     if [[ $enabled_new_collation = 0 ]]; then
         config_file="disable_new_collation.toml"
     fi
-    echo "start tidb-server, log file: $explain_test_log"
+    echo "start tidb-server, log file: $mysql_tester_log"
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        $tidb_server -P "$port" -status "$status" -config $config_file -store tikv -path "${TIKV_PATH}" > $explain_test_log 2>&1 &
+        $tidb_server -P "$port" -status "$status" -config $config_file -store tikv -path "${TIKV_PATH}" > $mysql_tester_log 2>&1 &
         SERVER_PID=$!
     else
-        $tidb_server -P "$port" -status "$status" -config $config_file -store unistore -path "" > $explain_test_log 2>&1 &
+        $tidb_server -P "$port" -status "$status" -config $config_file -store unistore -path "" > $mysql_tester_log 2>&1 &
         SERVER_PID=$!
     fi
     echo "tidb-server(PID: $SERVER_PID) started"
 }
 
-function run_explain_test()
+function run_mysql_tester()
 {
     coll_disabled="false"
     coll_msg="enabled new collation"
@@ -268,18 +232,10 @@ function run_explain_test()
     if [ $record -eq 1 ]; then
       if [ "$record_case" = 'all' ]; then
           echo "record all cases"
-          $explain_test -port "$port" -status "$status" --collation-disable=$coll_disabled --record --log-level=error
+          $mysql_tester -port "$port" --collation-disable=$coll_disabled --record
       else
           echo "record result for case: \"$record_case\""
-          $explain_test -port "$port" -status "$status" --collation-disable=$coll_disabled --record $record_case --log-level=error
-      fi
-    elif [ $create -eq 1 ]; then
-      if [ "$create_case" = 'all' ]; then
-          echo "create all cases"
-          $explain_test -port "$port" -status "$status" --collation-disable=$coll_disabled --create --log-level=error
-      else
-          echo "create result for case: \"$create_case\""
-          $explain_test -port "$port" -status "$status" --collation-disable=$coll_disabled --create $create_case --log-level=error
+          $mysql_tester -port "$port" --collation-disable=$coll_disabled --record $record_case
       fi
     else
       if [ -z "$tests" ]; then
@@ -287,7 +243,7 @@ function run_explain_test()
       else
           echo "run explain test cases($coll_msg): $tests"
       fi
-      $explain_test -port "$port" -status "$status" --collation-disable=$coll_disabled --log-level=error $tests
+      $mysql_tester -port "$port" --collation-disable=$coll_disabled $tests
     fi
 }
 
@@ -295,10 +251,10 @@ function check_data_race() {
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
         return
     fi
-    race=`grep 'DATA RACE' $explain_test_log || true`
+    race=`grep 'DATA RACE' $mysql_tester_log || true`
     if [ ! -z "$race" ]; then
         echo "tidb-server DATA RACE!"
-        cat $explain_test_log
+        cat $mysql_tester_log
         exit 1
     fi
 }
@@ -309,8 +265,11 @@ if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
     start_tidb_server
     sleep 5
-    run_explain_test
-    kill -9 $SERVER_PID
+    run_mysql_tester
+    kill -15 $SERVER_PID
+    while ps -p $SERVER_PID > /dev/null; do
+        sleep 1
+    done
     check_data_race
 fi
 
@@ -318,8 +277,11 @@ if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     enabled_new_collation=1
     start_tidb_server
     sleep 5
-    run_explain_test
-    kill -9 $SERVER_PID
+    run_mysql_tester
+    kill -15 $SERVER_PID
+    while ps -p $SERVER_PID > /dev/null; do
+        sleep 1
+    done
     check_data_race
 fi
 

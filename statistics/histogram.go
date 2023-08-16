@@ -231,9 +231,8 @@ const (
 	// Fast analyze is always Version1 currently.
 	Version1 = 1
 	// Version2 maintains the statistics in the following way.
-	// Column stats: CM Sketch is not used. TopN and Histogram are built from samples. TopN + Histogram represent all data.
-	// Index stats: CM SKetch is not used. TopN and Histograms are built from samples.
-	//    Then values covered by TopN is removed from Histogram. TopN + Histogram represent all data.
+	// Column stats: CM Sketch is not used. TopN and Histogram are built from samples. TopN + Histogram represent all data.(The values covered by TopN is removed from Histogram.)
+	// Index stats: CM SKetch is not used. TopN and Histograms are built from samples. TopN + Histogram represent all data.(The values covered by TopN is removed from Histogram.)
 	// Both Column and Index's NDVs are collected by full scan.
 	Version2 = 2
 )
@@ -279,6 +278,35 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 	lowerVal, err := ValueToString(nil, hg.GetLower(bktID), idxCols, nil)
 	terror.Log(errors.Trace(err))
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d ndv: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat, hg.Buckets[bktID].NDV)
+}
+
+// BinarySearchRemoveVal removes the value from the TopN using binary search.
+func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
+	lowIdx, highIdx := 0, hg.Len()-1
+	for lowIdx <= highIdx {
+		midIdx := (lowIdx + highIdx) / 2
+		cmpResult := bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2), valCntPairs.Encoded)
+		if cmpResult > 0 {
+			lowIdx = midIdx + 1
+			continue
+		}
+		cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2+1), valCntPairs.Encoded)
+		if cmpResult < 0 {
+			highIdx = midIdx - 1
+			continue
+		}
+		if hg.Buckets[midIdx].NDV > 0 {
+			hg.Buckets[midIdx].NDV--
+		}
+		if cmpResult == 0 {
+			hg.Buckets[midIdx].Repeat = 0
+		}
+		hg.Buckets[midIdx].Count -= int64(valCntPairs.Count)
+		if hg.Buckets[midIdx].Count < 0 {
+			hg.Buckets[midIdx].Count = 0
+		}
+		break
+	}
 }
 
 // RemoveVals remove the given values from the histogram.

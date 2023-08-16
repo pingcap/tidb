@@ -8159,7 +8159,7 @@ SumExpr:
 	"AVG" '(' BuggyDefaultFalseDistinctOpt Expression ')' OptWindowingClause
 	{
 		if $6 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 		}
@@ -8175,7 +8175,7 @@ SumExpr:
 |	builtinBitAnd '(' Expression ')' OptWindowingClause
 	{
 		if $5 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$3}, Spec: *($5.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$3}, Spec: *($5.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
 		}
@@ -8183,7 +8183,7 @@ SumExpr:
 |	builtinBitAnd '(' "ALL" Expression ')' OptWindowingClause
 	{
 		if $6 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Spec: *($6.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Spec: *($6.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}}
 		}
@@ -8191,7 +8191,7 @@ SumExpr:
 |	builtinBitOr '(' Expression ')' OptWindowingClause
 	{
 		if $5 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$3}, Spec: *($5.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$3}, Spec: *($5.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
 		}
@@ -8199,7 +8199,7 @@ SumExpr:
 |	builtinBitOr '(' "ALL" Expression ')' OptWindowingClause
 	{
 		if $6 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Spec: *($6.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Spec: *($6.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}}
 		}
@@ -8207,7 +8207,7 @@ SumExpr:
 |	builtinBitXor '(' Expression ')' OptWindowingClause
 	{
 		if $5 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$3}, Spec: *($5.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$3}, Spec: *($5.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
 		}
@@ -8215,7 +8215,7 @@ SumExpr:
 |	builtinBitXor '(' "ALL" Expression ')' OptWindowingClause
 	{
 		if $6 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Spec: *($6.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Spec: *($6.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}}
 		}
@@ -8227,7 +8227,7 @@ SumExpr:
 |	builtinCount '(' "ALL" Expression ')' OptWindowingClause
 	{
 		if $6 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Spec: *($6.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Spec: *($6.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}}
 		}
@@ -8235,7 +8235,7 @@ SumExpr:
 |	builtinCount '(' Expression ')' OptWindowingClause
 	{
 		if $5 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$3}, Spec: *($5.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$3}, Spec: *($5.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
 		}
@@ -8244,7 +8244,7 @@ SumExpr:
 	{
 		args := []ast.ExprNode{ast.NewValueExpr(1, parser.charset, parser.collation)}
 		if $5 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: args, Spec: *($5.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: args, Spec: *($5.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: args}
 		}
@@ -8254,7 +8254,7 @@ SumExpr:
 		args := $4.([]ast.ExprNode)
 		args = append(args, $6.(ast.ExprNode))
 		if $8 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: args, Distinct: $3.(bool), Spec: *($8.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: args, Distinct: $3.(bool), Spec: *($8.(*ast.WindowSpec))}
 		} else {
 			agg := &ast.AggregateFuncExpr{F: $1, Args: args, Distinct: $3.(bool)}
 			if $5 != nil {
@@ -8266,7 +8266,7 @@ SumExpr:
 |	builtinMax '(' BuggyDefaultFalseDistinctOpt Expression ')' OptWindowingClause
 	{
 		if $6 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 		}
@@ -8274,7 +8274,7 @@ SumExpr:
 |	builtinMin '(' BuggyDefaultFalseDistinctOpt Expression ')' OptWindowingClause
 	{
 		if $6 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 		}
@@ -8282,7 +8282,7 @@ SumExpr:
 |	builtinSum '(' BuggyDefaultFalseDistinctOpt Expression ')' OptWindowingClause
 	{
 		if $6 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 		}
@@ -8290,7 +8290,7 @@ SumExpr:
 |	builtinStddevPop '(' BuggyDefaultFalseDistinctOpt Expression ')' OptWindowingClause
 	{
 		if $6 != nil {
-			$$ = &ast.WindowFuncExpr{F: ast.AggFuncStddevPop, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: ast.AggFuncStddevPop, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: ast.AggFuncStddevPop, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 		}
@@ -8298,7 +8298,7 @@ SumExpr:
 |	builtinStddevSamp '(' BuggyDefaultFalseDistinctOpt Expression ')' OptWindowingClause
 	{
 		if $6 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 		}
@@ -8306,7 +8306,7 @@ SumExpr:
 |	builtinVarPop '(' BuggyDefaultFalseDistinctOpt Expression ')' OptWindowingClause
 	{
 		if $6 != nil {
-			$$ = &ast.WindowFuncExpr{F: ast.AggFuncVarPop, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: ast.AggFuncVarPop, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: ast.AggFuncVarPop, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 		}
@@ -8318,7 +8318,7 @@ SumExpr:
 |	"JSON_ARRAYAGG" '(' Expression ')' OptWindowingClause
 	{
 		if $5 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$3}, Spec: *($5.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$3}, Spec: *($5.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
 		}
@@ -8326,7 +8326,7 @@ SumExpr:
 |	"JSON_ARRAYAGG" '(' "ALL" Expression ')' OptWindowingClause
 	{
 		if $6 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Spec: *($6.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Spec: *($6.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}}
 		}
@@ -8334,7 +8334,7 @@ SumExpr:
 |	"JSON_OBJECTAGG" '(' Expression ',' Expression ')' OptWindowingClause
 	{
 		if $7 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$3, $5}, Spec: *($7.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$3, $5}, Spec: *($7.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3, $5}}
 		}
@@ -8342,7 +8342,7 @@ SumExpr:
 |	"JSON_OBJECTAGG" '(' "ALL" Expression ',' Expression ')' OptWindowingClause
 	{
 		if $8 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$4, $6}, Spec: *($8.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4, $6}, Spec: *($8.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4, $6}}
 		}
@@ -8350,7 +8350,7 @@ SumExpr:
 |	"JSON_OBJECTAGG" '(' Expression ',' "ALL" Expression ')' OptWindowingClause
 	{
 		if $8 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$3, $6}, Spec: *($8.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$3, $6}, Spec: *($8.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3, $6}}
 		}
@@ -8358,7 +8358,7 @@ SumExpr:
 |	"JSON_OBJECTAGG" '(' "ALL" Expression ',' "ALL" Expression ')' OptWindowingClause
 	{
 		if $9 != nil {
-			$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$4, $7}, Spec: *($9.(*ast.WindowSpec))}
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4, $7}, Spec: *($9.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4, $7}}
 		}
@@ -9432,27 +9432,27 @@ WindowNameOrSpec:
 WindowFuncCall:
 	"ROW_NUMBER" '(' ')' WindowingClause
 	{
-		$$ = &ast.WindowFuncExpr{F: $1, Spec: $4.(ast.WindowSpec)}
+		$$ = &ast.WindowFuncExpr{Name: $1, Spec: $4.(ast.WindowSpec)}
 	}
 |	"RANK" '(' ')' WindowingClause
 	{
-		$$ = &ast.WindowFuncExpr{F: $1, Spec: $4.(ast.WindowSpec)}
+		$$ = &ast.WindowFuncExpr{Name: $1, Spec: $4.(ast.WindowSpec)}
 	}
 |	"DENSE_RANK" '(' ')' WindowingClause
 	{
-		$$ = &ast.WindowFuncExpr{F: $1, Spec: $4.(ast.WindowSpec)}
+		$$ = &ast.WindowFuncExpr{Name: $1, Spec: $4.(ast.WindowSpec)}
 	}
 |	"CUME_DIST" '(' ')' WindowingClause
 	{
-		$$ = &ast.WindowFuncExpr{F: $1, Spec: $4.(ast.WindowSpec)}
+		$$ = &ast.WindowFuncExpr{Name: $1, Spec: $4.(ast.WindowSpec)}
 	}
 |	"PERCENT_RANK" '(' ')' WindowingClause
 	{
-		$$ = &ast.WindowFuncExpr{F: $1, Spec: $4.(ast.WindowSpec)}
+		$$ = &ast.WindowFuncExpr{Name: $1, Spec: $4.(ast.WindowSpec)}
 	}
 |	"NTILE" '(' SimpleExpr ')' WindowingClause
 	{
-		$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$3}, Spec: $5.(ast.WindowSpec)}
+		$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$3}, Spec: $5.(ast.WindowSpec)}
 	}
 |	"LEAD" '(' Expression OptLeadLagInfo ')' OptNullTreatment WindowingClause
 	{
@@ -9460,7 +9460,7 @@ WindowFuncCall:
 		if $4 != nil {
 			args = append(args, $4.([]ast.ExprNode)...)
 		}
-		$$ = &ast.WindowFuncExpr{F: $1, Args: args, IgnoreNull: $6.(bool), Spec: $7.(ast.WindowSpec)}
+		$$ = &ast.WindowFuncExpr{Name: $1, Args: args, IgnoreNull: $6.(bool), Spec: $7.(ast.WindowSpec)}
 	}
 |	"LAG" '(' Expression OptLeadLagInfo ')' OptNullTreatment WindowingClause
 	{
@@ -9468,19 +9468,19 @@ WindowFuncCall:
 		if $4 != nil {
 			args = append(args, $4.([]ast.ExprNode)...)
 		}
-		$$ = &ast.WindowFuncExpr{F: $1, Args: args, IgnoreNull: $6.(bool), Spec: $7.(ast.WindowSpec)}
+		$$ = &ast.WindowFuncExpr{Name: $1, Args: args, IgnoreNull: $6.(bool), Spec: $7.(ast.WindowSpec)}
 	}
 |	"FIRST_VALUE" '(' Expression ')' OptNullTreatment WindowingClause
 	{
-		$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$3}, IgnoreNull: $5.(bool), Spec: $6.(ast.WindowSpec)}
+		$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$3}, IgnoreNull: $5.(bool), Spec: $6.(ast.WindowSpec)}
 	}
 |	"LAST_VALUE" '(' Expression ')' OptNullTreatment WindowingClause
 	{
-		$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$3}, IgnoreNull: $5.(bool), Spec: $6.(ast.WindowSpec)}
+		$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$3}, IgnoreNull: $5.(bool), Spec: $6.(ast.WindowSpec)}
 	}
 |	"NTH_VALUE" '(' Expression ',' SimpleExpr ')' OptFromFirstLast OptNullTreatment WindowingClause
 	{
-		$$ = &ast.WindowFuncExpr{F: $1, Args: []ast.ExprNode{$3, $5}, FromLast: $7.(bool), IgnoreNull: $8.(bool), Spec: $9.(ast.WindowSpec)}
+		$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$3, $5}, FromLast: $7.(bool), IgnoreNull: $8.(bool), Spec: $9.(ast.WindowSpec)}
 	}
 
 OptLeadLagInfo:
