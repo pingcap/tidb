@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -74,7 +75,7 @@ func seekPropsOffsets(
 }
 
 // GetAllFileNames returns a FilePathHandle that contains all data file paths
-// and a slice of stat file paths.
+// and a slice of stat file paths. The stat file paths is sorted.
 func GetAllFileNames(
 	ctx context.Context,
 	store storage.ExternalStorage,
@@ -107,6 +108,8 @@ func GetAllFileNames(
 	if err != nil {
 		return dataFilePaths, nil, err
 	}
+	// in case the external storage does not guarantee the order of walk
+	sort.Strings(stats)
 	return dataFilePaths, stats, nil
 }
 
@@ -139,11 +142,12 @@ func (p *FilePathHandle) ForEach(f func(writerID, seq int, path string)) {
 	}
 }
 
-// FlatSlice returns a flat slice of all data file paths.
+// FlatSlice returns a flat slice of all data file paths in sorted order.
 func (p *FilePathHandle) FlatSlice() []string {
 	var paths []string
 	p.ForEach(func(writerID, seq int, path string) {
 		paths = append(paths, path)
 	})
+	sort.Strings(paths)
 	return paths
 }

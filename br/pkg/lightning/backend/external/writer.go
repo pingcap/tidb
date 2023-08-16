@@ -132,7 +132,8 @@ func (b *WriterBuilder) SetBufferPool(bufferPool *membuf.Pool) *WriterBuilder {
 	return b
 }
 
-// Build builds a new Writer.
+// Build builds a new Writer. The files writer will create are under the prefix
+// of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
 	store storage.ExternalStorage,
 	writerID int,

@@ -149,7 +149,7 @@ func TestGetAllFileNames(t *testing.T) {
 	}, statFiles)
 	require.Equal(t, []string{
 		"/subtask/0/0", "/subtask/0/1", "/subtask/0/2",
-		"/subtask/3/0", "/subtask/3/1", "/subtask/3/2",
 		"/subtask/12/0", "/subtask/12/1", "/subtask/12/2",
+		"/subtask/3/0", "/subtask/3/1", "/subtask/3/2",
 	}, fileHandle.FlatSlice())
 }
