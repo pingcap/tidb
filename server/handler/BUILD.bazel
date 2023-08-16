@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "handler",
+    srcs = ["upgrade_handler.go"],
+    importpath = "github.com/pingcap/tidb/server/handler",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//kv",
+        "//session",
+        "//util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
