@@ -86,6 +86,17 @@ const (
 	RegionUnit ProgressUnit = "region"
 )
 
+// BackupContext represents the context variable of normal backup and also raw/txn/file_copy backups.
+type BackupContext struct {
+	Concurrency      uint
+	ReplicaReadLabel map[string]string
+	MetaWriter       *metautil.MetaWriter
+	UniqueIdStoreMap *sync.Map
+
+	ProgressCallBack   func(ProgressUnit)
+	CheckpointCallBack func(*backuppb.BackupResponse) error
+}
+
 // Client is a client instructs TiKV how to do a backup.
 type Client struct {
 	mgr       ClientMgr
@@ -818,10 +829,7 @@ func (bc *Client) BackupRanges(
 	ctx context.Context,
 	ranges []rtree.Range,
 	request backuppb.BackupRequest,
-	concurrency uint,
-	replicaReadLabel map[string]string,
-	metaWriter *metautil.MetaWriter,
-	progressCallBack func(ProgressUnit),
+	backupCtx BackupContext,
 ) error {
 	log.Info("Backup Ranges Started", rtree.ZapRanges(ranges))
 	init := time.Now()
@@ -837,7 +845,7 @@ func (bc *Client) BackupRanges(
 	}
 
 	// we collect all files in a single goroutine to avoid thread safety issues.
-	workerPool := utils.NewWorkerPool(concurrency, "Ranges")
+	workerPool := utils.NewWorkerPool(backupCtx.Concurrency, "Ranges")
 	eg, ectx := errgroup.WithContext(ctx)
 	for id, r := range ranges {
 		id := id
@@ -849,7 +857,7 @@ func (bc *Client) BackupRanges(
 		}
 		workerPool.ApplyOnErrorGroup(eg, func() error {
 			elctx := logutil.ContextWithField(ectx, logutil.RedactAny("range-sn", id))
-			err := bc.BackupRange(elctx, req, replicaReadLabel, pr, metaWriter, progressCallBack)
+			err := bc.BackupRange(elctx, req, pr, backupCtx)
 			if err != nil {
 				// The error due to context cancel, stack trace is meaningless, the stack shall be suspended (also clear)
 				if errors.Cause(err) == context.Canceled {
@@ -869,10 +877,8 @@ func (bc *Client) BackupRanges(
 func (bc *Client) BackupRange(
 	ctx context.Context,
 	request backuppb.BackupRequest,
-	replicaReadLabel map[string]string,
 	progressRange *rtree.ProgressRange,
-	metaWriter *metautil.MetaWriter,
-	progressCallBack func(ProgressUnit),
+	backupCtx BackupContext,
 ) (err error) {
 	start := time.Now()
 	defer func() {
@@ -896,23 +902,37 @@ func (bc *Client) BackupRange(
 	}
 	var targetStores []*metapb.Store
 	targetStoreIds := make(map[uint64]struct{})
-	if len(replicaReadLabel) == 0 {
+	if len(backupCtx.ReplicaReadLabel) == 0 {
 		targetStores = allStores // send backup push down request to all stores
 	} else {
 		for _, store := range allStores {
 			for _, label := range store.Labels {
-				if val, ok := replicaReadLabel[label.Key]; ok && val == label.Value {
+				if val, ok := backupCtx.ReplicaReadLabel[label.Key]; ok && val == label.Value {
 					targetStores = append(targetStores, store) // send backup push down request to stores that match replica read label
 					targetStoreIds[store.GetId()] = struct{}{} // record store id for fine grained backup
 				}
 			}
 		}
 	}
-	if len(replicaReadLabel) > 0 && len(targetStores) == 0 {
-		return errors.Errorf("no store matches replica read label: %v", replicaReadLabel)
+	if len(backupCtx.ReplicaReadLabel) > 0 && len(targetStores) == 0 {
+		return errors.Errorf("no store matches replica read label: %v", backupCtx.ReplicaReadLabel)
 	}
 
 	logutil.CL(ctx).Info("backup push down started")
+	// set checkpoint callback for both pushBackup and fineGrainedBackup
+	backupCtx.CheckpointCallBack = func(resp *backuppb.BackupResponse) error {
+		if bc.checkpointRunner != nil {
+			return checkpoint.AppendForBackup(
+				ctx,
+				bc.checkpointRunner,
+				progressRange.GroupKey,
+				resp.StartKey,
+				resp.EndKey,
+				resp.Files,
+			)
+		}
+		return nil
+	}
 	// either the `incomplete` is origin range itself,
 	// or the `incomplete` is sub-ranges split by checkpoint of origin range
 	if len(progressRange.Incomplete) > 0 {
@@ -935,7 +955,7 @@ func (bc *Client) BackupRange(
 		}
 
 		push := newPushDown(bc.mgr, len(targetStores))
-		err = push.pushBackup(ctx, req, progressRange, targetStores, bc.checkpointRunner, progressCallBack)
+		err = push.pushBackup(ctx, req, progressRange, targetStores, backupCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -944,12 +964,12 @@ func (bc *Client) BackupRange(
 
 	// Find and backup remaining ranges.
 	// TODO: test fine grained backup.
-	if err := bc.fineGrainedBackup(ctx, request, targetStoreIds, progressRange, progressCallBack); err != nil {
+	if err := bc.fineGrainedBackup(ctx, request, targetStoreIds, progressRange, backupCtx); err != nil {
 		return errors.Trace(err)
 	}
 
 	// update progress of range unit
-	progressCallBack(RangeUnit)
+	backupCtx.ProgressCallBack(RangeUnit)
 
 	if request.IsRawKv {
 		logutil.CL(ctx).Info("raw ranges backed up",
@@ -971,7 +991,7 @@ func (bc *Client) BackupRange(
 		}
 		// we need keep the files in order after we support multi_ingest sst.
 		// default_sst and write_sst need to be together.
-		if err := metaWriter.Send(r.Files, metautil.AppendDataFile); err != nil {
+		if err := backupCtx.MetaWriter.Send(r.Files, metautil.AppendDataFile); err != nil {
 			ascendErr = err
 			return false
 		}
@@ -1036,7 +1056,7 @@ func (bc *Client) fineGrainedBackup(
 	req backuppb.BackupRequest,
 	targetStoreIds map[uint64]struct{},
 	pr *rtree.ProgressRange,
-	progressCallBack func(ProgressUnit),
+	backupCtx BackupContext,
 ) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.fineGrainedBackup", opentracing.ChildOf(span.Context()))
@@ -1073,7 +1093,7 @@ func (bc *Client) fineGrainedBackup(
 		retry := make(chan rtree.Range, 4)
 
 		wg := new(sync.WaitGroup)
-		for i := 0; i < 4; i++ {
+		for i := 0; i < int(backupCtx.Concurrency); i++ {
 			wg.Add(1)
 			fork, _ := bo.Inner().Fork()
 			go func(boFork *tikv.Backoffer) {
@@ -1081,7 +1101,7 @@ func (bc *Client) fineGrainedBackup(
 				for rg := range retry {
 					subReq := req
 					subReq.StartKey, subReq.EndKey = rg.StartKey, rg.EndKey
-					backoffMs, err := bc.handleFineGrained(ctx, boFork, subReq, targetStoreIds, respCh)
+					backoffMs, err := bc.handleFineGrained(ctx, boFork, subReq, targetStoreIds, respCh, backupCtx)
 					if err != nil {
 						errCh <- err
 						return
@@ -1122,24 +1142,17 @@ func (bc *Client) fineGrainedBackup(
 					logutil.Key("fine-grained-range-start", resp.StartKey),
 					logutil.Key("fine-grained-range-end", resp.EndKey),
 				)
-				if bc.checkpointRunner != nil {
-					if err := checkpoint.AppendForBackup(
-						ctx,
-						bc.checkpointRunner,
-						pr.GroupKey,
-						resp.StartKey,
-						resp.EndKey,
-						resp.Files,
-					); err != nil {
-						return errors.Annotate(err, "failed to flush checkpoint when fineGrainedBackup")
-					}
+				err := backupCtx.CheckpointCallBack(resp)
+				if err != nil {
+					return errors.Annotate(err, "failed to flush checkpoint when fineGrainedBackup")
 				}
+
 				pr.Res.Put(resp.StartKey, resp.EndKey, resp.Files)
 				apiVersion := resp.ApiVersion
 				bc.SetApiVersion(apiVersion)
 
 				// Update progress
-				progressCallBack(RegionUnit)
+				backupCtx.ProgressCallBack(RegionUnit)
 			}
 		}
 
@@ -1228,6 +1241,7 @@ func (bc *Client) handleFineGrained(
 	req backuppb.BackupRequest,
 	targetStoreIds map[uint64]struct{},
 	respCh chan<- *backuppb.BackupResponse,
+	backupCtx BackupContext,
 ) (int, error) {
 	targetPeer, pderr := bc.findTargetPeer(ctx, req.StartKey, req.IsRawKv, targetStoreIds)
 	if pderr != nil {
@@ -1249,6 +1263,14 @@ func (bc *Client) handleFineGrained(
 	}
 	hasProgress := false
 	backoffMill := 0
+	if backupCtx.UniqueIdStoreMap != nil {
+		uniqueId, ok := backupCtx.UniqueIdStoreMap.Load(storeID)
+		if ok {
+			req.UniqueId = uniqueId.(string)
+			logutil.CL(ctx).Info("get unique id for store when handle fineGrainedBackup",
+				zap.Int64("store", int64(storeID)), zap.String("unique_id", req.UniqueId))
+		}
+	}
 	err = SendBackup(
 		ctx, storeID, client, req,
 		// Handle responses with the same backoffer.

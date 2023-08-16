@@ -94,7 +94,6 @@ type BackupConfig struct {
 	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
 	CompressionConfig
 
-	// for ebs-based backup
 	FullBackupType          FullBackupType `json:"full-backup-type" toml:"full-backup-type"`
 	VolumeFile              string         `json:"volume-file" toml:"volume-file"`
 	SkipAWS                 bool           `json:"skip-aws" toml:"skip-aws"`
@@ -153,6 +152,11 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
 	flags.String(flagReplicaReadLabel, "", "specify the label of the stores to be used for backup, e.g. 'label_key:label_value'")
+	// Currently we have 3 type of backup, and correponsed to different rstore procedure.
+	// 1. scan precisely on leader and generate SST files
+	// 2. use EBS volume backup to backup all raft log and SST Files.
+	// 3. copy SST Files by region leader
+	flags.String(flagFullBackupType, string(FullBackupTypeScan), "full backup type")
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
@@ -222,35 +226,35 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if flags.Lookup(flagFullBackupType) != nil {
+	f := flags.Lookup(flagFullBackupType)
+	if f != nil {
 		// for backup full
-		fullBackupType, err := flags.GetString(flagFullBackupType)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		fullBackupType := f.Value.String()
 		if !FullBackupType(fullBackupType).Valid() {
 			return errors.New("invalid full backup type")
 		}
 		cfg.FullBackupType = FullBackupType(fullBackupType)
-		cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cfg.VolumeFile, err = flags.GetString(flagBackupVolumeFile)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cfg.ProgressFile, err = flags.GetString(flagProgressFile)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cfg.SkipPauseGCAndScheduler, err = flags.GetBool(flagOperatorPausedGCAndSchedulers)
-		if err != nil {
-			return errors.Trace(err)
+		if fullBackupType == string(FullBackupTypeEBS) {
+			cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cfg.VolumeFile, err = flags.GetString(flagBackupVolumeFile)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cfg.SkipPauseGCAndScheduler, err = flags.GetBool(flagOperatorPausedGCAndSchedulers)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 
@@ -679,7 +683,13 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}()
 	}
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	err = client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.ReplicaReadLabel, metawriter, progressCallBack)
+	backupCtx := backup.BackupContext{
+		Concurrency:      uint(cfg.Concurrency),
+		ReplicaReadLabel: cfg.ReplicaReadLabel,
+		MetaWriter:       metawriter,
+		ProgressCallBack: progressCallBack,
+	}
+	err = client.BackupRanges(ctx, ranges, req, backupCtx)
 	if err != nil {
 		return errors.Trace(err)
 	}
