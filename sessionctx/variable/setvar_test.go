@@ -123,7 +123,6 @@ func TestSetVarStringOrEnum(t *testing.T) {
 		{"tidb_partition_prune_mode", []string{"static", "dynamic"}},
 		{"mpp_version", []string{"0", "1"}},
 		{"tidb_opt_fix_control", []string{"44262:ON", "44389:ON,44823:ON"}},
-		// {"tidb_runtime_filter_type", []string{}},
 		{"tidb_runtime_filter_mode", []string{"OFF", "LOCAL"}},
 		{"sql_mode", []string{"", "ONLY_FULL_GROUP_BY"}},
 	}
