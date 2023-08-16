@@ -12,6 +12,8 @@ function run_with() {
   fi
 
   run_sql 'DROP DATABASE IF EXISTS csv'
+  run_sql 'DROP DATABASE IF EXISTS auto_incr_id'
+  run_sql 'DROP DATABASE IF EXISTS no_auto_incr_id'
 
   run_lightning --backend $backend --config $config_file
 
@@ -45,11 +47,20 @@ function run_with() {
   check_not_contains 'id:'
 
   for table in clustered nonclustered clustered_cache1 nonclustered_cache1; do
-    run_sql "select count(*) from csv.$table"
+    run_sql "select count(*) from auto_incr_id.$table"
     check_contains 'count(*): 3'
     # insert should work
-    run_sql "insert into csv.$table(v) values(1)"
-    run_sql "select count(*) from csv.$table"
+    run_sql "insert into auto_incr_id.$table(v) values(1)"
+    run_sql "select count(*) from auto_incr_id.$table"
+    check_contains 'count(*): 4'
+  done
+
+  for table in clustered nonclustered clustered_cache1 nonclustered_cache1 no_pk; do
+    run_sql "select count(*) from no_auto_incr_id.$table"
+    check_contains 'count(*): 3'
+    # insert should work
+    run_sql "insert into no_auto_incr_id.$table values(1, 1)"
+    run_sql "select count(*) from no_auto_incr_id.$table"
     check_contains 'count(*): 4'
   done
 }
