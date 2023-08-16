@@ -3,8 +3,10 @@
 package restore
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -21,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // DB is a TiDB instance, not thread-safe.
@@ -403,8 +404,8 @@ func (db *DB) ensureTablePlacementPolicies(ctx context.Context, tableInfo *model
 // FilterDDLJobs filters ddl jobs.
 func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs []*model.Job) {
 	// Sort the ddl jobs by schema version in descending order.
-	slices.SortFunc(allDDLJobs, func(i, j *model.Job) bool {
-		return i.BinlogInfo.SchemaVersion > j.BinlogInfo.SchemaVersion
+	slices.SortFunc(allDDLJobs, func(i, j *model.Job) int {
+		return cmp.Compare(j.BinlogInfo.SchemaVersion, i.BinlogInfo.SchemaVersion)
 	})
 	dbs := getDatabases(tables)
 	for _, db := range dbs {

@@ -161,17 +161,13 @@ func (sc *StatsCache) SetCapacity(c int64) {
 // Close stops the cache.
 func (sc *StatsCache) Close() {
 	sc.c.Close()
+	logutil.BgLogger().Info("closed LFU cache")
 }
 
 // Version returns the version of the current cache, which is defined as
 // the max table stats version the cache has in its lifecycle.
 func (sc *StatsCache) Version() uint64 {
 	return sc.maxTblStatsVer.Load()
-}
-
-// Front returns the front element's owner tableID, only used for test.
-func (sc *StatsCache) Front() int64 {
-	return sc.c.Front()
 }
 
 // CopyAndUpdate copies a new cache and updates the new statistics table cache. It is only used in the COW mode.

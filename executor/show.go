@@ -20,6 +20,7 @@ import (
 	gjson "encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -81,7 +82,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
-	"golang.org/x/exp/slices"
 )
 
 var etcdDialTimeout = 5 * time.Second

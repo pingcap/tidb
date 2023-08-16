@@ -14,10 +14,12 @@
 package importer
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 )
@@ -361,8 +362,8 @@ func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*precheck.Che
 	if len(stores) <= 1 {
 		return theResult, nil
 	}
-	slices.SortFunc(stores, func(i, j *pdtypes.StoreInfo) bool {
-		return i.Status.RegionCount < j.Status.RegionCount
+	slices.SortFunc(stores, func(i, j *pdtypes.StoreInfo) int {
+		return cmp.Compare(i.Status.RegionCount, j.Status.RegionCount)
 	})
 	minStore := stores[0]
 	maxStore := stores[len(stores)-1]

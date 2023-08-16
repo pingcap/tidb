@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 func (p *basePhysicalPlan) StatsCount() float64 {
@@ -1135,7 +1135,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 				return nil, err
 			}
 		}
-		recurStat := p.cte.recursivePartPhysicalPlan.StatsInfo()
+		recurStat := p.cte.recursivePartLogicalPlan.StatsInfo()
 		for i, col := range selfSchema.Columns {
 			p.StatsInfo().ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
 		}

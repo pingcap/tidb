@@ -446,6 +446,7 @@
       "parser/parser.go": "parser/parser.go code",
       "/cgo/": "ignore cgo code",
       "external/": "no need to vet third party code",
+      "$GOROOT/": "ignore GOROOT code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
@@ -510,6 +511,8 @@
       "types/json_binary_functions.go": "types/json_binary_functions.go",
       "types/json_binary_test.go": "types/json_binary_test.go",
       "ddl/": "ddl",
+      "expression/a": "expression/a code",
+      "expression/builtin.go": "expression/builtin code",
       "expression/builtin_cast.go": "expression/builtin_cast code",
       "server/": "server/ code",
       "distsql/": "distsql code",
@@ -592,7 +595,11 @@
       ".*test_/testmain\\.go$": "ignore generated code",
       ".*failpoint_binding__.go$": "ignore generated code",
       "util/chunk": "ignore util/chunk",
-      "br/pkg/restore": "ignore br/pkg/restore"
+      "br/pkg/lightning/mydump/": "more than 50",
+      "br/pkg/lightning/importer/": "more than 50",
+      "br/pkg/lightning/backend/local/": "more than 50",
+      "br/pkg/restore/": "more than 50",
+      "ddl/tests/partition/": "more than 50"
     },
     "only_files": {
       "planer/core/casetest/binaryplan": "planer/core/casetest/binaryplan",
@@ -607,6 +614,7 @@
       "planer/core/casetest/scalarsubquery": "planer/core/casetest/scalarsubquery",
       "planer/core/casetest/testdata": "planer/core/casetest/testdata",
       "planer/core/casetest/windows": "planer/core/casetest/windows",
+      "planer/core/tests/": "planer/core/tests/",
       "executor/test/admintest": "executor/test/admintest",
       "executor/test/aggregate": "executor/test/aggregate",
       "executor/test/autoidtest": "executor/test/autoidtest",
@@ -627,6 +635,7 @@
       "executor/test/splittest": "executor/test/splittest",
       "executor/test/tiflashtest": "executor/test/tiflashtest",
       "executor/test/unstabletest": "executor/test/unstabletest",
+      "br/": "br code",
       "session/test": "session/test code",
       "ddl/tests": "ddl/tests code",
       "disttask/": "disttask code",
@@ -1229,6 +1238,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1236,6 +1246,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1243,6 +1254,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1251,6 +1263,7 @@
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   },
@@ -1259,6 +1272,7 @@
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   }

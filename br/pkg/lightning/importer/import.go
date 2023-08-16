@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -64,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/prometheus/client_golang/prometheus"
 	tikvconfig "github.com/tikv/client-go/v2/config"
+	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -235,6 +237,7 @@ type Controller struct {
 
 	keyspaceName      string
 	resourceGroupName string
+	taskType          string
 }
 
 // LightningStatus provides the finished bytes and total bytes of the current task.
@@ -274,6 +277,8 @@ type ControllerParam struct {
 	KeyspaceName string
 	// ResourceGroup name for current TiDB user
 	ResourceGroupName string
+	// TaskType is the source component name use for background task control.
+	TaskType string
 }
 
 // NewImportController creates a new Controller instance.
@@ -383,6 +388,15 @@ func NewImportControllerWithPauser(
 			}
 		}
 
+		taskType, err := common.GetExplicitRequestSourceTypeFromDB(ctx, db)
+		if err != nil {
+			return nil, errors.Annotatef(err, "get system variable '%s' failed", variable.TiDBExplicitRequestSourceType)
+		}
+		if taskType == "" {
+			taskType = kvutil.ExplicitTypeLightning
+		}
+		p.TaskType = taskType
+
 		isRaftKV2, err := common.IsRaftKV2(ctx, db)
 		if err != nil {
 			log.FromContext(ctx).Warn("check isRaftKV2 failed", zap.Error(err))
@@ -391,7 +405,7 @@ func NewImportControllerWithPauser(
 		if isRaftKV2 {
 			raftKV2SwitchModeDuration = cfg.Cron.SwitchMode.Duration
 		}
-		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName, p.ResourceGroupName, raftKV2SwitchModeDuration)
+		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName, p.ResourceGroupName, p.TaskType, raftKV2SwitchModeDuration)
 		backendObj, err = local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
@@ -494,6 +508,7 @@ func NewImportControllerWithPauser(
 
 		keyspaceName:      p.KeyspaceName,
 		resourceGroupName: p.ResourceGroupName,
+		taskType:          p.TaskType,
 	}
 
 	return rc, nil

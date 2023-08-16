@@ -113,7 +113,7 @@ func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error
 
 	s.resetError()
 	logutil.Logger(s.logCtx).Info("scheduler run a step", zap.Any("step", task.Step), zap.Any("concurrency", task.Concurrency))
-	scheduler, err := createScheduler(task)
+	scheduler, err := createScheduler(ctx, task)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -292,7 +292,7 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 		}
 	}
 
-	scheduler, err := createScheduler(task)
+	scheduler, err := createScheduler(ctx, task)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -321,13 +321,13 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 	return s.getError()
 }
 
-func createScheduler(task *proto.Task) (Scheduler, error) {
+func createScheduler(ctx context.Context, task *proto.Task) (Scheduler, error) {
 	key := getKey(task.Type, task.Step)
 	constructor, ok := schedulerConstructors[key]
 	if !ok {
 		return nil, errors.Errorf("constructor of scheduler for key %s not found", key)
 	}
-	return constructor(task.ID, task.Meta, task.Step)
+	return constructor(ctx, task.ID, task.Meta, task.Step)
 }
 
 func createSubtaskExecutor(minimalTask proto.MinimalTask, tp string, step int64) (SubtaskExecutor, error) {

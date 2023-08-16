@@ -15,6 +15,7 @@
 package lightning
 
 import (
+	"cmp"
 	"compress/gzip"
 	"context"
 	"crypto/ecdsa"
@@ -29,6 +30,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,7 +67,6 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"golang.org/x/exp/slices"
 )
 
 // Lightning is the main struct of the lightning package.
@@ -960,8 +961,8 @@ func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta
 				tableTotalSizes = append(tableTotalSizes, tb.TotalSize)
 			}
 		}
-		slices.SortFunc(tableTotalSizes, func(i, j int64) bool {
-			return i > j
+		slices.SortFunc(tableTotalSizes, func(i, j int64) int {
+			return cmp.Compare(j, i)
 		})
 		topNTotalSize := int64(0)
 		for i := 0; i < len(tableTotalSizes) && i < cfg.App.TableConcurrency; i++ {

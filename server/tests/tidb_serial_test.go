@@ -477,7 +477,7 @@ func TestDefaultCharacterAndCollation(t *testing.T) {
 		variable string
 		except   string
 	}{
-		{"collation_connection", "utf8mb4_bin"},
+		{"collation_connection", "utf8mb4_0900_ai_ci"},
 		{"character_set_connection", "utf8mb4"},
 		{"character_set_client", "utf8mb4"},
 	}

@@ -9,7 +9,9 @@ set -eo pipefail
 # Step 1
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 group=$1
-
+export COV_DIR="/tmp/group_cover"
+rm -rf COV_DIR
+mkdir $COV_DIR
 
 # Define groups
 # Note: If new group is added, the group name must also be added to CI
@@ -65,8 +67,6 @@ elif [[ " ${!groups[*]} " =~ " ${group} " ]]; then
             echo "Run cases: ${case_name}"
             rm -rf /tmp/backup_restore_test
             mkdir -p /tmp/backup_restore_test
-            rm -rf cover
-            mkdir cover
             TEST_NAME=${case_name} ${CUR}/run.sh
         done
 	fi
