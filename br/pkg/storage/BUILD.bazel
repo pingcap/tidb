@@ -67,11 +67,16 @@ go_test(
         "memstore_test.go",
         "parse_test.go",
         "s3_test.go",
+        "storage_test.go",
         "writer_test.go",
     ],
     embed = [":storage"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 43,
+=======
+    shard_count = 47,
+>>>>>>> 88225787f3c (br: configure the httpclient for external storage (#46040))
     deps = [
         "//br/pkg/mock",
         "@com_github_aws_aws_sdk_go//aws",
