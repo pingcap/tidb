@@ -6,19 +6,6 @@ go_test(
     srcs = ["planner_issue_test.go"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 5,
-    deps = ["//testkit"],
-=======
     shard_count = 6,
-    deps = [
-        "//parser",
-        "//planner",
-        "//planner/core",
-        "//testkit",
-        "//testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
-    ],
->>>>>>> 073a5f8b906 (planner, expression: fix TableFullScan caused by extraHandleId not correctly found (#45139))
+    deps = ["//testkit"],
 )
