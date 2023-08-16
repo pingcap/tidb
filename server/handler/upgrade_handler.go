@@ -67,8 +67,8 @@ func (h ClusterUpgradeHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 		}
 	}
 	WriteData(w, "success!")
-	logutil.Logger(req.Context()).Info("[upgrading] upgrade op success",
-		zap.String("op", req.FormValue("op")), zap.Bool("hasDone", hasDone))
+	logutil.Logger(req.Context()).Info("upgrade op success",
+		zap.String("category", "upgrading"), zap.String("op", req.FormValue("op")), zap.Bool("hasDone", hasDone))
 }
 
 func (h ClusterUpgradeHandler) startUpgrade() (hasDone bool, err error) {

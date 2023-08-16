@@ -4,7 +4,7 @@ go_library(
     name = "handler",
     srcs = [
         "tikv_handler.go",
-        "upgradehandler.go",
+        "upgrade_handler.go",
         "util.go",
     ],
     importpath = "github.com/pingcap/tidb/server/handler",
