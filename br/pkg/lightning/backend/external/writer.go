@@ -19,10 +19,9 @@ import (
 	"context"
 	"encoding/hex"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
-
-	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -262,6 +261,7 @@ func (w *Writer) flushKVs(ctx context.Context) (err error) {
 		return nil
 	}
 
+	logger := logutil.Logger(ctx)
 	dataWriter, statWriter, err := w.createStorageWriter(ctx)
 	if err != nil {
 		return err
@@ -277,16 +277,16 @@ func (w *Writer) flushKVs(ctx context.Context) (err error) {
 			return
 		}
 		if err1 != nil {
-			logutil.Logger(ctx).Error("close data writer failed", zap.Error(err))
+			logger.Error("close data writer failed", zap.Error(err))
 			err = err1
 			return
 		}
 		if err2 != nil {
-			logutil.Logger(ctx).Error("close stat writer failed", zap.Error(err))
+			logger.Error("close stat writer failed", zap.Error(err))
 			err = err2
 			return
 		}
-		logutil.Logger(ctx).Info("flush kv",
+		logger.Info("flush kv",
 			zap.Duration("time", time.Since(ts)),
 			zap.Uint64("bytes", savedBytes),
 			zap.Any("rate", float64(savedBytes)/1024.0/1024.0/time.Since(ts).Seconds()))
