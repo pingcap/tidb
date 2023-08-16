@@ -423,7 +423,8 @@ func TestMultiColInExpression(t *testing.T) {
 }
 
 func TestCompareIssue38361(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists TEST1")
