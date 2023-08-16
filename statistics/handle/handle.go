@@ -2292,6 +2292,11 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 
 // Close stops the background
 func (h *Handle) Close() {
-	h.statsCache.Load().Close()
 	h.gpool.Close()
+	h.CloseStatsCache()
+}
+
+// CloseStatsCache stops the statsCache
+func (h *Handle) CloseStatsCache() {
+	h.statsCache.Load().Close()
 }
