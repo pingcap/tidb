@@ -944,6 +944,11 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		b.err = err
 		return nil
 	}
+	err = loadDataInfo.initColAssignExprs()
+	if err != nil {
+		b.err = err
+		return nil
+	}
 	loadDataExec := &LoadDataExec{
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
 		IsLocal:      v.IsLocal,
