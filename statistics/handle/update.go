@@ -430,9 +430,6 @@ func (h *Handle) sweepList() {
 	h.globalMap.Lock()
 	h.globalMap.data.merge(deltaMap)
 	h.globalMap.Unlock()
-	h.mu.Lock()
-	h.mu.rateMap.merge(errorRateMap)
-	h.mu.Unlock()
 	h.colMap.Lock()
 	h.colMap.data.merge(colMap)
 	h.colMap.Unlock()
@@ -577,41 +574,6 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
 	_, _, err := h.execRestrictedSQL(ctx, sql)
 	return errors.Trace(err)
-}
-
-// UpdateErrorRate updates the error rate of columns from h.rateMap to cache.
-func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
-	h.mu.Lock()
-	tbls := make([]*statistics.Table, 0, len(h.mu.rateMap))
-	for id, item := range h.mu.rateMap {
-		table, ok := h.getTableByPhysicalID(is, id)
-		if !ok {
-			continue
-		}
-		tbl := h.GetPartitionStats(table.Meta(), id).Copy()
-		if item.PkErrorRate != nil && tbl.Columns[item.PkID] != nil {
-			col := *tbl.Columns[item.PkID]
-			col.ErrorRate.Merge(item.PkErrorRate)
-			tbl.Columns[item.PkID] = &col
-		}
-		for key, val := range item.IdxErrorRate {
-			if tbl.Indices[key] == nil {
-				continue
-			}
-			idx := *tbl.Indices[key]
-			idx.ErrorRate.Merge(val)
-			tbl.Indices[key] = &idx
-		}
-		tbls = append(tbls, tbl)
-		delete(h.mu.rateMap, id)
-	}
-	h.mu.Unlock()
-	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
-		oldCache := h.statsCache.Load()
-		if h.updateStatsCache(oldCache, tbls, nil) {
-			break
-		}
-	}
 }
 
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.

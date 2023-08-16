@@ -109,8 +109,6 @@ type Handle struct {
 
 	mu struct {
 		ctx sessionctx.Context
-		// rateMap contains the error rate delta from feedback.
-		rateMap errorRateDeltaMap
 		syncutil.RWMutex
 	}
 
@@ -461,7 +459,6 @@ func (h *Handle) Clear() {
 	h.colMap.Lock()
 	h.colMap.data = make(colStatsUsageMap)
 	h.colMap.Unlock()
-	h.mu.rateMap = make(errorRateDeltaMap)
 	h.mu.Unlock()
 }
 
@@ -485,7 +482,6 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
 	handle.mu.ctx = ctx
-	handle.mu.rateMap = make(errorRateDeltaMap)
 	statsCache, err := cache.NewStatsCachePointer()
 	if err != nil {
 		return nil, err
@@ -1227,16 +1223,6 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 	}
 	if reader.IsHistory() || statsTbl == nil {
 		return statsTbl, nil
-	}
-	for histID, idx := range statsTbl.Indices {
-		if statistics.IsAnalyzed(idx.Flag) {
-			h.mu.rateMap.clear(physicalID, histID, true)
-		}
-	}
-	for histID, col := range statsTbl.Columns {
-		if statistics.IsAnalyzed(col.Flag) {
-			h.mu.rateMap.clear(physicalID, histID, false)
-		}
 	}
 	return statsTbl, nil
 }

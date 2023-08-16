@@ -2411,7 +2411,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if err != nil {
 				logutil.BgLogger().Debug("dump stats delta failed", zap.Error(err))
 			}
-			statsHandle.UpdateErrorRate(do.InfoSchema())
 		case <-loadLockedTablesTicker.C:
 			err := statsHandle.LoadLockedTables()
 			if err != nil {

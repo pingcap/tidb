@@ -700,52 +700,6 @@ func TestTableAnalyzed(t *testing.T) {
 	require.True(t, handle.TableAnalyzed(statsTbl))
 }
 
-func TestUpdatePartitionErrorRate(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	h := dom.StatsHandle()
-	is := dom.InfoSchema()
-	h.SetLease(0)
-	require.NoError(t, h.Update(is))
-
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
-	testKit.MustExec("create table t (a bigint(64), primary key(a)) partition by range (a) (partition p0 values less than (30))")
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
-
-	testKit.MustExec("insert into t values (1)")
-
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	testKit.MustExec("analyze table t")
-
-	testKit.MustExec("insert into t values (2)")
-	testKit.MustExec("insert into t values (5)")
-	testKit.MustExec("insert into t values (8)")
-	testKit.MustExec("insert into t values (12)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	is = dom.InfoSchema()
-	require.NoError(t, h.Update(is))
-
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo := table.Meta()
-	pid := tblInfo.Partition.Definitions[0].ID
-	tbl := h.GetPartitionStats(tblInfo, pid)
-	aID := tblInfo.Columns[0].ID
-
-	// The statistic table is outdated now.
-	require.True(t, tbl.Columns[aID].NotAccurate())
-
-	testKit.MustQuery("select * from t where a between 1 and 10")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	h.UpdateErrorRate(is)
-	require.NoError(t, h.Update(is))
-	tbl = h.GetPartitionStats(tblInfo, pid)
-
-	require.True(t, tbl.Columns[aID].NotAccurate())
-}
-
 func appendBucket(h *statistics.Histogram, l, r int64) {
 	lower, upper := types.NewIntDatum(l), types.NewIntDatum(r)
 	h.AppendBucket(&lower, &upper, 0, 0)
