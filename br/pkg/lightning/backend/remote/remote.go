@@ -1196,6 +1196,7 @@ func (remote *Backend) generateAndSendJob(
 	defer iter.Close()
 	for _, jobRange := range jobRanges {
 		r := jobRange
+		ts := time.Now()
 		failpoint.Inject("beforeGenerateJob", nil)
 		jobs, err := remote.generateJobForRange(ctx, r, regionSplitSize, regionSplitKeys)
 		if err != nil {
@@ -1205,7 +1206,7 @@ func (remote *Backend) generateAndSendJob(
 			return err
 		}
 		for _, job := range jobs {
-			log.FromContext(ctx).Info("fillJobKVs", zap.Time("time", time.Now()))
+			log.FromContext(ctx).Info("fillJobKVs", zap.Time("time", time.Now()), zap.Duration("since", time.Since(ts)))
 			remote.fillJobKVs(job, iter)
 			if len(job.writeBatch) == 0 {
 				continue
