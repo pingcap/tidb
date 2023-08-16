@@ -1135,7 +1135,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 				return nil, err
 			}
 		}
-		recurStat := p.cte.recursivePartPhysicalPlan.StatsInfo()
+		recurStat := p.cte.recursivePartLogicalPlan.StatsInfo()
 		for i, col := range selfSchema.Columns {
 			p.StatsInfo().ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
 		}
