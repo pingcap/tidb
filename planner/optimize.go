@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -860,6 +861,8 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		offs = append(offs, off)
 	}
 	offs = append(offs, setVarsOffs...)
+	// let hint is always ordered, it is convenient to human compare and test.
+	sort.Ints(offs)
 	return
 }
 
