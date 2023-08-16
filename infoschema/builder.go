@@ -325,7 +325,6 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 	if len(diff.AffectedOpts) > 0 {
 		ptID = diff.AffectedOpts[0].TableID
 		if diff.AffectedOpts[0].SchemaID != 0 {
-			// Old version!
 			ptSchemaID = diff.AffectedOpts[0].SchemaID
 		}
 	}
