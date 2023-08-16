@@ -91,7 +91,7 @@ type GCWorker struct {
 	lastFinish   time.Time
 	cancel       context.CancelFunc
 	done         chan error
-	lockResolver gcutil.GCLockResolver
+	lockResolver tikv.GCLockResolver
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -116,7 +116,7 @@ func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
 		pdClient:     pdClient,
 		gcIsRunning:  false,
 		lastFinish:   time.Now(),
-		lockResolver: &GCWorkerLockResolver{tikvStore},
+		lockResolver: tikv.NewBaseLockResolver(tikvStore),
 		done:         make(chan error),
 	}
 	variable.RegisterStatistics(worker)
@@ -1198,7 +1198,7 @@ func (w *GCWorker) legacyResolveLocks(
 	startTime := time.Now()
 
 	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-		return gcutil.ResolveLocksForRange(ctx, w.uuid, "gc worker", w.lockResolver, safePoint, r.StartKey, r.EndKey)
+		return tikv.ResolveLocksForRange(ctx, w.uuid, w.lockResolver, safePoint, r.StartKey, r.EndKey)
 	}
 
 	runner := rangetask.NewRangeTaskRunner("resolve-locks-runner", w.tikvStore, concurrency, handler)

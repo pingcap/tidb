@@ -6,12 +6,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/pingcap/errors"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/engine"
-	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
@@ -34,7 +32,7 @@ type Env interface {
 	// StreamMeta connects to the metadata service (normally PD).
 	StreamMeta
 	// GCLockResolver try to resolve locks when region checkpoint stopped.
-	gcutil.GCLockResolver
+	tikv.GCLockResolver
 }
 
 // PDRegionScanner is a simple wrapper over PD
@@ -92,6 +90,8 @@ type clusterEnv struct {
 	*AdvancerLockResolver
 }
 
+var _ Env = &clusterEnv{}
+
 // GetLogBackupClient gets the log backup client.
 func (t clusterEnv) GetLogBackupClient(ctx context.Context, storeID uint64) (logbackup.LogBackupClient, error) {
 	var cli logbackup.LogBackupClient
@@ -110,7 +110,7 @@ func CliEnv(cli *utils.StoreManager, tikvStore tikv.Storage, etcdCli *clientv3.C
 		clis:                 cli,
 		AdvancerExt:          &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
 		PDRegionScanner:      PDRegionScanner{cli.PDClient()},
-		AdvancerLockResolver: &AdvancerLockResolver{TiKvStore: tikvStore},
+		AdvancerLockResolver: newAdvancerLockResolver(tikvStore),
 	}
 }
 
@@ -127,7 +127,7 @@ func TiDBEnv(tikvStore tikv.Storage, pdCli pd.Client, etcdCli *clientv3.Client, 
 		}, tconf),
 		AdvancerExt:          &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
 		PDRegionScanner:      PDRegionScanner{Client: pdCli},
-		AdvancerLockResolver: &AdvancerLockResolver{TiKvStore: tikvStore},
+		AdvancerLockResolver: newAdvancerLockResolver(tikvStore),
 	}, nil
 }
 
@@ -147,26 +147,33 @@ type StreamMeta interface {
 	ClearV3GlobalCheckpointForTask(ctx context.Context, taskName string) error
 }
 
+var _ tikv.GCLockResolver = &AdvancerLockResolver{}
+
 type AdvancerLockResolver struct {
-	TiKvStore tikv.Storage
+	store tikv.Storage
+	*tikv.BaseLockResolver
+}
+
+func newAdvancerLockResolver(store tikv.Storage) *AdvancerLockResolver {
+	return &AdvancerLockResolver{
+		store:            store,
+		BaseLockResolver: tikv.NewBaseLockResolver(store),
+	}
 }
 
 // ResolveLocks tries to resolve expired locks with this method.
 // It will check status of the txn. Resolve the lock if txn is expired, Or do nothing.
-func (w *AdvancerLockResolver) ResolveLocks(
-	bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID) (bool, error) {
-	if len(locks) == 0 {
-		return true, nil
+func (l *AdvancerLockResolver) ResolveLocks(ctx context.Context, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
+	// renew backoffer
+	bo := tikv.NewGcResolveLockMaxBackoffer(ctx)
+	_, err := l.GetStore().GetLockResolver().ResolveLocks(bo, 0, locks)
+	if err != nil {
+		return nil, err
 	}
-
-	_, err := w.TiKvStore.GetLockResolver().ResolveLocks(bo, 0, locks)
-	return err == nil, errors.Trace(err)
+	return loc, nil
 }
 
-func (w *AdvancerLockResolver) ScanLocks(key []byte, regionID uint64) []*txnlock.Lock {
-	return nil
-}
-
-func (w *AdvancerLockResolver) GetStore() tikv.Storage {
-	return w.TiKvStore
+// If we don't implement GetStore here, it won't complie.
+func (l *AdvancerLockResolver) GetStore() tikv.Storage {
+	return l.store
 }

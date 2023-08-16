@@ -16,8 +16,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/util/gcutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -79,7 +79,7 @@ func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 						})
 						handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 							// we will scan all locks and try to resolve them by check txn status.
-							return gcutil.ResolveLocksForRange(ctx, "log backup", "advancer", c.env, math.MaxUint64, r.StartKey, r.EndKey)
+							return tikv.ResolveLocksForRange(ctx, "log backup advancer", c.env, math.MaxUint64, r.StartKey, r.EndKey)
 						}
 						workerPool := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
 						for _, r := range targets {
