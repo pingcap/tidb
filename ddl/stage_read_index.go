@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/disttask/framework/operator"
 	"strconv"
 	"time"
 
@@ -142,51 +143,88 @@ func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask []byte
 	mockReorgInfo.elements = elements
 	mockReorgInfo.currElement = mockReorgInfo.elements[0]
 
-	ingestScheduler := newIngestBackfillScheduler(ctx, mockReorgInfo, d.sessPool, tbl, true)
-	defer ingestScheduler.close(true)
+	useOperator := true
+	if !useOperator {
+		ingestScheduler := newIngestBackfillScheduler(ctx, mockReorgInfo, d.sessPool, tbl, true)
+		defer ingestScheduler.close(true)
 
-	consumer := newResultConsumer(d.ddlCtx, mockReorgInfo, nil, true)
-	consumer.run(ingestScheduler, startKey, &r.totalRowCnt)
+		consumer := newResultConsumer(d.ddlCtx, mockReorgInfo, nil, true)
+		consumer.run(ingestScheduler, startKey, &r.totalRowCnt)
 
-	err = ingestScheduler.setupWorkers()
-	if err != nil {
-		logutil.BgLogger().Error("setup workers error",
-			zap.String("category", "ddl"),
-			zap.Error(err))
-		return nil, err
-	}
-
-	taskIDAlloc := newTaskIDAllocator()
-	for {
-		kvRanges, err := splitTableRanges(r.ptbl, d.store, startKey, endKey, backfillTaskChanSize)
+		err = ingestScheduler.setupWorkers()
 		if err != nil {
+			logutil.BgLogger().Error("setup workers error",
+				zap.String("category", "ddl"),
+				zap.Error(err))
 			return nil, err
 		}
-		if len(kvRanges) == 0 {
-			break
-		}
 
-		logutil.BgLogger().Info("start backfill workers to reorg record",
-			zap.String("category", "ddl"),
-			zap.Int("workerCnt", ingestScheduler.currentWorkerSize()),
-			zap.Int("regionCnt", len(kvRanges)),
-			zap.String("startKey", hex.EncodeToString(startKey)),
-			zap.String("endKey", hex.EncodeToString(endKey)))
+		taskIDAlloc := newTaskIDAllocator()
+		for {
+			kvRanges, err := splitTableRanges(r.ptbl, d.store, startKey, endKey, backfillTaskChanSize)
+			if err != nil {
+				return nil, err
+			}
+			if len(kvRanges) == 0 {
+				break
+			}
 
-		sendTasks(ingestScheduler, consumer, tbl, kvRanges, mockReorgInfo, taskIDAlloc)
-		if consumer.shouldAbort() {
-			break
-		}
-		rangeEndKey := kvRanges[len(kvRanges)-1].EndKey
-		startKey = rangeEndKey.Next()
-		if startKey.Cmp(endKey) >= 0 {
-			break
-		}
-	}
-	ingestScheduler.close(false)
+			logutil.BgLogger().Info("start backfill workers to reorg record",
+				zap.String("category", "ddl"),
+				zap.Int("workerCnt", ingestScheduler.currentWorkerSize()),
+				zap.Int("regionCnt", len(kvRanges)),
+				zap.String("startKey", hex.EncodeToString(startKey)),
+				zap.String("endKey", hex.EncodeToString(endKey)))
 
-	if err := consumer.getResult(); err != nil {
-		return nil, err
+			sendTasks(ingestScheduler, consumer, tbl, kvRanges, mockReorgInfo, taskIDAlloc)
+			if consumer.shouldAbort() {
+				break
+			}
+			rangeEndKey := kvRanges[len(kvRanges)-1].EndKey
+			startKey = rangeEndKey.Next()
+			if startKey.Cmp(endKey) >= 0 {
+				break
+			}
+		}
+		ingestScheduler.close(false)
+
+		if err := consumer.getResult(); err != nil {
+			return nil, err
+		}
+	} else {
+		pipeline, scanOp, err := NewAddIndexPipeline(ctx, d.ddlCtx, mockReorgInfo, d.sessPool, tbl, startKey)
+		if err != nil {
+			logutil.BgLogger().Error("setup workers error",
+				zap.String("category", "ddl"),
+				zap.Error(err))
+			return nil, err
+		}
+		pipeline.Execute()
+		defer pipeline.Close()
+
+		taskIDAlloc := newTaskIDAllocator()
+		for {
+			kvRanges, err := splitTableRanges(r.ptbl, d.store, startKey, endKey, backfillTaskChanSize)
+			if err != nil {
+				return nil, err
+			}
+			if len(kvRanges) == 0 {
+				break
+			}
+
+			logutil.BgLogger().Info("start backfill workers to reorg record",
+				zap.String("category", "ddl"),
+				zap.Int("regionCnt", len(kvRanges)),
+				zap.String("startKey", hex.EncodeToString(startKey)),
+				zap.String("endKey", hex.EncodeToString(endKey)))
+
+			sendTasksToSource(tbl, kvRanges, mockReorgInfo, taskIDAlloc, scanOp)
+			rangeEndKey := kvRanges[len(kvRanges)-1].EndKey
+			startKey = rangeEndKey.Next()
+			if startKey.Cmp(endKey) >= 0 {
+				break
+			}
+		}
 	}
 
 	flushMode := ingest.FlushModeForceLocalAndCheckDiskQuota
@@ -269,5 +307,17 @@ func (r *readIndexToLocalStage) UpdateStatLoop() {
 		case <-tk:
 			writeToEtcd()
 		}
+	}
+}
+
+// sendTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
+func sendTasksToSource(
+	t table.PhysicalTable, kvRanges []kv.KeyRange, reorgInfo *reorgInfo, taskIDAlloc *taskIDAllocator, scanOp *tableScanOperator) {
+	batchTasks := getBatchTasks(t, reorgInfo, kvRanges, taskIDAlloc)
+	for _, task := range batchTasks {
+		//if consumer.shouldAbort() {
+		//	return
+		//}
+		scanOp.Source.(*operator.AsyncDataChannel[*reorgBackfillTask]).Channel.AddTask(task)
 	}
 }

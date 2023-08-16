@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/disttask/framework/operator"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1624,6 +1625,7 @@ type addIndexIngestWorker struct {
 
 	// for operator
 	tableScan *tableScanOperator
+	sink      operator.DataSink[*backfillResult]
 }
 
 func newAddIndexIngestWorker(ctx context.Context, t table.PhysicalTable, d *ddlCtx, ei ingest.Engine,

@@ -447,9 +447,18 @@ func (*ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize
 	return readerSize, writerSize
 }
 
+func (w *addIndexIngestWorker) addRes(res *backfillResult) {
+	if w.sink != nil {
+		w.sink.Write(res)
+	} else {
+		w.resultCh <- res
+	}
+}
+
 func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 	defer util.Recover(metrics.LabelDDL, "ingestWorker.HandleTask", func() {
-		w.resultCh <- &backfillResult{taskID: rs.id, err: dbterror.ErrReorgPanic}
+		res := &backfillResult{taskID: rs.id, err: dbterror.ErrReorgPanic}
+		w.addRes(res)
 	}, false)
 	defer func() {
 		if w.copReqSenderPool != nil {
@@ -465,21 +474,21 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 	if result.err != nil {
 		logutil.Logger(w.ctx).Error("encounter error when handle index chunk",
 			zap.Int("id", rs.id), zap.Error(rs.err))
-		w.resultCh <- result
+		w.addRes(result)
 		return
 	}
 	if !w.distribute {
 		err := w.d.isReorgRunnable(w.jobID, false)
 		if err != nil {
 			result.err = err
-			w.resultCh <- result
+			w.addRes(result)
 			return
 		}
 	}
 	count, nextKey, err := w.WriteLocal(&rs)
 	if err != nil {
 		result.err = err
-		w.resultCh <- result
+		w.addRes(result)
 		return
 	}
 	if count == 0 {
@@ -499,7 +508,7 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 	if ResultCounterForTest != nil && result.err == nil {
 		ResultCounterForTest.Add(1)
 	}
-	w.resultCh <- result
+	w.addRes(result)
 }
 
 func (*addIndexIngestWorker) Close() {}

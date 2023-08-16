@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"encoding/hex"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/ingest"
@@ -32,33 +33,51 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
+	"sync/atomic"
 )
-
-//type ingestBackfillBuilder struct {
-//	ctx       context.Context
-//	reorgInfo *reorgInfo
-//	sessPool  *sess.Pool
-//	tbl       table.PhysicalTable
-//	closed    bool
-//	//taskCh   chan *reorgBackfillTask
-//	//resultCh chan *backfillResult
-//	//copReqSenderPool *copReqSenderPool
-//	//writerPool    *workerpool.WorkerPool[idxRecResult]
-//	writerMaxID   int
-//	poolErr       chan error
-//	backendCtx    ingest.BackendCtx
-//	checkpointMgr *ingest.CheckpointManager
-//}
 
 func NewAddIndexPipeline(
 	ctx context.Context,
+	dc *ddlCtx,
 	info *reorgInfo,
 	sessPool *sess.Pool,
-	tbl table.PhysicalTable) (*operator.AsyncPipeline, error) {
+	tbl table.PhysicalTable, start kv.Key) (*operator.AsyncPipeline, *tableScanOperator, error) {
+	job := info.Job
+	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
+	if !ok {
+		logutil.Logger(ctx).Error(ingest.LitErrGetBackendFail, zap.Int64("job ID", job.ID))
+		return nil, nil, errors.Trace(errors.New("cannot get lightning backend"))
+	}
 
+	mgr := bc.GetCheckpointManager()
+	if mgr != nil {
+		mgr.Reset(tbl.GetPhysicalID(), info.StartKey, info.EndKey)
+	}
+	readerCnt, writerCnt := expectedWorkerSize()
+	// consume op.
+	consumeOp, err := newConsumerOperator(dc, info, sessPool, start)
+	if err != nil {
+		return nil, nil, errors.Trace(errors.New("cannot create consume operator"))
+	}
+
+	// ingest op.
+	ingestOp, err := newIngestWriterOperator(ctx, info, mgr, bc, consumeOp.Source.(operator.DataSink[*backfillResult]), writerCnt)
+	if err != nil {
+		return nil, nil, errors.Trace(errors.New("cannot create ingest operator"))
+	}
+
+	// scan op.
+	scanOp, err := newTableScanOperator(ctx, tbl, tbl.Meta().Indices, info, sessPool, mgr, ingestOp.Source.(operator.DataSink[idxRecResult]), readerCnt)
+	if err != nil {
+		return nil, nil, errors.Trace(errors.New("cannot create table scan operator"))
+	}
+
+	ingestOp.tableScan = scanOp
 	res := &operator.AsyncPipeline{}
-
-	return res
+	res.AddOperator(scanOp)
+	res.AddOperator(ingestOp)
+	res.AddOperator(consumeOp)
+	return res, scanOp, nil
 }
 
 type tableScanOperator struct {
@@ -147,9 +166,7 @@ func (rw *readCopWorker) scanRecords(task *reorgBackfillTask) error {
 }
 
 // Close implement the Close interface for workerpool.
-func (*readCopWorker) Close() {
-
-}
+func (*readCopWorker) Close() {}
 
 // Open implements AsyncOperator.
 func (oi *tableScanOperator) Open() error {
@@ -191,8 +208,9 @@ func newTableScanOperator(
 	indices []*model.IndexInfo,
 	info *reorgInfo,
 	sessPool *sess.Pool,
-	checkpointMgr *ingest.CheckpointManager, workerSize int,
-	sink operator.DataSink[idxRecResult]) (*tableScanOperator, error) {
+	checkpointMgr *ingest.CheckpointManager,
+	sink operator.DataSink[idxRecResult],
+	workerSize int) (*tableScanOperator, error) {
 	indexInfo := model.FindIndexInfoByID(indices, info.currElement.ID)
 	if indexInfo == nil {
 		logutil.Logger(ctx).Warn("cannot init cop request sender",
@@ -236,17 +254,16 @@ func newTableScanOperator(
 }
 
 type ingestWriterOperator struct {
-	operator.BaseOperator[idxRecResult, backfillResult] // source: idxRecResult, sink: backfillResult.
-	reorgInfo                                           *reorgInfo
-	poolErr                                             chan error
-	backendCtx                                          ingest.BackendCtx
-	writerMaxID                                         int
-	ctx                                                 context.Context
-	tbl                                                 table.PhysicalTable
-	resultCh                                            chan *backfillResult
-	checkpointMgr                                       *ingest.CheckpointManager
-	tableScan                                           *tableScanOperator
-	pool                                                *workerpool.WorkerPool[idxRecResult]
+	operator.BaseOperator[idxRecResult, *backfillResult] // source: idxRecResult, sink: backfillResult.
+	reorgInfo                                            *reorgInfo
+	poolErr                                              chan error
+	backendCtx                                           ingest.BackendCtx
+	writerMaxID                                          int
+	ctx                                                  context.Context
+	tbl                                                  table.PhysicalTable
+	checkpointMgr                                        *ingest.CheckpointManager
+	tableScan                                            *tableScanOperator
+	pool                                                 *workerpool.WorkerPool[idxRecResult]
 }
 
 // Open implements AsyncOperator.
@@ -272,10 +289,11 @@ func (oi *ingestWriterOperator) Open() error {
 					zap.Int64("job ID", reorgInfo.ID), zap.Int64("index ID", oi.reorgInfo.currElement.ID))
 				return nil
 			}
-			worker, err := newAddIndexIngestWorker(oi.ctx, oi.tbl, reorgInfo.d, ei, oi.resultCh, job.ID,
+			worker, err := newAddIndexIngestWorker(oi.ctx, oi.tbl, reorgInfo.d, ei, nil, job.ID,
 				reorgInfo.SchemaName, oi.reorgInfo.currElement.ID, oi.writerMaxID,
 				nil, sessCtx, oi.checkpointMgr, true)
 			worker.tableScan = oi.tableScan
+			worker.sink = oi.Sink
 			if err != nil {
 				// Return an error only if it is the first worker.
 				if oi.writerMaxID == 0 {
@@ -307,11 +325,10 @@ func (oi *ingestWriterOperator) Display() string {
 
 func newIngestWriterOperator(
 	ctx context.Context,
-	tbl table.PhysicalTable,
 	info *reorgInfo,
 	checkpointMgr *ingest.CheckpointManager,
 	backendCtx ingest.BackendCtx,
-	tableScan *tableScanOperator,
+	sink operator.DataSink[*backfillResult],
 	writerCnt int) (*ingestWriterOperator, error) {
 
 	res := &ingestWriterOperator{
@@ -320,7 +337,6 @@ func newIngestWriterOperator(
 		backendCtx:    backendCtx,
 		writerMaxID:   0,
 		checkpointMgr: checkpointMgr,
-		tableScan:     tableScan,
 	}
 	// create worker pool.
 	skipReg := workerpool.OptionSkipRegister[idxRecResult]{}
@@ -331,8 +347,114 @@ func newIngestWriterOperator(
 	source := &operator.AsyncDataChannel[idxRecResult]{Channel: pool}
 	res.Source = source
 	res.pool = pool
-	// sink need to decide...
+	res.Sink = sink
 	return res, nil
+}
+
+type consumerOperator struct {
+	operator.BaseOperator[*backfillResult, int64] // source: backfillResult, sink: totalRowCnt.
+	dc                                            *ddlCtx
+	err                                           error
+	hasError                                      *atomic.Bool
+	reorgInfo                                     *reorgInfo // reorgInfo is used to update the reorg handle.
+	sessPool                                      *sess.Pool // sessPool is used to get the session to update the reorg handle.
+	keeper                                        *doneTaskKeeper
+	pool                                          *workerpool.WorkerPool[*backfillResult]
+	start                                         kv.Key
+}
+
+// Open implements AsyncOperator.
+func (oi *consumerOperator) Open() error {
+	oi.pool.SetCreateWorker(func() workerpool.Worker[*backfillResult] {
+		return &consumeWorker{consumerOperator: oi, sink: oi.Sink}
+	})
+	return nil
+}
+
+// Close implements AsyncOperator.
+func (oi *consumerOperator) Close() {
+	if oi.pool != nil {
+		oi.pool.ReleaseAndWait()
+	}
+	if oi.hasError.Load() {
+		// ywq todo add error
+		logutil.BgLogger().Warn("backfill worker handle tasks failed", zap.String("category", "ddl"),
+			zap.String("start key", hex.EncodeToString(oi.start)))
+	}
+}
+
+// Display implements AsyncOperator.
+func (oi *consumerOperator) Display() string {
+	return "consumerOperator{ source: " + oi.Source.Display() + ", sink: " + oi.Sink.Display() + "}"
+}
+
+func newConsumerOperator(
+	dc *ddlCtx, reorgInfo *reorgInfo, sessPool *sess.Pool, start kv.Key) (*consumerOperator, error) {
+	res := &consumerOperator{
+		dc:        dc,
+		hasError:  &atomic.Bool{},
+		reorgInfo: reorgInfo,
+		sessPool:  sessPool,
+		start:     start,
+	}
+	keeper := newDoneTaskKeeper(start)
+	res.Sink = &TotalAddedCountSink{0}
+	res.keeper = keeper
+	return res, nil
+}
+
+type consumeWorker struct {
+	firstErr         error
+	consumerOperator *consumerOperator
+	sink             operator.DataSink[int64]
+	keeper           *doneTaskKeeper
+}
+
+// HandleTask define the basic running process for each operator.
+func (cw *consumeWorker) HandleTask(result *backfillResult) {
+	err := cw.handleOneResult(result)
+	if err != nil && cw.firstErr == nil {
+		cw.consumerOperator.hasError.Store(true)
+		cw.firstErr = err
+	}
+}
+
+func (cw *consumeWorker) handleOneResult(result *backfillResult) error {
+	reorgInfo := cw.consumerOperator.reorgInfo
+	if result.err != nil {
+		logutil.BgLogger().Warn("backfill worker failed", zap.String("category", "ddl"),
+			zap.Int64("job ID", reorgInfo.ID),
+			zap.String("result next key", hex.EncodeToString(result.nextKey)),
+			zap.Error(result.err))
+
+		// ywq todo
+		//scheduler.drainTasks() // Make it quit early.
+		return result.err
+	}
+	if result.totalCount > 0 {
+		_ = cw.sink.Write(int64(result.totalCount))
+	} else {
+		_ = cw.sink.Write(int64(result.addedCount))
+	}
+	cw.keeper.updateNextKey(result.taskID, result.nextKey)
+	// TODO adjust worker size.
+	return nil
+}
+
+// Close implement the Close interface for workerpool.
+func (*consumeWorker) Close() {}
+
+type TotalAddedCountSink struct {
+	cnt int64
+}
+
+func (s *TotalAddedCountSink) Write(data int64) error {
+	s.cnt += data
+	return nil
+}
+
+func (s *TotalAddedCountSink) Display() string {
+	return "TotalAddedCountSink"
 }
 
 func expectedWorkerSize() (readerSize int, writerSize int) {
@@ -342,8 +464,3 @@ func expectedWorkerSize() (readerSize int, writerSize int) {
 	writerSize = mathutil.Min(workerCnt/2+2, maxBackfillWorkerSize)
 	return readerSize, writerSize
 }
-
-// todo can add it..
-//type splitKVRangeOperator struct {
-//	operator.BaseOperator[[]kv.KeyRange, *reorgBackfillTask]
-//}
