@@ -84,7 +84,9 @@ func TestIsRetryableError(t *testing.T) {
 
 	// gRPC Errors
 	require.False(t, IsRetryableError(status.Error(codes.Canceled, "")))
-	require.False(t, IsRetryableError(status.Error(codes.Unknown, "")))
+	require.True(t, IsRetryableError(status.Error(codes.Unknown, "region 1234 is not fully replicated")))
+	require.True(t, IsRetryableError(status.Error(codes.Unknown, "No such file or directory: while stat a file "+
+		"for size: /...../63992d9c-fbc8-4708-b963-32495b299027_32279707_325_5280_write.sst: No such file or directory")))
 	require.True(t, IsRetryableError(status.Error(codes.DeadlineExceeded, "")))
 	require.True(t, IsRetryableError(status.Error(codes.NotFound, "")))
 	require.True(t, IsRetryableError(status.Error(codes.AlreadyExists, "")))
@@ -109,6 +111,5 @@ func TestIsRetryableError(t *testing.T) {
 	require.True(t, IsRetryableError(multierr.Combine(&net.DNSError{IsTimeout: true}, &net.DNSError{IsTimeout: true})))
 	require.False(t, IsRetryableError(multierr.Combine(context.Canceled, &net.DNSError{IsTimeout: true})))
 
-	require.True(t, IsRetryableError(errors.Errorf("region %d is not fully replicated", 1234)))
 	require.True(t, IsRetryableError(errors.New("other error: Coprocessor task terminated due to exceeding the deadline")))
 }

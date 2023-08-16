@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/set"
@@ -696,7 +697,7 @@ select * from t1;
 
 		err = tk.QueryToErr("select * from `information_schema`.`slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 		require.Error(t, err, quota)
-		require.Contains(t, err.Error(), "Out Of Memory Quota!", quota)
+		require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg, quota)
 	}
 	memQuotas := []int{128, 512, 1024, 2048, 4096}
 	for _, quota := range memQuotas {

@@ -19,10 +19,21 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+)
+
+const (
+	// storeDisconnectionDuration is the max duration of a store to be treated as living.
+	// when a store doesn't send heartbeat for 100s, it is probably offline, and most of leaders should be transformed.
+	// (How about network partition between TiKV and PD? Even that is rare.)
+	// Also note that the offline threshold in PD is 20s, see
+	// https://github.com/tikv/pd/blob/c40e319f50822678cda71ae62ee2fd70a9cac010/pkg/core/store.go#L523
+	storeDisconnectionDuration = 100 * time.Second
 )
 
 // IsTypeCompatible checks whether type target is compatible with type src
@@ -101,4 +112,21 @@ func GRPCConn(ctx context.Context, storeAddr string, tlsConf *tls.Config, opts .
 		return nil, errors.Trace(err)
 	}
 	return connection, nil
+}
+
+// CheckStoreLiveness checks whether a store is still alive.
+// Some versions of PD may not set the store state in the gRPC response.
+// We need to check it manually.
+func CheckStoreLiveness(s *metapb.Store) error {
+	if s.State != metapb.StoreState_Up {
+		return errors.Annotatef(berrors.ErrKVStorage, "the store state isn't up, it is %s", s.State)
+	}
+	// If the field isn't present (the default value), skip this check.
+	if s.GetLastHeartbeat() > 0 {
+		lastHeartBeat := time.Unix(0, s.GetLastHeartbeat())
+		if sinceLastHB := time.Since(lastHeartBeat); sinceLastHB > storeDisconnectionDuration {
+			return errors.Annotatef(berrors.ErrKVStorage, "the store last heartbeat is too far, at %s", sinceLastHB)
+		}
+	}
+	return nil
 }

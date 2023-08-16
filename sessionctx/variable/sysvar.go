@@ -2102,6 +2102,10 @@ var defaultSysVars = []*SysVar{
 		s.RangeMaxSize = TidbOptInt64(val, DefTiDBOptRangeMaxSize)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptAdvancedJoinHint, Value: BoolToOnOff(DefTiDBOptAdvancedJoinHint), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableAdvancedJoinHint = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzePartitionConcurrency, Value: strconv.FormatInt(DefTiDBAnalyzePartitionConcurrency, 10),
 		MinValue: 1, MaxValue: uint64(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota), SetSession: func(s *SessionVars, val string) error {
 			s.AnalyzePartitionConcurrency = int(TidbOptInt64(val, DefTiDBAnalyzePartitionConcurrency))
@@ -2258,6 +2262,34 @@ var defaultSysVars = []*SysVar{
 		},
 		GetSession: func(s *SessionVars) (string, error) {
 			return BoolToOnOff(s.EnableINLJoinInnerMultiPattern), nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptFixControl, Value: "", Type: TypeStr, IsHintUpdatable: true,
+		SetSession: func(s *SessionVars, val string) error {
+			newMap := make(map[uint64]string)
+			for _, singleFixCtrl := range strings.Split(val, ",") {
+				if len(singleFixCtrl) == 0 {
+					continue
+				}
+				colonIdx := strings.Index(singleFixCtrl, ":")
+				if colonIdx < 0 {
+					return errors.New("invalid fix control: colon not found")
+				}
+				k := strings.TrimSpace(singleFixCtrl[0:colonIdx])
+				v := strings.TrimSpace(singleFixCtrl[colonIdx+1:])
+				num, err := strconv.ParseUint(k, 10, 64)
+				if err != nil {
+					return err
+				}
+				originalV, ok := newMap[num]
+				if ok {
+					s.StmtCtx.AppendWarning(
+						errors.Errorf("found repeated fix control: %d:%s is overwritten with %s", num, originalV, v))
+				}
+				newMap[num] = v
+			}
+			s.OptimizerFixControl = newMap
+			return nil
 		},
 	},
 }

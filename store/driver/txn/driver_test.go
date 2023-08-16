@@ -16,6 +16,7 @@ package txn
 import (
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
@@ -65,5 +66,14 @@ func TestWriteConflictPrettyFormat(t *testing.T) {
 		"originalPrimaryKey=6d44423a3536000000fc00000000000000685449443a31303800fe, " +
 		"reason=Optimistic " +
 		kv.TxnRetryableMark
+	require.EqualError(t, newWriteConflictError(conflict), expectedStr)
+
+	// test log redaction
+	original := errors.RedactLogEnabled.Load()
+	errors.RedactLogEnabled.Store(true)
+	defer func() { errors.RedactLogEnabled.Store(original) }()
+	expectedStr = "[kv:9007]Write conflict, " +
+		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
+		"key=????, reason=Optimistic " + kv.TxnRetryableMark
 	require.EqualError(t, newWriteConflictError(conflict), expectedStr)
 }

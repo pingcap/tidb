@@ -327,7 +327,6 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel := context.WithCancel(context.Background())
 	f := &Engine{
-		db:           db,
 		UUID:         engineUUID,
 		sstDir:       tmpPath,
 		ctx:          engineCtx,
@@ -336,6 +335,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 		keyAdapter:   noopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.db.Store(db)
 	f.sstIngester = dbSSTIngester{e: f}
 	f.wg.Add(1)
 	go f.ingestSSTLoop()
@@ -479,9 +479,8 @@ func TestIsIngestRetryable(t *testing.T) {
 			},
 		},
 	}
-	retryType, newRegion, err := local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryWrite, retryType)
-	require.Equal(t, uint64(2), newRegion.Leader.Id)
+	retryType, _, err := local.isIngestRetryable(ctx, resp, region, metas)
+	require.Equal(t, retryNone, retryType)
 	require.Error(t, err)
 
 	resp.Error = &errorpb.Error{
@@ -500,6 +499,7 @@ func TestIsIngestRetryable(t *testing.T) {
 			},
 		},
 	}
+	var newRegion *split.RegionInfo
 	retryType, newRegion, err = local.isIngestRetryable(ctx, resp, region, metas)
 	require.Equal(t, retryWrite, retryType)
 	require.Equal(t, uint64(2), newRegion.Region.RegionEpoch.Version)
@@ -581,7 +581,6 @@ func TestLocalIngestLoop(t *testing.T) {
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel := context.WithCancel(context.Background())
 	f := Engine{
-		db:           db,
 		UUID:         engineUUID,
 		sstDir:       tmpPath,
 		ctx:          engineCtx,
@@ -594,6 +593,7 @@ func TestLocalIngestLoop(t *testing.T) {
 		},
 		logger: log.L(),
 	}
+	f.db.Store(db)
 	f.sstIngester = testIngester{}
 	f.wg.Add(1)
 	go f.ingestSSTLoop()
@@ -745,7 +745,6 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 	engineCtx, cancel := context.WithCancel(context.Background())
 
 	f := &Engine{
-		db:           db,
 		UUID:         engineUUID,
 		sstDir:       tmpPath,
 		ctx:          engineCtx,
@@ -758,6 +757,7 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 		},
 		logger: log.L(),
 	}
+	f.db.Store(db)
 
 	createSSTWriter := func() (*sstWriter, error) {
 		path := filepath.Join(f.sstDir, uuid.New().String()+".sst")
@@ -1307,7 +1307,6 @@ func TestCheckPeersBusy(t *testing.T) {
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel := context.WithCancel(context.Background())
 	f := &Engine{
-		db:           db,
 		UUID:         engineUUID,
 		sstDir:       tmpPath,
 		ctx:          engineCtx,
@@ -1316,9 +1315,10 @@ func TestCheckPeersBusy(t *testing.T) {
 		keyAdapter:   noopKeyAdapter{},
 		logger:       log.L(),
 	}
-	err := f.db.Set([]byte("a"), []byte("a"), nil)
+	f.db.Store(db)
+	err := db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)
-	err = f.db.Set([]byte("b"), []byte("b"), nil)
+	err = db.Set([]byte("b"), []byte("b"), nil)
 	require.NoError(t, err)
 	err = local.writeAndIngestByRange(ctx, f, []byte("a"), []byte("c"), 0, 0)
 	require.NoError(t, err)
@@ -1326,4 +1326,99 @@ func TestCheckPeersBusy(t *testing.T) {
 	require.Equal(t, []uint64{11, 12, 13, 21, 22, 23}, apiInvokeRecorder["Write"])
 	// store 12 has a follower busy, so it will cause region peers (11, 12, 13) retry once
 	require.Equal(t, []uint64{11, 12, 11, 12, 13, 11, 21, 22, 23, 21}, apiInvokeRecorder["MultiIngest"])
+}
+
+type regionChangedHook struct {
+	noopHook
+	scanCount int
+}
+
+func (r *regionChangedHook) AfterScanRegions(res []*split.RegionInfo, err error) ([]*split.RegionInfo, error) {
+	r.scanCount++
+	if r.scanCount == 1 {
+		return res, err
+	}
+	for _, info := range res {
+		// skip modified region
+		if info.Leader.Id > 3 {
+			return res, err
+		}
+		for _, p := range info.Region.Peers {
+			p.Id += 10
+			p.StoreId += 10
+		}
+	}
+
+	return res, err
+}
+
+func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
+	ctx := context.Background()
+
+	// test lightning using stale region info (1,2,3), now the region is (11,12,13)
+	apiInvokeRecorder := map[string][]uint64{}
+	notLeaderResp := &sst.IngestResponse{
+		Error: &errorpb.Error{
+			NotLeader: &errorpb.NotLeader{Leader: &metapb.Peer{StoreId: 11}},
+		}}
+
+	pdCli := &mockPdClient{}
+	pdCtl := &pdutil.PdController{}
+	pdCtl.SetPDClient(pdCli)
+
+	h := &regionChangedHook{}
+	splitCli := initTestSplitClient3Replica([][]byte{{}, {'b'}, {}}, h)
+
+	local := &local{
+		pdCtl:    pdCtl,
+		splitCli: splitCli,
+		importClientFactory: &mockImportClientFactory{
+			stores: []*metapb.Store{
+				{Id: 1}, {Id: 2}, {Id: 3},
+				{Id: 11}, {Id: 12}, {Id: 13},
+			},
+			createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
+				importCli := newMockImportClient()
+				importCli.store = store
+				importCli.apiInvokeRecorder = apiInvokeRecorder
+				if store.Id == 1 {
+					importCli.retry = 1
+					importCli.resp = notLeaderResp
+				}
+				return importCli
+			},
+		},
+		logger:                log.L(),
+		ingestConcurrency:     worker.NewPool(ctx, 1, "ingest"),
+		writeLimiter:          noopStoreWriteLimiter{},
+		bufferPool:            membuf.NewPool(),
+		supportMultiIngest:    true,
+		shouldCheckWriteStall: true,
+	}
+
+	db, tmpPath := makePebbleDB(t, nil)
+	_, engineUUID := backend.MakeUUID("ww", 0)
+	engineCtx, cancel := context.WithCancel(context.Background())
+	f := &Engine{
+		UUID:         engineUUID,
+		sstDir:       tmpPath,
+		ctx:          engineCtx,
+		cancel:       cancel,
+		sstMetasChan: make(chan metaOrFlush, 64),
+		keyAdapter:   noopKeyAdapter{},
+		logger:       log.L(),
+	}
+	f.db.Store(db)
+	err := db.Set([]byte("a"), []byte("a"), nil)
+	require.NoError(t, err)
+	err = local.writeAndIngestByRange(ctx, f, []byte{}, []byte("b"), 0, 0)
+	require.NoError(t, err)
+
+	// "ingest" to test peers busy of stale region: 1,2,3
+	// then "write" to stale region: 1,2,3
+	// then "ingest" to stale leader: 1
+	// then meet NotLeader error, scanned new region (11,12,13)
+	// repeat above for 11,12,13
+	require.Equal(t, []uint64{1, 2, 3, 11, 12, 13}, apiInvokeRecorder["Write"])
+	require.Equal(t, []uint64{1, 2, 3, 1, 11, 12, 13, 11}, apiInvokeRecorder["MultiIngest"])
 }

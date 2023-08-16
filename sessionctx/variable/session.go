@@ -1313,6 +1313,9 @@ type SessionVars struct {
 	// EnableReuseCheck indicates  request chunk whether use chunk alloc
 	EnableReuseCheck bool
 
+	// EnableAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
+	EnableAdvancedJoinHint bool
+
 	// preuseChunkAlloc indicates whether pre statement use chunk alloc
 	// like select @@last_sql_use_alloc
 	preUseChunkAlloc bool
@@ -1325,6 +1328,27 @@ type SessionVars struct {
 
 	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
 	EnableINLJoinInnerMultiPattern bool
+
+	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
+	OptimizerFixControl map[uint64]string
+}
+
+var (
+	// variables below are for the optimizer fix control.
+
+	// TiDBOptFixControl44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
+	TiDBOptFixControl44262 uint64 = 44262
+	// TiDBOptFixControl44389 controls whether to consider non-point ranges of some CNF item when building ranges.
+	TiDBOptFixControl44389 uint64 = 44389
+)
+
+// GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
+func (s *SessionVars) GetOptimizerFixControlValue(key uint64) (value string, exist bool) {
+	if s.OptimizerFixControl == nil {
+		return "", false
+	}
+	value, exist = s.OptimizerFixControl[key]
+	return
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool

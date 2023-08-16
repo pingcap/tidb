@@ -40,4 +40,6 @@ header:
     - "tidb-binlog/proto/go-binlog/secondary_binlog.pb.go"
     - "**/*.sql"
     - ".bazelversion"
+    - "**/OWNERS"
+    - "OWNERS_ALIASES"
   comment: on-failure

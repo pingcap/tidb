@@ -34,6 +34,7 @@ go_test(
     srcs = [
         "ddl_test.go",
         "interceptor_test.go",
+        "intergration_test.go",
         "main_test.go",
     ],
     embed = [":temptable"],
@@ -42,6 +43,7 @@ go_test(
         "//infoschema",
         "//kv",
         "//meta/autoid",
+        "//parser/auth",
         "//parser/model",
         "//parser/mysql",
         "//sessionctx",
@@ -49,6 +51,7 @@ go_test(
         "//store/mockstore",
         "//table",
         "//tablecodec",
+        "//testkit",
         "//testkit/testsetup",
         "//types",
         "//util/codec",

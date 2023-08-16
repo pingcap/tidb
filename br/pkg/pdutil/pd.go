@@ -254,7 +254,8 @@ func NewPdController(
 		}
 	}
 	if failure != nil {
-		return nil, errors.Annotatef(berrors.ErrPDUpdateFailed, "pd address (%s) not available, please check network", pdAddrs)
+		return nil, errors.Annotatef(berrors.ErrPDUpdateFailed,
+			"pd address (%s) not available, error is %s, please check network", pdAddrs, failure)
 	}
 
 	version := parseVersion(versionBytes)

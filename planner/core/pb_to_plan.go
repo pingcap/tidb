@@ -48,12 +48,9 @@ func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, ranges 
 func (b *PBPlanBuilder) Build(executors []*tipb.Executor) (p PhysicalPlan, err error) {
 	var src PhysicalPlan
 	for i := 0; i < len(executors); i++ {
-		curr, err := b.pbToPhysicalPlan(executors[i])
+		curr, err := b.pbToPhysicalPlan(executors[i], src)
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-		if src != nil {
-			curr.SetChildren(src)
 		}
 		src = curr
 	}
@@ -61,7 +58,7 @@ func (b *PBPlanBuilder) Build(executors []*tipb.Executor) (p PhysicalPlan, err e
 	return src, nil
 }
 
-func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor) (p PhysicalPlan, err error) {
+func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan PhysicalPlan) (p PhysicalPlan, err error) {
 	switch e.Tp {
 	case tipb.ExecType_TypeTableScan:
 		p, err = b.pbToTableScan(e)
@@ -80,6 +77,17 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor) (p PhysicalPlan, err 
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet", e.GetTp())
+	}
+	if subPlan != nil {
+		p.SetChildren(subPlan)
+	}
+	// The limit missed its output cols via the protobuf.
+	// We need to add it back and do a ResolveIndicies for the later inline projection.
+	if limit, ok := p.(*PhysicalLimit); ok {
+		limit.SetSchema(p.Children()[0].Schema().Clone())
+		for i, col := range limit.Schema().Columns {
+			col.Index = i
+		}
 	}
 	return p, err
 }

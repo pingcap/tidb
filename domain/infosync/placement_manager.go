@@ -21,9 +21,11 @@ import (
 	"path"
 	"sync"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/util/pdapi"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 )
 
 // PlacementManager manages placement settings
@@ -72,6 +74,7 @@ func (m *PDPlacementManager) PutRuleBundles(ctx context.Context, bundles []*plac
 		return err
 	}
 
+	log.Debug("Put placement rule bundles", zap.String("rules", string(b)))
 	_, err = doRequest(ctx, "PutPlacementRules", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "placement-rule")+"?partial=true", "POST", bytes.NewReader(b))
 	return err
 }

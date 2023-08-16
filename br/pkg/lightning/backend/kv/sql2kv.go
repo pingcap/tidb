@@ -45,6 +45,10 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+const (
+	maxLogLength = 512 * 1024
+)
+
 var ExtraHandleColumnInfo = model.NewExtraHandleColInfo()
 
 type genCol struct {
@@ -223,6 +227,7 @@ var kindStr = [...]string{
 // MarshalLogArray implements the zapcore.ArrayMarshaler interface
 func (row RowArrayMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 	for _, datum := range row {
+		var totalLength = 0
 		kind := datum.Kind()
 		var str string
 		var err error
@@ -239,6 +244,14 @@ func (row RowArrayMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) error
 				return err
 			}
 		}
+		if len(str) > maxLogLength {
+			str = str[0:1024] + " (truncated)"
+		}
+		totalLength += len(str)
+		if totalLength >= maxLogLength {
+			encoder.AppendString("The row has been truncated, and the log has exited early.")
+			return nil
+		}
 		if err := encoder.AppendObject(zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
 			enc.AddString("kind", kindStr[kind])
 			enc.AddString("val", redact.String(str))
@@ -250,7 +263,7 @@ func (row RowArrayMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) error
 	return nil
 }
 
-func logKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *model.ColumnInfo, err error) error {
+func LogKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *model.ColumnInfo, err error) error {
 	var original types.Datum
 	if 0 <= j && j < len(row) {
 		original = row[j]
@@ -265,9 +278,16 @@ func logKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *mo
 		log.ShortError(err),
 	)
 
-	logger.Error("failed to convert kv value", logutil.RedactAny("origVal", original.GetValue()),
-		zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
-		zap.Int("columnID", j+1))
+	if len(original.GetString()) >= maxLogLength {
+		originalPrefix := original.GetString()[0:1024] + " (truncated)"
+		logger.Error("failed to convert kv value", logutil.RedactAny("origVal", originalPrefix),
+			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
+			zap.Int("columnID", j+1))
+	} else {
+		logger.Error("failed to convert kv value", logutil.RedactAny("origVal", original.GetValue()),
+			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
+			zap.Int("columnID", j+1))
+	}
 	return errors.Annotatef(
 		err,
 		"failed to cast value as %s for column `%s` (#%d)", &colInfo.FieldType, colInfo.Name.O, j+1,
@@ -354,6 +374,11 @@ func (kvcodec *tableKVEncoder) Encode(
 	_ string,
 	offset int64,
 ) (Row, error) {
+	// we ignore warnings when encoding rows now, but warnings uses the same memory as parser, since the input
+	// row []types.Datum share the same underlying buf, and when doing CastValue, we're using hack.String/hack.Slice.
+	// when generating error such as mysql.ErrDataOutOfRange, the data will be part of the error, causing the buf
+	// unable to release. So we truncate the warnings here.
+	defer kvcodec.se.vars.StmtCtx.TruncateWarnings(0)
 	cols := kvcodec.tbl.Cols()
 
 	var value types.Datum
@@ -376,7 +401,7 @@ func (kvcodec *tableKVEncoder) Encode(
 		}
 		value, err = kvcodec.getActualDatum(rowID, i, theDatum)
 		if err != nil {
-			return nil, logKVConvertFailed(logger, row, j, col.ToInfo(), err)
+			return nil, LogKVConvertFailed(logger, row, j, col.ToInfo(), err)
 		}
 
 		record = append(record, value)
@@ -407,7 +432,7 @@ func (kvcodec *tableKVEncoder) Encode(
 			value, err = types.NewIntDatum(rowID), nil
 		}
 		if err != nil {
-			return nil, logKVConvertFailed(logger, row, j, ExtraHandleColumnInfo, err)
+			return nil, LogKVConvertFailed(logger, row, j, ExtraHandleColumnInfo, err)
 		}
 		record = append(record, value)
 		alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.RowIDAllocType)
@@ -506,6 +531,14 @@ func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDa
 	case isBadNullValue:
 		err = col.HandleBadNull(&value, kvcodec.se.vars.StmtCtx)
 	default:
+		// copy from the following GetColDefaultValue function, when this is true it will use getColDefaultExprValue
+		if col.DefaultIsExpr {
+			// the expression rewriter requires a non-nil TxnCtx.
+			kvcodec.se.vars.TxnCtx = new(variable.TransactionContext)
+			defer func() {
+				kvcodec.se.vars.TxnCtx = nil
+			}()
+		}
 		value, err = table.GetColDefaultValue(kvcodec.se, col.ToInfo())
 	}
 	return value, err

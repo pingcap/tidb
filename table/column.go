@@ -300,6 +300,10 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	if returnErr && err != nil {
 		return casted, err
 	}
+	if err != nil {
+		logutil.BgLogger().Debug("[debug] ConvertTo FieldType failed", zap.Stringer("FieldType", &col.FieldType),
+			zap.Stringer("Datum", val), zap.Error(err))
+	}
 	if err != nil && types.ErrTruncated.Equal(err) && col.GetType() != mysql.TypeSet && col.GetType() != mysql.TypeEnum {
 		str, err1 := val.ToString()
 		if err1 != nil {

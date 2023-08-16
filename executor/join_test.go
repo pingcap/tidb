@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -2307,14 +2308,14 @@ func TestIssue18070(t *testing.T) {
 	tk.MustExec("insert into t1 values(1),(2)")
 	tk.MustExec("insert into t2 values(1),(1),(2),(2)")
 	tk.MustExec("set @@tidb_mem_quota_query=1000")
-	tk.MustContainErrMsg("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", "Out Of Memory Quota!")
+	tk.MustContainErrMsg("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", memory.PanicMemoryExceedWarnMsg)
 
 	fpName := "github.com/pingcap/tidb/executor/mockIndexMergeJoinOOMPanic"
 	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
-	tk.MustContainErrMsg("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", "Out Of Memory Quota!")
+	tk.MustContainErrMsg("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", memory.PanicMemoryExceedWarnMsg)
 }
 
 func TestIssue18564(t *testing.T) {
@@ -2714,9 +2715,9 @@ func TestIssue30211(t *testing.T) {
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action = 'CANCEL'")
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
 	err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
-	require.True(t, strings.Contains(err, "Out Of Memory Quota"))
+	require.True(t, strings.Contains(err, memory.PanicMemoryExceedWarnMsg))
 	err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
-	require.True(t, strings.Contains(err, "Out Of Memory Quota"))
+	require.True(t, strings.Contains(err, memory.PanicMemoryExceedWarnMsg))
 }
 
 func TestIssue31129(t *testing.T) {
@@ -2907,7 +2908,7 @@ func TestCartesianJoinPanic(t *testing.T) {
 	}
 	err := tk.QueryToErr("desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;")
 	require.NotNil(t, err)
-	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
+	require.True(t, strings.Contains(err.Error(), memory.PanicMemoryExceedWarnMsg))
 }
 
 func TestTiDBNAAJ(t *testing.T) {

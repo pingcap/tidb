@@ -301,9 +301,9 @@ func TestIssue28650(t *testing.T) {
 		tk.MustExec("set @@tidb_mem_quota_query = 1073741824") // 1GB
 		require.Nil(t, tk.QueryToErr(sql))
 		tk.MustExec("set @@tidb_mem_quota_query = 33554432") // 32MB, out of memory during executing
-		require.True(t, strings.Contains(tk.QueryToErr(sql).Error(), "Out Of Memory Quota!"))
+		require.True(t, strings.Contains(tk.QueryToErr(sql).Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
 		tk.MustExec("set @@tidb_mem_quota_query = 65536") // 64KB, out of memory during building the plan
-		require.True(t, strings.Contains(tk.ExecToErr(sql).Error(), "Out Of Memory Quota!"))
+		require.True(t, strings.Contains(tk.ExecToErr(sql).Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
 	}
 }
 
@@ -483,10 +483,10 @@ func TestIndexJoin31494(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
 		require.Error(t, err)
-		require.Regexp(t, "Out Of Memory Quota!.*", err.Error())
+		require.Regexp(t, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery, err.Error())
 		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
 		require.Error(t, err)
-		require.Regexp(t, "Out Of Memory Quota!.*", err.Error())
+		require.Regexp(t, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery, err.Error())
 	}
 }
 
@@ -1352,12 +1352,26 @@ func TestIssue40158(t *testing.T) {
 	tk.MustQuery("select * from t1 where c1 is null and _id < 1;").Check(testkit.Rows())
 }
 
+func TestIssue42298(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("alter table t add column b int")
+	res := tk.MustQuery("admin show ddl job queries limit 268430000")
+	require.Greater(t, len(res.Rows()), 0, len(res.Rows()))
+	res = tk.MustQuery("admin show ddl job queries limit 999 offset 268430000")
+	require.Zero(t, len(res.Rows()), len(res.Rows()))
+}
+
 func TestIssue42662(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().GetSessionVars().ConnectionID = 12345
 	tk.Session().GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, -1)
-	tk.Session().GetSessionVars().MemTracker.SessionID = 12345
+	tk.Session().GetSessionVars().MemTracker.SessionID.Store(12345)
 	tk.Session().GetSessionVars().MemTracker.IsRootTrackerOfSess = true
 
 	sm := &testkit.MockSessionManager{

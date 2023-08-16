@@ -359,6 +359,7 @@ func (*ImplLimit) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty
 		Offset: logicalLimit.Offset,
 		Count:  logicalLimit.Count,
 	}.Init(logicalLimit.SCtx(), expr.Group.Prop.Stats, logicalLimit.SelectBlockOffset(), newProp)
+	physicalLimit.SetSchema(expr.Group.Prop.Schema.Clone())
 	return []memo.Implementation{impl.NewLimitImpl(physicalLimit)}, nil
 }
 
@@ -420,6 +421,7 @@ func (*ImplTopNAsLimit) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalPr
 		Offset: lt.Offset,
 		Count:  lt.Count,
 	}.Init(lt.SCtx(), expr.Group.Prop.Stats, lt.SelectBlockOffset(), newProp)
+	physicalLimit.SetSchema(expr.Group.Prop.Schema.Clone())
 	return []memo.Implementation{impl.NewLimitImpl(physicalLimit)}, nil
 }
 

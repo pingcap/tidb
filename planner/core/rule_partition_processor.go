@@ -1371,8 +1371,7 @@ func replaceColumnWithConst(partFn *expression.ScalarFunction, con *expression.C
 	args := partFn.GetArgs()
 	// The partition function may be floor(unix_timestamp(ts)) instead of a simple fn(col).
 	if partFn.FuncName.L == ast.Floor {
-		ut := args[0].(*expression.ScalarFunction)
-		if ut.FuncName.L == ast.UnixTimestamp {
+		if ut, ok := args[0].(*expression.ScalarFunction); ok && ut.FuncName.L == ast.UnixTimestamp {
 			args = ut.GetArgs()
 			args[0] = con
 			return partFn

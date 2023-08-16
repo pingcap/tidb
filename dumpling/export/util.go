@@ -35,8 +35,9 @@ func getPdDDLIDs(pCtx context.Context, cli *clientv3.Client) ([]string, error) {
 
 func checkSameCluster(tctx *tcontext.Context, db *sql.DB, pdAddrs []string) (bool, error) {
 	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   pdAddrs,
-		DialTimeout: defaultEtcdDialTimeOut,
+		Endpoints:        pdAddrs,
+		DialTimeout:      defaultEtcdDialTimeOut,
+		AutoSyncInterval: 30 * time.Second,
 	})
 	if err != nil {
 		return false, errors.Trace(err)

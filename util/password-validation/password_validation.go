@@ -143,12 +143,12 @@ func ValidatePassword(sessionVars *variable.SessionVars, pwd string) error {
 	if warn, err := ValidateUserNameInPassword(pwd, sessionVars); err != nil {
 		return err
 	} else if len(warn) > 0 {
-		return variable.ErrNotValidPassword.GenWithStack(warn)
+		return variable.ErrNotValidPassword.GenWithStackByArgs(warn)
 	}
 	if warn, err := ValidatePasswordLowPolicy(pwd, &globalVars); err != nil {
 		return err
 	} else if len(warn) > 0 {
-		return variable.ErrNotValidPassword.GenWithStack(warn)
+		return variable.ErrNotValidPassword.GenWithStackByArgs(warn)
 	}
 	// LOW
 	if validatePolicy == "LOW" {
@@ -159,7 +159,7 @@ func ValidatePassword(sessionVars *variable.SessionVars, pwd string) error {
 	if warn, err := ValidatePasswordMediumPolicy(pwd, &globalVars); err != nil {
 		return err
 	} else if len(warn) > 0 {
-		return variable.ErrNotValidPassword.GenWithStack(warn)
+		return variable.ErrNotValidPassword.GenWithStackByArgs(warn)
 	}
 	if validatePolicy == "MEDIUM" {
 		return nil
@@ -169,7 +169,7 @@ func ValidatePassword(sessionVars *variable.SessionVars, pwd string) error {
 	if ok, err := ValidateDictionaryPassword(pwd, &globalVars); err != nil {
 		return err
 	} else if !ok {
-		return variable.ErrNotValidPassword.GenWithStack("Password contains word in the dictionary")
+		return variable.ErrNotValidPassword.GenWithStackByArgs("Password contains word in the dictionary")
 	}
 	return nil
 }

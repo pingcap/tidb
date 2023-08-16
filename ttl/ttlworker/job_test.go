@@ -15,11 +15,26 @@
 package ttlworker
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/session"
 	"github.com/stretchr/testify/assert"
 )
+
+func NewTTLJob(tbl *cache.PhysicalTable, id string, status cache.JobStatus) *ttlJob {
+	return &ttlJob{
+		tbl:    tbl,
+		id:     id,
+		status: status,
+	}
+}
+
+func (j *ttlJob) ChangeStatus(ctx context.Context, se session.Session, status cache.JobStatus) error {
+	return j.changeStatus(ctx, se, status)
+}
 
 func TestIterScanTask(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")

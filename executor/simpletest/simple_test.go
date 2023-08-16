@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -1104,4 +1105,18 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	require.True(t, statsTbl2.Pseudo)
 	h.SetLease(0)
+}
+
+func TestIssue44098(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set global validate_password.enable = 1")
+	tk.MustExec("create user u1 identified with 'tidb_auth_token'")
+	tk.MustExec("create user u2 identified with 'auth_socket'")
+	tk.MustGetErrCode("create user u3 identified with 'mysql_native_password'", errno.ErrNotValidPassword)
+	tk.MustGetErrCode("create user u3 identified with 'caching_sha2_password'", errno.ErrNotValidPassword)
+	tk.MustGetErrCode("create user u3 identified with 'tidb_sm3_password'", errno.ErrNotValidPassword)
+	tk.MustGetErrCode("create user u3 identified with 'mysql_clear_password'", errno.ErrPluginIsNotLoaded)
+	tk.MustGetErrCode("create user u3 identified with 'tidb_session_token'", errno.ErrPluginIsNotLoaded)
 }
