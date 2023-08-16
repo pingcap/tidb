@@ -85,8 +85,8 @@ type ChunkParser struct {
 type Chunk struct {
 	Offset       int64
 	EndOffset    int64
-	PrevRowIDMax int64
-	RowIDMax     int64
+	PrevRowIDMax uint64
+	RowIDMax     uint64
 	Columns      []string
 }
 
@@ -550,14 +550,16 @@ func ReadChunks(parser Parser, minSize int64) ([]Chunk, error) {
 	cur := Chunk{
 		Offset:       pos,
 		EndOffset:    pos,
-		PrevRowIDMax: lastRowID,
-		RowIDMax:     lastRowID,
+		PrevRowIDMax: uint64(lastRowID),
+		RowIDMax:     uint64(lastRowID),
 	}
 
 	for {
 		switch err := parser.ReadRow(); errors.Cause(err) {
 		case nil:
-			cur.EndOffset, cur.RowIDMax = parser.Pos()
+			var rowIDMax int64
+			cur.EndOffset, rowIDMax = parser.Pos()
+			cur.RowIDMax = uint64(rowIDMax)
 			if cur.EndOffset-cur.Offset >= minSize {
 				chunks = append(chunks, cur)
 				cur.Offset = cur.EndOffset

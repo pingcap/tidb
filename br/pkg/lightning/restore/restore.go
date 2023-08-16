@@ -1555,7 +1555,7 @@ func (tr *TableRestore) restoreTable(
 		}
 
 		// fetch the max chunk row_id max value as the global max row_id
-		rowIDMax := int64(0)
+		rowIDMax := uint64(0)
 		for _, engine := range cp.Engines {
 			if len(engine.Chunks) > 0 && engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax > rowIDMax {
 				rowIDMax = engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax
@@ -2040,7 +2040,7 @@ func newChunkRestore(
 		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", chunk.Key.Path, chunk.FileMeta.Type.String()))
 	}
 
-	if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
+	if err = parser.SetPos(chunk.Chunk.Offset, int64(chunk.Chunk.PrevRowIDMax)); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if len(chunk.ColumnPermutation) > 0 {
@@ -2146,7 +2146,7 @@ func (cr *chunkRestore) deliverLoop(
 					p.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
 					columns = p.columns
 					offset = p.offset
-					rowID = p.rowID
+					rowID = uint64(p.rowID)
 				}
 			case <-ctx.Done():
 				err = ctx.Err()
@@ -2272,7 +2272,7 @@ func saveCheckpoint(rc *Controller, t *TableRestore, engineID int32, chunk *chec
 			Key:               chunk.Key,
 			Checksum:          chunk.Checksum,
 			Pos:               chunk.Chunk.Offset,
-			RowID:             chunk.Chunk.PrevRowIDMax,
+			RowID:             int64(chunk.Chunk.PrevRowIDMax),
 			ColumnPermutation: chunk.ColumnPermutation,
 		},
 	}
@@ -2446,7 +2446,7 @@ func (cr *chunkRestore) restore(
 		Timestamp: cr.chunk.Timestamp,
 		SysVars:   rc.sysVars,
 		// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
-		AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
+		AutoRandomSeed: int64(cr.chunk.Chunk.PrevRowIDMax),
 	})
 	if err != nil {
 		return err

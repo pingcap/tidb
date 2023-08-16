@@ -77,7 +77,7 @@ func (b *dbMetaMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
 
 type tableMetaMgr interface {
 	InitTableMeta(ctx context.Context) error
-	AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error)
+	AllocTableRowIDs(ctx context.Context, rawRowIDMax uint64) (*verify.KVChecksum, uint64, error)
 	UpdateTableStatus(ctx context.Context, status metaStatus) error
 	UpdateTableBaseChecksum(ctx context.Context, checksum *verify.KVChecksum) error
 	CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (
@@ -160,7 +160,7 @@ func parseMetaStatus(s string) (metaStatus, error) {
 	}
 }
 
-func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error) {
+func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax uint64) (*verify.KVChecksum, uint64, error) {
 	conn, err := m.session.Conn(ctx)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
@@ -170,7 +170,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 		DB:     m.session,
 		Logger: m.tr.logger,
 	}
-	var newRowIDBase, newRowIDMax int64
+	var newRowIDBase, newRowIDMax uint64
 	curStatus := metaStatusInitial
 	newStatus := metaStatusRowIDAllocated
 	var baseTotalKvs, baseTotalBytes, baseChecksum uint64
@@ -187,9 +187,10 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 		}
 		defer rows.Close()
 		var (
-			metaTaskID, rowIDBase, rowIDMax, maxRowIDMax int64
-			totalKvs, totalBytes, checksum               uint64
-			statusValue                                  string
+			metaTaskID                       int64
+			rowIDBase, rowIDMax, maxRowIDMax uint64
+			totalKvs, totalBytes, checksum   uint64
+			statusValue                      string
 		)
 		for rows.Next() {
 			if err = rows.Scan(&metaTaskID, &rowIDBase, &rowIDMax, &totalKvs, &totalBytes, &checksum, &statusValue); err != nil {
@@ -230,8 +231,8 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 				newStatus = metaStatusRestoreStarted
 			}
 
-			if rowIDMax > maxRowIDMax {
-				maxRowIDMax = rowIDMax
+			if uint64(rowIDMax) > maxRowIDMax {
+				maxRowIDMax = uint64(rowIDMax)
 			}
 		}
 		if rows.Err() != nil {
@@ -267,7 +268,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 				found := false
 				for _, info := range autoIDInfos {
 					if strings.ToLower(info.Column) == autoIDField {
-						maxRowIDMax = int64(info.NextID) - 1
+						maxRowIDMax = info.NextID - 1
 						found = true
 						break
 					}
@@ -328,7 +329,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 		checksum = &ck
 	}
 	log.L().Info("allocate table row_id base", zap.String("table", m.tr.tableName),
-		zap.Int64("row_id_base", newRowIDBase))
+		zap.Uint64("row_id_base", newRowIDBase))
 	if checksum != nil {
 		log.L().Info("checksum base", zap.Any("checksum", checksum))
 	}
@@ -1014,7 +1015,7 @@ func (m noopTableMetaMgr) InitTableMeta(ctx context.Context) error {
 	return nil
 }
 
-func (m noopTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error) {
+func (m noopTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax uint64) (*verify.KVChecksum, uint64, error) {
 	return nil, 0, nil
 }
 
