@@ -1,6 +1,5 @@
 [
   {
-<<<<<<< HEAD
     "Name": "TestStraightJoinHint",
     "Cases": [
       {
@@ -9657,7 +9656,11 @@
         "Warning": [
           "Warning 1815 There are no matching table names for (t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
-=======
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestAdditionOtherConditionsRemained4OuterJoin",
     "Cases": [
       {
@@ -9711,7 +9714,6 @@
           "    └─TableReader(Probe) 9990.00 root  data:Selection",
           "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
           "        └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
->>>>>>> dc04e2ca077 (planner: clean the one side filters for outer join reorder which is not done in #44409 (#45565))
         ]
       }
     ]

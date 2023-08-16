@@ -17,14 +17,10 @@ package core_test
 import (
 	"testing"
 
-<<<<<<< HEAD
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
-=======
-	"github.com/pingcap/tidb/planner/core"
->>>>>>> dc04e2ca077 (planner: clean the one side filters for outer join reorder which is not done in #44409 (#45565))
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -376,7 +372,7 @@ func TestAdditionOtherConditionsRemained4OuterJoin(t *testing.T) {
 	tk.MustExec("create table t3(a int, b int)")
 	tk.MustExec("create table t4(a int, b int)")
 
-	testData := core.GetJoinReorderData()
+	testData := plannercore.GetJoinReorderData()
 	var (
 		input  []string
 		output []struct {

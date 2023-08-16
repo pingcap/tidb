@@ -1,6 +1,5 @@
 [
   {
-<<<<<<< HEAD
     "name": "TestStraightJoinHint",
     "cases": [
       "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
@@ -523,9 +522,8 @@
       "select /*+ leading(t2@sel_2, t1) */ t1.a, (select min(t2.a) from t2) from t1 left join t3 on t1.a = t3.a;",
       "select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 right join t3 on t1.a = t3.a;"
     ]
-  }
-]
-=======
+  },
+  {
     "name": "TestAdditionOtherConditionsRemained4OuterJoin",
     "cases": [
         "SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC",
@@ -536,4 +534,3 @@
     ]
   }
 ]
->>>>>>> dc04e2ca077 (planner: clean the one side filters for outer join reorder which is not done in #44409 (#45565))
