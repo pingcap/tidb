@@ -1437,7 +1437,6 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 	} else {
 		serverID = disttaskutil.GenerateSubtaskExecID(ctx, do.ddl.GetID())
 	}
-	ctx = context.WithValue(ctx, "serverID", serverID)
 
 	if serverID == "" {
 		errMsg := fmt.Sprintf("TiDB node ID( = %s ) not found in available TiDB nodes list", do.ddl.GetID())
@@ -1473,7 +1472,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 			return
 		}
 		var err error
-		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager)
+		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager, schedulerManager.GetID())
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
 			return

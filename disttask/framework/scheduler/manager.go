@@ -330,3 +330,7 @@ func (m *Manager) onError(err error) {
 
 	logutil.Logger(m.logCtx).Error("task manager error", zap.Error(err))
 }
+
+func (m *Manager) GetID() string {
+	return m.id
+}
