@@ -17,6 +17,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -432,6 +433,7 @@ func (ci *storagePermissionCheckItem) Check(ctx context.Context) (*precheck.Chec
 			storage.ListObjects,
 			storage.GetObject,
 		},
+		HTTPClient: &http.Client{},
 	})
 	if err != nil {
 		theResult.Passed = false

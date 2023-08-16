@@ -172,7 +172,7 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 		opts = &ExternalStorageOptions{}
 	}
 	if opts.HTTPClient == nil {
-		opts.HTTPClient = GetDefaultHttpClient(DefaultRequestConcurrency)
+		//opts.HTTPClient = GetDefaultHttpClient(DefaultRequestConcurrency)
 	}
 	switch backend := backend.Backend.(type) {
 	case *backuppb.StorageBackend_Local:
