@@ -1095,6 +1095,10 @@ func (*singleTableMetaMgr) InitTableMeta(_ context.Context) error {
 // not for allocator of _tidb_rowid.
 // So we need to allocate IDs for those 2 allocators explicitly.
 func (s *singleTableMetaMgr) AllocTableRowIDs(ctx context.Context, rowIDMax int64) (*verify.KVChecksum, int64, error) {
+	if !common.TableHasAutoID(s.tr.tableInfo.Core) {
+		return nil, 0, nil
+	}
+
 	if err := common.RebaseGlobalAutoID(ctx, 0, s.tr.kvStore, s.tr.dbInfo.ID, s.tr.tableInfo.Core); err != nil {
 		return nil, 0, errors.Trace(err)
 	}
