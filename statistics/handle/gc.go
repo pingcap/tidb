@@ -35,6 +35,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const gcLastTSVarName = "tidb_stats_gc_last_ts"
+
 // GCStats will garbage collect the useless stats info. For dropped tables, we will first update their version so that
 // other tidb could know that table is deleted.
 func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
@@ -83,7 +85,7 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err 
 
 // GetLastGCTimestamp loads the last gc time from mysql.tidb.
 func (h *Handle) GetLastGCTimestamp(ctx context.Context) (uint64, error) {
-	rows, _, err := h.execRestrictedSQL(ctx, "SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?", "tidb_stats_gc_last_ts")
+	rows, _, err := h.execRestrictedSQL(ctx, "SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?", gcLastTSVarName)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -102,7 +104,7 @@ func (h *Handle) writeGCTimestampToKV(ctx context.Context, newTS uint64) error {
 	_, _, err := h.execRestrictedSQL(ctx,
 		"update mysql.tidb set variable_value = %? where variable_name = %?",
 		newTS,
-		"tidb_stats_gc_last_ts",
+		gcLastTSVarName,
 	)
 	return err
 }

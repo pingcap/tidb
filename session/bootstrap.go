@@ -731,7 +731,7 @@ const (
 	// oom-action when upgrade from v3.0.x to v4.0.11+.
 	tidbDefOOMAction = "default_oom_action"
 
-	tiDBStatsGCLastTS        = "tidb_stats_gc_last_stats"
+	tiDBStatsGCLastTS        = "tidb_stats_gc_last_ts"
 	tiDBStatsGCLastTSComment = "the previous gc timestamp for statistics"
 	// Const for TiDB server version 2.
 	version2  = 2
@@ -986,7 +986,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version172
+var currentBootstrapVersion int64 = version173
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -2801,8 +2801,12 @@ func upgradeToVer173(s Session, ver int64) {
 	if ver >= version173 {
 		return
 	}
+	writeStatsGCLastPos(s)
+}
+
+func writeStatsGCLastPos(s Session) {
 	mustExecute(s, "INSERT HIGH_PRIORITY INTO %n.%n VALUES(%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE = %?",
-		mysql.SystemDB, mysql.TiDBTable, tiDBStatsGCLastTS, 0, tiDBStatsGCLastTSComment)
+		mysql.SystemDB, mysql.TiDBTable, tiDBStatsGCLastTS, 0, tiDBStatsGCLastTSComment, 0)
 }
 
 func writeOOMAction(s Session) {
@@ -3056,6 +3060,8 @@ func doDMLWorks(s Session) {
 	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)
 
 	writeStmtSummaryVars(s)
+
+	writeStatsGCLastPos(s)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, "COMMIT")
