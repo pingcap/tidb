@@ -8379,7 +8379,6 @@ func TestIssue41458(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 func TestIssue43645(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -8421,7 +8420,8 @@ func TestIssue45033(t *testing.T) {
 				                from   (select distinct alias3.c4 as c2
 				                        from   t3 alias3) alias4
 				                where  alias4.c2 = alias2.alias_col1);`).Check(testkit.Rows("0"))
-=======
+}
+
 func TestIssue43116(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -8433,5 +8433,4 @@ func TestIssue43116(t *testing.T) {
 		"└─Selection 8000.00 cop[tikv]  in(test.sbtest1.id, 1, 1, 1, 1, 1), in(test.sbtest1.pad, \"1\", \"1\", \"1\", \"1\", \"1\")",
 		"  └─TableFullScan 10000.00 cop[tikv] table:a keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 111 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
->>>>>>> 1e343a8fcdc (util/ranger: fix collator missing of FullNotNullRange (#43124))
 }
