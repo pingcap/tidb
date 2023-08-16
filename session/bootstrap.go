@@ -1588,12 +1588,7 @@ func upgradeToVer19(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY User CHAR(32)")
 }
 
-func upgradeToVer20(s Session, ver int64) {
-	if ver >= version20 {
-		return
-	}
-	// TODO: What should we do here?
-}
+func upgradeToVer20(_ Session, _ int64) {}
 
 func upgradeToVer21(s Session, ver int64) {
 	if ver >= version21 {
