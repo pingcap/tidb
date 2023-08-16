@@ -61,7 +61,7 @@ func NewAddIndexPipeline(
 	}
 
 	// ingest op.
-	ingestOp, err := newIngestWriterOperator(ctx, info, mgr, bc, consumeOp.Source.(operator.DataSink[*backfillResult]), writerCnt)
+	ingestOp, err := newIngestWriterOperator(ctx, info, mgr, bc, consumeOp.Source.(operator.DataSink[*backfillResult]), tbl, writerCnt)
 	if err != nil {
 		return nil, nil, errors.Trace(errors.New("cannot create ingest operator"))
 	}
@@ -119,6 +119,7 @@ type readCopWorker struct {
 
 // HandleTask define the basic running process for each operator.
 func (rw *readCopWorker) HandleTask(task *reorgBackfillTask) {
+	logutil.BgLogger().Info("read cop worker handle task")
 	err := rw.scanRecords(task)
 	if err != nil {
 		rw.sink.Write(idxRecResult{id: task.id, err: err})
@@ -172,6 +173,7 @@ func (*readCopWorker) Close() {}
 func (oi *tableScanOperator) Open() error {
 	oi.Source.(*operator.AsyncDataChannel[*reorgBackfillTask]).Channel.SetCreateWorker(
 		func() workerpool.Worker[*reorgBackfillTask] {
+			logutil.BgLogger().Info("ywq test open table scan worker")
 			sessCtx, err := oi.sessPool.Get()
 			if err != nil {
 				logutil.Logger(oi.ctx).Error("copReqSender get session from pool failed", zap.Error(err))
@@ -270,6 +272,8 @@ type ingestWriterOperator struct {
 func (oi *ingestWriterOperator) Open() error {
 	oi.pool.SetCreateWorker(
 		func() workerpool.Worker[idxRecResult] {
+			logutil.BgLogger().Info("ywq test open ingest writer worker")
+
 			reorgInfo := oi.reorgInfo
 			job := reorgInfo.Job
 			sessCtx, err := newSessCtx(reorgInfo)
@@ -308,6 +312,7 @@ func (oi *ingestWriterOperator) Open() error {
 			return worker
 		},
 	)
+	oi.pool.Start()
 	return nil
 }
 
@@ -329,6 +334,7 @@ func newIngestWriterOperator(
 	checkpointMgr *ingest.CheckpointManager,
 	backendCtx ingest.BackendCtx,
 	sink operator.DataSink[*backfillResult],
+	tbl table.PhysicalTable,
 	writerCnt int) (*ingestWriterOperator, error) {
 
 	res := &ingestWriterOperator{
@@ -336,6 +342,7 @@ func newIngestWriterOperator(
 		reorgInfo:     info,
 		backendCtx:    backendCtx,
 		writerMaxID:   0,
+		tbl:           tbl,
 		checkpointMgr: checkpointMgr,
 	}
 	// create worker pool.
@@ -366,8 +373,10 @@ type consumerOperator struct {
 // Open implements AsyncOperator.
 func (oi *consumerOperator) Open() error {
 	oi.pool.SetCreateWorker(func() workerpool.Worker[*backfillResult] {
-		return &consumeWorker{consumerOperator: oi, sink: oi.Sink}
+		logutil.BgLogger().Info("ywq test open consume worker")
+		return &consumeWorker{consumerOperator: oi, sink: oi.Sink, keeper: oi.keeper}
 	})
+	oi.pool.Start()
 	return nil
 }
 
@@ -398,7 +407,16 @@ func newConsumerOperator(
 		start:     start,
 	}
 	keeper := newDoneTaskKeeper(start)
+	// create worker pool.
+	skipReg := workerpool.OptionSkipRegister[*backfillResult]{}
+	pool, err := workerpool.NewWorkerPoolWithoutCreateWorker[*backfillResult]("ingest_writer", poolutil.DDL, 1, skipReg)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	source := &operator.AsyncDataChannel[*backfillResult]{Channel: pool}
 	res.Sink = &TotalAddedCountSink{0}
+	res.Source = source
+	res.pool = pool
 	res.keeper = keeper
 	return res, nil
 }
@@ -412,6 +430,7 @@ type consumeWorker struct {
 
 // HandleTask define the basic running process for each operator.
 func (cw *consumeWorker) HandleTask(result *backfillResult) {
+	logutil.BgLogger().Info("consume worker handle task")
 	err := cw.handleOneResult(result)
 	if err != nil && cw.firstErr == nil {
 		cw.consumerOperator.hasError.Store(true)

@@ -200,7 +200,8 @@ func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask []byte
 			return nil, err
 		}
 		pipeline.Execute()
-		defer pipeline.Close()
+
+		logutil.BgLogger().Info("ywq test", zap.String("pipeline", pipeline.Display()))
 
 		taskIDAlloc := newTaskIDAllocator()
 		for {
@@ -225,6 +226,8 @@ func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask []byte
 				break
 			}
 		}
+
+		pipeline.Close()
 	}
 
 	flushMode := ingest.FlushModeForceLocalAndCheckDiskQuota

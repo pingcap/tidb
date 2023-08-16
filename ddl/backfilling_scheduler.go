@@ -456,6 +456,7 @@ func (w *addIndexIngestWorker) addRes(res *backfillResult) {
 }
 
 func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
+	logutil.BgLogger().Info("add index ingest worker handle task")
 	defer util.Recover(metrics.LabelDDL, "ingestWorker.HandleTask", func() {
 		res := &backfillResult{taskID: rs.id, err: dbterror.ErrReorgPanic}
 		w.addRes(res)
