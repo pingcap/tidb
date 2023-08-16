@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/binary"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"io"
 	"time"
 
@@ -253,6 +254,9 @@ func (r *byteReader) reload() error {
 	ReadByteForTest.Add(uint64(nBytes))
 	ReadTimeForTest.Add(uint64(elapsed))
 	readRate := float64(nBytes) / 1024.0 / 1024.0 / (float64(time.Since(startTime).Microseconds()) / 1000000.0)
+	if time.Since(startTime) > time.Millisecond {
+		log.Info("s3 read rate", zap.Any("res", readRate), zap.Any("bytes", nBytes), zap.Any("time", time.Since(startTime)))
+	}
 	//log.Info("s3 read rate", zap.Any("res", readRate), zap.Any("bytes", nBytes), zap.Any("time", time.Since(startTime)))
 	metrics.GlobalSortSharedDiskRate.WithLabelValues("read").Observe(readRate)
 	metrics.GlobalSortSharedDiskThroughput.WithLabelValues("read").Add(float64(nBytes) / 1024.0 / 1024.0)

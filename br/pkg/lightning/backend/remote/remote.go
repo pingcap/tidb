@@ -1079,7 +1079,9 @@ func (remote *Backend) fillJobKVs(j *regionJob, iter *sharedisk.MergeIter) {
 	log.FromContext(context.Background()).Info("", zap.Duration("duration for prepare", time.Since(ts)))
 	ts = time.Now()
 	//var prevKey kv.Key
+	cnt := 0
 	for iter.Valid() {
+		cnt++
 		k, v := iter.Key(), iter.Value()
 		//kBuf := memBuf.AllocBytes(len(k))
 		//key := append(kBuf[:0], k...)
@@ -1118,7 +1120,7 @@ func (remote *Backend) fillJobKVs(j *regionJob, iter *sharedisk.MergeIter) {
 			break
 		}
 	}
-	log.FromContext(context.Background()).Info("", zap.Duration("duration for a job", time.Since(ts)))
+	log.FromContext(context.Background()).Info("", zap.Duration("duration for a job", time.Since(ts)), zap.Int("cnt", cnt))
 	j.memBuffer = memBuf
 }
 
