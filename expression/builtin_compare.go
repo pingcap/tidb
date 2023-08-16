@@ -1592,17 +1592,10 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 
 		// case 2: int-expr <cmp> string/float/double/decimal-const
 		// refine `int_key < 1.1` to `int_key < 2` to generate RangeScan instead of FullScan.
-<<<<<<< HEAD
-		conType := args[conIdx].GetType().EvalType()
-		if exprType.EvalType() == types.ETInt &&
-			(conType == types.ETString || conType == types.ETReal || conType == types.ETDecimal) {
-			reason := errors.Errorf("skip plan-cache: '%v' may be converted to INT", args[conIdx].String())
-=======
 		conEvalType := args[conIdx].GetType().EvalType()
 		if exprEvalType == types.ETInt &&
 			(conEvalType == types.ETString || conEvalType == types.ETReal || conEvalType == types.ETDecimal) {
-			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
->>>>>>> d5fc8bbf034 (expression: Fix different behaviors with MySQL when comparing datetime column with numeric constant (#45945))
+			reason := errors.Errorf("skip plan-cache: '%v' may be converted to INT", args[conIdx].String())
 			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
 			return true
 		}
