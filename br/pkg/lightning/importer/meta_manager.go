@@ -1079,6 +1079,49 @@ func (noopTableMetaMgr) FinishTable(_ context.Context) error {
 	return nil
 }
 
+type singleTableMetaMgr struct {
+	tr *TableImporter
+}
+
+func (*singleTableMetaMgr) InitTableMeta(_ context.Context) error {
+	return nil
+}
+
+// AllocTableRowIDs allocates row id for the target table.
+// target table should be empty, we don't do checksum here.
+// for TiDB version >= 6.5.0, a table might have separate allocators for auto_increment column and _tidb_rowid,
+// especially when a table has auto_increment non-clustered PK, it will use both allocators.
+// And ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
+// not for allocator of _tidb_rowid.
+// So we need to allocate IDs for those 2 allocators explicitly.
+func (s *singleTableMetaMgr) AllocTableRowIDs(ctx context.Context, rowIDMax int64) (*verify.KVChecksum, int64, error) {
+	if err := common.RebaseGlobalAutoID(ctx, 0, s.tr.kvStore, s.tr.dbInfo.ID, s.tr.tableInfo.Core); err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	newRowIDBase, _, err := common.AllocGlobalAutoID(ctx, rowIDMax, s.tr.kvStore, s.tr.dbInfo.ID, s.tr.tableInfo.Core)
+	if err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	return nil, newRowIDBase, nil
+}
+
+func (*singleTableMetaMgr) UpdateTableStatus(_ context.Context, _ metaStatus) error {
+	return nil
+}
+
+func (*singleTableMetaMgr) UpdateTableBaseChecksum(_ context.Context, _ *verify.KVChecksum) error {
+	return nil
+}
+
+func (*singleTableMetaMgr) CheckAndUpdateLocalChecksum(_ context.Context, _ *verify.KVChecksum, _ bool) (
+	otherHasDupe bool, needRemoteDupe bool, baseTotalChecksum *verify.KVChecksum, err error) {
+	return false, true, &verify.KVChecksum{}, nil
+}
+
+func (*singleTableMetaMgr) FinishTable(_ context.Context) error {
+	return nil
+}
+
 type singleMgrBuilder struct {
 	taskID int64
 }
@@ -1094,8 +1137,10 @@ func (b singleMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
 	}
 }
 
-func (singleMgrBuilder) TableMetaMgr(_ *TableImporter) tableMetaMgr {
-	return noopTableMetaMgr{}
+func (singleMgrBuilder) TableMetaMgr(tr *TableImporter) tableMetaMgr {
+	return &singleTableMetaMgr{
+		tr: tr,
+	}
 }
 
 type singleTaskMetaMgr struct {

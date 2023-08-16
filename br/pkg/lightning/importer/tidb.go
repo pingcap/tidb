@@ -305,7 +305,7 @@ func ObtainNewCollationEnabled(ctx context.Context, db *sql.DB) (bool, error) {
 // AlterAutoIncrement rebase the table auto increment id
 //
 // NOTE: since tidb can make sure the auto id is always be rebase even if the `incr` value is smaller
-// the the auto incremanet base in tidb side, we needn't fetch currently auto increment value here.
+// than the auto increment base in tidb side, we needn't fetch currently auto increment value here.
 // See: https://github.com/pingcap/tidb/blob/64698ef9a3358bfd0fdc323996bb7928a56cadca/ddl/ddl_api.go#L2528-L2533
 func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr uint64) error {
 	var query string
@@ -342,6 +342,7 @@ func AlterAutoRandom(ctx context.Context, db *sql.DB, tableName string, randomBa
 		logger.Warn("auto_random out of the maximum value TiDB supports")
 		return nil
 	}
+	// if new base is smaller than current, this query will success with a warning
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_RANDOM_BASE=%d", tableName, randomBase)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_random")
 	exec := common.SQLWithRetry{DB: db, Logger: logger}
