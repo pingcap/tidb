@@ -473,7 +473,7 @@ type TableInfo struct {
 	//	in most cases, AutoIncID is _tidb_rowid and TiDBRowID is null
 	//      but in some cases, AutoIncID is auto_increment_id and TiDBRowID is _tidb_rowid
 	// So let's just use another name AutoIncIDExtra to avoid misconception.
-	AutoIncIDExtra *int64 `json:"auto_inc_id_extra"`
+	AutoIncIDExtra int64 `json:"auto_inc_id_extra,omitempty"`
 
 	AutoIdCache     int64 `json:"auto_id_cache"` //nolint:revive
 	AutoRandID      int64 `json:"auto_rand_id"`

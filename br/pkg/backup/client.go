@@ -636,8 +636,7 @@ func BuildBackupSchemas(
 					// For a nonclustered table with auto_increment column, both auto_increment_id and _tidb_rowid are required.
 					// See also https://github.com/pingcap/tidb/issues/46093
 					if rowID, err1 := autoIDAccess.RowID().Get(); err1 == nil {
-						rowID = rowID + 1
-						tableInfo.AutoIncIDExtra = &rowID
+						tableInfo.AutoIncIDExtra = rowID + 1
 					}
 				} else {
 					globalAutoID, err = autoIDAccess.RowID().Get()

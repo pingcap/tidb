@@ -2629,8 +2629,8 @@ func (d *ddl) createTableWithInfoPost(
 		}
 	}
 	// For issue https://github.com/pingcap/tidb/issues/46093
-	if tbInfo.AutoIncIDExtra != nil && *tbInfo.AutoIncIDExtra != 0 {
-		if err = d.handleAutoIncID(tbInfo, schemaID, *tbInfo.AutoIncIDExtra-1, autoid.RowIDAllocType); err != nil {
+	if tbInfo.AutoIncIDExtra != 0 {
+		if err = d.handleAutoIncID(tbInfo, schemaID, tbInfo.AutoIncIDExtra-1, autoid.RowIDAllocType); err != nil {
 			return errors.Trace(err)
 		}
 	}
