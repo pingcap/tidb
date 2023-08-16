@@ -136,12 +136,13 @@ func (b *WriterBuilder) SetBufferPool(bufferPool *membuf.Pool) *WriterBuilder {
 func (b *WriterBuilder) Build(
 	store storage.ExternalStorage,
 	writerID int,
-	filenamePrefix string,
+	prefix string,
 ) *Writer {
 	bp := b.bufferPool
 	if bp == nil {
 		bp = membuf.NewPool()
 	}
+	filenamePrefix := filepath.Join(prefix, strconv.Itoa(writerID))
 	return &Writer{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
@@ -334,7 +335,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (data, stats storage.E
 	if err != nil {
 		return nil, nil, err
 	}
-	statPath := filepath.Join(w.filenamePrefix+"_stat", strconv.Itoa(w.currentSeq))
+	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(w.currentSeq))
 	statsWriter, err := w.store.Create(ctx, statPath, nil)
 	if err != nil {
 		return nil, nil, err

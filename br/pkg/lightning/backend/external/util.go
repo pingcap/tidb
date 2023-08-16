@@ -86,15 +86,17 @@ func GetAllFileNames(
 	err := store.WalkDir(ctx,
 		&storage.WalkOption{SubDir: subDir},
 		func(path string, size int64) error {
-			if strings.HasSuffix(path, statSuffix) {
+			dir, fileSeq := filepath.Split(path)
+			// remove the trailing slash
+			dir = dir[:len(dir)-1]
+			if strings.HasSuffix(dir, statSuffix) {
 				stats = append(stats, path)
 			} else {
-				dir, file := filepath.Split(path)
 				writerID, err := strconv.Atoi(filepath.Base(dir))
 				if err != nil {
 					return err
 				}
-				seq, err := strconv.Atoi(file)
+				seq, err := strconv.Atoi(fileSeq)
 				if err != nil {
 					return err
 				}

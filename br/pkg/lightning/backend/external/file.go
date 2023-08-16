@@ -17,7 +17,6 @@ package external
 import (
 	"context"
 	"encoding/binary"
-	"path/filepath"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
@@ -115,4 +114,4 @@ func (s *KeyValueStore) Close() {
 	}
 }
 
-var statSuffix = filepath.Join("_stat", "0")
+const statSuffix = "_stat"

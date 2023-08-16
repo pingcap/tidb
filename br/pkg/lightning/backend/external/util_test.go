@@ -107,9 +107,9 @@ func TestGetAllFileNames(t *testing.T) {
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, 0, "/subtask/prefix")
-	kvPairs := make([]common.KvPair, 0, 100)
-	for i := 0; i < 100; i++ {
+		Build(store, 0, "/subtask")
+	kvPairs := make([]common.KvPair, 0, 30)
+	for i := 0; i < 30; i++ {
 		kvPairs = append(kvPairs, common.KvPair{
 			Key: []byte{byte(i)},
 			Val: []byte{byte(i)},
@@ -120,7 +120,36 @@ func TestGetAllFileNames(t *testing.T) {
 	_, err = w.Close(ctx)
 	require.NoError(t, err)
 
+	w2 := NewWriterBuilder().
+		SetMemorySizeLimit(20).
+		SetPropSizeDistance(5).
+		SetPropKeysDistance(3).
+		Build(store, 3, "/subtask")
+	err = w2.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
+	require.NoError(t, err)
+	_, err = w2.Close(ctx)
+	require.NoError(t, err)
+
+	w3 := NewWriterBuilder().
+		SetMemorySizeLimit(20).
+		SetPropSizeDistance(5).
+		SetPropKeysDistance(3).
+		Build(store, 12, "/subtask")
+	err = w3.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
+	require.NoError(t, err)
+	_, err = w3.Close(ctx)
+	require.NoError(t, err)
+
 	fileHandle, statFiles, err := GetAllFileNames(ctx, store, "/subtask")
-	require.Equal(t, []string{"/prefix/0"}, statFiles)
-	_ = fileHandle
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"/subtask/0_stat/0", "/subtask/0_stat/1", "/subtask/0_stat/2",
+		"/subtask/12_stat/0", "/subtask/12_stat/1", "/subtask/12_stat/2",
+		"/subtask/3_stat/0", "/subtask/3_stat/1", "/subtask/3_stat/2",
+	}, statFiles)
+	require.Equal(t, []string{
+		"/subtask/0/0", "/subtask/0/1", "/subtask/0/2",
+		"/subtask/3/0", "/subtask/3/1", "/subtask/3/2",
+		"/subtask/12/0", "/subtask/12/1", "/subtask/12/2",
+	}, fileHandle.FlatSlice())
 }
