@@ -248,49 +248,52 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 	elements = append(elements, &meta.Element{ID: b.index.ID, TypeKey: meta.IndexElementKey})
 	mockReorgInfo.elements = elements
 	mockReorgInfo.currElement = mockReorgInfo.elements[0]
+	useOperator := true
+	if !useOperator {
+		ctx = logutil.WithCategory(ctx, "ddl-ingest")
+		ingestScheduler := newIngestBackfillScheduler(ctx, mockReorgInfo, d.sessPool, tbl, true)
+		defer ingestScheduler.close(true)
+		consumer := newResultConsumer(d.ddlCtx, mockReorgInfo, nil, true)
+		consumer.run(ingestScheduler, startKey, &b.totalRowCnt)
 
-	ctx = logutil.WithCategory(ctx, "ddl-ingest")
-	ingestScheduler := newIngestBackfillScheduler(ctx, mockReorgInfo, d.sessPool, tbl, true)
-	defer ingestScheduler.close(true)
-
-	consumer := newResultConsumer(d.ddlCtx, mockReorgInfo, nil, true)
-	consumer.run(ingestScheduler, startKey, &b.totalRowCnt)
-
-	err = ingestScheduler.setupWorkers()
-	if err != nil {
-		logutil.BgLogger().Error("setup workers error", zap.String("category", "ddl"), zap.Error(err))
-		return nil, err
-	}
-
-	taskIDAlloc := newTaskIDAllocator()
-	for {
-		kvRanges, err := splitTableRanges(b.ptbl, d.store, startKey, endKey, backfillTaskChanSize)
+		// ywq todo
+		err = ingestScheduler.setupWorkers()
 		if err != nil {
+			logutil.BgLogger().Error("setup workers error", zap.String("category", "ddl"), zap.Error(err))
 			return nil, err
 		}
-		if len(kvRanges) == 0 {
-			break
-		}
 
-		logutil.BgLogger().Info("start backfill workers to reorg record", zap.String("category", "ddl"),
-			zap.Int("workerCnt", ingestScheduler.currentWorkerSize()),
-			zap.Int("regionCnt", len(kvRanges)),
-			zap.String("startKey", hex.EncodeToString(startKey)),
-			zap.String("endKey", hex.EncodeToString(endKey)))
+		taskIDAlloc := newTaskIDAllocator()
+		for {
+			kvRanges, err := splitTableRanges(b.ptbl, d.store, startKey, endKey, backfillTaskChanSize)
+			if err != nil {
+				return nil, err
+			}
+			if len(kvRanges) == 0 {
+				break
+			}
 
-		sendTasks(ingestScheduler, consumer, tbl, kvRanges, mockReorgInfo, taskIDAlloc)
-		if consumer.shouldAbort() {
-			break
-		}
-		startKey = kvRanges[len(kvRanges)-1].EndKey
-		if startKey.Cmp(endKey) >= 0 {
-			break
-		}
-	}
-	ingestScheduler.close(false)
+			logutil.BgLogger().Info("start backfill workers to reorg record", zap.String("category", "ddl"),
+				zap.Int("workerCnt", ingestScheduler.currentWorkerSize()),
+				zap.Int("regionCnt", len(kvRanges)),
+				zap.String("startKey", hex.EncodeToString(startKey)),
+				zap.String("endKey", hex.EncodeToString(endKey)))
 
-	if err := consumer.getResult(); err != nil {
-		return nil, err
+			sendTasks(ingestScheduler, consumer, tbl, kvRanges, mockReorgInfo, taskIDAlloc)
+			if consumer.shouldAbort() {
+				break
+			}
+			startKey = kvRanges[len(kvRanges)-1].EndKey
+			if startKey.Cmp(endKey) >= 0 {
+				break
+			}
+		}
+		ingestScheduler.close(false)
+		if err := consumer.getResult(); err != nil {
+			return nil, err
+		}
+	} else {
+
 	}
 
 	if b.isPartition {

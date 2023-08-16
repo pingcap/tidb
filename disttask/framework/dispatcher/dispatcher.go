@@ -289,7 +289,7 @@ func (d *dispatcher) processNormalFlow() error {
 }
 
 func (d *dispatcher) dispatchSubTask(task *proto.Task, handle TaskFlowHandle, metas [][]byte) error {
-	logutil.Logger(d.logCtx).Info("dispatch subtasks", zap.String("state", d.task.State), zap.Uint64("concurrency", d.task.Concurrency), zap.Int("subtasks", len(metas)))
+	logutil.Logger(d.logCtx).Info("dispatch subtasks", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step), zap.Uint64("concurrency", d.task.Concurrency), zap.Int("subtasks", len(metas)))
 	// 1. Adjust the global task's concurrency.
 	if task.Concurrency == 0 {
 		task.Concurrency = DefaultSubtaskConcurrency

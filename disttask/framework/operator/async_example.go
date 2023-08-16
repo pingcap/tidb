@@ -37,17 +37,17 @@ type exampleAsyncOperator struct {
 
 // Close implements AsyncOperator.
 func (oi *exampleAsyncOperator) Close() {
-	oi.Source.(*AsyncDataChannel[asyncChunk]).channel.ReleaseAndWait()
+	oi.Source.(*AsyncDataChannel[asyncChunk]).Channel.ReleaseAndWait()
 }
 
 // Open implements AsyncOperator.
 func (oi *exampleAsyncOperator) Open() error {
-	oi.Source.(*AsyncDataChannel[asyncChunk]).channel.SetCreateWorker(
+	oi.Source.(*AsyncDataChannel[asyncChunk]).Channel.SetCreateWorker(
 		func() workerpool.Worker[asyncChunk] {
 			return &asyncWorker{oi.Sink}
 		},
 	)
-	oi.Source.(*AsyncDataChannel[asyncChunk]).channel.Start()
+	oi.Source.(*AsyncDataChannel[asyncChunk]).Channel.Start()
 	return nil
 }
 
@@ -61,7 +61,7 @@ func newExampleAsyncOperator(name string,
 	concurrency int,
 	sink DataSink[asyncChunk]) *exampleAsyncOperator {
 	pool, _ := workerpool.NewWorkerPoolWithoutCreateWorker[asyncChunk](name, component, concurrency)
-	source := &AsyncDataChannel[asyncChunk]{channel: pool}
+	source := &AsyncDataChannel[asyncChunk]{Channel: pool}
 	op := &exampleAsyncOperator{}
 	op.Source = source
 	op.Sink = sink

@@ -39,7 +39,7 @@ type AsyncOperator interface {
 //	Eg: op1 use AsyncDataChannel as sink, op2 use AsyncDataChannel as source.
 //	    op1 call sink.Write, then op2's worker will handle the task.
 type AsyncDataChannel[T any] struct {
-	channel *workerpool.WorkerPool[T]
+	Channel *workerpool.WorkerPool[T]
 }
 
 // Start implement the DataSource Start.
@@ -56,6 +56,6 @@ func (*AsyncDataChannel[T]) Display() string { return "AsyncDataChannel" }
 
 // Write data to sink.
 func (c *AsyncDataChannel[T]) Write(data T) error {
-	c.channel.AddTask(data)
+	c.Channel.AddTask(data)
 	return nil
 }
