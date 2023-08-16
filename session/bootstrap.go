@@ -731,8 +731,8 @@ const (
 	// oom-action when upgrade from v3.0.x to v4.0.11+.
 	tidbDefOOMAction = "default_oom_action"
 
-	TiDBStatsGCLastTS        = "tidb_stats_gc_last_stats"
-	TiDBStatsGCLastTSComment = "the previous gc timestamp for statistics"
+	tiDBStatsGCLastTS        = "tidb_stats_gc_last_stats"
+	tiDBStatsGCLastTSComment = "the previous gc timestamp for statistics"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -2802,7 +2802,7 @@ func upgradeToVer173(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, "INSERT HIGH_PRIORITY INTO %n.%n VALUES(%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE = %?",
-		mysql.SystemDB, mysql.TiDBTable, TiDBStatsGCLastTS, 0, TiDBStatsGCLastTSComment)
+		mysql.SystemDB, mysql.TiDBTable, tiDBStatsGCLastTS, 0, tiDBStatsGCLastTSComment)
 }
 
 func writeOOMAction(s Session) {

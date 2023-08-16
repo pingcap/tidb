@@ -56,7 +56,7 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err 
 		if err != nil {
 			return
 		}
-		err = h.WriteGCTimestampToKV(ctx, gcVer)
+		err = h.writeGCTimestampToKV(ctx, gcVer)
 	}()
 	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_meta where version > %? and version < %?", lastGC, gcVer)
 	if err != nil {
@@ -98,7 +98,7 @@ func (h *Handle) GetLastGCTimestamp(ctx context.Context) (uint64, error) {
 	return lastGcTS, nil
 }
 
-func (h *Handle) WriteGCTimestampToKV(ctx context.Context, newTS uint64) error {
+func (h *Handle) writeGCTimestampToKV(ctx context.Context, newTS uint64) error {
 	_, _, err := h.execRestrictedSQL(ctx,
 		"update mysql.tidb set variable_value = %? where variable_name = %?",
 		newTS,
