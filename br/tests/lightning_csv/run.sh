@@ -43,6 +43,15 @@ function run_with() {
   check_contains 'id: 3'
   run_sql 'SELECT id FROM csv.empty_strings WHERE b <> ""'
   check_not_contains 'id:'
+
+  for table in clustered nonclustered clustered_cache1 nonclustered_cache1; do
+    run_sql "select count(*) from csv.$table"
+    check_contains 'count(*): 3'
+    # insert should work
+    run_sql "insert into csv.$table(v) values(1)"
+    run_sql "select count(*) from csv.$table"
+    check_contains 'count(*): 4'
+  done
 }
 
 rm -rf $TEST_DIR/lightning.log
