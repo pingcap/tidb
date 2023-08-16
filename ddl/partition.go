@@ -2458,7 +2458,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	if variable.EnableCheckConstraint.Load() {
 		err = verifyExchangePartitionRecordCheckConstraint(w, pt, nt, ptDbInfo.Name.L, ntDbInfo.Name.L, partName)
 		if err != nil {
-			job.State = model.JobStateCancelled
+			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
 	}
@@ -3363,8 +3363,6 @@ func verifyExchangePartitionRecordCheckConstraint(w *worker, pt, nt *model.Table
 		}
 		buf.WriteString(") limit 1")
 		sql = buf.String()
-
-		logutil.BgLogger().Error(fmt.Sprintf("jiyfsql:%s,args:%v", sql, paramList))
 
 		var ctx sessionctx.Context
 		ctx, err := w.sessPool.Get()
