@@ -42,6 +42,10 @@ const (
 	metaDataWorkerPoolSize = 128
 )
 
+func GetMetadataWorkerPoolSize() int {
+	return metaDataWorkerPoolSize
+}
+
 func GetStreamBackupMetaPrefix() string {
 	return streamBackupMetaPrefix
 }
