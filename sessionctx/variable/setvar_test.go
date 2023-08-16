@@ -41,7 +41,7 @@ func TestSetVarNonStringOrEnum(t *testing.T) {
 		{"tidb_enable_new_only_full_group_by_check", []string{"0", "1"}},
 		{"tidb_enable_outer_join_reorder", []string{"0", "1"}},
 		{"tidb_enable_null_aware_anti_join", []string{"0", "1"}},
-		// {"tidb_read_staleness", []string{"0", "-1"}},
+		{"tidb_read_staleness", []string{"0", "-1"}},
 		{"tidb_enable_paging", []string{"0", "1"}},
 		{"tidb_distsql_scan_concurrency", []string{"1", "2"}},
 		{"tidb_opt_insubq_to_join_and_agg", []string{"0", "1"}},
