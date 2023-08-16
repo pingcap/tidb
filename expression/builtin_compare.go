@@ -1560,7 +1560,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 }
 
 func matchRefineRule3Pattern(conEvalType types.EvalType, exprType *types.FieldType) bool {
-	return (exprType.GetType() == mysql.TypeTimestamp || exprType.GetType() == mysql.TypeDatetime) &&
+	return (exprType.Tp == mysql.TypeTimestamp || exprType.Tp == mysql.TypeDatetime) &&
 		(conEvalType == types.ETReal || conEvalType == types.ETDecimal || conEvalType == types.ETInt)
 }
 
