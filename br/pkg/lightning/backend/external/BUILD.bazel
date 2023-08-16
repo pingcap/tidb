@@ -23,6 +23,7 @@ go_library(
         "//br/pkg/membuf",
         "//br/pkg/storage",
         "//kv",
+        "//util/hack",
         "//util/logutil",
         "//util/mathutil",
         "//util/size",
@@ -38,6 +39,7 @@ go_test(
     srcs = [
         "byte_reader_test.go",
         "codec_test.go",
+        "engine_test.go",
         "file_test.go",
         "iter_test.go",
         "util_test.go",
@@ -45,7 +47,7 @@ go_test(
     ],
     embed = [":external"],
     flaky = True,
-    shard_count = 18,
+    shard_count = 19,
     deps = [
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/common",
