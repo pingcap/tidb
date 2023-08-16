@@ -60,7 +60,7 @@ func TestEnforceMPP(t *testing.T) {
 		}
 		if tblInfo.Name.L == "s" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count: 1,
+				Count:     1,
 				Available: true,
 			}
 		}
