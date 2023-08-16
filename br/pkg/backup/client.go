@@ -563,6 +563,7 @@ func BuildBackupRangeAndSchema(
 				zap.String("table", tableInfo.Name.O),
 			)
 
+			autoIDAccess := m.GetAutoIDAccessors(dbInfo.ID, tableInfo.ID)
 			tblVer := autoid.AllocOptionTableInfoVersion(tableInfo.Version)
 			idAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.RowIDAllocType, tblVer)
 			seqAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.SequenceType, tblVer)
@@ -575,7 +576,11 @@ func BuildBackupRangeAndSchema(
 			case tableInfo.IsView() || !utils.NeedAutoID(tableInfo):
 				// no auto ID for views or table without either rowID nor auto_increment ID.
 			default:
-				globalAutoID, err = idAlloc.NextGlobalAutoID()
+				if tableInfo.SepAutoInc() {
+					globalAutoID, err = autoIDAccess.IncrementID(tableInfo.Version).Get()
+				} else {
+					globalAutoID, err = idAlloc.NextGlobalAutoID()
+				}
 			}
 			if err != nil {
 				return nil, nil, nil, errors.Trace(err)

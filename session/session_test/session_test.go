@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -1787,7 +1788,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		err := tk.QueryToErr(sql)
 		require.Error(t, err)
-		require.Regexp(t, "Out Of Memory Quota.*", err)
+		require.Regexp(t, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery, err)
 	}
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockWaitMax", `return(true)`))
@@ -1834,7 +1835,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
 		err = tk.QueryToErr(testcase.sql)
 		require.Error(t, err)
-		require.Regexp(t, "Out Of Memory Quota.*", err)
+		require.Regexp(t, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery, err)
 		se.Close()
 	}
 }
@@ -4138,4 +4139,64 @@ func TestSQLModeOp(t *testing.T) {
 
 	a = mysql.SetSQLMode(s, mysql.ModeAllowInvalidDates)
 	require.Equal(t, mysql.ModeNoBackslashEscapes|mysql.ModeOnlyFullGroupBy|mysql.ModeAllowInvalidDates, a)
+}
+
+func TestPrepareExecuteWithSQLHints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	se.SetConnectionID(1)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key)")
+
+	type hintCheck struct {
+		hint  string
+		check func(*stmtctx.StmtHints)
+	}
+
+	hintChecks := []hintCheck{
+		{
+			hint: "MEMORY_QUOTA(1024 MB)",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasMemQuotaHint)
+				require.Equal(t, int64(1024*1024*1024), stmtHint.MemQuotaQuery)
+			},
+		},
+		{
+			hint: "READ_CONSISTENT_REPLICA()",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasReplicaReadHint)
+				require.Equal(t, byte(kv.ReplicaReadFollower), stmtHint.ReplicaRead)
+			},
+		},
+		{
+			hint: "MAX_EXECUTION_TIME(1000)",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasMaxExecutionTime)
+				require.Equal(t, uint64(1000), stmtHint.MaxExecutionTime)
+			},
+		},
+		{
+			hint: "USE_TOJA(TRUE)",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasAllowInSubqToJoinAndAggHint)
+				require.True(t, stmtHint.AllowInSubqToJoinAndAgg)
+			},
+		},
+	}
+
+	for i, check := range hintChecks {
+		// common path
+		tk.MustExec(fmt.Sprintf("prepare stmt%d from 'select /*+ %s */ * from t'", i, check.hint))
+		for j := 0; j < 10; j++ {
+			tk.MustQuery(fmt.Sprintf("execute stmt%d", i))
+			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
+		}
+		// fast path
+		tk.MustExec(fmt.Sprintf("prepare fast%d from 'select /*+ %s */ * from t where a = 1'", i, check.hint))
+		for j := 0; j < 10; j++ {
+			tk.MustQuery(fmt.Sprintf("execute fast%d", i))
+			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
+		}
+	}
 }

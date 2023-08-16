@@ -1543,3 +1543,26 @@ func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
 	require.Equal(t, 2, row.Len())
 	require.Equal(t, "1", row.GetString(1))
 }
+
+func TestTiDBDowngradeTo65(t *testing.T) {
+	ctx := context.Background()
+	store, _ := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(currentBootstrapVersion)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	err = txn.Set([]byte("DDLTableVersion"), []byte("3"))
+	require.NoError(t, err)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	dom.Close()
+}

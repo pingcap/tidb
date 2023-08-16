@@ -106,6 +106,7 @@ go_library(
         "//util/hack",
         "//util/logutil",
         "//util/mathutil",
+        "//util/memory",
         "//util/mock",
         "//util/ranger",
         "//util/resourcegrouptag",

@@ -814,6 +814,14 @@ func TestIndexComment(t *testing.T) {
 	tk.MustQuery("SELECT index_comment,char_length(index_comment),COLUMN_NAME FROM information_schema.statistics WHERE table_name='t1' ORDER BY index_comment;").Check(testkit.Rows(" 0 c2", "i1 comment 10 c1"))
 }
 
+func TestIssue42400(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("show create table information_schema.ddl_jobs").CheckContain("`QUERY` text")
+	tk.MustQuery("select length(query) from information_schema.ddl_jobs;") // No error
+}
+
 func TestInfoSchemaRenameTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

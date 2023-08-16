@@ -11,6 +11,7 @@ go_test(
     deps = [
         "//config",
         "//domain",
+        "//errno",
         "//expression",
         "//kv",
         "//parser",

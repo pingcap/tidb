@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	tidbconfig "github.com/pingcap/tidb/config"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
@@ -63,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	regexprrouter "github.com/pingcap/tidb/util/regexpr-router"
 	"github.com/pingcap/tidb/util/set"
+	tikvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -204,6 +206,7 @@ type Controller struct {
 	pauser        *common.Pauser
 	backend       backend.Backend
 	tidbGlue      glue.Glue
+	pdCli         pd.Client
 
 	alterTableLock sync.Mutex
 	sysVars        map[string]string
@@ -327,6 +330,7 @@ func NewRestoreControllerWithPauser(
 	}
 
 	var backend backend.Backend
+	var pdCli pd.Client
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
 		backend = tidb.NewTiDBBackend(ctx, db, cfg.TikvImporter.OnDuplicate, errorMgr)
@@ -341,9 +345,13 @@ func NewRestoreControllerWithPauser(
 		if maxOpenFiles < 0 {
 			maxOpenFiles = math.MaxInt32
 		}
+		pdCli, err = pd.NewClientWithContext(ctx, []string{cfg.TiDB.PdAddr}, tls.ToPDSecurityOption())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 
 		if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
-			if err := tikv.CheckTiKVVersion(ctx, tls, cfg.TiDB.PdAddr, minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
+			if err := tikv.CheckTiKVVersion(ctx, tls, pdCli.GetLeaderAddr(), minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
 				if berrors.Is(err, berrors.ErrVersionMismatch) {
 					log.FromContext(ctx).Warn("TiKV version doesn't support duplicate resolution. The resolution algorithm will fall back to 'none'", zap.Error(err))
 					cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
@@ -353,6 +361,7 @@ func NewRestoreControllerWithPauser(
 			}
 		}
 
+		initGlobalConfig(tls.ToTiKVSecurityConfig())
 		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
@@ -389,6 +398,7 @@ func NewRestoreControllerWithPauser(
 		targetDBGlue: p.Glue,
 		tls:          tls,
 		backend:      backend,
+		pdCli:        pdCli,
 	}
 	preInfoGetter, err := NewPreRestoreInfoGetter(
 		cfg,
@@ -417,6 +427,7 @@ func NewRestoreControllerWithPauser(
 		checksumWorks: worker.NewPool(ctx, cfg.TiDB.ChecksumTableConcurrency, "checksum"),
 		pauser:        p.Pauser,
 		backend:       backend,
+		pdCli:         pdCli,
 		tidbGlue:      p.Glue,
 		sysVars:       defaultImportantVariables,
 		tls:           tls,
@@ -445,6 +456,9 @@ func NewRestoreControllerWithPauser(
 func (rc *Controller) Close() {
 	rc.backend.Close()
 	rc.tidbGlue.GetSQLExecutor().Close()
+	if rc.pdCli != nil {
+		rc.pdCli.Close()
+	}
 }
 
 func (rc *Controller) Run(ctx context.Context) error {
@@ -1857,7 +1871,7 @@ func (rc *Controller) fullCompact(ctx context.Context) error {
 }
 
 func (rc *Controller) doCompact(ctx context.Context, level int32) error {
-	tls := rc.tls.WithHost(rc.cfg.TiDB.PdAddr)
+	tls := rc.tls.WithHost(rc.pdCli.GetLeaderAddr())
 	return tikv.ForAllStores(
 		ctx,
 		tls,
@@ -2824,4 +2838,19 @@ func openReader(ctx context.Context, fileMeta mydump.SourceFileMeta, store stora
 		reader, err = store.Open(ctx, fileMeta.Path)
 	}
 	return
+}
+
+// check store liveness of tikv client-go requires GlobalConfig to work correctly, so we need to init it,
+// else tikv will report SSL error when tls is enabled.
+// and the SSL error seems affects normal logic of newer TiKV version, and cause the error "tikv: region is unavailable"
+// during checksum.
+// todo: DM relay on lightning physical mode too, but client-go doesn't support passing TLS data as bytes,
+func initGlobalConfig(secCfg tikvconfig.Security) {
+	if secCfg.ClusterSSLCA != "" || secCfg.ClusterSSLCert != "" {
+		conf := tidbconfig.GetGlobalConfig()
+		conf.Security.ClusterSSLCA = secCfg.ClusterSSLCA
+		conf.Security.ClusterSSLCert = secCfg.ClusterSSLCert
+		conf.Security.ClusterSSLKey = secCfg.ClusterSSLKey
+		tidbconfig.StoreGlobalConfig(conf)
+	}
 }

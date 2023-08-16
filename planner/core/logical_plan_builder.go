@@ -72,6 +72,8 @@ const (
 	TiDBMergeJoin = "tidb_smj"
 	// HintSMJ is hint enforce merge join.
 	HintSMJ = "merge_join"
+	// HintNoMergeJoin is the hint to enforce the query not to use merge join.
+	HintNoMergeJoin = "no_merge_join"
 
 	// TiDBBroadCastJoin indicates applying broadcast join by force.
 	TiDBBroadCastJoin = "tidb_bcj"
@@ -93,8 +95,16 @@ const (
 	HintINLHJ = "inl_hash_join"
 	// HintINLMJ is hint enforce index nested loop merge join.
 	HintINLMJ = "inl_merge_join"
+	// HintNoIndexJoin is the hint to enforce the query not to use index join.
+	HintNoIndexJoin = "no_index_join"
+	// HintNoIndexHashJoin is the hint to enforce the query not to use index hash join.
+	HintNoIndexHashJoin = "no_index_hash_join"
+	// HintNoIndexMergeJoin is the hint to enforce the query not to use index merge join.
+	HintNoIndexMergeJoin = "no_index_merge_join"
 	// TiDBHashJoin is hint enforce hash join.
 	TiDBHashJoin = "tidb_hj"
+	// HintNoHashJoin is the hint to enforce the query not to use hash join.
+	HintNoHashJoin = "no_hash_join"
 	// HintHJ is hint enforce hash join.
 	HintHJ = "hash_join"
 	// HintHashJoinBuild is hint enforce hash join's build side
@@ -591,49 +601,129 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 
 	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
 	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
-	if hintInfo.ifPreferMergeJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferMergeJoin(lhsAlias) {
 		p.preferJoinType |= preferMergeJoin
+		p.leftPreferJoinType |= preferMergeJoin
 	}
-	if hintInfo.ifPreferBroadcastJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferMergeJoin(rhsAlias) {
+		p.preferJoinType |= preferMergeJoin
+		p.rightPreferJoinType |= preferMergeJoin
+	}
+	if hintInfo.ifPreferNoMergeJoin(lhsAlias) {
+		p.preferJoinType |= preferNoMergeJoin
+		p.leftPreferJoinType |= preferNoMergeJoin
+	}
+	if hintInfo.ifPreferNoMergeJoin(rhsAlias) {
+		p.preferJoinType |= preferNoMergeJoin
+		p.rightPreferJoinType |= preferNoMergeJoin
+	}
+	if hintInfo.ifPreferBroadcastJoin(lhsAlias) {
 		p.preferJoinType |= preferBCJoin
+		p.leftPreferJoinType |= preferBCJoin
 	}
-	if hintInfo.ifPreferShuffleJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferBroadcastJoin(rhsAlias) {
+		p.preferJoinType |= preferBCJoin
+		p.rightPreferJoinType |= preferBCJoin
+	}
+	if hintInfo.ifPreferShuffleJoin(lhsAlias) {
 		p.preferJoinType |= preferShuffleJoin
+		p.leftPreferJoinType |= preferShuffleJoin
 	}
-	if hintInfo.ifPreferHashJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferShuffleJoin(rhsAlias) {
+		p.preferJoinType |= preferShuffleJoin
+		p.rightPreferJoinType |= preferShuffleJoin
+	}
+	if hintInfo.ifPreferHashJoin(lhsAlias) {
 		p.preferJoinType |= preferHashJoin
+		p.leftPreferJoinType |= preferHashJoin
+	}
+	if hintInfo.ifPreferHashJoin(rhsAlias) {
+		p.preferJoinType |= preferHashJoin
+		p.rightPreferJoinType |= preferHashJoin
+	}
+	if hintInfo.ifPreferNoHashJoin(lhsAlias) {
+		p.preferJoinType |= preferNoHashJoin
+		p.leftPreferJoinType |= preferNoHashJoin
+	}
+	if hintInfo.ifPreferNoHashJoin(rhsAlias) {
+		p.preferJoinType |= preferNoHashJoin
+		p.rightPreferJoinType |= preferNoHashJoin
 	}
 	if hintInfo.ifPreferINLJ(lhsAlias) {
 		p.preferJoinType |= preferLeftAsINLJInner
+		p.leftPreferJoinType |= preferINLJ
 	}
 	if hintInfo.ifPreferINLJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLJInner
+		p.rightPreferJoinType |= preferINLJ
 	}
 	if hintInfo.ifPreferINLHJ(lhsAlias) {
 		p.preferJoinType |= preferLeftAsINLHJInner
+		p.leftPreferJoinType |= preferINLHJ
 	}
 	if hintInfo.ifPreferINLHJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLHJInner
+		p.rightPreferJoinType |= preferINLHJ
 	}
 	if hintInfo.ifPreferINLMJ(lhsAlias) {
 		p.preferJoinType |= preferLeftAsINLMJInner
+		p.leftPreferJoinType |= preferINLMJ
 	}
 	if hintInfo.ifPreferINLMJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLMJInner
+		p.rightPreferJoinType |= preferINLMJ
+	}
+	if hintInfo.ifPreferNoIndexJoin(lhsAlias) {
+		p.preferJoinType |= preferNoIndexJoin
+		p.leftPreferJoinType |= preferNoIndexJoin
+	}
+	if hintInfo.ifPreferNoIndexJoin(rhsAlias) {
+		p.preferJoinType |= preferNoIndexJoin
+		p.rightPreferJoinType |= preferNoIndexJoin
+	}
+	if hintInfo.ifPreferNoIndexHashJoin(lhsAlias) {
+		p.preferJoinType |= preferNoIndexHashJoin
+		p.leftPreferJoinType |= preferNoIndexHashJoin
+	}
+	if hintInfo.ifPreferNoIndexHashJoin(rhsAlias) {
+		p.preferJoinType |= preferNoIndexHashJoin
+		p.rightPreferJoinType |= preferNoIndexHashJoin
+	}
+	if hintInfo.ifPreferNoIndexMergeJoin(lhsAlias) {
+		p.preferJoinType |= preferNoIndexMergeJoin
+		p.leftPreferJoinType |= preferNoIndexMergeJoin
+	}
+	if hintInfo.ifPreferNoIndexMergeJoin(rhsAlias) {
+		p.preferJoinType |= preferNoIndexMergeJoin
+		p.rightPreferJoinType |= preferNoIndexMergeJoin
 	}
 	if hintInfo.ifPreferHJBuild(lhsAlias) {
 		p.preferJoinType |= preferLeftAsHJBuild
+		p.leftPreferJoinType |= preferHJBuild
 	}
 	if hintInfo.ifPreferHJBuild(rhsAlias) {
 		p.preferJoinType |= preferRightAsHJBuild
+		p.rightPreferJoinType |= preferHJBuild
 	}
 	if hintInfo.ifPreferHJProbe(lhsAlias) {
 		p.preferJoinType |= preferLeftAsHJProbe
+		p.leftPreferJoinType |= preferHJProbe
 	}
 	if hintInfo.ifPreferHJProbe(rhsAlias) {
 		p.preferJoinType |= preferRightAsHJProbe
+		p.rightPreferJoinType |= preferHJProbe
 	}
-	if containDifferentJoinTypes(p.preferJoinType) {
+	hasConflict := false
+	if !p.ctx.GetSessionVars().EnableAdvancedJoinHint || p.ctx.GetSessionVars().StmtCtx.StraightJoinOrder {
+		if containDifferentJoinTypes(p.preferJoinType) {
+			hasConflict = true
+		}
+	} else if p.ctx.GetSessionVars().EnableAdvancedJoinHint {
+		if containDifferentJoinTypes(p.leftPreferJoinType) || containDifferentJoinTypes(p.rightPreferJoinType) {
+			hasConflict = true
+		}
+	}
+	if hasConflict {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
@@ -647,6 +737,75 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if p.preferJoinType != 0 || p.preferJoinOrder {
 		p.hintInfo = hintInfo
 	}
+}
+
+// setPreferredJoinType4PhysicalOp generates hint information for the logicalJoin based on the hint information of its left and right children.
+// This information is used for selecting the physical operator.
+func (p *LogicalJoin) setPreferredJoinType4PhysicalOp() {
+	leftHintInfo := p.leftPreferJoinType
+	rightHintInfo := p.rightPreferJoinType
+	if leftHintInfo == 0 && rightHintInfo == 0 {
+		return
+	}
+	if leftHintInfo != 0 && rightHintInfo != 0 && leftHintInfo != rightHintInfo {
+		// The hint information on the left and right child nodes is different. It causes the conflict.
+		errMsg := "Join hints conflict after join reorder phase, you can only specify one type of join"
+		warning := ErrInternal.GenWithStack(errMsg)
+		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		p.preferJoinType = 0
+	} else {
+		if leftHintInfo != 0 {
+			p.preferJoinType = leftHintInfo
+		} else {
+			p.preferJoinType = rightHintInfo
+		}
+		preferJoinType := uint(0)
+		// Some implementations of physical operators are dependent on the direction,
+		// and adjustments need to be made based on the direction.
+		switch p.preferJoinType {
+		case preferINLJ:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLJInner
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferRightAsINLJInner
+			}
+		case preferINLHJ:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLHJInner
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLHJInner
+			}
+		case preferINLMJ:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLMJInner
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLMJInner
+			}
+		case preferHJBuild:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsHJBuild
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferLeftAsHJBuild
+			}
+		case preferHJProbe:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsHJProbe
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferLeftAsHJProbe
+			}
+		default:
+			preferJoinType = p.preferJoinType
+		}
+		p.preferJoinType = preferJoinType
+	}
+	// Clear information from left and right child nodes to prevent multiple calls to this function.
+	p.leftPreferJoinType = 0
+	p.rightPreferJoinType = 0
 }
 
 func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
@@ -3579,6 +3738,8 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
 	var (
 		sortMergeTables, inljTables, inlhjTables, inlmjTables, hashJoinTables, bcTables []hintTableInfo
+		noIndexJoinTables, noIndexHashJoinTables, noIndexMergeJoinTables                []hintTableInfo
+		noHashJoinTables, noMergeJoinTables                                             []hintTableInfo
 		shuffleJoinTables                                                               []hintTableInfo
 		indexHintList, indexMergeHintList                                               []indexHintInfo
 		tiflashTables, tikvTables                                                       []hintTableInfo
@@ -3593,7 +3754,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
 		switch hint.HintName.L {
-		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
+		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ, HintNoHashJoin, HintNoMergeJoin,
 			TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge, HintLeading:
 			if len(hint.Tables) == 0 {
 				b.pushHintWithoutTableWarning(hint)
@@ -3616,6 +3777,16 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			inlmjTables = append(inlmjTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case TiDBHashJoin, HintHJ:
 			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+		case HintNoHashJoin:
+			noHashJoinTables = append(noHashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+		case HintNoMergeJoin:
+			noMergeJoinTables = append(noMergeJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+		case HintNoIndexJoin:
+			noIndexJoinTables = append(noIndexJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+		case HintNoIndexHashJoin:
+			noIndexHashJoinTables = append(noIndexHashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+		case HintNoIndexMergeJoin:
+			noIndexMergeJoinTables = append(noIndexMergeJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case HintMPP1PhaseAgg:
 			aggHints.preferAggType |= preferMPP1PhaseAgg
 		case HintMPP2PhaseAgg:
@@ -3725,7 +3896,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		broadcastJoinTables:       bcTables,
 		shuffleJoinTables:         shuffleJoinTables,
 		indexNestedLoopJoinTables: indexNestedLoopJoinTables{inljTables, inlhjTables, inlmjTables},
+		noIndexJoinTables:         indexNestedLoopJoinTables{noIndexJoinTables, noIndexHashJoinTables, noIndexMergeJoinTables},
 		hashJoinTables:            hashJoinTables,
+		noHashJoinTables:          noHashJoinTables,
+		noMergeJoinTables:         noMergeJoinTables,
 		indexHintList:             indexHintList,
 		tiflashTables:             tiflashTables,
 		tikvTables:                tikvTables,
@@ -4642,6 +4816,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 	ds.handleCols = handleCols
+	ds.unMutableHandleCols = handleCols
 	handleMap := make(map[int64][]HandleCols)
 	handleMap[tableInfo.ID] = []HandleCols{handleCols}
 	b.handleHelper.pushMap(handleMap)
@@ -6940,6 +7115,12 @@ func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 // containDifferentJoinTypes checks whether `preferJoinType` contains different
 // join types.
 func containDifferentJoinTypes(preferJoinType uint) bool {
+	preferJoinType &= ^preferNoHashJoin
+	preferJoinType &= ^preferNoMergeJoin
+	preferJoinType &= ^preferNoIndexJoin
+	preferJoinType &= ^preferNoIndexHashJoin
+	preferJoinType &= ^preferNoIndexMergeJoin
+
 	inlMask := preferRightAsINLJInner ^ preferLeftAsINLJInner
 	inlhjMask := preferRightAsINLHJInner ^ preferLeftAsINLHJInner
 	inlmjMask := preferRightAsINLMJInner ^ preferLeftAsINLMJInner

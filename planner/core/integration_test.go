@@ -138,8 +138,8 @@ func TestAggPushDownLeftJoin(t *testing.T) {
 		"on c_custkey = o_custkey group by c_custkey").Check(testkit.Rows("6 0"))
 	tk.MustQuery("explain format='brief' select c_custkey, count(o_orderkey) as c_count from customer left outer join orders " +
 		"on c_custkey = o_custkey group by c_custkey").Check(testkit.Rows(
-		"Projection 10000.00 root  test.customer.c_custkey, Column#7",
-		"└─Projection 10000.00 root  if(isnull(Column#8), 0, 1)->Column#7, test.customer.c_custkey",
+		"Projection 8000.00 root  test.customer.c_custkey, Column#7",
+		"└─HashAgg 8000.00 root  group by:test.customer.c_custkey, funcs:count(Column#8)->Column#7, funcs:firstrow(test.customer.c_custkey)->test.customer.c_custkey",
 		"  └─HashJoin 10000.00 root  left outer join, equal:[eq(test.customer.c_custkey, test.orders.o_custkey)]",
 		"    ├─HashAgg(Build) 8000.00 root  group by:test.orders.o_custkey, funcs:count(Column#9)->Column#8, funcs:firstrow(test.orders.o_custkey)->test.orders.o_custkey",
 		"    │ └─TableReader 8000.00 root  data:HashAgg",
@@ -152,8 +152,8 @@ func TestAggPushDownLeftJoin(t *testing.T) {
 		"on c_custkey = o_custkey group by c_custkey").Check(testkit.Rows("6 0"))
 	tk.MustQuery("explain format='brief' select c_custkey, count(o_orderkey) as c_count from orders right outer join customer " +
 		"on c_custkey = o_custkey group by c_custkey").Check(testkit.Rows(
-		"Projection 10000.00 root  test.customer.c_custkey, Column#7",
-		"└─Projection 10000.00 root  if(isnull(Column#8), 0, 1)->Column#7, test.customer.c_custkey",
+		"Projection 8000.00 root  test.customer.c_custkey, Column#7",
+		"└─HashAgg 8000.00 root  group by:test.customer.c_custkey, funcs:count(Column#8)->Column#7, funcs:firstrow(test.customer.c_custkey)->test.customer.c_custkey",
 		"  └─HashJoin 10000.00 root  right outer join, equal:[eq(test.orders.o_custkey, test.customer.c_custkey)]",
 		"    ├─HashAgg(Build) 8000.00 root  group by:test.orders.o_custkey, funcs:count(Column#9)->Column#8, funcs:firstrow(test.orders.o_custkey)->test.orders.o_custkey",
 		"    │ └─TableReader 8000.00 root  data:HashAgg",
@@ -1371,6 +1371,24 @@ func TestKeepOrderHint(t *testing.T) {
 		res.Check(testkit.Rows(output[i].Plan...))
 		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 	}
+}
+
+func TestSplitJoinHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t(a int, b int, index idx_a(a), index idx_b(b));`)
+
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
+	tk.MustExec("select /*+ hash_join(t1) merge_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.a=t3.a")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Join hints are conflict, you can only specify one type of join"))
+
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=1`)
+	tk.MustExec("select /*+ hash_join(t1) merge_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.a=t3.a")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join"))
+
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 }
 
 func TestKeepOrderHintWithBinding(t *testing.T) {
@@ -8373,4 +8391,33 @@ func TestIssue43645(t *testing.T) {
 
 	rs := tk.MustQuery("WITH tmp AS (SELECT t2.* FROM t2) select (SELECT tmp.col1 FROM tmp WHERE tmp.id=t1.id ) col1, (SELECT tmp.col2 FROM tmp WHERE tmp.id=t1.id ) col2, (SELECT tmp.col3 FROM tmp WHERE tmp.id=t1.id ) col3 from t1;")
 	rs.Sort().Check(testkit.Rows("a aa aaa", "b bb bbb", "c cc ccc"))
+}
+
+func TestIssue45033(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3, t4;")
+	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, primary key(c1, c2));")
+	tk.MustExec("create table t2 (c2 int, c1 int, primary key(c2, c1));")
+	tk.MustExec("create table t3 (c4 int, key(c4));")
+	tk.MustExec("create table t4 (c2 varchar(20) , test_col varchar(50), gen_col varchar(50) generated always as(concat(test_col,'')) virtual not null, unique key(gen_col));")
+	tk.MustQuery(`select count(1)
+				 from   (select ( case
+				                    when count(1)
+				                           over(
+				                             partition by a.c2) >= 50 then 1
+				                    else 0
+				                  end ) alias1,
+				                b.c2    as alias_col1
+				         from   t1 a
+				                left join (select c2
+				                           from   t4 f) k
+				                       on k.c2 = a.c2
+				                inner join t2 b
+				                        on b.c1 = a.c3) alias2
+				 where  exists (select 1
+				                from   (select distinct alias3.c4 as c2
+				                        from   t3 alias3) alias4
+				                where  alias4.c2 = alias2.alias_col1);`).Check(testkit.Rows("0"))
 }
