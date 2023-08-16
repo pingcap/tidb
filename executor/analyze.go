@@ -89,7 +89,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	var tasks []*analyzeTask
 	tids := make([]int64, 0)
-	skipedTables := make([]string, 0)
+	skippedTables := make([]string, 0)
 	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
 	for _, task := range e.tasks {
 		var tableID statistics.AnalyzeTableID
@@ -124,15 +124,15 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				if !ok {
 					return nil
 				}
-				skipedTables = append(skipedTables, tbl.Meta().Name.L)
+				skippedTables = append(skippedTables, tbl.Meta().Name.L)
 			}
 			tids = append(tids, tableID.TableID)
 		}
 	}
 
-	if len(skipedTables) > 0 {
-		tables := skipedTables[0]
-		for i, table := range skipedTables {
+	if len(skippedTables) > 0 {
+		tables := skippedTables[0]
+		for i, table := range skippedTables {
 			if i == 0 {
 				continue
 			}
@@ -140,7 +140,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		}
 		var msg string
 		if len(tids) > 1 {
-			if len(tids) > len(skipedTables) {
+			if len(tids) > len(skippedTables) {
 				msg = "skip analyze locked tables: " + tables + ", other tables will be analyzed"
 			} else {
 				msg = "skip analyze locked tables: " + tables
