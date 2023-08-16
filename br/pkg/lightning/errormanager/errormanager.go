@@ -637,9 +637,15 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					}
 				}
 			}
+			if err := rows.Err(); err != nil {
+				return errors.Trace(err)
+			}
 			if err := rows.Close(); err != nil {
 				return errors.Trace(err)
 			}
+		}
+		if err := rawKeyRows.Err(); err != nil {
+			return errors.Trace(err)
 		}
 		if err := rawKeyRows.Close(); err != nil {
 			return errors.Trace(err)
