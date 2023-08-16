@@ -89,26 +89,17 @@ func getGlobalAutoIDAlloc(store kv.Storage, dbID int64, tblInfo *model.TableInfo
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
 	hasAutoRandID := tblInfo.ContainsAutoRandomBits()
 
-	// Before MySQL compatible AUTO_INCREMENT, TiDB has some limitations:
+	// Current TiDB has some limitations for auto ID.
 	// 1. Auto increment ID and auto row ID are using the same RowID allocator.
 	//    See https://github.com/pingcap/tidb/issues/982.
 	// 2. Auto random column must be a clustered primary key. That is to say,
 	//    there is no implicit row ID for tables with auto random column.
 	// 3. There is at most one auto column in a table.
 	// Therefore, we assume there is only one auto column in a table and use RowID allocator if possible.
-	//
-	// If AUTO_ID_CACHE=1 is set (i.e. MySQL compatible AUTO_INCREMENT), the limitations do not hold anymore.
 	switch {
-	case hasRowID:
+	case hasRowID || hasAutoIncID:
 		return autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(),
 			autoid.RowIDAllocType, noCache, tblVer), nil
-	case hasAutoIncID:
-		allocType := autoid.RowIDAllocType
-		if tblInfo.SepAutoInc() {
-			allocType = autoid.AutoIncrementType
-		}
-		return autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(),
-			allocType, noCache, tblVer), nil
 	case hasAutoRandID:
 		return autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(),
 			autoid.AutoRandomType, noCache, tblVer), nil
