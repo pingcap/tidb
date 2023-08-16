@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/oracle/oracles"
@@ -52,20 +51,21 @@ import (
 
 type mockGCWorkerLockResolver struct {
 	tikvStore         tikv.Storage
-	scanLocks         func(key []byte, regionID uint64) []*txnlock.Lock
-	batchResolveLocks func(locks []*txnlock.Lock, regionID tikv.RegionVerID) (ok bool, err error)
+	scanLocks         func([]byte) ([]*txnlock.Lock, *tikv.KeyLocation)
+	batchResolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
 }
 
-func (l *mockGCWorkerLockResolver) ScanLocks(key []byte, regionID uint64) []*txnlock.Lock {
-	return l.scanLocks(key, regionID)
+func (l *mockGCWorkerLockResolver) ScanLocks(ctx context.Context, key []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+	locks, loc := l.scanLocks(key)
+	return locks, loc, nil
+
 }
 
-func (l *mockGCWorkerLockResolver) ResolveLocks(bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID) (bool, error) {
+func (l *mockGCWorkerLockResolver) ResolveLocks(ctx context.Context, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
 	return l.batchResolveLocks(locks, loc)
 }
 
 func (l *mockGCWorkerLockResolver) GetStore() tikv.Storage {
-	// no use in test
 	return l.tikvStore
 }
 
@@ -1031,13 +1031,11 @@ func TestResolveLockRangeInfine(t *testing.T) {
 	s := createGCWorkerSuite(t)
 
 	require.NoError(t, failpoint.Enable("tikvclient/invalidCacheAndRetry", "return(true)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/gcutil/setGcResolveMaxBackoff", "return(1)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("tikvclient/invalidCacheAndRetry"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/gcutil/setGcResolveMaxBackoff"))
 	}()
 
-	_, err := gcutil.ResolveLocksForRange(gcContext(), s.gcWorker.uuid, s.gcWorker.lockResolver, 1, []byte{0}, []byte{1})
+	_, err := tikv.ResolveLocksForRange(gcContext(), s.gcWorker.uuid, s.gcWorker.lockResolver, 1, []byte{0}, []byte{1})
 	require.Error(t, err)
 }
 
@@ -1082,27 +1080,29 @@ func TestResolveLockRangeMeetRegionCacheMiss(t *testing.T) {
 
 	mockLockResolver := &mockGCWorkerLockResolver{
 		tikvStore: s.tikvStore,
-		scanLocks: func(key []byte, regionID uint64) []*txnlock.Lock {
+		scanLocks: func(key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
 			*scanCntRef++
-			return allLocks
+			return allLocks, &tikv.KeyLocation{
+				Region: tikv.NewRegionVerID(s.initRegion.regionID, 0, 0),
+			}
 		},
 		batchResolveLocks: func(
 			locks []*txnlock.Lock,
-			regionID tikv.RegionVerID,
-		) (ok bool, err error) {
+			loc *tikv.KeyLocation,
+		) (*tikv.KeyLocation, error) {
 			*resolveCntRef++
 			if *resolveCntRef == 1 {
-				s.gcWorker.tikvStore.GetRegionCache().InvalidateCachedRegion(regionID)
+				s.gcWorker.tikvStore.GetRegionCache().InvalidateCachedRegion(loc.Region)
 				// mock the region cache miss error
-				return false, nil
+				return nil, nil
 			}
-			return true, nil
+			return loc, nil
 		},
 	}
-	_, err := gcutil.ResolveLocksForRange(gcContext(), s.gcWorker.uuid, mockLockResolver, safepointTS, []byte{0}, []byte{10})
+	_, err := tikv.ResolveLocksForRange(gcContext(), s.gcWorker.uuid, mockLockResolver, safepointTS, []byte{0}, []byte{10})
 	require.NoError(t, err)
 	require.Equal(t, 2, resolveCnt)
-	require.Equal(t, 1, scanCnt)
+	require.Equal(t, 2, scanCnt)
 }
 
 func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
@@ -1128,21 +1128,29 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 
 	mockGCLockResolver := &mockGCWorkerLockResolver{
 		tikvStore: s.tikvStore,
-		scanLocks: func(key []byte, regionID uint64) []*txnlock.Lock {
-			if regionID == s.initRegion.regionID {
-				return []*txnlock.Lock{{Key: []byte("a")}, {Key: []byte("b")}}
+		scanLocks: func(key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
+			// first time scan locks
+			if bytes.Equal(key, []byte("")) {
+				return []*txnlock.Lock{{Key: []byte("a")}, {Key: []byte("b")}},
+					&tikv.KeyLocation{
+						Region: tikv.NewRegionVerID(s.initRegion.regionID, 0, 0),
+					}
 			}
-			if regionID == region2 {
-				return []*txnlock.Lock{{Key: []byte("o")}, {Key: []byte("p")}}
+			// second time scan locks
+			if bytes.Equal(key, []byte("m")) {
+				return []*txnlock.Lock{{Key: []byte("o")}, {Key: []byte("p")}},
+					&tikv.KeyLocation{
+						Region: tikv.NewRegionVerID(region2, 0, 0),
+					}
 			}
-			return []*txnlock.Lock{}
+			return []*txnlock.Lock{}, nil
 		},
 	}
 	mockGCLockResolver.batchResolveLocks = func(
 		locks []*txnlock.Lock,
-		regionID tikv.RegionVerID,
-	) (ok bool, err error) {
-		if regionID.GetID() == s.initRegion.regionID && *firstAccessRef {
+		loc *tikv.KeyLocation,
+	) (*tikv.KeyLocation, error) {
+		if loc.Region.GetID() == s.initRegion.regionID && *firstAccessRef {
 			*firstAccessRef = false
 			// merge region2 into region1 and return EpochNotMatch error.
 			mCluster := s.cluster.(*testutils.MockCluster)
@@ -1150,12 +1158,12 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 			regionMeta, _ := mCluster.GetRegion(s.initRegion.regionID)
 			_, err := s.tikvStore.GetRegionCache().OnRegionEpochNotMatch(
 				tikv.NewNoopBackoff(context.Background()),
-				&tikv.RPCContext{Region: regionID, Store: &tikv.Store{}},
+				&tikv.RPCContext{Region: loc.Region, Store: &tikv.Store{}},
 				[]*metapb.Region{regionMeta})
 			require.NoError(t, err)
 			// also let region1 contains all 4 locks
-			mockGCLockResolver.scanLocks = func(key []byte, regionID uint64) []*txnlock.Lock {
-				if regionID == s.initRegion.regionID {
+			mockGCLockResolver.scanLocks = func(key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
+				if bytes.Equal(key, []byte("")) {
 					locks := []*txnlock.Lock{
 						{Key: []byte("a")},
 						{Key: []byte("b")},
@@ -1164,20 +1172,20 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 					}
 					for i, lock := range locks {
 						if bytes.Compare(key, lock.Key) <= 0 {
-							return locks[i:]
+							return locks[i:], &tikv.KeyLocation{Region: tikv.NewRegionVerID(s.initRegion.regionID, 0, 0)}
 						}
 					}
 				}
-				return []*txnlock.Lock{}
+				return []*txnlock.Lock{}, nil
 			}
-			return false, nil
+			return nil, nil
 		}
 		for _, lock := range locks {
 			resolvedLock = append(resolvedLock, lock.Key)
 		}
-		return true, nil
+		return loc, nil
 	}
-	_, err := gcutil.ResolveLocksForRange(gcContext(), s.gcWorker.uuid, mockGCLockResolver, 1, []byte(""), []byte("z"))
+	_, err := tikv.ResolveLocksForRange(gcContext(), s.gcWorker.uuid, mockGCLockResolver, 1, []byte(""), []byte("z"))
 	require.NoError(t, err)
 	require.Len(t, resolvedLock, 4)
 	expects := [][]byte{[]byte("a"), []byte("b"), []byte("o"), []byte("p")}
