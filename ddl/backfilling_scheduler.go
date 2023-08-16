@@ -451,7 +451,13 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 	defer util.Recover(metrics.LabelDDL, "ingestWorker.HandleTask", func() {
 		w.resultCh <- &backfillResult{taskID: rs.id, err: dbterror.ErrReorgPanic}
 	}, false)
-	defer w.copReqSenderPool.recycleChunk(rs.chunk)
+	defer func() {
+		if w.copReqSenderPool != nil {
+			w.copReqSenderPool.recycleChunk(rs.chunk)
+		} else {
+			w.tableScan.recycleChunk(rs.chunk)
+		}
+	}()
 	result := &backfillResult{
 		taskID: rs.id,
 		err:    rs.err,

@@ -1620,6 +1620,9 @@ type addIndexIngestWorker struct {
 	resultCh   chan *backfillResult
 	jobID      int64
 	distribute bool
+
+	// for operator
+	tableScan *tableScanOperator
 }
 
 func newAddIndexIngestWorker(ctx context.Context, t table.PhysicalTable, d *ddlCtx, ei ingest.Engine,
@@ -1653,7 +1656,13 @@ func newAddIndexIngestWorker(ctx context.Context, t table.PhysicalTable, d *ddlC
 // WriteLocal will write index records to lightning engine.
 func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey kv.Key, err error) {
 	oprStartTime := time.Now()
-	copCtx := w.copReqSenderPool.copCtx
+	var copCtx *copContext
+	if w.copReqSenderPool != nil {
+		copCtx = w.copReqSenderPool.copCtx
+	} else {
+		copCtx = w.tableScan.copCtx
+	}
+
 	vars := w.sessCtx.GetSessionVars()
 	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, copCtx, vars, rs.chunk)
 	if err != nil || cnt == 0 {
