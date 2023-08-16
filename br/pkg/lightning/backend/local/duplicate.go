@@ -1058,30 +1058,21 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 		err = local.errorMgr.ReplaceConflictKeys(
 			ctx, tbl, tableName, pool, decoder,
 			func(ctx context.Context, key []byte) ([]byte, error) {
-				for {
-					value, err := local.getLatestValue(ctx, logger, key)
-					if err == nil {
-						return value, nil
-					}
-					if log.IsContextCanceledError(errors.Trace(err)) {
-						return nil, errors.Trace(err)
-					}
+				// TODO: check whether need for loop to retry when encountering error
+				value, err := local.getLatestValue(ctx, logger, key)
+				if err == nil {
+					return value, nil
 				}
+				return nil, errors.Trace(err)
 			},
 			func(ctx context.Context, key []byte) error {
-				for {
-					err := local.deleteDuplicateRow(ctx, logger, key)
-					if err == nil {
-						return nil
-					}
-					logger.Debug("delete duplicate rows encounter error", zap.Error(err))
-					if log.IsContextCanceledError(err) {
-						return errors.Trace(err)
-					}
-					if err = errLimiter.Wait(ctx); err != nil {
-						return errors.Trace(err)
-					}
+				// TODO: check whether need for loop to retry when encountering error
+				err := local.deleteDuplicateRow(ctx, logger, key)
+				if err == nil {
+					return nil
 				}
+				logger.Debug("delete duplicate rows encounter error", zap.Error(err))
+				return errors.Trace(err)
 			},
 		)
 	}
@@ -1094,29 +1085,14 @@ func (local *DupeController) getLatestValue(
 	logger *log.Task,
 	key []byte,
 ) ([]byte, error) {
-	// Starts a transaction.
-	txn, err := local.tikvCli.Begin()
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err == nil {
-			err = txn.Commit(ctx)
-		} else {
-			if rollbackErr := txn.Rollback(); rollbackErr != nil {
-				logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))
-			}
-		}
-	}()
-
-	var value []byte
-	value, err = txn.Get(ctx, key)
+	snapshot := local.tikvCli.GetSnapshot(math.MaxUint64)
+	value, err := snapshot.Get(ctx, key)
 	logger.Debug("getLatestValue",
 		logutil.Key("key", key),
 		zap.Binary("value", value),
 		zap.Error(err))
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return value, nil
 }
@@ -1129,7 +1105,7 @@ func (local *DupeController) deleteDuplicateRow(
 	// Starts a Delete transaction.
 	txn, err := local.tikvCli.Begin()
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	defer func() {
 		if err == nil {
@@ -1144,7 +1120,7 @@ func (local *DupeController) deleteDuplicateRow(
 	logger.Debug("will delete key", zap.String("category", "resolve-dupe"), logutil.Key("key", key))
 	err = txn.Delete(key)
 
-	return err
+	return errors.Trace(err)
 }
 
 func (local *DupeController) deleteDuplicateRows(
@@ -1157,7 +1133,7 @@ func (local *DupeController) deleteDuplicateRows(
 	// Starts a Delete transaction.
 	txn, err := local.tikvCli.Begin()
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	defer func() {
 		if err == nil {
@@ -1189,17 +1165,17 @@ func (local *DupeController) deleteDuplicateRows(
 			logutil.Key("row", handleRow[1]))
 
 		if err := deleteKey(handleRow[0]); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 
 		handle, err := decoder.DecodeHandleFromRowKey(handleRow[0])
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 
 		err = decoder.IterRawIndexKeys(handle, handleRow[1], deleteKey)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 
