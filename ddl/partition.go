@@ -2569,6 +2569,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	ntr := rules[ntrID]
 	ptr := rules[ptrID]
 
+	// This must be a bug, nt cannot be partitioned!
 	partIDs := getPartitionIDs(nt)
 
 	var setRules []*label.Rule

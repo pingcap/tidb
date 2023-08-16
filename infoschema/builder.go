@@ -348,7 +348,8 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	b.markPartitionBundleShouldUpdate(ntID)
+	// partID is the new id for the non-partitioned table!
+	b.markTableBundleShouldUpdate(partID)
 	// Then the partitioned table, will re-read the whole table, including all partitions!
 	currDiff.TableID = ptID
 	currDiff.SchemaID = ptSchemaID
@@ -358,7 +359,8 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	b.markTableBundleShouldUpdate(ptID)
+	// ntID is the new id for the partition!
+	b.markPartitionBundleShouldUpdate(ntID)
 	err = updateAutoIDForExchangePartition(b.store, ptSchemaID, ptID, ntSchemaID, ntID)
 	if err != nil {
 		return nil, errors.Trace(err)
