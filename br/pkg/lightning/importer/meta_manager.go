@@ -1080,12 +1080,11 @@ func (noopTableMetaMgr) FinishTable(_ context.Context) error {
 }
 
 type singleTableMetaMgr struct {
+	noopTableMetaMgr
 	tr *TableImporter
 }
 
-func (*singleTableMetaMgr) InitTableMeta(_ context.Context) error {
-	return nil
-}
+var _ tableMetaMgr = &singleTableMetaMgr{}
 
 // AllocTableRowIDs allocates row id for the target table.
 // target table should be empty, we don't do checksum here.
@@ -1107,23 +1106,6 @@ func (s *singleTableMetaMgr) AllocTableRowIDs(ctx context.Context, rowIDMax int6
 		return nil, 0, errors.Trace(err)
 	}
 	return nil, newRowIDBase, nil
-}
-
-func (*singleTableMetaMgr) UpdateTableStatus(_ context.Context, _ metaStatus) error {
-	return nil
-}
-
-func (*singleTableMetaMgr) UpdateTableBaseChecksum(_ context.Context, _ *verify.KVChecksum) error {
-	return nil
-}
-
-func (*singleTableMetaMgr) CheckAndUpdateLocalChecksum(_ context.Context, _ *verify.KVChecksum, _ bool) (
-	otherHasDupe bool, needRemoteDupe bool, baseTotalChecksum *verify.KVChecksum, err error) {
-	return false, true, &verify.KVChecksum{}, nil
-}
-
-func (*singleTableMetaMgr) FinishTable(_ context.Context) error {
-	return nil
 }
 
 type singleMgrBuilder struct {

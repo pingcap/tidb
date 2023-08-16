@@ -52,7 +52,7 @@ var DefaultImportVariablesTiDB = map[string]string{
 // AllocGlobalAutoID allocs N consecutive autoIDs from TiDB.
 func AllocGlobalAutoID(ctx context.Context, n int64, store kv.Storage, dbID int64,
 	tblInfo *model.TableInfo) (autoIDBase, autoIDMax int64, err error) {
-	allocators, err := getGlobalAutoIDAlloc(store, dbID, tblInfo)
+	allocators, err := GetGlobalAutoIDAlloc(store, dbID, tblInfo)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -72,7 +72,7 @@ func AllocGlobalAutoID(ctx context.Context, n int64, store kv.Storage, dbID int6
 // RebaseGlobalAutoID rebase the autoID base to newBase.
 func RebaseGlobalAutoID(ctx context.Context, newBase int64, store kv.Storage, dbID int64,
 	tblInfo *model.TableInfo) error {
-	allocators, err := getGlobalAutoIDAlloc(store, dbID, tblInfo)
+	allocators, err := GetGlobalAutoIDAlloc(store, dbID, tblInfo)
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,9 @@ func RebaseGlobalAutoID(ctx context.Context, newBase int64, store kv.Storage, db
 	return nil
 }
 
-func getGlobalAutoIDAlloc(store kv.Storage, dbID int64, tblInfo *model.TableInfo) ([]autoid.Allocator, error) {
+// GetGlobalAutoIDAlloc returns the autoID allocators for a table.
+// export it for testing.
+func GetGlobalAutoIDAlloc(store kv.Storage, dbID int64, tblInfo *model.TableInfo) ([]autoid.Allocator, error) {
 	if store == nil {
 		return nil, errors.New("internal error: kv store should not be nil")
 	}
@@ -117,7 +119,7 @@ func getGlobalAutoIDAlloc(store kv.Storage, dbID int64, tblInfo *model.TableInfo
 	switch {
 	case hasRowID || hasAutoIncID:
 		allocators := make([]autoid.Allocator, 0, 2)
-		if tblInfo.SepAutoInc() {
+		if tblInfo.SepAutoInc() && hasAutoIncID {
 			allocators = append(allocators, autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(),
 				autoid.AutoIncrementType, noCache, tblVer))
 		}
