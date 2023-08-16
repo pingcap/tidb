@@ -94,7 +94,9 @@ func NewWriterBuilder() *WriterBuilder {
 	}
 }
 
-// SetMemorySizeLimit sets the memory size limit of the writer.
+// SetMemorySizeLimit sets the memory size limit of the writer. When accumulated
+// data size exceeds this limit, the writer will flush data as a file to external
+// storage.
 func (b *WriterBuilder) SetMemorySizeLimit(size uint64) *WriterBuilder {
 	b.memSizeLimit = size
 	return b

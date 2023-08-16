@@ -18,6 +18,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -96,4 +98,29 @@ func TestSeekPropsOffsets(t *testing.T) {
 	got, err = seekPropsOffsets(ctx, []byte("key999"), []string{file1, file2}, store)
 	require.NoError(t, err)
 	require.Equal(t, []uint64{50, 40}, got)
+}
+
+func TestGetAllFileNames(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemStorage()
+	w := NewWriterBuilder().
+		SetMemorySizeLimit(20).
+		SetPropSizeDistance(5).
+		SetPropKeysDistance(3).
+		Build(store, 0, "/subtask/prefix")
+	kvPairs := make([]common.KvPair, 0, 100)
+	for i := 0; i < 100; i++ {
+		kvPairs = append(kvPairs, common.KvPair{
+			Key: []byte{byte(i)},
+			Val: []byte{byte(i)},
+		})
+	}
+	err := w.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
+	require.NoError(t, err)
+	_, err = w.Close(ctx)
+	require.NoError(t, err)
+
+	fileHandle, statFiles, err := GetAllFileNames(ctx, store, "/subtask")
+	require.Equal(t, []string{"/prefix/0"}, statFiles)
+	_ = fileHandle
 }
