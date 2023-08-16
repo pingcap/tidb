@@ -730,6 +730,9 @@ const (
 	// The variable name in mysql.tidb table and it records the default value of
 	// oom-action when upgrade from v3.0.x to v4.0.11+.
 	tidbDefOOMAction = "default_oom_action"
+
+	TiDBStatsGCLastTS        = "tidb_stats_gc_last_stats"
+	TiDBStatsGCLastTSComment = "the previous gc timestamp for statistics"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -975,6 +978,10 @@ const (
 	//   create table `mysql.tidb_runaway_watch` and table `mysql.tidb_runaway_watch_done`
 	//   to persist runaway watch and deletion of runaway watch at 7.3.
 	version172 = 172
+	// version 173
+	//   add new `variable tidb_analyze_last_gc_point` to mysql.tidb
+	//   used for reduce the pressure the statistics's GC jobs.
+	version173 = 173
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -1120,6 +1127,7 @@ var (
 		upgradeToVer170,
 		upgradeToVer171,
 		upgradeToVer172,
+		upgradeToVer173,
 	}
 )
 
@@ -2787,6 +2795,14 @@ func upgradeToVer172(s Session, ver int64) {
 	mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_quarantined_watch")
 	mustExecute(s, CreateRunawayWatchTable)
 	mustExecute(s, CreateDoneRunawayWatchTable)
+}
+
+func upgradeToVer173(s Session, ver int64) {
+	if ver >= version173 {
+		return
+	}
+	mustExecute(s, "INSERT HIGH_PRIORITY INTO %n.%n VALUES(%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE = %?",
+		mysql.SystemDB, mysql.TiDBTable, TiDBStatsGCLastTS, 0, TiDBStatsGCLastTSComment)
 }
 
 func writeOOMAction(s Session) {
