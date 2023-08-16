@@ -271,15 +271,6 @@ const (
 		UNIQUE KEY delete_range_done_index (job_id, element_id)
 	);`
 
-	// CreateStatsFeedbackTable stores the feedback info which is used to update stats.
-	CreateStatsFeedbackTable = `CREATE TABLE IF NOT EXISTS mysql.stats_feedback (
-		table_id 	BIGINT(64) NOT NULL,
-		is_index 	TINYINT(2) NOT NULL,
-		hist_id 	BIGINT(64) NOT NULL,
-		feedback 	BLOB NOT NULL,
-		INDEX hist(table_id, is_index, hist_id)
-	);`
-
 	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache.
 	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
 		original_sql TEXT NOT NULL,
@@ -1601,7 +1592,7 @@ func upgradeToVer20(s Session, ver int64) {
 	if ver >= version20 {
 		return
 	}
-	doReentrantDDL(s, CreateStatsFeedbackTable)
+	// TODO: What should we do here?
 }
 
 func upgradeToVer21(s Session, ver int64) {
@@ -2847,8 +2838,6 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGCDeleteRangeTable)
 	// Create gc_delete_range_done table.
 	mustExecute(s, CreateGCDeleteRangeDoneTable)
-	// Create stats_feedback table.
-	mustExecute(s, CreateStatsFeedbackTable)
 	// Create role_edges table.
 	mustExecute(s, CreateRoleEdgesTable)
 	// Create default_roles table.

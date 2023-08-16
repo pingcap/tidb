@@ -3438,17 +3438,6 @@ func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIn
 	return idxHash
 }
 
-// containsLimit tests if the execs contains Limit because we do not know whether `Limit` has consumed all of its' source,
-// so the feedback may not be accurate.
-func containsLimit(execs []*tipb.Executor) bool {
-	for _, exec := range execs {
-		if exec.Limit != nil {
-			return true
-		}
-	}
-	return false
-}
-
 func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableReader) (*TableReaderExecutor, error) {
 	tablePlans := v.TablePlans
 	if v.StoreType == kv.TiFlash {
@@ -5297,13 +5286,6 @@ func isCommonHandleRead(tbl *model.TableInfo, idx *model.IndexInfo) bool {
 
 func getPhysicalTableID(t table.Table) int64 {
 	if p, ok := t.(table.PhysicalTable); ok {
-		return p.GetPhysicalID()
-	}
-	return t.Meta().ID
-}
-
-func getFeedbackStatsTableID(ctx sessionctx.Context, t table.Table) int64 {
-	if p, ok := t.(table.PhysicalTable); ok && !ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return p.GetPhysicalID()
 	}
 	return t.Meta().ID

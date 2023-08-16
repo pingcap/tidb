@@ -900,7 +900,6 @@ func (e *IndexMergeReaderExecutor) Close() error {
 	e.processWorkerWg.Wait()
 	e.finished = nil
 	e.workerStarted = false
-	// TODO: how to store e.feedbacks
 	return nil
 }
 

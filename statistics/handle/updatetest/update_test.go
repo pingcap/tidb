@@ -706,14 +706,6 @@ func TestUpdatePartitionErrorRate(t *testing.T) {
 	is := dom.InfoSchema()
 	h.SetLease(0)
 	require.NoError(t, h.Update(is))
-	oriMinLogCount := handle.MinLogScanCount.Load()
-	oriErrorRate := handle.MinLogErrorRate.Load()
-	defer func() {
-		handle.MinLogScanCount.Store(oriMinLogCount)
-		handle.MinLogErrorRate.Store(oriErrorRate)
-	}()
-	handle.MinLogScanCount.Store(0)
-	handle.MinLogErrorRate.Store(0)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -751,7 +743,6 @@ func TestUpdatePartitionErrorRate(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	tbl = h.GetPartitionStats(tblInfo, pid)
 
-	// Feedback will not take effect under partition table.
 	require.True(t, tbl.Columns[aID].NotAccurate())
 }
 

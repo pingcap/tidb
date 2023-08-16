@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -173,7 +172,7 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64, colSi
 	s.mapper.update(id, delta, count, colSize)
 }
 
-// ClearForTest clears the mapper and feedback for test.
+// ClearForTest clears the mapper for test.
 func (s *SessionStatsCollector) ClearForTest() {
 	s.Lock()
 	defer s.Unlock()
@@ -183,13 +182,6 @@ func (s *SessionStatsCollector) ClearForTest() {
 	s.next = nil
 	s.deleted = false
 }
-
-var (
-	// MinLogScanCount is the minimum scan count for a feedback to be logged.
-	MinLogScanCount = atomic.NewInt64(1000)
-	// MinLogErrorRate is the minimum error rate for a feedback to be logged.
-	MinLogErrorRate = atomic.NewFloat64(0.5)
-)
 
 // UpdateColStatsUsage updates the last time when the column stats are used(needed).
 func (s *SessionStatsCollector) UpdateColStatsUsage(colMap colStatsUsageMap) {
@@ -422,7 +414,7 @@ func (h *Handle) sweepList() {
 	prev.Lock()
 	for curr := prev.next; curr != nil; curr = curr.next {
 		curr.Lock()
-		// Merge the session stats into deltaMap, errorRateMap and feedback respectively.
+		// Merge the session stats into deltaMap, errorRateMap respectively.
 		merge(curr, deltaMap, errorRateMap, colMap)
 		if curr.deleted {
 			prev.next = curr.next
