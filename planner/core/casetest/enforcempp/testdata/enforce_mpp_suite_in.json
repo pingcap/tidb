@@ -21,7 +21,8 @@
       "set @@tidb_enforce_mpp=1;",
       "explain format='verbose' select count(*) from t where a=1",
       "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
-      "explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1"
+      "explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1",
+      "explain select  /*+ READ_FROM_STORAGE(TIFLASH[s]) */ a from s where a = 10 and b is null; -- index path huristic rule will prune tiflash path"
     ]
   },
   {
@@ -216,7 +217,8 @@
       "explain format = 'brief' SELECT year, country, product, SUM(profit) AS profit FROM sales GROUP BY year, country, product with rollup order by grouping(year); -- 12. grouping function in order by clause",
       "explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(country); -- 13. 12 under gpos case",
       "explain format = 'brief' SELECT year, country, product, SUM(profit) AS profit FROM sales GROUP BY year, country, product with rollup having grouping(year) > 0 order by grouping(year); -- 14. grouping function in having clause",
-      "explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup having grouping(country) > 0 order by grouping(country); -- 15. 14 under gpos case"
+      "explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup having grouping(country) > 0 order by grouping(country); -- 15. 14 under gpos case",
+      "explain format = 'brief' SELECT year, country, product, grouping(year, country, product) from sales group by year, country, product with rollup having grouping(year, country, product) <> 0; -- 16. grouping function recreating fix"
     ]
   }
 ]

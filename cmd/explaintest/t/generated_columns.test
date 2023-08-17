@@ -1,8 +1,8 @@
 set tidb_cost_model_version=1;
--- Tests of using stored generated column as index and partition column.
--- Most of the cases are ported from other tests to make sure generated columns behaves the same.
+# Tests of using stored generated column as index and partition column.
+# Most of the cases are ported from other tests to make sure generated columns behaves the same.
 
--- Stored generated columns as indices
+# Stored generated columns as indices
 
 DROP TABLE IF EXISTS person;
 CREATE TABLE person (
@@ -72,7 +72,7 @@ EXPLAIN format = 'brief' SELECT /*+ TIDB_INLJ(sgc1, sgc2) */ * from sgc1 join sg
 EXPLAIN format = 'brief' SELECT * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 
 
--- Stored generated columns as partition columns
+# Stored generated columns as partition columns
 
 set @old_prune_mode = @@tidb_partition_prune_mode;
 set @@tidb_partition_prune_mode='static';
@@ -115,7 +115,7 @@ EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a < 7;
 
 set @@tidb_partition_prune_mode = @old_prune_mode;
 
--- Virtual generated columns as indices
+# Virtual generated columns as indices
 
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1(a INT, b INT AS (a+1) VIRTUAL, c INT AS (b+1) VIRTUAL, d INT AS (c+1) VIRTUAL, KEY(b), INDEX IDX(c, d));
@@ -137,8 +137,8 @@ KEY(city_no));
 INSERT INTO person (name, address_info) VALUES ("John", CAST('{"city_no": 1}' AS JSON));
 EXPLAIN format = 'brief' SELECT name FROM person where city_no=1;
 
--- Virtual generated columns in aggregate statement
--- ISSUE https://github.com/pingcap/tidb/issues/14072
+# Virtual generated columns in aggregate statement
+# ISSUE https://github.com/pingcap/tidb/issues/14072
 
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1 (a INT,
@@ -154,7 +154,7 @@ EXPLAIN format = 'brief' SELECT sum(b) FROM t1 GROUP BY c;
 EXPLAIN format = 'brief' SELECT sum(c) FROM t1 GROUP BY a;
 EXPLAIN format = 'brief' SELECT sum(c) FROM t1 GROUP BY b;
 
--- Virtual generated column for point get and batch point get
+# Virtual generated column for point get and batch point get
 DROP TABLE IF EXISTS tu;
 CREATE TABLE tu (a INT, b INT, c INT GENERATED ALWAYS AS (a + b) VIRTUAL, primary key (a), unique key uk(c));
 INSERT INTO tu(a, b) VALUES(1, 2);

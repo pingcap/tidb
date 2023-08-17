@@ -60,22 +60,24 @@ type TaskHandle interface {
 // Manage the lifetime of a task
 // including submitting subtasks and updating the status of a task.
 type dispatcher struct {
-	ctx     context.Context
-	taskMgr *storage.TaskManager
-	task    *proto.Task
-	logCtx  context.Context
+	ctx      context.Context
+	taskMgr  *storage.TaskManager
+	task     *proto.Task
+	logCtx   context.Context
+	serverID string
 }
 
 // MockOwnerChange mock owner change in tests.
 var MockOwnerChange func()
 
-func newDispatcher(ctx context.Context, taskMgr *storage.TaskManager, task *proto.Task) *dispatcher {
-	logPrefix := fmt.Sprintf("task_id: %d, task_type: %s", task.ID, task.Type)
+func newDispatcher(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) *dispatcher {
+	logPrefix := fmt.Sprintf("task_id: %d, task_type: %s, server_id: %s", task.ID, task.Type, serverID)
 	return &dispatcher{
 		ctx,
 		taskMgr,
 		task,
 		logutil.WithKeyValue(context.Background(), "dispatcher", logPrefix),
+		serverID,
 	}
 }
 

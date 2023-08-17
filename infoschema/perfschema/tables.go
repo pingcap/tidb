@@ -15,9 +15,11 @@
 package perfschema
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -35,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/profile"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -123,13 +124,6 @@ var pluginTable = make(map[string]func(autoid.Allocators, *model.TableInfo) (tab
 func IsPredefinedTable(tableName string) bool {
 	_, ok := tableIDMap[strings.ToLower(tableName)]
 	return ok
-}
-
-// RegisterTable registers a new table into TiDB.
-func RegisterTable(tableName, sql string,
-	tableFromMeta func(autoid.Allocators, *model.TableInfo) (table.Table, error)) {
-	perfSchemaTables = append(perfSchemaTables, sql)
-	pluginTable[tableName] = tableFromMeta
 }
 
 func tableFromMeta(allocs autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -403,7 +397,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 		}
 		results = append(results, result)
 	}
-	slices.SortFunc(results, func(i, j result) bool { return i.addr < j.addr })
+	slices.SortFunc(results, func(i, j result) int { return cmp.Compare(i.addr, j.addr) })
 	var finalRows [][]types.Datum
 	for _, result := range results {
 		addr := types.NewStringDatum(result.addr)

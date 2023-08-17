@@ -723,6 +723,15 @@ func TestCompareString(t *testing.T) {
 	require.NotEqual(t, 0, types.CompareString("ß", "s", "utf8_unicode_ci"))
 	require.Equal(t, 0, types.CompareString("ß", "ss", "utf8_unicode_ci"))
 
+	require.Equal(t, 0, types.CompareString("a", "A", "utf8mb4_0900_ai_ci"))
+	require.Equal(t, 0, types.CompareString("À", "A", "utf8mb4_0900_ai_ci"))
+	require.NotEqual(t, 0, types.CompareString("😜", "😃", "utf8mb4_0900_ai_ci"))
+	require.NotEqual(t, 0, types.CompareString("a ", "a  ", "utf8mb4_0900_ai_ci"))
+	require.NotEqual(t, 0, types.CompareString("ß", "s", "utf8mb4_0900_ai_ci"))
+	require.Equal(t, 0, types.CompareString("ß", "ss", "utf8mb4_0900_ai_ci"))
+	require.NotEqual(t, 0, types.CompareString("\U000FFFFE", "\U000FFFFF", "utf8mb4_0900_ai_ci"))
+	require.Equal(t, 0, types.CompareString("æ", "ae", "utf8mb4_0900_ai_ci"))
+
 	require.NotEqual(t, 0, types.CompareString("a", "A", "binary"))
 	require.NotEqual(t, 0, types.CompareString("À", "A", "binary"))
 	require.NotEqual(t, 0, types.CompareString("😜", "😃", "binary"))

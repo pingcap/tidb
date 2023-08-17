@@ -19,9 +19,11 @@
 package ddl
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,7 +70,6 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -1776,8 +1777,8 @@ func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 		}
 	}
 	// sort job.
-	slices.SortFunc(allJobs, func(i, j *model.Job) bool {
-		return i.ID < j.ID
+	slices.SortFunc(allJobs, func(i, j *model.Job) int {
+		return cmp.Compare(i.ID, j.ID)
 	})
 	return allJobs, nil
 }

@@ -19,6 +19,7 @@ import (
 	"encoding/gob"
 	"math"
 	"math/rand"
+	"slices"
 	"sort"
 	goatomic "sync/atomic"
 	"time"
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // Feedback represents the total scan count in range [lower, upper).
@@ -353,19 +353,19 @@ func NonOverlappedFeedbacks(sc *stmtctx.StatementContext, fbs []Feedback) ([]Fee
 	// Sort feedbacks by end point and start point incrementally, then pick every feedback that is not overlapped
 	// with the previous chosen feedbacks.
 	var existsErr bool
-	slices.SortFunc(fbs, func(i, j Feedback) bool {
+	slices.SortFunc(fbs, func(i, j Feedback) int {
 		res, err := i.Upper.Compare(sc, j.Upper, collate.GetBinaryCollator())
 		if err != nil {
 			existsErr = true
 		}
 		if existsErr || res != 0 {
-			return res < 0
+			return res
 		}
 		res, err = i.Lower.Compare(sc, j.Lower, collate.GetBinaryCollator())
 		if err != nil {
 			existsErr = true
 		}
-		return res < 0
+		return res
 	})
 	if existsErr {
 		return fbs, false

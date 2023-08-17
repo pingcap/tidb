@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "collation_test",
+    timeout = "short",
+    srcs = ["uca_test.go"],
+    flaky = True,
+    deps = ["//testkit"],
+)
