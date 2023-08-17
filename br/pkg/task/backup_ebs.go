@@ -295,13 +295,13 @@ func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr 
 			} else {
 				log.Warn("failed to wait schedule, will retry later", zap.Error(err2))
 			}
-			continue
-		}
+		} else {
+			log.Info("all leader regions got, start checking hole", zap.Int("len", len(allRegions)))
 
-		log.Info("all leader regions got, start checking hole", zap.Int("len", len(allRegions)))
-
-		if !isRegionsHasHole(allRegions) {
-			return nil
+			if !isRegionsHasHole(allRegions) {
+				return nil
+			}
+			log.Info("Regions has hole, needs sleep and retry")
 		}
 		time.Sleep(backoffer.ExponentialBackoff())
 	}
