@@ -44,6 +44,7 @@ go_test(
     name = "common_test",
     timeout = "short",
     srcs = [
+        "common_test.go",
         "errors_test.go",
         "main_test.go",
         "once_error_test.go",
@@ -55,14 +56,26 @@ go_test(
     ],
     embed = [":common"],
     flaky = True,
+<<<<<<< HEAD
+=======
+    shard_count = 21,
+>>>>>>> 740f7f51b76 (lightning: fix incorrect _tidb_rowid allocator value after import for table with AUTO_ID_CACHE=1 (#46171))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/log",
+        "//ddl",
         "//errno",
+        "//kv",
+        "//meta",
+        "//meta/autoid",
         "//parser",
+        "//parser/ast",
+        "//parser/model",
         "//store/driver/error",
+        "//store/mockstore",
         "//testkit/testsetup",
         "//util/dbutil",
+        "//util/mock",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
