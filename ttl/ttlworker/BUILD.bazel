@@ -61,6 +61,7 @@ go_test(
         "//session",
         "//sessionctx",
         "//sessionctx/variable",
+        "//statistics/handle",
         "//testkit",
         "//ttl/cache",
         "//ttl/session",
