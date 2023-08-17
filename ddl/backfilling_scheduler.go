@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
@@ -31,8 +30,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -446,73 +443,6 @@ func (*ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize
 	writerSize = mathutil.Min(workerCnt/2+2, maxBackfillWorkerSize)
 	return readerSize, writerSize
 }
-
-func (w *addIndexIngestWorker) addRes(res *backfillResult) {
-	if w.sink != nil {
-		w.sink.Write(res)
-	} else {
-		w.resultCh <- res
-	}
-}
-
-func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
-	logutil.BgLogger().Info("add index ingest worker handle task")
-	defer util.Recover(metrics.LabelDDL, "ingestWorker.HandleTask", func() {
-		res := &backfillResult{taskID: rs.id, err: dbterror.ErrReorgPanic}
-		w.addRes(res)
-	}, false)
-	defer func() {
-		if w.copReqSenderPool != nil {
-			w.copReqSenderPool.recycleChunk(rs.chunk)
-		} else {
-			w.tableScan.recycleChunk(rs.chunk)
-		}
-	}()
-	result := &backfillResult{
-		taskID: rs.id,
-		err:    rs.err,
-	}
-	if result.err != nil {
-		logutil.Logger(w.ctx).Error("encounter error when handle index chunk",
-			zap.Int("id", rs.id), zap.Error(rs.err))
-		w.addRes(result)
-		return
-	}
-	if !w.distribute {
-		err := w.d.isReorgRunnable(w.jobID, false)
-		if err != nil {
-			result.err = err
-			w.addRes(result)
-			return
-		}
-	}
-	count, nextKey, err := w.WriteLocal(&rs)
-	if err != nil {
-		result.err = err
-		w.addRes(result)
-		return
-	}
-	if count == 0 {
-		logutil.Logger(w.ctx).Info("finish a cop-request task", zap.Int("id", rs.id))
-		return
-	}
-	if w.checkpointMgr != nil {
-		cnt, nextKey := w.checkpointMgr.Status()
-		result.totalCount = cnt
-		result.nextKey = nextKey
-		result.err = w.checkpointMgr.UpdateCurrent(rs.id, count)
-	} else {
-		result.addedCount = count
-		result.scanCount = count
-		result.nextKey = nextKey
-	}
-	if ResultCounterForTest != nil && result.err == nil {
-		ResultCounterForTest.Add(1)
-	}
-	w.addRes(result)
-}
-
-func (*addIndexIngestWorker) Close() {}
 
 type taskIDAllocator struct {
 	id int

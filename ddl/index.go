@@ -20,11 +20,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/disttask/framework/operator"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -46,18 +44,15 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -1603,131 +1598,6 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 	}
 	// Constrains is already checked.
 	stmtCtx.BatchCheck = true
-	return nil
-}
-
-type addIndexIngestWorker struct {
-	ctx           context.Context
-	d             *ddlCtx
-	metricCounter prometheus.Counter
-	sessCtx       sessionctx.Context
-
-	tbl              table.PhysicalTable
-	index            table.Index
-	writer           ingest.Writer
-	copReqSenderPool *copReqSenderPool
-	checkpointMgr    *ingest.CheckpointManager
-	flushLock        *sync.RWMutex
-
-	resultCh   chan *backfillResult
-	jobID      int64
-	distribute bool
-
-	// for operator
-	tableScan *tableScanOperator
-	sink      operator.DataSink[*backfillResult]
-}
-
-func newAddIndexIngestWorker(ctx context.Context, t table.PhysicalTable, d *ddlCtx, ei ingest.Engine,
-	resultCh chan *backfillResult, jobID int64, schemaName string, indexID int64, writerID int,
-	copReqSenderPool *copReqSenderPool, sessCtx sessionctx.Context,
-	checkpointMgr *ingest.CheckpointManager, distribute bool) (*addIndexIngestWorker, error) {
-	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, indexID)
-	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-	lw, err := ei.CreateWriter(writerID, indexInfo.Unique)
-	if err != nil {
-		return nil, err
-	}
-
-	return &addIndexIngestWorker{
-		ctx:     ctx,
-		d:       d,
-		sessCtx: sessCtx,
-		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
-			metrics.GenerateReorgLabel("add_idx_rate", schemaName, t.Meta().Name.O)),
-		tbl:              t,
-		index:            index,
-		writer:           lw,
-		copReqSenderPool: copReqSenderPool,
-		resultCh:         resultCh,
-		jobID:            jobID,
-		checkpointMgr:    checkpointMgr,
-		distribute:       distribute,
-	}, nil
-}
-
-// WriteLocal will write index records to lightning engine.
-func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey kv.Key, err error) {
-	oprStartTime := time.Now()
-	var copCtx *copContext
-	if w.copReqSenderPool != nil {
-		copCtx = w.copReqSenderPool.copCtx
-	} else {
-		copCtx = w.tableScan.copCtx
-	}
-
-	vars := w.sessCtx.GetSessionVars()
-	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, copCtx, vars, rs.chunk)
-	if err != nil || cnt == 0 {
-		return 0, nil, err
-	}
-	w.metricCounter.Add(float64(cnt))
-	logSlowOperations(time.Since(oprStartTime), "writeChunkToLocal", 3000)
-	nextKey = tablecodec.EncodeRecordKey(w.tbl.RecordPrefix(), lastHandle)
-	return cnt, nextKey, nil
-}
-
-func writeChunkToLocal(writer ingest.Writer,
-	index table.Index, copCtx *copContext, vars *variable.SessionVars,
-	copChunk *chunk.Chunk) (int, kv.Handle, error) {
-	sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
-	iter := chunk.NewIterator4Chunk(copChunk)
-	idxDataBuf := make([]types.Datum, len(copCtx.idxColOutputOffsets))
-	handleDataBuf := make([]types.Datum, len(copCtx.handleOutputOffsets))
-	count := 0
-	var lastHandle kv.Handle
-	unlock := writer.LockForWrite()
-	defer unlock()
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		idxDataBuf, handleDataBuf = idxDataBuf[:0], handleDataBuf[:0]
-		idxDataBuf = extractDatumByOffsets(row, copCtx.idxColOutputOffsets, copCtx.expColInfos, idxDataBuf)
-		handleDataBuf := extractDatumByOffsets(row, copCtx.handleOutputOffsets, copCtx.expColInfos, handleDataBuf)
-		handle, err := buildHandle(handleDataBuf, copCtx.tblInfo, copCtx.pkInfo, sCtx)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
-		rsData := getRestoreData(copCtx.tblInfo, copCtx.idxInfo, copCtx.pkInfo, handleDataBuf)
-		err = writeOneKVToLocal(writer, index, sCtx, writeBufs, idxDataBuf, rsData, handle)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
-		count++
-		lastHandle = handle
-	}
-	return count, lastHandle, nil
-}
-
-func writeOneKVToLocal(writer ingest.Writer,
-	index table.Index, sCtx *stmtctx.StatementContext, writeBufs *variable.WriteStmtBufs,
-	idxDt, rsData []types.Datum, handle kv.Handle) error {
-	iter := index.GenIndexKVIter(sCtx, idxDt, handle, rsData)
-	for iter.Valid() {
-		key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		failpoint.Inject("mockLocalWriterPanic", func() {
-			panic("mock panic")
-		})
-		err = writer.WriteRow(key, idxVal, handle)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		failpoint.Inject("mockLocalWriterError", func() {
-			failpoint.Return(errors.New("mock engine error"))
-		})
-		writeBufs.IndexKeyBuf = key
-	}
 	return nil
 }
 

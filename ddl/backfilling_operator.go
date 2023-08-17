@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/resourcemanager/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
@@ -36,7 +37,7 @@ import (
 	"sync/atomic"
 )
 
-func NewAddIndexPipeline(
+func newAddIndexPipeline(
 	ctx context.Context,
 	dc *ddlCtx,
 	info *reorgInfo,
@@ -48,25 +49,24 @@ func NewAddIndexPipeline(
 		logutil.Logger(ctx).Error(ingest.LitErrGetBackendFail, zap.Int64("job ID", job.ID))
 		return nil, nil, errors.Trace(errors.New("cannot get lightning backend"))
 	}
-
 	mgr := bc.GetCheckpointManager()
 	if mgr != nil {
 		mgr.Reset(tbl.GetPhysicalID(), info.StartKey, info.EndKey)
 	}
 	readerCnt, writerCnt := expectedWorkerSize()
-	// consume op.
-	consumeOp, err := newConsumerOperator(dc, info, sessPool, start)
+	// create consume op.
+	consumeOp, err := newConsumerOperator(dc, info, start)
 	if err != nil {
 		return nil, nil, errors.Trace(errors.New("cannot create consume operator"))
 	}
 
-	// ingest op.
+	// create ingest op.
 	ingestOp, err := newIngestWriterOperator(ctx, info, mgr, bc, consumeOp.Source.(operator.DataSink[*backfillResult]), tbl, writerCnt)
 	if err != nil {
 		return nil, nil, errors.Trace(errors.New("cannot create ingest operator"))
 	}
 
-	// scan op.
+	// create scan op.
 	scanOp, err := newTableScanOperator(ctx, tbl, tbl.Meta().Indices, info, sessPool, mgr, ingestOp.Source.(operator.DataSink[idxRecResult]), readerCnt)
 	if err != nil {
 		return nil, nil, errors.Trace(errors.New("cannot create table scan operator"))
@@ -93,45 +93,46 @@ type tableScanOperator struct {
 	workerSize    int64
 }
 
-func (oi *tableScanOperator) getChunk() *chunk.Chunk {
-	chk := <-oi.srcChkPool
+func (t *tableScanOperator) getChunk() *chunk.Chunk {
+	chk := <-t.srcChkPool
 	newCap := copReadBatchSize()
 	if chk.Capacity() != newCap {
-		chk = chunk.NewChunkWithCapacity(oi.copCtx.fieldTps, newCap)
+		chk = chunk.NewChunkWithCapacity(t.copCtx.fieldTps, newCap)
 	}
 	chk.Reset()
 	return chk
 }
 
 // recycleChunk puts the index record slice and the chunk back to the pool for reuse.
-func (oi *tableScanOperator) recycleChunk(chk *chunk.Chunk) {
+func (t *tableScanOperator) recycleChunk(chk *chunk.Chunk) {
 	if chk == nil {
 		return
 	}
-	oi.srcChkPool <- chk
+	t.srcChkPool <- chk
 }
 
-type readCopWorker struct {
-	sink operator.DataSink[idxRecResult]
-	op   *tableScanOperator
-	se   *sess.Session
+type tableScanWorker struct {
+	sink    operator.DataSink[idxRecResult]
+	op      *tableScanOperator
+	se      *sess.Session
+	sessCtx sessionctx.Context
 }
 
 // HandleTask define the basic running process for each operator.
-func (rw *readCopWorker) HandleTask(task *reorgBackfillTask) {
-	logutil.BgLogger().Info("read cop worker handle task")
-	err := rw.scanRecords(task)
+func (tw *tableScanWorker) HandleTask(task *reorgBackfillTask) {
+	logutil.BgLogger().Info("table scan worker handle task")
+	err := tw.scanRecords(task)
 	if err != nil {
-		rw.sink.Write(idxRecResult{id: task.id, err: err})
+		tw.sink.Write(idxRecResult{id: task.id, err: err})
 		return
 	}
 }
 
-func (rw *readCopWorker) scanRecords(task *reorgBackfillTask) error {
-	logutil.Logger(rw.op.ctx).Info("start a cop-request task",
+func (tw *tableScanWorker) scanRecords(task *reorgBackfillTask) error {
+	logutil.Logger(tw.op.ctx).Info("start a cop-request task",
 		zap.Int("id", task.id), zap.String("task", task.String()))
-	return wrapInBeginRollback(rw.se, func(startTS uint64) error {
-		rs, err := rw.op.copCtx.buildTableScan(rw.op.ctx, startTS, task.startKey, task.endKey)
+	return wrapInBeginRollback(tw.se, func(startTS uint64) error {
+		rs, err := tw.op.copCtx.buildTableScan(tw.op.ctx, startTS, task.startKey, task.endKey)
 		if err != nil {
 			return err
 		}
@@ -140,26 +141,26 @@ func (rw *readCopWorker) scanRecords(task *reorgBackfillTask) error {
 				panic("mock panic")
 			}
 		})
-		if rw.op.checkpointMgr != nil {
-			rw.op.checkpointMgr.Register(task.id, task.endKey)
+		if tw.op.checkpointMgr != nil {
+			tw.op.checkpointMgr.Register(task.id, task.endKey)
 		}
 		var done bool
 		for !done {
-			srcChk := rw.op.getChunk()
-			done, err = rw.op.copCtx.fetchTableScanResult(rw.op.ctx, rs, srcChk)
+			srcChk := tw.op.getChunk()
+			done, err = tw.op.copCtx.fetchTableScanResult(tw.op.ctx, rs, srcChk)
 			if err != nil {
-				rw.op.recycleChunk(srcChk)
+				tw.op.recycleChunk(srcChk)
 				terror.Call(rs.Close)
 				return err
 			}
-			if rw.op.checkpointMgr != nil {
-				rw.op.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
+			if tw.op.checkpointMgr != nil {
+				tw.op.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
 			}
 			idxRs := idxRecResult{id: task.id, chunk: srcChk, done: done}
 			failpoint.Inject("mockCopSenderError", func() {
 				idxRs.err = errors.New("mock cop error")
 			})
-			rw.sink.Write(idxRs)
+			tw.sink.Write(idxRs)
 		}
 		terror.Call(rs.Close)
 		return nil
@@ -167,41 +168,43 @@ func (rw *readCopWorker) scanRecords(task *reorgBackfillTask) error {
 }
 
 // Close implement the Close interface for workerpool.
-func (*readCopWorker) Close() {}
+func (tw *tableScanWorker) Close() {
+	tw.op.sessPool.Put(tw.sessCtx)
+}
 
 // Open implements AsyncOperator.
-func (oi *tableScanOperator) Open() error {
-	oi.Source.(*operator.AsyncDataChannel[*reorgBackfillTask]).Channel.SetCreateWorker(
+func (t *tableScanOperator) Open() error {
+	t.Source.(*operator.AsyncDataChannel[*reorgBackfillTask]).Channel.SetCreateWorker(
 		func() workerpool.Worker[*reorgBackfillTask] {
 			logutil.BgLogger().Info("ywq test open table scan worker")
-			sessCtx, err := oi.sessPool.Get()
+			sessCtx, err := t.sessPool.Get()
 			if err != nil {
-				logutil.Logger(oi.ctx).Error("copReqSender get session from pool failed", zap.Error(err))
-				_ = oi.Sink.Write(idxRecResult{err: err})
+				logutil.Logger(t.ctx).Error("copReqSender get session from pool failed", zap.Error(err))
+				_ = t.Sink.Write(idxRecResult{err: err})
 				return nil
 			}
 			se := sess.NewSession(sessCtx)
-			return &readCopWorker{oi.Sink, oi, se}
+			return &tableScanWorker{t.Sink, t, se, sessCtx}
 		},
 	)
-	oi.Source.(*operator.AsyncDataChannel[*reorgBackfillTask]).Channel.Start()
+	t.Source.(*operator.AsyncDataChannel[*reorgBackfillTask]).Channel.Start()
 	return nil
 }
 
 // Display implements AsyncOperator.
-func (oi *tableScanOperator) Display() string {
-	return "tableScanOperator{ source: " + oi.Source.Display() + ", sink: " + oi.Sink.Display() + "}"
+func (t *tableScanOperator) Display() string {
+	return "tableScanOperator{ source: " + t.Source.Display() + ", sink: " + t.Sink.Display() + "}"
 }
 
 // Close implements AsyncOperator.
-func (oi *tableScanOperator) Close() {
-	if oi.closed {
+func (t *tableScanOperator) Close() {
+	if t.closed {
 		return
 	}
-	logutil.Logger(oi.ctx).Info("close cop-request sender operator")
+	logutil.Logger(t.ctx).Info("close cop-request sender operator")
 	// Wait for all cop-req senders to exit.
-	oi.Source.(*operator.AsyncDataChannel[*reorgBackfillTask]).Channel.ReleaseAndWait()
-	oi.closed = true
+	t.Source.(*operator.AsyncDataChannel[*reorgBackfillTask]).Channel.ReleaseAndWait()
+	t.closed = true
 }
 
 func newTableScanOperator(
@@ -376,7 +379,6 @@ type consumerOperator struct {
 	err                                           error
 	hasError                                      *atomic.Bool
 	reorgInfo                                     *reorgInfo // reorgInfo is used to update the reorg handle.
-	sessPool                                      *sess.Pool // sessPool is used to get the session to update the reorg handle.
 	keeper                                        *doneTaskKeeper
 	pool                                          *workerpool.WorkerPool[*backfillResult]
 	start                                         kv.Key
@@ -410,12 +412,11 @@ func (oi *consumerOperator) Display() string {
 }
 
 func newConsumerOperator(
-	dc *ddlCtx, reorgInfo *reorgInfo, sessPool *sess.Pool, start kv.Key) (*consumerOperator, error) {
+	dc *ddlCtx, reorgInfo *reorgInfo, start kv.Key) (*consumerOperator, error) {
 	res := &consumerOperator{
 		dc:        dc,
 		hasError:  &atomic.Bool{},
 		reorgInfo: reorgInfo,
-		sessPool:  sessPool,
 		start:     start,
 	}
 	keeper := newDoneTaskKeeper(start)
@@ -458,7 +459,7 @@ func (cw *consumeWorker) handleOneResult(result *backfillResult) error {
 			zap.String("result next key", hex.EncodeToString(result.nextKey)),
 			zap.Error(result.err))
 
-		// ywq todo
+		// Todo
 		//scheduler.drainTasks() // Make it quit early.
 		return result.err
 	}

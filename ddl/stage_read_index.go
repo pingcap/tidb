@@ -192,7 +192,7 @@ func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask []byte
 			return nil, err
 		}
 	} else {
-		pipeline, scanOp, err := NewAddIndexPipeline(ctx, d.ddlCtx, mockReorgInfo, d.sessPool, tbl, startKey)
+		pipeline, scanOp, err := newAddIndexPipeline(ctx, d.ddlCtx, mockReorgInfo, d.sessPool, tbl, startKey)
 		if err != nil {
 			logutil.BgLogger().Error("setup workers error",
 				zap.String("category", "ddl"),
