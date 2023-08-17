@@ -205,6 +205,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	return statsHandle.Update(e.Ctx().GetInfoSchema().(infoschema.InfoSchema), cache.WithTableStatsByQuery())
 }
+
 func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 	if !variable.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
 		return nil
