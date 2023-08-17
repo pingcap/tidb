@@ -1094,7 +1094,7 @@ func (b singleMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
 	}
 }
 
-func (singleMgrBuilder) TableMetaMgr(tr *TableImporter) tableMetaMgr {
+func (singleMgrBuilder) TableMetaMgr(_ *TableImporter) tableMetaMgr {
 	return noopTableMetaMgr{}
 }
 
