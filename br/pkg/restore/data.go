@@ -73,7 +73,7 @@ type recoveryBackoffer struct {
 
 func newRecoveryBackoffer() *recoveryBackoffer {
 	return &recoveryBackoffer{
-		state: utils.InitialRetryState(16, 0, 0),
+		state: utils.InitialRetryState(16, 30*time.Second, 4*time.Minute),
 	}
 }
 
