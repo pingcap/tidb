@@ -3376,10 +3376,10 @@ func TestExchangePartitionCheckConstraint(t *testing.T) {
 	tk.MustExec(`create database db_two`)
 	defer tk.MustExec(`drop database db_two`)
 
-	ntSql := "create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED)"
-	ptSql := "create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) )"
-	alterSql := "alter table db_two.pt exchange partition p1 with table db_one.nt"
-	dropSql := "drop table db_one.nt, db_two.pt"
+	ntSQL := "create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED)"
+	ptSQL := "create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) )"
+	alterSQL := "alter table db_two.pt exchange partition p1 with table db_one.nt"
+	dropSQL := "drop table db_one.nt, db_two.pt"
 	errMsg := "[ddl:1737]Found a row that does not match the partition"
 
 	type record struct {
@@ -3443,23 +3443,23 @@ func TestExchangePartitionCheckConstraint(t *testing.T) {
 	}
 	for _, input := range inputs {
 		tk.MustExec(`set @@global.tidb_enable_check_constraint = 1`)
-		tk.MustExec(ntSql)
+		tk.MustExec(ntSQL)
 		for _, r := range input.t {
 			tk.MustExec(fmt.Sprintf("insert into db_one.nt values (%d, %d)", r.a, r.b))
 		}
-		tk.MustExec(ptSql)
+		tk.MustExec(ptSQL)
 		for _, r := range input.pt {
 			tk.MustExec(fmt.Sprintf("insert into db_two.pt values (%d, %d)", r.a, r.b))
 		}
 		if input.ok {
-			tk.MustExec(alterSql)
-			tk.MustExec(dropSql)
+			tk.MustExec(alterSQL)
+			tk.MustExec(dropSQL)
 			continue
 		}
-		tk.MustContainErrMsg(alterSql, errMsg)
+		tk.MustContainErrMsg(alterSQL, errMsg)
 		tk.MustExec(`set @@global.tidb_enable_check_constraint = 0`)
-		tk.MustExec(alterSql)
-		tk.MustExec(dropSql)
+		tk.MustExec(alterSQL)
+		tk.MustExec(dropSQL)
 	}
 }
 
