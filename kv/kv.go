@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"slices"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -37,7 +38,6 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
-	"golang.org/x/exp/slices"
 )
 
 // UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
@@ -427,20 +427,20 @@ func (rr *KeyRanges) AppendSelfTo(ranges []KeyRange) []KeyRange {
 
 // SortByFunc sorts each partition's ranges.
 // Since the ranges are sorted in most cases, we check it first.
-func (rr *KeyRanges) SortByFunc(sortFunc func(i, j KeyRange) bool) {
-	if !slices.IsSortedFunc(rr.ranges, func(i, j []KeyRange) bool {
+func (rr *KeyRanges) SortByFunc(sortFunc func(i, j KeyRange) int) {
+	if !slices.IsSortedFunc(rr.ranges, func(i, j []KeyRange) int {
 		// A simple short-circuit since the empty range actually won't make anything wrong.
 		if len(i) == 0 || len(j) == 0 {
-			return true
+			return -1
 		}
 		return sortFunc(i[0], j[0])
 	}) {
-		slices.SortFunc(rr.ranges, func(i, j []KeyRange) bool {
+		slices.SortFunc(rr.ranges, func(i, j []KeyRange) int {
 			if len(i) == 0 {
-				return true
+				return -1
 			}
 			if len(j) == 0 {
-				return false
+				return 1
 			}
 			return sortFunc(i[0], j[0])
 		})
@@ -481,19 +481,19 @@ func (rr *KeyRanges) PartitionNum() int {
 
 // IsFullySorted checks whether the ranges are sorted inside partition and each partition is also sorated.
 func (rr *KeyRanges) IsFullySorted() bool {
-	sortedByPartition := slices.IsSortedFunc(rr.ranges, func(i, j []KeyRange) bool {
+	sortedByPartition := slices.IsSortedFunc(rr.ranges, func(i, j []KeyRange) int {
 		// A simple short-circuit since the empty range actually won't make anything wrong.
 		if len(i) == 0 || len(j) == 0 {
-			return true
+			return -1
 		}
-		return bytes.Compare(i[0].StartKey, j[0].StartKey) < 0
+		return bytes.Compare(i[0].StartKey, j[0].StartKey)
 	})
 	if !sortedByPartition {
 		return false
 	}
 	for _, ranges := range rr.ranges {
-		if !slices.IsSortedFunc(ranges, func(i, j KeyRange) bool {
-			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		if !slices.IsSortedFunc(ranges, func(i, j KeyRange) int {
+			return bytes.Compare(i.StartKey, j.StartKey)
 		}) {
 			return false
 		}

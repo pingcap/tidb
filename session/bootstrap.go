@@ -1209,7 +1209,7 @@ func upgrade(s Session) {
 	}
 
 	if ver >= int64(SupportUpgradeStateVer) {
-		syncUpgradeState(s)
+		terror.MustNil(SyncUpgradeState(s))
 	}
 	if isNull {
 		upgradeToVer99Before(s)
@@ -1224,7 +1224,7 @@ func upgrade(s Session) {
 		upgradeToVer99After(s)
 	}
 	if ver >= int64(SupportUpgradeStateVer) {
-		syncNormalRunning(s)
+		terror.MustNil(SyncNormalRunning(s))
 	}
 
 	variable.DDLForce2Queue.Store(false)
@@ -1253,14 +1253,16 @@ func upgrade(s Session) {
 	}
 }
 
-func syncUpgradeState(s Session) {
+// SyncUpgradeState syncs upgrade state to etcd.
+func SyncUpgradeState(s Session) error {
 	totalInterval := time.Duration(internalSQLTimeout) * time.Second
 	ctx, cancelFunc := context.WithTimeout(context.Background(), totalInterval)
 	defer cancelFunc()
 	dom := domain.GetDomain(s)
 	err := dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateUpgrading))
 	if err != nil {
-		logutil.BgLogger().Fatal("[upgrading] update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
+		logutil.BgLogger().Error("update global state failed", zap.String("category", "upgrading"), zap.String("state", syncer.StateUpgrading), zap.Error(err))
+		return err
 	}
 
 	interval := 200 * time.Millisecond
@@ -1271,7 +1273,8 @@ func syncUpgradeState(s Session) {
 			break
 		}
 		if i == retryTimes-1 {
-			logutil.BgLogger().Fatal("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
+			logutil.BgLogger().Error("get owner op failed", zap.String("category", "upgrading"), zap.Stringer("state", op), zap.Error(err))
+			return err
 		}
 		if i%10 == 0 {
 			logutil.BgLogger().Warn("get owner op failed", zap.String("category", "upgrading"), zap.Stringer("state", op), zap.Error(err))
@@ -1298,21 +1301,24 @@ func syncUpgradeState(s Session) {
 		}
 
 		if i == retryTimes-1 {
-			logutil.BgLogger().Fatal("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
+			logutil.BgLogger().Error("pause all jobs failed", zap.String("category", "upgrading"), zap.Strings("errs", jobErrStrs), zap.Error(err))
+			return err
 		}
 		logutil.BgLogger().Warn("pause all jobs failed", zap.String("category", "upgrading"), zap.Strings("errs", jobErrStrs), zap.Error(err))
 		time.Sleep(interval)
 	}
 	logutil.BgLogger().Info("update global state to upgrading", zap.String("category", "upgrading"), zap.String("state", syncer.StateUpgrading))
+	return nil
 }
 
-func syncNormalRunning(s Session) {
+// SyncNormalRunning syncs normal state to etcd.
+func SyncNormalRunning(s Session) error {
 	failpoint.Inject("mockResumeAllJobsFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			dom := domain.GetDomain(s)
 			//nolint: errcheck
 			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), syncer.NewStateInfo(syncer.StateNormalRunning))
-			failpoint.Return()
+			failpoint.Return(nil)
 		}
 	})
 
@@ -1329,9 +1335,24 @@ func syncNormalRunning(s Session) {
 	dom := domain.GetDomain(s)
 	err = dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateNormalRunning))
 	if err != nil {
-		logutil.BgLogger().Fatal("[upgrading] update global state to normal failed", zap.Error(err))
+		logutil.BgLogger().Error("update global state to normal failed", zap.String("category", "upgrading"), zap.Error(err))
+		return err
 	}
 	logutil.BgLogger().Info("update global state to normal running finished", zap.String("category", "upgrading"))
+	return nil
+}
+
+// IsUpgradingClusterState checks whether the global state is upgrading.
+func IsUpgradingClusterState(s Session) (bool, error) {
+	dom := domain.GetDomain(s)
+	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelFunc()
+	stateInfo, err := dom.DDL().StateSyncer().GetGlobalState(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	return stateInfo.State == syncer.StateUpgrading, nil
 }
 
 // checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.

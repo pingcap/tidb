@@ -27,6 +27,8 @@ const (
 	GetObject Permission = "GetObject"
 	// PutObject represents PutObject permission
 	PutObject Permission = "PutObject"
+
+	DefaultRequestConcurrency uint = 128
 )
 
 // WalkOption is the option of storage.WalkDir.
@@ -197,4 +199,20 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 	default:
 		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "storage %T is not supported yet", backend)
 	}
+}
+
+// Different from `http.DefaultTransport`, set the `MaxIdleConns` and `MaxIdleConnsPerHost`
+// to the actual request concurrency to reuse tcp connection as much as possible.
+func GetDefaultHttpClient(concurrency uint) *http.Client {
+	transport, _ := CloneDefaultHttpTransport()
+	transport.MaxIdleConns = int(concurrency)
+	transport.MaxIdleConnsPerHost = int(concurrency)
+	return &http.Client{
+		Transport: transport,
+	}
+}
+
+func CloneDefaultHttpTransport() (*http.Transport, bool) {
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	return transport.Clone(), ok
 }

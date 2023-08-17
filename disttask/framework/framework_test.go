@@ -86,7 +86,7 @@ type testMiniTask struct{}
 func (testMiniTask) IsMinimalTask() {}
 
 func (testMiniTask) String() string {
-	return ""
+	return "testMiniTask"
 }
 
 type testScheduler struct{}
