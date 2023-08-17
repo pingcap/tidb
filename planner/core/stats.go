@@ -162,13 +162,37 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSche
 	return profile, nil
 }
 
+// getTotalRowCount returns the total row count, which is obtained when collecting colHist.
+func getTotalRowCount(statsTbl *statistics.Table, colHist *statistics.Column) int64 {
+	if colHist.IsFullLoad() {
+		return int64(colHist.TotalRowCount())
+	}
+	// If colHist is not fully loaded, we may still get its total row count from other index/column stats.
+	for _, idx := range statsTbl.Indices {
+		if idx.IsFullLoad() && idx.LastUpdateVersion == colHist.LastUpdateVersion {
+			return int64(idx.TotalRowCount())
+		}
+	}
+	for _, col := range statsTbl.Columns {
+		if col.IsFullLoad() && col.LastUpdateVersion == colHist.LastUpdateVersion {
+			return int64(col.TotalRowCount())
+		}
+	}
+	return 0
+}
+
 // getColumnNDV computes estimated NDV of specified column using the original
 // histogram of `DataSource` which is retrieved from storage(not the derived one).
 func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 	hist, ok := ds.statisticTable.Columns[colID]
-	if ok && hist.Count > 0 {
-		factor := float64(ds.statisticTable.Count) / float64(hist.Count)
-		ndv = float64(hist.Histogram.NDV) * factor
+	if ok && hist.IsStatsInitialized() {
+		ndv = float64(hist.Histogram.NDV)
+		// TODO: a better way to get the total row count derived from the last analyze.
+		analyzeCount := getTotalRowCount(ds.statisticTable, hist)
+		if analyzeCount > 0 {
+			factor := float64(ds.statisticTable.Count) / float64(analyzeCount)
+			ndv *= factor
+		}
 	} else {
 		ndv = float64(ds.statisticTable.Count) * distinctFactor
 	}
@@ -570,11 +594,28 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 		if !ok || sf.FuncName.L != ast.LogicOr {
 			continue
 		}
+		// shouldKeepCurrentFilter means the partial paths can't cover the current filter completely, so we must add
+		// the current filter into a Selection after partial paths.
+		shouldKeepCurrentFilter := false
 		var partialPaths = make([]*util.AccessPath, 0, usedIndexCount)
 		dnfItems := expression.FlattenDNFConditions(sf)
 		for _, item := range dnfItems {
 			cnfItems := expression.SplitCNFItems(item)
-			itemPaths := ds.accessPathsForConds(cnfItems, usedIndexCount)
+
+			pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
+			for _, cnfItem := range cnfItems {
+				if expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx,
+					[]expression.Expression{cnfItem},
+					ds.ctx.GetClient(),
+					kv.TiKV,
+				) {
+					pushedDownCNFItems = append(pushedDownCNFItems, cnfItem)
+				} else {
+					shouldKeepCurrentFilter = true
+				}
+			}
+
+			itemPaths := ds.accessPathsForConds(pushedDownCNFItems, usedIndexCount)
 			if len(itemPaths) == 0 {
 				partialPaths = nil
 				break
@@ -601,7 +642,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 			continue
 		}
 		if len(partialPaths) > 1 {
-			possiblePath := ds.buildIndexMergeOrPath(filters, partialPaths, i)
+			possiblePath := ds.buildIndexMergeOrPath(filters, partialPaths, i, shouldKeepCurrentFilter)
 			if possiblePath == nil {
 				return nil
 			}
@@ -769,28 +810,37 @@ func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.Access
 }
 
 // buildIndexMergeOrPath generates one possible IndexMergePath.
-func (ds *DataSource) buildIndexMergeOrPath(filters []expression.Expression, partialPaths []*util.AccessPath, current int) *util.AccessPath {
+func (ds *DataSource) buildIndexMergeOrPath(
+	filters []expression.Expression,
+	partialPaths []*util.AccessPath,
+	current int,
+	shouldKeepCurrentFilter bool,
+) *util.AccessPath {
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[:current]...)
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current+1:]...)
-	var addCurrentFilter bool
 	for _, path := range partialPaths {
 		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
 		if len(path.TableFilters) > 0 {
-			addCurrentFilter = true
+			shouldKeepCurrentFilter = true
 		}
 		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
 		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, path.IndexFilters, ds.ctx.GetClient(), kv.TiKV) {
-			addCurrentFilter = true
+			shouldKeepCurrentFilter = true
 			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
 			path.IndexFilters = nil
 		}
 		if len(path.TableFilters) != 0 && !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, path.TableFilters, ds.ctx.GetClient(), kv.TiKV) {
-			addCurrentFilter = true
+			shouldKeepCurrentFilter = true
 			path.TableFilters = nil
 		}
 	}
-	if addCurrentFilter {
+
+	// Keep this filter as a part of table filters for safety if it has any parameter.
+	if expression.MaybeOverOptimized4PlanCache(ds.ctx, filters[current:current+1]) {
+		shouldKeepCurrentFilter = true
+	}
+	if shouldKeepCurrentFilter {
 		indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current])
 	}
 	return indexMergePath
@@ -875,6 +925,11 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 			dedupedFinalFilters = append(dedupedFinalFilters, cond)
 			hashCodeSet[hashCode] = struct{}{}
 		}
+	}
+
+	// Keep these partial filters as a part of table filters for safety if there is any parameter.
+	if expression.MaybeOverOptimized4PlanCache(ds.ctx, partialFilters) {
+		dedupedFinalFilters = append(dedupedFinalFilters, partialFilters...)
 	}
 
 	// 3. Estimate the row count after partial paths.
@@ -1420,7 +1475,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 			newSel.SetChildren(p.cte.seedPartLogicalPlan)
 			p.cte.seedPartLogicalPlan = newSel
 		}
-		p.cte.seedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
+		p.cte.seedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag|flagPredicatePushDown, p.cte.seedPartLogicalPlan)
 		if err != nil {
 			return nil, err
 		}
@@ -1442,7 +1497,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 				return nil, err
 			}
 		}
-		recurStat := p.cte.recursivePartPhysicalPlan.Stats()
+		recurStat := p.cte.recursivePartLogicalPlan.statsInfo()
 		for i, col := range selfSchema.Columns {
 			p.stats.ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
 		}

@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/set"
@@ -696,7 +697,7 @@ select * from t1;
 
 		err = tk.QueryToErr("select * from `information_schema`.`slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 		require.Error(t, err, quota)
-		require.Contains(t, err.Error(), "Out Of Memory Quota!", quota)
+		require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg, quota)
 	}
 	memQuotas := []int{128, 512, 1024, 2048, 4096}
 	for _, quota := range memQuotas {
@@ -851,4 +852,32 @@ func TestMDLView(t *testing.T) {
 	tk.MustExec("commit")
 
 	wg.Wait()
+}
+
+func TestCreateBindingForPrepareToken(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b time, c varchar(5))")
+
+	//some builtin functions listed in https://dev.mysql.com/doc/refman/8.0/en/function-resolution.html
+	cases := []string{
+		"select std(a) from t",
+		"select cast(a as decimal(10, 2)) from t",
+		"select bit_or(a) from t",
+		"select min(a) from t",
+		"select max(a) from t",
+		"select substr(c, 1, 2) from t",
+	}
+
+	for _, sql := range cases {
+		prep := fmt.Sprintf("prepare stmt from '%s'", sql)
+		tk.MustExec(prep)
+		tk.MustExec("execute stmt")
+		planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+		tk.MustExec(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]))
+	}
 }

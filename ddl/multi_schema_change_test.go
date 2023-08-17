@@ -1015,6 +1015,7 @@ func TestMultiSchemaChangeMixCancelled(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
+	defer tk.MustExec("set global tidb_ddl_enable_fast_reorg = default")
 
 	tk.MustExec("create table t (a int, b int, c int, index i1(c), index i2(c));")
 	tk.MustExec("insert into t values (1, 2, 3);")

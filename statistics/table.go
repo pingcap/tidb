@@ -402,9 +402,7 @@ func (t *Table) GetColRowCount() float64 {
 	slices.Sort(IDs)
 	for _, id := range IDs {
 		col := t.Columns[id]
-		// need to make sure stats on this column is loaded.
-		// TODO: use the new method to check if it's loaded
-		if col != nil && !(col.Histogram.NDV > 0 && col.notNullCount() == 0) && col.TotalRowCount() != 0 {
+		if col != nil && col.IsFullLoad() {
 			return col.TotalRowCount()
 		}
 	}
@@ -566,7 +564,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 		}
 		return result, nil
 	}
-	result, err = c.GetColumnRowCount(sctx, intRanges, coll.Count, true)
+	result, err = c.GetColumnRowCount(sctx, intRanges, coll.Count, coll.ModifyCount, true)
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats", uint64(result))
 	}
@@ -587,7 +585,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID i
 		}
 		return result, err
 	}
-	result, err := c.GetColumnRowCount(sctx, colRanges, coll.Count, false)
+	result, err := c.GetColumnRowCount(sctx, colRanges, coll.Count, coll.ModifyCount, false)
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats", uint64(result))
 	}
@@ -623,7 +621,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sctx sessionctx.Context, idxID in
 	if idx.CMSketch != nil && idx.StatsVer == Version1 {
 		result, err = coll.getIndexRowCount(sctx, idxID, indexRanges)
 	} else {
-		result, err = idx.GetRowCount(sctx, coll, indexRanges, coll.Count)
+		result, err = idx.GetRowCount(sctx, coll, indexRanges, coll.Count, coll.ModifyCount)
 	}
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats", uint64(result))
@@ -959,7 +957,7 @@ func (coll *HistColl) crossValidationSelectivity(sctx sessionctx.Context, idx *I
 				Collators:   []collate.Collator{idxPointRange.Collators[i]},
 			}
 
-			rowCount, err := col.GetColumnRowCount(sctx, []*ranger.Range{&rang}, coll.Count, col.IsHandle)
+			rowCount, err := col.GetColumnRowCount(sctx, []*ranger.Range{&rang}, coll.Count, coll.ModifyCount, col.IsHandle)
 			if err != nil {
 				return 0, 0, err
 			}
@@ -1031,7 +1029,7 @@ func (coll *HistColl) getIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 		// on single-column index, use previous way as well, because CMSketch does not contain null
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
-			count, err := idx.GetRowCount(sctx, nil, []*ranger.Range{ran}, coll.Count)
+			count, err := idx.GetRowCount(sctx, nil, []*ranger.Range{ran}, coll.Count, coll.ModifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -1375,8 +1373,7 @@ func (coll *HistColl) GetIndexAvgRowSize(ctx sessionctx.Context, cols []*express
 // We use this check to make sure all the statistics of the table are in the same version.
 func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 	for _, col := range tbl.Columns {
-		// Version0 means no statistics is collected currently.
-		if col.StatsVer == Version0 {
+		if !col.IsAnalyzed() {
 			continue
 		}
 		if col.StatsVer != int64(*version) {
@@ -1387,8 +1384,7 @@ func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 		return true
 	}
 	for _, idx := range tbl.Indices {
-		// Version0 means no statistics is collected currently.
-		if idx.StatsVer == Version0 {
+		if !idx.IsAnalyzed() {
 			continue
 		}
 		if idx.StatsVer != int64(*version) {

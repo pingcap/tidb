@@ -49,5 +49,5 @@ func TestJobSize(t *testing.T) {
 - SubJob.ToProxyJob()
 `
 	job := model.Job{}
-	require.Equal(t, 288, int(unsafe.Sizeof(job)), msg)
+	require.Equal(t, 320, int(unsafe.Sizeof(job)), msg)
 }

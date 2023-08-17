@@ -167,7 +167,10 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 	}
 
 	// If `stmtAsOfTS` is not 0, it means we use 'select ... from xxx as of timestamp ...'
-	stmtAsOfTS, err := parseAndValidateAsOf(p.ctx, p.sctx, tn.AsOf)
+	evaluateTS := func(sctx sessionctx.Context) (uint64, error) {
+		return parseAndValidateAsOf(context.Background(), p.sctx, tn.AsOf)
+	}
+	stmtAsOfTS, err := evaluateTS(p.sctx)
 	if err != nil {
 		return err
 	}
@@ -179,7 +182,7 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 		}
 		return nil
 	}
-	return p.evaluateFromStmtTSOrSysVariable(stmtAsOfTS)
+	return p.evaluateFromStmtTSOrSysVariable(stmtAsOfTS, evaluateTS)
 }
 
 func (p *staleReadProcessor) OnExecutePreparedStmt(preparedTSEvaluator StalenessTSEvaluator) (err error) {
@@ -201,7 +204,10 @@ func (p *staleReadProcessor) OnExecutePreparedStmt(preparedTSEvaluator Staleness
 			return err
 		}
 	}
-	return p.evaluateFromStmtTSOrSysVariable(stmtTS)
+	// When executing a prepared stmt, the stmtTS is calculated once and reused to avoid eval overhead,
+	// note it only takes PlanCacheStmt.SnapshotTSEvaluator without overwriting it.
+	// the evaluator will be re-calculated in next execution.
+	return p.evaluateFromStmtTSOrSysVariable(stmtTS, nil)
 }
 
 func (p *staleReadProcessor) evaluateFromTxn() error {
@@ -223,7 +229,7 @@ func (p *staleReadProcessor) evaluateFromTxn() error {
 	return p.setAsNonStaleRead()
 }
 
-func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64) error {
+func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64, evaluator StalenessTSEvaluator) error {
 	// If `txnReadTS` is not 0, it means  we meet following situation:
 	// set transaction read only as of timestamp ...
 	// select from table or execute prepared statement
@@ -235,6 +241,13 @@ func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64) erro
 
 	if stmtTS > 0 {
 		p.stmtTS = stmtTS
+		if evaluator != nil {
+			is, err := GetSessionSnapshotInfoSchema(p.sctx, stmtTS)
+			if err != nil {
+				return err
+			}
+			return p.setEvaluatedValues(stmtTS, is, evaluator)
+		}
 		return p.setEvaluatedTS(stmtTS)
 	}
 
@@ -267,7 +280,7 @@ func parseAndValidateAsOf(ctx context.Context, sctx sessionctx.Context, asOf *as
 		return 0, nil
 	}
 
-	ts, err := CalculateAsOfTsExpr(sctx, asOf.TsExpr)
+	ts, err := CalculateAsOfTsExpr(ctx, sctx, asOf.TsExpr)
 	if err != nil {
 		return 0, err
 	}

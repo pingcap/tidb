@@ -149,7 +149,6 @@ func assertTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
 	require.Equal(t, b.ModifyCount, a.ModifyCount)
 	require.Len(t, a.Columns, len(b.Columns))
 	for i := range a.Columns {
-		require.Equal(t, b.Columns[i].Count, a.Columns[i].Count)
 		require.True(t, statistics.HistogramEqual(&a.Columns[i].Histogram, &b.Columns[i].Histogram, false))
 		if a.Columns[i].CMSketch == nil {
 			require.Nil(t, b.Columns[i].CMSketch)
@@ -344,6 +343,7 @@ func TestDurationToTS(t *testing.T) {
 
 func TestVersion(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit2 := testkit.NewTestKit(t, store)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
@@ -353,7 +353,7 @@ func TestVersion(t *testing.T) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
-	h, err := handle.NewHandle(testKit.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker(), do.ServerID)
+	h, err := handle.NewHandle(testKit.Session(), testKit2.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker(), do.ServerID)
 	require.NoError(t, err)
 	unit := oracle.ComposeTS(1, 0)
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
@@ -462,7 +462,6 @@ func TestLoadHist(t *testing.T) {
 		hist.TotColSize = temp
 
 		require.True(t, hist.CMSketch.Equal(newStatsTbl.Columns[id].CMSketch))
-		require.Equal(t, newStatsTbl.Columns[id].Count, hist.Count)
 		require.Equal(t, newStatsTbl.Columns[id].Info, hist.Info)
 	}
 	// Add column c3, we only update c3.
@@ -540,6 +539,23 @@ func TestInitStatsVer2(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	table1 := h.GetTableStats(tbl.Meta())
 	assertTableEqual(t, table0, table1)
+	h.SetLease(0)
+}
+
+func TestInitStatsIssue41938(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_analyze_version=1")
+	tk.MustExec("set @@session.tidb_analyze_version=1")
+	tk.MustExec("create table t1 (a timestamp primary key)")
+	tk.MustExec("insert into t1 values ('2023-03-07 14:24:30'), ('2023-03-07 14:24:31'), ('2023-03-07 14:24:32'), ('2023-03-07 14:24:33')")
+	tk.MustExec("analyze table t1 with 0 topn")
+	h := dom.StatsHandle()
+	// `InitStats` is only called when `Lease` is not 0, so here we just change it.
+	h.SetLease(time.Millisecond)
+	h.Clear()
+	require.NoError(t, h.InitStats(dom.InfoSchema()))
 	h.SetLease(0)
 }
 
@@ -3178,31 +3194,6 @@ func TestIssues27147(t *testing.T) {
 	testKit.MustExec("alter table t1 add index idx((a+5));")
 	err = testKit.ExecToErr("analyze table t1;")
 	require.Equal(t, nil, err)
-}
-
-func TestColumnCountFromStorage(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	do := dom
-	h := do.StatsHandle()
-	originLease := h.Lease()
-	defer h.SetLease(originLease)
-	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
-	// `Lease` is not 0, so here we just change it.
-	h.SetLease(time.Millisecond)
-	testKit.MustExec("use test")
-	testKit.MustExec("set tidb_analyze_version = 2")
-	testKit.MustExec("create table tt (c int)")
-	testKit.MustExec("insert into tt values(1), (2)")
-	testKit.MustExec("analyze table tt")
-	is := do.InfoSchema()
-	h = do.StatsHandle()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tt"))
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	h.TableStatsFromStorage(tblInfo, tblInfo.ID, false, 0)
-	statsTbl := h.GetTableStats(tblInfo)
-	require.Equal(t, int64(2), statsTbl.Columns[tblInfo.Columns[0].ID].Count)
 }
 
 func testIncrementalModifyCountUpdateHelper(analyzeSnapshot bool) func(*testing.T) {

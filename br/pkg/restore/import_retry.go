@@ -4,9 +4,11 @@ package restore
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -85,6 +87,21 @@ func (o *OverRegionsInRangeController) tryFindLeader(ctx context.Context, region
 
 // handleInRegionError handles the error happens internal in the region. Update the region info, and perform a suitable backoff.
 func (o *OverRegionsInRangeController) handleInRegionError(ctx context.Context, result RPCResult, region *split.RegionInfo) (cont bool) {
+	if result.StoreError.GetServerIsBusy() != nil {
+		if strings.Contains(result.StoreError.GetMessage(), "memory is limited") {
+			sleepDuration := 15 * time.Second
+
+			failpoint.Inject("hint-memory-is-limited", func(val failpoint.Value) {
+				if val.(bool) {
+					logutil.CL(ctx).Debug("failpoint hint-memory-is-limited injected.")
+					sleepDuration = 100 * time.Microsecond
+				}
+			})
+			time.Sleep(sleepDuration)
+			return true
+		}
+	}
+
 	if nl := result.StoreError.GetNotLeader(); nl != nil {
 		if nl.Leader != nil {
 			region.Leader = nl.Leader

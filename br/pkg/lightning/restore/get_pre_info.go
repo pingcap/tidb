@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
@@ -117,12 +118,14 @@ type TargetInfoGetterImpl struct {
 	targetDBGlue glue.Glue
 	tls          *common.TLS
 	backend      backend.TargetInfoGetter
+	pdCli        pd.Client
 }
 
 // NewTargetInfoGetterImpl creates a TargetInfoGetterImpl object.
 func NewTargetInfoGetterImpl(
 	cfg *config.Config,
 	targetDB *sql.DB,
+	pdCli pd.Client,
 ) (*TargetInfoGetterImpl, error) {
 	targetDBGlue := glue.NewExternalTiDBGlue(targetDB, cfg.TiDB.SQLMode)
 	tls, err := cfg.ToTLS()
@@ -134,7 +137,10 @@ func NewTargetInfoGetterImpl(
 	case config.BackendTiDB:
 		backendTargetInfoGetter = tidb.NewTargetInfoGetter(targetDB)
 	case config.BackendLocal:
-		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDBGlue, cfg.TiDB.PdAddr)
+		if pdCli == nil {
+			return nil, common.ErrUnknown.GenWithStack("pd client is required when using local backend")
+		}
+		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDBGlue, pdCli)
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
@@ -143,6 +149,7 @@ func NewTargetInfoGetterImpl(
 		targetDBGlue: targetDBGlue,
 		tls:          tls,
 		backend:      backendTargetInfoGetter,
+		pdCli:        pdCli,
 	}, nil
 }
 
@@ -189,7 +196,12 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 	}
 	var dump int
 	err = exec.QueryRow(ctx, "check table empty",
-		fmt.Sprintf("SELECT 1 FROM %s LIMIT 1", common.UniqueTable(schemaName, tableName)),
+		// Here we use the `USE INDEX()` hint to skip fetch the record from index.
+		// In Lightning, if previous importing is halted half-way, it is possible that
+		// the data is partially imported, but the index data has not been imported.
+		// In this situation, if no hint is added, the SQL executor might fetch the record from index,
+		// which is empty.  This will result in missing check.
+		fmt.Sprintf("SELECT 1 FROM %s USE INDEX() LIMIT 1", common.UniqueTable(schemaName, tableName)),
 		&dump,
 	)
 
@@ -226,7 +238,7 @@ func (g *TargetInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Contex
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetReplicationConfig(ctx context.Context) (*pdtypes.ReplicationConfig, error) {
 	result := new(pdtypes.ReplicationConfig)
-	if err := g.tls.WithHost(g.cfg.TiDB.PdAddr).GetJSON(ctx, pdReplicate, &result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdReplicate, &result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil
@@ -237,7 +249,7 @@ func (g *TargetInfoGetterImpl) GetReplicationConfig(ctx context.Context) (*pdtyp
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdtypes.StoresInfo, error) {
 	result := new(pdtypes.StoresInfo)
-	if err := g.tls.WithHost(g.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdStores, result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil
@@ -248,7 +260,7 @@ func (g *TargetInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdtypes.Sto
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.RegionsInfo, error) {
 	result := new(pdtypes.RegionsInfo)
-	if err := g.tls.WithHost(g.cfg.TiDB.PdAddr).GetJSON(ctx, pdEmptyRegions, &result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdEmptyRegions, &result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil
@@ -362,6 +374,19 @@ func (p *PreRestoreInfoGetterImpl) GetAllTableStructures(ctx context.Context, op
 
 func (p *PreRestoreInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Context, dbSrcFileMeta *mydump.MDDatabaseMeta, getPreInfoCfg *ropts.GetPreInfoConfig) ([]*model.TableInfo, error) {
 	dbName := dbSrcFileMeta.Name
+	failpoint.Inject(
+		"getTableStructuresByFileMeta_BeforeFetchRemoteTableModels",
+		func(v failpoint.Value) {
+			fmt.Println("failpoint: getTableStructuresByFileMeta_BeforeFetchRemoteTableModels")
+			const defaultMilliSeconds int = 5000
+			sleepMilliSeconds, ok := v.(int)
+			if !ok || sleepMilliSeconds <= 0 || sleepMilliSeconds > 30000 {
+				sleepMilliSeconds = defaultMilliSeconds
+			}
+			//nolint: errcheck
+			failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/tidb/FetchRemoteTableModels_BeforeFetchTableAutoIDInfos", fmt.Sprintf("sleep(%d)", sleepMilliSeconds))
+		},
+	)
 	currentTableInfosFromDB, err := p.targetInfoGetter.FetchRemoteTableModels(ctx, dbName)
 	if err != nil {
 		if getPreInfoCfg != nil && getPreInfoCfg.IgnoreDBNotExist {

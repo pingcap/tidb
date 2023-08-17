@@ -17,6 +17,7 @@ package handle
 import (
 	"context"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -63,7 +65,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *statsCache
 func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY version, table_id, modify_count, count from mysql.stats_meta"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		return statsCache{}, errors.Trace(err)
 	}
@@ -136,23 +138,12 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			if colInfo == nil {
 				continue
 			}
-			var topnCount int64
-			// If this is stats of the Version2, we need to consider the topn's count as well.
-			// See the comments of Version2 for more details.
-			if statsVer >= statistics.Version2 {
-				var err error
-				topnCount, err = h.initTopNCountSum(tblID, id)
-				if err != nil {
-					terror.Log(err)
-				}
-			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
 			hist.Correlation = row.GetFloat64(9)
 			col := &statistics.Column{
 				Histogram:  *hist,
 				PhysicalID: table.PhysicalID,
 				Info:       colInfo,
-				Count:      nullCount + topnCount,
 				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       row.GetInt64(10),
 				StatsVer:   statsVer,
@@ -167,7 +158,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *statsCache) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -214,7 +205,7 @@ func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chu
 func (h *Handle) initStatsTopN(cache *statsCache) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -263,7 +254,7 @@ func (h *Handle) initStatsFMSketch4Chunk(cache *statsCache, iter *chunk.Iterator
 func (h *Handle) initStatsFMSketch(cache *statsCache) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, value from mysql.stats_fm_sketch"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -304,21 +295,23 @@ func (h *Handle) initStatsBuckets4Chunk(cache *statsCache, iter *chunk.Iterator4
 			if !ok {
 				continue
 			}
-			column.Count += row.GetInt64(3)
 			if !mysql.HasPriKeyFlag(column.Info.GetFlag()) {
 				continue
 			}
 			hist = &column.Histogram
 			d := types.NewBytesDatum(row.GetBytes(5))
+			// Setting TimeZone to time.UTC aligns with HistogramFromStorage and can fix #41938. However, #41985 still exist.
+			// TODO: do the correct time zone conversion for timestamp-type columns' upper/lower bounds.
+			sc := &stmtctx.StatementContext{TimeZone: time.UTC, AllowInvalidDate: true, IgnoreZeroInDate: true}
 			var err error
-			lower, err = d.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
+			lower, err = d.ConvertTo(sc, &column.Info.FieldType)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket lower bound failed", zap.Error(err))
 				delete(table.Columns, histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
-			upper, err = d.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
+			upper, err = d.ConvertTo(sc, &column.Info.FieldType)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket upper bound failed", zap.Error(err))
 				delete(table.Columns, histID)
@@ -329,35 +322,10 @@ func (h *Handle) initStatsBuckets4Chunk(cache *statsCache, iter *chunk.Iterator4
 	}
 }
 
-func (h *Handle) initTopNCountSum(tableID, colID int64) (int64, error) {
-	// Before stats ver 2, histogram represents all data in this column.
-	// In stats ver 2, histogram + TopN represent all data in this column.
-	// So we need to add TopN total count here.
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	selSQL := "select sum(count) from mysql.stats_top_n where table_id = %? and is_index = 0 and hist_id = %?"
-	rs, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, selSQL, tableID, colID)
-	if rs != nil {
-		defer terror.Call(rs.Close)
-	}
-	if err != nil {
-		return 0, err
-	}
-	req := rs.NewChunk(nil)
-	iter := chunk.NewIterator4Chunk(req)
-	err = rs.Next(ctx, req)
-	if err != nil {
-		return 0, err
-	}
-	if req.NumRows() == 0 {
-		return 0, nil
-	}
-	return iter.Begin().GetMyDecimal(0).ToInt()
-}
-
 func (h *Handle) initStatsBuckets(cache *statsCache) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -398,15 +366,13 @@ func (h *Handle) initStatsBuckets(cache *statsCache) error {
 func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	h.mu.Lock()
 	defer func() {
-		_, err1 := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "commit")
+		_, err1 := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "commit")
 		if err == nil && err1 != nil {
 			err = err1
 		}
-		h.mu.Unlock()
 	}()
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
+	_, err = h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return err
 	}
@@ -435,7 +401,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	// Set columns' stats status.
 	for _, table := range cache.Values() {
 		for _, col := range table.Columns {
-			if col.StatsVer != statistics.Version0 || col.Count > 0 {
+			if col.StatsAvailable() {
 				if mysql.HasPriKeyFlag(col.Info.GetFlag()) {
 					col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 				} else {

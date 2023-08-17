@@ -758,11 +758,14 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	lnConfig := config.NewConfig()
 	lnConfig.TikvImporter.Backend = config.BackendLocal
-	targetGetter, err := NewTargetInfoGetterImpl(lnConfig, db)
+	_, err = NewTargetInfoGetterImpl(lnConfig, db, nil)
+	require.ErrorContains(t, err, "pd client is required when using local backend")
+	lnConfig.TikvImporter.Backend = config.BackendTiDB
+	targetGetter, err := NewTargetInfoGetterImpl(lnConfig, db, nil)
 	require.NoError(t, err)
 	require.Equal(t, lnConfig, targetGetter.cfg)
 
-	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` USE INDEX\\(\\) LIMIT 1").
 		WillReturnError(&mysql_sql_driver.MySQLError{
 			Number:  errno.ErrNoSuchTable,
 			Message: "Table 'test_db.test_tbl' doesn't exist",
@@ -772,7 +775,7 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	require.NotNil(t, pIsEmpty)
 	require.Equal(t, true, *pIsEmpty)
 
-	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(
 			sqlmock.NewRows([]string{"1"}).
 				RowError(0, sql.ErrNoRows),
@@ -782,7 +785,7 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	require.NotNil(t, pIsEmpty)
 	require.Equal(t, true, *pIsEmpty)
 
-	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(
 			sqlmock.NewRows([]string{"1"}).AddRow(1),
 		)
@@ -791,7 +794,7 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	require.NotNil(t, pIsEmpty)
 	require.Equal(t, false, *pIsEmpty)
 
-	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` USE INDEX\\(\\) LIMIT 1").
 		WillReturnError(errors.New("some dummy error"))
 	_, err = targetGetter.IsTableEmpty(ctx, "test_db", "test_tbl")
 	require.Error(t, err)

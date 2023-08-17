@@ -419,6 +419,13 @@ func (store *MVCCStore) CheckTxnStatus(reqCtx *requestCtx,
 	lock := store.getLock(reqCtx, req.PrimaryKey)
 	batch := store.dbWriter.NewWriteBatch(req.LockTs, 0, reqCtx.rpcCtx)
 	if lock != nil && lock.StartTS == req.LockTs {
+		if !bytes.Equal(req.PrimaryKey, lock.Primary) {
+			return TxnStatus{}, &kverrors.ErrPrimaryMismatch{
+				Key:  req.PrimaryKey,
+				Lock: lock,
+			}
+		}
+
 		// For an async-commit lock, never roll it back or push forward it MinCommitTS.
 		if lock.UseAsyncCommit && !req.ForceSyncCommit {
 			log.S().Debugf("async commit startTS=%v secondaries=%v minCommitTS=%v", lock.StartTS, lock.Secondaries, lock.MinCommitTS)
@@ -1025,10 +1032,6 @@ func (store *MVCCStore) Commit(req *requestCtx, keys [][]byte, startTS, commitTS
 				Key:         key,
 			}
 		}
-		if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) {
-			log.Warn("commit a pessimistic lock with Lock type", zap.Binary("key", key), zap.Uint64("start ts", startTS), zap.Uint64("commit ts", commitTS))
-			lock.Op = uint8(kvrpcpb.Op_Lock)
-		}
 		isPessimisticTxn = lock.ForUpdateTS > 0
 		tmpDiff += len(key) + len(lock.Value)
 		batch.Commit(key, &lock)
@@ -1304,12 +1307,7 @@ func (store *MVCCStore) Cleanup(reqCtx *requestCtx, key []byte, startTS, current
 func (store *MVCCStore) appendScannedLock(locks []*kvrpcpb.LockInfo, it *lockstore.Iterator, maxTS uint64) []*kvrpcpb.LockInfo {
 	lock := mvcc.DecodeLock(it.Value())
 	if lock.StartTS < maxTS {
-		locks = append(locks, &kvrpcpb.LockInfo{
-			PrimaryLock: lock.Primary,
-			LockVersion: lock.StartTS,
-			Key:         safeCopy(it.Key()),
-			LockTtl:     uint64(lock.TTL),
-		})
+		locks = append(locks, lock.ToLockInfo(append([]byte{}, it.Key()...)))
 	}
 	return locks
 }

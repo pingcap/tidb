@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -230,6 +231,10 @@ func TestLockNewTable(t *testing.T) {
 			args,
 		}
 	}
+
+	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/set-job-uuid", `return("test-job-id")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/set-job-uuid")
+
 	type sqlExecute struct {
 		executeInfo
 
@@ -249,7 +254,7 @@ func TestLockNewTable(t *testing.T) {
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL(1, now, expireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, expireTime, "test-id")),
 				nil, nil,
 			},
 			{
@@ -271,7 +276,7 @@ func TestLockNewTable(t *testing.T) {
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL(1, now, expireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, expireTime, "test-id")),
 				nil, nil,
 			},
 			{
@@ -285,7 +290,7 @@ func TestLockNewTable(t *testing.T) {
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL(1, now, expireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, expireTime, "test-id")),
 				nil, errors.New("test error message"),
 			},
 		}, false, true},

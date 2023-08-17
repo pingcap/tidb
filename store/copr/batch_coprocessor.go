@@ -530,7 +530,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		rangesLen = 0
 		for i, ranges := range rangesForEachPhysicalTable {
 			rangesLen += ranges.Len()
-			locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
+			locations, err := cache.SplitKeyRangesByLocations(bo, ranges, UnspecifiedLimit)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -817,6 +817,10 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 				ranges = append(ranges, *ran)
 			})
 		}
+		// need to make sure the key ranges is sorted
+		slices.SortFunc(ranges, func(i, j kv.KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		})
 		ret, err := buildBatchCopTasksForNonPartitionedTable(bo, b.store, NewKeyRanges(ranges), b.req.StoreType, false, 0, false, 0)
 		return ret, err
 	}
@@ -834,6 +838,10 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 				})
 			}
 		}
+		// need to make sure the key ranges is sorted
+		slices.SortFunc(ranges, func(i, j kv.KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		})
 		keyRanges = append(keyRanges, NewKeyRanges(ranges))
 	}
 	ret, err := buildBatchCopTasksForPartitionedTable(bo, b.store, keyRanges, b.req.StoreType, false, 0, false, 0, pid)

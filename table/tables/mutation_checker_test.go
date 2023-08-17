@@ -310,9 +310,9 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 					require.Nil(t, err)
 					rowMutation := mutation{key: rowKey, value: rowValue}
 					corruptedRowMutation := mutation{key: corruptedRowKey, value: rowValue}
-					err = checkHandleConsistency(rowMutation, indexMutations, maps.IndexIDToInfo, "t")
+					err = checkHandleConsistency(rowMutation, indexMutations, maps.IndexIDToInfo, &tableInfo)
 					require.Nil(t, err)
-					err = checkHandleConsistency(corruptedRowMutation, indexMutations, maps.IndexIDToInfo, "t")
+					err = checkHandleConsistency(corruptedRowMutation, indexMutations, maps.IndexIDToInfo, &tableInfo)
 					require.NotNil(t, err)
 				}
 			}

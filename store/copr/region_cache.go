@@ -43,10 +43,10 @@ func NewRegionCache(rc *tikv.RegionCache) *RegionCache {
 }
 
 // SplitRegionRanges gets the split ranges from pd region.
-func (c *RegionCache) SplitRegionRanges(bo *Backoffer, keyRanges []kv.KeyRange) ([]kv.KeyRange, error) {
+func (c *RegionCache) SplitRegionRanges(bo *Backoffer, keyRanges []kv.KeyRange, limit int) ([]kv.KeyRange, error) {
 	ranges := NewKeyRanges(keyRanges)
 
-	locations, err := c.SplitKeyRangesByLocations(bo, ranges)
+	locations, err := c.SplitKeyRangesByLocations(bo, ranges, limit)
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}
@@ -123,10 +123,16 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 	return res
 }
 
+// UnspecifiedLimit means no limit.
+const UnspecifiedLimit = -1
+
 // SplitKeyRangesByLocations splits the KeyRanges by logical info in the cache.
-func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges) ([]*LocationKeyRanges, error) {
+func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges, limit int) ([]*LocationKeyRanges, error) {
 	res := make([]*LocationKeyRanges, 0)
 	for ranges.Len() > 0 {
+		if limit != UnspecifiedLimit && len(res) >= limit {
+			break
+		}
 		loc, err := c.LocateKey(bo.TiKVBackoffer(), ranges.At(0).StartKey)
 		if err != nil {
 			return res, derr.ToTiDBErr(err)
@@ -177,7 +183,7 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 //
 // TODO(youjiali1995): Try to do it in one round and reduce allocations if bucket is not enabled.
 func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) ([]*LocationKeyRanges, error) {
-	locs, err := c.SplitKeyRangesByLocations(bo, ranges)
+	locs, err := c.SplitKeyRangesByLocations(bo, ranges, UnspecifiedLimit)
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}

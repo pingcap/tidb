@@ -163,6 +163,8 @@ func (c *MetaDataClient) DeleteTask(ctx context.Context, taskName string) error 
 			clientv3.OpDelete(CheckPointsOf(taskName), clientv3.WithPrefix()),
 			clientv3.OpDelete(Pause(taskName)),
 			clientv3.OpDelete(LastErrorPrefixOf(taskName), clientv3.WithPrefix()),
+			clientv3.OpDelete(GlobalCheckpointOf(taskName)),
+			clientv3.OpDelete(StorageCheckpointOf(taskName), clientv3.WithPrefix()),
 		).
 		Commit()
 	if err != nil {
@@ -372,28 +374,6 @@ func (t *Task) GetStorageCheckpoint(ctx context.Context) (uint64, error) {
 	return storageCheckpoint, nil
 }
 
-// MinNextBackupTS query the all next backup ts of a store, returning the minimal next backup ts of the store.
-func (t *Task) MinNextBackupTS(ctx context.Context, store uint64) (uint64, error) {
-	key := CheckPointOf(t.Info.Name, store)
-	resp, err := t.cli.KV.Get(ctx, key)
-	if err != nil {
-		return 0, errors.Annotatef(err, "failed to get checkpoints of %s", t.Info.Name)
-	}
-	if resp.Count != 1 {
-		return 0, nil
-	}
-	kv := resp.Kvs[0]
-	if len(kv.Value) != 8 {
-		return 0, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
-			"the next backup ts of store %d isn't 64bits (it is %d bytes, value = %s)",
-			store,
-			len(kv.Value),
-			redact.Key(kv.Value))
-	}
-	nextBackupTS := binary.BigEndian.Uint64(kv.Value)
-	return nextBackupTS, nil
-}
-
 // GetGlobalCheckPointTS gets the global checkpoint timestamp according to log task.
 func (t *Task) GetGlobalCheckPointTS(ctx context.Context) (uint64, error) {
 	checkPointMap, err := t.NextBackupTSList(ctx)
@@ -420,16 +400,6 @@ func (t *Task) GetGlobalCheckPointTS(ctx context.Context) (uint64, error) {
 	}
 
 	return mathutil.Max(checkpoint, ts), nil
-}
-
-// Step forwards the progress (next_backup_ts) of some region.
-// The task should be done by TiKV. This function should only be used for test cases.
-func (t *Task) Step(ctx context.Context, store uint64, ts uint64) error {
-	_, err := t.cli.KV.Put(ctx, CheckPointOf(t.Info.Name, store), string(encodeUint64(ts)))
-	if err != nil {
-		return errors.Annotatef(err, "failed forward the progress of %s to %d", t.Info.Name, ts)
-	}
-	return nil
 }
 
 func (t *Task) UploadGlobalCheckpoint(ctx context.Context, ts uint64) error {

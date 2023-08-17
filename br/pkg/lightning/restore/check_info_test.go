@@ -493,11 +493,11 @@ func TestCheckTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	mock.MatchExpectationsInOrder(false)
 	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
-	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
-	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
-	mock.ExpectQuery("SELECT 1 FROM `test2`.`tbl1` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test2`.`tbl1` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	rc.checkTemplate = NewSimpleTemplate()
 	err = rc.checkTableEmpty(ctx)
@@ -510,13 +510,13 @@ func TestCheckTableEmpty(t *testing.T) {
 	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 	mock.MatchExpectationsInOrder(false)
 	// test auto retry retryable error
-	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` USE INDEX\\(\\) LIMIT 1").
 		WillReturnError(&gmysql.MySQLError{Number: errno.ErrPDServerTimeout})
-	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
-	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
-	mock.ExpectQuery("SELECT 1 FROM `test2`.`tbl1` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test2`.`tbl1` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
 	rc.checkTemplate = NewSimpleTemplate()
 	err = rc.checkTableEmpty(ctx)
@@ -532,11 +532,11 @@ func TestCheckTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 	mock.MatchExpectationsInOrder(false)
-	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
-	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
-	mock.ExpectQuery("SELECT 1 FROM `test2`.`tbl1` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test2`.`tbl1` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
 	rc.checkTemplate = NewSimpleTemplate()
 	err = rc.checkTableEmpty(ctx)
@@ -576,7 +576,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 	// only need to check the one that is not in checkpoint
-	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	err = rc.checkTableEmpty(ctx)
 	require.NoError(t, err)

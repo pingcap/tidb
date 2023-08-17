@@ -2126,6 +2126,18 @@
     "Name": "TestSingleConsumerCTE",
     "Cases": [
       {
+        "SQL": "with base1 as (WITH RECURSIVE cte(a) AS (with tmp as (select 1 as a) SELECT a from tmp UNION SELECT a+1 FROM cte) SELECT * FROM cte) select * from base1; -- issue #43318",
+        "Plan": [
+          "CTEFullScan 2.00 root CTE:cte data:CTE_3",
+          "CTE_3 2.00 root  Recursive CTE",
+          "├─Projection(Seed Part) 1.00 root  1->Column#15",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection(Recursive Part) 1.00 root  cast(plus(Column#16, 1), bigint(1) BINARY)->Column#18",
+          "  └─CTETable 1.00 root  Scan on CTE_3"
+        ],
+        "Warning": null
+      },
+      {
         "SQL": "with cte as (select 1) select * from cte; -- inline cte",
         "Plan": [
           "Projection 1.00 root  1->Column#3",
@@ -2169,26 +2181,24 @@
       {
         "SQL": "with cte as (with cte as (select 1) select * from cte) select * from cte a, cte b; -- inline inner cte, cannot be inlined outer cte",
         "Plan": [
-          "HashJoin 0.64 root  CARTESIAN inner join",
-          "├─CTEFullScan(Build) 0.80 root CTE:cte AS b data:CTE_0",
-          "└─CTEFullScan(Probe) 0.80 root CTE:cte AS a data:CTE_0",
-          "CTE_0 0.80 root  Non-Recursive CTE",
-          "└─Selection(Seed Part) 0.80 root  1",
-          "  └─Projection 1.00 root  1->Column#3",
-          "    └─TableDual 1.00 root  rows:1"
+          "HashJoin 1.00 root  CARTESIAN inner join",
+          "├─CTEFullScan(Build) 1.00 root CTE:cte AS b data:CTE_0",
+          "└─CTEFullScan(Probe) 1.00 root CTE:cte AS a data:CTE_0",
+          "CTE_0 1.00 root  Non-Recursive CTE",
+          "└─Projection(Seed Part) 1.00 root  1->Column#3",
+          "  └─TableDual 1.00 root  rows:1"
         ],
         "Warning": null
       },
       {
         "SQL": "with cte1 as (select 1), cte2 as (with cte3 as (select * from cte1) select * from cte3) select * from cte1, cte2; -- inline cte2, cte3, cannot be inlined cte1",
         "Plan": [
-          "HashJoin 0.64 root  CARTESIAN inner join",
-          "├─CTEFullScan(Build) 0.80 root CTE:cte1 data:CTE_0",
-          "└─CTEFullScan(Probe) 0.80 root CTE:cte1 data:CTE_0",
-          "CTE_0 0.80 root  Non-Recursive CTE",
-          "└─Selection(Seed Part) 0.80 root  1",
-          "  └─Projection 1.00 root  1->Column#1",
-          "    └─TableDual 1.00 root  rows:1"
+          "HashJoin 1.00 root  CARTESIAN inner join",
+          "├─CTEFullScan(Build) 1.00 root CTE:cte1 data:CTE_0",
+          "└─CTEFullScan(Probe) 1.00 root CTE:cte1 data:CTE_0",
+          "CTE_0 1.00 root  Non-Recursive CTE",
+          "└─Projection(Seed Part) 1.00 root  1->Column#1",
+          "  └─TableDual 1.00 root  rows:1"
         ],
         "Warning": null
       },
@@ -2203,21 +2213,20 @@
       {
         "SQL": "with cte1 as (select 1), cte2 as (select * from cte1) select * from cte2 a, cte2 b; -- inline cte1, cannot be inlined cte2",
         "Plan": [
-          "HashJoin 0.64 root  CARTESIAN inner join",
-          "├─CTEFullScan(Build) 0.80 root CTE:cte2 AS b data:CTE_1",
-          "└─CTEFullScan(Probe) 0.80 root CTE:cte2 AS a data:CTE_1",
-          "CTE_1 0.80 root  Non-Recursive CTE",
-          "└─Selection(Seed Part) 0.80 root  1",
-          "  └─Projection 1.00 root  1->Column#3",
-          "    └─TableDual 1.00 root  rows:1"
+          "HashJoin 1.00 root  CARTESIAN inner join",
+          "├─CTEFullScan(Build) 1.00 root CTE:cte2 AS b data:CTE_1",
+          "└─CTEFullScan(Probe) 1.00 root CTE:cte2 AS a data:CTE_1",
+          "CTE_1 1.00 root  Non-Recursive CTE",
+          "└─Projection(Seed Part) 1.00 root  1->Column#3",
+          "  └─TableDual 1.00 root  rows:1"
         ],
         "Warning": null
       },
       {
         "SQL": "with recursive cte(a) as (select 1 union select a from cte) select * from cte; -- recursive cte cannot be inlined",
         "Plan": [
-          "CTEFullScan 1.00 root CTE:cte data:CTE_0",
-          "CTE_0 1.00 root  Recursive CTE",
+          "CTEFullScan 2.00 root CTE:cte data:CTE_0",
+          "CTE_0 2.00 root  Recursive CTE",
           "├─Projection(Seed Part) 1.00 root  1->Column#2",
           "│ └─TableDual 1.00 root  rows:1",
           "└─CTETable(Recursive Part) 1.00 root  Scan on CTE_0"
@@ -6705,6 +6714,120 @@
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#15)->Column#12",
           "      └─Projection 10000.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#15",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexMergeOrderPushDown",
+    "Cases": [
+      {
+        "SQL": "select * from t where a = 1 or b = 1 order by c limit 2",
+        "Plan": [
+          "TopN 2.00 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 19.99 root  type: union",
+          "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "  │ └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(a, c) range:[1,1], keep order:true, stats:pseudo",
+          "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "  │ └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where a = 1 or b in (1, 2, 3) order by c limit 2",
+        "Plan": [
+          "TopN 2.00 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 2.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx(a, c) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 2.00 cop[tikv]  test.t.c, offset:0, count:2",
+          "    └─TableRowIDScan 39.97 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where a in (1, 2, 3) or b = 1 order by c limit 2",
+        "Plan": [
+          "TopN 2.00 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 2.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t, index:idx(a, c) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 2.00 cop[tikv]  test.t.c, offset:0, count:2",
+          "    └─TableRowIDScan 39.97 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where a in (1, 2, 3) or b in (1, 2, 3) order by c limit 2",
+        "Plan": [
+          "TopN 2.00 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 2.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t, index:idx(a, c) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 2.00 cop[tikv]  test.t.c, offset:0, count:2",
+          "    └─TableRowIDScan 59.91 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where (a = 1 and c = 2) or (b = 1) order by c limit 2",
+        "Plan": [
+          "TopN 2.00 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 10.10 root  type: union",
+          "  ├─Limit(Build) 0.10 cop[tikv]  offset:0, count:2",
+          "  │ └─IndexRangeScan 0.10 cop[tikv] table:t, index:idx(a, c) range:[1 2,1 2], keep order:true, stats:pseudo",
+          "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "  │ └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 10.10 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where (a = 1 and c = 2) or b in (1, 2, 3) order by c limit 2",
+        "Plan": [
+          "TopN 2.00 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 2.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:idx(a, c) range:[1 2,1 2], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 2.00 cop[tikv]  test.t.c, offset:0, count:2",
+          "    └─TableRowIDScan 30.10 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where (a = 1 and c = 2) or (b in (1, 2, 3) and c = 3) order by c limit 2",
+        "Plan": [
+          "TopN 0.40 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 0.40 root  type: union",
+          "  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:idx(a, c) range:[1 2,1 2], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 0.30 cop[tikv] table:t, index:idx2(b, c) range:[1 3,1 3], [2 3,2 3], [3 3,3 3], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 0.40 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where (a = 1 or b = 2) and c = 3 order by c limit 2",
+        "Plan": [
+          "TopN 0.02 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 0.02 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx(a, c) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx2(b, c) range:[2,2], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.02 cop[tikv]  eq(test.t.c, 3)",
+          "    └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by c limit 2",
+        "Plan": [
+          "TopN 0.06 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 0.06 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx(a, c) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx2(b, c) range:[2,2], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.06 cop[tikv]  in(test.t.c, 1, 2, 3)",
+          "    └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
       }

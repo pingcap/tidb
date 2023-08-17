@@ -66,8 +66,16 @@ type TiDBStatement struct {
 	boundParams [][]byte
 	paramsType  []byte
 	ctx         *TiDBContext
-	rs          ResultSet
-	sql         string
+	// this result set should have been closed before stored here. Only the `rowIterator` are used here. This field is
+	// not moved out to reuse the logic inside functions `writeResultSet...`
+	// TODO: move the `fetchedRows` into the statement, and remove the `ResultSet` from statement.
+	rs cursorResultSet
+	// the `rowContainer` should contain all pre-fetched results of the statement in `EXECUTE` command.
+	// it's stored here to be closed in RESET and CLOSE command
+	rowContainer *chunk.RowContainer
+	sql          string
+
+	hasActiveCursor bool
 }
 
 // ID implements PreparedStatement ID method.
@@ -126,37 +134,61 @@ func (ts *TiDBStatement) GetParamsType() []byte {
 }
 
 // StoreResultSet stores ResultSet for stmt fetching
-func (ts *TiDBStatement) StoreResultSet(rs ResultSet) {
-	// refer to https://dev.mysql.com/doc/refman/5.7/en/cursor-restrictions.html
-	// You can have open only a single cursor per prepared statement.
-	// closing previous ResultSet before associating a new ResultSet with this statement
-	// if it exists
-	if ts.rs != nil {
-		terror.Call(ts.rs.Close)
-	}
+func (ts *TiDBStatement) StoreResultSet(rs cursorResultSet) {
+	// the original reset set should have been closed, and it's only used to store the iterator through the rowContainer
+	// so it's fine to just overwrite it.
 	ts.rs = rs
 }
 
 // GetResultSet gets ResultSet associated this statement
-func (ts *TiDBStatement) GetResultSet() ResultSet {
+func (ts *TiDBStatement) GetResultSet() cursorResultSet {
 	return ts.rs
 }
 
 // Reset implements PreparedStatement Reset method.
-func (ts *TiDBStatement) Reset() {
+func (ts *TiDBStatement) Reset() error {
 	for i := range ts.boundParams {
 		ts.boundParams[i] = nil
 	}
+	ts.hasActiveCursor = false
 
-	// closing previous ResultSet if it exists
-	if ts.rs != nil {
-		terror.Call(ts.rs.Close)
-		ts.rs = nil
+	if ts.rs != nil && ts.rs.GetRowContainerReader() != nil {
+		ts.rs.GetRowContainerReader().Close()
 	}
+	ts.rs = nil
+
+	if ts.rowContainer != nil {
+		ts.rowContainer.GetMemTracker().Detach()
+		ts.rowContainer.GetDiskTracker().Detach()
+
+		rc := ts.rowContainer
+		ts.rowContainer = nil
+
+		err := rc.Close()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Close implements PreparedStatement Close method.
 func (ts *TiDBStatement) Close() error {
+	if ts.rs != nil && ts.rs.GetRowContainerReader() != nil {
+		ts.rs.GetRowContainerReader().Close()
+	}
+
+	if ts.rowContainer != nil {
+		ts.rowContainer.GetMemTracker().Detach()
+		ts.rowContainer.GetDiskTracker().Detach()
+
+		err := ts.rowContainer.Close()
+		if err != nil {
+			return err
+		}
+	}
+
 	// TODO close at tidb level
 	if ts.ctx.GetSessionVars().TxnCtx != nil && ts.ctx.GetSessionVars().TxnCtx.CouldRetry {
 		err := ts.ctx.DropPreparedStmt(ts.id)
@@ -183,12 +215,27 @@ func (ts *TiDBStatement) Close() error {
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}
 	delete(ts.ctx.stmts, int(ts.id))
-
-	// close ResultSet associated with this statement
-	if ts.rs != nil {
-		terror.Call(ts.rs.Close)
-	}
 	return nil
+}
+
+// GetCursorActive implements PreparedStatement GetCursorActive method.
+func (ts *TiDBStatement) GetCursorActive() bool {
+	return ts.hasActiveCursor
+}
+
+// SetCursorActive implements PreparedStatement SetCursorActive method.
+func (ts *TiDBStatement) SetCursorActive(fetchEnd bool) {
+	ts.hasActiveCursor = fetchEnd
+}
+
+// StoreRowContainer stores a row container into the prepared statement
+func (ts *TiDBStatement) StoreRowContainer(c *chunk.RowContainer) {
+	ts.rowContainer = c
+}
+
+// GetRowContainer returns the row container of the statement
+func (ts *TiDBStatement) GetRowContainer() *chunk.RowContainer {
+	return ts.rowContainer
 }
 
 // OpenCtx implements IDriver.
@@ -356,8 +403,8 @@ func (tc *TiDBContext) EncodeSessionStates(ctx context.Context, sctx sessionctx.
 				return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("prepared statements have bound params")
 			}
 		}
-		if rs := stmt.GetResultSet(); rs != nil && !rs.IsClosed() {
-			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("prepared statements have open result sets")
+		if stmt.GetCursorActive() {
+			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("prepared statements have unfetched rows")
 		}
 		preparedStmtInfo.ParamTypes = stmt.GetParamsType()
 	}
@@ -410,7 +457,6 @@ func (tc *TiDBContext) DecodeSessionStates(ctx context.Context, sctx sessionctx.
 type tidbResultSet struct {
 	recordSet    sqlexec.RecordSet
 	columns      []*ColumnInfo
-	rows         []chunk.Row
 	closed       int32
 	preparedStmt *core.PlanCacheStmt
 }
@@ -421,17 +467,6 @@ func (trs *tidbResultSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 
 func (trs *tidbResultSet) Next(ctx context.Context, req *chunk.Chunk) error {
 	return trs.recordSet.Next(ctx, req)
-}
-
-func (trs *tidbResultSet) StoreFetchedRows(rows []chunk.Row) {
-	trs.rows = rows
-}
-
-func (trs *tidbResultSet) GetFetchedRows() []chunk.Row {
-	if trs.rows == nil {
-		trs.rows = make([]chunk.Row, 0, 1024)
-	}
-	return trs.rows
 }
 
 func (trs *tidbResultSet) Close() error {
@@ -478,6 +513,30 @@ func (trs *tidbResultSet) Columns() []*ColumnInfo {
 		}
 	}
 	return trs.columns
+}
+
+func (trs *tidbResultSet) FieldTypes() []*types.FieldType {
+	fts := make([]*types.FieldType, 0, len(trs.recordSet.Fields()))
+	for _, f := range trs.recordSet.Fields() {
+		fts = append(fts, &f.Column.FieldType)
+	}
+	return fts
+}
+
+var _ cursorResultSet = &tidbCursorResultSet{}
+
+type tidbCursorResultSet struct {
+	ResultSet
+
+	reader chunk.RowContainerReader
+}
+
+func (tcrs *tidbCursorResultSet) StoreRowContainerReader(reader chunk.RowContainerReader) {
+	tcrs.reader = reader
+}
+
+func (tcrs *tidbCursorResultSet) GetRowContainerReader() chunk.RowContainerReader {
+	return tcrs.reader
 }
 
 func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {

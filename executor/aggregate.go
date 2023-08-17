@@ -305,7 +305,11 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	}
 	e.prepared = false
 
-	e.memTracker = memory.NewTracker(e.id, -1)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.id, -1)
+	}
 	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage {
 		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	}
@@ -1288,8 +1292,12 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 		e.memUsageOfInitialPartialResult += memDelta
 	}
 
-	// bytesLimit <= 0 means no limit, for now we just track the memory footprint
-	e.memTracker = memory.NewTracker(e.id, -1)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		// bytesLimit <= 0 means no limit, for now we just track the memory footprint
+		e.memTracker = memory.NewTracker(e.id, -1)
+	}
 	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage {
 		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	}

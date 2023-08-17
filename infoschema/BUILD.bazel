@@ -59,7 +59,6 @@ go_library(
 
 go_test(
     name = "infoschema_test",
-    timeout = "short",
     srcs = [
         "cache_test.go",
         "cluster_tables_test.go",
@@ -69,8 +68,6 @@ go_test(
         "tables_test.go",
     ],
     embed = [":infoschema"],
-    flaky = True,
-    shard_count = 50,
     deps = [
         "//config",
         "//ddl/placement",

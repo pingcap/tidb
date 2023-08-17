@@ -62,6 +62,40 @@ func TestStraightJoinHint(t *testing.T) {
 	runJoinReorderTestData(t, tk, "TestStraightJoinHint")
 }
 
+func TestNoHashJoinHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, b int, key(a));")
+	tk.MustExec("create table t2(a int, b int, key(a));")
+	tk.MustExec("create table t3(a int, b int, key(a));")
+	tk.MustExec("create table t4(a int, b int, key(a));")
+	runJoinReorderTestData(t, tk, "TestNoHashJoinHint")
+}
+
+func TestNoMergeJoinHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, key(a));")
+	tk.MustExec("create table t2(a int, key(a));")
+	tk.MustExec("create table t3(a int, key(a));")
+	tk.MustExec("create table t4(a int, key(a));")
+	runJoinReorderTestData(t, tk, "TestNoMergeJoinHint")
+}
+
+func TestNoIndexJoinHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_index_merge_join=true`)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, key(a));")
+	tk.MustExec("create table t2(a int, key(a));")
+	tk.MustExec("create table t3(a int, key(a));")
+	tk.MustExec("create table t4(a int, key(a));")
+	runJoinReorderTestData(t, tk, "TestNoIndexJoinHint")
+}
+
 func TestLeadingJoinHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -351,6 +385,43 @@ func TestLeadingJoinHint4OuterJoin(t *testing.T) {
 	tk.MustExec("create table t8(a int, b int, key(a));")
 	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runJoinReorderTestData(t, tk, "TestLeadingJoinHint4OuterJoin")
+}
+
+func TestAdditionOtherConditionsRemained4OuterJoin(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `queries_identifier` (\n   `id` int(11) NOT NULL AUTO_INCREMENT,\n   `name` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,\n   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+	tk.MustExec("CREATE TABLE `queries_program` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `identifier_id` int(11) NOT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  UNIQUE KEY `identifier_id` (`identifier_id`),\n  CONSTRAINT `queries_program_identifier_id_70ff12a6_fk_queries_identifier_id` FOREIGN KEY (`identifier_id`) REFERENCES `test`.`queries_identifier` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+	tk.MustExec("CREATE TABLE `queries_channel` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `identifier_id` int(11) NOT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  UNIQUE KEY `identifier_id` (`identifier_id`),\n  CONSTRAINT `queries_channel_identifier_id_06ac3513_fk_queries_identifier_id` FOREIGN KEY (`identifier_id`) REFERENCES `test`.`queries_identifier` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+
+	tk.MustExec("INSERT  INTO queries_identifier(`id`, `name`) values(13, 'i1'), (14, 'i2'), (15, 'i3');")
+	tk.MustExec("INSERT  INTO queries_program(`id`, `identifier_id`) values(8, 13), (9, 14);")
+	tk.MustExec("INSERT  INTO queries_channel(`id`, `identifier_id`) values(5, 13);")
+
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int, c int)")
+	tk.MustExec("create table t3(a int, b int)")
+	tk.MustExec("create table t4(a int, b int)")
+
+	testData := plannercore.GetJoinReorderData()
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Output []string
+		}
+	)
+	testData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Output = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+		})
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Output...))
+	}
 }
 
 func TestOuterJoinWIthEqCondCrossInnerJoin(t *testing.T) {

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -397,12 +398,58 @@ func TestCreateTableWithHashPartition(t *testing.T) {
                                        PARTITION p0 VALUES LESS THAN (100),
                                        PARTITION p1 VALUES LESS THAN (200),
                                        PARTITION p2 VALUES LESS THAN MAXVALUE)`)
-	tk.MustGetErrCode("select * from t_sub partition (p0)", errno.ErrPartitionClauseOnNonpartitioned)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported subpartitioning, only using RANGE partitioning"))
+	tk.MustQuery("select * from t_sub partition (p0)").Check(testkit.Rows())
+	tk.MustQuery("show create table t_sub").Check(testkit.Rows("" +
+		"t_sub CREATE TABLE `t_sub` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(128) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (200),\n" +
+		" PARTITION `p2` VALUES LESS THAN (MAXVALUE))"))
 
 	// Fix create partition table using extract() function as partition key.
 	tk.MustExec("create table t2 (a date, b datetime) partition by hash (EXTRACT(YEAR_MONTH FROM a)) partitions 7")
 	tk.MustExec("create table t3 (a int, b int) partition by hash(ceiling(a-b)) partitions 10")
 	tk.MustExec("create table t4 (a int, b int) partition by hash(floor(a-b)) partitions 10")
+}
+
+func TestSubPartitioning(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int) partition by range (a) subpartition by hash (a) subpartitions 2 (partition pMax values less than (maxvalue))`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported subpartitioning, only using RANGE partitioning"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t (a int) partition by list (a) subpartition by key (a) subpartitions 2 (partition pMax values in (1,3,4))`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported subpartitioning, only using LIST partitioning"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (`a`)\n" +
+		"(PARTITION `pMax` VALUES IN (1,3,4))"))
+	tk.MustExec(`drop table t`)
+
+	tk.MustContainErrMsg(`create table t (a int) partition by hash (a) partitions 2 subpartition by key (a) subpartitions 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
+	tk.MustExec(`create table t (a int) partition by key (a) partitions 2 subpartition by hash (a) subpartitions 2`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported partition type KEY, treat as normal table"))
+	tk.MustExec(`drop table t`)
+
+	tk.MustContainErrMsg(`CREATE TABLE t ( col1 INT NOT NULL, col2 INT NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL, primary KEY (col1,col3) ) PARTITION BY HASH(col1) PARTITIONS 4 SUBPARTITION BY HASH(col3) SUBPARTITIONS 2`,
+		"[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
+	tk.MustExec(`CREATE TABLE t ( col1 INT NOT NULL, col2 INT NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL, primary KEY (col1,col3) ) PARTITION BY KEY(col1) PARTITIONS 4 SUBPARTITION BY KEY(col3) SUBPARTITIONS 2`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported partition type KEY, treat as normal table"))
 }
 
 func TestCreateTableWithRangeColumnPartition(t *testing.T) {
@@ -1532,6 +1579,39 @@ func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 a"))
 	tk.MustExec(`alter table t truncate partition p0`)
 	tk.MustQuery("select * from t").Check(testkit.Rows())
+}
+
+func TestAlterTableTruncatePartitionPreSplitRegion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec(`CREATE TABLE t1 (id int, c varchar(128), key c(c)) partition by range (id) (
+		partition p0 values less than (10), 
+		partition p1 values less than MAXVALUE)`)
+	re := tk.MustQuery("show table t1 regions")
+	rows := re.Rows()
+	require.Len(t, rows, 2)
+	tk.MustExec(`alter table t1 truncate partition p0`)
+	re = tk.MustQuery("show table t1 regions")
+	rows = re.Rows()
+	require.Len(t, rows, 2)
+
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec(`CREATE TABLE t2(id bigint(20) NOT NULL AUTO_INCREMENT, PRIMARY KEY (id) NONCLUSTERED) SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 PARTITION BY RANGE (id) (
+		PARTITION p1 VALUES LESS THAN (10),
+		PARTITION p2 VALUES LESS THAN (20),
+		PARTITION p3 VALUES LESS THAN (MAXVALUE))`)
+	re = tk.MustQuery("show table t2 regions")
+	rows = re.Rows()
+	require.Len(t, rows, 24)
+	tk.MustExec(`alter table t2 truncate partition p3`)
+	re = tk.MustQuery("show table t2 regions")
+	rows = re.Rows()
+	require.Len(t, rows, 24)
 }
 
 func TestCreateTableWithKeyPartition(t *testing.T) {
@@ -4534,6 +4614,62 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		` PARTITION "p3" VALUES LESS THAN ('''''',''''''),` + "\n" +
 		` PARTITION "p4" VALUES LESS THAN ('\\''\t\n','\\''\t\n'),` + "\n" +
 		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE,MAXVALUE))`))
+}
+
+func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
+	t.Skip("waiting for supporting Modify Partition Column again")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "truncWarn"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`set sql_mode = default`)
+	tk.MustExec(`create table t (a varchar(255)) partition by range columns (a) (partition p1 values less than ("0"), partition p2 values less than ("zzzz"))`)
+	tk.MustExec(`insert into t values ("123456"),(" 654321")`)
+	tk.MustContainErrMsg(`alter table t modify a varchar(5)`, "[types:1265]Data truncated for column 'a', value is '")
+	tk.MustExec(`set sql_mode = ''`)
+	tk.MustExec(`alter table t modify a varchar(5)`)
+	// Fix the duplicate warning, see https://github.com/pingcap/tidb/issues/38699
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(""+
+		"Warning 1265 Data truncated for column 'a', value is ' 654321'",
+		"Warning 1265 Data truncated for column 'a', value is ' 654321'"))
+}
+
+func TestIssue40135Ver2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE t40135 ( a int DEFAULT NULL, b varchar(32) DEFAULT 'md', index(a)) PARTITION BY HASH (a) PARTITIONS 6")
+	tk.MustExec("insert into t40135 values (1, 'md'), (2, 'ma'), (3, 'md'), (4, 'ma'), (5, 'md'), (6, 'ma')")
+	one := true
+	hook := &ddl.TestDDLCallback{Do: dom}
+	var checkErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState == model.StateDeleteOnly {
+			tk3.MustExec("delete from t40135 where a = 1")
+		}
+		if one {
+			one = false
+			go func() {
+				_, checkErr = tk1.Exec("alter table t40135 modify column a int NULL")
+				wg.Done()
+			}()
+		}
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t40135 modify column a bigint NULL DEFAULT '6243108' FIRST")
+	wg.Wait()
+	require.ErrorContains(t, checkErr, "[ddl:8200]Unsupported modify column: table is partition table")
+	tk.MustExec("admin check table t40135")
 }
 
 func TestAlterModifyColumnOnPartitionedTableRename(t *testing.T) {

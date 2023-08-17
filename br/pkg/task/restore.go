@@ -52,6 +52,9 @@ const (
 	// current only support STRICT or IGNORE, the default is STRICT according to tidb.
 	FlagWithPlacementPolicy = "with-tidb-placement-mode"
 
+	// FlagWaitTiFlashReady represents whether wait tiflash replica ready after table restored and checksumed.
+	FlagWaitTiFlashReady = "wait-tiflash-ready"
+
 	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
 	FlagStreamStartTS   = "start-ts"
 	FlagStreamRestoreTS = "restored-ts"
@@ -188,6 +191,12 @@ type RestoreConfig struct {
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
 
+	UseCheckpoint                     bool   `json:"use-checkpoint" toml:"use-checkpoint"`
+	checkpointSnapshotRestoreTaskName string `json:"-" toml:"-"`
+	checkpointLogRestoreTaskName      string `json:"-" toml:"-"`
+	checkpointTaskInfoClusterID       uint64 `json:"-" toml:"-"`
+	WaitTiflashReady                  bool   `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
+
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
 	Prepare             bool                  `json:"prepare" toml:"prepare"`
@@ -198,6 +207,7 @@ type RestoreConfig struct {
 	VolumeIOPS          int64                 `json:"volume-iops" toml:"volume-iops"`
 	VolumeThroughput    int64                 `json:"volume-throughput" toml:"volume-throughput"`
 	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
+	TargetAZ            string                `json:"target-az" toml:"target-az"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -206,6 +216,8 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
+
+	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -298,6 +310,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWithPlacementPolicy)
 	}
 
+	cfg.WaitTiflashReady, err = flags.GetBool(FlagWaitTiFlashReady)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagWaitTiFlashReady)
+	}
+
 	if flags.Lookup(flagFullBackupType) != nil {
 		// for restore full only
 		fullBackupType, err := flags.GetString(flagFullBackupType)
@@ -340,6 +357,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		}
 
 		cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		cfg.TargetAZ, err = flags.GetString(flagTargetAZ)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -393,7 +415,8 @@ func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	if cfg.PitrBatchSize == 0 {
 		cfg.PitrBatchSize = defaultPiTRBatchSize
 	}
-
+	// another goroutine is used to iterate the backup file
+	cfg.PitrConcurrency += 1
 	log.Info("set restore kv files concurrency", zap.Int("concurrency", int(cfg.PitrConcurrency)))
 	cfg.Config.Concurrency = cfg.PitrConcurrency
 }
@@ -473,10 +496,17 @@ func IsStreamRestore(cmdName string) bool {
 
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+	if err := checkTaskExists(c, cfg); err != nil {
+		return errors.Annotate(err, "failed to check task exits")
+	}
+
 	if IsStreamRestore(cmdName) {
 		return RunStreamRestore(c, g, cmdName, cfg)
 	}
+	return runRestore(c, g, cmdName, cfg)
+}
 
+func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
@@ -504,10 +534,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// according to https://github.com/pingcap/tidb/issues/34167.
 		// we should get the real config from tikv to adapt the dynamic region.
 		httpCli := httputil.NewClient(mgr.GetTLSConfig())
-		mergeRegionSize, mergeRegionCount, err = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		mergeRegionSize, mergeRegionCount = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
 	}
 
 	keepaliveCfg.PermitWithoutStream = true
@@ -706,12 +733,19 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		batchSize = v.(int)
 	})
 
+	// Split/Scatter + Download/Ingest
+	progressLen := int64(rangeSize + len(files))
+	if cfg.Checksum {
+		progressLen += int64(len(tables))
+	}
+	if cfg.WaitTiflashReady {
+		progressLen += int64(len(tables))
+	}
 	// Redirect to log if there is no log file to avoid unreadable output.
 	updateCh := g.StartProgress(
 		ctx,
 		cmdName,
-		// Split/Scatter + Download/Ingest + Checksum
-		int64(rangeSize+len(files)+len(tables)),
+		progressLen,
 		!cfg.LogProgress)
 	defer updateCh.Close()
 	sender, err := restore.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency)
@@ -719,20 +753,28 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 	manager := restore.NewBRContextManager(client)
-	batcher, afterRestoreStream := restore.NewBatcher(ctx, sender, manager, errCh)
+	batcher, afterTableRestoredCh := restore.NewBatcher(ctx, sender, manager, errCh)
 	batcher.SetThreshold(batchSize)
 	batcher.EnableAutoCommit(ctx, cfg.BatchFlushInterval)
 	go restoreTableStream(ctx, rangeStream, batcher, errCh)
 
 	var finish <-chan struct{}
-	// Checksum
+	postHandleCh := afterTableRestoredCh
+
+	// pipeline checksum and load stats
 	if cfg.Checksum {
-		finish = client.GoValidateChecksum(
-			ctx, afterRestoreStream, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
-	} else {
-		// when user skip checksum, just collect tables, and drop them.
-		finish = dropToBlackhole(ctx, afterRestoreStream, errCh, updateCh)
+		afterTableCheckesumedCh := client.GoValidateChecksum(
+			ctx, afterTableRestoredCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
+		afterTableLoadStatsCh := client.GoUpdateMetaAndLoadStats(ctx, afterTableCheckesumedCh, errCh)
+		postHandleCh = afterTableLoadStatsCh
 	}
+
+	// pipeline wait Tiflash synced
+	if cfg.WaitTiflashReady {
+		postHandleCh = client.GoWaitTiFlashReady(ctx, postHandleCh, updateCh, errCh)
+	}
+
+	finish = dropToBlackhole(ctx, postHandleCh, errCh)
 
 	// Reset speed limit. ResetSpeedLimit must be called after client.InitBackupMeta has been called.
 	defer func() {
@@ -777,9 +819,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 // i.e. don't execute checksum, just increase the process anyhow.
 func dropToBlackhole(
 	ctx context.Context,
-	tableStream <-chan restore.CreatedTable,
+	inCh <-chan *restore.CreatedTable,
 	errCh chan<- error,
-	updateCh glue.Progress,
 ) <-chan struct{} {
 	outCh := make(chan struct{}, 1)
 	go func() {
@@ -791,11 +832,10 @@ func dropToBlackhole(
 			case <-ctx.Done():
 				errCh <- ctx.Err()
 				return
-			case _, ok := <-tableStream:
+			case _, ok := <-inCh:
 				if !ok {
 					return
 				}
-				updateCh.Inc()
 			}
 		}
 	}()

@@ -46,6 +46,8 @@ import (
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
+	// MaxTxnEntrySize is the max value of TxnEntrySizeLimit.
+	MaxTxnEntrySizeLimit = 120 * 1024 * 1024 // 120MB
 	// DefTxnEntrySizeLimit is the default value of TxnEntrySizeLimit.
 	DefTxnEntrySizeLimit = 6 * 1024 * 1024
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
@@ -261,6 +263,9 @@ type Config struct {
 	// EnableGlobalKill indicates whether to enable global kill.
 	TrxSummary       TrxSummary `toml:"transaction-summary" json:"transaction-summary"`
 	EnableGlobalKill bool       `toml:"enable-global-kill" json:"enable-global-kill"`
+	// InitializeSQLFile is a file that will be executed after first bootstrap only.
+	// It can be used to set GLOBAL system variable values
+	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -729,6 +734,9 @@ type ProxyProtocol struct {
 	Networks string `toml:"networks" json:"networks"`
 	// PROXY protocol header read timeout, Unit is second.
 	HeaderTimeout uint `toml:"header-timeout" json:"header-timeout"`
+	// PROXY protocol header process fallback-able.
+	// If set to true and not send PROXY protocol header, connection will return connection's client IP.
+	Fallbackable bool `toml:"fallbackable" json:"fallbackable"`
 }
 
 // Binlog is the config for binlog.
@@ -937,6 +945,7 @@ var defaultConf = Config{
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
+		Fallbackable:  false,
 	},
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:          true,
@@ -967,7 +976,7 @@ var defaultConf = Config{
 	},
 	Experimental:               Experimental{},
 	EnableCollectExecutionInfo: true,
-	EnableTelemetry:            true,
+	EnableTelemetry:            false,
 	Labels:                     make(map[string]string),
 	EnableGlobalIndex:          false,
 	Security: Security{

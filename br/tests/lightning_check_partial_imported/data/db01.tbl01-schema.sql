@@ -1,0 +1,12 @@
+CREATE TABLE tbl01 (
+  `id` INTEGER,
+  `val` VARCHAR(64),
+  `aaa` CHAR(66) DEFAULT NULL,
+  `bbb` CHAR(10) NOT NULL,
+  `ccc` CHAR(42) DEFAULT NULL,
+  `ddd` CHAR(42) DEFAULT NULL,
+  `eee` CHAR(66) DEFAULT NULL,
+  `fff` VARCHAR(128) DEFAULT NULL,
+  KEY `aaa` (`aaa`),
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

@@ -4,6 +4,7 @@ go_test(
     name = "simpletest_test",
     timeout = "short",
     srcs = [
+        "chunk_reuse_test.go",
         "main_test.go",
         "password_management_test.go",
         "simple_test.go",

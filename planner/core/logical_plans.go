@@ -110,21 +110,36 @@ func (tp JoinType) String() string {
 }
 
 const (
-	preferLeftAsINLJInner uint = 1 << iota
+	// Hint flag for join
+	preferINLJ uint = 1 << iota
+	preferINLHJ
+	preferINLMJ
+	preferHJBuild
+	preferHJProbe
+	preferHashJoin
+	preferNoHashJoin
+	preferMergeJoin
+	preferNoMergeJoin
+	preferNoIndexJoin
+	preferNoIndexHashJoin
+	preferNoIndexMergeJoin
+	preferBCJoin
+	preferShuffleJoin
+	preferRewriteSemiJoin
+
+	// Hint flag to specify the join with direction
+	preferLeftAsINLJInner
 	preferRightAsINLJInner
 	preferLeftAsINLHJInner
 	preferRightAsINLHJInner
 	preferLeftAsINLMJInner
 	preferRightAsINLMJInner
-	preferHashJoin
 	preferLeftAsHJBuild
 	preferRightAsHJBuild
 	preferLeftAsHJProbe
 	preferRightAsHJProbe
-	preferMergeJoin
-	preferBCJoin
-	preferShuffleJoin
-	preferRewriteSemiJoin
+
+	// Hint flag for Agg
 	preferHashAgg
 	preferStreamAgg
 	preferMPP1PhaseAgg
@@ -146,9 +161,11 @@ type LogicalJoin struct {
 	StraightJoin  bool
 
 	// hintInfo stores the join algorithm hint information specified by client.
-	hintInfo        *tableHintInfo
-	preferJoinType  uint
-	preferJoinOrder bool
+	hintInfo            *tableHintInfo
+	preferJoinType      uint
+	preferJoinOrder     bool
+	leftPreferJoinType  uint
+	rightPreferJoinType uint
 
 	EqualConditions []*expression.ScalarFunction
 	NAEQConditions  []*expression.ScalarFunction
@@ -1196,7 +1213,8 @@ type DataSource struct {
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
 	// handleCol *expression.Column
-	handleCols HandleCols
+	handleCols          HandleCols
+	unMutableHandleCols HandleCols
 	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
 	TblCols []*expression.Column

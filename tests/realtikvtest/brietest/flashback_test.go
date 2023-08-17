@@ -74,9 +74,7 @@ func TestFlashback(t *testing.T) {
 		require.NoError(t, err)
 
 		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
-		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-			fmt.Sprintf("return(%v)", injectSafeTS)))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 
 		tk.MustExec("insert t values (4), (5), (6)")
@@ -86,7 +84,6 @@ func TestFlashback(t *testing.T) {
 		require.Equal(t, tk.MustQuery("select max(a) from t").Rows()[0][0], "3")
 		require.Equal(t, tk.MustQuery("select max(a) from t use index(i)").Rows()[0][0], "3")
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 	}
 }

@@ -280,6 +280,35 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d ndv: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat, hg.Buckets[bktID].NDV)
 }
 
+// BinarySearchRemoveVal removes the value from the TopN using binary search.
+func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
+	lowIdx, highIdx := 0, hg.Len()-1
+	for lowIdx <= highIdx {
+		midIdx := (lowIdx + highIdx) / 2
+		cmpResult := bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2), valCntPairs.Encoded)
+		if cmpResult > 0 {
+			lowIdx = midIdx + 1
+			continue
+		}
+		cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2+1), valCntPairs.Encoded)
+		if cmpResult < 0 {
+			highIdx = midIdx - 1
+			continue
+		}
+		if hg.Buckets[midIdx].NDV > 0 {
+			hg.Buckets[midIdx].NDV--
+		}
+		if cmpResult == 0 {
+			hg.Buckets[midIdx].Repeat = 0
+		}
+		hg.Buckets[midIdx].Count -= int64(valCntPairs.Count)
+		if hg.Buckets[midIdx].Count < 0 {
+			hg.Buckets[midIdx].Count = 0
+		}
+		break
+	}
+}
+
 // RemoveVals remove the given values from the histogram.
 // This function contains an **ASSUMPTION**: valCntPairs is sorted in ascending order.
 func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
@@ -778,7 +807,7 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 
 // outOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
 // Here we assume the density of data is decreasing from the lower/upper bound of the histogram toward outside.
-// The maximum row count it can get is the increaseCount. It reaches the maximum when out-of-range width reaches histogram range width.
+// The maximum row count it can get is the modifyCount. It reaches the maximum when out-of-range width reaches histogram range width.
 // As it shows below. To calculate the out-of-range row count, we need to calculate the percentage of the shaded area.
 // Note that we assume histL-boundL == histR-histL == boundR-histR here.
 /*
@@ -795,7 +824,7 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
          │   │
     lDatum  rDatum
 */
-func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCount int64) float64 {
+func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, modifyCount int64) float64 {
 	if hg.Len() == 0 {
 		return 0
 	}
@@ -879,8 +908,14 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCou
 		totalPercent = 1
 	}
 	rowCount := totalPercent * hg.notNullCount()
-	if rowCount > float64(increaseCount) {
-		return float64(increaseCount)
+
+	// Use the modifyCount as the upper bound. Note that modifyCount contains insert, delete and update. So this is
+	// a rather loose upper bound.
+	// There are some scenarios where we need to handle out-of-range estimation after both insert and delete happen.
+	// But we don't know how many increases are in the modifyCount. So we have to use this loose bound to ensure it
+	// can produce a reasonable results in this scenario.
+	if rowCount > float64(modifyCount) {
+		return float64(modifyCount)
 	}
 	return rowCount
 }
@@ -1592,7 +1627,9 @@ func (s StatsLoadedStatus) IsLoadNeeded() bool {
 	if s.statsInitialized {
 		return s.evictedStatus > allLoaded
 	}
-	return true
+	// If statsInitialized is false, it means there is no stats for the column/index in the storage.
+	// Hence, we don't need to trigger the task of loading the column/index stats.
+	return false
 }
 
 // IsEssentialStatsLoaded indicates whether the essential statistics is loaded.

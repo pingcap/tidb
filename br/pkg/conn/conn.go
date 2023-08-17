@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -69,7 +70,7 @@ type Mgr struct {
 }
 
 func GetAllTiKVStoresWithRetry(ctx context.Context,
-	pdClient pd.Client,
+	pdClient util.StoreMeta,
 	storeBehavior util.StoreBehavior,
 ) ([]*metapb.Store, error) {
 	stores := make([]*metapb.Store, 0)
@@ -281,7 +282,8 @@ func (mgr *Mgr) GetTS(ctx context.Context) (uint64, error) {
 }
 
 // GetMergeRegionSizeAndCount returns the tikv config `coprocessor.region-split-size` and `coprocessor.region-split-key`.
-func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Client) (uint64, uint64, error) {
+// returns the default config when failed.
+func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Client) (uint64, uint64) {
 	regionSplitSize := DefaultMergeRegionSizeBytes
 	regionSplitKeys := DefaultMergeRegionKeyCount
 	type coprocessor struct {
@@ -310,9 +312,10 @@ func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Cli
 		return nil
 	})
 	if err != nil {
-		return 0, 0, errors.Trace(err)
+		log.Warn("meet error when getting config from TiKV; using default", logutil.ShortError(err))
+		return DefaultMergeRegionSizeBytes, DefaultMergeRegionKeyCount
 	}
-	return regionSplitSize, regionSplitKeys, nil
+	return regionSplitSize, regionSplitKeys
 }
 
 // GetConfigFromTiKV get configs from all alive tikv stores.
@@ -383,7 +386,7 @@ func handleTiKVAddress(store *metapb.Store, httpPrefix string) (*url.URL, error)
 	// but in sometimes we may not get the correct status address from PD.
 	if statusUrl.Hostname() != nodeUrl.Hostname() {
 		// if not matched, we use the address as default, but change the port
-		addr.Host = nodeUrl.Hostname() + ":" + statusUrl.Port()
+		addr.Host = net.JoinHostPort(nodeUrl.Hostname(), statusUrl.Port())
 		log.Warn("store address and status address mismatch the host, we will use the store address as hostname",
 			zap.Uint64("store", store.Id),
 			zap.String("status address", statusAddr),

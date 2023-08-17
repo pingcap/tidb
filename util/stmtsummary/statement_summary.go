@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
 
@@ -403,8 +404,9 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*Bi
 							PlanHint:  ssElement.planHint,
 							Charset:   ssElement.charset,
 							Collation: ssElement.collation,
-							Users:     ssElement.authUsers,
+							Users:     make(map[string]struct{}),
 						}
+						maps.Copy(stmt.Users, ssElement.authUsers)
 						// If it is SQL command prepare / execute, the ssElement.sampleSQL is `execute ...`, we should get the original select query.
 						// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
 						if ssElement.prepared {
@@ -516,10 +518,12 @@ func getBindableStmtByPlanDigest(ssbd *stmtSummaryByDigest, planDigest string) *
 				Collation: ssElement.collation,
 				Users:     ssElement.authUsers,
 			}
-			// If it is SQL command prepare / execute, the ssElement.sampleSQL is `execute ...`, we should get the original select query.
+			// If it is SQL command prepare / execute, we should remove the arguments
 			// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
 			if ssElement.prepared {
-				stmt.Query = ssbd.normalizedSQL
+				if idx := strings.LastIndex(stmt.Query, "[arguments:"); idx != -1 {
+					stmt.Query = stmt.Query[:idx]
+				}
 			}
 			return stmt
 		}
@@ -906,7 +910,10 @@ func formatSQL(sql string) string {
 	maxSQLLength := StmtSummaryByDigestMap.maxSQLLength()
 	length := len(sql)
 	if length > maxSQLLength {
-		sql = fmt.Sprintf("%.*s(len:%d)", maxSQLLength, sql, length)
+		var result strings.Builder
+		result.WriteString(sql[:maxSQLLength])
+		fmt.Fprintf(&result, "(len:%d)", length)
+		return result.String()
 	}
 	return sql
 }

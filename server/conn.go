@@ -172,6 +172,7 @@ func newClientConn(s *Server) *clientConn {
 		status:       connStatusDispatching,
 		lastActive:   time.Now(),
 		authPlugin:   mysql.AuthNativePassword,
+		ppEnabled:    s.cfg.ProxyProtocol.Networks != "",
 	}
 }
 
@@ -215,6 +216,9 @@ type clientConn struct {
 		cancelFunc context.CancelFunc
 	}
 	extensions *extension.SessionExtensions
+
+	// Proxy Protocol Enabled
+	ppEnabled bool
 }
 
 func (cc *clientConn) getCtx() *TiDBContext {
@@ -622,6 +626,21 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return err
 	}
 
+	// After read packets we should update the client's host and port to grab
+	// real client's IP and port from PROXY Protocol header if PROXY Protocol is enabled.
+	_, _, err = cc.PeerHost("", true)
+	if err != nil {
+		terror.Log(err)
+		return err
+	}
+	// If enable proxy protocol check audit plugins after update real IP
+	if cc.ppEnabled {
+		err = cc.server.checkAuditPlugin(cc)
+		if err != nil {
+			return err
+		}
+	}
+
 	if resp.Capability&mysql.ClientSSL > 0 {
 		tlsConfig := (*tls.Config)(atomic.LoadPointer(&cc.server.tlsConfig))
 		if tlsConfig != nil {
@@ -824,7 +843,8 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	host, port, err := cc.PeerHost(hasPassword)
+
+	host, port, err := cc.PeerHost(hasPassword, false)
 	if err != nil {
 		return err
 	}
@@ -875,7 +895,8 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	host, _, err := cc.PeerHost(hasPassword)
+
+	host, _, err := cc.PeerHost(hasPassword, false)
 	if err != nil {
 		return nil, err
 	}
@@ -947,9 +968,17 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	return nil, nil
 }
 
-func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error) {
+func (cc *clientConn) PeerHost(hasPassword string, update bool) (host, port string, err error) {
+	// already get peer host
 	if len(cc.peerHost) > 0 {
-		return cc.peerHost, cc.peerPort, nil
+		// Proxy protocol enabled and not update
+		if cc.ppEnabled && !update {
+			return cc.peerHost, cc.peerPort, nil
+		}
+		// Proxy protocol not enabled
+		if !cc.ppEnabled {
+			return cc.peerHost, cc.peerPort, nil
+		}
 	}
 	host = variable.DefHostname
 	if cc.isUnixSocket {
@@ -2092,12 +2121,20 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	cc.audit(plugin.Starting)
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
-	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.
-	// If the rs is nil, the detachment will be done in the `handleNoDelay`.
+	// - If rs is not nil, the statement tracker detachment from session tracker
+	//   is done in the `rs.Close` in most cases.
+	// - If the rs is nil and err is not nil, the detachment will be done in
+	//   the `handleNoDelay`.
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
 	if err != nil {
+		// If error is returned during the planner phase or the executor.Open
+		// phase, the rs will be nil, and StmtCtx.MemTracker StmtCtx.DiskTracker
+		// will not be detached. We need to detach them manually.
+		if sv := cc.ctx.GetSessionVars(); sv != nil && sv.StmtCtx != nil {
+			sv.StmtCtx.DetachMemDiskTracker()
+		}
 		return true, err
 	}
 
@@ -2230,7 +2267,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		if r == nil {
 			return
 		}
-		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceed) {
+		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceedWarnMsg) {
 			panic(r)
 		}
 		// TODO(jianzhang.zj: add metrics here)
@@ -2240,7 +2277,12 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	cc.initResultEncoder(ctx)
 	defer cc.rsEncoder.clean()
 	if mysql.HasCursorExistsFlag(serverStatus) {
-		if err := cc.writeChunksWithFetchSize(ctx, rs, serverStatus, fetchSize); err != nil {
+		crs, ok := rs.(cursorResultSet)
+		if !ok {
+			// this branch is actually unreachable
+			return false, errors.New("this cursor is not a resultSet")
+		}
+		if err := cc.writeChunksWithFetchSize(ctx, crs, serverStatus, fetchSize); err != nil {
 			return false, err
 		}
 		return false, cc.flush(ctx)
@@ -2374,65 +2416,27 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // binary specifies the way to dump data. It throws any error while dumping data.
 // serverStatus, a flag bit represents server information.
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
-func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
-	fetchedRows := rs.GetFetchedRows()
-	// if fetchedRows is not enough, getting data from recordSet.
-	// NOTE: chunk should not be allocated from the allocator
-	// the allocator will reset every statement
-	// but it maybe stored in the result set among statements
-	// ref https://github.com/pingcap/tidb/blob/7fc6ebbda4ddf84c0ba801ca7ebb636b934168cf/server/conn_stmt.go#L233-L239
-	// Here server.tidbResultSet implements Next method.
-	req := rs.NewChunk(nil)
-	for len(fetchedRows) < fetchSize {
-		if err := rs.Next(ctx, req); err != nil {
-			return err
-		}
-		rowCount := req.NumRows()
-		if rowCount == 0 {
-			break
-		}
-		// filling fetchedRows with chunk
-		for i := 0; i < rowCount; i++ {
-			fetchedRows = append(fetchedRows, req.GetRow(i))
-		}
-		req = chunk.Renew(req, cc.ctx.GetSessionVars().MaxChunkSize)
-	}
-
-	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
-	// and close ResultSet.
-	if len(fetchedRows) == 0 {
-		serverStatus &^= mysql.ServerStatusCursorExists
-		serverStatus |= mysql.ServerStatusLastRowSend
-		terror.Call(rs.Close)
-		return cc.writeEOF(ctx, serverStatus)
-	}
-
-	// construct the rows sent to the client according to fetchSize.
-	var curRows []chunk.Row
-	if fetchSize < len(fetchedRows) {
-		curRows = fetchedRows[:fetchSize]
-		fetchedRows = fetchedRows[fetchSize:]
-	} else {
-		curRows = fetchedRows
-		fetchedRows = fetchedRows[:0]
-	}
-	rs.StoreFetchedRows(fetchedRows)
-
+func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs cursorResultSet, serverStatus uint16, fetchSize int) error {
+	var (
+		stmtDetail *execdetails.StmtExecDetails
+		err        error
+		start      time.Time
+	)
 	data := cc.alloc.AllocWithLen(4, 1024)
-	var stmtDetail *execdetails.StmtExecDetails
 	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
 		//nolint:forcetypeassert
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
-	var (
-		err   error
-		start time.Time
-	)
 	if stmtDetail != nil {
 		start = time.Now()
 	}
-	for _, row := range curRows {
+
+	iter := rs.GetRowContainerReader()
+	// send the rows to the client according to fetchSize.
+	for i := 0; i < fetchSize && iter.Current() != iter.End(); i++ {
+		row := iter.Current()
+
 		data = data[0:4]
 		data, err = dumpBinaryRow(data, rs.Columns(), row, cc.rsEncoder)
 		if err != nil {
@@ -2441,16 +2445,30 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		if err = cc.writePacket(data); err != nil {
 			return err
 		}
+
+		iter.Next()
 	}
+	if iter.Error() != nil {
+		return iter.Error()
+	}
+
+	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
+	// and close ResultSet.
+	if iter.Current() == iter.End() {
+		serverStatus &^= mysql.ServerStatusCursorExists
+		serverStatus |= mysql.ServerStatusLastRowSend
+	}
+
+	// don't include the time consumed by `cl.OnFetchReturned()` in the `WriteSQLRespDuration`
 	if stmtDetail != nil {
 		stmtDetail.WriteSQLRespDuration += time.Since(start)
 	}
+
 	if cl, ok := rs.(fetchNotifier); ok {
 		cl.OnFetchReturned()
 	}
-	if stmtDetail != nil {
-		start = time.Now()
-	}
+
+	start = time.Now()
 	err = cc.writeEOF(ctx, serverStatus)
 	if stmtDetail != nil {
 		stmtDetail.WriteSQLRespDuration += time.Since(start)

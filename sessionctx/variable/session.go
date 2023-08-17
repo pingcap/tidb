@@ -1207,6 +1207,9 @@ type SessionVars struct {
 	EnableNewCostInterface bool
 	// CostModelVersion is a internal switch to indicates the Cost Model Version.
 	CostModelVersion int
+	// IndexJoinDoubleReadPenaltyCostRate indicates whether to add some penalty cost to IndexJoin and how much of it.
+	IndexJoinDoubleReadPenaltyCostRate float64
+
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
 	// RcWriteCheckTS indicates whether some special write statements don't get latest tso from PD at RC
@@ -1310,6 +1313,9 @@ type SessionVars struct {
 	// EnableReuseCheck indicates  request chunk whether use chunk alloc
 	EnableReuseCheck bool
 
+	// EnableAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
+	EnableAdvancedJoinHint bool
+
 	// preuseChunkAlloc indicates whether pre statement use chunk alloc
 	// like select @@last_sql_use_alloc
 	preUseChunkAlloc bool
@@ -1319,6 +1325,30 @@ type SessionVars struct {
 
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
+
+	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
+	EnableINLJoinInnerMultiPattern bool
+
+	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
+	OptimizerFixControl map[uint64]string
+}
+
+var (
+	// variables below are for the optimizer fix control.
+
+	// TiDBOptFixControl44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
+	TiDBOptFixControl44262 uint64 = 44262
+	// TiDBOptFixControl44389 controls whether to consider non-point ranges of some CNF item when building ranges.
+	TiDBOptFixControl44389 uint64 = 44389
+)
+
+// GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
+func (s *SessionVars) GetOptimizerFixControlValue(key uint64) (value string, exist bool) {
+	if s.OptimizerFixControl == nil {
+		return "", false
+	}
+	value, exist = s.OptimizerFixControl[key]
+	return
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
@@ -1352,6 +1382,16 @@ func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 		return
 	}
 	s.ChunkPool.Alloc = alloc
+}
+
+// IsAllocValid check if chunk reuse is enable or ChunkPool is inused.
+func (s *SessionVars) IsAllocValid() bool {
+	if !s.EnableReuseCheck {
+		return false
+	}
+	s.ChunkPool.mu.Lock()
+	defer s.ChunkPool.mu.Unlock()
+	return s.ChunkPool.Alloc != nil
 }
 
 // ClearAlloc indicates stop reuse chunk
@@ -2048,11 +2088,7 @@ func (s *SessionVars) GetGeneralPlanCacheStmt(sql string) interface{} {
 // AddPreparedStmt adds prepareStmt to current session and count in global.
 func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt interface{}) error {
 	if _, exists := s.PreparedStmts[stmtID]; !exists {
-		valStr, _ := s.GetSystemVar(MaxPreparedStmtCount)
-		maxPreparedStmtCount, err := strconv.ParseInt(valStr, 10, 64)
-		if err != nil {
-			maxPreparedStmtCount = DefMaxPreparedStmtCount
-		}
+		maxPreparedStmtCount := MaxPreparedStmtCountValue.Load()
 		newPreparedStmtCount := atomic.AddInt64(&PreparedStmtCount, 1)
 		if maxPreparedStmtCount >= 0 && newPreparedStmtCount > maxPreparedStmtCount {
 			atomic.AddInt64(&PreparedStmtCount, -1)

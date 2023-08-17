@@ -1556,39 +1556,94 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	return con, false
 }
 
-// refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
-// `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`. It also handles comparing year type
-// with int constant if the int constant falls into a sensible year representation.
-// This refine operation depends on the values of these args, but these values can change when using plan-cache.
+func matchRefineRule3Pattern(conEvalType types.EvalType, exprType *types.FieldType) bool {
+	return (exprType.GetType() == mysql.TypeTimestamp || exprType.GetType() == mysql.TypeDatetime) &&
+		(conEvalType == types.ETReal || conEvalType == types.ETDecimal || conEvalType == types.ETInt)
+}
+
+// Since the argument refining of cmp functions can bring some risks to the plan-cache, the optimizer
+// needs to decide to whether to skip the refining or skip plan-cache for safety.
+// For example, `unsigned_int_col > ?(-1)` can be refined to `True`, but the validation of this result
+// can be broken if the parameter changes to 1 after.
+func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (allowRefining bool) {
+	if !MaybeOverOptimized4PlanCache(ctx, args) {
+		return true // plan-cache disabled or no parameter in these args
+	}
+
+	// For these 3 cases below, we apply the refining:
+	// 1. year-expr <cmp> const
+	// 2. int-expr <cmp> string/float/double/decimal-const
+	// 3. datetime/timestamp column <cmp> int/float/double/decimal-const
+	for conIdx := 0; conIdx < 2; conIdx++ {
+		if _, isCon := args[conIdx].(*Constant); !isCon {
+			continue // not a constant
+		}
+
+		// case 1: year-expr <cmp> const
+		// refine `year < 12` to `year < 2012` to guarantee the correctness.
+		// see https://github.com/pingcap/tidb/issues/41626 for more details.
+		exprType := args[1-conIdx].GetType()
+		exprEvalType := exprType.EvalType()
+		if exprType.GetType() == mysql.TypeYear {
+			reason := errors.Errorf("skip plan-cache: '%v' may be converted to INT", args[conIdx].String())
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+			return true
+		}
+
+		// case 2: int-expr <cmp> string/float/double/decimal-const
+		// refine `int_key < 1.1` to `int_key < 2` to generate RangeScan instead of FullScan.
+		conEvalType := args[conIdx].GetType().EvalType()
+		if exprEvalType == types.ETInt &&
+			(conEvalType == types.ETString || conEvalType == types.ETReal || conEvalType == types.ETDecimal) {
+			reason := errors.Errorf("skip plan-cache: '%v' may be converted to INT", args[conIdx].String())
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+			return true
+		}
+
+		// case 3: datetime/timestamp column <cmp> int/float/double/decimal-const
+		// try refine numeric-const to timestamp const
+		// see https://github.com/pingcap/tidb/issues/38361 for more details
+		_, exprIsCon := args[1-conIdx].(*Constant)
+		if !exprIsCon && matchRefineRule3Pattern(conEvalType, exprType) {
+			reason := errors.Errorf("'%v' may be converted to datetime", args[conIdx].String())
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+			return true
+		}
+	}
+
+	return false
+}
+
+// refineArgs will rewrite the arguments if the compare expression is
+// 1. `int column <cmp> non-int constant` or `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`.
+// 2. It also handles comparing year type with int constant if the int constant falls into a sensible year representation.
+// 3. It also handles comparing datetime/timestamp column with numeric constant, try to cast numeric constant as timestamp type, do nothing if failed.
+// This refining operation depends on the values of these args, but these values can change when using plan-cache.
 // So we have to skip this operation or mark the plan as over-optimized when using plan-cache.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
-	arg0IsInt := arg0Type.EvalType() == types.ETInt
-	arg1IsInt := arg1Type.EvalType() == types.ETInt
-	arg0IsString := arg0Type.EvalType() == types.ETString
-	arg1IsString := arg1Type.EvalType() == types.ETString
+	arg0EvalType, arg1EvalType := arg0Type.EvalType(), arg1Type.EvalType()
+	arg0IsInt := arg0EvalType == types.ETInt
+	arg1IsInt := arg1EvalType == types.ETInt
 	arg0, arg0IsCon := args[0].(*Constant)
 	arg1, arg1IsCon := args[1].(*Constant)
 	isExceptional, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
-	if MaybeOverOptimized4PlanCache(ctx, args) {
-		// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
-		// here and skip this refine operation in all other cases for safety.
-		if (arg0IsInt && !arg0IsCon && arg1IsString && arg1IsCon) || (arg1IsInt && !arg1IsCon && arg0IsString && arg0IsCon) {
-			ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
-			if arg1IsString {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg1.String()))
-			} else { // arg0IsString
-				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg0.String()))
-			}
-			RemoveMutableConst(ctx, args)
-		} else {
-			return args
-		}
-	} else if ctx.GetSessionVars().StmtCtx.SkipPlanCache {
-		// We should remove the mutable constant for correctness, because its value may be changed.
-		RemoveMutableConst(ctx, args)
+
+	if !allowCmpArgsRefining4PlanCache(ctx, args) {
+		return args
 	}
+	// We should remove the mutable constant for correctness, because its value may be changed.
+	RemoveMutableConst(ctx, args)
+
+	if arg0IsCon && !arg1IsCon && matchRefineRule3Pattern(arg0EvalType, arg1Type) {
+		return c.refineNumericConstantCmpDatetime(ctx, args, arg0, 0)
+	}
+
+	if !arg0IsCon && arg1IsCon && matchRefineRule3Pattern(arg1EvalType, arg0Type) {
+		return c.refineNumericConstantCmpDatetime(ctx, args, arg1, 1)
+	}
+
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
@@ -1633,6 +1688,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 			}
 		}
 	}
+
 	// int constant [cmp] year type
 	if arg0IsCon && arg0IsInt && arg1Type.GetType() == mysql.TypeYear && !arg0.Value.IsNull() {
 		adjusted, failed := types.AdjustYear(arg0.Value.GetInt64(), false)
@@ -1669,6 +1725,31 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 
 	return c.refineArgsByUnsignedFlag(ctx, []Expression{finalArg0, finalArg1})
+}
+
+// see https://github.com/pingcap/tidb/issues/38361 for more details
+func (c *compareFunctionClass) refineNumericConstantCmpDatetime(ctx sessionctx.Context, args []Expression, constArg *Constant, constArgIdx int) []Expression {
+	dt, err := constArg.Eval(chunk.Row{})
+	if err != nil || dt.IsNull() {
+		return args
+	}
+	sc := ctx.GetSessionVars().StmtCtx
+	var datetimeDatum types.Datum
+	targetFieldType := types.NewFieldType(mysql.TypeDatetime)
+	datetimeDatum, err = dt.ConvertTo(sc, targetFieldType)
+	if err != nil || datetimeDatum.IsNull() {
+		return args
+	}
+	finalArg := Constant{
+		Value:        datetimeDatum,
+		RetType:      targetFieldType,
+		DeferredExpr: nil,
+		ParamMarker:  nil,
+	}
+	if constArgIdx == 0 {
+		return []Expression{&finalArg, args[1]}
+	}
+	return []Expression{args[0], &finalArg}
 }
 
 func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, args []Expression) []Expression {

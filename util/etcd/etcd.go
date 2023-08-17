@@ -78,9 +78,10 @@ func NewClient(cli *clientv3.Client, root string) *Client {
 // NewClientFromCfg returns a wrapped etcd client
 func NewClientFromCfg(endpoints []string, dialTimeout time.Duration, root string, security *tls.Config) (*Client, error) {
 	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   endpoints,
-		DialTimeout: dialTimeout,
-		TLS:         security,
+		Endpoints:        endpoints,
+		DialTimeout:      dialTimeout,
+		TLS:              security,
+		AutoSyncInterval: 30 * time.Second,
 	})
 	if err != nil {
 		return nil, errors.Trace(err)

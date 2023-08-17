@@ -1327,15 +1327,15 @@ func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
 }
 
 // FindPartitionDefinitionByName finds PartitionDefinition by name.
-func (t *TableInfo) FindPartitionDefinitionByName(partitionDefinitionName string) *PartitionDefinition {
+func (pi *PartitionInfo) FindPartitionDefinitionByName(partitionDefinitionName string) int {
 	lowConstrName := strings.ToLower(partitionDefinitionName)
-	definitions := t.Partition.Definitions
+	definitions := pi.Definitions
 	for i := range definitions {
 		if definitions[i].Name.L == lowConstrName {
-			return &t.Partition.Definitions[i]
+			return i
 		}
 	}
-	return nil
+	return -1
 }
 
 // IndexColumn provides index column info.
@@ -1735,6 +1735,7 @@ type PlacementSettings struct {
 	LearnerConstraints  string `json:"learner_constraints"`
 	FollowerConstraints string `json:"follower_constraints"`
 	VoterConstraints    string `json:"voter_constraints"`
+	SurvivalPreferences string `json:"survival_preferences"`
 }
 
 // PolicyInfo is the struct to store the placement policy.

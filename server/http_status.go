@@ -82,9 +82,9 @@ func sleepWithCtx(ctx context.Context, d time.Duration) {
 }
 
 func (s *Server) listenStatusHTTPServer() error {
-	s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
+	s.statusAddr = net.JoinHostPort(s.cfg.Status.StatusHost, strconv.Itoa(int(s.cfg.Status.StatusPort)))
 	if s.cfg.Status.StatusPort == 0 && !RunInGoTest {
-		s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
+		s.statusAddr = net.JoinHostPort(s.cfg.Status.StatusHost, strconv.Itoa(defaultStatusPort))
 	}
 
 	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", s.statusAddr))
@@ -477,7 +477,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 				logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
 				break
 			}
-			selfAddr := fmt.Sprintf("%s:%d", s.cfg.AdvertiseAddress, s.cfg.Status.StatusPort)
+			selfAddr := net.JoinHostPort(s.cfg.AdvertiseAddress, strconv.Itoa(int(s.cfg.Status.StatusPort)))
 			service := autoid.New(selfAddr, etcdAddr, store, ebd.TLSConfig())
 			logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
 			pb.RegisterAutoIDAllocServer(grpcServer, service)
