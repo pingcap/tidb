@@ -41,13 +41,8 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 			regionIDs = append(regionIDs, preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, def.ID, scatter)...)
 		}
 	} else {
-<<<<<<< HEAD
 		for _, def := range pi.Definitions {
-			regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, def.ID, scatter))
-=======
-		for _, def := range parts {
 			regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, def.ID, tbInfo.ID, scatter))
->>>>>>> 4fc7970f216 (ddl, session: using table ID instead of partition ID when calling `SplitRegions` (#46156))
 		}
 	}
 	if scatter {
