@@ -80,37 +80,6 @@ func newAddIndexPipeline(
 	return res, scanOp, nil
 }
 
-type tableScanOperator struct {
-	operator.BaseOperator[*reorgBackfillTask, idxRecResult]
-	checkpointMgr *ingest.CheckpointManager
-	sessPool      *sess.Pool
-	ctx           context.Context
-	copCtx        *copContext
-	store         kv.Storage
-	closed        bool
-	srcChkPool    chan *chunk.Chunk
-	se            *sess.Session
-	workerSize    int64
-}
-
-func (t *tableScanOperator) getChunk() *chunk.Chunk {
-	chk := <-t.srcChkPool
-	newCap := copReadBatchSize()
-	if chk.Capacity() != newCap {
-		chk = chunk.NewChunkWithCapacity(t.copCtx.fieldTps, newCap)
-	}
-	chk.Reset()
-	return chk
-}
-
-// recycleChunk puts the index record slice and the chunk back to the pool for reuse.
-func (t *tableScanOperator) recycleChunk(chk *chunk.Chunk) {
-	if chk == nil {
-		return
-	}
-	t.srcChkPool <- chk
-}
-
 type tableScanWorker struct {
 	sink    operator.DataSink[idxRecResult]
 	op      *tableScanOperator
@@ -172,9 +141,43 @@ func (tw *tableScanWorker) Close() {
 	tw.op.sessPool.Put(tw.sessCtx)
 }
 
+type tableScanOperator struct {
+	operator.BaseOperator[*reorgBackfillTask, idxRecResult]
+	pool *workerpool.WorkerPool[*reorgBackfillTask]
+
+	checkpointMgr *ingest.CheckpointManager
+	sessPool      *sess.Pool
+	ctx           context.Context
+	copCtx        *copContext
+	store         kv.Storage
+	closed        bool
+	poolErr       error
+	srcChkPool    chan *chunk.Chunk
+	se            *sess.Session
+	workerSize    int64
+}
+
+func (t *tableScanOperator) getChunk() *chunk.Chunk {
+	chk := <-t.srcChkPool
+	newCap := copReadBatchSize()
+	if chk.Capacity() != newCap {
+		chk = chunk.NewChunkWithCapacity(t.copCtx.fieldTps, newCap)
+	}
+	chk.Reset()
+	return chk
+}
+
+// recycleChunk puts the index record slice and the chunk back to the pool for reuse.
+func (t *tableScanOperator) recycleChunk(chk *chunk.Chunk) {
+	if chk == nil {
+		return
+	}
+	t.srcChkPool <- chk
+}
+
 // Open implements AsyncOperator.
 func (t *tableScanOperator) Open() error {
-	t.Source.(*operator.AsyncDataChannel[*reorgBackfillTask]).Channel.SetCreateWorker(
+	t.pool.SetCreateWorker(
 		func() workerpool.Worker[*reorgBackfillTask] {
 			logutil.BgLogger().Info("ywq test open table scan worker")
 			sessCtx, err := t.sessPool.Get()
@@ -187,13 +190,8 @@ func (t *tableScanOperator) Open() error {
 			return &tableScanWorker{t.Sink, t, se, sessCtx}
 		},
 	)
-	t.Source.(*operator.AsyncDataChannel[*reorgBackfillTask]).Channel.Start()
+	t.pool.Start()
 	return nil
-}
-
-// Display implements AsyncOperator.
-func (t *tableScanOperator) Display() string {
-	return "tableScanOperator{ source: " + t.Source.Display() + ", sink: " + t.Sink.Display() + "}"
 }
 
 // Close implements AsyncOperator.
@@ -205,6 +203,11 @@ func (t *tableScanOperator) Close() {
 	// Wait for all cop-req senders to exit.
 	t.Source.(*operator.AsyncDataChannel[*reorgBackfillTask]).Channel.ReleaseAndWait()
 	t.closed = true
+}
+
+// Display implements AsyncOperator.
+func (t *tableScanOperator) Display() string {
+	return "tableScanOperator{ source: " + t.Source.Display() + ", sink: " + t.Sink.Display() + "}"
 }
 
 func newTableScanOperator(
@@ -253,6 +256,7 @@ func newTableScanOperator(
 	source := &operator.AsyncDataChannel[*reorgBackfillTask]{Channel: pool}
 
 	// set operator source and sink.
+	res.pool = pool
 	res.Source = source
 	res.Sink = sink
 	return res, nil
@@ -261,7 +265,7 @@ func newTableScanOperator(
 type ingestWriterOperator struct {
 	operator.BaseOperator[idxRecResult, *backfillResult] // source: idxRecResult, sink: backfillResult.
 	reorgInfo                                            *reorgInfo
-	poolErr                                              chan error
+	poolErr                                              error
 	backendCtx                                           ingest.BackendCtx
 	writerMaxID                                          int
 	ctx                                                  context.Context
@@ -272,76 +276,76 @@ type ingestWriterOperator struct {
 }
 
 // Open implements AsyncOperator.
-func (oi *ingestWriterOperator) Open() error {
-	oi.pool.SetCreateWorker(
+func (w *ingestWriterOperator) Open() error {
+	w.pool.SetCreateWorker(
 		func() workerpool.Worker[idxRecResult] {
 			logutil.BgLogger().Info("ywq test open ingest writer worker")
 
-			reorgInfo := oi.reorgInfo
+			reorgInfo := w.reorgInfo
 			job := reorgInfo.Job
 			sessCtx, err := newSessCtx(reorgInfo)
 			if err != nil {
-				oi.poolErr <- err
+				w.poolErr = err
 				return nil
 			}
-			bcCtx := oi.backendCtx
-			ei, err := bcCtx.Register(job.ID, oi.reorgInfo.currElement.ID, job.SchemaName, job.TableName)
+			bcCtx := w.backendCtx
+			ei, err := bcCtx.Register(job.ID, w.reorgInfo.currElement.ID, job.SchemaName, job.TableName)
 			if err != nil {
 				// Return an error only if it is the first worker.
-				if oi.writerMaxID == 0 {
-					oi.poolErr <- err
+				if w.writerMaxID == 0 {
+					w.poolErr = err
 					return nil
 				}
-				logutil.Logger(oi.ctx).Warn("cannot create new writer", zap.Error(err),
-					zap.Int64("job ID", reorgInfo.ID), zap.Int64("index ID", oi.reorgInfo.currElement.ID))
+				logutil.Logger(w.ctx).Warn("cannot create new writer", zap.Error(err),
+					zap.Int64("job ID", reorgInfo.ID), zap.Int64("index ID", w.reorgInfo.currElement.ID))
 				return nil
 			}
-			worker, err := newAddIndexIngestWorker(oi.ctx, oi.tbl, reorgInfo.d, ei, nil, job.ID,
-				reorgInfo.SchemaName, oi.reorgInfo.currElement.ID, oi.writerMaxID,
-				nil, sessCtx, oi.checkpointMgr, true)
-			worker.tableScan = oi.tableScan
-			worker.sink = oi.Sink
+			worker, err := newAddIndexIngestWorker(w.ctx, w.tbl, reorgInfo.d, ei, nil, job.ID,
+				reorgInfo.SchemaName, w.reorgInfo.currElement.ID, w.writerMaxID,
+				nil, sessCtx, w.checkpointMgr, true)
+			worker.tableScan = w.tableScan
+			worker.sink = w.Sink
 			if err != nil {
 				// Return an error only if it is the first worker.
-				if oi.writerMaxID == 0 {
-					oi.poolErr <- err
+				if w.writerMaxID == 0 {
+					w.poolErr = err
 					return nil
 				}
-				logutil.Logger(oi.ctx).Warn("cannot create new writer", zap.Error(err),
-					zap.Int64("job ID", reorgInfo.ID), zap.Int64("index ID", oi.reorgInfo.currElement.ID))
+				logutil.Logger(w.ctx).Warn("cannot create new writer", zap.Error(err),
+					zap.Int64("job ID", reorgInfo.ID), zap.Int64("index ID", w.reorgInfo.currElement.ID))
 				return nil
 			}
-			oi.writerMaxID++
+			w.writerMaxID++
 			return worker
 		},
 	)
-	oi.pool.Start()
-	return nil
+	w.pool.Start()
+	return w.poolErr
 }
 
 // Close implements AsyncOperator.
-func (oi *ingestWriterOperator) Close() {
-	if oi.pool != nil {
-		oi.pool.ReleaseAndWait()
+func (w *ingestWriterOperator) Close() {
+	if w.pool != nil {
+		w.pool.ReleaseAndWait()
 	}
-	if oi.checkpointMgr != nil {
-		oi.checkpointMgr.Sync()
+	if w.checkpointMgr != nil {
+		w.checkpointMgr.Sync()
 		// Get the latest status after all workers are closed so that the result is more accurate.
-		cnt, nextKey := oi.checkpointMgr.Status()
-		_ = oi.Sink.Write(&backfillResult{
+		cnt, nextKey := w.checkpointMgr.Status()
+		_ = w.Sink.Write(&backfillResult{
 			totalCount: cnt,
 			nextKey:    nextKey,
 		})
 	}
 
-	jobID := oi.reorgInfo.ID
-	indexID := oi.reorgInfo.currElement.ID
-	oi.backendCtx.ResetWorkers(jobID, indexID)
+	jobID := w.reorgInfo.ID
+	indexID := w.reorgInfo.currElement.ID
+	w.backendCtx.ResetWorkers(jobID, indexID)
 }
 
 // Display implements AsyncOperator.
-func (oi *ingestWriterOperator) Display() string {
-	return "ingestWriterOperator{ source: " + oi.Source.Display() + ", sink: " + oi.Sink.Display() + "}"
+func (w *ingestWriterOperator) Display() string {
+	return "ingestWriterOperator{ source: " + w.Source.Display() + ", sink: " + w.Sink.Display() + "}"
 }
 
 func newIngestWriterOperator(
@@ -385,30 +389,30 @@ type consumerOperator struct {
 }
 
 // Open implements AsyncOperator.
-func (oi *consumerOperator) Open() error {
-	oi.pool.SetCreateWorker(func() workerpool.Worker[*backfillResult] {
+func (c *consumerOperator) Open() error {
+	c.pool.SetCreateWorker(func() workerpool.Worker[*backfillResult] {
 		logutil.BgLogger().Info("ywq test open consume worker")
-		return &consumeWorker{consumerOperator: oi, sink: oi.Sink, keeper: oi.keeper}
+		return &consumeWorker{consumerOperator: c, sink: c.Sink, keeper: c.keeper}
 	})
-	oi.pool.Start()
+	c.pool.Start()
 	return nil
 }
 
 // Close implements AsyncOperator.
-func (oi *consumerOperator) Close() {
-	if oi.pool != nil {
-		oi.pool.ReleaseAndWait()
+func (c *consumerOperator) Close() {
+	if c.pool != nil {
+		c.pool.ReleaseAndWait()
 	}
-	if oi.hasError.Load() {
+	if c.hasError.Load() {
 		// ywq todo add error
 		logutil.BgLogger().Warn("backfill worker handle tasks failed", zap.String("category", "ddl"),
-			zap.String("start key", hex.EncodeToString(oi.start)))
+			zap.String("start key", hex.EncodeToString(c.start)))
 	}
 }
 
 // Display implements AsyncOperator.
-func (oi *consumerOperator) Display() string {
-	return "consumerOperator{ source: " + oi.Source.Display() + ", sink: " + oi.Sink.Display() + "}"
+func (c *consumerOperator) Display() string {
+	return "consumerOperator{ source: " + c.Source.Display() + ", sink: " + c.Sink.Display() + "}"
 }
 
 func newConsumerOperator(
@@ -427,7 +431,7 @@ func newConsumerOperator(
 		return nil, errors.Trace(err)
 	}
 	source := &operator.AsyncDataChannel[*backfillResult]{Channel: pool}
-	res.Sink = &TotalAddedCountSink{0}
+	res.Sink = &totalAddedCountSink{atomic.Int64{}}
 	res.Source = source
 	res.pool = pool
 	res.keeper = keeper
@@ -476,17 +480,17 @@ func (cw *consumeWorker) handleOneResult(result *backfillResult) error {
 // Close implement the Close interface for workerpool.
 func (*consumeWorker) Close() {}
 
-type TotalAddedCountSink struct {
-	cnt int64
+type totalAddedCountSink struct {
+	cnt atomic.Int64
 }
 
-func (s *TotalAddedCountSink) Write(data int64) error {
-	s.cnt += data
+func (s *totalAddedCountSink) Write(cnt int64) error {
+	s.cnt.Add(cnt)
 	return nil
 }
 
-func (s *TotalAddedCountSink) Display() string {
-	return "TotalAddedCountSink"
+func (s *totalAddedCountSink) Display() string {
+	return "totalAddedCountSink"
 }
 
 func expectedWorkerSize() (readerSize int, writerSize int) {
