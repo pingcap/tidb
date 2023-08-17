@@ -84,6 +84,8 @@ const (
 	idxIncrementalTask
 )
 
+// Next implements the Executor Next interface.
+// It will collect all the sample task and run them concurrently.
 func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	var tasks []*analyzeTask
