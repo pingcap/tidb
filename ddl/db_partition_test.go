@@ -2514,6 +2514,14 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 }
 
 func TestExchangePartitionMultiTable(t *testing.T) {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	dumpChan := make(chan struct{})
+	defer func() {
+		close(dumpChan)
+		wg.Wait()
+	}()
+	go testkit.DebugDumpOnTimeout(&wg, dumpChan, 20*time.Second)
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 
@@ -2542,6 +2550,16 @@ func TestExchangePartitionMultiTable(t *testing.T) {
 			if len(res) == 1 && res[0][col] == s {
 				break
 			}
+			logutil.BgLogger().Info("No match", zap.String("sql", sql), zap.String("s", s))
+			sql = `admin show ddl jobs`
+			res = tk4.MustQuery(sql).Rows()
+			for _, row := range res {
+				strs := make([]string, 0, len(row))
+				for _, c := range row {
+					strs = append(strs, c.(string))
+				}
+				logutil.BgLogger().Info("admin show ddl jobs", zap.Strings("row", strs))
+			}
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
@@ -2558,11 +2576,17 @@ func TestExchangePartitionMultiTable(t *testing.T) {
 	}()
 	waitFor(11, "t2", "queueing")
 	tk3.MustExec(`rollback`)
+	logutil.BgLogger().Info("rollback done")
 	require.NoError(t, <-alterChan1)
+	logutil.BgLogger().Info("alter1 done")
 	err := <-alterChan2
+	logutil.BgLogger().Info("alter2 done")
 	tk3.MustQuery(`select * from t1`).Check(testkit.Rows("6"))
+	logutil.BgLogger().Info("select t1 done")
 	tk3.MustQuery(`select * from t2`).Check(testkit.Rows("0"))
+	logutil.BgLogger().Info("select t2 done")
 	tk3.MustQuery(`select * from tp`).Check(testkit.Rows("3"))
+	logutil.BgLogger().Info("select tp done")
 	require.NoError(t, err)
 }
 
