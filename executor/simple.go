@@ -192,7 +192,7 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	case *ast.SetResourceGroupStmt:
 		err = e.executeSetResourceGroupName(x)
 	case *ast.DropQueryWatchStmt:
-		err = e.executeDropQueryWatch(ctx, x)
+		err = e.executeDropQueryWatch(x)
 	}
 	e.done = true
 	return err
@@ -2185,8 +2185,8 @@ func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, use
 	return err
 }
 
-func (e *SimpleExec) executeDropQueryWatch(ctx context.Context, s *ast.DropQueryWatchStmt) error {
-	return querywatch.ExecDropQueryWatch(ctx, e.Ctx(), s.IntValue)
+func (e *SimpleExec) executeDropQueryWatch(s *ast.DropQueryWatchStmt) error {
+	return querywatch.ExecDropQueryWatch(e.Ctx(), s.IntValue)
 }
 
 func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) error {
@@ -2608,6 +2608,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 		SetFromInfoSchema(sctx.GetInfoSchema()).
 		SetStoreType(kv.TiDB).
 		SetTiDBServerID(gcid.ServerID).
+		SetStartTS(math.MaxUint64). // To make check visibility success.
 		Build()
 	if err != nil {
 		return err
@@ -2616,6 +2617,14 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return err
+	}
+
+	// Must consume & close the response, otherwise coprocessor task will leak.
+	defer func() {
+		_ = resp.Close()
+	}()
+	if _, err := resp.Next(ctx); err != nil {
+		return errors.Trace(err)
 	}
 
 	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", gcid.ServerID),

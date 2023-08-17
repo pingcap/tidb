@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/tikv/client-go/v2/tikv"
+	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -480,9 +481,9 @@ func storeHasEngineTiFlashLabel(store *metapb.Store) bool {
 	return false
 }
 
-func checkListPartitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition) error {
+func checkListPartitions(defs []*ast.PartitionDefinition) error {
 	for _, def := range defs {
-		valIn, ok := def.Clause.(*ast.PartitionDefinitionClauseIn)
+		_, ok := def.Clause.(*ast.PartitionDefinitionClauseIn)
 		if !ok {
 			switch def.Clause.(type) {
 			case *ast.PartitionDefinitionClauseLessThan:
@@ -491,13 +492,6 @@ func checkListPartitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition
 				return ast.ErrPartitionRequiresValues.GenWithStackByArgs("LIST", "IN")
 			default:
 				return dbterror.ErrUnsupportedCreatePartition.GenWithStack("Only VALUES IN () is supported for LIST partitioning")
-			}
-		}
-		if !ctx.GetSessionVars().EnableDefaultListPartition {
-			for _, val := range valIn.Values {
-				if _, ok := val[0].(*ast.DefaultExpr); ok {
-					return dbterror.ErrUnsupportedCreatePartition.GenWithStack("VALUES IN (DEFAULT) is not supported, please use 'tidb_enable_default_list_partition'")
-				}
 			}
 		}
 	}
@@ -523,7 +517,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		// Partition by list is enabled only when tidb_enable_list_partition is 'ON'.
 		enable = ctx.GetSessionVars().EnableListTablePartition
 		if enable {
-			err := checkListPartitions(ctx, s.Definitions)
+			err := checkListPartitions(s.Definitions)
 			if err != nil {
 				return err
 			}
@@ -1700,13 +1694,17 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				if !eval.IsNull() && colTps[k].EvalType() == types.ETInt {
-					defs[i].InValues[j][k] = s
+				if eval.IsNull() {
+					s = "NULL"
+				} else {
+					if colTps[k].EvalType() == types.ETInt {
+						defs[i].InValues[j][k] = s
+					}
+					if colTps[k].EvalType() == types.ETString {
+						s = string(hack.String(collate.GetCollator(cols[k].GetCollate()).Key(s)))
+						s = driver.WrapInSingleQuotes(s)
+					}
 				}
-				if colTps[k].EvalType() == types.ETString {
-					s = string(hack.String(collate.GetCollator(cols[k].GetCollate()).Key(s)))
-				}
-				s = strings.ReplaceAll(s, ",", `\,`)
 				inValueStrs = append(inValueStrs, s)
 			}
 			exprStrs = append(exprStrs, strings.Join(inValueStrs, ","))
@@ -2411,6 +2409,9 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	if job.IsRollingback() {
+		return rollbackExchangeTablePartition(d, t, job, nt)
+	}
 	pt, err := getTableInfo(t, ptID, ptSchemaID)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
@@ -2419,44 +2420,80 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	if pt.State != model.StatePublic {
-		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", pt.Name, pt.State)
-	}
-
-	err = checkExchangePartition(pt, nt)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	err = checkTableDefCompatible(pt, nt)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	index, _, err := getPartitionDef(pt, partName)
+	index, partDef, err := getPartitionDef(pt, partName)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if nt.ExchangePartitionInfo == nil || !nt.ExchangePartitionInfo.ExchangePartitionFlag {
+	if job.SchemaState == model.StateNone {
+		if pt.State != model.StatePublic {
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", pt.Name, pt.State)
+		}
+		err = checkExchangePartition(pt, nt)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		err = checkTableDefCompatible(pt, nt)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		err = checkExchangePartitionPlacementPolicy(t, nt.PlacementPolicyRef, pt.PlacementPolicyRef, partDef.PlacementPolicyRef)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		if defID != partDef.ID {
+			logutil.BgLogger().Info("Exchange partition id changed, updating to actual id", zap.String("category", "ddl"),
+				zap.String("job", job.String()), zap.Int64("defID", defID), zap.Int64("partDef.ID", partDef.ID))
+			job.Args[0] = partDef.ID
+			defID = partDef.ID
+			err = updateDDLJob2Table(w.sess, job, true)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
 		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
-			ExchangePartitionFlag:  true,
 			ExchangePartitionID:    ptID,
 			ExchangePartitionDefID: defID,
 		}
+		// We need an interim schema version,
+		// so there are no non-matching rows inserted
+		// into the table using the schema version
+		// before the exchange is made.
+		job.SchemaState = model.StateWriteOnly
 		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	}
+	// From now on, nt (the non-partitioned table) has
+	// ExchangePartitionInfo set, meaning it is restricted
+	// to only allow writes that would match the
+	// partition to be exchange with.
+	// So we need to rollback that change, instead of just cancelling.
 
 	if d.lease > 0 {
 		delayForAsyncCommit()
 	}
 
+	if defID != partDef.ID {
+		// Should never happen, should have been updated above, in previous state!
+		logutil.BgLogger().Error("Exchange partition id changed, updating to actual id", zap.String("category", "ddl"),
+			zap.String("job", job.String()), zap.Int64("defID", defID), zap.Int64("partDef.ID", partDef.ID))
+		job.Args[0] = partDef.ID
+		defID = partDef.ID
+		err = updateDDLJob2Table(w.sess, job, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
+
 	if withValidation {
 		err = checkExchangePartitionRecordValidation(w, pt, index, ntDbInfo.Name, nt.Name)
 		if err != nil {
-			job.State = model.JobStateCancelled
+			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
 	}
@@ -2464,19 +2501,11 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	// partition table auto IDs.
 	ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	// non-partition table auto IDs.
 	ntAutoIDs, err := t.GetAutoIDAccessors(job.SchemaID, nt.ID).Get()
 	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	_, partDef, err := getPartitionDef(pt, partName)
-	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -2489,34 +2518,31 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	}
 
+	// Recreate non-partition table meta info,
+	// by first delete it with the old table id
+	err = t.DropTableOrView(job.SchemaID, nt.ID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	// exchange table meta id
 	partDef.ID, nt.ID = nt.ID, partDef.ID
 
 	err = t.UpdateTable(ptSchemaID, pt)
 	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	failpoint.Inject("exchangePartitionErr", func(val failpoint.Value) {
-		if val.(bool) {
-			job.State = model.JobStateCancelled
-			failpoint.Return(ver, errors.New("occur an error after updating partition id"))
-		}
-	})
-
-	// recreate non-partition table meta info
-	err = t.DropTableOrView(job.SchemaID, partDef.ID)
-	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	err = t.CreateTableOrView(job.SchemaID, nt)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	failpoint.Inject("exchangePartitionErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("occur an error after updating partition id"))
+		}
+	})
 
 	// Set both tables to the maximum auto IDs between normal table and partitioned table.
 	newAutoIDs := meta.AutoIDGroup{
@@ -2526,12 +2552,10 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 	err = t.GetAutoIDAccessors(ptSchemaID, pt.ID).Put(newAutoIDs)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	err = t.GetAutoIDAccessors(job.SchemaID, nt.ID).Put(newAutoIDs)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -2550,23 +2574,15 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	})
 
-	err = checkExchangePartitionPlacementPolicy(t, partDef.PlacementPolicyRef, nt.PlacementPolicyRef)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
 	// the follow code is a swap function for rules of two partitions
 	// though partitions has exchanged their ID, swap still take effect
 
-	bundles, err := bundlesForExchangeTablePartition(t, job, pt, partDef, nt)
+	bundles, err := bundlesForExchangeTablePartition(t, pt, partDef, nt)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
@@ -2575,13 +2591,13 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	rules, err := infosync.GetLabelRules(context.TODO(), []string{ntrID, ptrID})
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return 0, errors.Wrapf(err, "failed to get PD the label rules")
 	}
 
 	ntr := rules[ntrID]
 	ptr := rules[ptrID]
 
+	// This must be a bug, nt cannot be partitioned!
 	partIDs := getPartitionIDs(nt)
 
 	var setRules []*label.Rule
@@ -2602,10 +2618,10 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	patch := label.NewRulePatch(setRules, deleteRules)
 	err = infosync.UpdateLabelRules(context.TODO(), patch)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
 
+	job.SchemaState = model.StatePublic
 	nt.ExchangePartitionInfo = nil
 	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	if err != nil {
@@ -3073,7 +3089,7 @@ func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.Physical
 
 func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
-	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
+	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
@@ -3143,11 +3159,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in reorgPartitionWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
 
-			if taskRange.endInclude {
-				taskDone = recordKey.Cmp(taskRange.endKey) > 0
-			} else {
-				taskDone = recordKey.Cmp(taskRange.endKey) >= 0
-			}
+			taskDone = recordKey.Cmp(taskRange.endKey) >= 0
 
 			if taskDone || len(w.rowRecords) >= w.batchCnt {
 				return false, nil
@@ -3314,7 +3326,7 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 	return nil
 }
 
-func bundlesForExchangeTablePartition(t *meta.Meta, _ *model.Job, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
+func bundlesForExchangeTablePartition(t *meta.Meta, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
 	bundles := make([]*placement.Bundle, 0, 3)
 
 	ptBundle, err := placement.NewTableBundle(t, pt)
@@ -3412,16 +3424,21 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	return nil
 }
 
-func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPlacementPolicyRef *model.PolicyRefInfo, ptPlacementPolicyRef *model.PolicyRefInfo) error {
-	if ntPlacementPolicyRef == nil && ptPlacementPolicyRef == nil {
+func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPPRef, ptPPRef, partPPRef *model.PolicyRefInfo) error {
+	partitionPPRef := partPPRef
+	if partitionPPRef == nil {
+		partitionPPRef = ptPPRef
+	}
+
+	if ntPPRef == nil && partitionPPRef == nil {
 		return nil
 	}
-	if ntPlacementPolicyRef == nil || ptPlacementPolicyRef == nil {
+	if ntPPRef == nil || partitionPPRef == nil {
 		return dbterror.ErrTablesDifferentMetadata
 	}
 
-	ptPlacementPolicyInfo, _ := getPolicyInfo(t, ptPlacementPolicyRef.ID)
-	ntPlacementPolicyInfo, _ := getPolicyInfo(t, ntPlacementPolicyRef.ID)
+	ptPlacementPolicyInfo, _ := getPolicyInfo(t, partitionPPRef.ID)
+	ntPlacementPolicyInfo, _ := getPolicyInfo(t, ntPPRef.ID)
 	if ntPlacementPolicyInfo == nil && ptPlacementPolicyInfo == nil {
 		return nil
 	}

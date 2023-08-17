@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"math/rand"
+	"slices"
 	"sync"
 	"testing"
 
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/util/extsort"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 )
 
 func TestDetector(t *testing.T) {
@@ -92,20 +92,17 @@ func TestDetector(t *testing.T) {
 }
 
 func verifyResults(t *testing.T, keys [][]byte, results []result) {
-	less := func(a, b []byte) bool {
-		return bytes.Compare(a, b) < 0
-	}
 	for _, r := range results {
 		require.GreaterOrEqual(t, len(r.keyIDs), 2, "keyIDs should have at least 2 elements")
-		require.True(t, slices.IsSortedFunc(r.keyIDs, less), "keyIDs should be sorted")
+		require.True(t, slices.IsSortedFunc(r.keyIDs, bytes.Compare), "keyIDs should be sorted")
 	}
-	slices.SortFunc(results, func(a, b result) bool {
-		return bytes.Compare(a.key, b.key) < 0
+	slices.SortFunc(results, func(a, b result) int {
+		return bytes.Compare(a.key, b.key)
 	})
 
 	sortedKeys := make([][]byte, len(keys))
 	copy(sortedKeys, keys)
-	slices.SortFunc(sortedKeys, less)
+	slices.SortFunc(sortedKeys, bytes.Compare)
 
 	for i := 0; i < len(sortedKeys); {
 		j := i + 1

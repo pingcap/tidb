@@ -68,7 +68,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
+func (cc *clientConn) HandleStmtPrepare(ctx context.Context, sql string) error {
 	stmt, columns, params, err := cc.ctx.Prepare(sql)
 	if err != nil {
 		return err

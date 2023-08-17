@@ -28,25 +28,12 @@ import (
 
 // Iter abstract iterator method for Ingester.
 type Iter interface {
+	ForwardIter
 	// Seek seek to specify position.
 	// if key not found, seeks next key position in iter.
 	Seek(key []byte) bool
-	// Error return current error on this iter.
-	Error() error
-	// First moves this iter to the first key.
-	First() bool
 	// Last moves this iter to the last key.
 	Last() bool
-	// Valid check this iter reach the end.
-	Valid() bool
-	// Next moves this iter forward.
-	Next() bool
-	// Key represents current position pair's key.
-	Key() []byte
-	// Value represents current position pair's Value.
-	Value() []byte
-	// Close close this iter.
-	Close() error
 	// OpType represents operations of pair. currently we have two types.
 	// 1. Put
 	// 2. Delete

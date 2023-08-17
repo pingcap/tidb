@@ -154,6 +154,17 @@ const (
 	HintSemiJoinRewrite = "semi_join_rewrite"
 	// HintNoDecorrelate indicates a LogicalApply not to be decorrelated.
 	HintNoDecorrelate = "no_decorrelate"
+
+	// HintMemoryQuota sets the memory limit for a query
+	HintMemoryQuota = "memory_quota"
+	// HintUseToja is a hint to optimize `in (select ...)` subquery into `join`
+	HintUseToja = "use_toja"
+	// HintNoIndexMerge is a hint to disable index merge
+	HintNoIndexMerge = "no_index_merge"
+	// HintMaxExecutionTime specifies the max allowed execution time in milliseconds
+	HintMaxExecutionTime = "max_execution_time"
+	// HintTidbKvReadTimeout specifies timeout value for any readonly kv request in milliseconds
+	HintTidbKvReadTimeout = "tidb_kv_read_timeout"
 )
 
 const (
@@ -272,7 +283,6 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 		distinctGbyColNames: distinctGbyColNames,
 		// for resolving grouping function args.
 		distinctGbyExprs: distinctGbyExprs,
-		gbyExprsRefPos:   gbyExprsRefPos,
 
 		// fill the gen col names when building level projections.
 	}.Init(b.ctx, b.getSelectOffset())
@@ -297,6 +307,7 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 	expandSchema.Append(gid)
 	expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gid.OrigName)
 	names = append(names, buildExpandFieldName(gid, nil, "gid_"))
+	expand.GIDName = names[len(names)-1]
 	if hasDuplicateGroupingSet {
 		// the last two col of the schema should be gid & gpos
 		gpos := &expression.Column{
@@ -308,6 +319,7 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 		expandSchema.Append(gpos)
 		expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gpos.OrigName)
 		names = append(names, buildExpandFieldName(gpos, nil, "gpos_"))
+		expand.GPosName = names[len(names)-1]
 	}
 	expand.SetChildren(proj)
 	expand.SetSchema(expandSchema)
@@ -1325,6 +1337,13 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 		if err != nil {
 			return nil, err
 		}
+		// for case: explain SELECT year+2 as y, SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP having y > 2002;
+		// currently, we succeed to resolve y to (year+2), but fail to resolve (year+2) to grouping col, and to base column function: plus(year, 2) instead.
+		// which will cause this selection being pushed down through Expand OP itself.
+		//
+		// In expand, we will additionally project (year+2) out as a new column, let's say grouping_col here, and we wanna it can substitute any upper layer's (year+2)
+		expr = b.replaceGroupingFunc(expr)
+
 		p = np
 		if expr == nil {
 			continue
@@ -1670,6 +1689,16 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 		projExprs = append(projExprs, gCol)
 		projNames = append(projNames, b.currentBlockExpand.distinctGbyColNames[idx])
 	}
+	// project GID.
+	projSchema.Append(b.currentBlockExpand.GID)
+	projExprs = append(projExprs, b.currentBlockExpand.GID)
+	projNames = append(projNames, b.currentBlockExpand.GIDName)
+	// project GPos if any.
+	if b.currentBlockExpand.GPos != nil {
+		projSchema.Append(b.currentBlockExpand.GPos)
+		projExprs = append(projExprs, b.currentBlockExpand.GPos)
+		projNames = append(projNames, b.currentBlockExpand.GPosName)
+	}
 	return projSchema, projNames, projExprs
 }
 
@@ -1742,7 +1771,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		schema.Append(col)
 		newNames = append(newNames, name)
 	}
-	// implicitly project expand grouping set cols, if not used later, prune it out in logical column pruner.
+	// implicitly project expand grouping set cols, if not used later, it will being pruned out in logical column pruner.
 	schema, newNames, proj.Exprs = b.implicitProjectGroupingSetCols(schema, newNames, proj.Exprs)
 
 	proj.SetSchema(schema)
@@ -2673,7 +2702,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 	case *ast.WindowFuncExpr:
 		a.inWindowFunc = false
 		if a.curClause == havingClause {
-			a.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(strings.ToLower(v.F))
+			a.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(strings.ToLower(v.Name))
 			return node, false
 		}
 		if a.curClause == orderByClause {
@@ -2805,11 +2834,11 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 	}
 	havingAggMapper := extractor.aggMapper
 	extractor.aggMapper = make(map[*ast.AggregateFuncExpr]int)
-	extractor.inExpr = false
 	// Extract agg funcs from order by clause.
 	if sel.OrderBy != nil {
 		extractor.curClause = orderByClause
 		for _, item := range sel.OrderBy.Items {
+			extractor.inExpr = false
 			if ast.HasWindowFlag(item.Expr) {
 				continue
 			}
@@ -3534,6 +3563,13 @@ func checkExprInGroupByOrIsSingleValue(
 ) {
 	if _, ok := expr.(*ast.AggregateFuncExpr); ok {
 		return
+	}
+	if f, ok := expr.(*ast.FuncCallExpr); ok {
+		if f.FnName.L == ast.Grouping {
+			// just skip grouping function check here, because later in building plan phase, we
+			// will do the grouping function valid check.
+			return
+		}
 	}
 	if _, ok := expr.(*ast.ColumnNameExpr); !ok {
 		for _, gbyExpr := range gbyExprs {
@@ -4430,6 +4466,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		for _, tName := range l.Tables {
+			// CTE has no *model.TableInfo, we need to skip it.
+			if tName.TableInfo == nil {
+				continue
+			}
 			b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tName.TableInfo.ID] = struct{}{}
 		}
 		p, err = b.buildSelectLock(p, l)
@@ -6746,7 +6786,7 @@ func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.Wi
 func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p LogicalPlan, windowFuncExprs []*ast.WindowFuncExpr, windowAggMap map[*ast.AggregateFuncExpr]int) error {
 	checker := &expression.ParamMarkerInPrepareChecker{}
 	for _, windowFuncExpr := range windowFuncExprs {
-		if strings.ToLower(windowFuncExpr.F) == ast.AggFuncGroupConcat {
+		if strings.ToLower(windowFuncExpr.Name) == ast.AggFuncGroupConcat {
 			return ErrNotSupportedYet.GenWithStackByArgs("group_concat as window function")
 		}
 		args, err := b.buildArgs4WindowFunc(ctx, p, windowFuncExpr.Args, windowAggMap)
@@ -6757,12 +6797,12 @@ func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p LogicalPlan, wi
 		for _, expr := range windowFuncExpr.Args {
 			expr.Accept(checker)
 		}
-		desc, err := aggregation.NewWindowFuncDesc(b.ctx, windowFuncExpr.F, args, checker.InPrepareStmt)
+		desc, err := aggregation.NewWindowFuncDesc(b.ctx, windowFuncExpr.Name, args, checker.InPrepareStmt)
 		if err != nil {
 			return err
 		}
 		if desc == nil {
-			return ErrWrongArguments.GenWithStackByArgs(strings.ToLower(windowFuncExpr.F))
+			return ErrWrongArguments.GenWithStackByArgs(strings.ToLower(windowFuncExpr.Name))
 		}
 	}
 	return nil
@@ -6873,12 +6913,12 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 			for _, expr := range windowFunc.Args {
 				expr.Accept(checker)
 			}
-			desc, err := aggregation.NewWindowFuncDesc(b.ctx, windowFunc.F, args[preArgs:preArgs+len(windowFunc.Args)], checker.InPrepareStmt)
+			desc, err := aggregation.NewWindowFuncDesc(b.ctx, windowFunc.Name, args[preArgs:preArgs+len(windowFunc.Args)], checker.InPrepareStmt)
 			if err != nil {
 				return nil, nil, err
 			}
 			if desc == nil {
-				return nil, nil, ErrWrongArguments.GenWithStackByArgs(strings.ToLower(windowFunc.F))
+				return nil, nil, ErrWrongArguments.GenWithStackByArgs(strings.ToLower(windowFunc.Name))
 			}
 			preArgs += len(windowFunc.Args)
 			desc.WrapCastForAggArgs(b.ctx)
@@ -7094,7 +7134,7 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 					return nil, nil, err
 				}
 			}
-			spec, _ = b.handleDefaultFrame(spec, windowFunc.F)
+			spec, _ = b.handleDefaultFrame(spec, windowFunc.Name)
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
 			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, spec)
 			continue
@@ -7105,7 +7145,7 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 		if !ok {
 			return nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(windowFunc.Spec.Name.O)
 		}
-		newSpec, updated := b.handleDefaultFrame(spec, windowFunc.F)
+		newSpec, updated := b.handleDefaultFrame(spec, windowFunc.Name)
 		if !updated {
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
 			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, spec)

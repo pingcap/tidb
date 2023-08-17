@@ -64,8 +64,6 @@ type executor interface {
 	ResetCounts()
 	Counts() []int64
 	Next(ctx context.Context) ([][]byte, error)
-	// Cursor returns the key gonna to be scanned by the Next() function.
-	Cursor() (key []byte, desc bool)
 	// ExecDetails returns its and its children's execution details.
 	// The order is same as DAGRequest.Executors, which children are in front of parents.
 	ExecDetails() []*execDetail
@@ -120,29 +118,6 @@ func (e *tableScanExec) Counts() []int64 {
 		return e.counts[e.start:e.cursor]
 	}
 	return e.counts[e.start : e.cursor+1]
-}
-
-func (e *tableScanExec) Cursor() ([]byte, bool) {
-	if len(e.seekKey) > 0 {
-		return e.seekKey, e.Desc
-	}
-
-	if e.cursor < len(e.kvRanges) {
-		ran := e.kvRanges[e.cursor]
-		if ran.IsPoint() {
-			return ran.StartKey, e.Desc
-		}
-
-		if e.Desc {
-			return ran.EndKey, e.Desc
-		}
-		return ran.StartKey, e.Desc
-	}
-
-	if e.Desc {
-		return e.kvRanges[len(e.kvRanges)-1].StartKey, e.Desc
-	}
-	return e.kvRanges[len(e.kvRanges)-1].EndKey, e.Desc
 }
 
 func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
@@ -306,26 +281,6 @@ func (e *indexScanExec) isUnique() bool {
 	return e.Unique != nil && *e.Unique
 }
 
-func (e *indexScanExec) Cursor() ([]byte, bool) {
-	if len(e.seekKey) > 0 {
-		return e.seekKey, e.Desc
-	}
-	if e.cursor < len(e.kvRanges) {
-		ran := e.kvRanges[e.cursor]
-		if ran.IsPoint() && e.isUnique() {
-			return ran.StartKey, e.Desc
-		}
-		if e.Desc {
-			return ran.EndKey, e.Desc
-		}
-		return ran.StartKey, e.Desc
-	}
-	if e.Desc {
-		return e.kvRanges[len(e.kvRanges)-1].StartKey, e.Desc
-	}
-	return e.kvRanges[len(e.kvRanges)-1].EndKey, e.Desc
-}
-
 func (e *indexScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 	defer func(begin time.Time) {
 		e.execDetail.update(begin, value)
@@ -471,10 +426,6 @@ func evalBool(exprs []expression.Expression, row []types.Datum, ctx *stmtctx.Sta
 	return true, nil
 }
 
-func (e *selectionExec) Cursor() ([]byte, bool) {
-	return e.src.Cursor()
-}
-
 func (e *selectionExec) Next(ctx context.Context) (value [][]byte, err error) {
 	defer func(begin time.Time) {
 		e.execDetail.update(begin, value)
@@ -552,10 +503,6 @@ func (e *topNExec) innerNext(ctx context.Context) (bool, error) {
 		return false, errors.Trace(err)
 	}
 	return true, nil
-}
-
-func (e *topNExec) Cursor() ([]byte, bool) {
-	panic("don't not use coprocessor streaming API for topN!")
 }
 
 func (e *topNExec) Next(ctx context.Context) (value [][]byte, err error) {
@@ -638,10 +585,6 @@ func (e *limitExec) ResetCounts() {
 
 func (e *limitExec) Counts() []int64 {
 	return e.src.Counts()
-}
-
-func (e *limitExec) Cursor() ([]byte, bool) {
-	return e.src.Cursor()
 }
 
 func (e *limitExec) Next(ctx context.Context) (value [][]byte, err error) {

@@ -1148,9 +1148,10 @@ func (p PartitionType) String() string {
 
 // ExchangePartitionInfo provides exchange partition info.
 type ExchangePartitionInfo struct {
-	ExchangePartitionFlag  bool  `json:"exchange_partition_flag"`
 	ExchangePartitionID    int64 `json:"exchange_partition_id"`
 	ExchangePartitionDefID int64 `json:"exchange_partition_def_id"`
+	// Deprecated, not used
+	XXXExchangePartitionFlag bool `json:"exchange_partition_flag"`
 }
 
 // PartitionInfo provides table partition info.
@@ -1892,7 +1893,6 @@ type RunawayActionType int32
 
 //revive:disable:exported
 const (
-	// Note: RunawayActionNone is only defined in tidb, so take care of converting.
 	RunawayActionNone RunawayActionType = iota
 	RunawayActionDryRun
 	RunawayActionCooldown

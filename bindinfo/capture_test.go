@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/bindinfo/internal"
@@ -736,8 +737,11 @@ func TestCaptureWildcardFilter(t *testing.T) {
 		}
 
 		tk.MustExec("admin capture bindings")
-		rows := tk.MustQuery("show global bindings").Sort().Rows()
-		require.Len(t, rows, len(dbTbls))
+		var rows [][]interface{}
+		require.Eventually(t, func() bool {
+			rows = tk.MustQuery("show global bindings").Sort().Rows()
+			return len(rows) == len(dbTbls)
+		}, time.Second*2, time.Millisecond*100)
 		for _, r := range rows {
 			q := r[0].(string)
 			if _, exist := m[q]; !exist { // encounter an unexpected binding
@@ -1001,6 +1005,7 @@ func TestCaptureHints(t *testing.T) {
 		// runtime hints
 		{"select /*+ memory_quota(1024 MB) */ * from t", "memory_quota(1024 mb)"},
 		{"select /*+ max_execution_time(1000) */ * from t", "max_execution_time(1000)"},
+		{"select /*+ tidb_kv_read_timeout(1000) */ * from t", "tidb_kv_read_timeout(1000)"},
 		// storage hints
 		{"select /*+ read_from_storage(tikv[t]) */ * from t", "read_from_storage(tikv[`t`])"},
 		// others

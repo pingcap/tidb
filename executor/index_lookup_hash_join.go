@@ -631,7 +631,10 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 		defer func() {
 			endTime := time.Now()
 			atomic.AddInt64(&iw.stats.totalTime, int64(endTime.Sub(start)))
-			atomic.AddInt64(&iw.stats.join, int64(endTime.Sub(joinStartTime)))
+			if !joinStartTime.IsZero() {
+				// FetchInnerResults maybe return err and return, so joinStartTime is not initialized.
+				atomic.AddInt64(&iw.stats.join, int64(endTime.Sub(joinStartTime)))
+			}
 		}()
 	}
 

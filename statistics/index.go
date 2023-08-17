@@ -17,6 +17,7 @@ package statistics
 import (
 	"bytes"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/failpoint"
@@ -33,22 +34,21 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/twmb/murmur3"
-	"golang.org/x/exp/slices"
 )
 
 // Index represents an index histogram.
 type Index struct {
-	Histogram
-	CMSketch *CMSketch
-	TopN     *TopN
-	FMSketch *FMSketch
-	ErrorRate
-	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
-	Info           *model.IndexInfo
-	Flag           int64
 	LastAnalyzePos types.Datum
-	PhysicalID     int64
+	CMSketch       *CMSketch
+	TopN           *TopN
+	FMSketch       *FMSketch
+	Info           *model.IndexInfo
+	Histogram
+	ErrorRate
 	StatsLoadedStatus
+	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
+	Flag       int64
+	PhysicalID int64
 }
 
 // ItemID implements TableCacheItem
@@ -58,51 +58,43 @@ func (idx *Index) ItemID() int64 {
 
 // IsAllEvicted indicates whether all stats evicted
 func (idx *Index) IsAllEvicted() bool {
-	return idx.statsInitialized && idx.evictedStatus >= allEvicted
+	return idx.statsInitialized && idx.evictedStatus >= AllEvicted
 }
 
-func (idx *Index) dropCMS() {
-	idx.CMSketch = nil
-	idx.evictedStatus = onlyCmsEvicted
+// GetEvictedStatus returns the evicted status
+func (idx *Index) GetEvictedStatus() int {
+	return idx.evictedStatus
 }
 
-func (idx *Index) dropHist() {
+// DropUnnecessaryData drops unnecessary data for index.
+func (idx *Index) DropUnnecessaryData() {
+	if idx.GetStatsVer() < Version2 {
+		idx.CMSketch = nil
+	}
+	idx.TopN = nil
 	idx.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
 	idx.Histogram.Buckets = make([]Bucket, 0)
 	idx.Histogram.scalars = make([]scalar, 0)
-	idx.evictedStatus = allEvicted
-}
-
-func (idx *Index) dropTopN() {
-	originTopNNum := int64(idx.TopN.Num())
-	idx.TopN = nil
-	if len(idx.Histogram.Buckets) == 0 && originTopNNum >= idx.Histogram.NDV {
-		// This indicates index has topn instead of histogram
-		idx.evictedStatus = allEvicted
-	} else {
-		idx.evictedStatus = onlyHistRemained
-	}
-}
-
-func (idx *Index) getEvictedStatus() int {
-	return idx.evictedStatus
+	idx.evictedStatus = AllEvicted
 }
 
 func (idx *Index) isStatsInitialized() bool {
 	return idx.statsInitialized
 }
 
-func (idx *Index) statsVer() int64 {
+// GetStatsVer returns the version of the current stats
+func (idx *Index) GetStatsVer() int64 {
 	return idx.StatsVer
 }
 
-func (idx *Index) isCMSExist() bool {
+// IsCMSExist returns whether CMSketch exists.
+func (idx *Index) IsCMSExist() bool {
 	return idx.CMSketch != nil
 }
 
 // IsEvicted returns whether index statistics got evicted
 func (idx *Index) IsEvicted() bool {
-	return idx.evictedStatus != allLoaded
+	return idx.evictedStatus != AllLoaded
 }
 
 func (idx *Index) String() string {
@@ -148,7 +140,7 @@ func (idx *Index) EvictAllStats() {
 	idx.Histogram.Buckets = nil
 	idx.CMSketch = nil
 	idx.TopN = nil
-	idx.StatsLoadedStatus.evictedStatus = allEvicted
+	idx.StatsLoadedStatus.evictedStatus = AllEvicted
 }
 
 // MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.

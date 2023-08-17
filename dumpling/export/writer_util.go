@@ -454,7 +454,7 @@ func writeBytes(tctx *tcontext.Context, writer storage.ExternalFileWriter, p []b
 func buildFileWriter(tctx *tcontext.Context, s storage.ExternalStorage, fileName string, compressType storage.CompressType) (storage.ExternalFileWriter, func(ctx context.Context) error, error) {
 	fileName += compressFileSuffix(compressType)
 	fullPath := s.URI() + "/" + fileName
-	writer, err := storage.WithCompression(s, compressType).Create(tctx, fileName)
+	writer, err := storage.WithCompression(s, compressType).Create(tctx, fileName, nil)
 	if err != nil {
 		tctx.L().Warn("fail to open file",
 			zap.String("path", fullPath),
@@ -487,7 +487,7 @@ func buildInterceptFileWriter(pCtx *tcontext.Context, s storage.ExternalStorage,
 	initRoutine := func() error {
 		// use separated context pCtx here to make sure context used in ExternalFile won't be canceled before close,
 		// which will cause a context canceled error when closing gcs's Writer
-		w, err := storage.WithCompression(s, compressType).Create(pCtx, fileName)
+		w, err := storage.WithCompression(s, compressType).Create(pCtx, fileName, nil)
 		if err != nil {
 			pCtx.L().Warn("fail to open file",
 				zap.String("path", fullPath),
