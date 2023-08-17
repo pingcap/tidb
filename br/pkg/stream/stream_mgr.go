@@ -40,10 +40,6 @@ const (
 	streamBackupGlobalCheckpointPrefix = "v1/global_checkpoint"
 )
 
-func GetMetadataWorkerPoolSize() int {
-	return metaDataWorkerPoolSize
-}
-
 func GetStreamBackupMetaPrefix() string {
 	return streamBackupMetaPrefix
 }
