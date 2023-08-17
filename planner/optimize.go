@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -97,7 +98,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		return nil, nil, false, nil
 	}
 
-	paramSQL, paramsVals, err := core.GetParamSQLFromAST(sctx, stmt)
+	paramSQL, paramsVals, err := core.GetParamSQLFromAST(stmt)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -860,6 +861,8 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		offs = append(offs, off)
 	}
 	offs = append(offs, setVarsOffs...)
+	// let hint is always ordered, it is convenient to human compare and test.
+	sort.Ints(offs)
 	return
 }
 
