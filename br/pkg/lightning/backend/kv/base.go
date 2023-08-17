@@ -227,6 +227,7 @@ func (e *BaseKVEncoder) ProcessColDatum(col *table.Column, rowID int64, inputDat
 		}
 	}
 	if IsAutoIncCol(col.ToInfo()) {
+		// same as RowIDAllocType, since SepAutoInc is always false when initializing allocators of Table.
 		alloc := e.Table.Allocators(e.SessionCtx).Get(autoid.AutoIncrementType)
 		if err := alloc.Rebase(context.Background(), GetAutoRecordID(value, &col.FieldType), false); err != nil {
 			return value, errors.Trace(err)
