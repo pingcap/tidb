@@ -2762,6 +2762,37 @@ func TestGlobalIndexLookUpInDropPartition(t *testing.T) {
 	indexLookupResult.Check(testkit.Rows("11 11 11", "12 12 12"))
 }
 
+func TestGlobalIndexShowTableRegions(t *testing.T) {
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists p")
+	tk.MustExec("set @@global.tidb_scatter_region = on")
+	tk.MustExec(`create table p (id int, c int, d int, unique key uidx(c)) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10))`)
+	rs := tk.MustQuery("show table p regions").Rows()
+	require.Equal(t, len(rs), 3)
+	rs = tk.MustQuery("show table p index uidx regions").Rows()
+	require.Equal(t, len(rs), 3)
+
+	tk.MustExec("alter table p add unique idx(id)")
+	rs = tk.MustQuery("show table p regions").Rows()
+	require.Equal(t, len(rs), 4)
+	rs = tk.MustQuery("show table p index idx regions").Rows()
+	require.Equal(t, len(rs), 1)
+	rs = tk.MustQuery("show table p index uidx regions").Rows()
+	require.Equal(t, len(rs), 3)
+}
+
 func TestAlterTableExchangePartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
