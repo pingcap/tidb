@@ -84,11 +84,10 @@ const (
 	idxIncrementalTask
 )
 
-// Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	var tasks []*analyzeTask
-	tids := make([]int64, 0)
+	tids := make(map[int64]struct{}) // use a set for tid
 	skippedTables := make([]string, 0)
 	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
 	for _, task := range e.tasks {
@@ -110,15 +109,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			tasks = append(tasks, task)
 		}
 		// generate warning message
-		dup := false
-		for _, id := range tids {
-			if id == tableID.TableID {
-				dup = true
-				break
-			}
-		}
-		//avoid generate duplicate tables
-		if !dup {
+		if _, ok := tids[tableID.TableID]; !ok {
 			if statsHandle.IsTableLocked(tableID.TableID) {
 				tbl, ok := is.TableByID(tableID.TableID)
 				if !ok {
@@ -126,7 +117,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				}
 				skippedTables = append(skippedTables, tbl.Meta().Name.L)
 			}
-			tids = append(tids, tableID.TableID)
+			tids[tableID.TableID] = struct{}{}
 		}
 	}
 
@@ -214,7 +205,6 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	return statsHandle.Update(e.Ctx().GetInfoSchema().(infoschema.InfoSchema), cache.WithTableStatsByQuery())
 }
-
 func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 	if !variable.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
 		return nil
