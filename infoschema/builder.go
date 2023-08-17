@@ -285,6 +285,81 @@ func (b *Builder) applyDropTableOrParition(m *meta.Meta, diff *model.SchemaDiff)
 	return tblIDs, nil
 }
 
+<<<<<<< HEAD
+=======
+func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	tblIDs, err := b.applyTableUpdate(m, diff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, opt := range diff.AffectedOpts {
+		if opt.OldTableID != 0 {
+			b.deleteBundle(b.is, opt.OldTableID)
+		}
+		if opt.TableID != 0 {
+			b.markTableBundleShouldUpdate(opt.TableID)
+		}
+	}
+	return tblIDs, nil
+}
+
+func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	// The partitioned table is not affected until the last stage
+	if diff.OldTableID == diff.TableID && diff.OldSchemaID == diff.SchemaID {
+		return b.applyTableUpdate(m, diff)
+	}
+	ntSchemaID := diff.OldSchemaID
+	ntID := diff.OldTableID
+	ptSchemaID := diff.SchemaID
+	ptID := diff.TableID
+	partID := diff.TableID
+	if len(diff.AffectedOpts) > 0 {
+		ptID = diff.AffectedOpts[0].TableID
+		if diff.AffectedOpts[0].SchemaID != 0 {
+			ptSchemaID = diff.AffectedOpts[0].SchemaID
+		}
+	}
+	// The normal table needs to be updated first:
+	// Just update the tables separately
+	currDiff := &model.SchemaDiff{
+		// This is only for the case since https://github.com/pingcap/tidb/pull/45877
+		// Fixed now, by adding back the AffectedOpts
+		// to carry the partitioned Table ID.
+		Type:     diff.Type,
+		Version:  diff.Version,
+		TableID:  ntID,
+		SchemaID: ntSchemaID,
+	}
+	if ptID != partID {
+		currDiff.TableID = partID
+		currDiff.OldTableID = ntID
+		currDiff.OldSchemaID = ntSchemaID
+	}
+	ntIDs, err := b.applyTableUpdate(m, currDiff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// partID is the new id for the non-partitioned table!
+	b.markTableBundleShouldUpdate(partID)
+	// Then the partitioned table, will re-read the whole table, including all partitions!
+	currDiff.TableID = ptID
+	currDiff.SchemaID = ptSchemaID
+	currDiff.OldTableID = ptID
+	currDiff.OldSchemaID = ptSchemaID
+	ptIDs, err := b.applyTableUpdate(m, currDiff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// ntID is the new id for the partition!
+	b.markPartitionBundleShouldUpdate(ntID)
+	err = updateAutoIDForExchangePartition(b.store, ptSchemaID, ptID, ntSchemaID, ntID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return append(ptIDs, ntIDs...), nil
+}
+
+>>>>>>> 48e22971729 (ddl: Exchange part schema load fix (#46126))
 func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
@@ -391,7 +466,12 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
+<<<<<<< HEAD
 	case model.ActionTruncateTable, model.ActionCreateView, model.ActionExchangeTablePartition:
+=======
+	case model.ActionTruncateTable, model.ActionCreateView,
+		model.ActionExchangeTablePartition:
+>>>>>>> 48e22971729 (ddl: Exchange part schema load fix (#46126))
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	default:
