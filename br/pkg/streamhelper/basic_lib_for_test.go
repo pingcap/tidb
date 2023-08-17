@@ -656,9 +656,8 @@ func (t *testEnv) ResolveLocks(ctx context.Context, locks []*txnlock.Lock, loc *
 }
 
 func (t *testEnv) GetStore() tikv.Storage {
-	return nil
 	// only used for GetRegionCache once in resolve lock
-	//return &mockTiKVStore{regionCache: tikv.NewRegionCache(&mockPDClient{})}
+	return &mockTiKVStore{regionCache: tikv.NewRegionCache(&mockPDClient{})}
 }
 
 type mockKVStore struct {

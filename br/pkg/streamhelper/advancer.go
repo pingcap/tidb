@@ -237,6 +237,11 @@ func (c *CheckpointAdvancer) WithCheckpoints(f func(*spans.ValueSortedFull)) {
 	f(c.checkpoints)
 }
 
+// only used for test
+func (c *CheckpointAdvancer) NewCheckpoints(cps *spans.ValueSortedFull) {
+	c.checkpoints = cps
+}
+
 func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
 	threshold time.Duration) (spans.Valued, error) {
 	var targets []spans.Valued

@@ -335,6 +335,14 @@ func TestResolveLock(t *testing.T) {
 		},
 		Value: 123,
 	}))
+	adv.NewCheckpoints(
+		spans.Sorted(spans.NewFullWith([]kv.KeyRange{
+			{
+				StartKey: kv.Key([]byte("1")),
+				EndKey:   kv.Key([]byte("2")),
+			},
+		}, 0)),
+	)
 	adv.OnBecomeOwner(ctx)
 	coll := streamhelper.NewClusterCollector(ctx, env)
 	err := adv.GetCheckpointInRange(ctx, []byte{}, []byte{}, coll)
@@ -347,5 +355,4 @@ func TestResolveLock(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, r.FailureSubRanges, 0)
 	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
-
 }

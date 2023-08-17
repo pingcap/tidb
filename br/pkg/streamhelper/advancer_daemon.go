@@ -5,6 +5,7 @@ package streamhelper
 import (
 	"context"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -82,9 +83,12 @@ func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 							return tikv.ResolveLocksForRange(ctx, "log backup advancer", c.env, math.MaxUint64, r.StartKey, r.EndKey)
 						}
 						workerPool := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
+						var wg sync.WaitGroup
 						for _, r := range targets {
 							targetRange := r
+							wg.Add(1)
 							workerPool.Apply(func() {
+								defer wg.Done()
 								// Run resolve lock on the whole TiKV cluster.
 								// it will use startKey/endKey to scan region in PD.
 								// but regionCache already has a codecPDClient. so just use decode key here.
@@ -100,6 +104,7 @@ func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 								}
 							})
 						}
+						wg.Wait()
 						log.Info("finish resolve locks for checkpoint", zap.String("category", "advancer"),
 							zap.String("uuid", "log backup advancer"),
 							logutil.Key("StartKey", c.lastCheckpoint.StartKey),
