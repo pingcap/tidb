@@ -17,6 +17,7 @@ package local
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -1027,6 +1028,13 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 
 	errLimiter := rate.NewLimiter(1, 1)
 	pool := utils.NewWorkerPool(uint(local.dupeConcurrency), "resolve duplicate rows")
+
+	tblInfo, err := json.Marshal(tbl)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	logger.Debug("got tblInfo from tbl",
+		zap.ByteString("tblInfo", tblInfo))
 
 	switch algorithm {
 	case config.DupeResAlgRemove:

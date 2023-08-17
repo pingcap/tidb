@@ -24,9 +24,15 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	tidbkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
@@ -149,7 +155,7 @@ func (c mockConn) QueryContext(_ context.Context, query string, args []driver.Na
 	return &mockRows{start: start, end: end}, nil
 }
 
-func TestResolveAllConflictKeysRemove(t *testing.T) {
+func TestRemoveAllConflictKeys(t *testing.T) {
 	const totalRows = int64(1 << 18)
 	driverName := "errmgr-mock-" + strconv.Itoa(rand.Int())
 	sql.Register(driverName, mockDriver{totalRows: totalRows})
@@ -178,56 +184,96 @@ func TestResolveAllConflictKeysRemove(t *testing.T) {
 	require.Equal(t, totalRows, resolved.Load())
 }
 
-//func TestResolveAllConflictKeysReplace(t *testing.T) {
-//	var tbl table.Table
-//	p := parser.New()
-//	node, _, err := p.ParseSQL("create table t (a varchar(10) primary key, b int, index idx(b));")
-//	require.NoError(t, err)
-//	mockSctx := mock.NewContext()
-//	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-//	var info *model.TableInfo
-//	info, err = ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 1)
-//	require.NoError(t, err)
-//	info.State = model.StatePublic
-//	require.True(t, info.IsCommonHandle)
-//	tbl, err = tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), info)
-//	require.NoError(t, err)
-//
-//	const totalRows = int64(1 << 18)
-//	driverName := "errmgr-mock-" + strconv.Itoa(rand.Int())
-//	sql.Register(driverName, mockDriver{totalRows: totalRows})
-//	db, err := sql.Open(driverName, "")
-//	require.NoError(t, err)
-//	defer db.Close()
-//
-//	cfg := config.NewConfig()
-//	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
-//	cfg.App.TaskInfoSchemaName = "lightning_errors"
-//	em := New(db, cfg, log.L())
-//	ctx := context.Background()
-//	err = em.Init(ctx)
-//	require.NoError(t, err)
-//
-//	var decoder *tidbkv.TableKVDecoder
-//	decoder, err = tidbkv.NewTableKVDecoder(tbl, "test", &encode.SessionOptions{
-//		SQLMode: mysql.ModeStrictAllTables,
-//	}, log.FromContext(ctx))
-//	require.NoError(t, err)
-//
-//	resolved := atomic.NewInt64(0)
-//	pool := utils.NewWorkerPool(16, "resolve duplicate rows by replace")
-//	err = em.ReplaceConflictKeys(
-//		ctx, tbl, "test", pool, decoder,
-//		func(ctx context.Context, key []byte) ([]byte, error) {
-//			return nil, nil
-//		},
-//		func(ctx context.Context, handleRows [2][]byte) error {
-//			resolved.Add(1)
-//			return nil
-//		},
-//	)
-//	require.NoError(t, err)
-//}
+func TestReplaceConflictKeys(t *testing.T) {
+	column := &model.ColumnInfo{
+		ID:           1,
+		Name:         model.NewCIStr("c"),
+		Offset:       0,
+		DefaultValue: 0,
+		FieldType:    *types.NewFieldType(0),
+		Hidden:       true,
+	}
+	column.AddFlag(mysql.PriKeyFlag)
+
+	index := &model.IndexInfo{
+		Name:  model.NewCIStr("key"),
+		Table: model.NewCIStr("t"),
+		Columns: []*model.IndexColumn{
+			{
+				Name:   model.NewCIStr("c"),
+				Offset: 0,
+				Length: 10,
+			}},
+		Unique:  true,
+		Primary: true,
+	}
+
+	fk := &model.FKInfo{
+		RefCols: []model.CIStr{model.NewCIStr("a")},
+		Cols:    []model.CIStr{model.NewCIStr("a")},
+	}
+
+	table := &model.TableInfo{
+		ID:          1,
+		Name:        model.NewCIStr("t"),
+		Charset:     "utf8",
+		Collate:     "utf8_bin",
+		Columns:     []*model.ColumnInfo{column},
+		Indices:     []*model.IndexInfo{index},
+		ForeignKeys: []*model.FKInfo{fk},
+		PKIsHandle:  true,
+	}
+
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), table)
+	require.NoError(t, err)
+
+	db, mockDB, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mockDB.ExpectQuery("SELECT raw_key FROM `lightning_task_info`.`conflict_error_v1` WHERE table_name = 'a' AND index_name <> 'PRIMARY' GROUP BY raw_key").
+		WillReturnRows(sqlmock.NewRows([]string{"raw_key"}).
+			AddRow("t\\ufffd\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000K_i\\ufffd\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0001\\u0003\\ufffd\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0006"))
+	mockDB.ExpectQuery("SELECT index_name, raw_value, hex(raw_handle) FROM `lightning_task_info`.`conflict_error_v1` WHERE table_name = 'a' AND raw_key = 't\\ufffd\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000K_i\\ufffd\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0001\\u0003\\ufffd\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0006'").
+		WillReturnRows(sqlmock.NewRows([]string{"index_name", "raw_value", "hex(raw_handle)"}).
+			AddRow("uni_b", "AAAAAAAAAAE=", "74800000000000004B5F728000000000000001").
+			AddRow("uni_b", "AAAAAAAAAAI=", "74800000000000004B5F728000000000000002"))
+
+	decoder, err := tidbkv.NewTableKVDecoder(tbl, "test", &encode.SessionOptions{
+		SQLMode: mysql.ModeStrictAllTables,
+	}, log.FromContext(ctx))
+	require.NoError(t, err)
+
+	cfg := config.NewConfig()
+	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
+	cfg.App.TaskInfoSchemaName = "lightning_errors"
+	em := New(db, cfg, log.L())
+	err = em.Init(ctx)
+	require.NoError(t, err)
+
+	fnGetLatestCount := atomic.NewInt64(0)
+	fnDeleteKeyCount := atomic.NewInt64(0)
+	pool := utils.NewWorkerPool(16, "resolve duplicate rows by replace")
+	err = em.ReplaceConflictKeys(
+		ctx, tbl, "test", pool, decoder,
+		func(ctx context.Context, key []byte) ([]byte, error) {
+			fnGetLatestCount.Add(1)
+			return nil, nil
+		},
+		func(ctx context.Context, key []byte) error {
+			fnDeleteKeyCount.Add(1)
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, 1, fnGetLatestCount.Load())
+	require.Equal(t, 1, fnDeleteKeyCount.Load())
+}
 
 func TestErrorMgrHasError(t *testing.T) {
 	cfg := &config.Config{}
