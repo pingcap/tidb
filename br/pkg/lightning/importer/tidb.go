@@ -308,16 +308,15 @@ func ObtainNewCollationEnabled(ctx context.Context, db *sql.DB) (bool, error) {
 // than the auto increment base in tidb side, we needn't fetch currently auto increment value here.
 // See: https://github.com/pingcap/tidb/blob/64698ef9a3358bfd0fdc323996bb7928a56cadca/ddl/ddl_api.go#L2528-L2533
 func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr uint64) error {
-	var query string
 	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Uint64("auto_increment", incr))
+	base := adjustIDBase(incr)
+	var forceStr string
 	if incr > math.MaxInt64 {
 		// automatically set max value
 		logger.Warn("auto_increment out of the maximum value TiDB supports, automatically set to the max", zap.Uint64("auto_increment", incr))
-		incr = math.MaxInt64
-		query = fmt.Sprintf("ALTER TABLE %s FORCE AUTO_INCREMENT=%d", tableName, incr)
-	} else {
-		query = fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
+		forceStr = "FORCE"
 	}
+	query := fmt.Sprintf("ALTER TABLE %s %s AUTO_INCREMENT=%d", tableName, forceStr, base)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_increment")
 	exec := common.SQLWithRetry{DB: db, Logger: logger}
 	err := exec.Exec(ctx, "alter table auto_increment", query)
@@ -329,6 +328,13 @@ func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr 
 		)
 	}
 	return errors.Annotatef(err, "%s", query)
+}
+
+func adjustIDBase(incr uint64) int64 {
+	if incr > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(incr)
 }
 
 // AlterAutoRandom rebase the table auto random id

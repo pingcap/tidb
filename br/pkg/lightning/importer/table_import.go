@@ -935,7 +935,17 @@ func (tr *TableImporter) postProcess(
 			// ALTER TABLE xxx AUTO_INCREMENT = yyy has a bad naming.
 			// if a table has implicit _tidb_rowid column & tbl.SepAutoID=false, then it works on _tidb_rowid
 			// allocator, even if the table has NO auto-increment column.
-			err = AlterAutoIncrement(ctx, rc.db, tr.tableName, uint64(tr.alloc.Get(autoid.RowIDAllocType).Base())+1)
+			newBase := uint64(tr.alloc.Get(autoid.RowIDAllocType).Base()) + 1
+			err = AlterAutoIncrement(ctx, rc.db, tr.tableName, newBase)
+
+			if err == nil && isLocalBackend(rc.cfg) {
+				// for TiDB version >= 6.5.0, a table might have separate allocators for auto_increment column and _tidb_rowid,
+				// especially when a table has auto_increment non-clustered PK, it will use both allocators.
+				// And in this case, ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
+				// not for allocator of _tidb_rowid.
+				// So we need to rebase IDs for those 2 allocators explicitly.
+				err = common.RebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr.kvStore, tr.dbInfo.ID, tr.tableInfo.Core)
+			}
 		}
 		rc.alterTableLock.Unlock()
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)
