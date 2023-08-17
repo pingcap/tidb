@@ -44,6 +44,9 @@ const updateHeartBeatTemplate = "UPDATE mysql.tidb_ttl_table_status SET current_
 
 const timeFormat = "2006-01-02 15:04:05"
 
+// SkipTTLJobManager4Test skips the bootstrap of TTLJobManager if it's true. It's used to avoid data race in test.
+var SkipTTLJobManager4Test bool
+
 func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) (string, []interface{}) {
 	return insertNewTableIntoStatusTemplate, []interface{}{tableID, parentTableID}
 }
@@ -98,6 +101,13 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage) (manager *
 	manager.sessPool = sessPool
 	manager.delCh = make(chan *ttlDeleteTask)
 	manager.notifyStateCh = make(chan interface{}, 1)
+
+	if SkipTTLJobManager4Test {
+		manager.init(func() error {
+			return nil
+		})
+		return
+	}
 
 	manager.init(manager.jobLoop)
 	manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", "manager")

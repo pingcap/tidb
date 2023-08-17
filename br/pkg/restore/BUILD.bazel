@@ -149,6 +149,7 @@ go_test(
         "//tablecodec",
         "//testkit",
         "//testkit/testsetup",
+        "//ttl/ttlworker",
         "//types",
         "//util/codec",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
