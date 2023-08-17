@@ -749,11 +749,6 @@ func testAnalyzeIncremental(tk *testkit.TestKit, t *testing.T, dom *domain.Domai
 	tk.MustExec("set @@tidb_enable_paging = off")
 
 	tk.MustExec("insert into t values (3,3)")
-	oriMinLogCount := handle.MinLogScanCount.Load()
-	defer func() {
-		handle.MinLogScanCount.Store(oriMinLogCount)
-	}()
-	handle.MinLogScanCount.Store(0)
 	is := dom.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
