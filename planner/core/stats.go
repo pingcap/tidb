@@ -363,8 +363,14 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			selected = uniqueBest
 		}
 	}
-	// If some path matches a heuristic rule, just remove other possible paths
+	// heuristic rule pruning other path should consider hint prefer.
+	// If no hints and some path matches a heuristic rule, just remove other possible paths.
 	if selected != nil {
+		// if user wanna tiFlash read, while current heuristic choose a TiKV path. so we shouldn't prune other paths.
+		keep := ds.preferStoreType&preferTiFlash != 0 && selected.StoreType != kv.TiFlash
+		if keep {
+			return nil
+		}
 		ds.possibleAccessPaths[0] = selected
 		ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 		if ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain {
@@ -1497,7 +1503,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 				return nil, err
 			}
 		}
-		recurStat := p.cte.recursivePartPhysicalPlan.Stats()
+		recurStat := p.cte.recursivePartLogicalPlan.statsInfo()
 		for i, col := range selfSchema.Columns {
 			p.stats.ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
 		}

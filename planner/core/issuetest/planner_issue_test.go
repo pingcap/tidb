@@ -46,6 +46,33 @@ func TestIssue42732(t *testing.T) {
 	tk.MustQuery("SELECT one.a, one.b as b2 FROM t1 one ORDER BY (SELECT two.b FROM t2 two WHERE two.a = one.b)").Check(testkit.Rows("1 1"))
 }
 
+// https://github.com/pingcap/tidb/issues/45036
+func TestIssue45036(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE ads_txn (\n" +
+		"  `cusno` varchar(10) NOT NULL,\n" +
+		"  `txn_dt` varchar(8) NOT NULL,\n" +
+		"  `unn_trno` decimal(22,0) NOT NULL,\n" +
+		"  `aml_cntpr_accno` varchar(64) DEFAULT NULL,\n" +
+		"  `acpayr_accno` varchar(35) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`cusno`,`txn_dt`,`unn_trno`) NONCLUSTERED\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(`txn_dt`)\n" +
+		"(PARTITION `p20000101` VALUES IN ('20000101'),\n" +
+		"PARTITION `p20220101` VALUES IN ('20220101'),\n" +
+		"PARTITION `p20230516` VALUES IN ('20230516'))")
+	tk.MustExec("analyze table ads_txn")
+	tk.MustExec("set autocommit=OFF;")
+	tk.MustQuery("explain update ads_txn s set aml_cntpr_accno = trim(acpayr_accno) where s._tidb_rowid between 1 and 100000;").Check(testkit.Rows(
+		"Update_5 N/A root  N/A",
+		"└─Projection_6 8000.00 root  test.ads_txn.cusno, test.ads_txn.txn_dt, test.ads_txn.unn_trno, test.ads_txn.aml_cntpr_accno, test.ads_txn.acpayr_accno, test.ads_txn._tidb_rowid",
+		"  └─SelectLock_7 8000.00 root  for update 0",
+		"    └─TableReader_9 10000.00 root partition:all data:TableRangeScan_8",
+		"      └─TableRangeScan_8 10000.00 cop[tikv] table:s range:[1,100000], keep order:false, stats:pseudo"))
+}
+
 func TestIssue45758(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -54,4 +81,12 @@ func TestIssue45758(t *testing.T) {
 	tk.MustExec("CREATE TABLE tb2 (cid INT, code INT, class VARCHAR(10))")
 	// result ok
 	tk.MustExec("UPDATE tb1, (SELECT code AS cid, code, MAX(class) AS class FROM tb2 GROUP BY code) tb3 SET tb1.cid = tb3.cid, tb1.code = tb3.code, tb1.class = tb3.class")
+}
+
+func TestIssue46083(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TEMPORARY TABLE v0(v1 int)")
+	tk.MustExec("INSERT INTO v0 WITH ta2 AS (TABLE v0) TABLE ta2 FOR UPDATE OF ta2;")
 }

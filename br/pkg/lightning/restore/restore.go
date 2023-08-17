@@ -206,6 +206,7 @@ type Controller struct {
 	pauser        *common.Pauser
 	backend       backend.Backend
 	tidbGlue      glue.Glue
+	pdCli         pd.Client
 
 	alterTableLock sync.Mutex
 	sysVars        map[string]string
@@ -329,6 +330,7 @@ func NewRestoreControllerWithPauser(
 	}
 
 	var backend backend.Backend
+	var pdCli pd.Client
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
 		backend = tidb.NewTiDBBackend(ctx, db, cfg.TikvImporter.OnDuplicate, errorMgr)
@@ -343,9 +345,13 @@ func NewRestoreControllerWithPauser(
 		if maxOpenFiles < 0 {
 			maxOpenFiles = math.MaxInt32
 		}
+		pdCli, err = pd.NewClientWithContext(ctx, []string{cfg.TiDB.PdAddr}, tls.ToPDSecurityOption())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 
 		if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
-			if err := tikv.CheckTiKVVersion(ctx, tls, cfg.TiDB.PdAddr, minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
+			if err := tikv.CheckTiKVVersion(ctx, tls, pdCli.GetLeaderAddr(), minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
 				if berrors.Is(err, berrors.ErrVersionMismatch) {
 					log.FromContext(ctx).Warn("TiKV version doesn't support duplicate resolution. The resolution algorithm will fall back to 'none'", zap.Error(err))
 					cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
@@ -392,6 +398,7 @@ func NewRestoreControllerWithPauser(
 		targetDBGlue: p.Glue,
 		tls:          tls,
 		backend:      backend,
+		pdCli:        pdCli,
 	}
 	preInfoGetter, err := NewPreRestoreInfoGetter(
 		cfg,
@@ -420,6 +427,7 @@ func NewRestoreControllerWithPauser(
 		checksumWorks: worker.NewPool(ctx, cfg.TiDB.ChecksumTableConcurrency, "checksum"),
 		pauser:        p.Pauser,
 		backend:       backend,
+		pdCli:         pdCli,
 		tidbGlue:      p.Glue,
 		sysVars:       defaultImportantVariables,
 		tls:           tls,
@@ -448,6 +456,9 @@ func NewRestoreControllerWithPauser(
 func (rc *Controller) Close() {
 	rc.backend.Close()
 	rc.tidbGlue.GetSQLExecutor().Close()
+	if rc.pdCli != nil {
+		rc.pdCli.Close()
+	}
 }
 
 func (rc *Controller) Run(ctx context.Context) error {
@@ -1860,7 +1871,7 @@ func (rc *Controller) fullCompact(ctx context.Context) error {
 }
 
 func (rc *Controller) doCompact(ctx context.Context, level int32) error {
-	tls := rc.tls.WithHost(rc.cfg.TiDB.PdAddr)
+	tls := rc.tls.WithHost(rc.pdCli.GetLeaderAddr())
 	return tikv.ForAllStores(
 		ctx,
 		tls,

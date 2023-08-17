@@ -48,7 +48,7 @@ type Batcher struct {
 	// sendCh is for communiate with sendWorker.
 	sendCh chan<- SendType
 	// outCh is for output the restored table, so it can be sent to do something like checksum.
-	outCh chan<- CreatedTable
+	outCh chan<- *CreatedTable
 
 	sender             BatchSender
 	manager            ContextManager
@@ -86,7 +86,8 @@ func (b *Batcher) contextCleaner(ctx context.Context, tables <-chan []CreatedTab
 				return
 			}
 			for _, tbl := range tbls {
-				b.outCh <- tbl
+				cloneTable := tbl
+				b.outCh <- &cloneTable
 			}
 		}
 	}
@@ -102,13 +103,13 @@ func NewBatcher(
 	sender BatchSender,
 	manager ContextManager,
 	errCh chan<- error,
-) (*Batcher, <-chan CreatedTable) {
-	output := make(chan CreatedTable, defaultChannelSize)
+) (*Batcher, chan *CreatedTable) {
+	outCh := DefaultOutputTableChan()
 	sendChan := make(chan SendType, 2)
 	b := &Batcher{
 		rewriteRules:       EmptyRewriteRule(),
 		sendErr:            errCh,
-		outCh:              output,
+		outCh:              outCh,
 		sender:             sender,
 		manager:            manager,
 		sendCh:             sendChan,
@@ -122,7 +123,7 @@ func NewBatcher(
 	go b.contextCleaner(ctx, restoredTables)
 	sink := chanTableSink{restoredTables, errCh}
 	sender.PutSink(sink)
-	return b, output
+	return b, outCh
 }
 
 // EnableAutoCommit enables the batcher commit batch periodically even batcher size isn't big enough.
