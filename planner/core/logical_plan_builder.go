@@ -4695,6 +4695,7 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 // 1. tidb-server started and statistics handle has not been initialized.
 // 2. table row count from statistics is zero.
 // 3. statistics is outdated.
+// Note: please also update getLatestVersionFromStatsTable() when logic in this function changes.
 func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
 	var usePartitionStats, countIs0, pseudoStatsForUninitialized, pseudoStatsForOutdated bool
