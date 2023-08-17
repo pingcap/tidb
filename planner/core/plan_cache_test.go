@@ -492,9 +492,6 @@ func TestIssue42125(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // can hit
 }
 
-<<<<<<< HEAD
-func TestIssue41828(t *testing.T) {
-=======
 func TestPlanCacheMemoryTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -510,8 +507,7 @@ func TestPlanCacheMemoryTable(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // plan accessing memory tables cannot hit the cache
 }
 
-func TestPlanCacheWithSubquery(t *testing.T) {
->>>>>>> bd423ea76ee (planner: skip plan cache if plans have `MemTableScan` operator (#41830))
+func TestIssue41828(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
