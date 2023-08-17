@@ -60,12 +60,20 @@ func seekPropsOffsets(
 		}
 	}()
 	offsets := make([]uint64, len(paths))
+	moved := false
 	for iter.Next() {
 		p := iter.prop()
 		propKey := kv.Key(p.key)
 		if propKey.Cmp(start) > 0 {
+			if !moved {
+				return nil, fmt.Errorf("start key %s is too small for stat files %v",
+					start.String(),
+					paths,
+				)
+			}
 			return offsets, nil
 		}
+		moved = true
 		offsets[iter.readerIndex()] = p.offset
 	}
 	if iter.Error() != nil {

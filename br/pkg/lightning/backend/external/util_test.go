@@ -93,12 +93,29 @@ func TestSeekPropsOffsets(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []uint64{30, 20}, got)
 	got, err = seekPropsOffsets(ctx, []byte("key0"), []string{file1, file2}, store)
+	require.ErrorContains(t, err, "start key 6b657930 is too small for stat files [/test1 /test2]")
+	got, err = seekPropsOffsets(ctx, []byte("key1"), []string{file1, file2}, store)
 	require.NoError(t, err)
-	// TODO(lance6716): maybe return an error?
-	require.Equal(t, []uint64{0, 0}, got)
+	require.Equal(t, []uint64{10, 0}, got)
 	got, err = seekPropsOffsets(ctx, []byte("key999"), []string{file1, file2}, store)
 	require.NoError(t, err)
 	require.Equal(t, []uint64{50, 40}, got)
+
+	file3 := "/test3"
+	w3, err := store.Create(ctx, file3, nil)
+	require.NoError(t, err)
+	err = w3.Close(ctx)
+
+	file4 := "/test4"
+	w4, err := store.Create(ctx, file4, nil)
+	require.NoError(t, err)
+	_, err = w4.Write(ctx, rc1.encode())
+	require.NoError(t, err)
+	err = w4.Close(ctx)
+	require.NoError(t, err)
+	got, err = seekPropsOffsets(ctx, []byte("key3"), []string{file1, file2, file3, file4}, store)
+	require.NoError(t, err)
+	require.Equal(t, []uint64{30, 20, 0, 30}, got)
 }
 
 func TestGetAllFileNames(t *testing.T) {
