@@ -46,6 +46,9 @@ const updateHeartBeatTemplate = "UPDATE mysql.tidb_ttl_table_status SET current_
 
 const timeFormat = "2006-01-02 15:04:05"
 
+// SkipTTLJobManager4Test skips the bootstrap of TTLJobManager if it's true. It's used to avoid data race in test.
+var SkipTTLJobManager4Test bool
+
 func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) (string, []interface{}) {
 	return insertNewTableIntoStatusTemplate, []interface{}{tableID, parentTableID}
 }
@@ -101,11 +104,18 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage) (manager *
 	manager.delCh = make(chan *ttlDeleteTask)
 	manager.notifyStateCh = make(chan interface{}, 1)
 
+	if SkipTTLJobManager4Test {
+		manager.init(func() error {
+			return nil
+		})
+		return
+	}
+
 	manager.init(manager.jobLoop)
 	manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", "manager")
 
-	manager.infoSchemaCache = cache.NewInfoSchemaCache(updateInfoSchemaCacheInterval)
-	manager.tableStatusCache = cache.NewTableStatusCache(updateTTLTableStatusCacheInterval)
+	manager.infoSchemaCache = cache.NewInfoSchemaCache(getUpdateInfoSchemaCacheInterval())
+	manager.tableStatusCache = cache.NewTableStatusCache(getUpdateTTLTableStatusCacheInterval())
 
 	return
 }
@@ -127,7 +137,7 @@ func (m *JobManager) jobLoop() error {
 	updateScanTaskStateTicker := time.Tick(jobManagerLoopTickerInterval)
 	infoSchemaCacheUpdateTicker := time.Tick(m.infoSchemaCache.GetInterval())
 	tableStatusCacheUpdateTicker := time.Tick(m.tableStatusCache.GetInterval())
-	resizeWorkersTicker := time.Tick(resizeWorkersInterval)
+	resizeWorkersTicker := time.Tick(getResizeWorkersInterval())
 	for {
 		m.reportMetrics()
 		now := se.Now()
@@ -489,7 +499,7 @@ func (m *JobManager) couldTrySchedule(table *cache.TableStatus, now time.Time) b
 		hbTime := table.CurrentJobOwnerHBTime
 		// a more concrete value is `2 * max(updateTTLTableStatusCacheInterval, jobManagerLoopTickerInterval)`, but the
 		// `updateTTLTableStatusCacheInterval` is greater than `jobManagerLoopTickerInterval` in most cases.
-		if hbTime.Add(2 * updateTTLTableStatusCacheInterval).Before(now) {
+		if hbTime.Add(2 * getUpdateTTLTableStatusCacheInterval()).Before(now) {
 			logutil.Logger(m.ctx).Info("task heartbeat has stopped", zap.Int64("tableID", table.TableID), zap.Time("hbTime", hbTime), zap.Time("now", now))
 			return true
 		}

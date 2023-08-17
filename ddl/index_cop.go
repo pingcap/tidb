@@ -137,7 +137,8 @@ func (c *copReqSender) run() {
 			p.resultsCh <- idxRecResult{id: task.id, err: err}
 			return
 		}
-		rs, err := p.copCtx.buildTableScan(p.ctx, ver.Ver, task.startKey, task.excludedEndKey())
+		ctx := kv.WithInternalSourceType(p.ctx, task.source)
+		rs, err := p.copCtx.buildTableScan(ctx, ver.Ver, task.startKey, task.excludedEndKey())
 		if err != nil {
 			p.resultsCh <- idxRecResult{id: task.id, err: err}
 			return
@@ -422,6 +423,12 @@ func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, 
 		SetFromInfoSchema(c.sessCtx.GetDomainInfoSchema()).
 		SetConcurrency(1).
 		Build()
+	builder.RequestSource.RequestSourceInternal = true
+	if source := ctx.Value(kv.RequestSourceKey); source != nil {
+		builder.RequestSource.RequestSourceType = source.(kv.RequestSource).RequestSourceType
+	} else {
+		builder.RequestSource.RequestSourceType = kv.InternalTxnDDL
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -485,7 +492,7 @@ func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo,
 
 func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
+	_, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
 	sc := sCtx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()
 	for i := range colInfos {

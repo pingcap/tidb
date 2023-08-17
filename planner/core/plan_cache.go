@@ -209,6 +209,9 @@ func getPointQueryPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmtC
 	}
 	sessVars.FoundInPlanCache = true
 	stmtCtx.PointExec = true
+	if pointGetPlan, ok := plan.(*PointGetPlan); ok && pointGetPlan != nil && pointGetPlan.stmtHints != nil {
+		sessVars.StmtCtx.StmtHints = *pointGetPlan.stmtHints
+	}
 	return plan, names, true, nil
 }
 
@@ -251,6 +254,7 @@ func getGeneralPlan(sctx sessionctx.Context, isGeneralPlanCache bool, cacheKey k
 		planCacheCounter.Inc()
 	}
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
+	stmtCtx.StmtHints = *cachedVal.stmtHints
 	return cachedVal.Plan, cachedVal.OutPutNames, true, nil
 }
 
@@ -289,7 +293,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isGeneralPlan
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, paramTypes)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, paramTypes, &stmtCtx.StmtHints)
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
@@ -687,11 +691,14 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 		names   types.NameSlice
 	)
 
-	if _, _ok := p.(*PointGetPlan); _ok {
+	if plan, _ok := p.(*PointGetPlan); _ok {
 		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
 		names = p.OutputNames()
 		if err != nil {
 			return err
+		}
+		if ok {
+			plan.stmtHints = sctx.GetSessionVars().StmtCtx.StmtHints.Clone()
 		}
 	}
 
@@ -723,6 +730,9 @@ func containShuffleOperator(p PhysicalPlan) bool {
 		return true
 	}
 	if _, isShuffleRecv := p.(*PhysicalShuffleReceiverStub); isShuffleRecv {
+		return true
+	}
+	if _, isMemOperator := p.(*PhysicalMemTable); isMemOperator {
 		return true
 	}
 	for _, child := range p.Children() {
