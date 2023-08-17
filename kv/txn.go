@@ -195,20 +195,22 @@ func BackOff(attempts uint) int {
 func setRequestSourceForInnerTxn(ctx context.Context, txn Transaction) {
 	if source := ctx.Value(RequestSourceKey); source != nil {
 		requestSource := source.(RequestSource)
-		if !requestSource.RequestSourceInternal {
-			logutil.Logger(ctx).Warn("`RunInNewTxn` should be used by inner txn only")
+		if requestSource.RequestSourceType != "" {
+			if !requestSource.RequestSourceInternal {
+				logutil.Logger(ctx).Warn("`RunInNewTxn` should be used by inner txn only")
+			}
+			txn.SetOption(RequestSourceInternal, requestSource.RequestSourceInternal)
+			txn.SetOption(RequestSourceType, requestSource.RequestSourceType)
+			return
 		}
-		txn.SetOption(RequestSourceInternal, requestSource.RequestSourceInternal)
-		txn.SetOption(RequestSourceType, requestSource.RequestSourceType)
+	}
+	// panic in test mode in case there are requests without source in the future.
+	// log warnings in production mode.
+	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+		panic("unexpected no source type context, if you see this error, " +
+			"the `RequestSourceTypeKey` is missing in your context")
 	} else {
-		// panic in test mode in case there are requests without source in the future.
-		// log warnings in production mode.
-		if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
-			panic("unexpected no source type context, if you see this error, " +
-				"the `RequestSourceTypeKey` is missing in your context")
-		} else {
-			logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, " +
-				"the `RequestSourceTypeKey` is missing in the context")
-		}
+		logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, " +
+			"the `RequestSourceTypeKey` is missing in the context")
 	}
 }
