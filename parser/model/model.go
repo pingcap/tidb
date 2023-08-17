@@ -2153,7 +2153,7 @@ func (s WindowRepeatType) String() string {
 	}
 }
 
-// TraceInfo is the information for trace
+// TraceInfo is the information for trace.
 type TraceInfo struct {
 	// ConnectionID is the id of the connection
 	ConnectionID uint64 `json:"connection_id"`
