@@ -367,3 +367,24 @@ func TestAddIndexSplitTableRanges(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	ddl.SetBackfillTaskChanSizeForTest(1024)
 }
+
+func TestAddIndexIngestTimezone(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("SET time_zone = '-06:00';")
+	tk.MustExec("create table t (`src` varchar(48),`t` timestamp,`timezone` varchar(100));")
+	tk.MustExec("insert into t values('2000-07-29 23:15:30','2000-07-29 23:15:30','-6:00');")
+	tk.MustExec("alter table t add index idx(t);")
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("alter table t drop index idx;")
+	tk.MustExec("SET time_zone = 'Asia/Shanghai';")
+	tk.MustExec("insert into t values('2000-07-29 23:15:30','2000-07-29 23:15:30', '+8:00');")
+	tk.MustExec("alter table t add index idx(t);")
+	tk.MustExec("admin check table t;")
+}
