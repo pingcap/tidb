@@ -292,26 +292,26 @@ type compareExec struct {
 	handleCols plannercore.HandleCols
 }
 
-func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum) (ret bool, err error) {
+func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum) (ret int, err error) {
 	var cmp int
 	for _, colOff := range ce.usedIndex {
 		aColumn := a[colOff]
 		bColumn := b[colOff]
 		cmp, err = aColumn.Compare(sctx, &bColumn, ce.collators[colOff])
 		if err != nil {
-			return false, err
+			return -1, err
 		}
 		if cmp == 0 {
 			continue
 		}
 		if cmp > 0 && !ce.desc || cmp < 0 && ce.desc {
-			return false, nil
+			return -1, nil
 		}
-		return true, nil
+		return 1, nil
 	}
 	cmp, err = ce.handleCols.Compare(a, b, ce.collators)
 	if cmp > 0 && !ce.desc || cmp < 0 && ce.desc {
-		return false, err
+		return -1, err
 	}
-	return true, err
+	return 1, err
 }

@@ -148,10 +148,7 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 			if err1 != nil {
 				err = err1
 			}
-			if ret {
-				return -1
-			}
-			return 1
+			return ret
 		})
 		return m.addedRows, err
 	}
@@ -429,10 +426,7 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 			if err1 != nil {
 				err = err1
 			}
-			if ret {
-				return -1
-			}
-			return 1
+			return ret
 		})
 		return m.addedRows, err
 	}
@@ -946,10 +940,7 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 			if err1 != nil {
 				err = err1
 			}
-			if ret {
-				return -1
-			}
-			return 1
+			return ret
 		})
 	}
 
