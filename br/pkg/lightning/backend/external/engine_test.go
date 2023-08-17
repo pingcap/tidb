@@ -76,7 +76,7 @@ func TestIter(t *testing.T) {
 		dataFiles:  dataFiles,
 		statsFiles: statFiles,
 	}
-	iter, err := engine.createMergeIter(ctx, nil)
+	iter, err := engine.createMergeIter(ctx, sortedKVPairs[0].Key)
 	require.NoError(t, err)
 	got := make([]common.KvPair, 0, totalKV)
 	for iter.Next() {
@@ -86,15 +86,11 @@ func TestIter(t *testing.T) {
 		})
 	}
 	require.NoError(t, iter.Error())
-	for i := range got {
-		require.Equal(t, sortedKVPairs[i].Key, got[i].Key, "i: %d", i)
-		require.Equal(t, sortedKVPairs[i].Val, got[i].Val, "i: %d", i)
-	}
 	require.Equal(t, sortedKVPairs, got)
 
 	pickStartIdx := rand.Intn(len(sortedKVPairs))
 	startKey := sortedKVPairs[pickStartIdx].Key
-	iter, err = engine.createMergeIter(ctx, nil)
+	iter, err = engine.createMergeIter(ctx, startKey)
 	require.NoError(t, err)
 	got = make([]common.KvPair, 0, totalKV)
 	for iter.Next() {
@@ -104,7 +100,10 @@ func TestIter(t *testing.T) {
 		})
 	}
 	require.NoError(t, iter.Error())
-	require.Equal(t, sortedKVPairs[len(sortedKVPairs)-len(got):], got)
+	// got keys must be ascending
+	for i := 1; i < len(got); i++ {
+		require.True(t, bytes.Compare(got[i-1].Key, got[i].Key) < 0)
+	}
 	// the first key must be less than or equal to startKey
 	require.True(t, bytes.Compare(got[0].Key, startKey) <= 0)
 }
