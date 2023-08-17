@@ -209,7 +209,8 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	} else if snapshotRow == nil {
 		row = addedRow
 	} else {
-		isSnapshotRow, err = us.compare(us.Ctx().GetSessionVars().StmtCtx, snapshotRow, addedRow)
+		isSnapshotRowInt, err := us.compare(us.Ctx().GetSessionVars().StmtCtx, snapshotRow, addedRow)
+		isSnapshotRow = isSnapshotRowInt > 0
 		if err != nil {
 			return nil, err
 		}
