@@ -623,7 +623,7 @@ func TestSessionAlias(t *testing.T) {
 	tk.MustQuery("select @@tidb_session_alias").Check(testkit.Rows(val[:64]))
 	// an invalid value
 	err := tk.ExecToErr("set @@tidb_session_alias='abc '")
-	require.EqualError(t, err, "[variable:1231]incorrect value for variable @@tidb_session_alias 'abc '")
+	require.EqualError(t, err, "[variable:1231]Incorrect value for variable @@tidb_session_alias 'abc '")
 	tk.MustQuery("select @@tidb_session_alias").Check(testkit.Rows(val[:64]))
 	// reset to empty
 	tk.MustExec("set @@tidb_session_alias=''")

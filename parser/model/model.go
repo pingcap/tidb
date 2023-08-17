@@ -2158,5 +2158,5 @@ type TraceInfo struct {
 	// ConnectionID is the id of the connection
 	ConnectionID uint64 `json:"connection_id"`
 	// SessionAlias is the alias of session
-	SessionAlias string `json:"connection_alias"`
+	SessionAlias string `json:"session_alias"`
 }
