@@ -38,12 +38,12 @@ type metaMgrSuite struct {
 func newTableRestore(t *testing.T,
 	db, table string,
 	dbID, tableID int64,
-	createTableSql string, kvStore kv.Storage,
+	createTableSQL string, kvStore kv.Storage,
 ) *TableImporter {
 	p := parser.New()
 	se := tmock.NewContext()
 
-	node, err := p.ParseOneStmt(createTableSql, "utf8mb4", "utf8mb4_bin")
+	node, err := p.ParseOneStmt(createTableSQL, "utf8mb4", "utf8mb4_bin")
 	require.NoError(t, err)
 	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), tableID)
 	require.NoError(t, err)

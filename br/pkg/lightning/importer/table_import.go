@@ -931,7 +931,10 @@ func (tr *TableImporter) postProcess(
 			maxCap := shardFmt.IncrementalBitsCapacity()
 			err = AlterAutoRandom(ctx, rc.db, tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxCap)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
-			// only alter auto increment id iff table contains auto-increment column or generated handle
+			// only alter auto increment id iff table contains auto-increment column or generated handle.
+			// ALTER TABLE xxx AUTO_INCREMENT = yyy has a bad naming.
+			// if a table has implicit _tidb_rowid column & tbl.SepAutoID=false, then it works on _tidb_rowid
+			// allocator, even if the table has NO auto-increment column.
 			err = AlterAutoIncrement(ctx, rc.db, tr.tableName, uint64(tr.alloc.Get(autoid.RowIDAllocType).Base())+1)
 		}
 		rc.alterTableLock.Unlock()
