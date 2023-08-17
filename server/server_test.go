@@ -24,7 +24,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server/internal"
+	"github.com/pingcap/tidb/server/internal/testutil"
 	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
@@ -99,4 +101,47 @@ func TestOptimizerDebugTrace(t *testing.T) {
 		require.True(t, success)
 		require.NoError(t, os.Remove(filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName)))
 	}
+}
+
+func TestIssue46197(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tidbdrv := NewTiDBDriver(store)
+	cfg := util.NewTestConfig()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
+	cfg.Status.ReportStatus = false
+	server, err := NewServer(cfg, tidbdrv)
+	require.NoError(t, err)
+	defer server.Close()
+
+	// Mock the content of the SQL file in PacketIO buffer.
+	// First 4 bytes are the header, followed by the actual content.
+	var inBuffer bytes.Buffer
+	_, err = inBuffer.Write([]byte{0x11, 0x00, 0x00, 0x01})
+	require.NoError(t, err)
+	_, err = inBuffer.Write([]byte("select * from t1;"))
+	require.NoError(t, err)
+
+	// clientConn setup
+	brc := util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
+	pkt := internal.NewPacketIO(brc)
+	pkt.SetBufWriter(bufio.NewWriter(bytes.NewBuffer(nil)))
+	cc := &clientConn{
+		server:     server,
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt:        pkt,
+		capability: mysql.ClientLocalFiles,
+	}
+	ctx := context.Background()
+	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int)")
+
+	require.NoError(t, cc.dispatch(ctx, []byte("\u0003plan replayer dump explain 'a.txt'")))
+
+	// clean up
+	path := testdata.ConvertRowsToStrings(tk.MustQuery("select @@tidb_last_plan_replayer_token").Rows())
+	require.NoError(t, os.Remove(filepath.Join(replayer.GetPlanReplayerDirName(), path[0])))
 }
