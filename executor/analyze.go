@@ -85,11 +85,12 @@ const (
 )
 
 // Next implements the Executor Next interface.
+// It will collect all the sample task and run them concurrently.
 func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	var tasks []*analyzeTask
-	tids := make([]int64, 0)
-	skipedTables := make([]string, 0)
+	tids := make(map[int64]struct{}) // use a set for tid
+	skippedTables := make([]string, 0)
 	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
 	for _, task := range e.tasks {
 		var tableID statistics.AnalyzeTableID
@@ -110,29 +111,21 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			tasks = append(tasks, task)
 		}
 		// generate warning message
-		dup := false
-		for _, id := range tids {
-			if id == tableID.TableID {
-				dup = true
-				break
-			}
-		}
-		//avoid generate duplicate tables
-		if !dup {
+		if _, ok := tids[tableID.TableID]; !ok {
 			if statsHandle.IsTableLocked(tableID.TableID) {
 				tbl, ok := is.TableByID(tableID.TableID)
 				if !ok {
 					return nil
 				}
-				skipedTables = append(skipedTables, tbl.Meta().Name.L)
+				skippedTables = append(skippedTables, tbl.Meta().Name.L)
 			}
-			tids = append(tids, tableID.TableID)
+			tids[tableID.TableID] = struct{}{}
 		}
 	}
 
-	if len(skipedTables) > 0 {
-		tables := skipedTables[0]
-		for i, table := range skipedTables {
+	if len(skippedTables) > 0 {
+		tables := skippedTables[0]
+		for i, table := range skippedTables {
 			if i == 0 {
 				continue
 			}
@@ -140,7 +133,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		}
 		var msg string
 		if len(tids) > 1 {
-			if len(tids) > len(skipedTables) {
+			if len(tids) > len(skippedTables) {
 				msg = "skip analyze locked tables: " + tables + ", other tables will be analyzed"
 			} else {
 				msg = "skip analyze locked tables: " + tables

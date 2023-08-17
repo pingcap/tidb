@@ -2179,6 +2179,8 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 		}
 		return []int64{tblInfo.ID}, []string{""}, nil
 	}
+
+	// If the partitionNames is empty, we will return all partitions.
 	if len(partitionNames) == 0 {
 		ids := make([]int64, 0, len(pi.Definitions))
 		names := make([]string, 0, len(pi.Definitions))
@@ -2204,6 +2206,7 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 			return nil, nil, fmt.Errorf("can not found the specified partition name %s in the table definition", name.O)
 		}
 	}
+
 	return ids, names, nil
 }
 
@@ -2462,6 +2465,40 @@ func getModifiedIndexesInfoForAnalyze(sctx sessionctx.Context, tblInfo *model.Ta
 	return idxsInfo
 }
 
+// filterSkipColumnTypes filters out columns whose types are in the skipTypes list.
+func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *ast.TableName, mustAnalyzedCols *calcOnceMap) (result []*model.ColumnInfo) {
+	// If the session is in restricted SQL mode, it uses @@global.tidb_analyze_skip_column_types to get the skipTypes list.
+	skipTypes := b.ctx.GetSessionVars().AnalyzeSkipColumnTypes
+	if b.ctx.GetSessionVars().InRestrictedSQL {
+		// For auto analyze, we need to use @@global.tidb_analyze_skip_column_types.
+		val, err1 := b.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
+		if err1 != nil {
+			logutil.BgLogger().Error("loading tidb_analyze_skip_column_types failed", zap.Error(err1))
+			result = origin
+			return
+		}
+		skipTypes = variable.ParseAnalyzeSkipColumnTypes(val)
+	}
+	mustAnalyze, err1 := b.getMustAnalyzedColumns(tbl, mustAnalyzedCols)
+	if err1 != nil {
+		logutil.BgLogger().Error("getting must-analyzed columns failed", zap.Error(err1))
+		result = origin
+		return
+	}
+	// If one column's type is in the skipTypes list and it doesn't exist in mustAnalyzedCols, we will skip it.
+	for _, colInfo := range origin {
+		_, skip := skipTypes[types.TypeToStr(colInfo.FieldType.GetType(), colInfo.FieldType.GetCharset())]
+		// Currently, if the column exists in some index(except MV Index), we need to bring the column's sample values
+		// into TiDB to build the index statistics.
+		_, keep := mustAnalyze[colInfo.ID]
+		if skip && !keep {
+			continue
+		}
+		result = append(result, colInfo)
+	}
+	return
+}
+
 func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	as *ast.AnalyzeTableStmt,
 	tasks []AnalyzeColumnsTask,
@@ -2507,10 +2544,11 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		rsOptionsMap[physicalID] = opts
 	}
 
+	// Build tasks for each partition.
 	for i, id := range physicalIDs {
 		physicalID := id
 		if id == tbl.TableInfo.ID {
-			id = -1
+			id = statistics.NonPartitionTableID
 		}
 		info := AnalyzeInfo{
 			DBName:        tbl.Schema.O,
@@ -2527,37 +2565,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		if colsInfo, ok := colsInfoMap[physicalID]; ok {
 			execColsInfo = colsInfo
 		}
-		filterSkipColumnTypes := func(origin []*model.ColumnInfo) (result []*model.ColumnInfo) {
-			skipTypes := b.ctx.GetSessionVars().AnalyzeSkipColumnTypes
-			if b.ctx.GetSessionVars().InRestrictedSQL {
-				// For auto analyze, we need to use @@global.tidb_analyze_skip_column_types.
-				val, err1 := b.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
-				if err1 != nil {
-					logutil.BgLogger().Error("loading tidb_analyze_skip_column_types failed", zap.Error(err1))
-					result = origin
-					return
-				}
-				skipTypes = variable.ParseAnalyzeSkipColumnTypes(val)
-			}
-			mustAnalyze, err1 := b.getMustAnalyzedColumns(tbl, &mustAnalyzedCols)
-			if err1 != nil {
-				logutil.BgLogger().Error("getting must-analyzed columns failed", zap.Error(err1))
-				result = origin
-				return
-			}
-			for _, colInfo := range origin {
-				_, skip := skipTypes[types.TypeToStr(colInfo.FieldType.GetType(), colInfo.FieldType.GetCharset())]
-				// Currently, if the column exists in some index(except MV Index), we need to bring the column's sample values
-				// into TiDB to build the index statistics.
-				_, keep := mustAnalyze[colInfo.ID]
-				if skip && !keep {
-					continue
-				}
-				result = append(result, colInfo)
-			}
-			return
-		}
-		execColsInfo = filterSkipColumnTypes(execColsInfo)
+		execColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
 		allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
 		indexes := getModifiedIndexesInfoForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
@@ -2596,6 +2604,11 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 	if !persist {
 		return optionsMap, colsInfoMap, nil
 	}
+
+	// In dynamic mode, we collect statistics for all partitions of the table as a global statistics.
+	// In static mode, each partition generates its own execution plan, which is then combined with PartitionUnion.
+	// Because the plan is generated for each partition individually, each partition uses its own statistics;
+	// In dynamic mode, there is no partitioning, and a global plan is generated for the whole table, so a global statistic is needed;
 	dynamicPrune := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
 	if !isAnalyzeTable && dynamicPrune && (len(astOpts) > 0 || astColChoice != model.DefaultChoice) {
 		astOpts = make(map[ast.AnalyzeOptionType]uint64, 0)
@@ -2603,6 +2616,8 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 		astColList = make([]*model.ColumnInfo, 0)
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("Ignore columns and options when analyze partition in dynamic mode"))
 	}
+
+	// Get the analyze options which are saved in mysql.analyze_options.
 	tblSavedOpts, tblSavedColChoice, tblSavedColList, err := b.getSavedAnalyzeOpts(tbl.TableInfo.ID, tbl.TableInfo)
 	if err != nil {
 		return nil, nil, err
@@ -2612,13 +2627,16 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 	tblColList := tblSavedColList
 	if isAnalyzeTable {
 		tblOpts = mergeAnalyzeOptions(astOpts, tblSavedOpts)
-		tblColChoice, tblColList = mergeColumnList(astColChoice, astColList, tblSavedColChoice, tblSavedColList)
+		tblColChoice, tblColList = pickColumnList(astColChoice, astColList, tblSavedColChoice, tblSavedColList)
 	}
+
 	tblFilledOpts := fillAnalyzeOptionsV2(tblOpts)
+
 	tblColsInfo, tblColList, err := b.getFullAnalyzeColumnsInfo(tbl, tblColChoice, tblColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 	if err != nil {
 		return nil, nil, err
 	}
+
 	tblAnalyzeOptions := V2AnalyzeOptions{
 		PhyTableID:  tbl.TableInfo.ID,
 		RawOpts:     tblOpts,
@@ -2629,50 +2647,56 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 	}
 	optionsMap[tbl.TableInfo.ID] = tblAnalyzeOptions
 	colsInfoMap[tbl.TableInfo.ID] = tblColsInfo
-	for _, id := range physicalIDs {
-		if id != tbl.TableInfo.ID {
+
+	for _, physicalID := range physicalIDs {
+		// This is a partitioned table, we need to collect statistics for each partition.
+		if physicalID != tbl.TableInfo.ID {
+			// In dynamic mode, we collect statistics for all partitions of the table as a global statistics.
+			// So we use the same options as the table level.
 			if dynamicPrune {
 				parV2Options := V2AnalyzeOptions{
-					PhyTableID:  id,
+					PhyTableID:  physicalID,
 					RawOpts:     tblOpts,
 					FilledOpts:  tblFilledOpts,
 					ColChoice:   tblColChoice,
 					ColumnList:  tblColList,
 					IsPartition: true,
 				}
-				optionsMap[id] = parV2Options
-				colsInfoMap[id] = tblColsInfo
+				optionsMap[physicalID] = parV2Options
+				colsInfoMap[physicalID] = tblColsInfo
 				continue
 			}
-			parSavedOpts, parSavedColChoice, parSavedColList, err := b.getSavedAnalyzeOpts(id, tbl.TableInfo)
+			parSavedOpts, parSavedColChoice, parSavedColList, err := b.getSavedAnalyzeOpts(physicalID, tbl.TableInfo)
 			if err != nil {
 				return nil, nil, err
 			}
 			// merge partition level options with table level options firstly
 			savedOpts := mergeAnalyzeOptions(parSavedOpts, tblSavedOpts)
-			savedColChoice, savedColList := mergeColumnList(parSavedColChoice, parSavedColList, tblSavedColChoice, tblSavedColList)
+			savedColChoice, savedColList := pickColumnList(parSavedColChoice, parSavedColList, tblSavedColChoice, tblSavedColList)
 			// then merge statement level options
 			mergedOpts := mergeAnalyzeOptions(astOpts, savedOpts)
 			filledMergedOpts := fillAnalyzeOptionsV2(mergedOpts)
-			finalColChoice, mergedColList := mergeColumnList(astColChoice, astColList, savedColChoice, savedColList)
+			finalColChoice, mergedColList := pickColumnList(astColChoice, astColList, savedColChoice, savedColList)
 			finalColsInfo, finalColList, err := b.getFullAnalyzeColumnsInfo(tbl, finalColChoice, mergedColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 			if err != nil {
 				return nil, nil, err
 			}
 			parV2Options := V2AnalyzeOptions{
-				PhyTableID: id,
+				PhyTableID: physicalID,
 				RawOpts:    mergedOpts,
 				FilledOpts: filledMergedOpts,
 				ColChoice:  finalColChoice,
 				ColumnList: finalColList,
 			}
-			optionsMap[id] = parV2Options
-			colsInfoMap[id] = finalColsInfo
+			optionsMap[physicalID] = parV2Options
+			colsInfoMap[physicalID] = finalColsInfo
 		}
 	}
+
 	return optionsMap, colsInfoMap, nil
 }
 
+// getSavedAnalyzeOpts gets the analyze options which are saved in mysql.analyze_options.
 func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.TableInfo) (map[ast.AnalyzeOptionType]uint64, model.ColumnChoice, []*model.ColumnInfo, error) {
 	analyzeOptions := map[ast.AnalyzeOptionType]uint64{}
 	exec := b.ctx.(sqlexec.RestrictedSQLExecutor)
@@ -2684,6 +2708,7 @@ func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.Table
 	if len(rows) <= 0 {
 		return analyzeOptions, model.DefaultChoice, nil, nil
 	}
+
 	row := rows[0]
 	sampleNum := row.GetInt64(0)
 	if sampleNum > 0 {
@@ -2735,11 +2760,13 @@ func mergeAnalyzeOptions(stmtOpts map[ast.AnalyzeOptionType]uint64, savedOpts ma
 	return merged
 }
 
-func mergeColumnList(choice1 model.ColumnChoice, list1 []*model.ColumnInfo, choice2 model.ColumnChoice, list2 []*model.ColumnInfo) (model.ColumnChoice, []*model.ColumnInfo) {
-	if choice1 != model.DefaultChoice {
-		return choice1, list1
+// pickColumnList picks the column list to be analyzed.
+// If the column list is specified in the statement, we will use it.
+func pickColumnList(astColChoice model.ColumnChoice, astColList []*model.ColumnInfo, tblSavedColChoice model.ColumnChoice, tblSavedColList []*model.ColumnInfo) (model.ColumnChoice, []*model.ColumnInfo) {
+	if astColChoice != model.DefaultChoice {
+		return astColChoice, astColList
 	}
-	return choice2, list2
+	return tblSavedColChoice, tblSavedColList
 }
 
 // buildAnalyzeTable constructs anylyze tasks for each table.
