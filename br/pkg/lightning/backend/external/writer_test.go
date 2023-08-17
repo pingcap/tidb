@@ -136,7 +136,7 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 	require.Len(t, dataFiles, 4)
 	require.Len(t, statFiles, 4)
 	for i := 0; i < 4; i++ {
-		require.Equal(t, dataFiles[i], fmt.Sprintf("/test/%d", i))
-		require.Equal(t, statFiles[i], fmt.Sprintf("/test_stat/%d", i))
+		require.Equal(t, dataFiles[i], fmt.Sprintf("/test/0/%d", i))
+		require.Equal(t, statFiles[i], fmt.Sprintf("/test/0_stat/%d", i))
 	}
 }
