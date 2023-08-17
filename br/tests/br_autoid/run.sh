@@ -24,9 +24,9 @@ run_sql "show table $DB.issue46093 next_row_id;"
 check_contains "NEXT_GLOBAL_ROW_ID: 30001"
 check_contains "NEXT_GLOBAL_ROW_ID: 4"
 
-run_sql "backup table $DB.issue46093 to 'local:///tmp/br'";
+run_sql "backup table $DB.issue46093 to 'local://$TEST_DIR/$DB'";
 run_sql "drop table $DB.issue46093;"
-run_sql "restore table $DB.issue46093 from 'local:///tmp/br';"
+run_sql "restore table $DB.issue46093 from 'local://$TEST_DIR/$DB';"
 
 run_sql "show table $DB.issue46093 next_row_id;"
 check_contains "NEXT_GLOBAL_ROW_ID: 30001"
