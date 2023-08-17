@@ -187,7 +187,7 @@ func TestRemoveAllConflictKeys(t *testing.T) {
 func TestReplaceConflictKeys(t *testing.T) {
 	column := &model.ColumnInfo{
 		ID:           1,
-		Name:         model.NewCIStr("c"),
+		Name:         model.NewCIStr("a"),
 		Offset:       0,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(0),
@@ -196,32 +196,26 @@ func TestReplaceConflictKeys(t *testing.T) {
 	column.AddFlag(mysql.PriKeyFlag)
 
 	index := &model.IndexInfo{
-		Name:  model.NewCIStr("key"),
-		Table: model.NewCIStr("t"),
+		Name:  model.NewCIStr("uni_b"),
+		Table: model.NewCIStr(""),
 		Columns: []*model.IndexColumn{
 			{
-				Name:   model.NewCIStr("c"),
+				Name:   model.NewCIStr("b"),
 				Offset: 0,
-				Length: 10,
+				Length: -1,
 			}},
 		Unique:  true,
 		Primary: true,
 	}
 
-	fk := &model.FKInfo{
-		RefCols: []model.CIStr{model.NewCIStr("a")},
-		Cols:    []model.CIStr{model.NewCIStr("a")},
-	}
-
 	table := &model.TableInfo{
-		ID:          1,
-		Name:        model.NewCIStr("t"),
-		Charset:     "utf8",
-		Collate:     "utf8_bin",
-		Columns:     []*model.ColumnInfo{column},
-		Indices:     []*model.IndexInfo{index},
-		ForeignKeys: []*model.FKInfo{fk},
-		PKIsHandle:  true,
+		ID:         1,
+		Name:       model.NewCIStr("a"),
+		Charset:    "utf8",
+		Collate:    "utf8_bin",
+		Columns:    []*model.ColumnInfo{column},
+		Indices:    []*model.IndexInfo{index},
+		PKIsHandle: true,
 	}
 
 	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), table)
