@@ -379,34 +379,6 @@ func rollingbackTruncateTable(t *meta.Meta, job *model.Job) (ver int64, err erro
 	return cancelOnlyNotHandledJob(job, model.StateNone)
 }
 
-<<<<<<< HEAD
-=======
-func rollingbackReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	if job.SchemaState == model.StateNone {
-		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrCancelledDDLJob
-	}
-
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	// addingDefinitions is also in tblInfo, here pass the tblInfo as parameter directly.
-	// TODO: Test this with reorganize partition p1 into (partition p1 ...)!
-	return convertAddTablePartitionJob2RollbackJob(d, t, job, dbterror.ErrCancelledDDLJob, tblInfo)
-}
-
-func pauseReorgWorkers(w *worker, d *ddlCtx, job *model.Job) (err error) {
-	if needNotifyAndStopReorgWorker(job) {
-		logutil.Logger(w.logCtx).Info("pausing the DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
-		d.notifyReorgWorkerJobStateChange(job)
-	}
-
-	return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
-}
-
->>>>>>> c7c7000165a (ddl: Exchange partition rollback (#45877))
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
@@ -442,13 +414,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
-<<<<<<< HEAD
-		model.ActionExchangeTablePartition, model.ActionModifySchemaDefaultPlacement,
-		model.ActionRecoverSchema:
-=======
 		model.ActionModifySchemaDefaultPlacement,
-		model.ActionRecoverSchema, model.ActionAlterCheckConstraint:
->>>>>>> c7c7000165a (ddl: Exchange partition rollback (#45877))
+		model.ActionRecoverSchema:
 		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
 	case model.ActionMultiSchemaChange:
 		err = rollingBackMultiSchemaChange(job)

@@ -219,13 +219,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyRecoverTable(m, diff)
 	case model.ActionCreateTables:
 		return b.applyCreateTables(m, diff)
-<<<<<<< HEAD
-=======
-	case model.ActionReorganizePartition:
-		return b.applyReorganizePartition(m, diff)
 	case model.ActionExchangeTablePartition:
 		return b.applyExchangeTablePartition(m, diff)
->>>>>>> c7c7000165a (ddl: Exchange partition rollback (#45877))
 	case model.ActionFlashbackCluster:
 		return []int64{-1}, nil
 	default:
@@ -292,24 +287,6 @@ func (b *Builder) applyDropTableOrParition(m *meta.Meta, diff *model.SchemaDiff)
 	return tblIDs, nil
 }
 
-<<<<<<< HEAD
-=======
-func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	tblIDs, err := b.applyTableUpdate(m, diff)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for _, opt := range diff.AffectedOpts {
-		if opt.OldTableID != 0 {
-			b.deleteBundle(b.is, opt.OldTableID)
-		}
-		if opt.TableID != 0 {
-			b.markTableBundleShouldUpdate(opt.TableID)
-		}
-	}
-	return tblIDs, nil
-}
-
 func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	// The partitioned table is not affected until the last stage
 	if diff.OldTableID == diff.TableID && diff.OldSchemaID == diff.SchemaID {
@@ -351,7 +328,6 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 	return append(ptIDs, ntIDs...), nil
 }
 
->>>>>>> c7c7000165a (ddl: Exchange partition rollback (#45877))
 func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
