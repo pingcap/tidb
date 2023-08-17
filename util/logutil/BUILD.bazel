@@ -36,6 +36,7 @@ go_test(
     flaky = True,
     deps = [
         "//kv",
+        "//parser/model",
         "//testkit/testsetup",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_kvproto//pkg/metapb",

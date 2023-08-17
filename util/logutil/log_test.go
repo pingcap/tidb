@@ -25,10 +25,28 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
+
+func TestFieldsFromTraceInfo(t *testing.T) {
+	fields := fieldsFromTraceInfo(nil)
+	require.Equal(t, 0, len(fields))
+
+	fields = fieldsFromTraceInfo(&model.TraceInfo{})
+	require.Equal(t, 0, len(fields))
+
+	fields = fieldsFromTraceInfo(&model.TraceInfo{ConnectionID: 1})
+	require.Equal(t, []zap.Field{zap.Uint64("conn", 1)}, fields)
+
+	fields = fieldsFromTraceInfo(&model.TraceInfo{SessionAlias: "alias123"})
+	require.Equal(t, []zap.Field{zap.String("session_alias", "alias123")}, fields)
+
+	fields = fieldsFromTraceInfo(&model.TraceInfo{ConnectionID: 1, SessionAlias: "alias123"})
+	require.Equal(t, []zap.Field{zap.Uint64("conn", 1), zap.String("session_alias", "alias123")}, fields)
+}
 
 func TestZapLoggerWithKeys(t *testing.T) {
 	if runtime.GOOS == "windows" {
