@@ -2011,6 +2011,7 @@ func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 	}
 
 	physicalIDs := []int64{}
+	hasGlobalIndex := false
 	if pi := tb.Meta().GetPartitionInfo(); pi != nil {
 		for _, name := range e.Table.PartitionNames {
 			pid, err := tables.FindPartitionByName(tb.Meta(), name.L)
@@ -2022,6 +2023,13 @@ func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 		if len(physicalIDs) == 0 {
 			for _, p := range pi.Definitions {
 				physicalIDs = append(physicalIDs, p.ID)
+			}
+		}
+		// when table has global index, show the logical table region.
+		for _, index := range tb.Meta().Indices {
+			if index.Global {
+				hasGlobalIndex = true
+				break
 			}
 		}
 	} else {
@@ -2039,9 +2047,16 @@ func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 		if indexInfo == nil {
 			return plannercore.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
 		}
-		regions, err = getTableIndexRegions(indexInfo, physicalIDs, tikvStore, splitStore)
+		if indexInfo.Global {
+			regions, err = getTableIndexRegions(indexInfo, []int64{tb.Meta().ID}, tikvStore, splitStore)
+		} else {
+			regions, err = getTableIndexRegions(indexInfo, physicalIDs, tikvStore, splitStore)
+		}
 	} else {
 		// show table * region
+		if hasGlobalIndex {
+			physicalIDs = append([]int64{tb.Meta().ID}, physicalIDs...)
+		}
 		regions, err = getTableRegions(tb, physicalIDs, tikvStore, splitStore)
 	}
 	if err != nil {
