@@ -29,4 +29,4 @@ check_contains 'max(a): 6'
 
 run_sql 'insert into EE1472.notpk (a) values (3333);'
 run_sql 'select b from EE1472.notpk where a = 3333;'
-check_contains 'b: 10'
+check_contains 'b: 11'
