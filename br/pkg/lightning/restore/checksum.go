@@ -310,14 +310,9 @@ func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 	return nil, err
 }
 
-<<<<<<< HEAD:br/pkg/lightning/restore/checksum.go
-func (e *tikvChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
-=======
 var retryGetTSInterval = time.Second
 
-// Checksum implements the ChecksumManager interface.
-func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
->>>>>>> 04f6570f1a7 (lightning: retry for leader change error when GetTS (#44478) (#44856) (#45330)):br/pkg/lightning/backend/local/checksum.go
+func (e *tikvChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
 	tbl := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	var (
 		physicalTS, logicalTS int64

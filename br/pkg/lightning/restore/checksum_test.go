@@ -208,8 +208,8 @@ func TestDoChecksumWithTikv(t *testing.T) {
 	})
 	pdClient.leaderChanging = true
 	kvClient.maxErrCount = 0
-	checksumExec := &TiKVChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
-	_, err := checksumExec.Checksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
+	checksumExec := &tikvChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
+	_, err = checksumExec.Checksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
 	require.NoError(t, err)
 }
 
