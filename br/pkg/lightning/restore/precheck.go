@@ -8,6 +8,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
+	pd "github.com/tikv/pd/client"
 )
 
 type CheckItemID string
@@ -57,7 +58,7 @@ type PrecheckItemBuilder struct {
 	checkpointsDB checkpoints.DB
 }
 
-func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, opts ...ropts.PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
+func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, pdCli pd.Client, opts ...ropts.PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
 	var gerr error
 	builderCfg := new(ropts.PrecheckItemBuilderConfig)
 	for _, o := range opts {
@@ -67,7 +68,7 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, o
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	targetInfoGetter, err := NewTargetInfoGetterImpl(cfg, targetDB)
+	targetInfoGetter, err := NewTargetInfoGetterImpl(cfg, targetDB, pdCli)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

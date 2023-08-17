@@ -1885,7 +1885,9 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 		if err != nil {
 			return nil, err
 		}
-		if leftCol.RetType.GetType() != rightCol.RetType.GetType() {
+		_, leftArgIsColumn := eqCond.(*expression.ScalarFunction).GetArgs()[0].(*expression.Column)
+		_, rightArgIsColumn := eqCond.(*expression.ScalarFunction).GetArgs()[1].(*expression.Column)
+		if leftCol.RetType.GetType() != rightCol.RetType.GetType() || !leftArgIsColumn || !rightArgIsColumn {
 			joinPlan.OtherConditions = append(joinPlan.OtherConditions, eqCond)
 		} else {
 			joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
