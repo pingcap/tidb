@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	tidbNewCollationEnabled = "new_collation_enabled"
+	TidbNewCollationEnabled = "new_collation_enabled"
 )
 
 var (
@@ -226,5 +226,5 @@ func IsLogBackupInUse(ctx sessionctx.Context) bool {
 
 // GetTidbNewCollationEnabled returns the variable name of NewCollationEnabled.
 func GetTidbNewCollationEnabled() string {
-	return tidbNewCollationEnabled
+	return TidbNewCollationEnabled
 }
