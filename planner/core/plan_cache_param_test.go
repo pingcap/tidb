@@ -138,7 +138,7 @@ func TestGetParamSQLFromASTConcurrently(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			for i := 0; i < 1000; i++ {
-				_, vals, err := GetParamSQLFromAST(MockContext(), stmts[id])
+				_, vals, err := GetParamSQLFromAST(stmts[id])
 				require.Nil(t, err)
 				require.Equal(t, len(vals), 3)
 				require.Equal(t, vals[0].GetValue(), int64(id*3+0))
@@ -183,10 +183,9 @@ func BenchmarkGetParamSQL(b *testing.B) {
 	paymentInsertHistory := `INSERT INTO history (h_c_d_id, h_c_w_id, h_c_id, h_d_id, h_w_id, h_date, h_amount, h_data) VALUES (1, 2, 3, 4, 5, 6, 7, 8)`
 	stmt, err := parser.New().ParseOneStmt(paymentInsertHistory, "", "")
 	require.Nil(b, err)
-	sctx := MockContext()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		GetParamSQLFromAST(sctx, stmt)
+		GetParamSQLFromAST(stmt)
 	}
 }
