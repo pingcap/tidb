@@ -18,6 +18,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	mysql "github.com/pingcap/tidb/errno"
@@ -744,7 +745,7 @@ func TestExchangePartitionStates(t *testing.T) {
 				logutil.BgLogger().Info("Got state", zap.String("State", s))
 				break
 			}
-			gotime.Sleep(50 * gotime.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 		}
 	}
 	waitFor("t", "write only", 4)
