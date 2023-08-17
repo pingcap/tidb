@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -62,23 +61,6 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
-
-type GCWorkerLockResolver struct {
-	TiKvStore tikv.Storage
-}
-
-func (w *GCWorkerLockResolver) ResolveLocks(bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID) (bool, error) {
-	// Resolve locks without check txn status. it's safe because it use safepoint to scan locks.
-	return w.TiKvStore.GetLockResolver().BatchResolveLocks(bo, locks, loc)
-}
-
-func (w *GCWorkerLockResolver) ScanLocks(key []byte, regionID uint64) []*txnlock.Lock {
-	return nil
-}
-
-func (w *GCWorkerLockResolver) GetStore() tikv.Storage {
-	return w.TiKvStore
-}
 
 // GCWorker periodically triggers GC process on tikv server.
 type GCWorker struct {
@@ -2249,7 +2231,7 @@ func newMergeLockScanner(safePoint uint64, client tikv.Client, stores map[uint64
 		safePoint:     safePoint,
 		client:        client,
 		stores:        stores,
-		scanLockLimit: gcutil.GCScanLockLimit,
+		scanLockLimit: tikv.GCScanLockLimit,
 	}
 	failpoint.Inject("lowPhysicalScanLockLimit", func() {
 		scanner.scanLockLimit = 3

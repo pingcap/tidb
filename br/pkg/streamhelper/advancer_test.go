@@ -313,17 +313,18 @@ func TestResolveLock(t *testing.T) {
 			TxnID: minCheckpoint + 1,
 		},
 	}
-	env.scanLocks = func(key []byte, regionID uint64) []*txnlock.Lock {
-		return allLocks
-
+	env.scanLocks = func(key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
+		return allLocks, &tikv.KeyLocation{
+			Region: tikv.NewRegionVerID(1, 0, 0),
+		}
 	}
 	// ensure resolve locks triggered and collect all locks from scan locks
 	resolveLockCnt := 0
 	resolveLockCntRef := &resolveLockCnt
-	env.resolveLocks = func(locks []*txnlock.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
+	env.resolveLocks = func(locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
 		*resolveLockCntRef += 1
 		require.ElementsMatch(t, locks, allLocks)
-		return true, nil
+		return loc, nil
 	}
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	// make lastCheckpoint stuck at 123

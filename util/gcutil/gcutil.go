@@ -24,35 +24,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"github.com/tikv/client-go/v2/util"
 )
 
 const (
 	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?`
-
-	// GCScanLockLimit We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
-	GCScanLockLimit = txnlock.ResolvedCacheSize / 2
 )
-
-// GCLockResolver is used for GCWorker and log backup advancer to resolve locks.
-// #Note: Put it here to avoid cycle import
-type GCLockResolver interface {
-	// ResolveLocks tries to resolve expired locks.
-	// 1. For GCWorker it will scan locks for all regions before *safepoint*,
-	// and force remove locks. rollback the txn, no matter the lock is expired of not.
-	// 2. For log backup advancer, it will scan all locks for a small range.
-	// and it will check status of the txn. resolve the locks if txn is expired, Or do nothing.
-	ResolveLocks(*tikv.Backoffer, []*txnlock.Lock, tikv.RegionVerID) (bool, error)
-
-	// ScanLocks only used for mock test.
-	ScanLocks([]byte, uint64) []*txnlock.Lock
-	// We need to get tikvStore to build rangerunner.
-	// TODO: the most code is in client.go and the store is only used to locate end keys of a region.
-	// maybe we can move GCLockResolver into client.go.
-	GetStore() tikv.Storage
-}
 
 // CheckGCEnable is use to check whether GC is enable.
 func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {

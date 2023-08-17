@@ -588,8 +588,8 @@ type testEnv struct {
 	ranges     []kv.KeyRange
 	taskCh     chan<- streamhelper.TaskEvent
 
-	scanLocks    func(key []byte, regionID uint64) []*txnlock.Lock
-	resolveLocks func(locks []*txnlock.Lock, regionID tikv.RegionVerID) (ok bool, err error)
+	scanLocks    func([]byte) ([]*txnlock.Lock, *tikv.KeyLocation)
+	resolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
 
 	mu sync.Mutex
 }
@@ -645,22 +645,20 @@ func (t *testEnv) unregisterTask() {
 	}
 }
 
-func (t *testEnv) ResolveLocks(
-	bo *tikv.Backoffer, locks []*txnlock.Lock, loc tikv.RegionVerID) (bool, error) {
-	if len(locks) == 0 {
-		return true, nil
-	}
+func (t *testEnv) ScanLocks(ctx context.Context, key []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+	locks, loc := t.scanLocks(key)
+	return locks, loc, nil
 
+}
+
+func (t *testEnv) ResolveLocks(ctx context.Context, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
 	return t.resolveLocks(locks, loc)
 }
 
-func (t *testEnv) ScanLocks(key []byte, regionID uint64) []*txnlock.Lock {
-	return t.scanLocks(key, regionID)
-}
-
 func (t *testEnv) GetStore() tikv.Storage {
+	return nil
 	// only used for GetRegionCache once in resolve lock
-	return &mockTiKVStore{regionCache: tikv.NewRegionCache(&mockPDClient{})}
+	//return &mockTiKVStore{regionCache: tikv.NewRegionCache(&mockPDClient{})}
 }
 
 type mockKVStore struct {

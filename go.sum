@@ -47,8 +47,8 @@ cloud.google.com/go/storage v1.30.1 h1:uOdMxAs8HExqBlnLtnQyP0YkvbiDpdGShGKtx6U/o
 cloud.google.com/go/storage v1.30.1/go.mod h1:NfxhC0UJE1aXSx7CIIbCf7y9HKT7BiccwkR7+P7gN8E=
 contrib.go.opencensus.io/exporter/ocagent v0.4.12/go.mod h1:450APlNTSR6FrvC3CTRqYosuDstRB9un7SOx2k/9ckA=
 dmitri.shuralyov.com/gpu/mtl v0.0.0-20190408044501-666a987793e9/go.mod h1:H6x//7gZCb22OMCxBHrMx7a5I7Hp++hsVxbQ4BYO7hU=
-github.com/3pointer/client-go/v2 v2.0.1-0.20230816091421-4125f3e49bda h1:EY4NdDiFOPNHe5NYbDTTreLjm9G2swaWvbPjtPWJzto=
-github.com/3pointer/client-go/v2 v2.0.1-0.20230816091421-4125f3e49bda/go.mod h1:J17iHkj8buCLDF7lgKJLX5jq5aGozrbpa7+Ln6g8Xjc=
+github.com/3pointer/client-go/v2 v2.0.1-0.20230817033745-505e606d43bc h1:y4KdIgx8v7yA2GH3Rzs4foBQB0u61+IuDyvXC+dU8Wg=
+github.com/3pointer/client-go/v2 v2.0.1-0.20230817033745-505e606d43bc/go.mod h1:J17iHkj8buCLDF7lgKJLX5jq5aGozrbpa7+Ln6g8Xjc=
 github.com/AndreasBriese/bbloom v0.0.0-20190306092124-e2d15f34fcf9/go.mod h1:bOvUY6CB00SOBii9/FifXqc0awNKxLFCL/+pkDPuyl8=
 github.com/Azure/azure-sdk-for-go v23.2.0+incompatible/go.mod h1:9XXNKU+eRnpl9moKnB4QOLf1HestfXbmab5FXxiDBjc=
 github.com/Azure/azure-sdk-for-go/sdk/azcore v1.6.0 h1:8kDqDngH+DmVBiCtIjCFTGa7MBnsIOkF9IccInFEbjk=
