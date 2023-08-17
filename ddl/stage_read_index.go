@@ -19,7 +19,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/disttask/framework/operator"
 	"strconv"
 	"time"
 
@@ -320,6 +319,6 @@ func sendTasksToSource(
 	for _, task := range batchTasks {
 		// todo add should abort?
 		logutil.BgLogger().Info("ywq test send task to source")
-		scanOp.Source.(*operator.AsyncDataChannel[*reorgBackfillTask]).Channel.AddTask(task)
+		scanOp.pool.AddTask(task)
 	}
 }
