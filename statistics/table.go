@@ -1240,10 +1240,10 @@ func (coll *HistColl) getIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 	return totalCount, nil
 }
 
-const fakePhysicalID int64 = -1
-
 // PseudoTable creates a pseudo table statistics.
 func PseudoTable(tblInfo *model.TableInfo) *Table {
+	const fakePhysicalID int64 = -1
+
 	pseudoHistColl := HistColl{
 		RealtimeCount:  PseudoRowCount,
 		PhysicalID:     tblInfo.ID,

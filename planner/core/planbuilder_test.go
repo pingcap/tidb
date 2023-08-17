@@ -649,3 +649,55 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 		})
 	}
 }
+
+func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
+	pb, _ := NewPlanBuilder().Init(MockContext(), nil, &hint.BlockHintProcessor{})
+
+	// Create a new TableName instance.
+	tableName := &ast.TableName{
+		Schema: model.NewCIStr("test"),
+		Name:   model.NewCIStr("my_table"),
+	}
+	columns := []*model.ColumnInfo{
+		{
+			ID:        1,
+			Name:      model.NewCIStr("id"),
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		},
+		{
+			ID:        2,
+			Name:      model.NewCIStr("name"),
+			FieldType: *types.NewFieldType(mysql.TypeString),
+		},
+		{
+			ID:        3,
+			Name:      model.NewCIStr("age"),
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		},
+	}
+	tableName.TableInfo = &model.TableInfo{
+		Columns: columns,
+	}
+
+	// Test case 1: DefaultChoice.
+	cols, _, err := pb.getFullAnalyzeColumnsInfo(tableName, model.DefaultChoice, nil, nil, nil, false, false)
+	require.NoError(t, err)
+	require.Equal(t, columns, cols)
+
+	// Test case 2: AllColumns.
+	cols, _, err = pb.getFullAnalyzeColumnsInfo(tableName, model.AllColumns, nil, nil, nil, false, false)
+	require.NoError(t, err)
+	require.Equal(t, columns, cols)
+
+	mustAnalyzedCols := &calcOnceMap{data: make(map[int64]struct{})}
+
+	// TODO(hi-rustin): Find a better way to mock SQL execution.
+	// Test case 3: PredicateColumns.
+
+	// Test case 4: ColumnList.
+	specifiedCols := []*model.ColumnInfo{columns[0], columns[2]}
+	mustAnalyzedCols.data[3] = struct{}{}
+	cols, _, err = pb.getFullAnalyzeColumnsInfo(tableName, model.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)
+	require.NoError(t, err)
+	require.Equal(t, specifiedCols, cols)
+}
