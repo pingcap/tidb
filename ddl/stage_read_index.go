@@ -213,7 +213,7 @@ func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask []byte
 				break
 			}
 
-			logutil.BgLogger().Info("start backfill workers to reorg record",
+			logutil.BgLogger().Info("send kvRanges to reorg record",
 				zap.String("category", "ddl"),
 				zap.Int("regionCnt", len(kvRanges)),
 				zap.String("startKey", hex.EncodeToString(startKey)),
@@ -318,9 +318,8 @@ func sendTasksToSource(
 	t table.PhysicalTable, kvRanges []kv.KeyRange, reorgInfo *reorgInfo, taskIDAlloc *taskIDAllocator, scanOp *tableScanOperator) {
 	batchTasks := getBatchTasks(t, reorgInfo, kvRanges, taskIDAlloc)
 	for _, task := range batchTasks {
-		//if consumer.shouldAbort() {
-		//	return
-		//}
+		// todo add should abort?
+		logutil.BgLogger().Info("ywq test send task to source")
 		scanOp.Source.(*operator.AsyncDataChannel[*reorgBackfillTask]).Channel.AddTask(task)
 	}
 }

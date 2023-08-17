@@ -321,6 +321,19 @@ func (oi *ingestWriterOperator) Close() {
 	if oi.pool != nil {
 		oi.pool.ReleaseAndWait()
 	}
+	if oi.checkpointMgr != nil {
+		oi.checkpointMgr.Sync()
+		// Get the latest status after all workers are closed so that the result is more accurate.
+		cnt, nextKey := oi.checkpointMgr.Status()
+		_ = oi.Sink.Write(&backfillResult{
+			totalCount: cnt,
+			nextKey:    nextKey,
+		})
+	}
+
+	jobID := oi.reorgInfo.ID
+	indexID := oi.reorgInfo.currElement.ID
+	oi.backendCtx.ResetWorkers(jobID, indexID)
 }
 
 // Display implements AsyncOperator.
@@ -336,7 +349,6 @@ func newIngestWriterOperator(
 	sink operator.DataSink[*backfillResult],
 	tbl table.PhysicalTable,
 	writerCnt int) (*ingestWriterOperator, error) {
-
 	res := &ingestWriterOperator{
 		ctx:           ctx,
 		reorgInfo:     info,
