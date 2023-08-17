@@ -119,7 +119,6 @@ go_library(
         "//util/filter",
         "//util/gcutil",
         "//util/hack",
-        "//util/intest",
         "//util/logutil",
         "//util/mathutil",
         "//util/memory",

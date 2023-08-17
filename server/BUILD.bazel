@@ -79,7 +79,6 @@ go_library(
         "//util/execdetails",
         "//util/fastrand",
         "//util/hack",
-        "//util/intest",
         "//util/logutil",
         "//util/memory",
         "//util/printer",

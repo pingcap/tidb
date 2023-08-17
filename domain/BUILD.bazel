@@ -70,7 +70,6 @@ go_library(
         "//util/expensivequery",
         "//util/gctuner",
         "//util/globalconn",
-        "//util/intest",
         "//util/logutil",
         "//util/memory",
         "//util/memoryusagealarm",

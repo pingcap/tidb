@@ -30,7 +30,6 @@ go_library(
         "//store/driver/options",
         "//util",
         "//util/execdetails",
-        "//util/intest",
         "//util/logutil",
         "//util/mathutil",
         "//util/memory",

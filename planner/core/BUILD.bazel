@@ -141,7 +141,6 @@ go_library(
         "//util/filter",
         "//util/hack",
         "//util/hint",
-        "//util/intest",
         "//util/kvcache",
         "//util/logutil",
         "//util/mathutil",

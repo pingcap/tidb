@@ -199,7 +199,6 @@ go_library(
         "//util/globalconn",
         "//util/hack",
         "//util/hint",
-        "//util/intest",
         "//util/keydecoder",
         "//util/logutil",
         "//util/logutil/consistency",
