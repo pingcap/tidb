@@ -2800,7 +2800,7 @@ var defaultSysVars = []*SysVar{
 			}
 
 			if len(normalizedValue) > 0 && normalizedValue[len(normalizedValue)-1] == ' ' {
-				return "", ErrWrongValueForVar.GenWithStack("incorrect value for variable @@%s '%s'", TiDBSessionAlias, normalizedValue)
+				return "", ErrWrongValueForVar.GenWithStack("Incorrect value for variable @@%s '%s'", TiDBSessionAlias, normalizedValue)
 			}
 
 			return normalizedValue, nil
