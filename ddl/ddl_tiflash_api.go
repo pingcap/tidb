@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -399,7 +399,7 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Cont
 				zap.Int64("tableID", availableTableID.ID),
 				zap.Bool("IsPartition", availableTableID.IsPartition),
 			)
-			if intest.InTest {
+			if testing.Testing() {
 				// In the test, the server cannot start up because the port is occupied.
 				// Although the port is random. so we need to quickly return when to
 				// fail to get tiflash sync.

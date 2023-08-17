@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	tidb_util "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -54,7 +54,7 @@ var (
 
 func init() {
 	// In test the wait duration can be reduced to make test case run faster
-	if intest.InTest {
+	if testing.Testing() {
 		dispatchLoopWaitingDuration = 50 * time.Millisecond
 	}
 }

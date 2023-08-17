@@ -17,11 +17,11 @@ package gctuner
 import (
 	"math"
 	"runtime/debug"
+	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/memory"
 	atomicutil "go.uber.org/atomic"
 )
@@ -46,7 +46,7 @@ var memoryGoroutineCntInTest = *atomicutil.NewInt64(0)
 
 // WaitMemoryLimitTunerExitInTest is used to wait memory limit tuner exit in test.
 func WaitMemoryLimitTunerExitInTest() {
-	if intest.InTest {
+	if testing.Testing() {
 		for memoryGoroutineCntInTest.Load() > 0 {
 			time.Sleep(100 * time.Millisecond)
 		}
@@ -74,7 +74,7 @@ func (t *memoryLimitTuner) tuning() {
 	if float64(r.HeapInuse)*ratio > float64(debug.SetMemoryLimit(-1)) {
 		if t.nextGCTriggeredByMemoryLimit.Load() && t.waitingReset.CompareAndSwap(false, true) {
 			go func() {
-				if intest.InTest {
+				if testing.Testing() {
 					memoryGoroutineCntInTest.Inc()
 					defer memoryGoroutineCntInTest.Dec()
 				}
@@ -82,7 +82,7 @@ func (t *memoryLimitTuner) tuning() {
 				memory.MemoryLimitGCTotal.Add(1)
 				debug.SetMemoryLimit(t.calcMemoryLimit(fallbackPercentage))
 				resetInterval := 1 * time.Minute // Wait 1 minute and set back, to avoid frequent GC
-				if intest.InTest {
+				if testing.Testing() {
 					resetInterval = 3 * time.Second
 				}
 				failpoint.Inject("testMemoryLimitTuner", func(val failpoint.Value) {

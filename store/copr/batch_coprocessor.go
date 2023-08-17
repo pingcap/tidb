@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
@@ -670,7 +670,7 @@ func buildBatchCopTasksConsistentHash(
 			}
 			retErr := errors.New(errMsg)
 			logutil.BgLogger().Info("buildBatchCopTasksConsistentHash retry because FetchAndGetTopo return empty topo", zap.Int("retryNum", retryNum))
-			if intest.InTest && retryNum > 3 {
+			if testing.Testing() && retryNum > 3 {
 				return nil, retErr
 			}
 			err := fetchTopoBo.Backoff(tikv.BoTiFlashRPC(), retErr)

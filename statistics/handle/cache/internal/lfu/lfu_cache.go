@@ -16,12 +16,12 @@ package lfu
 
 import (
 	"sync/atomic"
+	"testing"
 
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 )
@@ -45,7 +45,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 	metrics.CapacityGauge.Set(float64(totalMemCost))
 	result := &LFU{}
 	bufferItems := int64(64)
-	if intest.InTest {
+	if testing.Testing() {
 		bufferItems = 1
 	}
 
@@ -56,8 +56,8 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 		OnEvict:            result.onEvict,
 		OnExit:             result.onExit,
 		OnReject:           result.onReject,
-		IgnoreInternalCost: intest.InTest,
-		Metrics:            intest.InTest,
+		IgnoreInternalCost: testing.Testing(),
+		Metrics:            testing.Testing(),
 	})
 	if err != nil {
 		return nil, err
