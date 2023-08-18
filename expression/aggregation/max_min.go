@@ -28,7 +28,7 @@ type maxMinFunction struct {
 }
 
 // GetResult implements Aggregation interface.
-func (mmf *maxMinFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
+func (*maxMinFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 	return evalCtx.Value
 }
 

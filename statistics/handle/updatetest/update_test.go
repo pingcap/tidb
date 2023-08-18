@@ -624,10 +624,10 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	statsTbl1 := h.GetTableStats(tbl.Meta())
 	// Check that all the version of t's stats are 1.
 	for _, col := range statsTbl1.Columns {
-		require.Equal(t, int64(1), col.StatsVer)
+		require.Equal(t, int64(1), col.GetStatsVer())
 	}
 	for _, idx := range statsTbl1.Indices {
-		require.Equal(t, int64(1), idx.StatsVer)
+		require.Equal(t, int64(1), idx.GetStatsVer())
 	}
 	tk.MustExec("set @@global.tidb_analyze_version = 2")
 	err = h.UpdateSessionVar()
@@ -642,10 +642,10 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.Equal(t, int64(5), statsTbl1.RealtimeCount)
 	// All of its statistics should still be version 1.
 	for _, col := range statsTbl1.Columns {
-		require.Equal(t, int64(1), col.StatsVer)
+		require.Equal(t, int64(1), col.GetStatsVer())
 	}
 	for _, idx := range statsTbl1.Indices {
-		require.Equal(t, int64(1), idx.StatsVer)
+		require.Equal(t, int64(1), idx.GetStatsVer())
 	}
 	// Add a new table after the analyze version set to 2.
 	tk.MustExec("create table tt(a int, index idx(a))")
@@ -662,10 +662,10 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	statsTbl2 := h.GetTableStats(tbl2.Meta())
 	// Since it's a newly created table. Auto analyze should analyze it's statistics to version2.
 	for _, idx := range statsTbl2.Indices {
-		require.Equal(t, int64(2), idx.StatsVer)
+		require.Equal(t, int64(2), idx.GetStatsVer())
 	}
 	for _, col := range statsTbl2.Columns {
-		require.Equal(t, int64(2), col.StatsVer)
+		require.Equal(t, int64(2), col.GetStatsVer())
 	}
 	tk.MustExec("set @@global.tidb_analyze_version = 1")
 }

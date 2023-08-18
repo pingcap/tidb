@@ -263,7 +263,8 @@
       "select * from tlist3 where a in (1,2) and 1 = 1 order by a desc",
       "select * from tlist3 partition(p0) where a in (1,4)",
       "select * from tlist3 partition(p1) where a in (1,2)",
-      "select * from tlist3 partition(p0,p1) where a in (1,2)"
+      "select * from tlist3 partition(p0,p1) where a in (1,2)",
+      "select _tidb_rowid, a from issue45889 where _tidb_rowid in (7, 8)"
     ]
   },
   {

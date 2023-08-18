@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl_test
+package partition
 
 import (
 	"bytes"
@@ -2762,6 +2762,37 @@ func TestGlobalIndexLookUpInDropPartition(t *testing.T) {
 	indexLookupResult.Check(testkit.Rows("11 11 11", "12 12 12"))
 }
 
+func TestGlobalIndexShowTableRegions(t *testing.T) {
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists p")
+	tk.MustExec("set @@global.tidb_scatter_region = on")
+	tk.MustExec(`create table p (id int, c int, d int, unique key uidx(c)) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10))`)
+	rs := tk.MustQuery("show table p regions").Rows()
+	require.Equal(t, len(rs), 3)
+	rs = tk.MustQuery("show table p index uidx regions").Rows()
+	require.Equal(t, len(rs), 3)
+
+	tk.MustExec("alter table p add unique idx(id)")
+	rs = tk.MustQuery("show table p regions").Rows()
+	require.Equal(t, len(rs), 4)
+	rs = tk.MustQuery("show table p index idx regions").Rows()
+	require.Equal(t, len(rs), 1)
+	rs = tk.MustQuery("show table p index uidx regions").Rows()
+	require.Equal(t, len(rs), 3)
+}
+
 func TestAlterTableExchangePartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3280,6 +3311,124 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 	}
 	err = tk.Session().GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "0")
 	require.NoError(t, err)
+}
+
+func TestExchangePartitionMultiTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+
+	dbName := "ExchangeMultiTable"
+	tk1.MustExec(`create schema ` + dbName)
+	tk1.MustExec(`use ` + dbName)
+	tk1.MustExec(`CREATE TABLE t1 (a int)`)
+	tk1.MustExec(`CREATE TABLE t2 (a int)`)
+	tk1.MustExec(`CREATE TABLE tp (a int) partition by hash(a) partitions 3`)
+	tk1.MustExec(`insert into t1 values (0)`)
+	tk1.MustExec(`insert into t2 values (3)`)
+	tk1.MustExec(`insert into tp values (6)`)
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec(`use ` + dbName)
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec(`use ` + dbName)
+	tk4 := testkit.NewTestKit(t, store)
+	tk4.MustExec(`use ` + dbName)
+	waitFor := func(col int, tableName, s string) {
+		for {
+			tk4 := testkit.NewTestKit(t, store)
+			tk4.MustExec(`use test`)
+			sql := `admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'exchange partition'`
+			res := tk4.MustQuery(sql).Rows()
+			if len(res) == 1 && res[0][col] == s {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	alterChan1 := make(chan error)
+	alterChan2 := make(chan error)
+	tk3.MustExec(`BEGIN`)
+	tk3.MustExec(`insert into tp values (1)`)
+	go func() {
+		alterChan1 <- tk1.ExecToErr(`alter table tp exchange partition p0 with table t1`)
+	}()
+	waitFor(11, "t1", "running")
+	go func() {
+		alterChan2 <- tk2.ExecToErr(`alter table tp exchange partition p0 with table t2`)
+	}()
+	waitFor(11, "t2", "queueing")
+	tk3.MustExec(`rollback`)
+	require.NoError(t, <-alterChan1)
+	err := <-alterChan2
+	tk3.MustQuery(`select * from t1`).Check(testkit.Rows("6"))
+	tk3.MustQuery(`select * from t2`).Check(testkit.Rows("0"))
+	tk3.MustQuery(`select * from tp`).Check(testkit.Rows("3"))
+	require.NoError(t, err)
+}
+
+func TestExchangePartitionValidation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	dbName := "ExchangeValidation"
+	tk.MustExec(`create schema ` + dbName)
+	tk.MustExec(`use ` + dbName)
+	tk.MustExec(`CREATE TABLE t1 (
+		d date NOT NULL ,
+		name varchar(10)  NOT NULL,
+		UNIQUE KEY (d,name))`)
+
+	tk.MustExec(`CREATE TABLE t1p (
+		d date NOT NULL ,
+		name varchar(10)  NOT NULL,
+		UNIQUE KEY (d,name)
+	)
+	PARTITION BY RANGE COLUMNS(d)
+	(PARTITION p202307 VALUES LESS THAN ('2023-08-01'),
+	 PARTITION p202308 VALUES LESS THAN ('2023-09-01'),
+	 PARTITION p202309 VALUES LESS THAN ('2023-10-01'),
+	 PARTITION p202310 VALUES LESS THAN ('2023-11-01'),
+	 PARTITION p202311 VALUES LESS THAN ('2023-12-01'),
+	 PARTITION p202312 VALUES LESS THAN ('2024-01-01'),
+	 PARTITION pfuture VALUES LESS THAN (MAXVALUE))`)
+
+	tk.MustExec(`insert into t1 values ("2023-08-06","0000")`)
+	tk.MustContainErrMsg(`alter table t1p exchange partition p202307 with table t1 with validation`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`insert into t1 values ("2023-08-06","0001")`)
+}
+
+func TestExchangePartitionPlacementPolicy(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`create schema ExchangePartWithPolicy`)
+	tk.MustExec(`use ExchangePartWithPolicy`)
+	tk.MustExec(`CREATE PLACEMENT POLICY rule1 FOLLOWERS=1`)
+	tk.MustExec(`CREATE PLACEMENT POLICY rule2 FOLLOWERS=2`)
+	tk.MustExec(`CREATE TABLE t1 (
+		d date NOT NULL ,
+		name varchar(10)  NOT NULL,
+		UNIQUE KEY (d,name)
+	) PLACEMENT POLICY="rule1"`)
+
+	tk.MustExec(`CREATE TABLE t1p (
+		d date NOT NULL ,
+		name varchar(10)  NOT NULL,
+		UNIQUE KEY (d,name)
+	) PLACEMENT POLICY="rule2"
+	PARTITION BY RANGE COLUMNS(d)
+	(PARTITION p202307 VALUES LESS THAN ('2023-08-01'),
+	 PARTITION p202308 VALUES LESS THAN ('2023-09-01'),
+	 PARTITION p202309 VALUES LESS THAN ('2023-10-01'),
+	 PARTITION p202310 VALUES LESS THAN ('2023-11-01'),
+	 PARTITION p202311 VALUES LESS THAN ('2023-12-01'),
+	 PARTITION p202312 VALUES LESS THAN ('2024-01-01'),
+	 PARTITION pfuture VALUES LESS THAN (MAXVALUE))`)
+
+	tk.MustContainErrMsg(`alter table t1p exchange partition p202307 with table t1`,
+		"[ddl:1736]Tables have different definitions")
+	tk.MustExec(`insert into t1 values ("2023-08-06","0000")`)
 }
 
 func TestExchangePartitionHook(t *testing.T) {

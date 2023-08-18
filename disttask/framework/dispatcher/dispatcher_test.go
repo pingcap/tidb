@@ -61,7 +61,7 @@ func MockDispatcherManager(t *testing.T, pool *pools.ResourcePool) (*dispatcher.
 	ctx := context.Background()
 	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
 	storage.SetTaskManager(mgr)
-	dsp, err := dispatcher.NewManager(util.WithInternalSourceType(ctx, "dispatcher"), mgr)
+	dsp, err := dispatcher.NewManager(util.WithInternalSourceType(ctx, "dispatcher"), mgr, "host:port")
 	require.NoError(t, err)
 	dispatcher.RegisterTaskFlowHandle(proto.TaskTypeExample, &testFlowHandle{})
 	return dsp, mgr

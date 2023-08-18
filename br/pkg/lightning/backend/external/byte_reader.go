@@ -32,8 +32,6 @@ type byteReader struct {
 	buf       []byte
 	bufOffset int
 
-	isEOF bool
-
 	retPointers []*[]byte
 }
 
@@ -54,6 +52,8 @@ func openStoreReaderAndSeek(
 	return storageReader, nil
 }
 
+// newByteReader wraps readNBytes functionality to storageReader. It will not
+// close storageReader when meet error.
 func newByteReader(ctx context.Context, storageReader storage.ReadSeekCloser, bufSize int) (*byteReader, error) {
 	r := &byteReader{
 		ctx:           ctx,
@@ -83,7 +83,14 @@ func (r *byteReader) readNBytes(n int) (*[]byte, error) {
 	for readLen < n {
 		r.cloneSlices()
 		err := r.reload()
-		if err != nil {
+		switch err {
+		case nil:
+		case io.EOF:
+			if readLen > 0 {
+				return nil, io.ErrUnexpectedEOF
+			}
+			return nil, err
+		default:
 			return nil, err
 		}
 		b = r.next(n - readLen)
@@ -110,10 +117,6 @@ func (r *byteReader) cloneSlices() {
 	r.retPointers = r.retPointers[:0]
 }
 
-func (r *byteReader) eof() bool {
-	return r.isEOF && len(r.buf) == r.bufOffset
-}
-
 func (r *byteReader) next(n int) []byte {
 	end := mathutil.Min(r.bufOffset+n, len(r.buf))
 	ret := r.buf[r.bufOffset:end]
@@ -123,20 +126,20 @@ func (r *byteReader) next(n int) []byte {
 
 func (r *byteReader) reload() error {
 	nBytes, err := io.ReadFull(r.storageReader, r.buf[0:])
-	if err == io.EOF {
-		r.isEOF = true
-		return err
-	} else if err == io.ErrUnexpectedEOF {
-		r.isEOF = true
-	} else if err != nil {
-		logutil.Logger(r.ctx).Warn("other error during reading from external storage", zap.Error(err))
-		return err
+	if err != nil {
+		switch err {
+		case io.EOF:
+			return err
+		case io.ErrUnexpectedEOF:
+			// The last batch.
+			r.buf = r.buf[:nBytes]
+			break
+		default:
+			logutil.Logger(r.ctx).Warn("other error during reload", zap.Error(err))
+			return err
+		}
 	}
 	r.bufOffset = 0
-	if nBytes < len(r.buf) {
-		// The last batch.
-		r.buf = r.buf[:nBytes]
-	}
 	return nil
 }
 

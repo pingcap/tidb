@@ -287,6 +287,7 @@ go_test(
     srcs = [
         "adapter_test.go",
         "analyze_test.go",
+        "analyze_utils_test.go",
         "batch_point_get_test.go",
         "benchmark_test.go",
         "brie_test.go",
@@ -469,7 +470,6 @@ go_test(
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//util",
         "@org_golang_google_grpc//:grpc",
-        "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//zapcore",

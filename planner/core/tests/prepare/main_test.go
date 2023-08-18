@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,16 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package filter
+package prepare
 
-import "reflect"
+import (
+	"flag"
+	"testing"
 
-// reverse replace the contents of a slice with the same elements but in reverse order.
-func reverse(items interface{}) {
-	n := reflect.ValueOf(items).Len()
-	swap := reflect.Swapper(items)
-	for i := n/2 - 1; i >= 0; i-- {
-		opp := n - 1 - i
-		swap(i, opp)
+	"github.com/pingcap/tidb/testkit/testsetup"
+	"go.uber.org/goleak"
+)
+
+func TestMain(m *testing.M) {
+	testsetup.SetupForCommonTest()
+	flag.Parse()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 	}
+	goleak.VerifyTestMain(m, opts...)
 }

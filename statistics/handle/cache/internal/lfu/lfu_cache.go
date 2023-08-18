@@ -55,9 +55,13 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 		BufferItems:        bufferItems,
 		OnEvict:            result.onEvict,
 		OnExit:             result.onExit,
+		OnReject:           result.onReject,
 		IgnoreInternalCost: intest.InTest,
 		Metrics:            intest.InTest,
 	})
+	if err != nil {
+		return nil, err
+	}
 	result.cache = cache
 	result.resultKeySet = newKeySetShard()
 	return result, err
@@ -67,19 +71,23 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
 	result, ok := s.cache.Get(tid)
 	if !ok {
-		return nil, ok
+		return s.resultKeySet.Get(tid)
 	}
 	return result.(*statistics.Table), ok
 }
 
 // Put implements statsCacheInner
 func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
-	ok := s.cache.Set(tblID, tbl, tbl.MemoryUsage().TotalTrackingMemUsage())
-	if ok { // NOTE: `s.cache` and `s.resultKeySet` may be inconsistent since the update operation is not atomic, but it's acceptable for our scenario
-		s.resultKeySet.Add(tblID)
-		s.cost.Add(tbl.MemoryUsage().TotalTrackingMemUsage())
-		metrics.CostGauge.Set(float64(s.cost.Load()))
-	}
+	cost := tbl.MemoryUsage().TotalTrackingMemUsage()
+	// Here we need to insert resultKeySet first and then write to LFU,
+	// in order to prevent data race. If the LFU cost is already full,
+	// a rejection may occur, triggering the onEvict event.
+	// Both inserting into resultKeySet and evicting will modify the memory cost,
+	// so we need to stagger these two actions.
+	s.resultKeySet.AddKeyValue(tblID, tbl)
+	s.cost.Add(cost)
+	ok := s.cache.Set(tblID, tbl, cost)
+	metrics.CostGauge.Set(float64(s.cost.Load()))
 	return ok
 }
 
@@ -98,21 +106,55 @@ func (s *LFU) Cost() int64 {
 func (s *LFU) Values() []*statistics.Table {
 	result := make([]*statistics.Table, 0, 512)
 	for _, k := range s.resultKeySet.Keys() {
-		if value, ok := s.cache.Get(k); ok {
-			result = append(result, value.(*statistics.Table))
+		if value, ok := s.resultKeySet.Get(k); ok {
+			result = append(result, value)
 		}
 	}
 	return result
 }
 
+// DropEvicted drop stats for table column/index
+func DropEvicted(item statistics.TableCacheItem) {
+	if !item.IsStatsInitialized() || item.GetEvictedStatus() == statistics.AllEvicted {
+		return
+	}
+	item.DropUnnecessaryData()
+}
+
+func (s *LFU) onReject(item *ristretto.Item) {
+	metrics.RejectCounter.Add(1.0)
+	s.onEvict(item)
+}
+
 func (s *LFU) onEvict(item *ristretto.Item) {
+	if item.Value == nil {
+		// Sometimes the same key may be passed to the "onEvict/onExit" function twice,
+		// and in the second invocation, the value is empty, so it should not be processed.
+		return
+	}
 	// We do not need to calculate the cost during onEvict, because the onexit function
 	// is also called when the evict event occurs.
-	s.resultKeySet.Remove(int64(item.Key))
 	metrics.EvictCounter.Inc()
+	table := item.Value.(*statistics.Table)
+	before := table.MemoryUsage().TotalTrackingMemUsage()
+	for _, column := range table.Columns {
+		DropEvicted(column)
+	}
+	for _, indix := range table.Indices {
+		DropEvicted(indix)
+	}
+	after := table.MemoryUsage().TotalTrackingMemUsage()
+	// why add before again? because the cost will be subtracted in onExit.
+	// in fact, it is  -(before - after) + after = after + after - before
+	s.cost.Add(2*after - before)
 }
 
 func (s *LFU) onExit(val interface{}) {
+	if val == nil {
+		// Sometimes the same key may be passed to the "onEvict/onExit" function twice,
+		// and in the second invocation, the value is empty, so it should not be processed.
+		return
+	}
 	s.cost.Add(-1 * val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
 	metrics.CostGauge.Set(float64(s.cost.Load()))
 }
@@ -120,11 +162,6 @@ func (s *LFU) onExit(val interface{}) {
 // Len implements statsCacheInner
 func (s *LFU) Len() int {
 	return s.resultKeySet.Len()
-}
-
-// Front implements statsCacheInner
-func (*LFU) Front() int64 {
-	return 0
 }
 
 // Copy implements statsCacheInner

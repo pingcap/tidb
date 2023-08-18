@@ -268,7 +268,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			ResourceControlContext: &kvrpcpb.ResourceControlContext{
 				ResourceGroupName: local.ResourceGroupName,
 			},
-			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
 		},
 	}
 	for _, peer := range region.GetPeers() {
@@ -600,7 +600,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			ResourceControlContext: &kvrpcpb.ResourceControlContext{
 				ResourceGroupName: local.ResourceGroupName,
 			},
-			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
 		}
 
 		if supportMultiIngest {

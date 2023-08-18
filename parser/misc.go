@@ -1040,6 +1040,7 @@ var hintTokenMap = map[string]int{
 	"LEADING":                 hintLeading,
 	"SEMI_JOIN_REWRITE":       hintSemiJoinRewrite,
 	"NO_DECORRELATE":          hintNoDecorrelate,
+	"TIDB_KV_READ_TIMEOUT":    hintTidbKvReadTimeout,
 
 	// TiDB hint aliases
 	"TIDB_HJ":   hintHashJoin,
