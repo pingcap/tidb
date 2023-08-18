@@ -2528,6 +2528,7 @@ func TestExchangePartitionMultiTable(t *testing.T) {
 	dbName := "ExchangeMultiTable"
 	tk1.MustExec(`create schema ` + dbName)
 	tk1.MustExec(`use ` + dbName)
+	tk1.MustExec(`set @@global.tidb_enable_metadata_lock = 1`)
 	tk1.MustExec(`CREATE TABLE t1 (a int)`)
 	tk1.MustExec(`CREATE TABLE t2 (a int)`)
 	tk1.MustExec(`CREATE TABLE tp (a int) partition by hash(a) partitions 3`)
