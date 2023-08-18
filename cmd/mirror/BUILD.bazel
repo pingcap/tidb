@@ -13,7 +13,6 @@ go_library(
         "@com_google_cloud_go_storage//:storage",
         "@io_bazel_rules_go//go/tools/bazel:go_default_library",
         "@org_golang_google_api//googleapi",
-        "@org_golang_x_exp//slices",
         "@org_golang_x_sync//errgroup",
     ],
 )

@@ -17,6 +17,7 @@ package helper
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -25,6 +26,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -47,7 +49,6 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // Storage represents a storage that connects TiKV.
@@ -719,8 +720,8 @@ func (*Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoWit
 			}
 		}
 	}
-	slices.SortFunc(tables, func(i, j TableInfoWithKeyRange) bool {
-		return i.getStartKey() < j.getStartKey()
+	slices.SortFunc(tables, func(i, j TableInfoWithKeyRange) int {
+		return cmp.Compare(i.getStartKey(), j.getStartKey())
 	})
 	return tables
 }
@@ -733,8 +734,8 @@ func (*Helper) ParseRegionsTableInfos(regionsInfo []*RegionInfo, tables []TableI
 		return tableInfos
 	}
 	// tables is sorted in GetTablesInfoWithKeyRange func
-	slices.SortFunc(regionsInfo, func(i, j *RegionInfo) bool {
-		return i.getStartKey() < j.getStartKey()
+	slices.SortFunc(regionsInfo, func(i, j *RegionInfo) int {
+		return cmp.Compare(i.getStartKey(), j.getStartKey())
 	})
 
 	idx := 0

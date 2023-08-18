@@ -27,12 +27,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
 	"cloud.google.com/go/storage"
 	"github.com/bazelbuild/rules_go/go/tools/bazel"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/googleapi"
 )

@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -82,7 +83,6 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 type memtableRetriever struct {
@@ -2900,9 +2900,7 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	if !e.initialized {
 		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 		dbs := is.AllSchemas()
-		slices.SortFunc(dbs, func(i, j *model.DBInfo) bool {
-			return i.Name.L < j.Name.L
-		})
+		slices.SortFunc(dbs, model.LessDBInfo)
 		e.dbs = dbs
 		e.initialized = true
 		e.rows = make([][]types.Datum, 0, 1024)

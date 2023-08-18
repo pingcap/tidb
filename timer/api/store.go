@@ -17,12 +17,12 @@ package api
 import (
 	"context"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"golang.org/x/exp/slices"
 )
 
 type optionalVal interface {

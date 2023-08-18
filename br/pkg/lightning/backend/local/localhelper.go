@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 )
@@ -271,9 +271,7 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 					var err1 error
 					region := sp.region
 					keys := sp.keys
-					slices.SortFunc(keys, func(i, j []byte) bool {
-						return bytes.Compare(i, j) < 0
-					})
+					slices.SortFunc(keys, bytes.Compare)
 					splitRegion := region
 					startIdx := 0
 					endIdx := 0
@@ -317,8 +315,8 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 							log.FromContext(ctx).Info("batch split region", zap.Uint64("region_id", splitRegion.Region.Id),
 								zap.Int("keys", endIdx-startIdx), zap.Binary("firstKey", keys[startIdx]),
 								zap.Binary("end", keys[endIdx-1]))
-							slices.SortFunc(newRegions, func(i, j *split.RegionInfo) bool {
-								return bytes.Compare(i.Region.StartKey, j.Region.StartKey) < 0
+							slices.SortFunc(newRegions, func(i, j *split.RegionInfo) int {
+								return bytes.Compare(i.Region.StartKey, j.Region.StartKey)
 							})
 							syncLock.Lock()
 							scatterRegions = append(scatterRegions, newRegions...)
@@ -372,9 +370,7 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 		if len(retryKeys) == 0 {
 			break
 		}
-		slices.SortFunc(retryKeys, func(i, j []byte) bool {
-			return bytes.Compare(i, j) < 0
-		})
+		slices.SortFunc(retryKeys, bytes.Compare)
 		minKey = codec.EncodeBytes([]byte{}, retryKeys[0])
 		maxKey = codec.EncodeBytes([]byte{}, nextKey(retryKeys[len(retryKeys)-1]))
 	}
