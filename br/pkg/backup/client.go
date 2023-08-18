@@ -587,7 +587,7 @@ func BuildBackupRangeAndSchema(
 						// so err1 != nil might be expected.
 						if globalAutoID == 0 {
 							// When both auto_increment_id and _rowid are missing, it must be something wrong.
-							return errors.Trace(err1)
+							return nil, nil, nil, errors.Trace(err1)
 						}
 						// Print a warning in other scenes, should it be a INFO log?
 						log.Warn("get rowid error", zap.Error(err1))
