@@ -41,8 +41,6 @@ for BACKEND in tidb local; do
   check_contains 'id: 3'
   run_sql 'SELECT id FROM csv.empty_strings WHERE b <> ""'
   check_not_contains 'id:'
-<<<<<<< HEAD
-=======
 
   for table in clustered nonclustered clustered_cache1 nonclustered_cache1; do
     run_sql "select count(*) from auto_incr_id.$table"
@@ -61,8 +59,6 @@ for BACKEND in tidb local; do
     run_sql "select count(*) from no_auto_incr_id.$table"
     check_contains 'count(*): 4'
   done
-}
->>>>>>> 740f7f51b76 (lightning: fix incorrect _tidb_rowid allocator value after import for table with AUTO_ID_CACHE=1 (#46171))
 
 done
 

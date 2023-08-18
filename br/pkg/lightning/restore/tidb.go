@@ -374,12 +374,7 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, e
 // NOTE: since tidb can make sure the auto id is always be rebase even if the `incr` value is smaller
 // than the auto increment base in tidb side, we needn't fetch currently auto increment value here.
 // See: https://github.com/pingcap/tidb/blob/64698ef9a3358bfd0fdc323996bb7928a56cadca/ddl/ddl_api.go#L2528-L2533
-<<<<<<< HEAD:br/pkg/lightning/restore/tidb.go
 func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName string, incr uint64) error {
-	var query string
-=======
-func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr uint64) error {
->>>>>>> 740f7f51b76 (lightning: fix incorrect _tidb_rowid allocator value after import for table with AUTO_ID_CACHE=1 (#46171)):br/pkg/lightning/importer/tidb.go
 	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Uint64("auto_increment", incr))
 	base := adjustIDBase(incr)
 	var forceStr string
@@ -401,9 +396,6 @@ func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr 
 	return errors.Annotatef(err, "%s", query)
 }
 
-<<<<<<< HEAD:br/pkg/lightning/restore/tidb.go
-func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, randomBase uint64, maxAutoRandom uint64) error {
-=======
 func adjustIDBase(incr uint64) int64 {
 	if incr > math.MaxInt64 {
 		return math.MaxInt64
@@ -411,9 +403,8 @@ func adjustIDBase(incr uint64) int64 {
 	return int64(incr)
 }
 
-// AlterAutoRandom rebase the table auto random id
-func AlterAutoRandom(ctx context.Context, db *sql.DB, tableName string, randomBase uint64, maxAutoRandom uint64) error {
->>>>>>> 740f7f51b76 (lightning: fix incorrect _tidb_rowid allocator value after import for table with AUTO_ID_CACHE=1 (#46171)):br/pkg/lightning/importer/tidb.go
+// AlterAutoRandom rebase the table auto random id.
+func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, randomBase uint64, maxAutoRandom uint64) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Uint64("auto_random", randomBase))
 	if randomBase == maxAutoRandom+1 {
 		// insert a tuple with key maxAutoRandom
