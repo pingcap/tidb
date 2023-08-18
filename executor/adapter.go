@@ -1601,18 +1601,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			totalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
 			totalCopWaitHistogramInternal.Observe(execDetail.TimeDetail.WaitTime.Seconds())
 		} else {
-<<<<<<< HEAD
 			totalQueryProcHistogramGeneral.Observe(costTime.Seconds())
 			totalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
 			totalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
-=======
-			executor_metrics.TotalQueryProcHistogramGeneral.Observe(costTime.Seconds())
-			executor_metrics.TotalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
-			executor_metrics.TotalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
 			if execDetail.ScanDetail != nil && execDetail.ScanDetail.ProcessedKeys != 0 {
-				executor_metrics.CopMVCCRatioHistogramGeneral.Observe(float64(execDetail.ScanDetail.TotalKeys) / float64(execDetail.ScanDetail.ProcessedKeys))
+				metrics.CopMVCCRatioHistogram.WithLabelValues(metrics.LblGeneral).Observe(float64(execDetail.ScanDetail.TotalKeys) / float64(execDetail.ScanDetail.ProcessedKeys))
 			}
->>>>>>> d6143a20539 (*: add  MVCC version ratio to slow log metrics (#44897))
 		}
 		var userString string
 		if sessVars.User != nil {
