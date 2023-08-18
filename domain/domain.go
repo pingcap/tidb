@@ -1173,10 +1173,6 @@ func (do *Domain) Init(
 	if err != nil {
 		return err
 	}
-	err = do.initResourceGroupsController(ctx, pdCli)
-	if err != nil {
-		return err
-	}
 	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdCli)
 	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
@@ -1207,6 +1203,12 @@ func (do *Domain) Init(
 		}
 	} else {
 		do.connIDAllocator = globalconn.NewSimpleAllocator()
+	}
+
+	// should put `initResourceGroupsController` after fetching server ID
+	err = do.initResourceGroupsController(ctx, pdCli, do.ServerID())
+	if err != nil {
+		return err
 	}
 
 	startReloadTime := time.Now()
