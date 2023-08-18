@@ -2514,14 +2514,6 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 }
 
 func TestExchangePartitionMultiTable(t *testing.T) {
-	var wg sync.WaitGroup
-	wg.Add(1)
-	dumpChan := make(chan struct{})
-	defer func() {
-		close(dumpChan)
-		wg.Wait()
-	}()
-	go testkit.DebugDumpOnTimeout(&wg, dumpChan, 20*time.Second)
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 
@@ -2561,13 +2553,24 @@ func TestExchangePartitionMultiTable(t *testing.T) {
 				}
 				logutil.BgLogger().Info("admin show ddl jobs", zap.Strings("row", strs))
 			}
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 		}
 	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	dumpChan := make(chan struct{})
+	defer func() {
+		close(dumpChan)
+		wg.Wait()
+	}()
+	go testkit.DebugDumpOnTimeout(&wg, dumpChan, 20*time.Second)
 	alterChan1 := make(chan error)
 	alterChan2 := make(chan error)
 	tk3.MustExec(`BEGIN`)
-	tk3.MustExec(`insert into tp values (1)`)
+	tk3.MustExec(`insert into t1 values (1)`)
+	tk3.MustExec(`insert into t2 values (2)`)
+	tk3.MustExec(`insert into tp values (3)`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID", `pause`))
 	go func() {
 		alterChan1 <- tk1.ExecToErr(`alter table tp exchange partition p0 with table t1`)
 	}()
@@ -2578,6 +2581,7 @@ func TestExchangePartitionMultiTable(t *testing.T) {
 	waitFor(11, "t2", "queueing")
 	tk3.MustExec(`rollback`)
 	logutil.BgLogger().Info("rollback done")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID"))
 	require.NoError(t, <-alterChan1)
 	logutil.BgLogger().Info("alter1 done")
 	err := <-alterChan2

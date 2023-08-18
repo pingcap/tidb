@@ -17,6 +17,7 @@ package tables_test
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -723,9 +724,18 @@ func TestExchangePartitionStates(t *testing.T) {
 	tk.MustExec(`insert into t values (1, "1")`)
 	tk.MustExec(`insert into tp values (2, "2")`)
 	tk.MustExec(`analyze table t,tp`)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	dumpChan := make(chan struct{})
+	defer func() {
+		close(dumpChan)
+		wg.Wait()
+	}()
+	go testkit.DebugDumpOnTimeout(&wg, dumpChan, 20*time.Second)
 	tk.MustExec("BEGIN")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 1"))
 	tk.MustQuery(`select * from tp`).Check(testkit.Rows("2 2"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID", `pause`))
 	alterChan := make(chan error)
 	go func() {
 		// WITH VALIDATION is the default
@@ -759,6 +769,7 @@ func TestExchangePartitionStates(t *testing.T) {
 	// MDL will block the alter to not continue until all clients
 	// are in StateWriteOnly, which tk is blocking until it commits
 	tk.MustExec(`COMMIT`)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID"))
 	waitFor("t", "rollback done", 11)
 	// MDL will block the alter from finish, tk is in 'rollbacked' schema version
 	// but the alter is still waiting for tk3 to commit, before continuing
