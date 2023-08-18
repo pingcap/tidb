@@ -67,7 +67,7 @@ func TestWriter(t *testing.T) {
 	})
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test/0", memStore, 0, bufSize)
+	kvReader, err := newKVReader(ctx, "/test/0/0", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := 0; i < kvCnt; i++ {
 		key, value, err := kvReader.nextKV()
@@ -78,7 +78,7 @@ func TestWriter(t *testing.T) {
 	_, _, err = kvReader.nextKV()
 	require.Equal(t, io.EOF, err)
 
-	statReader, err := newStatsReader(ctx, memStore, "/test_stat/0", bufSize)
+	statReader, err := newStatsReader(ctx, memStore, "/test/0_stat/0", bufSize)
 	require.NoError(t, err)
 
 	var keyCnt uint64 = 0
@@ -136,7 +136,7 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 	require.Len(t, dataFiles, 4)
 	require.Len(t, statFiles, 4)
 	for i := 0; i < 4; i++ {
-		require.Equal(t, dataFiles[i], fmt.Sprintf("/test/%d", i))
-		require.Equal(t, statFiles[i], fmt.Sprintf("/test_stat/%d", i))
+		require.Equal(t, dataFiles[i], fmt.Sprintf("/test/0/%d", i))
+		require.Equal(t, statFiles[i], fmt.Sprintf("/test/0_stat/%d", i))
 	}
 }

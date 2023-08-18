@@ -378,6 +378,10 @@ func (i *MergePropIter) prop() *rangeProperty {
 	return i.iter.curr
 }
 
+func (i *MergePropIter) readerIndex() int {
+	return i.iter.lastReaderIdx
+}
+
 // Close closes the iterator.
 func (i *MergePropIter) Close() error {
 	return i.iter.close()

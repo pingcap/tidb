@@ -19,10 +19,9 @@ import (
 	"context"
 	"encoding/hex"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
-
-	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -95,7 +94,9 @@ func NewWriterBuilder() *WriterBuilder {
 	}
 }
 
-// SetMemorySizeLimit sets the memory size limit of the writer.
+// SetMemorySizeLimit sets the memory size limit of the writer. When accumulated
+// data size exceeds this limit, the writer will flush data as a file to external
+// storage.
 func (b *WriterBuilder) SetMemorySizeLimit(size uint64) *WriterBuilder {
 	b.memSizeLimit = size
 	return b
@@ -131,16 +132,18 @@ func (b *WriterBuilder) SetBufferPool(bufferPool *membuf.Pool) *WriterBuilder {
 	return b
 }
 
-// Build builds a new Writer.
+// Build builds a new Writer. The files writer will create are under the prefix
+// of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
 	store storage.ExternalStorage,
 	writerID int,
-	filenamePrefix string,
+	prefix string,
 ) *Writer {
 	bp := b.bufferPool
 	if bp == nil {
 		bp = membuf.NewPool()
 	}
+	filenamePrefix := filepath.Join(prefix, strconv.Itoa(writerID))
 	return &Writer{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
@@ -262,6 +265,7 @@ func (w *Writer) flushKVs(ctx context.Context) (err error) {
 		return nil
 	}
 
+	logger := logutil.Logger(ctx)
 	dataWriter, statWriter, err := w.createStorageWriter(ctx)
 	if err != nil {
 		return err
@@ -277,16 +281,16 @@ func (w *Writer) flushKVs(ctx context.Context) (err error) {
 			return
 		}
 		if err1 != nil {
-			logutil.Logger(ctx).Error("close data writer failed", zap.Error(err))
+			logger.Error("close data writer failed", zap.Error(err))
 			err = err1
 			return
 		}
 		if err2 != nil {
-			logutil.Logger(ctx).Error("close stat writer failed", zap.Error(err))
+			logger.Error("close stat writer failed", zap.Error(err))
 			err = err2
 			return
 		}
-		logutil.Logger(ctx).Info("flush kv",
+		logger.Info("flush kv",
 			zap.Duration("time", time.Since(ts)),
 			zap.Uint64("bytes", savedBytes),
 			zap.Any("rate", float64(savedBytes)/1024.0/1024.0/time.Since(ts).Seconds()))
@@ -332,7 +336,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (data, stats storage.E
 	if err != nil {
 		return nil, nil, err
 	}
-	statPath := filepath.Join(w.filenamePrefix+"_stat", strconv.Itoa(w.currentSeq))
+	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(w.currentSeq))
 	statsWriter, err := w.store.Create(ctx, statPath, nil)
 	if err != nil {
 		return nil, nil, err

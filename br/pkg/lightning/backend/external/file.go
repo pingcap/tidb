@@ -17,9 +17,6 @@ package external
 import (
 	"context"
 	"encoding/binary"
-	"path/filepath"
-	"strconv"
-	"strings"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
@@ -117,77 +114,4 @@ func (s *KeyValueStore) Close() {
 	}
 }
 
-var statSuffix = filepath.Join("_stat", "0")
-
-// GetAllFileNames returns a FilePathHandle that contains all data file paths
-// and a slice of stat file paths.
-func GetAllFileNames(
-	ctx context.Context,
-	store storage.ExternalStorage,
-	subDir string,
-) (FilePathHandle, []string, error) {
-	var dataFilePaths FilePathHandle
-	var stats []string
-
-	err := store.WalkDir(ctx,
-		&storage.WalkOption{SubDir: subDir},
-		func(path string, size int64) error {
-			if strings.HasSuffix(path, statSuffix) {
-				stats = append(stats, path)
-			} else {
-				dir, file := filepath.Split(path)
-				writerID, err := strconv.Atoi(filepath.Base(dir))
-				if err != nil {
-					return err
-				}
-				seq, err := strconv.Atoi(file)
-				if err != nil {
-					return err
-				}
-				dataFilePaths.set(writerID, seq, path)
-			}
-			return nil
-		})
-	if err != nil {
-		return dataFilePaths, nil, err
-	}
-	return dataFilePaths, stats, nil
-}
-
-// FilePathHandle handles data file paths under a prefix path.
-type FilePathHandle struct {
-	paths [][]string
-}
-
-func (p *FilePathHandle) set(writerID, seq int, path string) {
-	if writerID >= len(p.paths) {
-		p.paths = append(p.paths, make([][]string, writerID-len(p.paths)+1)...)
-	}
-	if seq >= len(p.paths[writerID]) {
-		p.paths[writerID] = append(p.paths[writerID], make([]string, seq-len(p.paths[writerID])+1)...)
-	}
-	p.paths[writerID][seq] = path
-}
-
-// Get returns the path of the data file with the given writerID and seq.
-func (p *FilePathHandle) Get(writerID, seq int) string {
-	return p.paths[writerID][seq]
-}
-
-// ForEach applies the given function to each data file path.
-func (p *FilePathHandle) ForEach(f func(writerID, seq int, path string)) {
-	for writerID, paths := range p.paths {
-		for seq, path := range paths {
-			f(writerID, seq, path)
-		}
-	}
-}
-
-// FlatSlice returns a flat slice of all data file paths.
-func (p *FilePathHandle) FlatSlice() []string {
-	var paths []string
-	p.ForEach(func(writerID, seq int, path string) {
-		paths = append(paths, path)
-	})
-	return paths
-}
+const statSuffix = "_stat"
