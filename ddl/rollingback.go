@@ -424,7 +424,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackAddIndex(w, d, t, job, true)
 	case model.ActionAddTablePartition:
 		ver, err = rollingbackAddTablePartition(d, t, job)
-	case model.ActionReorganizePartition:
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
 		ver, err = rollingbackReorganizePartition(d, t, job)
 	case model.ActionDropColumn:
 		ver, err = rollingbackDropColumn(d, t, job)

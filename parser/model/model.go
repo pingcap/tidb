@@ -1132,6 +1132,10 @@ type PartitionType int
 
 // Partition types.
 const (
+	// Actually non-partitioned, but during DDL keeping the table as
+	// a single partition
+	PartitionTypeNone PartitionType = 0
+
 	PartitionTypeRange      PartitionType = 1
 	PartitionTypeHash       PartitionType = 2
 	PartitionTypeList       PartitionType = 3
@@ -1151,6 +1155,8 @@ func (p PartitionType) String() string {
 		return "KEY"
 	case PartitionTypeSystemTime:
 		return "SYSTEM_TIME"
+	case PartitionTypeNone:
+		return "NONE"
 	default:
 		return ""
 	}
@@ -1187,6 +1193,16 @@ type PartitionInfo struct {
 	Num    uint64           `json:"num"`
 	// Only used during ReorganizePartition so far
 	DDLState SchemaState `json:"ddl_state"`
+	// Set during ALTER TABLE ... if the table id needs to change
+	// like if there is a global index or going between non-partitioned
+	// and partitioned table, to make the data dropping / range delete
+	// optimized.
+	NewTableID int64 `json:"new_table_id"`
+	// Set during ALTER TABLE ... PARTITION BY ...
+	// First as the new partition scheme, then in StateDeleteReorg as the old
+	DDLType    PartitionType `json:"ddl_type"`
+	DDLExpr    string        `json:"ddl_expr"`
+	DDLColumns []CIStr       `json:"ddl_columns"`
 }
 
 // Clone clones itself.

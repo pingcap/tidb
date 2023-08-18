@@ -23,7 +23,6 @@ import (
 	"testing"
 	gotime "time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	mysql "github.com/pingcap/tidb/errno"
@@ -400,13 +399,9 @@ func TestLocatePartitionSingleColumn(t *testing.T) {
 }
 
 func TestLocatePartition(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON;")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	tk.MustExec("drop table if exists t;")
 
 	tk.MustExec(`CREATE TABLE t (
@@ -416,7 +411,9 @@ func TestLocatePartition(t *testing.T) {
     	PARTITION BY LIST COLUMNS(type)
     	(PARTITION push_event VALUES IN ("PushEvent"),
     	PARTITION watch_event VALUES IN ("WatchEvent")
-    );`)
+    )`)
+	tk.MustExec(`insert into t values (1,"PushEvent"),(2,"WatchEvent"),(3, "WatchEvent")`)
+	tk.MustExec(`analyze table t`)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -426,7 +423,10 @@ func TestLocatePartition(t *testing.T) {
 	wg := util.WaitGroupWrapper{}
 	exec := func(tk0 *testkit.TestKit) {
 		tk0.MustExec("use test")
-		tk0.MustQuery("desc select id, type from t where  type = 'WatchEvent';").Check(testkit.Rows("TableReader_7 10.00 root partition:watch_event data:Selection_6]\n[└─Selection_6 10.00 cop[tikv]  eq(test.t.type, \"WatchEvent\")]\n[  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		tk0.MustQuery("explain format = 'brief' select id, type from t where  type = 'WatchEvent';").Check(testkit.Rows(""+
+			`TableReader 2.00 root partition:watch_event data:Selection`,
+			`└─Selection 2.00 cop[tikv]  eq(test.t.type, "WatchEvent")`,
+			`  └─TableFullScan 3.00 cop[tikv] table:t keep order:false`))
 	}
 
 	run := func(num int) {
@@ -915,7 +915,7 @@ func executePartTableCase(t *testing.T, tk *testkit.TestKit, testCases []partTab
 	for i, testCase := range testCases {
 		// create table ... partition by key ...
 		ddlSQL := createSQL + testCase.partitionbySQL
-		fmt.Println(i, ":", ddlSQL)
+		logutil.BgLogger().Info("Partition DDL test", zap.Int("i", i), zap.String("ddlSQL", ddlSQL))
 		executeSQLWrapper(t, tk, ddlSQL)
 		// insert data
 		for _, insertsql := range insertSQLs {
@@ -923,7 +923,7 @@ func executePartTableCase(t *testing.T, tk *testkit.TestKit, testCases []partTab
 		}
 		// execute testcases
 		for j, selInfo := range testCase.selectInfo {
-			fmt.Println(j, ":", selInfo.selectSQL)
+			logutil.BgLogger().Info("Select", zap.Int("j", j), zap.String("selectSQL", selInfo.selectSQL))
 			tk.MustQuery(selInfo.selectSQL).Check(testkit.Rows(strconv.Itoa(selInfo.rowCount)))
 			if selInfo.executeExplain {
 				result := tk.MustQuery("EXPLAIN " + selInfo.selectSQL)
@@ -1355,11 +1355,11 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 	}
 
 	for i, testCase := range testCases {
-		fmt.Println(i, ":", testCase.createSQL)
+		logutil.BgLogger().Info("Partition DDL test", zap.Int("i", i), zap.String("createSQL", testCase.createSQL))
 		executeSQLWrapper(t, tk, testCase.createSQL)
 		executeSQLWrapper(t, tk, testCase.insertSQL)
 		for j, selInfo := range testCase.selectInfo {
-			fmt.Println(j, ":", selInfo.selectSQL)
+			logutil.BgLogger().Info("Select", zap.Int("j", j), zap.String("selectSQL", selInfo.selectSQL))
 			tk.MustQuery(selInfo.selectSQL).Check(testkit.Rows(strconv.Itoa(selInfo.rowCount)))
 			if selInfo.executeExplain {
 				result := tk.MustQuery("EXPLAIN " + selInfo.selectSQL)
@@ -2490,10 +2490,8 @@ func TestKeyPartitionTableDDL(t *testing.T) {
 		"PARTITION BY KEY(col3) PARTITIONS 4")
 	tk.MustExec("INSERT INTO tkey16 values(1,1,1,1),(1,1,2,2),(3,3,3,3),(3,3,4,3),(4,4,4,4),(5,5,5,5),(6,6,6,6),(7,7,7,7),(8,8,8,8),(9,9,9,9),(10,10,10,5),(11,11,11,6),(12,12,12,12),(13,13,13,13),(14,14,14,14)")
 
-	err := tk.ExecToErr("ALTER TABLE tkey15 PARTITION BY KEY(col3) PARTITIONS 4")
-	require.Regexp(t, "alter table partition is unsupported", err)
 	tk.MustExec("ALTER TABLE tkey14 ADD PARTITION PARTITIONS 1")
-	err = tk.ExecToErr("ALTER TABLE tkey14 DROP PARTITION p4")
+	err := tk.ExecToErr("ALTER TABLE tkey14 DROP PARTITION p4")
 	require.Regexp(t, "DROP PARTITION can only be used on RANGE/LIST partitions", err)
 	tk.MustExec("ALTER TABLE tkey14 TRUNCATE PARTITION p3")
 	tk.MustQuery("SELECT COUNT(*) FROM tkey14 partition(p3)").Check(testkit.Rows("0"))
@@ -2516,8 +2514,8 @@ func TestKeyPartitionTableDDL(t *testing.T) {
 	require.Regexp(t, "Unsupported reorganize partition", err)
 	err = tk.ExecToErr("ALTER TABLE tkey16 REORGANIZE PARTITION p0 INTO (PARTITION p4)")
 	require.Regexp(t, "Unsupported reorganize partition", err)
-	err = tk.ExecToErr("ALTER TABLE tkey16 REMOVE PARTITIONING")
-	require.Regexp(t, "Unsupported remove partitioning", err)
+	tk.MustExec("ALTER TABLE tkey15 PARTITION BY KEY(col3) PARTITIONS 4")
+	tk.MustExec("ALTER TABLE tkey16 REMOVE PARTITIONING")
 
 	tk.MustExec("CREATE TABLE tkey17 (" +
 		"id INT NOT NULL PRIMARY KEY," +
@@ -2574,12 +2572,358 @@ func (c *testCallback) OnJobRunBefore(job *model.Job) {
 	}
 }
 
+// TODO: do extensive test for LIST [COLUMNS]
+// TODO: Either skip this, move it to a separate directory for big tests
+// or see if there are ways to speed this up :)
+// Leaving the test here, for reference and completeness testing
+func TestPartitionByIntListExtensivePart(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "PartitionByIntListExtensive"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use " + schemaName)
+
+	tBase := `(lp tinyint unsigned, a int unsigned, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, key (b), key (c,b), key (d,c), key(e), primary key (a, lp))`
+	t2Str := `create table t2 ` + tBase
+	tStr := `create table t ` + tBase
+
+	rows := 1000
+	pkInserts := 20
+	pkUpdates := 20
+	pkDeletes := 10 // Enough to delete half of what is inserted?
+	tStart := []string{
+		// Non partitioned
+		tStr,
+		// RANGE COLUMNS
+		tStr + ` partition by list (lp) (partition p0 values in (0,6),partition p1 values in (1), partition p2 values in (2), partition p3 values in (3), partition p4 values in (4,5))`,
+		// KEY
+		tStr + ` partition by key(a) partitions 5`,
+		// HASH
+		tStr + ` partition by hash(a) partitions 5`,
+		// HASH with function
+		tStr + ` partition by hash(a DIV 3) partitions 5`,
+	}
+	quarterUintRange := 1 << 30
+	quarterUintRangeStr := fmt.Sprintf("%d", quarterUintRange)
+	halfUintRangeStr := fmt.Sprintf("%d", 2*quarterUintRange)
+	threeQuarterUintRangeStr := fmt.Sprintf("%d", 3*quarterUintRange)
+	tAlter := []string{
+		// LIST
+		`alter table t partition by list (lp) (partition p0 values in (2), partition p1 values in (1,3,5), partition p2 values in (0,4,6))`,
+		`alter table t partition by list (lp) (partition p3 values in (3), partition p4 values in (4), partition p2 values in (2), partition p6 values in (6), partition p5 values in (5), partition p1 values in (1), partition p0 values in (0))`,
+		// LIST COLUMNS
+		`alter table t partition by list columns (lp) (partition p0 values in (2), partition p1 values in (1,3,5), partition p2 values in (0,4,6))`,
+		`alter table t partition by list columns (lp) (partition p3 values in (3), partition p4 values in (4), partition p2 values in (2), partition p6 values in (6), partition p5 values in (5), partition p1 values in (1), partition p0 values in (0))`,
+		// RANGE COLUMNS
+		`alter table t partition by range (a) (partition pFirst values less than (` + halfUintRangeStr + `), partition pLast values less than (MAXVALUE))`,
+		// RANGE COLUMNS
+		`alter table t partition by range (a) (partition pFirst values less than (` + quarterUintRangeStr + `),` +
+			`partition pLowMid values less than (` + halfUintRangeStr + `),` +
+			`partition pHighMid values less than (` + threeQuarterUintRangeStr + `),` +
+			`partition pLast values less than (maxvalue))`,
+		// KEY
+		`alter table t partition by key(a) partitions 7`,
+		`alter table t partition by key(a) partitions 3`,
+		// Hash
+		`alter table t partition by hash(a) partitions 7`,
+		`alter table t partition by hash(a) partitions 3`,
+		// Hash
+		`alter table t partition by hash(a DIV 13) partitions 7`,
+		`alter table t partition by hash(a DIV 13) partitions 3`,
+	}
+
+	seed := gotime.Now().UnixNano()
+	logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
+	reorgRand := rand.New(rand.NewSource(seed))
+	for _, createSQL := range tStart {
+		for _, alterSQL := range tAlter {
+			tk.MustExec(createSQL)
+			tk.MustExec(t2Str)
+			getNewPK := getNewIntPK()
+			getValues := getInt7ValuesFunc()
+			checkDMLInAllStates(t, tk, tk2, schemaName, alterSQL, rows, pkInserts, pkUpdates, pkDeletes, reorgRand, getNewPK, getValues)
+			tk.MustExec(`drop table t`)
+			tk.MustExec(`drop table t2`)
+		}
+	}
+	for _, createSQL := range tStart[1:] {
+		tk.MustExec(createSQL)
+		tk.MustExec(t2Str)
+		getNewPK := getNewIntPK()
+		getValues := getInt7ValuesFunc()
+		checkDMLInAllStates(t, tk, tk2, schemaName, "alter table t remove partitioning", rows, pkInserts, pkUpdates, pkDeletes, reorgRand, getNewPK, getValues)
+		tk.MustExec(`drop table t`)
+		tk.MustExec(`drop table t2`)
+	}
+}
+
+func getInt7ValuesFunc() func(string, bool, *rand.Rand) string {
+	cnt := 0
+	return func(pk string, asAssignment bool, reorgRand *rand.Rand) string {
+		s := `(%d, %s, '%s', %d, '%s', '%s', %f, '%s')`
+		if asAssignment {
+			s = `lp = %d, a = %s, b = '%s', c = %d,  d = '%s', e = '%s', f = %f, g = '%s'`
+		}
+		cnt++
+		lp, err := strconv.Atoi(pk)
+		if err != nil {
+			lp = 0
+		}
+		return fmt.Sprintf(s,
+			lp%7,
+			pk,
+			randStr(reorgRand.Intn(19), reorgRand),
+			cnt, //reorgRand.Int31(),
+			gotime.Unix(413487608+int64(reorgRand.Intn(1705689644)), 0).Format("2006-01-02T15:04:05"),
+			gotime.Unix(413487608+int64(reorgRand.Intn(1705689644)), 0).Format("2006-01-02T15:04:05"),
+			reorgRand.Float64(),
+			randStr(512+reorgRand.Intn(1024), reorgRand))
+	}
+}
+
+// TODO: Either skip this, move it to a separate directory for big tests
+// or see if there are ways to speed this up :)
+// Leaving the test here, for reference and completeness testing
+func TestPartitionByIntExtensivePart(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "PartitionByIntExtensive"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use " + schemaName)
+
+	tBase := `(a int unsigned, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, primary key (a), key (b), key (c,b), key (d,c), key(e))`
+	t2Str := `create table t2 ` + tBase
+	tStr := `create table t ` + tBase
+
+	rows := 1000
+	pkInserts := 20
+	pkUpdates := 20
+	pkDeletes := 10 // Enough to delete half of what is inserted?
+	thirdUintRange := 1 << 32 / 2
+	thirdUintRangeStr := fmt.Sprintf("%d", thirdUintRange)
+	twoThirdUintRangeStr := fmt.Sprintf("%d", 2*thirdUintRange)
+	tStart := []string{
+		// Non partitioned
+		tStr,
+		// RANGE COLUMNS
+		tStr + ` partition by range (a) (partition pFirst values less than (` + thirdUintRangeStr + `),` +
+			`partition pMid values less than (` + twoThirdUintRangeStr + `), partition pLast values less than (maxvalue))`,
+		// KEY
+		tStr + ` partition by key(a) partitions 5`,
+		// HASH
+		tStr + ` partition by hash(a) partitions 5`,
+		// HASH with function
+		tStr + ` partition by hash(a DIV 3) partitions 5`,
+	}
+	quarterUintRange := 1 << 30
+	quarterUintRangeStr := fmt.Sprintf("%d", quarterUintRange)
+	halfUintRangeStr := fmt.Sprintf("%d", 2*quarterUintRange)
+	threeQuarterUintRangeStr := fmt.Sprintf("%d", 3*quarterUintRange)
+	tAlter := []string{
+		// RANGE COLUMNS
+		`alter table t partition by range (a) (partition pFirst values less than (` + halfUintRangeStr + `), partition pLast values less than (MAXVALUE))`,
+		// RANGE COLUMNS
+		`alter table t partition by range (a) (partition pFirst values less than (` + quarterUintRangeStr + `),` +
+			`partition pLowMid values less than (` + halfUintRangeStr + `),` +
+			`partition pHighMid values less than (` + threeQuarterUintRangeStr + `),` +
+			`partition pLast values less than (maxvalue))`,
+		// KEY
+		`alter table t partition by key(a) partitions 7`,
+		`alter table t partition by key(a) partitions 3`,
+		// Hash
+		`alter table t partition by hash(a) partitions 7`,
+		`alter table t partition by hash(a) partitions 3`,
+		// Hash
+		`alter table t partition by hash(a DIV 13) partitions 7`,
+		`alter table t partition by hash(a DIV 13) partitions 3`,
+	}
+
+	seed := gotime.Now().UnixNano()
+	logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
+	reorgRand := rand.New(rand.NewSource(seed))
+	for _, createSQL := range tStart {
+		for _, alterSQL := range tAlter {
+			tk.MustExec(createSQL)
+			tk.MustExec(t2Str)
+			getNewPK := getNewIntPK()
+			getValues := getIntValuesFunc()
+			checkDMLInAllStates(t, tk, tk2, schemaName, alterSQL, rows, pkInserts, pkUpdates, pkDeletes, reorgRand, getNewPK, getValues)
+			tk.MustExec(`drop table t`)
+			tk.MustExec(`drop table t2`)
+		}
+	}
+	for _, createSQL := range tStart[1:] {
+		tk.MustExec(createSQL)
+		tk.MustExec(t2Str)
+		getNewPK := getNewIntPK()
+		getValues := getIntValuesFunc()
+		checkDMLInAllStates(t, tk, tk2, schemaName, "alter table t remove partitioning", rows, pkInserts, pkUpdates, pkDeletes, reorgRand, getNewPK, getValues)
+		tk.MustExec(`drop table t`)
+		tk.MustExec(`drop table t2`)
+	}
+}
+
+func getNewIntPK() func(map[string]struct{}, string, *rand.Rand) string {
+	return func(m map[string]struct{}, suf string, reorgRand *rand.Rand) string {
+		uintPK := reorgRand.Uint32()
+		newPK := strconv.FormatUint(uint64(uintPK), 10)
+		for _, ok := m[newPK]; ok; {
+			uintPK = reorgRand.Uint32()
+			newPK = strconv.FormatUint(uint64(uintPK), 10)
+			_, ok = m[newPK]
+		}
+		m[newPK] = struct{}{}
+		return newPK
+	}
+}
+
+func getIntValuesFunc() func(string, bool, *rand.Rand) string {
+	cnt := 0
+	return func(pk string, asAssignment bool, reorgRand *rand.Rand) string {
+		s := `(%s, '%s', %d, '%s', '%s', %f, '%s')`
+		if asAssignment {
+			s = `a = %s, b = '%s', c = %d,  d = '%s', e = '%s', f = %f, g = '%s'`
+		}
+		cnt++
+		return fmt.Sprintf(s,
+			pk,
+			randStr(reorgRand.Intn(19), reorgRand),
+			cnt, //reorgRand.Int31(),
+			gotime.Unix(413487608+int64(reorgRand.Intn(1705689644)), 0).Format("2006-01-02T15:04:05"),
+			gotime.Unix(413487608+int64(reorgRand.Intn(1705689644)), 0).Format("2006-01-02T15:04:05"),
+			reorgRand.Float64(),
+			randStr(512+reorgRand.Intn(1024), reorgRand))
+	}
+}
+
+func TestRangePartitionByRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "RangePartitionByRange"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`create table t (a int) partition by range(a) (partition p0 values less than (0), partition p1M values less than (1000000))`)
+	tk.MustExec(`insert into t values (-1),(0),(1)`)
+	tk.MustExec(`alter table t partition by range(a) (partition p0 values less than (0), partition p1M values less than (1000000))`)
+	tk.MustExec(`alter table t remove partitioning`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("-1", "0", "1"))
+}
+
+// TODO: Either skip this, move it to a separate directory for big tests
+// or see if there are ways to speed this up :)
+// Leaving the test here, for reference and completeness testing
+func TestPartitionByExtensivePart(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "PartitionByExtensive"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use " + schemaName)
+
+	tBase := `(a varchar(255) collate utf8mb4_unicode_ci, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, primary key (a), key (b), key (c,b), key (d,c), key(e))`
+	t2Str := `create table t2 ` + tBase
+	tStr := `create table t ` + tBase
+
+	rows := 1000
+	pkInserts := 20
+	pkUpdates := 20
+	pkDeletes := 10 // Enough to delete half of what is inserted?
+	tStart := []string{
+		// Non partitioned
+		tStr,
+		// RANGE COLUMNS
+		tStr + ` partition by range columns (a) (partition pNull values less than (""), partition pM values less than ("M"), partition pLast values less than (maxvalue))`,
+		// KEY
+		tStr + ` partition by key(a) partitions 5`,
+	}
+	showCreateStr := "t CREATE TABLE `t` (\n" +
+		"  `a` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,\n" +
+		"  `b` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  `d` datetime DEFAULT NULL,\n" +
+		"  `e` timestamp NULL DEFAULT NULL,\n" +
+		"  `f` double DEFAULT NULL,\n" +
+		"  `g` text DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`),\n" +
+		"  KEY `d` (`d`,`c`),\n" +
+		"  KEY `e` (`e`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"
+	tAlter := []struct{ alter, result string }{
+		{
+			// RANGE COLUMNS
+			alter: `alter table t partition by range columns (a) (partition pH values less than ("H"), partition pLast values less than (MAXVALUE))`,
+			result: showCreateStr +
+				"PARTITION BY RANGE COLUMNS(`a`)\n" +
+				"(PARTITION `pH` VALUES LESS THAN ('H'),\n" +
+				" PARTITION `pLast` VALUES LESS THAN (MAXVALUE))",
+		},
+		{
+			// RANGE COLUMNS
+			alter: `alter table t partition by range columns (a) (partition pNull values less than (""), partition pG values less than ("G"), partition pR values less than ("R"), partition pLast values less than (maxvalue))`,
+			result: showCreateStr +
+				"PARTITION BY RANGE COLUMNS(`a`)\n" +
+				"(PARTITION `pNull` VALUES LESS THAN (''),\n" +
+				" PARTITION `pG` VALUES LESS THAN ('G'),\n" +
+				" PARTITION `pR` VALUES LESS THAN ('R'),\n" +
+				" PARTITION `pLast` VALUES LESS THAN (MAXVALUE))",
+		},
+		// KEY
+		{
+			alter: `alter table t partition by key(a) partitions 7`,
+			result: showCreateStr +
+				"PARTITION BY KEY (`a`) PARTITIONS 7",
+		},
+		{
+			alter: `alter table t partition by key(a) partitions 3`,
+			result: showCreateStr +
+				"PARTITION BY KEY (`a`) PARTITIONS 3",
+		},
+	}
+
+	seed := gotime.Now().UnixNano()
+	logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
+	reorgRand := rand.New(rand.NewSource(seed))
+	for _, createSQL := range tStart {
+		for _, alterSQL := range tAlter {
+			tk.MustExec(createSQL)
+			tk.MustExec(t2Str)
+			getNewPK := getNewStringPK()
+			getValues := getValuesFunc()
+			checkDMLInAllStates(t, tk, tk2, schemaName, alterSQL.alter, rows, pkInserts, pkUpdates, pkDeletes, reorgRand, getNewPK, getValues)
+			res := tk.MustQuery(`show create table t`)
+			res.AddComment("create SQL: " + createSQL + "\nalterSQL: " + alterSQL.alter)
+			res.Check(testkit.Rows(alterSQL.result))
+			tk.MustExec(`drop table t`)
+			tk.MustExec(`drop table t2`)
+		}
+	}
+
+	for _, createSQL := range tStart[1:] {
+		tk.MustExec(createSQL)
+		tk.MustExec(t2Str)
+		getNewPK := getNewStringPK()
+		getValues := getValuesFunc()
+		checkDMLInAllStates(t, tk, tk2, schemaName, "alter table t remove partitioning", rows, pkInserts, pkUpdates, pkDeletes, reorgRand, getNewPK, getValues)
+		tk.MustExec(`drop table t`)
+		tk.MustExec(`drop table t2`)
+	}
+}
+
 func TestReorgPartExtensivePart(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "ReorgPartExtensive"
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use " + schemaName)
 	// TODO: Handle different column types?
 	// TODO: Handle index for different column types / combinations as well?
 
@@ -2632,22 +2976,21 @@ func TestReorgPartExtensivePart(t *testing.T) {
 		"  KEY `e` (`e`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
-	dom := domain.GetDomain(tk.Session())
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	hook := newTestCallBack(t, dom)
-	dom.DDL().SetHook(hook)
-
 	rows := 10000
 	pkInserts := 200
 	pkUpdates := 200
 	pkDeletes := 100 // Enough to delete half of what is inserted?
-	pkMap := make(map[string]struct{}, rows)
-	pkArray := make([]string, 0, len(pkMap))
+	alterStr := `alter table t reorganize partition pNull, pM, pLast into (partition pI values less than ("I"), partition pQ values less than ("q"), partition pLast values less than (MAXVALUE))`
 	seed := rand.Int63()
 	logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
 	reorgRand := rand.New(rand.NewSource(seed))
-	getNewPK := func(m map[string]struct{}, suf string) string {
+	getNewPK := getNewStringPK()
+	getValues := getValuesFunc()
+	checkDMLInAllStates(t, tk, tk2, schemaName, alterStr, rows, pkInserts, pkUpdates, pkDeletes, reorgRand, getNewPK, getValues)
+}
+
+func getNewStringPK() func(map[string]struct{}, string, *rand.Rand) string {
+	return func(m map[string]struct{}, suf string, reorgRand *rand.Rand) string {
 		newPK := randStr(2+reorgRand.Intn(5), reorgRand) + suf
 		lowerPK := strings.ToLower(newPK)
 		for _, ok := m[lowerPK]; ok; {
@@ -2658,8 +3001,11 @@ func TestReorgPartExtensivePart(t *testing.T) {
 		m[lowerPK] = struct{}{}
 		return newPK
 	}
+}
+
+func getValuesFunc() func(string, bool, *rand.Rand) string {
 	cnt := 0
-	getValues := func(pk string, asAssignment bool) string {
+	return func(pk string, asAssignment bool, reorgRand *rand.Rand) string {
 		s := `('%s', '%s', %d, '%s', '%s', %f, '%s')`
 		if asAssignment {
 			s = `a = '%s', b = '%s', c = %d,  d = '%s', e = '%s', f = %f, g = '%s'`
@@ -2674,11 +3020,26 @@ func TestReorgPartExtensivePart(t *testing.T) {
 			reorgRand.Float64(),
 			randStr(512+reorgRand.Intn(1024), reorgRand))
 	}
+}
+
+func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alterStr string,
+	rows, pkInserts, pkUpdates, pkDeletes int,
+	reorgRand *rand.Rand,
+	getNewPK func(map[string]struct{}, string, *rand.Rand) string,
+	getValues func(string, bool, *rand.Rand) string) {
+	dom := domain.GetDomain(tk.Session())
+	originHook := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originHook)
+	hook := newTestCallBack(t, dom)
+	dom.DDL().SetHook(hook)
+
+	pkMap := make(map[string]struct{}, rows)
+	pkArray := make([]string, 0, len(pkMap))
 	// Generate a start set:
 	for i := 0; i < rows; i++ {
-		pk := getNewPK(pkMap, "-o")
+		pk := getNewPK(pkMap, "-o", reorgRand)
 		pkArray = append(pkArray, pk)
-		values := getValues(pk, false)
+		values := getValues(pk, false, reorgRand)
 		tk.MustExec(`insert into t values ` + values)
 		tk.MustExec(`insert into t2 values ` + values)
 	}
@@ -2705,8 +3066,6 @@ func TestReorgPartExtensivePart(t *testing.T) {
 	//  update
 	//  delete
 	// Note: update the PK so it moves between different before and after partitions
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use " + schemaName)
 	tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
 	tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
 	currentState := model.StateNone
@@ -2739,11 +3098,11 @@ func TestReorgPartExtensivePart(t *testing.T) {
 			insPK := make([]string, 0, pkInserts)
 			values := make([]string, 0, pkInserts)
 			for i := 0; i < pkInserts; i += 2 {
-				pk := getNewPK(pkMap, "-i0")
+				pk := getNewPK(pkMap, "-i0", reorgRand)
 				logutil.BgLogger().Debug("insert1", zap.String("pk", pk))
 				pkArray = append(pkArray, pk)
 				insPK = append(insPK, pk)
-				values = append(values, getValues(pk, false))
+				values = append(values, getValues(pk, false, reorgRand))
 			}
 			if len(pkMap) != len(pkArray) {
 				panic("Different length!!!")
@@ -2768,11 +3127,11 @@ func TestReorgPartExtensivePart(t *testing.T) {
 
 			values = values[:0]
 			for i := 1; i < pkInserts; i += 2 {
-				pk := getNewPK(pkMap, "-i1")
+				pk := getNewPK(pkMap, "-i1", reorgRand)
 				logutil.BgLogger().Debug("insert2", zap.String("pk", pk))
 				pkArray = append(pkArray, pk)
 				insPK = append(insPK, pk)
-				values = append(values, getValues(pk, false))
+				values = append(values, getValues(pk, false, reorgRand))
 			}
 			hookErr = tk2.ExecToErr(`insert into t values ` + strings.Join(values, ","))
 			if hookErr != nil {
@@ -2815,11 +3174,11 @@ func TestReorgPartExtensivePart(t *testing.T) {
 				oldPK := insPK[insIdx]
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
-				newPK := getNewPK(pkMap, "-u0")
+				newPK := getNewPK(pkMap, "-u0", reorgRand)
 				insPK[insIdx] = newPK
 				idx := len(pkArray) - len(insPK) + insIdx
 				pkArray[idx] = newPK
-				value := getValues(newPK, true)
+				value := getValues(newPK, true, reorgRand)
 
 				logutil.BgLogger().Debug("update1", zap.String("old", oldPK), zap.String("value", value))
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
@@ -2834,7 +3193,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 				// Also do some non-pk column updates!
 				insIdx = reorgRand.Intn(len(insPK))
 				oldPK = insPK[insIdx]
-				value = getValues(oldPK, true)
+				value = getValues(oldPK, true, reorgRand)
 
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -2863,11 +3222,11 @@ func TestReorgPartExtensivePart(t *testing.T) {
 				oldPK := insPK[insIdx]
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
-				newPK := getNewPK(pkMap, "-u1")
+				newPK := getNewPK(pkMap, "-u1", reorgRand)
 				insPK[insIdx] = newPK
 				idx := len(pkArray) - len(insPK) + insIdx
 				pkArray[idx] = newPK
-				value := getValues(newPK, true)
+				value := getValues(newPK, true, reorgRand)
 				logutil.BgLogger().Debug("update2", zap.String("old", oldPK), zap.String("value", value))
 
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
@@ -2883,7 +3242,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 				// Note: if PK changes it does RemoveRecord + AddRecord
 				insIdx = reorgRand.Intn(len(insPK))
 				oldPK = insPK[insIdx]
-				value = getValues(oldPK, true)
+				value = getValues(oldPK, true, reorgRand)
 
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -2913,9 +3272,9 @@ func TestReorgPartExtensivePart(t *testing.T) {
 				oldPK := pkArray[idx]
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
-				newPK := getNewPK(pkMap, "-u2")
+				newPK := getNewPK(pkMap, "-u2", reorgRand)
 				pkArray[idx] = newPK
-				value := getValues(newPK, true)
+				value := getValues(newPK, true, reorgRand)
 				logutil.BgLogger().Debug("update3", zap.String("old", oldPK), zap.String("value", value))
 
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
@@ -2930,7 +3289,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 				// Also do some non-pk column updates!
 				idx = reorgRand.Intn(len(pkArray) - len(insPK))
 				oldPK = pkArray[idx]
-				value = getValues(oldPK, true)
+				value = getValues(oldPK, true, reorgRand)
 
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -2959,9 +3318,9 @@ func TestReorgPartExtensivePart(t *testing.T) {
 				oldPK := pkArray[idx]
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
-				newPK := getNewPK(pkMap, "-u3")
+				newPK := getNewPK(pkMap, "-u3", reorgRand)
 				pkArray[idx] = newPK
-				value := getValues(newPK, true)
+				value := getValues(newPK, true, reorgRand)
 				logutil.BgLogger().Debug("update4", zap.String("old", oldPK), zap.String("value", value))
 
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
@@ -2976,7 +3335,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 				// Also do some non-pk column updates!
 				idx = reorgRand.Intn(len(pkArray) - len(insPK))
 				oldPK = pkArray[idx]
-				value = getValues(oldPK, true)
+				value = getValues(oldPK, true, reorgRand)
 
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -3156,7 +3515,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 				zap.Int("rows", len(pkMap)), zap.Stringer("SchemaState", job.SchemaState))
 		}
 	}
-	tk.MustExec(`alter table t reorganize partition pNull, pM, pLast into (partition pI values less than ("I"), partition pQ values less than ("q"), partition pLast values less than (MAXVALUE))`)
+	tk.MustExec(alterStr)
 	require.NoError(t, hookErr)
 	tk.MustExec(`admin check table t`)
 	tk.MustExec(`admin check table t2`)

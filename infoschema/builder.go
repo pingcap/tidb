@@ -226,7 +226,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyRecoverTable(m, diff)
 	case model.ActionCreateTables:
 		return b.applyCreateTables(m, diff)
-	case model.ActionReorganizePartition:
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
 		return b.applyReorganizePartition(m, diff)
 	case model.ActionExchangeTablePartition:
 		return b.applyExchangeTablePartition(m, diff)
@@ -308,6 +309,7 @@ func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff)
 		if opt.TableID != 0 {
 			b.markTableBundleShouldUpdate(opt.TableID)
 		}
+		// TODO: Should we also check markPartitionBundleShouldUpdate?!?
 	}
 	return tblIDs, nil
 }
@@ -467,7 +469,8 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
 	case model.ActionTruncateTable, model.ActionCreateView,
-		model.ActionExchangeTablePartition:
+		model.ActionExchangeTablePartition, model.ActionAlterTablePartitioning,
+		model.ActionRemovePartitioning:
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	default:
@@ -768,7 +771,8 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	case model.ActionDropTablePartition:
 	case model.ActionTruncateTablePartition:
 	// ReorganizePartition handle the bundles in applyReorganizePartition
-	case model.ActionReorganizePartition:
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
 	default:
 		pi := tblInfo.GetPartitionInfo()
 		if pi != nil {
