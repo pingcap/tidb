@@ -21,6 +21,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,7 +47,6 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const fetchTopoMaxBackoff = 20000
@@ -1219,8 +1219,8 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 			})
 		}
 		// need to make sure the key ranges is sorted
-		slices.SortFunc(ranges, func(i, j kv.KeyRange) bool {
-			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		slices.SortFunc(ranges, func(i, j kv.KeyRange) int {
+			return bytes.Compare(i.StartKey, j.StartKey)
 		})
 		ret, err := buildBatchCopTasksForNonPartitionedTable(ctx, bo, b.store, NewKeyRanges(ranges), b.req.StoreType, false, 0, false, 0, tiflashcompute.DispatchPolicyInvalid, b.tiflashReplicaReadPolicy, b.appendWarning)
 		return ret, err
