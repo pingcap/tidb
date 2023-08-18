@@ -2712,7 +2712,7 @@ func (e *FastCheckTableExec) Next(context.Context, *chunk.Chunk) error {
 	}()
 
 	workerPool, err := workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
-		poolutil.CheckTable, 3, e.createWorker, workerpool.OptionSkipRegister[checkIndexTask, workerpool.None]{})
+		poolutil.CheckTable, 3, e.createWorker)
 	if err != nil {
 		return errors.Trace(err)
 	}

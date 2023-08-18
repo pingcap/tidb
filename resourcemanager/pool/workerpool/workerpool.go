@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/syncutil"
@@ -44,7 +43,6 @@ type WorkerPool[T, R any] struct {
 	createWorker  func() Worker[T, R]
 	lastTuneTs    atomicutil.Time
 	mu            syncutil.RWMutex
-	skipRegister  bool
 }
 
 // Option is the config option for WorkerPool.
@@ -52,19 +50,19 @@ type Option[T, R any] interface {
 	Apply(pool *WorkerPool[T, R])
 }
 
-// OptionSkipRegister is an option to skip register the worker pool to resource manager.
-type OptionSkipRegister[T, R any] struct{}
-
-// Apply implements the Option interface.
-func (OptionSkipRegister[T, R]) Apply(pool *WorkerPool[T, R]) {
-	pool.skipRegister = true
-}
-
+// None is a placeholder for no destination.
 type None struct{}
 
 // NewWorkerPoolWithoutCreateWorker creates a new worker pool without creating worker.
 func NewWorkerPoolWithoutCreateWorker[T, R any](name string, component util.Component,
 	numWorkers int, opts ...Option[T, R]) (*WorkerPool[T, R], error) {
+
+	return p, nil
+}
+
+// NewWorkerPool creates a new worker pool.
+func NewWorkerPool[T, R any](name string, component util.Component, numWorkers int,
+	createWorker func() Worker[T, R], opts ...Option[T, R]) (*WorkerPool[T, R], error) {
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
@@ -87,31 +85,9 @@ func NewWorkerPoolWithoutCreateWorker[T, R any](name string, component util.Comp
 		opt.Apply(p)
 	}
 
-	if !p.skipRegister {
-		err := resourcemanager.InstanceResourceManager.Register(p, name, component)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return p, nil
-}
-
-// NewWorkerPool creates a new worker pool.
-func NewWorkerPool[T, R any](name string, component util.Component, numWorkers int,
-	createWorker func() Worker[T, R], opts ...Option[T, R]) (*WorkerPool[T, R], error) {
-	p, err := NewWorkerPoolWithoutCreateWorker[T](name, component, numWorkers, opts...)
-	if err != nil {
-		return nil, err
-	}
-	p.SetCreateWorker(createWorker)
+	p.createWorker = createWorker
 	p.Start()
 	return p, nil
-}
-
-// SetCreateWorker set createWorker.
-func (p *WorkerPool[T, R]) SetCreateWorker(createWorker func() Worker[T, R]) {
-	p.createWorker = createWorker
 }
 
 // Start starts default count of workers.
@@ -211,9 +187,6 @@ func (p *WorkerPool[T, R]) Name() string {
 func (p *WorkerPool[T, R]) ReleaseAndWait() {
 	close(p.quitChan)
 	p.wg.Wait()
-	if !p.skipRegister {
-		resourcemanager.InstanceResourceManager.Unregister(p.Name())
-	}
 	if p.resChan != nil {
 		close(p.resChan)
 	}

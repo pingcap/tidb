@@ -308,9 +308,8 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	}
 	b.copReqSenderPool = copReqSenderPool
 	readerCnt, writerCnt := b.expectedWorkerSize()
-	skipReg := workerpool.OptionSkipRegister[idxRecResult, workerpool.None]{}
 	writerPool, err := workerpool.NewWorkerPool[idxRecResult]("ingest_writer",
-		poolutil.DDL, writerCnt, b.createWorker, skipReg)
+		poolutil.DDL, writerCnt, b.createWorker)
 	if err != nil {
 		return errors.Trace(err)
 	}
