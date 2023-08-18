@@ -477,7 +477,7 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 		start = end
 	}
 
-	err = local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true, 1000)
+	err = local.SplitAndScatterRegionByRanges(ctx, ranges, true)
 	if len(errPat) != 0 {
 		require.Error(t, err)
 		require.Regexp(t, errPat, err.Error())
@@ -567,7 +567,7 @@ func TestMissingScatter(t *testing.T) {
 		start = end
 	}
 
-	err = local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true, 1000)
+	err = local.SplitAndScatterRegionByRanges(ctx, ranges, true)
 	require.NoError(t, err)
 
 	splitHook.check(t, client)
@@ -826,7 +826,7 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 		start = e
 	}
 
-	err := local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true, 1000)
+	err := local.SplitAndScatterRegionByRanges(ctx, ranges, true)
 	require.NoError(t, err)
 
 	startKey := codec.EncodeBytes([]byte{}, rangeKeys[0])
