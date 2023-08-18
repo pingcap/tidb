@@ -203,6 +203,7 @@ func debugTraceGetStatsTbl(
 }
 
 func stabilizeGetStatsTblInfo(info *getStatsTblInfo) {
+	info.TblInfoID = 100
 	info.InputPhysicalID = 100
 	tbl := info.StatsTblInfo
 	if tbl == nil {
