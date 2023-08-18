@@ -17,6 +17,7 @@ package core
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const (

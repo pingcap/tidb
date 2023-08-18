@@ -19,9 +19,11 @@
 package ddl
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,7 +70,6 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -983,7 +984,9 @@ func getIntervalFromPolicy(policy []time.Duration, i int) (time.Duration, bool) 
 func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	switch job.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn,
-		model.ActionReorganizePartition:
+		model.ActionReorganizePartition,
+		model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	case model.ActionCreateTable, model.ActionCreateSchema:
 		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
@@ -1776,8 +1779,8 @@ func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 		}
 	}
 	// sort job.
-	slices.SortFunc(allJobs, func(i, j *model.Job) bool {
-		return i.ID < j.ID
+	slices.SortFunc(allJobs, func(i, j *model.Job) int {
+		return cmp.Compare(i.ID, j.ID)
 	})
 	return allJobs, nil
 }

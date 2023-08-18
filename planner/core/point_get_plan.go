@@ -97,6 +97,8 @@ type PointGetPlan struct {
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in PhysicalPlan for details.
 	probeParents []PhysicalPlan
+	// stmtHints should restore in executing context.
+	stmtHints *stmtctx.StmtHints
 }
 
 func (p *PointGetPlan) getEstRowCountForDisplay() float64 {
@@ -1819,7 +1821,7 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 		if len(pi.Columns) == 1 {
 			for i, pair := range pairs {
 				if pi.Columns[0].L == pair.colName {
-					pos, err := partitionExpr.LocateKeyPartitionWithSPC(pi, []types.Datum{pair.value})
+					pos, err := partitionExpr.LocateKeyPartition(pi.Num, []types.Datum{pair.value})
 					if err != nil {
 						return nil, 0, 0, false
 					}

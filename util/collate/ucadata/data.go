@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,16 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package filter
+package ucadata
 
-import "reflect"
+const (
+	// LongRune8 means the rune has at most 8 collation elements
+	LongRune8 = 0xFFFD
+)
 
-// reverse replace the contents of a slice with the same elements but in reverse order.
-func reverse(items interface{}) {
-	n := reflect.ValueOf(items).Len()
-	swap := reflect.Swapper(items)
-	for i := n/2 - 1; i >= 0; i-- {
-		opp := n - 1 - i
-		swap(i, opp)
-	}
-}
+//go:generate go run ./generator/ -- unicode_0900_ai_ci_data_generated.go
+//go:generate go run ./generator/ -- unicode_ci_data_generated.go

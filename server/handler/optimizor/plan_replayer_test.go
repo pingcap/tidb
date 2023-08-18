@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
-	"golang.org/x/exp/slices"
 )
 
 var expectedFilesInReplayer = []string{

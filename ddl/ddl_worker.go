@@ -546,7 +546,8 @@ func jobNeedGC(job *model.Job) bool {
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition,
 			model.ActionDropColumn, model.ActionModifyColumn,
 			model.ActionAddIndex, model.ActionAddPrimaryKey,
-			model.ActionReorganizePartition:
+			model.ActionReorganizePartition, model.ActionRemovePartitioning,
+			model.ActionAlterTablePartitioning:
 			return true
 		case model.ActionMultiSchemaChange:
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
@@ -1125,7 +1126,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = w.onFlashbackCluster(d, t, job)
 	case model.ActionMultiSchemaChange:
 		ver, err = onMultiSchemaChange(w, d, t, job)
-	case model.ActionReorganizePartition:
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
 		ver, err = w.onReorganizePartition(d, t, job)
 	case model.ActionAlterTTLInfo:
 		ver, err = onTTLInfoChange(d, t, job)
@@ -1373,27 +1375,40 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 		diff.OldSchemaID = oldSchemaIDs[0]
 		diff.AffectedOpts = affects
 	case model.ActionExchangeTablePartition:
+		// From start of function: diff.SchemaID = job.SchemaID
+		// Old is original non partitioned table
 		diff.OldTableID = job.TableID
 		diff.OldSchemaID = job.SchemaID
+		// Update the partitioned table (it is only done in the last state)
+		var (
+			ptSchemaID     int64
+			ptTableID      int64
+			ptDefID        int64
+			partName       string // Not used
+			withValidation bool   // Not used
+		)
+		// See ddl.ExchangeTablePartition
+		err = job.DecodeArgs(&ptDefID, &ptSchemaID, &ptTableID, &partName, &withValidation)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		// This is needed for not crashing TiFlash!
+		// TODO: Update TiFlash, to handle StateWriteOnly
+		diff.AffectedOpts = []*model.AffectedOption{{
+			TableID: ptTableID,
+		}}
 		if job.SchemaState != model.StatePublic {
+			// No change, just to refresh the non-partitioned table
+			// with its new ExchangePartitionInfo.
 			diff.TableID = job.TableID
-			diff.SchemaID = job.SchemaID
+			// Keep this as Schema ID of non-partitioned table
+			// to avoid trigger early rename in TiFlash
+			diff.AffectedOpts[0].SchemaID = job.SchemaID
 		} else {
-			// Update the partitioned table (it is only done in the last state)
-			var (
-				ptSchemaID     int64
-				ptTableID      int64
-				ptDefID        int64  // Not needed, will reload the whole table
-				partName       string // Not used
-				withValidation bool   // Not used
-			)
-			// See ddl.ExchangeTablePartition
-			err = job.DecodeArgs(&ptDefID, &ptSchemaID, &ptTableID, &partName, &withValidation)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			diff.SchemaID = ptSchemaID
-			diff.TableID = ptTableID
+			// Swap
+			diff.TableID = ptDefID
+			// Also add correct SchemaID in case different schemas
+			diff.AffectedOpts[0].SchemaID = ptSchemaID
 		}
 	case model.ActionTruncateTablePartition:
 		diff.TableID = job.TableID
@@ -1412,6 +1427,7 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 		}
 	case model.ActionReorganizePartition:
 		diff.TableID = job.TableID
+		// TODO: should this be for every state of Reorganize?
 		if len(job.CtxVars) > 0 {
 			if droppedIDs, ok := job.CtxVars[0].([]int64); ok {
 				if addedIDs, ok := job.CtxVars[1].([]int64); ok {
@@ -1423,6 +1439,33 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 					newIDs := make([]int64, maxParts)
 					copy(newIDs, addedIDs)
 					diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+				}
+			}
+		}
+	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
+		diff.TableID = job.TableID
+		diff.OldTableID = job.TableID
+		if job.SchemaState == model.StateDeleteReorganization {
+			partInfo := &model.PartitionInfo{}
+			var partNames []string
+			err = job.DecodeArgs(&partNames, &partInfo)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			// Final part, new table id is assigned
+			diff.TableID = partInfo.NewTableID
+			if len(job.CtxVars) > 0 {
+				if droppedIDs, ok := job.CtxVars[0].([]int64); ok {
+					if addedIDs, ok := job.CtxVars[1].([]int64); ok {
+						// to use AffectedOpts we need both new and old to have the same length
+						maxParts := mathutil.Max[int](len(droppedIDs), len(addedIDs))
+						// Also initialize them to 0!
+						oldIDs := make([]int64, maxParts)
+						copy(oldIDs, droppedIDs)
+						newIDs := make([]int64, maxParts)
+						copy(newIDs, addedIDs)
+						diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+					}
 				}
 			}
 		}
