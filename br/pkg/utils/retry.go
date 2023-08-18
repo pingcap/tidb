@@ -72,19 +72,6 @@ func WithRetryV2[T any](
 ) (T, error) {
 	var allErrors error
 	for backoffer.Attempt() > 0 {
-<<<<<<< HEAD
-		err := retryableFunc()
-		if err != nil {
-			allErrors = multierr.Append(allErrors, err)
-			select {
-			case <-ctx.Done():
-				return allErrors // nolint:wrapcheck
-			case <-time.After(backoffer.NextBackoff(err)):
-			}
-		} else {
-			return nil
-		}
-=======
 		res, err := fn(ctx)
 		if err == nil {
 			return res, nil
@@ -95,7 +82,6 @@ func WithRetryV2[T any](
 			return *new(T), allErrors
 		case <-time.After(backoffer.NextBackoff(err)):
 		}
->>>>>>> 2ac191a1379 (snap_restore: added retry for recovery (#46094))
 	}
 	return *new(T), allErrors // nolint:wrapcheck
 }
