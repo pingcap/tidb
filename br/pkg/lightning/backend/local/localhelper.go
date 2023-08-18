@@ -399,6 +399,28 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 	return nil
 }
 
+func (local *local) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
+	var err error
+	waitTime := time.Second
+	for i := 0; i < 10; i++ {
+		myArray := []*split.RegionInfo{regionInfo}
+		if err = local.splitCli.ScatterRegion(ctx, myArray); err != nil {
+			select {
+			case <-time.After(waitTime):
+			case <-ctx.Done():
+				log.FromContext(ctx).Warn("scatter region failed", zap.Error(ctx.Err()), zap.Int("retry", i))
+				return ctx.Err()
+			}
+		} else {
+			break
+		}
+	}
+	if err != nil {
+		log.FromContext(ctx).Warn("scatter region failed", zap.Error(err))
+	}
+	return err
+}
+
 // BatchSplitRegions will split regions by the given split keys and tries to
 // scatter new regions. If split/scatter fails because new region is not ready,
 // this function will not return error.
@@ -430,7 +452,7 @@ func (local *Backend) BatchSplitRegions(
 				retryRegions = append(retryRegions, region)
 				continue
 			}
-			if err = local.splitCli.ScatterRegion(ctx, region); err != nil {
+			if err = local.ScatterRegion(ctx, region); err != nil {
 				failedErr = err
 				retryRegions = append(retryRegions, region)
 			}
@@ -540,7 +562,7 @@ func (local *Backend) checkRegionScatteredOrReScatter(ctx context.Context, regio
 	default:
 		log.FromContext(ctx).Debug("scatter-region operator status is abnormal, will scatter region again",
 			logutil.Region(regionInfo.Region), zap.Stringer("status", resp.GetStatus()))
-		return false, local.splitCli.ScatterRegion(ctx, regionInfo)
+		return false, local.ScatterRegion(ctx, regionInfo)
 	}
 }
 
