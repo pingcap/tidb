@@ -669,7 +669,7 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		retChk = chunk.NewChunkWithCapacity(w.getRetTpsForTableScan(), w.batchSize)
 	}
 	var memUsage int64
-	var i int
+	var chunkRowOffset int
 	defer w.memTracker.Consume(-memUsage)
 	for len(handles) < w.batchSize {
 		requiredRows := w.batchSize - len(handles)
@@ -697,7 +697,7 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memDelta := chk.MemoryUsage()
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
-		for i = 0; i < chk.NumRows(); i++ {
+		for chunkRowOffset = 0; chunkRowOffset < chk.NumRows(); chunkRowOffset++ {
 			if w.pushedLimit != nil {
 				w.scannedKeys++
 				if w.scannedKeys > (w.pushedLimit.Offset + w.pushedLimit.Count) {
@@ -711,9 +711,9 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 				return nil, nil, err1
 			}
 			if ok {
-				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(i))
+				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(chunkRowOffset))
 			} else {
-				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(i))
+				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(chunkRowOffset))
 			}
 			if err != nil {
 				return nil, nil, err
@@ -722,7 +722,7 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		}
 		// used for order by
 		if len(w.byItems) != 0 {
-			retChk.Append(chk, 0, i)
+			retChk.Append(chk, 0, chunkRowOffset)
 		}
 	}
 	w.batchSize *= 2
@@ -1600,7 +1600,7 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		retChk = chunk.NewChunkWithCapacity(w.getRetTpsForIndexScan(handleCols), w.batchSize)
 	}
 	var memUsage int64
-	var i int
+	var chunkRowOffset int
 	defer w.memTracker.Consume(-memUsage)
 	for len(handles) < w.batchSize {
 		requiredRows := w.batchSize - len(handles)
@@ -1628,7 +1628,7 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memDelta := chk.MemoryUsage()
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
-		for i = 0; i < chk.NumRows(); i++ {
+		for chunkRowOffset = 0; chunkRowOffset < chk.NumRows(); chunkRowOffset++ {
 			if w.pushedLimit != nil {
 				w.scannedKeys++
 				if w.scannedKeys > (w.pushedLimit.Offset + w.pushedLimit.Count) {
@@ -1642,9 +1642,9 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 				return nil, nil, err1
 			}
 			if ok {
-				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(i))
+				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(chunkRowOffset))
 			} else {
-				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(i))
+				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(chunkRowOffset))
 			}
 			if err != nil {
 				return nil, nil, err
@@ -1653,7 +1653,7 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		}
 		// used for order by
 		if len(w.byItems) != 0 {
-			retChk.Append(chk, 0, i)
+			retChk.Append(chk, 0, chunkRowOffset)
 		}
 	}
 	w.batchSize *= 2
