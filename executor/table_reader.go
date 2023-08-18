@@ -262,16 +262,15 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
+	var err error
 	if e.resultHandler != nil {
-		if err := e.resultHandler.Close(); err != nil {
-			return err
-		}
+		err = e.resultHandler.Close()
 	}
 	e.kvRanges = e.kvRanges[:0]
 	if e.dummy {
 		return nil
 	}
-	return nil
+	return err
 }
 
 // buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResult returned by the callee
