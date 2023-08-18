@@ -151,8 +151,16 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 			newCol := col
 			col.GetGeneratedExpr = func() ast.ExprNode {
 				// The error is checked before, so we can ignore them here.
-				expr, _ := generatedexpr.ParseExpression(newCol.GeneratedExprString)
-				expr, _ = generatedexpr.SimpleResolveName(expr, tblInfo)
+				expr, err := generatedexpr.ParseExpression(newCol.GeneratedExprString)
+				if err != nil {
+					logutil.BgLogger().Warn("unexpected parse error", zap.Error(err))
+					return nil
+				}
+				expr, err = generatedexpr.SimpleResolveName(expr, tblInfo)
+				if err != nil {
+					logutil.BgLogger().Warn("unexpected resolve name error", zap.Error(err))
+					return nil
+				}
 				return expr
 			}
 		}
