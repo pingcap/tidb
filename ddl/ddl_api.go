@@ -2628,6 +2628,12 @@ func (d *ddl) createTableWithInfoPost(
 			return errors.Trace(err)
 		}
 	}
+	// For issue https://github.com/pingcap/tidb/issues/46093
+	if tbInfo.AutoIncIDExtra != 0 {
+		if err = d.handleAutoIncID(tbInfo, schemaID, tbInfo.AutoIncIDExtra-1, autoid.RowIDAllocType); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	if tbInfo.AutoRandID > 1 {
 		// Default tableAutoRandID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
