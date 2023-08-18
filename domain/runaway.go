@@ -399,8 +399,6 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 		return nil
 	}
 
-	logutil.BgLogger().Info("UUUUU", zap.Uint64("uniqueID", uniqueID))
-
 	control, err := rmclient.NewResourceGroupController(ctx, uniqueID, pdClient, nil, rmclient.WithMaxWaitDuration(resourcegroup.MaxWaitDuration))
 	if err != nil {
 		return err
