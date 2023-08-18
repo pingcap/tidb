@@ -7192,3 +7192,15 @@ func TestTTLTableOption(t *testing.T) {
 
 	RunTest(t, table, false)
 }
+
+func TestIssue45898(t *testing.T) {
+	p := parser.New()
+	p.ParseSQL("a.")
+	stmts, _, err := p.ParseSQL("select count(1) from t")
+	require.NoError(t, err)
+	var sb strings.Builder
+	restoreCtx := NewRestoreCtx(DefaultRestoreFlags, &sb)
+	sb.Reset()
+	stmts[0].Restore(restoreCtx)
+	require.Equal(t, "SELECT COUNT(1) FROM `t`", sb.String())
+}
