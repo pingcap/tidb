@@ -197,7 +197,7 @@ func downloadZips(
 	cmd := exec.Command(gobin, downloadArgs...)
 	cmd.Dir = tmpdir
 	env := os.Environ()
-	env = append(env, fmt.Sprintf("GOPROXY=%s", "https://proxy.golang.org,direct"))
+	env = append(env, fmt.Sprintf("GOPROXY=%s", "https://goproxy.cn,https://proxy.golang.org,direct"))
 	env = append(env, fmt.Sprintf("GOSUMDB=%s", "sum.golang.org"))
 	cmd.Env = env
 	jsonBytes, err := cmd.Output()
