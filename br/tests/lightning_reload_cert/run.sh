@@ -29,7 +29,10 @@ shpid="$!"
 sleep 15
 ok=0
 for _ in {0..60}; do
-  if grep -Fq "connection closed before server preface received" "$TEST_DIR"/lightning.log; then
+	# depends on TiKV version, the message might be:
+	# connection closed before server preface received
+	# connection error: desc = \"error reading server preface: EOF
+  if grep -Fq "server preface" "$TEST_DIR"/lightning.log; then
     ok=1
     break
   fi
