@@ -427,7 +427,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					results = []distsql.SelectResult{ssr}
 				}
 				ctx1, cancel := context.WithCancel(ctx)
-				// this error is synced in fetchHandles(), don't sync it again
+				// this error is reported in fetchHandles(), so ignore it here.
 				_, _ = worker.fetchHandles(ctx1, results, exitCh, fetchCh, e.finished, e.handleCols, workID)
 				cancel()
 			},
@@ -543,7 +543,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					if err = worker.tableReader.Close(); err != nil {
 						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
 					}
-					// this error is synced in fetchHandles, so don't sync it again
+					// this error is reported in fetchHandles(), so ignore it here.
 					if fetchErr != nil {
 						break
 					}
