@@ -99,7 +99,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return nil
 	}
 
-	// Get the max number of goroutines for parallel execution.
+	// Get the min number of goroutines for parallel execution.
 	concurrency, err := getBuildStatsConcurrency(e.Ctx())
 	if err != nil {
 		return err
