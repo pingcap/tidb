@@ -1029,27 +1029,12 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 	errLimiter := rate.NewLimiter(1, 1)
 	pool := utils.NewWorkerPool(uint(local.dupeConcurrency), "resolve duplicate rows")
 
-	tblName, err := json.Marshal(tbl.Meta().Name)
+	tblInfo, err := json.Marshal(tbl.Meta())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tblColumns, err := json.Marshal(tbl.Meta().Columns)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tblIndices, err := json.Marshal(tbl.Meta().Indices)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tblForeignKeys, err := json.Marshal(tbl.Meta().ForeignKeys)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	logger.Debug("got tblName, tblColumns, tblIndices, tblForeignKeys from tbl",
-		zap.ByteString("tblName", tblName),
-		zap.ByteString("tblColumns", tblColumns),
-		zap.ByteString("tblIndices", tblIndices),
-		zap.ByteString("tblForeignKeys", tblForeignKeys))
+	logger.Debug("got tblInfo from tbl",
+		zap.ByteString("tblInfo", tblInfo))
 
 	switch algorithm {
 	case config.DupeResAlgRemove:
