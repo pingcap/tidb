@@ -221,6 +221,15 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblSQLType})
 
+	CopMVCCRatioHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "slow_query_cop_mvcc_ratio",
+			Help:      "Bucketed histogram of all cop total keys / processed keys in slow queries.",
+			Buckets:   prometheus.ExponentialBuckets(0.5, 2, 21), // 0.5 ~ 262144
+		}, []string{LblSQLType})
+
 	MaxProcs = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
