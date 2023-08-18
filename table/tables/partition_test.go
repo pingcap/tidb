@@ -17,6 +17,7 @@ package tables_test
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -723,6 +724,14 @@ func TestExchangePartitionStates(t *testing.T) {
 	tk.MustExec(`insert into t values (1, "1")`)
 	tk.MustExec(`insert into tp values (2, "2")`)
 	tk.MustExec(`analyze table t,tp`)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	dumpChan := make(chan struct{})
+	defer func() {
+		close(dumpChan)
+		wg.Wait()
+	}()
+	go testkit.DebugDumpOnTimeout(&wg, dumpChan, 20*time.Second)
 	tk.MustExec("BEGIN")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 1"))
 	tk.MustQuery(`select * from tp`).Check(testkit.Rows("2 2"))
@@ -740,12 +749,23 @@ func TestExchangePartitionStates(t *testing.T) {
 			default:
 				// Alter still running
 			}
-			res := tk4.MustQuery(`admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'exchange partition'`).Rows()
+			sql := `admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'exchange partition'`
+			res := tk4.MustQuery(sql).Rows()
 			if len(res) == 1 && res[0][pos] == s {
 				logutil.BgLogger().Info("Got state", zap.String("State", s))
 				break
 			}
-			time.Sleep(50 * time.Millisecond)
+			logutil.BgLogger().Info("No match", zap.String("sql", sql), zap.String("s", s))
+			sql = `admin show ddl jobs`
+			res = tk4.MustQuery(sql).Rows()
+			for _, row := range res {
+				strs := make([]string, 0, len(row))
+				for _, c := range row {
+					strs = append(strs, c.(string))
+				}
+				logutil.BgLogger().Info("admin show ddl jobs", zap.Strings("row", strs))
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
 	}
 	waitFor("t", "write only", 4)

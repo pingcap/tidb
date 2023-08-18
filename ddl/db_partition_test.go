@@ -2514,14 +2514,6 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 }
 
 func TestExchangePartitionMultiTable(t *testing.T) {
-	var wg sync.WaitGroup
-	wg.Add(1)
-	dumpChan := make(chan struct{})
-	defer func() {
-		close(dumpChan)
-		wg.Wait()
-	}()
-	go testkit.DebugDumpOnTimeout(&wg, dumpChan, 20*time.Second)
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 
@@ -2531,6 +2523,7 @@ func TestExchangePartitionMultiTable(t *testing.T) {
 	tk1.MustExec(`CREATE TABLE t1 (a int)`)
 	tk1.MustExec(`CREATE TABLE t2 (a int)`)
 	tk1.MustExec(`CREATE TABLE tp (a int) partition by hash(a) partitions 3`)
+	tk1.MustExec(`set @@global.tidb_enable_metadata_lock = ON`)
 	tk1.MustExec(`insert into t1 values (0)`)
 	tk1.MustExec(`insert into t2 values (3)`)
 	tk1.MustExec(`insert into tp values (6)`)
@@ -2560,9 +2553,17 @@ func TestExchangePartitionMultiTable(t *testing.T) {
 				}
 				logutil.BgLogger().Info("admin show ddl jobs", zap.Strings("row", strs))
 			}
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 		}
 	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	dumpChan := make(chan struct{})
+	defer func() {
+		close(dumpChan)
+		wg.Wait()
+	}()
+	go testkit.DebugDumpOnTimeout(&wg, dumpChan, 20*time.Second)
 	alterChan1 := make(chan error)
 	alterChan2 := make(chan error)
 	tk3.MustExec(`BEGIN`)
