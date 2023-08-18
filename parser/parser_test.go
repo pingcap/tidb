@@ -7204,4 +7204,3 @@ func TestIssue45898(t *testing.T) {
 	stmts[0].Restore(restoreCtx)
 	require.Equal(t, "SELECT COUNT(1) FROM `t`", sb.String())
 }
-
