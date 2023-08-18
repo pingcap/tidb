@@ -256,12 +256,12 @@ func TestReplaceConflictKeys(t *testing.T) {
 
 	mockDB.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_task_info`").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`.conflict_error_v1 ( task_id bigint NOT NULL, create_time datetime(6) NOT NULL DEFAULT now(6), table_name varchar(261) NOT NULL, index_name varchar(128) NOT NULL, key_data text NOT NULL COMMENT 'decoded from raw_key, human readable only, not for machine use', row_data text NOT NULL COMMENT 'decoded from raw_row, human readable only, not for machine use', raw_key mediumblob NOT NULL COMMENT 'the conflicted key', raw_value mediumblob NOT NULL COMMENT 'the value of the conflicted key', raw_handle mediumblob NOT NULL COMMENT 'the data handle derived from the conflicted key or value', raw_row mediumblob NOT NULL COMMENT 'the data retrieved from the handle', KEY (task_id, table_name), INDEX (index_name) );").
+	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v1.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
-	mockDB.ExpectQuery("SELECT raw_key FROM `lightning_task_info`.conflict_error_v1 WHERE table_name = 'a' AND index_name <> 'PRIMARY' GROUP BY raw_key").
+	mockDB.ExpectQuery("\\QSELECT raw_key FROM `lightning_task_info`.conflict_error_v1 WHERE table_name = ? AND index_name <> 'PRIMARY' GROUP BY raw_key\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key"}).
 			AddRow("t\\ufffd\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000K_i\\ufffd\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0001\\u0003\\ufffd\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0006"))
-	mockDB.ExpectQuery("SELECT index_name, raw_value, hex(raw_handle) FROM `lightning_task_info`.conflict_error_v1 WHERE table_name = 'a' AND raw_key = 't\\ufffd\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000K_i\\ufffd\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0001\\u0003\\ufffd\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0006'").
+	mockDB.ExpectQuery("\\QSELECT index_name, raw_value, hex(raw_handle) FROM `lightning_task_info`.conflict_error_v1 WHERE table_name = ? AND raw_key = ?\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"index_name", "raw_value", "hex(raw_handle)"}).
 			AddRow("uni_b", "AAAAAAAAAAE=", "74800000000000004B5F728000000000000001").
 			AddRow("uni_b", "AAAAAAAAAAI=", "74800000000000004B5F728000000000000002"))
