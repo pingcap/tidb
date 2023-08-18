@@ -34,43 +34,45 @@ type metaMgrSuite struct {
 	checksumMgr *testChecksumMgr
 }
 
-func newTableRestore(t *testing.T, kvStore kv.Storage) *TableRestore {
+func newTableRestore(t *testing.T,
+	db, table string,
+	dbID, tableID int64,
+	createTableSQL string, kvStore kv.Storage,
+) *TableRestore {
 	p := parser.New()
 	se := tmock.NewContext()
 
-	node, err := p.ParseOneStmt("CREATE TABLE `t1` (`c1` varchar(5) NOT NULL)", "utf8mb4", "utf8mb4_bin")
+	node, err := p.ParseOneStmt(createTableSQL, "utf8mb4", "utf8mb4_bin")
 	require.NoError(t, err)
-	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), int64(1))
+	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), tableID)
 	require.NoError(t, err)
 	tableInfo.State = model.StatePublic
 
-	schema := "test"
-	tb := "t1"
 	ti := &checkpoints.TidbTableInfo{
 		ID:   tableInfo.ID,
-		DB:   schema,
-		Name: tb,
+		DB:   db,
+		Name: table,
 		Core: tableInfo,
 	}
 	dbInfo := &checkpoints.TidbDBInfo{
-		ID:   1,
-		Name: schema,
+		ID:   dbID,
+		Name: db,
 		Tables: map[string]*checkpoints.TidbTableInfo{
-			tb: ti,
+			table: ti,
 		},
 	}
 
 	ctx := kv.WithInternalSourceType(context.Background(), "test")
 	err = kv.RunInNewTxn(ctx, kvStore, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
-		if err := m.CreateDatabase(&model.DBInfo{ID: dbInfo.ID}); err != nil {
+		if err := m.CreateDatabase(&model.DBInfo{ID: dbInfo.ID}); err != nil && !errors.ErrorEqual(err, meta.ErrDBExists) {
 			return err
 		}
 		return m.CreateTableOrView(dbInfo.ID, ti.Core)
 	})
 	require.NoError(t, err)
 
-	tableName := common.UniqueTable(schema, tb)
+	tableName := common.UniqueTable(db, table)
 	logger := log.With(zap.String("table", tableName))
 
 	return &TableRestore{
@@ -92,9 +94,10 @@ func newMetaMgrSuite(t *testing.T) *metaMgrSuite {
 
 	var s metaMgrSuite
 	s.mgr = &dbTableMetaMgr{
-		session:      db,
-		taskID:       1,
-		tr:           newTableRestore(t, kvStore),
+		session: db,
+		taskID:  1,
+		tr: newTableRestore(t, "test", "t1", 1, 1,
+			"CREATE TABLE `t1` (`c1` varchar(5) NOT NULL)", kvStore),
 		tableName:    common.UniqueTable("test", TableMetaTableName),
 		needChecksum: true,
 	}
@@ -450,4 +453,132 @@ func TestSingleTaskMetaMgr(t *testing.T) {
 		return nil, nil
 	})
 	require.NoError(t, err)
+}
+
+func newTableInfo2(t *testing.T,
+	dbID, tableID int64,
+	createTableSql string, kvStore kv.Storage,
+) *model.TableInfo {
+	p := parser.New()
+	se := tmock.NewContext()
+
+	node, err := p.ParseOneStmt(createTableSql, "utf8mb4", "utf8mb4_bin")
+	require.NoError(t, err)
+	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), tableID)
+	require.NoError(t, err)
+	tableInfo.State = model.StatePublic
+
+	ctx := kv.WithInternalSourceType(context.Background(), "test")
+	err = kv.RunInNewTxn(ctx, kvStore, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		if err := m.CreateDatabase(&model.DBInfo{ID: dbID}); err != nil && !errors.ErrorEqual(err, meta.ErrDBExists) {
+			return err
+		}
+		return m.CreateTableOrView(dbID, tableInfo)
+	})
+	require.NoError(t, err)
+	return tableInfo
+}
+
+func TestAllocGlobalAutoID(t *testing.T) {
+	storePath := t.TempDir()
+	kvStore, err := mockstore.NewMockStore(mockstore.WithPath(storePath))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, kvStore.Close())
+	})
+
+	cases := []struct {
+		tableID              int64
+		createTableSQL       string
+		expectErrStr         string
+		expectAllocatorTypes []autoid.AllocatorType
+	}{
+		// autoID, autoIncrID = false, false
+		{
+			tableID:              11,
+			createTableSQL:       "create table t11 (a int primary key clustered)",
+			expectErrStr:         "has no auto ID",
+			expectAllocatorTypes: nil,
+		},
+		{
+			tableID:              12,
+			createTableSQL:       "create table t12 (a int primary key clustered) AUTO_ID_CACHE 1",
+			expectErrStr:         "has no auto ID",
+			expectAllocatorTypes: nil,
+		},
+		// autoID, autoIncrID = true, false
+		{
+			tableID:              21,
+			createTableSQL:       "create table t21 (a int)",
+			expectErrStr:         "",
+			expectAllocatorTypes: []autoid.AllocatorType{autoid.RowIDAllocType},
+		},
+		{
+			tableID:              22,
+			createTableSQL:       "create table t22 (a int) AUTO_ID_CACHE 1",
+			expectErrStr:         "",
+			expectAllocatorTypes: []autoid.AllocatorType{autoid.RowIDAllocType},
+		},
+		// autoID, autoIncrID = false, true
+		{
+			tableID:              31,
+			createTableSQL:       "create table t31 (a int primary key clustered auto_increment)",
+			expectErrStr:         "",
+			expectAllocatorTypes: []autoid.AllocatorType{autoid.RowIDAllocType},
+		},
+		{
+			tableID:              32,
+			createTableSQL:       "create table t32 (a int primary key clustered auto_increment) AUTO_ID_CACHE 1",
+			expectErrStr:         "",
+			expectAllocatorTypes: []autoid.AllocatorType{autoid.AutoIncrementType, autoid.RowIDAllocType},
+		},
+		// autoID, autoIncrID = true, true
+		{
+			tableID:              41,
+			createTableSQL:       "create table t41 (a int primary key nonclustered auto_increment)",
+			expectErrStr:         "",
+			expectAllocatorTypes: []autoid.AllocatorType{autoid.RowIDAllocType},
+		},
+		{
+			tableID:              42,
+			createTableSQL:       "create table t42 (a int primary key nonclustered auto_increment) AUTO_ID_CACHE 1",
+			expectErrStr:         "",
+			expectAllocatorTypes: []autoid.AllocatorType{autoid.AutoIncrementType, autoid.RowIDAllocType},
+		},
+		// autoRandomID
+		{
+			tableID:              51,
+			createTableSQL:       "create table t51 (a bigint primary key auto_random)",
+			expectErrStr:         "",
+			expectAllocatorTypes: []autoid.AllocatorType{autoid.AutoRandomType},
+		},
+	}
+	ctx := context.Background()
+	for _, c := range cases {
+		ti := newTableInfo2(t, 1, c.tableID, c.createTableSQL, kvStore)
+		allocators, err := getGlobalAutoIDAlloc(kvStore, 1, ti)
+		if c.expectErrStr == "" {
+			require.NoError(t, err, c.tableID)
+			require.NoError(t, rebaseGlobalAutoID(ctx, 123, kvStore, 1, ti))
+			base, idMax, err := allocGlobalAutoID(ctx, 100, kvStore, 1, ti)
+			require.NoError(t, err, c.tableID)
+			require.Equal(t, int64(123), base, c.tableID)
+			require.Equal(t, int64(223), idMax, c.tableID)
+			// all allocators are rebased and allocated
+			for _, alloc := range allocators {
+				base2, max2, err := alloc.Alloc(ctx, 100, 1, 1)
+				require.NoError(t, err, c.tableID)
+				require.Equal(t, int64(223), base2, c.tableID)
+				require.Equal(t, int64(323), max2, c.tableID)
+			}
+		} else {
+			require.ErrorContains(t, err, c.expectErrStr, c.tableID)
+		}
+		var allocatorTypes []autoid.AllocatorType
+		for _, alloc := range allocators {
+			allocatorTypes = append(allocatorTypes, alloc.GetType())
+		}
+		require.Equal(t, c.expectAllocatorTypes, allocatorTypes, c.tableID)
+	}
 }

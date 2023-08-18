@@ -372,19 +372,18 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, e
 // AlterAutoIncrement rebase the table auto increment id
 //
 // NOTE: since tidb can make sure the auto id is always be rebase even if the `incr` value is smaller
-// the the auto incremanet base in tidb side, we needn't fetch currently auto increment value here.
+// than the auto increment base in tidb side, we needn't fetch currently auto increment value here.
 // See: https://github.com/pingcap/tidb/blob/64698ef9a3358bfd0fdc323996bb7928a56cadca/ddl/ddl_api.go#L2528-L2533
 func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName string, incr uint64) error {
-	var query string
 	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Uint64("auto_increment", incr))
+	base := adjustIDBase(incr)
+	var forceStr string
 	if incr > math.MaxInt64 {
 		// automatically set max value
 		logger.Warn("auto_increment out of the maximum value TiDB supports, automatically set to the max", zap.Uint64("auto_increment", incr))
-		incr = math.MaxInt64
-		query = fmt.Sprintf("ALTER TABLE %s FORCE AUTO_INCREMENT=%d", tableName, incr)
-	} else {
-		query = fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
+		forceStr = "FORCE"
 	}
+	query := fmt.Sprintf("ALTER TABLE %s %s AUTO_INCREMENT=%d", tableName, forceStr, base)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_increment")
 	err := g.ExecuteWithLog(ctx, query, "alter table auto_increment", logger)
 	task.End(zap.ErrorLevel, err)
@@ -397,6 +396,14 @@ func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName strin
 	return errors.Annotatef(err, "%s", query)
 }
 
+func adjustIDBase(incr uint64) int64 {
+	if incr > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(incr)
+}
+
+// AlterAutoRandom rebase the table auto random id.
 func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, randomBase uint64, maxAutoRandom uint64) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Uint64("auto_random", randomBase))
 	if randomBase == maxAutoRandom+1 {
@@ -407,6 +414,7 @@ func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, 
 		logger.Warn("auto_random out of the maximum value TiDB supports")
 		return nil
 	}
+	// if new base is smaller than current, this query will success with a warning
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_RANDOM_BASE=%d", tableName, randomBase)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_random")
 	err := g.ExecuteWithLog(ctx, query, "alter table auto_random_base", logger)
