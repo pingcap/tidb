@@ -49,9 +49,8 @@ import (
 )
 
 var extraHandleTableColumn = &table.Column{
-	ColumnInfo:    kv.ExtraHandleColumnInfo,
-	GeneratedExpr: nil,
-	DefaultExpr:   nil,
+	ColumnInfo:  kv.ExtraHandleColumnInfo,
+	DefaultExpr: nil,
 }
 
 const (

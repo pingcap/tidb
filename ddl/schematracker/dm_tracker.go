@@ -606,10 +606,10 @@ func (d SchemaTracker) renameColumn(_ sessionctx.Context, ident ast.Ident, spec 
 
 	// Check generated expression.
 	for _, col := range allCols {
-		if col.GeneratedExpr == nil {
+		if !col.IsGenerated() {
 			continue
 		}
-		dependedColNames := ddl.FindColumnNamesInExpr(col.GeneratedExpr)
+		dependedColNames := ddl.FindColumnNamesInExpr(col.GetGeneratedExpr(false))
 		for _, name := range dependedColNames {
 			if name.Name.L == oldColName.L {
 				if col.Hidden {

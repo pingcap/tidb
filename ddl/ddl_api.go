@@ -5097,7 +5097,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			col.GeneratedExprString = sb.String()
 			col.GeneratedStored = opt.Stored
 			col.Dependences = make(map[string]struct{})
-			col.GeneratedExpr = opt.Expr
+			col.SetGeneratedExpr(opt.Expr)
 			for _, colName := range FindColumnNamesInExpr(opt.Expr) {
 				col.Dependences[colName.Name.L] = struct{}{}
 			}
@@ -5160,10 +5160,10 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 
 func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, oldColName model.CIStr) error {
 	for _, col := range allCols {
-		if col.GeneratedExpr == nil {
+		if !col.IsGenerated() {
 			continue
 		}
-		dependedColNames := FindColumnNamesInExpr(col.GeneratedExpr)
+		dependedColNames := FindColumnNamesInExpr(col.GetGeneratedExpr(false))
 		for _, name := range dependedColNames {
 			if name.Name.L == oldColName.L {
 				if col.Hidden {

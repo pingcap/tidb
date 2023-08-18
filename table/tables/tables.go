@@ -147,9 +147,13 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 			if err != nil {
 				return nil, err
 			}
-			col.GeneratedExpr = expr
+			col.SetGeneratedExpr(expr)
 			newCol := col
-			col.GetGeneratedExpr = func() ast.ExprNode {
+			col.InitGetInternalGeneratedExpr()
+			col.GetGeneratedExpr = func(b bool) ast.ExprNode {
+				if !b {
+					return col.GetInternalGeneratedExpr()
+				}
 				// The error is checked before, so we can ignore them here.
 				expr, err := generatedexpr.ParseExpression(newCol.GeneratedExprString)
 				if err != nil {

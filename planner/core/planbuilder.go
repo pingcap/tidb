@@ -3911,7 +3911,7 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 
 		originalVal := b.allowBuildCastArray
 		b.allowBuildCastArray = true
-		expr, _, err := b.rewrite(ctx, column.GetGeneratedExpr(), mockPlan, nil, true)
+		expr, _, err := b.rewrite(ctx, column.GetGeneratedExpr(true), mockPlan, nil, true)
 		b.allowBuildCastArray = originalVal
 		if err != nil {
 			return igc, err

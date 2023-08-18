@@ -73,7 +73,7 @@ func NewTableKVEncoder(
 func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.Column) ([]GeneratedCol, error) {
 	hasGenCol := false
 	for _, col := range cols {
-		if col.GeneratedExpr != nil {
+		if col.IsGenerated() {
 			hasGenCol = true
 			break
 		}
@@ -114,8 +114,8 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 	// for simplicity we just evaluate all generated columns (virtual or not) before the last stored one.
 	var genCols []GeneratedCol
 	for i, col := range cols {
-		if col.GeneratedExpr != nil {
-			expr, err := expression.RewriteAstExpr(se, col.GetGeneratedExpr(), schema, names, true)
+		if col.IsGenerated() {
+			expr, err := expression.RewriteAstExpr(se, col.GetGeneratedExpr(true), schema, names, true)
 			if err != nil {
 				return nil, err
 			}
