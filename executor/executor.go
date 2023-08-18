@@ -2457,8 +2457,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 			logutil.BgLogger().Warn("compare checksum by group reaches time limit", zap.Int("times", times))
 			break
 		}
-		whereKey := fmt.Sprintf("((%s - %d) %% %d)", md5Handle.String(), offset, mod)
-		groupByKey := fmt.Sprintf("((%s - %d) div %d %% %d)", md5Handle.String(), offset, mod, bucketSize)
+		whereKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle.String(), offset, mod)
+		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) div %d %% %d)", md5Handle.String(), offset, mod, bucketSize)
 		if !checkOnce {
 			whereKey = "0"
 		}
