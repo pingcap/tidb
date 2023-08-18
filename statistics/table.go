@@ -591,23 +591,13 @@ func (coll *HistColl) crossValidationSelectivity(sctx sessionctx.Context, idx *I
 			if col.IsInvalid(sctx, coll.Pseudo) {
 				continue
 			}
-			lowExclude := idxPointRange.LowExclude
-			highExclude := idxPointRange.HighExclude
-			// Consider this case:
-			// create table t(a int, b int, c int, primary key(a,b,c));
-			// insert into t values(1,1,1),(2,2,3);
-			// explain select * from t where (a,b) in ((1,1),(2,2)) and c > 2;
-			// For column a, we will get range: (1, 1], (2, 2], but GetColumnRowCount() with rang = (2, 2] will return 0.
-			// And the result of the explain statement will output estRow 0.0. So we change it to [2, 2].
-			if lowExclude != highExclude && i < usedColsLen {
-				lowExclude = false
-				highExclude = false
-			}
+			// Since the column range is point range(LowVal is equal to HighVal), we need to set both LowExclude and HighExclude to false.
+			// Otherwise we would get 0.0 estRow from GetColumnRowCount.
 			rang := ranger.Range{
 				LowVal:      []types.Datum{idxPointRange.LowVal[i]},
-				LowExclude:  lowExclude,
+				LowExclude:  false,
 				HighVal:     []types.Datum{idxPointRange.HighVal[i]},
-				HighExclude: highExclude,
+				HighExclude: false,
 				Collators:   []collate.Collator{idxPointRange.Collators[i]},
 			}
 
