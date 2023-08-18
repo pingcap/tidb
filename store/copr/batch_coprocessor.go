@@ -16,6 +16,7 @@ package copr
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -217,13 +218,13 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 	storeTasks := deepCopyStoreTaskMap(storeTaskMap)
 
 	// Sort regions by their key ranges.
-	slices.SortFunc(candidateRegionInfos, func(i, j RegionInfo) bool {
+	slices.SortFunc(candidateRegionInfos, func(i, j RegionInfo) int {
 		// Special case: Sort empty ranges to the end.
 		if i.Ranges.Len() < 1 || j.Ranges.Len() < 1 {
-			return i.Ranges.Len() > j.Ranges.Len()
+			return cmp.Compare(j.Ranges.Len(), i.Ranges.Len())
 		}
 		// StartKey0 < StartKey1
-		return bytes.Compare(i.Ranges.At(0).StartKey, j.Ranges.At(0).StartKey) == -1
+		return bytes.Compare(i.Ranges.At(0).StartKey, j.Ranges.At(0).StartKey)
 	})
 
 	balanceStart := time.Now()
@@ -1240,8 +1241,8 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 			}
 		}
 		// need to make sure the key ranges is sorted
-		slices.SortFunc(ranges, func(i, j kv.KeyRange) bool {
-			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		slices.SortFunc(ranges, func(i, j kv.KeyRange) int {
+			return bytes.Compare(i.StartKey, j.StartKey)
 		})
 		keyRanges = append(keyRanges, NewKeyRanges(ranges))
 	}
