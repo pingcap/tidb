@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	_ "github.com/pingcap/tidb/types/parser_driver" // for parser driver
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/logutil"
@@ -2792,6 +2793,25 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableCheckConstraint.Load()), nil
 	}},
+	{Scope: ScopeSession, Name: TiDBSessionAlias, Value: "", Type: TypeStr,
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			if len(normalizedValue) > 64 {
+				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBSessionAlias, originalValue))
+				normalizedValue = normalizedValue[:64]
+			}
+
+			if len(normalizedValue) > 0 && util.IsInCorrectIdentifierName(normalizedValue) {
+				return "", ErrWrongValueForVar.GenWithStack("Incorrect value for variable @@%s '%s'", TiDBSessionAlias, normalizedValue)
+			}
+
+			return normalizedValue, nil
+		},
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.SessionAlias = s
+			return nil
+		}, GetSession: func(vars *SessionVars) (string, error) {
+			return vars.SessionAlias, nil
+		}},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

@@ -283,3 +283,15 @@ func ReadLines(reader *bufio.Reader, count int, maxLineSize int) ([][]byte, erro
 	}
 	return lines, nil
 }
+
+// IsInCorrectIdentifierName checks if the identifier is incorrect.
+// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
+func IsInCorrectIdentifierName(name string) bool {
+	if len(name) == 0 {
+		return true
+	}
+	if name[len(name)-1] == ' ' {
+		return true
+	}
+	return false
+}
