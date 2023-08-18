@@ -41,6 +41,7 @@ const (
 	TaskStateCanceled      = "canceled"
 	TaskStatePausing       = "pausing"
 	TaskStatePaused        = "paused"
+	TaskStateResuming      = "resuming"
 	TaskStateRevertPending = "revert_pending"
 	TaskStateReverted      = "reverted"
 )
