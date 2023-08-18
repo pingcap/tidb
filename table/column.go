@@ -55,6 +55,7 @@ type Column struct {
 	DefaultExpr ast.ExprNode
 }
 
+// SetGeneratedExpr sets the generated column exprNode.
 func (c *Column) SetGeneratedExpr(exprNode ast.ExprNode) {
 	c.generatedExpr = exprNode
 }
