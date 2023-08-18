@@ -146,8 +146,6 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	// restore tikv data from a snapshot volume
 	var totalRegions int
 
-	// Roughly handle the case that some TiKVs are rebooted during making plan.
-	// Generally,
 	totalRegions, err = restore.RecoverData(ctx, resolveTS, allStores, mgr, progress, restoreTS, cfg.Concurrency)
 	if err != nil {
 		return errors.Trace(err)

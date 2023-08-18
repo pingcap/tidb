@@ -104,6 +104,9 @@ func (bo *recoveryBackoffer) Attempt() int {
 // 5. prepare the flashback
 // 6. flashback to resolveTS
 func RecoverData(ctx context.Context, resolveTS uint64, allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress, restoreTS uint64, concurrency uint32) (int, error) {
+	// Roughly handle the case that some TiKVs are rebooted during making plan.
+	// Generally, retry the whole procedure will be fine for most cases. But perhaps we can do finer-grained retry,
+	// say, we may reuse the recovery plan, and probably no need to rebase PD allocation ID once we have done it.
 	return utils.WithRetryV2(ctx, newRecoveryBackoffer(), func(ctx context.Context) (int, error) {
 		return doRecoveryData(ctx, resolveTS, allStores, mgr, progress, restoreTS, concurrency)
 	})
@@ -121,8 +124,7 @@ func doRecoveryData(ctx context.Context, resolveTS uint64, allStores []*metapb.S
 
 	totalRegions := recovery.GetTotalRegions()
 
-	err := recovery.MakeRecoveryPlan()
-	if err != nil {
+	if err := recovery.MakeRecoveryPlan(); err != nil {
 		return totalRegions, recoveryError{error: err, atStage: StageMakingRecoveryPlan}
 	}
 
@@ -141,8 +143,8 @@ func doRecoveryData(ctx context.Context, resolveTS uint64, allStores []*metapb.S
 	if err := recovery.WaitApply(ctx); err != nil {
 		return totalRegions, recoveryError{error: err, atStage: StageRecovering}
 	}
-	err = recovery.PrepareFlashbackToVersion(ctx, resolveTS, restoreTS-1)
-	if err != nil {
+
+	if err := recovery.PrepareFlashbackToVersion(ctx, resolveTS, restoreTS-1); err != nil {
 		return totalRegions, recoveryError{error: err, atStage: StageFlashback}
 	}
 
