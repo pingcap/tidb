@@ -113,9 +113,7 @@ func (g *TableRegionSizeGetterImpl) GetTableRegionSize(ctx context.Context, tabl
 func (local *Backend) SplitAndScatterRegionInBatches(
 	ctx context.Context,
 	ranges []Range,
-	tableInfo *checkpoints.TidbTableInfo,
 	needSplit bool,
-	regionSplitSize int64,
 	batchCnt int,
 ) error {
 	for i := 0; i < len(ranges); i += batchCnt {
@@ -123,7 +121,7 @@ func (local *Backend) SplitAndScatterRegionInBatches(
 		if len(batch) > batchCnt {
 			batch = batch[:batchCnt]
 		}
-		if err := local.SplitAndScatterRegionByRanges(ctx, batch, tableInfo, needSplit, regionSplitSize); err != nil {
+		if err := local.SplitAndScatterRegionByRanges(ctx, batch, needSplit); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -137,9 +135,7 @@ func (local *Backend) SplitAndScatterRegionInBatches(
 func (local *Backend) SplitAndScatterRegionByRanges(
 	ctx context.Context,
 	ranges []Range,
-	tableInfo *checkpoints.TidbTableInfo,
 	needSplit bool,
-	regionSplitSize int64,
 ) (err error) {
 	if len(ranges) == 0 {
 		return nil
