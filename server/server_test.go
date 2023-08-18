@@ -34,6 +34,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// cmd: go test -run=^TestOptimizerDebugTrace$ --tags=intest github.com/pingcap/tidb/server
+// If you want to update the test result, please run the following command:
+// cmd: go test -run=^TestOptimizerDebugTrace$ --tags=intest github.com/pingcap/tidb/server --record
 func TestOptimizerDebugTrace(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/SetBindingTimeToZero", `return(true)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DebugTraceStableStatsTbl", `return(true)`))
