@@ -120,6 +120,27 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 			},
 		}, nil
 	}))
+	// mock regions
+	router.Handle(pdapi.Regions, fn.Wrap(func() (*helper.RegionsInfo, error) {
+		return &helper.RegionsInfo{
+			Count: 1,
+			Regions: []helper.RegionInfo{
+				{
+					ID:       1,
+					StartKey: "",
+					EndKey:   "",
+					Epoch: helper.RegionEpoch{
+						ConfVer: 1,
+						Version: 2,
+					},
+					WrittenBytes:    10000,
+					ReadBytes:       20000,
+					ApproximateSize: 300000,
+					ApproximateKeys: 1000,
+				},
+			},
+		}, nil
+	}))
 	// mock PD API
 	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
 		return struct {
@@ -251,6 +272,68 @@ func TestTiDBClusterInfo(t *testing.T) {
 	))
 }
 
+func TestTikvRegionStatus(t *testing.T) {
+	s := createInfosSchemaClusterTableSuite(t)
+	mockAddr := s.mockAddr
+	store := &mockStore{
+		s.store.(helper.Storage),
+		mockAddr,
+	}
+	tk := testkit.NewTestKit(t, store)
+	restoreConfig := config.RestoreFunc()
+	defer restoreConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_t1")
+	tk.MustExec(`CREATE TABLE test_t1 ( a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, c int(11) DEFAULT NULL)`)
+	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_ID, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1'").Check(testkit.Rows(
+		"1 test test_t1 0 <nil> <nil> 0 <nil>",
+	))
+
+	tk.MustExec("alter table test_t1 add index p_a (a)")
+	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1' order by IS_INDEX").Check(testkit.Rows(
+		"1 test test_t1 0 <nil> 0 <nil>",
+		"1 test test_t1 1 p_a 0 <nil>",
+	))
+
+	tk.MustExec("alter table test_t1 add unique p_b (b);")
+	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1' order by IS_INDEX, INDEX_NAME").Check(testkit.Rows(
+		"1 test test_t1 0 <nil> 0 <nil>",
+		"1 test test_t1 1 p_a 0 <nil>",
+		"1 test test_t1 1 p_b 0 <nil>",
+	))
+
+	tk.MustExec("drop table if exists test_t2")
+	tk.MustExec(`CREATE TABLE test_t2 ( a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, c int(11) DEFAULT NULL)
+		PARTITION BY RANGE (c) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN (MAXVALUE))`)
+	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_ID, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by PARTITION_NAME").Check(testkit.Rows(
+		"1 test test_t2 0 <nil> <nil> 1 p0",
+		"1 test test_t2 0 <nil> <nil> 1 p1",
+	))
+
+	tk.MustExec("alter table test_t2 add index p_a (a)")
+	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by IS_INDEX, PARTITION_NAME").Check(testkit.Rows(
+		"1 test test_t2 0 <nil> 1 p0",
+		"1 test test_t2 0 <nil> 1 p1",
+		"1 test test_t2 1 p_a 1 p0",
+		"1 test test_t2 1 p_a 1 p1",
+	))
+
+	tk.MustExec("alter table test_t2 add unique p_b (b);")
+	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by IS_INDEX, IS_PARTITION desc, PARTITION_NAME").Check(testkit.Rows(
+		"1 test test_t2 0 <nil> 1 p0",
+		"1 test test_t2 0 <nil> 1 p1",
+		"1 test test_t2 1 p_a 1 p0",
+		"1 test test_t2 1 p_a 1 p1",
+		"1 test test_t2 1 p_b 0 <nil>",
+	))
+}
+
 func TestTableStorageStats(t *testing.T) {
 	s := createInfosSchemaClusterTableSuite(t)
 
@@ -290,7 +373,7 @@ func TestTableStorageStats(t *testing.T) {
 		"test 2",
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	result := 51
+	result := 53
 	require.Len(t, rows, result)
 
 	// More tests about the privileges.

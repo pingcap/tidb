@@ -34,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
@@ -64,22 +66,23 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 	}
 
 	vars := map[string]string{
-		"tidb_build_stats_concurrency":       strconv.Itoa(dsn.BuildStatsConcurrency),
-		"tidb_distsql_scan_concurrency":      strconv.Itoa(dsn.DistSQLScanConcurrency),
-		"tidb_index_serial_scan_concurrency": strconv.Itoa(dsn.IndexSerialScanConcurrency),
-		"tidb_checksum_table_concurrency":    strconv.Itoa(dsn.ChecksumTableConcurrency),
+		variable.TiDBBuildStatsConcurrency:      strconv.Itoa(dsn.BuildStatsConcurrency),
+		variable.TiDBDistSQLScanConcurrency:     strconv.Itoa(dsn.DistSQLScanConcurrency),
+		variable.TiDBIndexSerialScanConcurrency: strconv.Itoa(dsn.IndexSerialScanConcurrency),
+		variable.TiDBChecksumTableConcurrency:   strconv.Itoa(dsn.ChecksumTableConcurrency),
 
 		// after https://github.com/pingcap/tidb/pull/17102 merge,
 		// we need set session to true for insert auto_random value in TiDB Backend
-		"allow_auto_random_explicit_insert": "1",
+		variable.TiDBAllowAutoRandExplicitInsert: "1",
 		// allow use _tidb_rowid in sql statement
-		"tidb_opt_write_row_id": "1",
+		variable.TiDBOptWriteRowID: "1",
 		// always set auto-commit to ON
-		"autocommit": "1",
+		variable.AutoCommit: "1",
 		// always set transaction mode to optimistic
-		"tidb_txn_mode": "optimistic",
+		variable.TiDBTxnMode: "optimistic",
 		// disable foreign key checks
-		"foreign_key_checks": "0",
+		variable.ForeignKeyChecks:              "0",
+		variable.TiDBExplicitRequestSourceType: util.ExplicitTypeLightning,
 	}
 
 	if dsn.Vars != nil {
@@ -302,19 +305,18 @@ func ObtainNewCollationEnabled(ctx context.Context, db *sql.DB) (bool, error) {
 // AlterAutoIncrement rebase the table auto increment id
 //
 // NOTE: since tidb can make sure the auto id is always be rebase even if the `incr` value is smaller
-// the the auto incremanet base in tidb side, we needn't fetch currently auto increment value here.
+// than the auto increment base in tidb side, we needn't fetch currently auto increment value here.
 // See: https://github.com/pingcap/tidb/blob/64698ef9a3358bfd0fdc323996bb7928a56cadca/ddl/ddl_api.go#L2528-L2533
 func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr uint64) error {
-	var query string
 	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Uint64("auto_increment", incr))
+	base := adjustIDBase(incr)
+	var forceStr string
 	if incr > math.MaxInt64 {
 		// automatically set max value
 		logger.Warn("auto_increment out of the maximum value TiDB supports, automatically set to the max", zap.Uint64("auto_increment", incr))
-		incr = math.MaxInt64
-		query = fmt.Sprintf("ALTER TABLE %s FORCE AUTO_INCREMENT=%d", tableName, incr)
-	} else {
-		query = fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
+		forceStr = "FORCE"
 	}
+	query := fmt.Sprintf("ALTER TABLE %s %s AUTO_INCREMENT=%d", tableName, forceStr, base)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_increment")
 	exec := common.SQLWithRetry{DB: db, Logger: logger}
 	err := exec.Exec(ctx, "alter table auto_increment", query)
@@ -328,6 +330,13 @@ func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr 
 	return errors.Annotatef(err, "%s", query)
 }
 
+func adjustIDBase(incr uint64) int64 {
+	if incr > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(incr)
+}
+
 // AlterAutoRandom rebase the table auto random id
 func AlterAutoRandom(ctx context.Context, db *sql.DB, tableName string, randomBase uint64, maxAutoRandom uint64) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Uint64("auto_random", randomBase))
@@ -339,6 +348,7 @@ func AlterAutoRandom(ctx context.Context, db *sql.DB, tableName string, randomBa
 		logger.Warn("auto_random out of the maximum value TiDB supports")
 		return nil
 	}
+	// if new base is smaller than current, this query will success with a warning
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_RANDOM_BASE=%d", tableName, randomBase)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_random")
 	exec := common.SQLWithRetry{DB: db, Logger: logger}

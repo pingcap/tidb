@@ -468,7 +468,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 			if !ok {
 				tb, _, _ := is.FindTableByPartitionID(phyTable.ID)
 				if tb == nil {
-					logutil.BgLogger().Info("[ddl] waitForAddPartition")
+					logutil.BgLogger().Info("waitForAddPartition", zap.String("category", "ddl"))
 					sleepSecond := val.(int)
 					time.Sleep(time.Duration(sleepSecond) * time.Second)
 				}

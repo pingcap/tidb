@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikv"
@@ -37,7 +38,8 @@ const (
 	// MppVersionV1 supports TiFlash version [v6.6.x, ~]
 	MppVersionV1
 
-	// MppVersionV2
+	// MppVersionV2 supports TiFlash version [v7.3, ~], support ReportMPPTaskStatus service
+	MppVersionV2
 	// MppVersionV3
 
 	mppVersionMax
@@ -96,6 +98,7 @@ type MPPTask struct {
 	Meta       MPPTaskMeta // on which store this task will execute
 	ID         int64       // mppTaskID
 	StartTs    uint64
+	GatherID   uint64
 	MppQueryID MPPQueryID
 	TableID    int64      // physical table id
 	MppVersion MppVersion // mpp version
@@ -108,6 +111,7 @@ type MPPTask struct {
 func (t *MPPTask) ToPB() *mpp.TaskMeta {
 	meta := &mpp.TaskMeta{
 		StartTs:      t.StartTs,
+		GatherId:     t.GatherID,
 		QueryTs:      t.MppQueryID.QueryTs,
 		LocalQueryId: t.MppQueryID.LocalQueryID,
 		ServerId:     t.MppQueryID.ServerID,
@@ -141,17 +145,21 @@ type MPPDispatchRequest struct {
 	IsRoot  bool        // root task returns data to tidb directly.
 	Timeout uint64      // If task is assigned but doesn't receive a connect request during timeout, the task should be destroyed.
 	// SchemaVer is for any schema-ful storage (like tiflash) to validate schema correctness if necessary.
-	SchemaVar  int64
-	StartTs    uint64
-	MppQueryID MPPQueryID
-	ID         int64 // identify a single task
-	MppVersion MppVersion
-	State      MppTaskStates
+	SchemaVar              int64
+	StartTs                uint64
+	MppQueryID             MPPQueryID
+	GatherID               uint64
+	ID                     int64 // identify a single task
+	MppVersion             MppVersion
+	CoordinatorAddress     string
+	ReportExecutionSummary bool
+	State                  MppTaskStates
 }
 
 // CancelMPPTasksParam represents parameter for MPPClient's CancelMPPTasks
 type CancelMPPTasksParam struct {
-	Reqs []*MPPDispatchRequest
+	StoreAddr map[string]bool
+	Reqs      []*MPPDispatchRequest
 }
 
 // EstablishMPPConnsParam represents parameter for MPPClient's EstablishMPPConns
@@ -173,7 +181,7 @@ type DispatchMPPTaskParam struct {
 type MPPClient interface {
 	// ConstructMPPTasks schedules task for a plan fragment.
 	// TODO:: This interface will be refined after we support more executors.
-	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, time.Duration, tiflashcompute.DispatchPolicy) ([]MPPTaskMeta, error)
+	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, time.Duration, tiflashcompute.DispatchPolicy, tiflash.ReplicaRead, func(error)) ([]MPPTaskMeta, error)
 
 	// DispatchMPPTask dispatch mpp task, and returns valid response when retry = false and err is nil.
 	DispatchMPPTask(DispatchMPPTaskParam) (resp *mpp.DispatchTaskResponse, retry bool, err error)
@@ -191,14 +199,24 @@ type MPPClient interface {
 	GetMPPStoreCount() (int, error)
 }
 
+// ReportStatusRequest wraps mpp ReportStatusRequest
+type ReportStatusRequest struct {
+	Request *mpp.ReportTaskStatusRequest
+}
+
 // MppCoordinator describes the basic api for executing mpp physical plan.
 type MppCoordinator interface {
 	// Execute generates and executes mpp tasks for mpp physical plan.
 	Execute(ctx context.Context) (Response, []KeyRange, error)
 	// Next returns next data
 	Next(ctx context.Context) (ResultSubset, error)
+	// ReportStatus report task execution info to coordinator
+	// It shouldn't change any state outside coordinator itself, since the query which generated the coordinator may not exist
+	ReportStatus(info ReportStatusRequest) error
 	// Close and release the used resources.
 	Close() error
+	// IsClosed returns whether mpp coordinator is closed or not
+	IsClosed() bool
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.

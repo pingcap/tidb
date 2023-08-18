@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	gmysql "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -141,10 +143,11 @@ func NewTargetInfoGetter(db *sql.DB) backend.TargetInfoGetter {
 // TODO: refactor
 func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
 	var err error
-	tables := []*model.TableInfo{}
+	results := []*model.TableInfo{}
+	logger := log.FromContext(ctx)
 	s := common.SQLWithRetry{
 		DB:     b.db,
-		Logger: log.FromContext(ctx),
+		Logger: logger,
 	}
 
 	err = s.Transact(ctx, "fetch table columns", func(c context.Context, tx *sql.Tx) error {
@@ -170,6 +173,7 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 			curColOffset int
 			curTable     *model.TableInfo
 		)
+		tables := []*model.TableInfo{}
 		for rows.Next() {
 			var tableName, columnName, columnType, generationExpr, columnExtra string
 			if e := rows.Scan(&tableName, &columnName, &columnType, &generationExpr, &columnExtra); e != nil {
@@ -212,15 +216,24 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 		// shard_row_id/auto random is only available after tidb v4.0.0
 		// `show table next_row_id` is also not available before tidb v4.0.0
 		if serverInfo.ServerType != version.ServerTypeTiDB || serverInfo.ServerVersion.Major < 4 {
+			results = tables
 			return nil
 		}
+
+		failpoint.Inject(
+			"FetchRemoteTableModels_BeforeFetchTableAutoIDInfos",
+			func() {
+				fmt.Println("failpoint: FetchRemoteTableModels_BeforeFetchTableAutoIDInfos")
+			},
+		)
 
 		// init auto id column for each table
 		for _, tbl := range tables {
 			tblName := common.UniqueTable(schemaName, tbl.Name.O)
 			autoIDInfos, err := FetchTableAutoIDInfos(ctx, tx, tblName)
 			if err != nil {
-				return errors.Trace(err)
+				logger.Warn("fetch table auto ID infos error. Ignore this table and continue.", zap.String("table_name", tblName), zap.Error(err))
+				continue
 			}
 			for _, info := range autoIDInfos {
 				for _, col := range tbl.Columns {
@@ -237,10 +250,11 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 					}
 				}
 			}
+			results = append(results, tbl)
 		}
 		return nil
 	})
-	return tables, err
+	return results, err
 }
 
 // CheckRequirements performs the check whether the backend satisfies the version requirements.
@@ -252,6 +266,10 @@ func (*targetInfoGetter) CheckRequirements(ctx context.Context, _ *backend.Check
 
 type tidbBackend struct {
 	db          *sql.DB
+	conflictCfg config.Conflict
+	// onDuplicate is the type of INSERT SQL. It may be different with
+	// conflictCfg.Strategy to implement other feature, but the behaviour in caller's
+	// view should be the same.
 	onDuplicate string
 	errorMgr    *errormanager.ErrorManager
 }
@@ -262,15 +280,33 @@ var _ backend.Backend = (*tidbBackend)(nil)
 //
 // The backend does not take ownership of `db`. Caller should close `db`
 // manually after the backend expired.
-func NewTiDBBackend(ctx context.Context, db *sql.DB, onDuplicate string, errorMgr *errormanager.ErrorManager) backend.Backend {
-	switch onDuplicate {
-	case config.ReplaceOnDup, config.IgnoreOnDup, config.ErrorOnDup:
-	default:
-		log.FromContext(ctx).Warn("unsupported action on duplicate, overwrite with `replace`")
+func NewTiDBBackend(
+	ctx context.Context,
+	db *sql.DB,
+	conflict config.Conflict,
+	errorMgr *errormanager.ErrorManager,
+) backend.Backend {
+	var onDuplicate string
+	switch conflict.Strategy {
+	case config.ErrorOnDup:
+		onDuplicate = config.ErrorOnDup
+	case config.ReplaceOnDup:
 		onDuplicate = config.ReplaceOnDup
+	case config.IgnoreOnDup:
+		if conflict.MaxRecordRows == 0 {
+			onDuplicate = config.IgnoreOnDup
+		} else {
+			// need to stop batch insert on error and fall back to row by row insert
+			// to record the row
+			onDuplicate = config.ErrorOnDup
+		}
+	default:
+		log.FromContext(ctx).Warn("unsupported conflict strategy, overwrite with `error`")
+		onDuplicate = config.ErrorOnDup
 	}
 	return &tidbBackend{
 		db:          db,
+		conflictCfg: conflict,
 		onDuplicate: onDuplicate,
 		errorMgr:    errorMgr,
 	}
@@ -584,13 +620,15 @@ rowLoop:
 				continue rowLoop
 			case common.IsRetryableError(err):
 				// retry next loop
-			case be.errorMgr.TypeErrorsRemain() > 0:
+			case be.errorMgr.TypeErrorsRemain() > 0 ||
+				be.errorMgr.ConflictErrorsRemain() > 0 ||
+				(be.conflictCfg.Strategy == config.ErrorOnDup && !be.errorMgr.RecordErrorOnce()):
 				// WriteBatchRowsToDB failed in the batch mode and can not be retried,
 				// we need to redo the writing row-by-row to find where the error locates (and skip it correctly in future).
 				if err = be.WriteRowsToDB(ctx, tableName, columnNames, r); err != nil {
-					// If the error is not nil, it means we reach the max error count in the non-batch mode.
-					// For now, we will treat like maxErrorCount is always 0. So we will just return if any error occurs.
-					return errors.Annotatef(err, "[%s] write rows reach max error count %d", tableName, 0)
+					// If the error is not nil, it means we reach the max error count in the
+					// non-batch mode or this is "error" conflict strategy.
+					return errors.Annotatef(err, "[%s] write rows exceed conflict threshold", tableName)
 				}
 				continue rowLoop
 			default:
@@ -687,39 +725,101 @@ func (be *tidbBackend) buildStmt(tableName string, columnNames []string) *string
 }
 
 func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tableName string, batch bool) error {
+stmtLoop:
 	for _, stmtTask := range stmtTasks {
+		var (
+			result sql.Result
+			err    error
+		)
 		for i := 0; i < writeRowsMaxRetryTimes; i++ {
 			stmt := stmtTask.stmt
-			_, err := be.db.ExecContext(ctx, stmt)
-			if err != nil {
-				if !common.IsContextCanceledError(err) {
-					log.FromContext(ctx).Error("execute statement failed",
-						zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.String(stmt)), zap.Error(err))
+			result, err = be.db.ExecContext(ctx, stmt)
+			if err == nil {
+				affected, err2 := result.RowsAffected()
+				if err2 != nil {
+					// should not happen
+					return errors.Trace(err2)
 				}
-				// It's batch mode, just return the error.
-				if batch {
-					return errors.Trace(err)
+				diff := int64(len(stmtTask.rows)) - affected
+				if diff < 0 {
+					diff = -diff
 				}
-				// Retry the non-batch insert here if this is not the last retry.
-				if common.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
-					continue
+				if diff > 0 {
+					if err2 = be.errorMgr.RecordDuplicateCount(diff); err2 != nil {
+						return err2
+					}
 				}
-				firstRow := stmtTask.rows[0]
-				err = be.errorMgr.RecordTypeError(ctx, log.FromContext(ctx), tableName, firstRow.path, firstRow.offset, firstRow.insertStmt, err)
-				if err == nil {
-					// max-error not yet reached (error consumed by errorMgr), proceed to next stmtTask.
-					break
-				}
+				continue stmtLoop
+			}
+
+			if !common.IsContextCanceledError(err) {
+				log.FromContext(ctx).Error("execute statement failed",
+					zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.String(stmt)), zap.Error(err))
+			}
+			// It's batch mode, just return the error. Caller will fall back to row-by-row mode.
+			if batch {
 				return errors.Trace(err)
 			}
-			// No error, continue the next stmtTask.
-			break
+			if !common.IsRetryableError(err) {
+				break
+			}
 		}
+
+		firstRow := stmtTask.rows[0]
+
+		if isDupEntryError(err) {
+			// rowID is ignored in tidb backend
+			if be.conflictCfg.Strategy == config.ErrorOnDup {
+				be.errorMgr.RecordDuplicateOnce(
+					ctx,
+					log.FromContext(ctx),
+					tableName,
+					firstRow.path,
+					firstRow.offset,
+					err.Error(),
+					0,
+					firstRow.insertStmt,
+				)
+				return err
+			}
+			err = be.errorMgr.RecordDuplicate(
+				ctx,
+				log.FromContext(ctx),
+				tableName,
+				firstRow.path,
+				firstRow.offset,
+				err.Error(),
+				0,
+				firstRow.insertStmt,
+			)
+		} else {
+			err = be.errorMgr.RecordTypeError(
+				ctx,
+				log.FromContext(ctx),
+				tableName,
+				firstRow.path,
+				firstRow.offset,
+				firstRow.insertStmt,
+				err,
+			)
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// max-error not yet reached (error consumed by errorMgr), proceed to next stmtTask.
 	}
 	failpoint.Inject("FailIfImportedSomeRows", func() {
 		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
 	})
 	return nil
+}
+
+func isDupEntryError(err error) bool {
+	merr, ok := errors.Cause(err).(*gmysql.MySQLError)
+	if !ok {
+		return false
+	}
+	return merr.Number == errno.ErrDupEntry
 }
 
 // FlushEngine flushes the data in the engine to the underlying storage.
@@ -770,7 +870,7 @@ func (*Writer) IsSynced() bool {
 // TableAutoIDInfo is the auto id information of a table.
 type TableAutoIDInfo struct {
 	Column string
-	NextID int64
+	NextID uint64
 	Type   string
 }
 
@@ -784,7 +884,7 @@ func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableN
 	for rows.Next() {
 		var (
 			dbName, tblName, columnName, idType string
-			nextID                              int64
+			nextID                              uint64
 		)
 		columns, err := rows.Columns()
 		if err != nil {
@@ -797,7 +897,7 @@ func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableN
 		//| testsysbench | t          | _tidb_rowid |                  1 | AUTO_INCREMENT |
 		//+--------------+------------+-------------+--------------------+----------------+
 
-		// if columns length is 4, it doesn't contains the last column `ID_TYPE`, and it will always be 'AUTO_INCREMENT'
+		// if columns length is 4, it doesn't contain the last column `ID_TYPE`, and it will always be 'AUTO_INCREMENT'
 		// for v4.0.0~v4.0.2 show table t next_row_id only returns 4 columns.
 		if len(columns) == 4 {
 			err = rows.Scan(&dbName, &tblName, &columnName, &nextID)

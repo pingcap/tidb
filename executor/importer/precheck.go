@@ -81,7 +81,7 @@ func (e *LoadDataController) checkTableEmpty(ctx context.Context, conn sqlexec.S
 	return nil
 }
 
-func (e *LoadDataController) checkCDCPiTRTasks(ctx context.Context) error {
+func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context) error {
 	cli, err := GetEtcdClient()
 	if err != nil {
 		return err

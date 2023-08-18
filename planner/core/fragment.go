@@ -15,7 +15,9 @@
 package core
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -37,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // Fragment is cut from the whole pushed-down plan by network communication.
@@ -94,6 +95,7 @@ type tasksAndFrags struct {
 type mppTaskGenerator struct {
 	ctx        sessionctx.Context
 	startTS    uint64
+	gatherID   uint64
 	mppQueryID kv.MPPQueryID
 	is         infoschema.InfoSchema
 	frags      []*Fragment
@@ -106,9 +108,10 @@ type mppTaskGenerator struct {
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppQueryID kv.MPPQueryID, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, []kv.KeyRange, error) {
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppGatherID uint64, mppQueryID kv.MPPQueryID, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, []kv.KeyRange, error) {
 	g := &mppTaskGenerator{
 		ctx:        ctx,
+		gatherID:   mppGatherID,
 		startTS:    startTs,
 		mppQueryID: mppQueryID,
 		is:         is,
@@ -142,6 +145,7 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragm
 	mppVersion := e.ctx.GetSessionVars().ChooseMppVersion()
 	tidbTask := &kv.MPPTask{
 		StartTs:    e.startTS,
+		GatherID:   e.gatherID,
 		MppQueryID: e.mppQueryID,
 		ID:         -1,
 		MppVersion: mppVersion,
@@ -191,6 +195,7 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask,
 			mppTask := &kv.MPPTask{
 				Meta:       &mppAddr{addr: addr},
 				ID:         AllocMPPTaskID(e.ctx),
+				GatherID:   e.gatherID,
 				MppQueryID: e.mppQueryID,
 				StartTs:    e.startTS,
 				TableID:    -1,
@@ -456,7 +461,7 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 		for i, col := range cols {
 			col.Index = i
 		}
-		proj := PhysicalProjection{Exprs: expression.Column2Exprs(cols)}.Init(cteReader.ctx, cteReader.stats, 0, nil)
+		proj := PhysicalProjection{Exprs: expression.Column2Exprs(cols)}.Init(cteReader.SCtx(), cteReader.StatsInfo(), 0, nil)
 		proj.SetSchema(cteReader.schema.Clone())
 		proj.SetChildren(receiver)
 		cteReader.SetChildren(proj)
@@ -569,7 +574,8 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		dispatchPolicy = e.ctx.GetSessionVars().TiFlashComputeDispatchPolicy
 		ttl = time.Duration(0)
 	}
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl, dispatchPolicy)
+	tiflashReplicaRead := e.ctx.GetSessionVars().TiFlashReplicaRead
+	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl, dispatchPolicy, tiflashReplicaRead, e.ctx.GetSessionVars().StmtCtx.AppendWarning)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -581,6 +587,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 			ID:                 AllocMPPTaskID(e.ctx),
 			MppVersion:         e.ctx.GetSessionVars().ChooseMppVersion(),
 			StartTs:            e.startTS,
+			GatherID:           e.gatherID,
 			MppQueryID:         e.mppQueryID,
 			TableID:            ts.Table.ID,
 			PartitionTableIDs:  allPartitionsIDs,
@@ -592,8 +599,8 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 }
 
 func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *PhysicalTableScan, splitedRanges []*ranger.Range, partitions []table.PhysicalTable) (*kv.MPPBuildTasksRequest, []int64, error) {
-	slices.SortFunc(partitions, func(i, j table.PhysicalTable) bool {
-		return i.GetPhysicalID() < j.GetPhysicalID()
+	slices.SortFunc(partitions, func(i, j table.PhysicalTable) int {
+		return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 	})
 	partitionIDAndRanges := make([]kv.PartitionIDAndRanges, len(partitions))
 	allPartitionsIDs := make([]int64, len(partitions))

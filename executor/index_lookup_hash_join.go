@@ -124,19 +124,19 @@ type indexHashJoinTask struct {
 
 // Open implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
-	err := e.children[0].Open(ctx)
+	err := e.Children(0).Open(ctx)
 	if err != nil {
 		return err
 	}
 	if e.memTracker != nil {
 		e.memTracker.Reset()
 	} else {
-		e.memTracker = memory.NewTracker(e.id, -1)
+		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 	e.cancelFunc = nil
 	e.innerPtrBytes = make([][]byte, 0, 8)
-	if e.runtimeStats != nil {
+	if e.RuntimeStats() != nil {
 		e.stats = &indexLookUpJoinRuntimeStats{}
 	}
 	e.finished.Store(false)
@@ -144,7 +144,7 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 }
 
 func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
-	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency()
+	concurrency := e.Ctx().GetSessionVars().IndexLookupJoinConcurrency()
 	if e.stats != nil {
 		e.stats.concurrency = concurrency
 	}
@@ -292,7 +292,7 @@ func (e *IndexNestedLoopHashJoin) isDryUpTasks(ctx context.Context) bool {
 // Close implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Close() error {
 	if e.stats != nil {
-		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
 	if e.cancelFunc != nil {
 		e.cancelFunc()
@@ -311,7 +311,7 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 	e.joinChkResourceCh = nil
 	e.finished.Store(false)
 	e.prepared = false
-	return e.baseExecutor.Close()
+	return e.BaseExecutor.Close()
 }
 
 func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
@@ -382,7 +382,7 @@ func (ow *indexHashJoinOuterWorker) buildTask(ctx context.Context) (*indexHashJo
 	}, nil
 }
 
-func (ow *indexHashJoinOuterWorker) pushToChan(ctx context.Context, task *indexHashJoinTask, dst chan<- *indexHashJoinTask) bool {
+func (*indexHashJoinOuterWorker) pushToChan(ctx context.Context, task *indexHashJoinTask, dst chan<- *indexHashJoinTask) bool {
 	select {
 	case <-ctx.Done():
 		return true
@@ -395,10 +395,10 @@ func (e *IndexNestedLoopHashJoin) newOuterWorker(innerCh chan *indexHashJoinTask
 	ow := &indexHashJoinOuterWorker{
 		outerWorker: outerWorker{
 			outerCtx:         e.outerCtx,
-			ctx:              e.ctx,
-			executor:         e.children[0],
+			ctx:              e.Ctx(),
+			executor:         e.Children(0),
 			batchSize:        32,
-			maxBatchSize:     e.ctx.GetSessionVars().IndexJoinBatchSize,
+			maxBatchSize:     e.Ctx().GetSessionVars().IndexJoinBatchSize,
 			parentMemTracker: e.memTracker,
 			lookup:           &e.IndexLookUpJoin,
 		},
@@ -423,8 +423,8 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		innerWorker: innerWorker{
 			innerCtx:      e.innerCtx,
 			outerCtx:      e.outerCtx,
-			ctx:           e.ctx,
-			executorChk:   e.ctx.GetSessionVars().GetNewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize, e.maxChunkSize, e.AllocPool),
+			ctx:           e.Ctx(),
+			executorChk:   e.Ctx().GetSessionVars().GetNewChunkWithCapacity(e.innerCtx.rowTypes, e.MaxChunkSize(), e.MaxChunkSize(), e.AllocPool),
 			indexRanges:   copiedRanges,
 			keyOff2IdxOff: e.keyOff2IdxOff,
 			stats:         innerStats,
@@ -435,9 +435,9 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		joiner:            e.joiners[workerID],
 		joinChkResourceCh: e.joinChkResourceCh[workerID],
 		resultCh:          e.resultCh,
-		matchedOuterPtrs:  make([]chunk.RowPtr, 0, e.maxChunkSize),
+		matchedOuterPtrs:  make([]chunk.RowPtr, 0, e.MaxChunkSize()),
 		joinKeyBuf:        make([]byte, 1),
-		outerRowStatus:    make([]outerRowStatusFlag, 0, e.maxChunkSize),
+		outerRowStatus:    make([]outerRowStatusFlag, 0, e.MaxChunkSize()),
 		rowIter:           chunk.NewIterator4Slice([]chunk.Row{}).(*chunk.Iterator4Slice),
 	}
 	iw.memTracker.AttachTo(e.memTracker)
@@ -446,7 +446,7 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		// memory usage of inner worker will be reset the end of iw.handleTask.
 		// While the life cycle of this memory consumption exists throughout the
 		// whole active period of inner worker.
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.Consume(2 * types.EstimatedMemUsage(copiedRanges[0].LowVal, len(copiedRanges)))
+		e.Ctx().GetSessionVars().StmtCtx.MemTracker.Consume(2 * types.EstimatedMemUsage(copiedRanges[0].LowVal, len(copiedRanges)))
 	}
 	if e.lastColHelper != nil {
 		// nextCwf.TmpConstant needs to be reset for every individual
@@ -549,7 +549,7 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 	return joinResult, ok
 }
 
-func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Context, task *indexHashJoinTask, h hash.Hash64) {
+func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(task *indexHashJoinTask, h hash.Hash64) {
 	failpoint.Inject("IndexHashJoinBuildHashTablePanic", nil)
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	if iw.stats != nil {
@@ -631,7 +631,10 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 		defer func() {
 			endTime := time.Now()
 			atomic.AddInt64(&iw.stats.totalTime, int64(endTime.Sub(start)))
-			atomic.AddInt64(&iw.stats.join, int64(endTime.Sub(joinStartTime)))
+			if !joinStartTime.IsZero() {
+				// FetchInnerResults maybe return err and return, so joinStartTime is not initialized.
+				atomic.AddInt64(&iw.stats.join, int64(endTime.Sub(joinStartTime)))
+			}
 		}()
 	}
 
@@ -641,7 +644,7 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
 	go util.WithRecovery(
 		func() {
-			iw.buildHashTableForOuterResult(ctx, task, h)
+			iw.buildHashTableForOuterResult(task, h)
 		},
 		func(r interface{}) {
 			var err error
@@ -772,7 +775,7 @@ func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(ctx context.Contex
 	return true, joinResult
 }
 
-func (iw *indexHashJoinInnerWorker) collectMatchedInnerPtrs4OuterRows(ctx context.Context, innerRow chunk.Row, innerRowPtr chunk.RowPtr,
+func (iw *indexHashJoinInnerWorker) collectMatchedInnerPtrs4OuterRows(innerRow chunk.Row, innerRowPtr chunk.RowPtr,
 	task *indexHashJoinTask, h hash.Hash64, buf []byte) error {
 	_, matchedOuterRowIdx, err := iw.getMatchedOuterRows(innerRow, task, h, buf)
 	if err != nil {
@@ -809,7 +812,7 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 		for j, chk := 0, task.innerResult.GetChunk(i); j < chk.NumRows(); j++ {
 			row := chk.GetRow(j)
 			ptr := chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)}
-			err = iw.collectMatchedInnerPtrs4OuterRows(ctx, row, ptr, task, h, iw.joinKeyBuf)
+			err = iw.collectMatchedInnerPtrs4OuterRows(row, ptr, task, h, iw.joinKeyBuf)
 			failpoint.Inject("TestIssue31129", func() {
 				err = errors.New("TestIssue31129")
 			})

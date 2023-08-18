@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "mpp",
@@ -10,6 +10,7 @@ go_library(
         "//distsql",
         "//executor/internal/builder",
         "//executor/internal/util",
+        "//executor/metrics",
         "//infoschema",
         "//kv",
         "//planner/core",
@@ -26,5 +27,18 @@ go_library(
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "mpp_test",
+    timeout = "short",
+    srcs = ["local_mpp_coordinator_test.go"],
+    embed = [":mpp"],
+    flaky = True,
+    deps = [
+        "//planner/core",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_stretchr_testify//require",
     ],
 )

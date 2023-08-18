@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -37,11 +38,11 @@ import (
 )
 
 var (
-	_ Executor = &UpdateExec{}
-	_ Executor = &DeleteExec{}
-	_ Executor = &InsertExec{}
-	_ Executor = &ReplaceExec{}
-	_ Executor = &LoadDataExec{}
+	_ exec.Executor = &UpdateExec{}
+	_ exec.Executor = &DeleteExec{}
+	_ exec.Executor = &InsertExec{}
+	_ exec.Executor = &ReplaceExec{}
+	_ exec.Executor = &LoadDataExec{}
 )
 
 // updateRecord updates the row specified by the handle `h`, from `oldData` to `newData`.
@@ -53,7 +54,7 @@ var (
 func updateRecord(
 	ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, modified []bool,
 	t table.Table,
-	onDup bool, memTracker *memory.Tracker, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec,
+	onDup bool, _ *memory.Tracker, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec,
 ) (bool, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "executor.updateRecord")
 	defer r.End()
@@ -78,7 +79,7 @@ func updateRecord(
 
 	// Handle exchange partition
 	tbl := t.Meta()
-	if tbl.ExchangePartitionInfo != nil && tbl.ExchangePartitionInfo.ExchangePartitionFlag {
+	if tbl.ExchangePartitionInfo != nil {
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
 		if !tableFound {
@@ -321,7 +322,7 @@ func rebaseAutoRandomValue(
 // resetErrDataTooLong reset ErrDataTooLong error msg.
 // types.ErrDataTooLong is produced in types.ProduceStrWithSpecifiedTp, there is no column info in there,
 // so we reset the error msg here, and wrap old err with errors.Wrap.
-func resetErrDataTooLong(colName string, rowIdx int, err error) error {
+func resetErrDataTooLong(colName string, rowIdx int, _ error) error {
 	newErr := types.ErrDataTooLong.GenWithStack("Data too long for column '%v' at row %v", colName, rowIdx)
 	return newErr
 }

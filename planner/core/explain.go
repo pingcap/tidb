@@ -48,10 +48,10 @@ func (p *PhysicalLock) ExplainInfo() string {
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalIndexScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
-		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
+		if p.SCtx() != nil && p.SCtx().GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.TP()
 		}
-		return p.TP() + "_" + strconv.Itoa(p.id)
+		return p.TP() + "_" + strconv.Itoa(p.ID())
 	})
 }
 
@@ -120,7 +120,7 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 				buffer.WriteString(", ")
 				buffer.WriteString(str)
 			}
-		} else if p.stats.StatsVersion == statistics.PseudoVersion {
+		} else if p.StatsInfo().StatsVersion == statistics.PseudoVersion {
 			// This branch is not needed in fact, we add this to prevent test result changes under planner/cascades/
 			buffer.WriteString(", stats:pseudo")
 		}
@@ -152,10 +152,10 @@ func (p *PhysicalIndexScan) isFullScan() bool {
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
-		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
+		if p.SCtx() != nil && p.SCtx().GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.TP()
 		}
-		return p.TP() + "_" + strconv.Itoa(p.id)
+		return p.TP() + "_" + strconv.Itoa(p.ID())
 	})
 }
 
@@ -213,7 +213,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			}
 		}
 	}
-	if p.ctx.GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 && p.StoreType == kv.TiFlash {
+	if p.SCtx().GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 && p.StoreType == kv.TiFlash {
 		buffer.WriteString("pushed down filter:")
 		if len(p.lateMaterializationFilterCondition) > 0 {
 			if normalized {
@@ -238,12 +238,12 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 				buffer.WriteString(", ")
 				buffer.WriteString(str)
 			}
-		} else if p.stats.StatsVersion == statistics.PseudoVersion {
+		} else if p.StatsInfo().StatsVersion == statistics.PseudoVersion {
 			// This branch is not needed in fact, we add this to prevent test result changes under planner/cascades/
 			buffer.WriteString(", stats:pseudo")
 		}
 	}
-	if p.StoreType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if p.StoreType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		buffer.WriteString(", PartitionTableScan:true")
 	}
 	if len(p.runtimeFilterList) > 0 {
@@ -290,7 +290,7 @@ func (p *PhysicalTableReader) ExplainInfo() string {
 	tablePlanInfo := "data:" + p.tablePlan.ExplainID().String()
 
 	if p.ReadReqType == MPP {
-		return fmt.Sprintf("MppVersion: %d, %s", p.ctx.GetSessionVars().ChooseMppVersion(), tablePlanInfo)
+		return fmt.Sprintf("MppVersion: %d, %s", p.SCtx().GetSessionVars().ChooseMppVersion(), tablePlanInfo)
 	}
 
 	return tablePlanInfo
@@ -528,7 +528,7 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) 
 	if len(p.OuterHashKeys) > 0 && !isIndexMergeJoin {
 		exprs := make([]expression.Expression, 0, len(p.OuterHashKeys))
 		for i := range p.OuterHashKeys {
-			expr, err := expression.NewFunctionBase(MockContext(), ast.EQ, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
+			expr, err := expression.NewFunctionBase(p.SCtx(), ast.EQ, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
 			if err != nil {
 				logutil.BgLogger().Warn("fail to NewFunctionBase", zap.Error(err))
 			}

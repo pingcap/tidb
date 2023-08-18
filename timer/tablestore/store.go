@@ -200,13 +200,15 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 				Watermark:       watermark,
 				Enable:          row.GetInt64(9) != 0,
 			},
-			EventStatus: api.SchedEventStatus(row.GetString(11)),
-			EventID:     row.GetString(12),
-			EventData:   eventData,
-			EventStart:  eventStart,
-			SummaryData: summaryData,
-			CreateTime:  createTime,
-			Version:     row.GetUint64(18),
+			ManualRequest: ext.Manual.ToManualRequest(),
+			EventStatus:   api.SchedEventStatus(row.GetString(11)),
+			EventID:       row.GetString(12),
+			EventData:     eventData,
+			EventStart:    eventStart,
+			EventExtra:    ext.Event.ToEventExtra(),
+			SummaryData:   summaryData,
+			CreateTime:    createTime,
+			Version:       row.GetUint64(18),
 		}
 		timers = append(timers, timer)
 	}
@@ -319,7 +321,11 @@ func (s *tableTimerStoreCore) takeSession() (sessionctx.Context, func(), error) 
 
 	back := func() {
 		if _, err = executeSQL(context.Background(), sctx, "ROLLBACK"); err != nil {
+			// Though this branch is rarely to be called because "ROLLBACK" will always be successfully, we still need
+			// to handle it here to make sure the code is strong.
 			terror.Log(err)
+			// call `r.Close()` to make sure the resource is released to avoid memory leak
+			r.Close()
 			return
 		}
 		s.pool.Put(r)

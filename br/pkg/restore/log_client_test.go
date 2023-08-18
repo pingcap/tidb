@@ -230,6 +230,8 @@ func testReadMetaBetweenTSWithVersion(t *testing.T, m metaMaker) {
 			StartTS:   c.startTS,
 			RestoreTS: c.endTS,
 			Storage:   loc,
+
+			MetadataDownloadBatchSize: 32,
 		}
 		cli, err := CreateLogFileManager(ctx, init)
 		req.Equal(cli.ShiftTS(), c.expectedShiftTS)
@@ -301,6 +303,7 @@ func testReadFromMetadataWithVersion(t *testing.T, m metaMaker) {
 
 		meta := new(StreamMetadataSet)
 		meta.Helper = stream.NewMetadataHelper()
+		meta.MetadataDownloadBatchSize = 128
 		meta.LoadUntilAndCalculateShiftTS(ctx, loc, c.untilTS)
 
 		var metas []*backuppb.Metadata
@@ -460,6 +463,8 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 			StartTS:   start,
 			RestoreTS: end,
 			Storage:   loc,
+
+			MetadataDownloadBatchSize: 32,
 		})
 		req.NoError(err)
 

@@ -15,7 +15,9 @@
 package expression
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"strings"
 	"unsafe"
 
@@ -30,15 +32,13 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/size"
-	"golang.org/x/exp/slices"
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
 type CorrelatedColumn struct {
 	Column
 
-	Data           *types.Datum
-	columnHashCode []byte
+	Data *types.Datum
 }
 
 // Clone implements Expression interface.
@@ -222,30 +222,6 @@ func (col *CorrelatedColumn) RemapColumn(m map[int64]*Column) (Expression, error
 		Column: *mapped,
 		Data:   col.Data,
 	}, nil
-}
-
-// HashCode implements Expression interface.
-func (col *CorrelatedColumn) HashCode(sc *stmtctx.StatementContext) []byte {
-	if len(col.columnHashCode) == 0 {
-		col.columnHashCode = make([]byte, 0, 9)
-		col.columnHashCode = append(col.columnHashCode, columnFlag)
-		col.columnHashCode = codec.EncodeInt(col.columnHashCode, col.UniqueID)
-	}
-
-	if len(col.hashcode) < len(col.columnHashCode) {
-		if len(col.hashcode) == 0 {
-			col.hashcode = make([]byte, 0, len(col.columnHashCode))
-		} else {
-			col.hashcode = col.hashcode[:0]
-		}
-		col.hashcode = append(col.hashcode, col.columnHashCode...)
-	}
-
-	// Because col.Data can be changed anytime, so always use newest Datum to calc hash code.
-	if col.Data != nil {
-		col.hashcode = codec.HashCode(col.hashcode, *col.Data)
-	}
-	return col.hashcode
 }
 
 // Column represents a column.
@@ -760,8 +736,8 @@ func (col *Column) Repertoire() Repertoire {
 func SortColumns(cols []*Column) []*Column {
 	sorted := make([]*Column, len(cols))
 	copy(sorted, cols)
-	slices.SortFunc(sorted, func(i, j *Column) bool {
-		return i.UniqueID < j.UniqueID
+	slices.SortFunc(sorted, func(i, j *Column) int {
+		return cmp.Compare(i.UniqueID, j.UniqueID)
 	})
 	return sorted
 }

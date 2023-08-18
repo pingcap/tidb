@@ -991,6 +991,11 @@ error = '''
 Partition column values of incorrect type
 '''
 
+["ddl:1656"]
+error = '''
+Cannot use MAXVALUE as value in VALUES IN
+'''
+
 ["ddl:1659"]
 error = '''
 Field '%-.192s' is of a not allowed type for this type of partitioning
@@ -1466,6 +1471,11 @@ error = '''
 Ingest failed: %s
 '''
 
+["ddl:8256"]
+error = '''
+Check ingest environment failed: %s
+'''
+
 ["ddl:8260"]
 error = '''
 Job [%v] can't be paused: %s
@@ -1859,6 +1869,11 @@ Query execution was interrupted, identified as runaway query
 ["executor:8254"]
 error = '''
 Quarantined and interrupted because of being in runaway watch list
+'''
+
+["executor:8255"]
+error = '''
+Unknown background task name '%-.192s'
 '''
 
 ["expression:1139"]
@@ -2764,6 +2779,66 @@ Unknown resource group '%-.192s'
 ["schema:8250"]
 error = '''
 Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature
+'''
+
+["server:1040"]
+error = '''
+Too many connections
+'''
+
+["server:1045"]
+error = '''
+Access denied for user '%-.48s'@'%-.255s' (using password: %s)
+'''
+
+["server:1148"]
+error = '''
+The used command is not allowed with this MySQL version
+'''
+
+["server:1153"]
+error = '''
+Got a packet bigger than 'max_allowed_packet' bytes
+'''
+
+["server:1184"]
+error = '''
+Aborted connection %d to db: '%-.192s' user: '%-.48s' host: '%-.255s' (%-.64s)
+'''
+
+["server:1251"]
+error = '''
+Client does not support authentication protocol requested by server; consider upgrading MySQL client
+'''
+
+["server:1698"]
+error = '''
+Access denied for user '%-.48s'@'%-.255s'
+'''
+
+["server:1820"]
+error = '''
+You must reset your password using ALTER USER statement before executing this statement
+'''
+
+["server:3159"]
+error = '''
+Connections using insecure transport are prohibited while --require_secure_transport=ON.
+'''
+
+["server:8052"]
+error = '''
+invalid sequence
+'''
+
+["server:8057"]
+error = '''
+invalid type
+'''
+
+["server:8130"]
+error = '''
+client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk
 '''
 
 ["session:8002"]

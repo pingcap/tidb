@@ -25,6 +25,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	copr_metrics "github.com/pingcap/tidb/store/copr/metrics"
 	"github.com/tikv/client-go/v2/config"
 )
 
@@ -81,6 +82,9 @@ func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
 		NumCounters: estimatedEntities * 10,
 		MaxCost:     capacityInBytes,
 		BufferItems: 64,
+		OnEvict: func(_ *ristretto.Item) {
+			copr_metrics.CoprCacheCounterEvict.Add(1)
+		},
 	})
 	if err != nil {
 		return nil, errors.Trace(err)

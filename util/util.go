@@ -153,12 +153,12 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 		logFields = append(logFields, zap.String("database", info.DB))
 	}
 	var tableIDs, indexNames string
-	if len(info.StmtCtx.TableIDs) > 0 {
-		tableIDs = strings.ReplaceAll(fmt.Sprintf("%v", info.StmtCtx.TableIDs), " ", ",")
+	if len(info.TableIDs) > 0 {
+		tableIDs = strings.ReplaceAll(fmt.Sprintf("%v", info.TableIDs), " ", ",")
 		logFields = append(logFields, zap.String("table_ids", tableIDs))
 	}
-	if len(info.StmtCtx.IndexNames) > 0 {
-		indexNames = strings.ReplaceAll(fmt.Sprintf("%v", info.StmtCtx.IndexNames), " ", ",")
+	if len(info.IndexNames) > 0 {
+		indexNames = strings.ReplaceAll(fmt.Sprintf("%v", info.IndexNames), " ", ",")
 		logFields = append(logFields, zap.String("index_names", indexNames))
 	}
 	logFields = append(logFields, zap.Uint64("txn_start_ts", info.CurTxnStartTS))
@@ -282,4 +282,16 @@ func ReadLines(reader *bufio.Reader, count int, maxLineSize int) ([][]byte, erro
 		lines = append(lines, line)
 	}
 	return lines, nil
+}
+
+// IsInCorrectIdentifierName checks if the identifier is incorrect.
+// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
+func IsInCorrectIdentifierName(name string) bool {
+	if len(name) == 0 {
+		return true
+	}
+	if name[len(name)-1] == ' ' {
+		return true
+	}
+	return false
 }

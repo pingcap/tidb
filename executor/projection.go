@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
@@ -56,7 +57,7 @@ type projectionOutput struct {
 // ProjectionExec implements the physical Projection Operator:
 // https://en.wikipedia.org/wiki/Projection_(relational_algebra)
 type ProjectionExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	evaluatorSuit *expression.EvaluatorSuite
 
@@ -83,7 +84,7 @@ type ProjectionExec struct {
 
 // Open implements the Executor Open interface.
 func (e *ProjectionExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 	failpoint.Inject("mockProjectionExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
@@ -96,14 +97,14 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 
 func (e *ProjectionExec) open(_ context.Context) error {
 	e.prepared = false
-	e.parentReqRows = int64(e.maxChunkSize)
+	e.parentReqRows = int64(e.MaxChunkSize())
 
 	if e.memTracker != nil {
 		e.memTracker.Reset()
 	} else {
-		e.memTracker = memory.NewTracker(e.id, -1)
+		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
 	// For now a Projection can not be executed vectorially only because it
 	// contains "SetVar" or "GetVar" functions, in this scenario this
@@ -113,7 +114,7 @@ func (e *ProjectionExec) open(_ context.Context) error {
 	}
 
 	if e.isUnparallelExec() {
-		e.childResult = tryNewCacheChunk(e.children[0])
+		e.childResult = tryNewCacheChunk(e.Children(0))
 		e.memTracker.Consume(e.childResult.MemoryUsage())
 	}
 
@@ -178,7 +179,7 @@ func (e *ProjectionExec) open(_ context.Context) error {
   +------------------------------+       +----------------------+
 */
 func (e *ProjectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.GrowAndReset(e.maxChunkSize)
+	req.GrowAndReset(e.MaxChunkSize())
 	if e.isUnparallelExec() {
 		return e.unParallelExecute(ctx, req)
 	}
@@ -191,9 +192,9 @@ func (e *ProjectionExec) isUnparallelExec() bool {
 
 func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk) error {
 	// transmit the requiredRows
-	e.childResult.SetRequiredRows(chk.RequiredRows(), e.maxChunkSize)
+	e.childResult.SetRequiredRows(chk.RequiredRows(), e.MaxChunkSize())
 	mSize := e.childResult.MemoryUsage()
-	err := Next(ctx, e.children[0], e.childResult)
+	err := Next(ctx, e.Children(0), e.childResult)
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 	if err != nil {
@@ -202,7 +203,7 @@ func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk
 	if e.childResult.NumRows() == 0 {
 		return nil
 	}
-	err = e.evaluatorSuit.Run(e.ctx, e.childResult, chk)
+	err = e.evaluatorSuit.Run(e.Ctx(), e.childResult, chk)
 	return err
 }
 
@@ -237,7 +238,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 	// Initialize projectionInputFetcher.
 	e.fetcher = projectionInputFetcher{
 		proj:           e,
-		child:          e.children[0],
+		child:          e.Children(0),
 		globalFinishCh: e.finishCh,
 		globalOutputCh: e.outputCh,
 		inputCh:        make(chan *projectionInput, e.numWorkers),
@@ -249,7 +250,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 	for i := int64(0); i < e.numWorkers; i++ {
 		e.workers = append(e.workers, &projectionWorker{
 			proj:            e,
-			sctx:            e.ctx,
+			sctx:            e.Ctx(),
 			evaluatorSuit:   e.evaluatorSuit,
 			globalFinishCh:  e.finishCh,
 			inputGiveBackCh: e.fetcher.inputCh,
@@ -257,7 +258,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 			outputCh:        make(chan *projectionOutput, 1),
 		})
 
-		inputChk := newFirstChunk(e.children[0])
+		inputChk := newFirstChunk(e.Children(0))
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(inputChk.MemoryUsage())
 		e.fetcher.inputCh <- &projectionInput{
@@ -302,7 +303,7 @@ func (e *ProjectionExec) drainOutputCh(ch chan *projectionOutput) {
 
 // Close implements the Executor Close interface.
 func (e *ProjectionExec) Close() error {
-	// if e.baseExecutor.Open returns error, e.childResult will be nil, see https://github.com/pingcap/tidb/issues/24210
+	// if e.BaseExecutor.Open returns error, e.childResult will be nil, see https://github.com/pingcap/tidb/issues/24210
 	// for more information
 	if e.isUnparallelExec() && e.childResult != nil {
 		e.memTracker.Consume(-e.childResult.MemoryUsage())
@@ -322,21 +323,21 @@ func (e *ProjectionExec) Close() error {
 			e.drainOutputCh(w.outputCh)
 		}
 	}
-	if e.baseExecutor.runtimeStats != nil {
+	if e.BaseExecutor.RuntimeStats() != nil {
 		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
 		if e.isUnparallelExec() {
 			runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", 0))
 		} else {
 			runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", int(e.numWorkers)))
 		}
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
+		e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), runtimeStats)
 	}
-	return e.baseExecutor.Close()
+	return e.BaseExecutor.Close()
 }
 
 type projectionInputFetcher struct {
 	proj           *ProjectionExec
-	child          Executor
+	child          exec.Executor
 	globalFinishCh <-chan struct{}
 	globalOutputCh chan<- *projectionOutput
 
@@ -383,7 +384,7 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 		f.globalOutputCh <- output
 
 		requiredRows := atomic.LoadInt64(&f.proj.parentReqRows)
-		input.chk.SetRequiredRows(int(requiredRows), f.proj.maxChunkSize)
+		input.chk.SetRequiredRows(int(requiredRows), f.proj.MaxChunkSize())
 		mSize := input.chk.MemoryUsage()
 		err := Next(ctx, f.child, input.chk)
 		failpoint.Inject("ConsumeRandomPanic", nil)

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -75,7 +76,7 @@ func recordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 	if _, err := exec.ExecuteInternal(ctx, sql, tableID, modifyCount, count, version, source); err != nil {
 		return errors.Trace(err)
 	}
-	TableRowStatsCache.Invalidate(tableID)
+	cache.TableRowStatsCache.Invalidate(tableID)
 	return nil
 }
 
@@ -85,7 +86,7 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64, source
 		return
 	}
 	sc := v
-	tbl, ok := sc.Get(tableID)
+	tbl, ok := sc.GetFromInternal(tableID)
 	if !ok {
 		return
 	}

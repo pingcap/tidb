@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -99,7 +100,7 @@ func (c *copReqSender) run() {
 	}, false)
 	sessCtx, err := p.sessPool.Get()
 	if err != nil {
-		logutil.BgLogger().Error("[ddl-ingest] copReqSender get session from pool failed", zap.Error(err))
+		logutil.Logger(p.ctx).Error("copReqSender get session from pool failed", zap.Error(err))
 		p.chunkSender.AddTask(idxRecResult{err: err})
 		return
 	}
@@ -114,7 +115,7 @@ func (c *copReqSender) run() {
 			return
 		}
 		if p.checkpointMgr != nil && p.checkpointMgr.IsComplete(task.endKey) {
-			logutil.BgLogger().Info("[ddl-ingest] checkpoint detected, skip a cop-request task",
+			logutil.Logger(p.ctx).Info("checkpoint detected, skip a cop-request task",
 				zap.Int("task ID", task.id),
 				zap.String("task end key", hex.EncodeToString(task.endKey)))
 			continue
@@ -128,11 +129,11 @@ func (c *copReqSender) run() {
 }
 
 func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
-	logutil.BgLogger().Info("[ddl-ingest] start a cop-request task",
+	logutil.Logger(p.ctx).Info("start a cop-request task",
 		zap.Int("id", task.id), zap.String("task", task.String()))
 
 	return wrapInBeginRollback(se, func(startTS uint64) error {
-		rs, err := p.copCtx.buildTableScan(p.ctx, startTS, task.startKey, task.excludedEndKey())
+		rs, err := p.copCtx.buildTableScan(p.ctx, startTS, task.startKey, task.endKey)
 		if err != nil {
 			return err
 		}
@@ -227,7 +228,7 @@ func (c *copReqSenderPool) close(force bool) {
 	if c.closed {
 		return
 	}
-	logutil.BgLogger().Info("[ddl-ingest] close cop-request sender pool")
+	logutil.Logger(c.ctx).Info("close cop-request sender pool", zap.Bool("force", force))
 	if force {
 		for _, w := range c.senders {
 			w.cancel()
@@ -424,6 +425,7 @@ func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, 
 		Build()
 	kvReq.RequestSource.RequestSourceInternal = true
 	kvReq.RequestSource.RequestSourceType = getDDLRequestSource(model.ActionAddIndex)
+	kvReq.RequestSource.ExplicitRequestSourceType = kvutil.ExplicitTypeDDL
 	if err != nil {
 		return nil, err
 	}
@@ -482,7 +484,7 @@ func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo,
 
 func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
+	_, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
 	sc := sCtx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()
 	for i := range colInfos {

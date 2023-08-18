@@ -47,12 +47,6 @@ import (
 
 // Histogram represents statistics for a column or index.
 type Histogram struct {
-	ID        int64 // Column ID.
-	NDV       int64 // Number of distinct values.
-	NullCount int64 // Number of null values.
-	// LastUpdateVersion is the version that this histogram updated last time.
-	LastUpdateVersion uint64
-
 	Tp *types.FieldType
 
 	// Histogram elements.
@@ -69,7 +63,13 @@ type Histogram struct {
 
 	// Used for estimating fraction of the interval [lower, upper] that lies within the [lower, value].
 	// For some types like `Int`, we do not build it because we can get them directly from `Bounds`.
-	scalars []scalar
+	scalars   []scalar
+	ID        int64 // Column ID.
+	NDV       int64 // Number of distinct values.
+	NullCount int64 // Number of null values.
+	// LastUpdateVersion is the version that this histogram updated last time.
+	LastUpdateVersion uint64
+
 	// TotColSize is the total column size for the histogram.
 	// For unfixed-len types, it includes LEN and BYTE.
 	TotColSize int64
@@ -231,9 +231,8 @@ const (
 	// Fast analyze is always Version1 currently.
 	Version1 = 1
 	// Version2 maintains the statistics in the following way.
-	// Column stats: CM Sketch is not used. TopN and Histogram are built from samples. TopN + Histogram represent all data.
-	// Index stats: CM SKetch is not used. TopN and Histograms are built from samples.
-	//    Then values covered by TopN is removed from Histogram. TopN + Histogram represent all data.
+	// Column stats: CM Sketch is not used. TopN and Histogram are built from samples. TopN + Histogram represent all data.(The values covered by TopN is removed from Histogram.)
+	// Index stats: CM SKetch is not used. TopN and Histograms are built from samples. TopN + Histogram represent all data.(The values covered by TopN is removed from Histogram.)
 	// Both Column and Index's NDVs are collected by full scan.
 	Version2 = 2
 )
@@ -279,6 +278,35 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 	lowerVal, err := ValueToString(nil, hg.GetLower(bktID), idxCols, nil)
 	terror.Log(errors.Trace(err))
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d ndv: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat, hg.Buckets[bktID].NDV)
+}
+
+// BinarySearchRemoveVal removes the value from the TopN using binary search.
+func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
+	lowIdx, highIdx := 0, hg.Len()-1
+	for lowIdx <= highIdx {
+		midIdx := (lowIdx + highIdx) / 2
+		cmpResult := bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2), valCntPairs.Encoded)
+		if cmpResult > 0 {
+			lowIdx = midIdx + 1
+			continue
+		}
+		cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2+1), valCntPairs.Encoded)
+		if cmpResult < 0 {
+			highIdx = midIdx - 1
+			continue
+		}
+		if hg.Buckets[midIdx].NDV > 0 {
+			hg.Buckets[midIdx].NDV--
+		}
+		if cmpResult == 0 {
+			hg.Buckets[midIdx].Repeat = 0
+		}
+		hg.Buckets[midIdx].Count -= int64(valCntPairs.Count)
+		if hg.Buckets[midIdx].Count < 0 {
+			hg.Buckets[midIdx].Count = 0
+		}
+		break
+	}
 }
 
 // RemoveVals remove the given values from the histogram.
@@ -1079,9 +1107,10 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 			}
 			newIdxHist, err := idxHist.newIndexBySelectivity(sctx.GetSessionVars().StmtCtx, node)
 			if err != nil {
-				logutil.BgLogger().Warn("[Histogram-in-plan]: something wrong happened when calculating row count, "+
+				logutil.BgLogger().Warn("something wrong happened when calculating row count, "+
 					"failed to build histogram for index %v of table %v",
-					zap.String("index", idxHist.Info.Name.O), zap.String("table", idxHist.Info.Table.O), zap.Error(err))
+					zap.String("category", "Histogram-in-plan"), zap.String("index", idxHist.Info.Name.O),
+					zap.String("table", idxHist.Info.Table.O), zap.Error(err))
 				continue
 			}
 			newColl.Indices[node.ID] = newIdxHist
@@ -1101,7 +1130,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 		var err error
 		splitRanges, ok := oldCol.Histogram.SplitRange(sctx.GetSessionVars().StmtCtx, node.Ranges, false)
 		if !ok {
-			logutil.BgLogger().Warn("[Histogram-in-plan]: the type of histogram and ranges mismatch")
+			logutil.BgLogger().Warn("the type of histogram and ranges mismatch", zap.String("category", "Histogram-in-plan"))
 			continue
 		}
 		// Deal with some corner case.
@@ -1122,7 +1151,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 			err = newHistogramBySelectivity(sctx, node.ID, &oldCol.Histogram, &newCol.Histogram, splitRanges, coll.GetRowCountByColumnRanges)
 		}
 		if err != nil {
-			logutil.BgLogger().Warn("[Histogram-in-plan]: something wrong happened when calculating row count",
+			logutil.BgLogger().Warn("something wrong happened when calculating row count", zap.String("category", "Histogram-in-plan"),
 				zap.Error(err))
 			continue
 		}
@@ -1621,10 +1650,10 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 }
 
 const (
-	allLoaded = iota
-	onlyCmsEvicted
-	onlyHistRemained
-	allEvicted
+	// AllLoaded indicates all statistics are loaded
+	AllLoaded = iota
+	// AllEvicted indicates all statistics are evicted
+	AllEvicted
 )
 
 // StatsLoadedStatus indicates the status of statistics
@@ -1637,17 +1666,17 @@ type StatsLoadedStatus struct {
 func NewStatsFullLoadStatus() StatsLoadedStatus {
 	return StatsLoadedStatus{
 		statsInitialized: true,
-		evictedStatus:    allLoaded,
+		evictedStatus:    AllLoaded,
 	}
 }
 
 // NewStatsAllEvictedStatus returns the status that only loads count/nullCount/NDV and doesn't load CMSketch/TopN/Histogram.
-// When we load table stats, column stats is in allEvicted status by default. CMSketch/TopN/Histogram of column is only
+// When we load table stats, column stats is in AllEvicted status by default. CMSketch/TopN/Histogram of column is only
 // loaded when we really need column stats.
 func NewStatsAllEvictedStatus() StatsLoadedStatus {
 	return StatsLoadedStatus{
 		statsInitialized: true,
-		evictedStatus:    allEvicted,
+		evictedStatus:    AllEvicted,
 	}
 }
 
@@ -1661,7 +1690,7 @@ func (s StatsLoadedStatus) IsStatsInitialized() bool {
 // If the column/index was loaded and any statistics of it is evicting, it also needs re-load statistics.
 func (s StatsLoadedStatus) IsLoadNeeded() bool {
 	if s.statsInitialized {
-		return s.evictedStatus > allLoaded
+		return s.evictedStatus > AllLoaded
 	}
 	// If statsInitialized is false, it means there is no stats for the column/index in the storage.
 	// Hence, we don't need to trigger the task of loading the column/index stats.
@@ -1671,25 +1700,15 @@ func (s StatsLoadedStatus) IsLoadNeeded() bool {
 // IsEssentialStatsLoaded indicates whether the essential statistics is loaded.
 // If the column/index was loaded, and at least histogram and topN still exists, the necessary statistics is still loaded.
 func (s StatsLoadedStatus) IsEssentialStatsLoaded() bool {
-	return s.statsInitialized && (s.evictedStatus < allEvicted)
-}
-
-// IsCMSEvicted indicates whether the cms got evicted now.
-func (s StatsLoadedStatus) IsCMSEvicted() bool {
-	return s.statsInitialized && s.evictedStatus >= onlyCmsEvicted
-}
-
-// IsTopNEvicted indicates whether the topn got evicted now.
-func (s StatsLoadedStatus) IsTopNEvicted() bool {
-	return s.statsInitialized && s.evictedStatus >= onlyHistRemained
+	return s.statsInitialized && (s.evictedStatus < AllEvicted)
 }
 
 // IsAllEvicted indicates whether all the stats got evicted or not.
 func (s StatsLoadedStatus) IsAllEvicted() bool {
-	return s.statsInitialized && s.evictedStatus >= allEvicted
+	return s.statsInitialized && s.evictedStatus >= AllEvicted
 }
 
 // IsFullLoad indicates whether the stats are full loaded
 func (s StatsLoadedStatus) IsFullLoad() bool {
-	return s.statsInitialized && s.evictedStatus == allLoaded
+	return s.statsInitialized && s.evictedStatus == AllLoaded
 }

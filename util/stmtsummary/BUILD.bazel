@@ -25,7 +25,6 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_client_go_v2//util",
         "@org_golang_x_exp//maps",
-        "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
@@ -41,6 +40,7 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
+    shard_count = 24,
     deps = [
         "//parser/auth",
         "//parser/model",

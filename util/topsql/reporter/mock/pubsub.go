@@ -48,7 +48,7 @@ func NewMockPubSubServer() (*mockPubSubServer, error) {
 func (svr *mockPubSubServer) Serve() {
 	err := svr.grpcServer.Serve(svr.listen)
 	if err != nil {
-		logutil.BgLogger().Warn("[top-sql] mock pubsub server serve failed", zap.Error(err))
+		logutil.BgLogger().Warn("mock pubsub server serve failed", zap.String("category", "top-sql"), zap.Error(err))
 	}
 }
 

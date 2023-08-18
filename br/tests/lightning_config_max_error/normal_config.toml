@@ -1,5 +1,5 @@
-[lightning.max-error]
-conflict = 20
+[conflict]
+threshold = 20
 
 [mydumper.csv]
 header = true

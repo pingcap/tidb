@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/tables"
+	timertable "github.com/pingcap/tidb/timer/tablestore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -612,21 +613,37 @@ const (
 		action varchar(12) NOT NULL,
 		original_sql TEXT NOT NULL,
 		plan_digest TEXT NOT NULL,
-		tidb_server varchar(64),
+		tidb_server varchar(512),
 		INDEX plan_index(plan_digest(64)) COMMENT "accelerate the speed when select runaway query",
 		INDEX time_index(time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
-	// CreateRunawayQuarantineWatchTable stores the condition which is used to check whether query should be quarantined.
-	CreateRunawayQuarantineWatchTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_quarantined_watch (
+	// CreateRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
+	CreateRunawayWatchTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_watch (
+		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		resource_group_name varchar(32) not null,
-		start_time TIMESTAMP NOT NULL,
-		end_time TIMESTAMP NOT NULL,
-		watch varchar(12) NOT NULL,
+		start_time datetime(6) NOT NULL,
+		end_time datetime(6),
+		watch bigint(10) NOT NULL,
 		watch_text TEXT NOT NULL,
-		tidb_server varchar(64),
-		INDEX sql_index(watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
+		source varchar(512) NOT NULL,
+		action bigint(10),
+		INDEX sql_index(resource_group_name,watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
 		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
+
+	// CreateDoneRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
+	CreateDoneRunawayWatchTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_watch_done (
+		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		record_id BIGINT(20) not null,
+		resource_group_name varchar(32) not null,
+		start_time datetime(6) NOT NULL,
+		end_time datetime(6),
+		watch bigint(10) NOT NULL,
+		watch_text TEXT NOT NULL,
+		source varchar(512) NOT NULL,
+		action bigint(10),
+		done_time TIMESTAMP(6) NOT NULL
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateImportJobs is a table that IMPORT INTO uses.
@@ -650,6 +667,9 @@ const (
 		KEY (created_by),
 		KEY (status));`
 )
+
+// CreateTimers is a table to store all timers for tidb
+var CreateTimers = timertable.CreateTimerTableSQL("mysql", "tidb_timers")
 
 // bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
@@ -941,12 +961,25 @@ const (
 	// version 167 add column `step` to `mysql.tidb_background_subtask`
 	version167 = 167
 	version168 = 168
+	// version 169
+	// 	 create table `mysql.tidb_runaway_quarantined_watch` and table `mysql.tidb_runaway_queries`
+	//   to save runaway query records and persist runaway watch at 7.2 version.
+	//   but due to ver171 recreate `mysql.tidb_runaway_watch`,
+	//   no need to create table `mysql.tidb_runaway_quarantined_watch`, so delete it.
 	version169 = 169
+	version170 = 170
+	// version 171
+	//   keep the tidb_server length same as instance in other tables.
+	version171 = 171
+	// version 172
+	//   create table `mysql.tidb_runaway_watch` and table `mysql.tidb_runaway_watch_done`
+	//   to persist runaway watch and deletion of runaway watch at 7.3.
+	version172 = 172
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version169
+var currentBootstrapVersion int64 = version172
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1084,6 +1117,9 @@ var (
 		upgradeToVer167,
 		upgradeToVer168,
 		upgradeToVer169,
+		upgradeToVer170,
+		upgradeToVer171,
+		upgradeToVer172,
 	}
 )
 
@@ -1173,7 +1209,7 @@ func upgrade(s Session) {
 	}
 
 	if ver >= int64(SupportUpgradeStateVer) {
-		syncUpgradeState(s)
+		terror.MustNil(SyncUpgradeState(s))
 	}
 	if isNull {
 		upgradeToVer99Before(s)
@@ -1188,7 +1224,7 @@ func upgrade(s Session) {
 		upgradeToVer99After(s)
 	}
 	if ver >= int64(SupportUpgradeStateVer) {
-		syncNormalRunning(s)
+		terror.MustNil(SyncNormalRunning(s))
 	}
 
 	variable.DDLForce2Queue.Store(false)
@@ -1217,14 +1253,16 @@ func upgrade(s Session) {
 	}
 }
 
-func syncUpgradeState(s Session) {
+// SyncUpgradeState syncs upgrade state to etcd.
+func SyncUpgradeState(s Session) error {
 	totalInterval := time.Duration(internalSQLTimeout) * time.Second
 	ctx, cancelFunc := context.WithTimeout(context.Background(), totalInterval)
 	defer cancelFunc()
 	dom := domain.GetDomain(s)
 	err := dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateUpgrading))
 	if err != nil {
-		logutil.BgLogger().Fatal("[upgrading] update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
+		logutil.BgLogger().Error("update global state failed", zap.String("category", "upgrading"), zap.String("state", syncer.StateUpgrading), zap.Error(err))
+		return err
 	}
 
 	interval := 200 * time.Millisecond
@@ -1235,10 +1273,11 @@ func syncUpgradeState(s Session) {
 			break
 		}
 		if i == retryTimes-1 {
-			logutil.BgLogger().Fatal("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
+			logutil.BgLogger().Error("get owner op failed", zap.String("category", "upgrading"), zap.Stringer("state", op), zap.Error(err))
+			return err
 		}
 		if i%10 == 0 {
-			logutil.BgLogger().Warn("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
+			logutil.BgLogger().Warn("get owner op failed", zap.String("category", "upgrading"), zap.Stringer("state", op), zap.Error(err))
 		}
 		time.Sleep(interval)
 	}
@@ -1262,30 +1301,33 @@ func syncUpgradeState(s Session) {
 		}
 
 		if i == retryTimes-1 {
-			logutil.BgLogger().Fatal("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
+			logutil.BgLogger().Error("pause all jobs failed", zap.String("category", "upgrading"), zap.Strings("errs", jobErrStrs), zap.Error(err))
+			return err
 		}
-		logutil.BgLogger().Warn("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
+		logutil.BgLogger().Warn("pause all jobs failed", zap.String("category", "upgrading"), zap.Strings("errs", jobErrStrs), zap.Error(err))
 		time.Sleep(interval)
 	}
-	logutil.BgLogger().Info("[upgrading] update global state to upgrading", zap.String("state", syncer.StateUpgrading))
+	logutil.BgLogger().Info("update global state to upgrading", zap.String("category", "upgrading"), zap.String("state", syncer.StateUpgrading))
+	return nil
 }
 
-func syncNormalRunning(s Session) {
+// SyncNormalRunning syncs normal state to etcd.
+func SyncNormalRunning(s Session) error {
 	failpoint.Inject("mockResumeAllJobsFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			dom := domain.GetDomain(s)
 			//nolint: errcheck
 			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), syncer.NewStateInfo(syncer.StateNormalRunning))
-			failpoint.Return()
+			failpoint.Return(nil)
 		}
 	})
 
 	jobErrs, err := ddl.ResumeAllJobsBySystem(s)
 	if err != nil {
-		logutil.BgLogger().Warn("[upgrading] resume all paused jobs failed", zap.Error(err))
+		logutil.BgLogger().Warn("resume all paused jobs failed", zap.String("category", "upgrading"), zap.Error(err))
 	}
 	for _, e := range jobErrs {
-		logutil.BgLogger().Warn("[upgrading] resume the job failed ", zap.Error(e))
+		logutil.BgLogger().Warn("resume the job failed ", zap.String("category", "upgrading"), zap.Error(e))
 	}
 
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1293,9 +1335,24 @@ func syncNormalRunning(s Session) {
 	dom := domain.GetDomain(s)
 	err = dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateNormalRunning))
 	if err != nil {
-		logutil.BgLogger().Fatal("[upgrading] update global state to normal failed", zap.Error(err))
+		logutil.BgLogger().Error("update global state to normal failed", zap.String("category", "upgrading"), zap.Error(err))
+		return err
 	}
-	logutil.BgLogger().Info("[upgrading] update global state to normal running finished")
+	logutil.BgLogger().Info("update global state to normal running finished", zap.String("category", "upgrading"))
+	return nil
+}
+
+// IsUpgradingClusterState checks whether the global state is upgrading.
+func IsUpgradingClusterState(s Session) (bool, error) {
+	dom := domain.GetDomain(s)
+	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelFunc()
+	stateInfo, err := dom.DDL().StateSyncer().GetGlobalState(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	return stateInfo.State == syncer.StateUpgrading, nil
 }
 
 // checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.
@@ -2727,8 +2784,30 @@ func upgradeToVer169(s Session, ver int64) {
 	if ver >= version169 {
 		return
 	}
-	mustExecute(s, CreateRunawayQuarantineWatchTable)
 	mustExecute(s, CreateRunawayTable)
+}
+
+func upgradeToVer170(s Session, ver int64) {
+	if ver >= version170 {
+		return
+	}
+	mustExecute(s, CreateTimers)
+}
+
+func upgradeToVer171(s Session, ver int64) {
+	if ver >= version171 {
+		return
+	}
+	mustExecute(s, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `tidb_server` `tidb_server` varchar(512)")
+}
+
+func upgradeToVer172(s Session, ver int64) {
+	if ver >= version172 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_quarantined_watch")
+	mustExecute(s, CreateRunawayWatchTable)
+	mustExecute(s, CreateDoneRunawayWatchTable)
 }
 
 func writeOOMAction(s Session) {
@@ -2847,10 +2926,14 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateLoadDataJobs)
 	// Create tidb_import_jobs
 	mustExecute(s, CreateImportJobs)
-	// create quarantine_watch
-	mustExecute(s, CreateRunawayQuarantineWatchTable)
+	// create runaway_watch
+	mustExecute(s, CreateRunawayWatchTable)
 	// create runaway_queries
 	mustExecute(s, CreateRunawayTable)
+	// create tidb_timers
+	mustExecute(s, CreateTimers)
+	// create runaway_watch done
+	mustExecute(s, CreateDoneRunawayWatchTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

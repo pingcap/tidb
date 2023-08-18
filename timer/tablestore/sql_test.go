@@ -15,12 +15,21 @@
 package tablestore
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/timer/api"
+	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,10 +37,10 @@ func TestBuildInsertTimerSQL(t *testing.T) {
 	now := time.Now()
 	sql1 := "INSERT INTO `db1`.`t1` (NAMESPACE, TIMER_KEY, TIMER_DATA, TIMEZONE, SCHED_POLICY_TYPE, SCHED_POLICY_EXPR, " +
 		"HOOK_CLASS, WATERMARK, ENABLE, TIMER_EXT, EVENT_ID, EVENT_STATUS, EVENT_START, EVENT_DATA, SUMMARY_DATA, VERSION) " +
-		"VALUES (%?, %?, %?, 'TIDB', %?, %?, %?, FROM_UNIXTIME(%?), %?, %?, %?, %?, FROM_UNIXTIME(%?), %?, %?, 1)"
+		"VALUES (%?, %?, %?, 'TIDB', %?, %?, %?, FROM_UNIXTIME(%?), %?, JSON_MERGE_PATCH('{}', %?), %?, %?, FROM_UNIXTIME(%?), %?, %?, 1)"
 	sql2 := "INSERT INTO `db1`.`t1` (NAMESPACE, TIMER_KEY, TIMER_DATA, TIMEZONE, SCHED_POLICY_TYPE, SCHED_POLICY_EXPR, " +
 		"HOOK_CLASS, WATERMARK, ENABLE, TIMER_EXT, EVENT_ID, EVENT_STATUS, EVENT_START, EVENT_DATA, SUMMARY_DATA, VERSION) " +
-		"VALUES (%?, %?, %?, 'TIDB', %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, 1)"
+		"VALUES (%?, %?, %?, 'TIDB', %?, %?, %?, %?, %?, JSON_MERGE_PATCH('{}', %?), %?, %?, %?, %?, %?, 1)"
 
 	cases := []struct {
 		sql    string
@@ -52,6 +61,17 @@ func TestBuildInsertTimerSQL(t *testing.T) {
 					Enable:          true,
 					Tags:            []string{"l1", "l2"},
 				},
+				ManualRequest: api.ManualRequest{
+					ManualRequestID:   "req1",
+					ManualRequestTime: time.Unix(123, 0),
+					ManualTimeout:     time.Minute,
+					ManualProcessed:   true,
+					ManualEventID:     "event1",
+				},
+				EventExtra: api.EventExtra{
+					EventManualRequestID: "req1",
+					EventWatermark:       time.Unix(456, 0),
+				},
 				EventID:     "e1",
 				EventStatus: api.SchedEventTrigger,
 				EventStart:  now.Add(time.Second),
@@ -60,7 +80,9 @@ func TestBuildInsertTimerSQL(t *testing.T) {
 			},
 			args: []any{
 				"n1", "k1", []byte("data1"), "INTERVAL", "1h", "h1", now.Unix(),
-				true, json.RawMessage(`{"tags":["l1","l2"]}`),
+				true, json.RawMessage(`{"tags":["l1","l2"],` +
+					`"manual":{"request_id":"req1","request_time_unix":123,"timeout_sec":60,"processed":true,"event_id":"event1"},` +
+					`"event":{"manual_request_id":"req1","watermark_unix":456}}`),
 				"e1", "TRIGGER", now.Unix() + 1, []byte("event1"), []byte("summary1"),
 			},
 		},
@@ -395,14 +417,25 @@ func TestBuildUpdateCriteria(t *testing.T) {
 				Tags:            api.NewOptionalVal([]string{"l1", "l2"}),
 				SchedPolicyType: api.NewOptionalVal(api.SchedEventInterval),
 				SchedPolicyExpr: api.NewOptionalVal("1h"),
-				EventStatus:     api.NewOptionalVal(api.SchedEventTrigger),
-				EventID:         api.NewOptionalVal("event1"),
-				EventData:       api.NewOptionalVal([]byte("data1")),
-				EventStart:      api.NewOptionalVal(now),
-				Watermark:       api.NewOptionalVal(now.Add(time.Second)),
-				SummaryData:     api.NewOptionalVal([]byte("summary")),
-				CheckEventID:    api.NewOptionalVal("ee"),
-				CheckVersion:    api.NewOptionalVal(uint64(1)),
+				ManualRequest: api.NewOptionalVal(api.ManualRequest{
+					ManualRequestID:   "req1",
+					ManualRequestTime: time.Unix(123, 0),
+					ManualTimeout:     time.Minute,
+					ManualProcessed:   true,
+					ManualEventID:     "event1",
+				}),
+				EventStatus: api.NewOptionalVal(api.SchedEventTrigger),
+				EventID:     api.NewOptionalVal("event1"),
+				EventData:   api.NewOptionalVal([]byte("data1")),
+				EventStart:  api.NewOptionalVal(now),
+				EventExtra: api.NewOptionalVal(api.EventExtra{
+					EventManualRequestID: "req2",
+					EventWatermark:       time.Unix(456, 0),
+				}),
+				Watermark:    api.NewOptionalVal(now.Add(time.Second)),
+				SummaryData:  api.NewOptionalVal([]byte("summary")),
+				CheckEventID: api.NewOptionalVal("ee"),
+				CheckVersion: api.NewOptionalVal(uint64(1)),
 			},
 			criteria: "ENABLE = %?, SCHED_POLICY_TYPE = %?, SCHED_POLICY_EXPR = %?, EVENT_STATUS = %?, " +
 				"EVENT_ID = %?, EVENT_DATA = %?, EVENT_START = FROM_UNIXTIME(%?), " +
@@ -411,8 +444,35 @@ func TestBuildUpdateCriteria(t *testing.T) {
 				"VERSION = VERSION + 1",
 			args: []any{
 				false, "INTERVAL", "1h", "TRIGGER", "event1", []byte("data1"), now.Unix(),
-				now.Unix() + 1, []byte("summary"), json.RawMessage(`{"tags":["l1","l2"]}`),
+				now.Unix() + 1, []byte("summary"),
+				json.RawMessage(`{` +
+					`"event":{"manual_request_id":"req2","watermark_unix":456},` +
+					`"manual":{"request_id":"req1","request_time_unix":123,"timeout_sec":60,"processed":true,"event_id":"event1"},` +
+					`"tags":["l1","l2"]` +
+					`}`),
 			},
+		},
+		{
+			update: &api.TimerUpdate{
+				EventExtra:    api.NewOptionalVal(api.EventExtra{EventManualRequestID: "req1"}),
+				ManualRequest: api.NewOptionalVal(api.ManualRequest{ManualRequestID: "req2"}),
+			},
+			criteria: "TIMER_EXT = JSON_MERGE_PATCH(TIMER_EXT, %?), VERSION = VERSION + 1",
+			args: []any{json.RawMessage(`{` +
+				`"event":{"manual_request_id":"req1","watermark_unix":null},` +
+				`"manual":{"request_id":"req2","request_time_unix":null,"timeout_sec":null,"processed":null,"event_id":null}` +
+				`}`)},
+		},
+		{
+			update: &api.TimerUpdate{
+				EventExtra:    api.NewOptionalVal(api.EventExtra{EventWatermark: time.Unix(123, 0)}),
+				ManualRequest: api.NewOptionalVal(api.ManualRequest{ManualRequestTime: time.Unix(456, 0)}),
+			},
+			criteria: "TIMER_EXT = JSON_MERGE_PATCH(TIMER_EXT, %?), VERSION = VERSION + 1",
+			args: []any{json.RawMessage(`{` +
+				`"event":{"manual_request_id":null,"watermark_unix":123},` +
+				`"manual":{"request_id":null,"request_time_unix":456,"timeout_sec":null,"processed":null,"event_id":null}` +
+				`}`)},
 		},
 		{
 			update: &api.TimerUpdate{
@@ -420,6 +480,8 @@ func TestBuildUpdateCriteria(t *testing.T) {
 				EventID:         api.NewOptionalVal(""),
 				EventData:       api.NewOptionalVal([]byte(nil)),
 				EventStart:      api.NewOptionalVal(zeroTime),
+				EventExtra:      api.NewOptionalVal(api.EventExtra{}),
+				ManualRequest:   api.NewOptionalVal(api.ManualRequest{}),
 				Watermark:       api.NewOptionalVal(zeroTime),
 				SummaryData:     api.NewOptionalVal([]byte(nil)),
 				Tags:            api.NewOptionalVal([]string(nil)),
@@ -428,7 +490,7 @@ func TestBuildUpdateCriteria(t *testing.T) {
 				"EVENT_START = NULL, WATERMARK = NULL, SUMMARY_DATA = %?, " +
 				"TIMER_EXT = JSON_MERGE_PATCH(TIMER_EXT, %?), " +
 				"VERSION = VERSION + 1",
-			args: []any{"", "", []byte(nil), []byte(nil), json.RawMessage(`{"tags":null}`)},
+			args: []any{"", "", []byte(nil), []byte(nil), json.RawMessage(`{"event":null,"manual":null,"tags":null}`)},
 		},
 		{
 			update: &api.TimerUpdate{
@@ -489,4 +551,162 @@ func TestBuildDeleteTimerSQL(t *testing.T) {
 	sql, args := buildDeleteTimerSQL("db1", "tbl1", "123")
 	require.Equal(t, "DELETE FROM `db1`.`tbl1` WHERE ID = %?", sql)
 	require.Equal(t, []any{"123"}, args)
+}
+
+type mockSessionPool struct {
+	mock.Mock
+}
+
+func (p *mockSessionPool) Get() (resource pools.Resource, _ error) {
+	ret := p.Called()
+	if r := ret.Get(0); r != nil {
+		resource = r.(pools.Resource)
+	}
+	return resource, ret.Error(1)
+}
+
+func (p *mockSessionPool) Put(r pools.Resource) {
+	p.Called(r)
+}
+
+type mockSession struct {
+	mock.Mock
+	sessionctx.Context
+	sqlexec.SQLExecutor
+}
+
+func (p *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, _ error) {
+	ret := p.Called(ctx, sql, args)
+	if r := ret.Get(0); r != nil {
+		rs = r.(sqlexec.RecordSet)
+	}
+	return rs, ret.Error(1)
+}
+
+func (p *mockSession) GetSessionVars() *variable.SessionVars {
+	return p.Context.GetSessionVars()
+}
+
+func (p *mockSession) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	p.Context.SetDiskFullOpt(level)
+}
+
+func (p *mockSession) Close() {
+	p.Called()
+}
+
+var matchCtx = mock.MatchedBy(func(ctx context.Context) bool {
+	return kv.GetInternalSourceType(ctx) == kv.InternalTimer
+})
+
+func TestTakeSession(t *testing.T) {
+	pool := &mockSessionPool{}
+	core := tableTimerStoreCore{pool: pool}
+
+	// Get returns error
+	pool.On("Get").Return(nil, errors.New("mockErr")).Once()
+	r, back, err := core.takeSession()
+	require.Nil(t, r)
+	require.Nil(t, back)
+	require.EqualError(t, err, "mockErr")
+	pool.AssertExpectations(t)
+
+	// Get returns a session
+	se := &mockSession{}
+	pool.On("Get").Return(se, nil).Once()
+	r, back, err = core.takeSession()
+	require.Equal(t, r, se)
+	require.NotNil(t, back)
+	require.Nil(t, err)
+	pool.AssertExpectations(t)
+	se.AssertExpectations(t)
+
+	// Put session failed
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []interface{}(nil)).
+		Return(nil, errors.New("mockErr")).
+		Once()
+	se.On("Close").Once()
+	back()
+	pool.AssertExpectations(t)
+	se.AssertExpectations(t)
+
+	// Put session success
+	pool.On("Get").Return(se, nil).Once()
+	r, back, err = core.takeSession()
+	require.Equal(t, r, se)
+	require.NotNil(t, back)
+	require.Nil(t, err)
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []interface{}(nil)).
+		Return(nil, nil).
+		Once()
+	pool.On("Put", se).Once()
+	back()
+	pool.AssertExpectations(t)
+	se.AssertExpectations(t)
+}
+
+func TestRunInTxn(t *testing.T) {
+	se := &mockSession{}
+
+	// success
+	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []interface{}(nil)).
+		Return(nil, nil).
+		Once()
+	se.On("ExecuteInternal", matchCtx, mock.MatchedBy(func(sql string) bool {
+		return strings.HasPrefix(sql, "insert")
+	}), mock.Anything).
+		Return(nil, nil).
+		Once()
+	se.On("ExecuteInternal", matchCtx, "COMMIT", []interface{}(nil)).
+		Return(nil, nil).
+		Once()
+	require.Nil(t, runInTxn(context.Background(), se, func() error {
+		_, err := executeSQL(context.Background(), se, "insert into t value(?)", 1)
+		return err
+	}))
+	se.AssertExpectations(t)
+
+	// start txn failed
+	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []interface{}(nil)).
+		Return(nil, errors.New("mockBeginErr")).
+		Once()
+	err := runInTxn(context.Background(), se, func() error { return nil })
+	require.EqualError(t, err, "mockBeginErr")
+	se.AssertExpectations(t)
+
+	// exec failed, rollback success
+	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []interface{}(nil)).
+		Return(nil, nil).
+		Once()
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []interface{}(nil)).
+		Return(nil, nil).
+		Once()
+	err = runInTxn(context.Background(), se, func() error { return errors.New("mockFuncErr") })
+	require.EqualError(t, err, "mockFuncErr")
+	se.AssertExpectations(t)
+
+	// commit failed
+	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []interface{}(nil)).
+		Return(nil, nil).
+		Once()
+	se.On("ExecuteInternal", matchCtx, "COMMIT", []interface{}(nil)).
+		Return(nil, errors.New("commitErr")).
+		Once()
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []interface{}(nil)).
+		Return(nil, nil).
+		Once()
+	err = runInTxn(context.Background(), se, func() error { return nil })
+	require.EqualError(t, err, "commitErr")
+	se.AssertExpectations(t)
+
+	// rollback failed
+	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []interface{}(nil)).
+		Return(nil, nil).
+		Once()
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []interface{}(nil)).
+		Return(nil, errors.New("rollbackErr")).
+		Once()
+	err = runInTxn(context.Background(), se, func() error { return errors.New("mockFuncErr") })
+	require.EqualError(t, err, "mockFuncErr")
+	se.AssertExpectations(t)
 }

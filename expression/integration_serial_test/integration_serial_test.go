@@ -3060,7 +3060,7 @@ func TestBuiltin(t *testing.T) {
 	_ = tk.MustQuery(`select * from tb5 where cast(a as unsigned int)=b;`)
 	// TODO `obtained string = "[18446744073709552000 18446744073709551615]`
 	// result.Check(testkit.Rows("18446744073709551616 18446744073709551615"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows())
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1690 constant 1.8446744073709552e+19 overflows bigint"))
 	tk.MustExec(`drop table tb5;`)
 
 	// test builtinCastJSONAsIntSig

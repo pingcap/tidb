@@ -21,12 +21,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/timer/api"
+	"github.com/pingcap/tidb/timer/metrics"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
 const (
-	workerRecvChanCap               = 8
+	workerRecvChanCap               = 128
 	workerRespChanCap               = 128
 	workerEventDefaultRetryInterval = 10 * time.Second
 	chanBlockInterval               = time.Second
@@ -68,6 +70,13 @@ type hookWorker struct {
 	ch        chan *triggerEventRequest
 	logger    *zap.Logger
 	nowFunc   func() time.Time
+	// metrics for worker
+	triggerRequestCounter       prometheus.Counter
+	onPreSchedEventCounter      prometheus.Counter
+	onPreSchedEventErrCounter   prometheus.Counter
+	onPreSchedEventDelayCounter prometheus.Counter
+	onSchedEventCounter         prometheus.Counter
+	onSchedEventErrCounter      prometheus.Counter
 }
 
 func newHookWorker(ctx context.Context, wg *sync.WaitGroup, groupID string, hookClass string, hook api.Hook, nowFunc func() time.Time) *hookWorker {
@@ -85,7 +94,13 @@ func newHookWorker(ctx context.Context, wg *sync.WaitGroup, groupID string, hook
 			zap.String("groupID", groupID),
 			zap.String("hookClass", hookClass),
 		),
-		nowFunc: nowFunc,
+		nowFunc:                     nowFunc,
+		triggerRequestCounter:       metrics.TimerHookWorkerCounter(hookClass, "trigger"),
+		onPreSchedEventCounter:      metrics.TimerHookWorkerCounter(hookClass, "OnPreSchedEvent"),
+		onPreSchedEventErrCounter:   metrics.TimerHookWorkerCounter(hookClass, "OnPreSchedEvent_error"),
+		onPreSchedEventDelayCounter: metrics.TimerHookWorkerCounter(hookClass, "OnPreSchedEvent_delay"),
+		onSchedEventCounter:         metrics.TimerHookWorkerCounter(hookClass, "OnSchedEvent"),
+		onSchedEventErrCounter:      metrics.TimerHookWorkerCounter(hookClass, "OnSchedEvent_error"),
 	}
 
 	wg.Add(1)
@@ -127,16 +142,58 @@ func (w *hookWorker) loop() {
 }
 
 func (w *hookWorker) triggerEvent(req *triggerEventRequest, logger *zap.Logger) *triggerEventResponse {
+	w.triggerRequestCounter.Inc()
 	timer := req.timer
 	resp := &triggerEventResponse{
 		timerID: timer.ID,
 		eventID: req.eventID,
 	}
 
+	if timer.IsManualRequesting() {
+		logger.Info("manual trigger request detected",
+			zap.String("requestID", timer.ManualRequestID),
+			zap.Time("requestTime", timer.ManualRequestTime),
+			zap.Duration("timeout", timer.ManualTimeout),
+		)
+		timeout := timer.ManualRequestTime.Add(timer.ManualTimeout)
+		if w.nowFunc().After(timeout) {
+			logger.Warn(
+				"cancel manual trigger for timer is disabled for request timeout",
+				zap.String("requestID", timer.ManualRequestID),
+				zap.Bool("timerEnable", timer.Enable),
+			)
+
+			processed := timer.ManualRequest.SetProcessed("")
+			err := req.store.Update(w.ctx, timer.ID, &api.TimerUpdate{
+				ManualRequest: api.NewOptionalVal(processed),
+				CheckVersion:  api.NewOptionalVal(timer.Version),
+			})
+
+			if err == nil {
+				timer, err = req.store.GetByID(w.ctx, timer.ID)
+				if err == nil {
+					resp.newTimerRecord.Set(timer)
+				}
+			}
+
+			if err != nil {
+				logger.Error(
+					"error occurs when close manual request",
+					zap.Error(err),
+					zap.Duration("retryAfter", workerEventDefaultRetryInterval),
+				)
+				resp.retryAfter.Set(workerEventDefaultRetryInterval)
+			}
+
+			return resp
+		}
+	}
+
 	if timer.EventStatus == api.SchedEventIdle {
 		var preResult api.PreSchedEventResult
 		if w.hook != nil {
 			logger.Debug("call OnPreSchedEvent")
+			w.onPreSchedEventCounter.Inc()
 			result, err := w.hook.OnPreSchedEvent(w.ctx, &timerEvent{
 				eventID: req.eventID,
 				record:  timer,
@@ -148,15 +205,16 @@ func (w *hookWorker) triggerEvent(req *triggerEventRequest, logger *zap.Logger) 
 					zap.Error(err),
 					zap.Duration("retryAfter", workerEventDefaultRetryInterval),
 				)
+				w.onPreSchedEventErrCounter.Inc()
 				resp.retryAfter.Set(workerEventDefaultRetryInterval)
 				return resp
 			}
 
 			if result.Delay > 0 {
+				w.onPreSchedEventDelayCounter.Inc()
 				resp.retryAfter.Set(result.Delay)
 				return resp
 			}
-
 			preResult = result
 		}
 
@@ -217,12 +275,14 @@ func (w *hookWorker) triggerEvent(req *triggerEventRequest, logger *zap.Logger) 
 
 	if w.hook != nil {
 		logger.Debug("call OnSchedEvent")
+		w.onSchedEventCounter.Inc()
 		err = w.hook.OnSchedEvent(w.ctx, &timerEvent{
 			eventID: req.eventID,
 			record:  timer,
 		})
 
 		if err != nil {
+			w.onSchedEventErrCounter.Inc()
 			logger.Error(
 				"error occurs when invoking hook OnTimerEvent",
 				zap.Error(err),
@@ -265,5 +325,16 @@ func buildEventUpdate(req *triggerEventRequest, result api.PreSchedEventResult, 
 	update.EventStart.Set(nowFunc())
 	update.EventData.Set(result.EventData)
 	update.CheckVersion.Set(req.timer.Version)
+
+	eventExtra := api.EventExtra{
+		EventWatermark: req.timer.Watermark,
+	}
+
+	if manual := req.timer.ManualRequest; manual.IsManualRequesting() {
+		eventExtra.EventManualRequestID = manual.ManualRequestID
+		update.ManualRequest.Set(manual.SetProcessed(req.eventID))
+	}
+
+	update.EventExtra.Set(eventExtra)
 	return &update
 }

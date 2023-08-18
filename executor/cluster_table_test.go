@@ -416,6 +416,10 @@ func TestFunctionEncodeSQLDigest(t *testing.T) {
 
 	tk.MustQuery("select tidb_encode_sql_digest(null)").Check(testkit.Rows("<nil>"))
 	tk.MustGetErrCode("select tidb_encode_sql_digest()", 1582)
+
+	tk.MustQuery("select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 1;')").Check(testkit.Rows("1"))
+	tk.MustQuery("select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 1 ;')").Check(testkit.Rows("1"))
+	tk.MustQuery("select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 2 ;')").Check(testkit.Rows("1"))
 }
 
 func prepareLogs(t *testing.T, logData []string, fileNames []string) {

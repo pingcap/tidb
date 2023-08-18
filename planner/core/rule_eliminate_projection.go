@@ -80,7 +80,7 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	if p.Schema().Len() != child.Schema().Len() {
 		return false
 	}
-	for _, ref := range p.ctx.GetSessionVars().StmtCtx.ColRefFromUpdatePlan {
+	for _, ref := range p.SCtx().GetSessionVars().StmtCtx.ColRefFromUpdatePlan {
 		for _, one := range p.Schema().Columns {
 			if ref == one.UniqueID {
 				return false
@@ -152,16 +152,7 @@ func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
 		}
 	})
 
-	oldSchema := p.Schema()
 	newRoot := doPhysicalProjectionElimination(p)
-	newCols := newRoot.Schema().Columns
-	for i, oldCol := range oldSchema.Columns {
-		oldCol.Index = newCols[i].Index
-		oldCol.ID = newCols[i].ID
-		oldCol.UniqueID = newCols[i].UniqueID
-		oldCol.VirtualExpr = newCols[i].VirtualExpr
-		newRoot.Schema().Columns[i] = oldCol
-	}
 	return newRoot
 }
 
@@ -203,7 +194,7 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 			resolveColumnAndReplace(dst, replace)
 		}
 	}
-	p.replaceExprColumns(replace)
+	p.ReplaceExprColumns(replace)
 	if isProj {
 		if child, ok := p.Children()[0].(*LogicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
 			for i := range proj.Exprs {
@@ -245,7 +236,8 @@ func ReplaceColumnOfExpr(expr expression.Expression, proj *LogicalProjection, sc
 	return expr
 }
 
-func (p *LogicalJoin) replaceExprColumns(replace map[string]*expression.Column) {
+// ReplaceExprColumns implements LogicalPlan interface.
+func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, equalExpr := range p.EqualConditions {
 		ResolveExprAndReplace(equalExpr, replace)
 	}
@@ -260,13 +252,15 @@ func (p *LogicalJoin) replaceExprColumns(replace map[string]*expression.Column) 
 	}
 }
 
-func (p *LogicalProjection) replaceExprColumns(replace map[string]*expression.Column) {
+// ReplaceExprColumns implements LogicalPlan interface.
+func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, expr := range p.Exprs {
 		ResolveExprAndReplace(expr, replace)
 	}
 }
 
-func (la *LogicalAggregation) replaceExprColumns(replace map[string]*expression.Column) {
+// ReplaceExprColumns implements LogicalPlan interface.
+func (la *LogicalAggregation) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, agg := range la.AggFuncs {
 		for _, aggExpr := range agg.Args {
 			ResolveExprAndReplace(aggExpr, replace)
@@ -277,14 +271,16 @@ func (la *LogicalAggregation) replaceExprColumns(replace map[string]*expression.
 	}
 }
 
-func (p *LogicalSelection) replaceExprColumns(replace map[string]*expression.Column) {
+// ReplaceExprColumns implements LogicalPlan interface.
+func (p *LogicalSelection) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, expr := range p.Conditions {
 		ResolveExprAndReplace(expr, replace)
 	}
 }
 
-func (la *LogicalApply) replaceExprColumns(replace map[string]*expression.Column) {
-	la.LogicalJoin.replaceExprColumns(replace)
+// ReplaceExprColumns implements LogicalPlan interface.
+func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column) {
+	la.LogicalJoin.ReplaceExprColumns(replace)
 	for _, coCol := range la.CorCols {
 		dst := replace[string(coCol.Column.HashCode(nil))]
 		if dst != nil {
@@ -293,19 +289,22 @@ func (la *LogicalApply) replaceExprColumns(replace map[string]*expression.Column
 	}
 }
 
-func (ls *LogicalSort) replaceExprColumns(replace map[string]*expression.Column) {
+// ReplaceExprColumns implements LogicalPlan interface.
+func (ls *LogicalSort) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, byItem := range ls.ByItems {
 		ResolveExprAndReplace(byItem.Expr, replace)
 	}
 }
 
-func (lt *LogicalTopN) replaceExprColumns(replace map[string]*expression.Column) {
+// ReplaceExprColumns implements LogicalPlan interface.
+func (lt *LogicalTopN) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, byItem := range lt.ByItems {
 		ResolveExprAndReplace(byItem.Expr, replace)
 	}
 }
 
-func (p *LogicalWindow) replaceExprColumns(replace map[string]*expression.Column) {
+// ReplaceExprColumns implements LogicalPlan interface.
+func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, desc := range p.WindowFuncDescs {
 		for _, arg := range desc.Args {
 			ResolveExprAndReplace(arg, replace)

@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -71,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
+	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -2607,7 +2609,11 @@ func (d *ddl) createTableWithInfoPost(
 	schemaID int64,
 ) error {
 	var err error
-	d.preSplitAndScatter(ctx, tbInfo, tbInfo.GetPartitionInfo())
+	var partitions []model.PartitionDefinition
+	if pi := tbInfo.GetPartitionInfo(); pi != nil {
+		partitions = pi.Definitions
+	}
+	preSplitAndScatter(ctx, d.store, tbInfo, partitions)
 	if tbInfo.AutoIncID > 1 {
 		// Default tableAutoIncID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
@@ -2619,6 +2625,12 @@ func (d *ddl) createTableWithInfoPost(
 			allocType = autoid.RowIDAllocType
 		}
 		if err = d.handleAutoIncID(tbInfo, schemaID, newEnd, allocType); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	// For issue https://github.com/pingcap/tidb/issues/46093
+	if tbInfo.AutoIncIDExtra != 0 {
+		if err = d.handleAutoIncID(tbInfo, schemaID, tbInfo.AutoIncIDExtra-1, autoid.RowIDAllocType); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -2817,11 +2829,11 @@ func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *mode
 
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
 // If `pi` is not nil, will only split region for `pi`, this is used when add partition.
-func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo) {
+func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.TableInfo, parts []model.PartitionDefinition) {
 	if tbInfo.TempTableType != model.TempTableNone {
 		return
 	}
-	sp, ok := d.store.(kv.SplittableStore)
+	sp, ok := store.(kv.SplittableStore)
 	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
 		return
 	}
@@ -2831,12 +2843,12 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 	)
 	val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBScatterRegion)
 	if err != nil {
-		logutil.BgLogger().Warn("[ddl] won't scatter region", zap.Error(err))
+		logutil.BgLogger().Warn("won't scatter region", zap.String("category", "ddl"), zap.Error(err))
 	} else {
 		scatterRegion = variable.TiDBOptOn(val)
 	}
-	if pi != nil {
-		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, pi, scatterRegion) }
+	if len(parts) > 0 {
+		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scatterRegion) }
 	} else {
 		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion) }
 	}
@@ -2848,7 +2860,7 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 }
 
 func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error {
-	logutil.BgLogger().Info("[ddl] get flashback cluster job", zap.String("flashbackTS", oracle.GetTimeFromTS(flashbackTS).String()))
+	logutil.BgLogger().Info("get flashback cluster job", zap.String("category", "ddl"), zap.String("flashbackTS", oracle.GetTimeFromTS(flashbackTS).String()))
 	nowTS, err := ctx.GetStore().GetOracle().GetTimestamp(d.ctx, &oracle.Option{})
 	if err != nil {
 		return errors.Trace(err)
@@ -3166,7 +3178,8 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 }
 
 // SetDirectResourceGroupSettings tries to set the ResourceGroupSettings.
-func SetDirectResourceGroupSettings(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupOption) error {
+func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast.ResourceGroupOption) error {
+	resourceGroupSettings := groupInfo.ResourceGroupSettings
 	switch opt.Tp {
 	case ast.ResourceRURate:
 		resourceGroupSettings.RURate = opt.UintValue
@@ -3189,12 +3202,24 @@ func SetDirectResourceGroupSettings(resourceGroupSettings *model.ResourceGroupSe
 		}
 		resourceGroupSettings.BurstLimit = limit
 	case ast.ResourceGroupRunaway:
-		if len(opt.ResourceGroupRunawayOptionList) == 0 {
+		if len(opt.RunawayOptionList) == 0 {
 			resourceGroupSettings.Runaway = nil
 		}
-		for _, opt := range opt.ResourceGroupRunawayOptionList {
-			err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt.Tp, opt.StrValue, opt.IntValue)
-			if err != nil {
+		for _, opt := range opt.RunawayOptionList {
+			if err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt.Tp, opt.StrValue, opt.IntValue); err != nil {
+				return err
+			}
+		}
+	case ast.ResourceGroupBackground:
+		if groupInfo.Name.L != rg.DefaultResourceGroupName {
+			// FIXME: this is a temporary restriction, so we don't add a error-code for it.
+			return errors.New("unsupported operation. Currently, only the default resource group support change background settings")
+		}
+		if len(opt.BackgroundOptions) == 0 {
+			resourceGroupSettings.Background = nil
+		}
+		for _, opt := range opt.BackgroundOptions {
+			if err := SetDirectResourceGroupBackgroundOption(resourceGroupSettings, opt); err != nil {
 				return err
 			}
 		}
@@ -3222,15 +3247,56 @@ func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGr
 		settings.Action = model.RunawayActionType(intVal)
 	case ast.RunawayWatch:
 		settings.WatchType = model.RunawayWatchType(intVal)
-		dur, err := time.ParseDuration(stringVal)
-		if err != nil {
-			return err
+		if len(stringVal) > 0 {
+			dur, err := time.ParseDuration(stringVal)
+			if err != nil {
+				return err
+			}
+			settings.WatchDurationMs = dur.Milliseconds()
+		} else {
+			settings.WatchDurationMs = 0
 		}
-		settings.WatchDurationMs = uint64(dur.Milliseconds())
 	default:
 		return errors.Trace(errors.New("unknown runaway option type"))
 	}
 	return nil
+}
+
+// SetDirectResourceGroupBackgroundOption set background configs of the ResourceGroupSettings.
+func SetDirectResourceGroupBackgroundOption(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupBackgroundOption) error {
+	if resourceGroupSettings.Background == nil {
+		resourceGroupSettings.Background = &model.ResourceGroupBackgroundSettings{}
+	}
+	switch opt.Type {
+	case ast.BackgroundOptionTaskNames:
+		jobTypes, err := parseBackgroundJobTypes(opt.StrValue)
+		if err != nil {
+			return err
+		}
+		resourceGroupSettings.Background.JobTypes = jobTypes
+	default:
+		return errors.Trace(errors.New("unknown background option type"))
+	}
+	return nil
+}
+
+func parseBackgroundJobTypes(t string) ([]string, error) {
+	if len(t) == 0 {
+		return []string{}, nil
+	}
+
+	segs := strings.Split(t, ",")
+	res := make([]string, 0, len(segs))
+	for _, s := range segs {
+		ty := strings.ToLower(strings.TrimSpace(s))
+		if len(ty) > 0 {
+			if !slices.Contains(kvutil.ExplicitTypeList, ty) {
+				return nil, infoschema.ErrResourceGroupInvalidBackgroundTaskName.GenWithStackByArgs(ty)
+			}
+			res = append(res, ty)
+		}
+	}
+	return res, nil
 }
 
 // handleTableOptions updates tableInfo according to table options.
@@ -4059,6 +4125,13 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if pi.Type == model.PartitionTypeList {
+		// TODO: make sure that checks in ddl_api and ddl_worker is the same.
+		err = checkAddListPartitions(meta)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	if err := d.assignPartitionIDs(partInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
@@ -4109,9 +4182,6 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	if dbterror.ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
-	}
-	if err == nil {
-		d.preSplitAndScatter(ctx, meta, partInfo)
 	}
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
@@ -4443,11 +4513,6 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if _, tb, err := d.getSchemaAndTableByIdent(ctx, ident); err == nil {
-		if p, err := getTruncatedParts(tb.Meta().GetPartitionInfo()); err == nil {
-			d.preSplitAndScatter(ctx, tb.Meta(), p)
-		}
-	}
 	return nil
 }
 
@@ -4687,7 +4752,6 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 		return errors.Trace(dbterror.ErrPartitionExchangeForeignKey.GenWithStackByArgs(nt.Name))
 	}
 
-	// NOTE: if nt is temporary table, it should be checked
 	return nil
 }
 
@@ -5333,6 +5397,10 @@ func GetModifiableColumnJob(
 	// We don't support modifying column from not_auto_increment to auto_increment.
 	if !mysql.HasAutoIncrementFlag(col.GetFlag()) && mysql.HasAutoIncrementFlag(newCol.GetFlag()) {
 		return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't set auto_increment")
+	}
+	// Not support auto id with default value.
+	if mysql.HasAutoIncrementFlag(newCol.GetFlag()) && newCol.GetDefaultValue() != nil {
+		return nil, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(newCol.Name)
 	}
 	// Disallow modifying column from auto_increment to not auto_increment if the session variable `AllowRemoveAutoInc` is false.
 	if !sctx.GetSessionVars().AllowRemoveAutoInc && mysql.HasAutoIncrementFlag(col.GetFlag()) && !mysql.HasAutoIncrementFlag(newCol.GetFlag()) {
@@ -6489,9 +6557,6 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		}
 		return errors.Trace(err)
 	}
-	if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
-		d.preSplitAndScatter(ctx, tb.Meta(), tb.Meta().GetPartitionInfo())
-	}
 
 	if !config.TableLockEnabled() {
 		return nil
@@ -7426,6 +7491,11 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 		if len(spec.PartDefinitions) == 0 {
 			return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
 		}
+		err := checkListPartitions(spec.PartDefinitions)
+		if err != nil {
+			return nil, err
+		}
+
 	case model.PartitionTypeRange:
 		if spec.Tp == ast.AlterTableAddLastPartition {
 			err := buildAddedPartitionDefs(ctx, meta, spec)
@@ -7500,6 +7570,12 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx sessionctx.Context, colTypes []typ
 	for i, colExpr := range exprs {
 		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
 			valStrings = append(valStrings, partitionMaxValue)
+			continue
+		}
+		if d, ok := colExpr.(*ast.DefaultExpr); ok {
+			if d.Name != nil {
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
 			continue
 		}
 		colType := colTypes[i]
@@ -7772,7 +7848,8 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStm
 			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Column " + newOne.Name.L + " type should be the same")
 		}
 		if newOne.GetFlen() != old.GetFlen() {
-			logutil.BgLogger().Warn("[ddl] admin repair table : Column " + newOne.Name.L + " flen is not equal to the old one")
+			logutil.BgLogger().Warn("admin repair table : Column "+newOne.Name.L+" flen is not equal to the old one",
+				zap.String("category", "ddl"))
 		}
 		newTableInfo.Columns[i].ID = old.ID
 	}
@@ -8279,7 +8356,7 @@ func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.Resour
 		*groupInfo.ResourceGroupSettings = *oldGroup.ResourceGroupSettings
 	}
 	for _, opt := range options {
-		err := SetDirectResourceGroupSettings(groupInfo.ResourceGroupSettings, opt)
+		err := SetDirectResourceGroupSettings(groupInfo, opt)
 		if err != nil {
 			return nil, err
 		}

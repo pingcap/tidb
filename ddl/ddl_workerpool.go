@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // workerPool is used to new worker.
@@ -79,7 +80,7 @@ func (wp *workerPool) close() {
 		return
 	}
 	wp.exit.Store(true)
-	logutil.BgLogger().Info("[ddl] closing workerPool")
+	logutil.BgLogger().Info("closing workerPool", zap.String("category", "ddl"))
 	wp.resPool.Close()
 }
 

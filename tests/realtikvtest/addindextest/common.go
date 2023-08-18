@@ -242,7 +242,7 @@ func createIndexOneCol(ctx *suiteContext, tableID int, colID int) (err error) {
 		colID += 60
 		ddlStr += " , add column c" + strconv.Itoa(colID) + " int;"
 	}
-	logutil.BgLogger().Info("[add index test] createIndexOneCol", zap.String("sql", ddlStr))
+	logutil.BgLogger().Info("createIndexOneCol", zap.String("category", "add index test"), zap.String("sql", ddlStr))
 	if ctx.CompCtx != nil && ctx.CompCtx.isConcurrentDDL {
 		_, err = ctx.CompCtx.executor[tableID].tk.Exec(ddlStr)
 	} else {
@@ -281,14 +281,14 @@ func createIndexTwoCols(ctx *suiteContext, tableID int, indexID int, colID1 int,
 		colID1 += 60
 		ddlStr += " , add column c" + strconv.Itoa(colID1) + " varchar(10);"
 	}
-	logutil.BgLogger().Info("[add index test] createIndexTwoCols", zap.String("sql", ddlStr))
+	logutil.BgLogger().Info("createIndexTwoCols", zap.String("category", "add index test"), zap.String("sql", ddlStr))
 	if ctx.CompCtx != nil && ctx.CompCtx.isConcurrentDDL {
 		_, err = ctx.CompCtx.executor[tableID].tk.Exec(ddlStr)
 	} else {
 		_, err = ctx.tk.Exec(ddlStr)
 	}
 	if err != nil {
-		logutil.BgLogger().Error("[add index test] add index failed",
+		logutil.BgLogger().Error("add index failed", zap.String("category", "add index test"),
 			zap.String("sql", ddlStr), zap.Error(err))
 	}
 	require.NoError(ctx.t, err)
@@ -304,7 +304,7 @@ func checkResult(ctx *suiteContext, tableName string, indexID int, tkID int) {
 		_, err = ctx.tk.Exec(adminCheckSQL)
 	}
 	if err != nil {
-		logutil.BgLogger().Error("[add index test] checkResult",
+		logutil.BgLogger().Error("checkResult", zap.String("category", "add index test"),
 			zap.String("sql", adminCheckSQL), zap.Error(err))
 	}
 	require.NoError(ctx.t, err)
@@ -318,7 +318,7 @@ func checkResult(ctx *suiteContext, tableName string, indexID int, tkID int) {
 	}
 
 	if err != nil {
-		logutil.BgLogger().Error("[add index test] drop index failed",
+		logutil.BgLogger().Error("drop index failed", zap.String("category", "add index test"),
 			zap.String("sql", adminCheckSQL), zap.Error(err))
 	}
 	require.NoError(ctx.t, err)
@@ -333,7 +333,7 @@ func checkTableResult(ctx *suiteContext, tableName string, tkID int) {
 		_, err = ctx.tk.Exec(adminCheckSQL)
 	}
 	if err != nil {
-		logutil.BgLogger().Error("[add index test] checkTableResult",
+		logutil.BgLogger().Error("checkTableResult", zap.String("category", "add index test"),
 			zap.String("sql", adminCheckSQL), zap.Error(err))
 	}
 	require.NoError(ctx.t, err)
@@ -360,7 +360,7 @@ func testOneColFrame(ctx *suiteContext, colIDs [][]int, f func(*suiteContext, in
 				if ctx.isUnique || ctx.isPK {
 					require.Contains(ctx.t, err.Error(), "Duplicate entry")
 				} else {
-					logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
+					logutil.BgLogger().Error("add index failed", zap.String("category", "add index test"), zap.Error(err))
 					require.NoError(ctx.t, err)
 				}
 			}
@@ -392,7 +392,7 @@ func testTwoColsFrame(ctx *suiteContext, iIDs [][]int, jIDs [][]int, f func(*sui
 				}
 				err := f(ctx, tableID, tableName, indexID, i, j)
 				if err != nil {
-					logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
+					logutil.BgLogger().Error("add index failed", zap.String("category", "add index test"), zap.Error(err))
 				}
 				require.NoError(ctx.t, err)
 				if ctx.workload != nil {
@@ -423,7 +423,7 @@ func testOneIndexFrame(ctx *suiteContext, colID int, f func(*suiteContext, int, 
 		}
 		err := f(ctx, tableID, tableName, colID)
 		if err != nil {
-			logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
+			logutil.BgLogger().Error("add index failed", zap.String("category", "add index test"), zap.Error(err))
 		}
 		require.NoError(ctx.t, err)
 		if ctx.workload != nil {
@@ -455,9 +455,9 @@ func addIndexUnique(ctx *suiteContext, tableID int, tableName string, indexID in
 	if indexID == 0 || indexID == 6 || indexID == 11 || indexID == 19 || tableID > 0 {
 		err = createIndexOneCol(ctx, tableID, indexID)
 		if err != nil {
-			logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
+			logutil.BgLogger().Error("add index failed", zap.String("category", "add index test"), zap.Error(err))
 		} else {
-			logutil.BgLogger().Info("[add index test] add index success",
+			logutil.BgLogger().Info("add index success", zap.String("category", "add index test"),
 				zap.String("table name", tableName), zap.Int("index ID", indexID))
 		}
 		require.NoError(ctx.t, err)
@@ -465,7 +465,7 @@ func addIndexUnique(ctx *suiteContext, tableID int, tableName string, indexID in
 		err = createIndexOneCol(ctx, tableID, indexID)
 		if err != nil {
 			require.Contains(ctx.t, err.Error(), "1062")
-			logutil.BgLogger().Error("[add index test] add index failed",
+			logutil.BgLogger().Error("add index failed", zap.String("category", "add index test"),
 				zap.Error(err), zap.String("table name", tableName), zap.Int("index ID", indexID))
 		}
 	}
@@ -492,7 +492,7 @@ func addIndexMultiCols(ctx *suiteContext, tableID int, tableName string, indexID
 	if colID1 != colID2 {
 		err = createIndexTwoCols(ctx, tableID, indexID, colID1, colID2)
 		if err != nil {
-			logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
+			logutil.BgLogger().Error("add index failed", zap.String("category", "add index test"), zap.Error(err))
 		}
 		require.NoError(ctx.t, err)
 	}

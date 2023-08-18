@@ -308,7 +308,7 @@ func (tsr *RemoteTopSQLReporter) trySend(data *ReportData, deadline time.Time) e
 	tsr.DefaultDataSinkRegisterer.Unlock()
 	for _, ds := range dataSinks {
 		if err := ds.TrySend(data, deadline); err != nil {
-			logutil.BgLogger().Warn("[top-sql] failed to send data to datasink", zap.Error(err))
+			logutil.BgLogger().Warn("failed to send data to datasink", zap.String("category", "top-sql"), zap.Error(err))
 		}
 	}
 	return nil

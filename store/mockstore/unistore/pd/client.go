@@ -94,7 +94,7 @@ func NewClient(pdAddrs []string, tag string) (Client, error) {
 			urls = append(urls, "http://"+addr)
 		}
 	}
-	log.Info("[pd] client created", zap.String("tag", tag), zap.Strings("endpoints", urls))
+	log.Info("client created", zap.String("category", "pd"), zap.String("tag", tag), zap.Strings("endpoints", urls))
 
 	c := &client{
 		urls:                     urls,
@@ -122,7 +122,7 @@ func NewClient(pdAddrs []string, tag string) (Client, error) {
 	}
 
 	c.clusterID = members.GetHeader().GetClusterId()
-	log.Info("[pd] init cluster id", zap.String("tag", tag), zap.Uint64("id", c.clusterID))
+	log.Info("init cluster id", zap.String("category", "pd"), zap.String("tag", tag), zap.Uint64("id", c.clusterID))
 	c.wg.Add(2)
 	go c.checkLeaderLoop()
 	go c.heartbeatStreamLoop()
@@ -154,7 +154,7 @@ func (c *client) checkLeaderLoop() {
 		}
 
 		if _, err := c.updateLeader(); err != nil {
-			log.Error("[pd] failed updateLeader", zap.Error(err))
+			log.Error("failed updateLeader", zap.String("category", "pd"), zap.Error(err))
 		}
 	}
 }
@@ -201,7 +201,7 @@ func (c *client) switchLeader(addrs []string) error {
 		return nil
 	}
 
-	log.Info("[pd] switch leader", zap.String("new leader", addr), zap.String("old leader", oldLeader))
+	log.Info("switch leader", zap.String("category", "pd"), zap.String("new leader", addr), zap.String("old leader", oldLeader))
 	if _, err := c.getOrCreateConn(addr); err != nil {
 		return err
 	}
@@ -304,7 +304,7 @@ func (c *client) heartbeatStreamLoop() {
 		go c.receiveRegionHeartbeat(stream, errCh, wg)
 		select {
 		case err := <-errCh:
-			log.Warn("[pd] heartbeat stream failed", zap.String("tag", c.tag), zap.Error(err))
+			log.Warn("heartbeat stream failed", zap.String("category", "pd"), zap.String("tag", c.tag), zap.Error(err))
 			cancel()
 			c.schedulerUpdateLeader()
 			time.Sleep(retryInterval)
@@ -376,7 +376,7 @@ func (c *client) Close() {
 	for _, cc := range c.connMu.clientConns {
 		err := cc.Close()
 		if err != nil {
-			log.Error("[pd] close failed", zap.Error(err))
+			log.Error("close failed", zap.String("category", "pd"), zap.Error(err))
 		}
 	}
 }

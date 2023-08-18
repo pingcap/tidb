@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/tracing"
@@ -32,12 +34,12 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-var _ Executor = &TableSampleExecutor{}
+var _ exec.Executor = &TableSampleExecutor{}
 
 // TableSampleExecutor fetches a few rows through kv.Scan
 // according to the specific sample method.
 type TableSampleExecutor struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	table   table.Table
 	startTS uint64
@@ -46,14 +48,14 @@ type TableSampleExecutor struct {
 }
 
 // Open initializes necessary variables for using this executor.
-func (e *TableSampleExecutor) Open(ctx context.Context) error {
+func (*TableSampleExecutor) Open(ctx context.Context) error {
 	defer tracing.StartRegion(ctx, "TableSampleExecutor.Open").End()
 	return nil
 }
 
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by sampler.
-func (e *TableSampleExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *TableSampleExecutor) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.sampler.finished() {
 		return nil
@@ -63,7 +65,7 @@ func (e *TableSampleExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 }
 
 // Close implements the Executor Close interface.
-func (e *TableSampleExecutor) Close() error {
+func (*TableSampleExecutor) Close() error {
 	return nil
 }
 
@@ -378,8 +380,7 @@ func (s *sampleSyncer) sync() error {
 	defer func() {
 		for _, f := range s.fetchers {
 			// Cleanup channels to terminate fetcher goroutines.
-			for _, ok := <-f.kvChan; ok; {
-			}
+			channel.Clear(f.kvChan)
 		}
 	}()
 	for i := 0; i < s.totalCount; i++ {

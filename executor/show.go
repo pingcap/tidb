@@ -20,6 +20,7 @@ import (
 	gjson "encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -69,6 +71,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/etcd"
+	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
@@ -78,14 +81,14 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
-	"golang.org/x/exp/slices"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 var etcdDialTimeout = 5 * time.Second
 
 // ShowExec represents a show executor.
 type ShowExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName            model.CIStr
@@ -122,7 +125,7 @@ type showTableRegionRowItem struct {
 
 // Next implements the Executor Next interface.
 func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.GrowAndReset(e.maxChunkSize)
+	req.GrowAndReset(e.MaxChunkSize())
 	if e.result == nil {
 		e.result = newFirstChunk(e)
 		err := e.fetchAll(ctx)
@@ -163,11 +166,11 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	// Finally, when above result set, may not include qualified record, is returned to up
 	// level show stmt's selection, which really applies the filter operation on returned
 	// result set, it may return empty result to client.
-	oldSelectLimit := e.ctx.GetSessionVars().SelectLimit
-	e.ctx.GetSessionVars().SelectLimit = math.MaxUint64
+	oldSelectLimit := e.Ctx().GetSessionVars().SelectLimit
+	e.Ctx().GetSessionVars().SelectLimit = math.MaxUint64
 	defer func() {
 		// Restore session Var SelectLimit value.
-		e.ctx.GetSessionVars().SelectLimit = oldSelectLimit
+		e.Ctx().GetSessionVars().SelectLimit = oldSelectLimit
 	}()
 
 	switch e.Tp {
@@ -178,7 +181,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowColumns:
 		return e.fetchShowColumns(ctx)
 	case ast.ShowConfig:
-		return e.fetchShowClusterConfigs(ctx)
+		return e.fetchShowClusterConfigs()
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
 	case ast.ShowCreateSequence:
@@ -297,8 +300,7 @@ type visibleChecker struct {
 }
 
 func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch x := in.(type) {
-	case *ast.TableName:
+	if x, ok := in.(*ast.TableName); ok {
 		schema := x.Schema.L
 		if schema == "" {
 			schema = v.defaultDB
@@ -315,17 +317,17 @@ func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	return in, false
 }
 
-func (v *visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (*visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
 func (e *ShowExec) fetchShowBind() error {
 	var tmp []*bindinfo.BindRecord
 	if !e.GlobalScope {
-		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 		tmp = handle.GetAllBindRecord()
 	} else {
-		tmp = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
+		tmp = domain.GetDomain(e.Ctx()).BindHandle().GetAllBindRecord()
 	}
 	bindRecords := make([]*bindinfo.BindRecord, 0)
 	for _, bindRecord := range tmp {
@@ -369,16 +371,16 @@ func (e *ShowExec) fetchShowBind() error {
 			}
 			checker := visibleChecker{
 				defaultDB: bindData.Db,
-				ctx:       e.ctx,
+				ctx:       e.Ctx(),
 				is:        e.is,
-				manager:   privilege.GetPrivilegeManager(e.ctx),
+				manager:   privilege.GetPrivilegeManager(e.Ctx()),
 				ok:        true,
 			}
 			stmt.Accept(&checker)
 			if !checker.ok {
 				continue
 			}
-			e.appendRow([]interface{}{
+			e.appendRow([]any{
 				bindData.OriginalSQL,
 				hint.BindSQL,
 				bindData.Db,
@@ -397,7 +399,7 @@ func (e *ShowExec) fetchShowBind() error {
 }
 
 func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
-	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBindInfo)
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf("SELECT count(*) FROM mysql.bind_info where status = '%s' or status = '%s';", bindinfo.Enabled, bindinfo.Using))
@@ -405,7 +407,7 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	handle := domain.GetDomain(e.ctx).BindHandle()
+	handle := domain.GetDomain(e.Ctx()).BindHandle()
 
 	bindRecords := handle.GetAllBindRecord()
 	numBindings := 0
@@ -419,7 +421,7 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 
 	memUsage := handle.GetMemUsage()
 	memCapacity := handle.GetMemCapacity()
-	e.appendRow([]interface{}{
+	e.appendRow([]any{
 		numBindings,
 		rows[0].GetInt64(0),
 		memory.FormatBytes(memUsage),
@@ -430,7 +432,7 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 
 func (e *ShowExec) fetchShowEngines(ctx context.Context) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT * FROM information_schema.engines`)
 	if err != nil {
@@ -443,20 +445,20 @@ func (e *ShowExec) fetchShowEngines(ctx context.Context) error {
 
 // moveInfoSchemaToFront moves information_schema to the first, and the others are sorted in the origin ascending order.
 func moveInfoSchemaToFront(dbs []string) {
-	if len(dbs) > 0 && strings.EqualFold(dbs[0], "INFORMATION_SCHEMA") {
+	if len(dbs) > 0 && strings.EqualFold(dbs[0], filter.InformationSchemaName) {
 		return
 	}
 
-	i := sort.SearchStrings(dbs, "INFORMATION_SCHEMA")
-	if i < len(dbs) && strings.EqualFold(dbs[i], "INFORMATION_SCHEMA") {
+	i := sort.SearchStrings(dbs, filter.InformationSchemaName)
+	if i < len(dbs) && strings.EqualFold(dbs[i], filter.InformationSchemaName) {
 		copy(dbs[1:i+1], dbs[0:i])
-		dbs[0] = "INFORMATION_SCHEMA"
+		dbs[0] = filter.InformationSchemaName
 	}
 }
 
 func (e *ShowExec) fetchShowDatabases() error {
 	dbs := e.is.AllSchemaNames()
-	checker := privilege.GetPrivilegeManager(e.ctx)
+	checker := privilege.GetPrivilegeManager(e.Ctx())
 	slices.Sort(dbs)
 	var (
 		fieldPatternsLike collate.WildcardPattern
@@ -470,7 +472,7 @@ func (e *ShowExec) fetchShowDatabases() error {
 	// let information_schema be the first database
 	moveInfoSchemaToFront(dbs)
 	for _, d := range dbs {
-		if checker != nil && !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, d) {
+		if checker != nil && !checker.DBIsVisible(e.Ctx().GetSessionVars().ActiveRoles, d) {
 			continue
 		} else if fieldFilter != "" && strings.ToLower(d) != fieldFilter {
 			continue
@@ -485,14 +487,14 @@ func (e *ShowExec) fetchShowDatabases() error {
 }
 
 func (e *ShowExec) fetchShowProcessList() error {
-	sm := e.ctx.GetSessionManager()
+	sm := e.Ctx().GetSessionManager()
 	if sm == nil {
 		return nil
 	}
 
-	loginUser, activeRoles := e.ctx.GetSessionVars().User, e.ctx.GetSessionVars().ActiveRoles
+	loginUser, activeRoles := e.Ctx().GetSessionVars().User, e.Ctx().GetSessionVars().ActiveRoles
 	var hasProcessPriv bool
-	if pm := privilege.GetPrivilegeManager(e.ctx); pm != nil {
+	if pm := privilege.GetPrivilegeManager(e.Ctx()); pm != nil {
 		if pm.RequestVerification(activeRoles, "", "", "", mysql.ProcessPriv) {
 			hasProcessPriv = true
 		}
@@ -511,16 +513,16 @@ func (e *ShowExec) fetchShowProcessList() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowOpenTables() error {
+func (*ShowExec) fetchShowOpenTables() error {
 	// TiDB has no concept like mysql's "table cache" and "open table"
 	// For simplicity, we just return an empty result with the same structure as MySQL's SHOW OPEN TABLES
 	return nil
 }
 
 func (e *ShowExec) fetchShowTables() error {
-	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && e.ctx.GetSessionVars().User != nil {
-		if !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, e.DBName.O) {
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	if checker != nil && e.Ctx().GetSessionVars().User != nil {
+		if !checker.DBIsVisible(e.Ctx().GetSessionVars().ActiveRoles, e.DBName.O) {
 			return e.dbAccessDenied()
 		}
 	}
@@ -530,7 +532,7 @@ func (e *ShowExec) fetchShowTables() error {
 	// sort for tables
 	schemaTables := e.is.SchemaTables(e.DBName)
 	tableNames := make([]string, 0, len(schemaTables))
-	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 	var (
 		tableTypes        = make(map[string]string)
 		fieldPatternsLike collate.WildcardPattern
@@ -574,9 +576,9 @@ func (e *ShowExec) fetchShowTables() error {
 }
 
 func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
-	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && e.ctx.GetSessionVars().User != nil {
-		if !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, e.DBName.O) {
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	if checker != nil && e.Ctx().GetSessionVars().User != nil {
+		if !checker.DBIsVisible(e.Ctx().GetSessionVars().ActiveRoles, e.DBName.O) {
 			return e.dbAccessDenied()
 		}
 	}
@@ -584,19 +586,19 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 
-	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 
 	var snapshot uint64
-	txn, err := e.ctx.Txn(false)
+	txn, err := e.Ctx().Txn(false)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if txn.Valid() {
 		snapshot = txn.StartTS()
 	}
-	if e.ctx.GetSessionVars().SnapshotTS != 0 {
-		snapshot = e.ctx.GetSessionVars().SnapshotTS
+	if e.Ctx().GetSessionVars().SnapshotTS != 0 {
+		snapshot = e.Ctx().GetSessionVars().SnapshotTS
 	}
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(snapshot), sqlexec.ExecOptionUseCurSession},
@@ -618,7 +620,7 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 		fieldFilter = e.Extractor.Field()
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
-	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 	for _, row := range rows {
 		tableName := row.GetString(0)
 		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tableName, "", mysql.AllPrivMask) {
@@ -648,9 +650,9 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
 
-	checker := privilege.GetPrivilegeManager(e.ctx)
-	activeRoles := e.ctx.GetSessionVars().ActiveRoles
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.InsertPriv|mysql.SelectPriv|mysql.UpdatePriv|mysql.ReferencesPriv) {
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+	if checker != nil && e.Ctx().GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.InsertPriv|mysql.SelectPriv|mysql.UpdatePriv|mysql.ReferencesPriv) {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
@@ -662,7 +664,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	} else {
 		cols = tb.VisibleCols()
 	}
-	if err := tryFillViewColumnType(ctx, e.ctx, e.is, e.DBName, tb.Meta()); err != nil {
+	if err := tryFillViewColumnType(ctx, e.Ctx(), e.is, e.DBName, tb.Meta()); err != nil {
 		return err
 	}
 	for _, col := range cols {
@@ -678,7 +680,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 			defaultValStr := fmt.Sprintf("%v", desc.DefaultValue)
 			// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
 			if col.GetType() == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr && !strings.HasPrefix(strings.ToUpper(defaultValStr), strings.ToUpper(ast.CurrentTimestamp)) {
-				timeValue, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
+				timeValue, err := table.GetColDefaultValue(e.Ctx(), col.ToInfo())
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -721,7 +723,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 }
 
 func (e *ShowExec) fetchShowIndex() error {
-	do := domain.GetDomain(e.ctx)
+	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
 
 	tb, err := e.getTable()
@@ -731,9 +733,9 @@ func (e *ShowExec) fetchShowIndex() error {
 
 	statsTbl := h.GetTableStats(tb.Meta())
 
-	checker := privilege.GetPrivilegeManager(e.ctx)
-	activeRoles := e.ctx.GetSessionVars().ActiveRoles
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+	if checker != nil && e.Ctx().GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
@@ -852,7 +854,7 @@ func (e *ShowExec) fetchShowCharset() error {
 }
 
 func (e *ShowExec) fetchShowMasterStatus() error {
-	tso := e.ctx.GetSessionVars().TxnCtx.StartTS
+	tso := e.Ctx().GetSessionVars().TxnCtx.StartTS
 	e.appendRow([]interface{}{"tidb-binlog", tso, "", "", ""})
 	return nil
 }
@@ -860,7 +862,7 @@ func (e *ShowExec) fetchShowMasterStatus() error {
 func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 	var (
 		value       string
-		sessionVars = e.ctx.GetSessionVars()
+		sessionVars = e.Ctx().GetSessionVars()
 	)
 	var (
 		fieldPatternsLike collate.WildcardPattern
@@ -886,7 +888,7 @@ func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 				} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 					continue
 				}
-				if infoschema.SysVarHiddenForSem(e.ctx, v.Name) {
+				if infoschema.SysVarHiddenForSem(e.Ctx(), v.Name) {
 					continue
 				}
 				value, err = sessionVars.GetGlobalSystemVar(ctx, v.Name)
@@ -911,7 +913,7 @@ func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 			continue
 		}
-		if infoschema.SysVarHiddenForSem(e.ctx, v.Name) {
+		if infoschema.SysVarHiddenForSem(e.Ctx(), v.Name) {
 			continue
 		}
 		value, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), v.Name)
@@ -924,12 +926,12 @@ func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 }
 
 func (e *ShowExec) fetchShowStatus() error {
-	sessionVars := e.ctx.GetSessionVars()
+	sessionVars := e.Ctx().GetSessionVars()
 	statusVars, err := variable.GetStatusVars(sessionVars)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	checker := privilege.GetPrivilegeManager(e.ctx)
+	checker := privilege.GetPrivilegeManager(e.Ctx())
 	for status, v := range statusVars {
 		if e.GlobalScope && v.Scope == variable.ScopeSession {
 			continue
@@ -1057,7 +1059,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 				default:
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
 					// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
-					if col.GetType() == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr {
+					if defaultValStr != types.ZeroDatetimeStr && col.GetType() == mysql.TypeTimestamp {
 						timeValue, err := table.GetColDefaultValue(ctx, col)
 						if err != nil {
 							return errors.Trace(err)
@@ -1394,7 +1396,7 @@ func (e *ShowExec) fetchShowCreateSequence() error {
 		return exeerrors.ErrWrongObject.GenWithStackByArgs(e.DBName.O, tableInfo.Name.O, "SEQUENCE")
 	}
 	var buf bytes.Buffer
-	ConstructResultOfShowCreateSequence(e.ctx, tableInfo, &buf)
+	ConstructResultOfShowCreateSequence(e.Ctx(), tableInfo, &buf)
 	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})
 	return nil
 }
@@ -1405,14 +1407,14 @@ var TestShowClusterConfigKey stringutil.StringerStr = "TestShowClusterConfigKey"
 // TestShowClusterConfigFunc is used to test 'show config ...'.
 type TestShowClusterConfigFunc func() ([][]types.Datum, error)
 
-func (e *ShowExec) fetchShowClusterConfigs(ctx context.Context) error {
+func (e *ShowExec) fetchShowClusterConfigs() error {
 	emptySet := set.NewStringSet()
 	var confItems [][]types.Datum
 	var err error
-	if f := e.ctx.Value(TestShowClusterConfigKey); f != nil {
+	if f := e.Ctx().Value(TestShowClusterConfigKey); f != nil {
 		confItems, err = f.(TestShowClusterConfigFunc)()
 	} else {
-		confItems, err = fetchClusterConfig(e.ctx, emptySet, emptySet)
+		confItems, err = fetchClusterConfig(e.Ctx(), emptySet, emptySet)
 	}
 	if err != nil {
 		return err
@@ -1436,7 +1438,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	tableInfo := tb.Meta()
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
-	if err = constructResultOfShowCreateTable(e.ctx, &e.DBName, tableInfo, tb.Allocators(e.ctx), &buf); err != nil {
+	if err = constructResultOfShowCreateTable(e.Ctx(), &e.DBName, tableInfo, tb.Allocators(e.Ctx()), &buf); err != nil {
 		return err
 	}
 	if tableInfo.IsView() {
@@ -1464,7 +1466,7 @@ func (e *ShowExec) fetchShowCreateView() error {
 	}
 
 	var buf bytes.Buffer
-	fetchShowCreateTable4View(e.ctx, tb.Meta(), &buf)
+	fetchShowCreateTable4View(e.Ctx(), tb.Meta(), &buf)
 	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String(), tb.Meta().Charset, tb.Meta().Collate})
 	return nil
 }
@@ -1538,9 +1540,9 @@ func constructResultOfShowCreateResourceGroup(resourceGroup *model.ResourceGroup
 
 // fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
-	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && e.ctx.GetSessionVars().User != nil {
-		if !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, e.DBName.String()) {
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	if checker != nil && e.Ctx().GetSessionVars().User != nil {
+		if !checker.DBIsVisible(e.Ctx().GetSessionVars().ActiveRoles, e.DBName.String()) {
 			return e.dbAccessDenied()
 		}
 	}
@@ -1550,7 +1552,7 @@ func (e *ShowExec) fetchShowCreateDatabase() error {
 	}
 
 	var buf bytes.Buffer
-	err := ConstructResultOfShowCreateDatabase(e.ctx, dbInfo, e.IfNotExists, &buf)
+	err := ConstructResultOfShowCreateDatabase(e.Ctx(), dbInfo, e.IfNotExists, &buf)
 	if err != nil {
 		return err
 	}
@@ -1615,14 +1617,14 @@ func (e *ShowExec) fetchShowCollation() error {
 
 // fetchShowCreateUser composes 'show create user' result.
 func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
-	checker := privilege.GetPrivilegeManager(e.ctx)
+	checker := privilege.GetPrivilegeManager(e.Ctx())
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 
 	userName, hostName := e.User.Username, e.User.Hostname
-	sessVars := e.ctx.GetSessionVars()
+	sessVars := e.Ctx().GetSessionVars()
 	if e.User.CurrentUser {
 		userName = sessVars.User.AuthUsername
 		hostName = sessVars.User.AuthHostname
@@ -1635,7 +1637,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		}
 	}
 
-	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil,
 		`SELECT plugin, Account_locked, user_attributes->>'$.metadata', Token_issuer,
@@ -1746,8 +1748,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 }
 
 func (e *ShowExec) fetchShowGrants() error {
-	vars := e.ctx.GetSessionVars()
-	checker := privilege.GetPrivilegeManager(e.ctx)
+	vars := e.Ctx().GetSessionVars()
+	checker := privilege.GetPrivilegeManager(e.Ctx())
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
@@ -1774,11 +1776,11 @@ func (e *ShowExec) fetchShowGrants() error {
 		if r.Hostname == "" {
 			r.Hostname = "%"
 		}
-		if !checker.FindEdge(e.ctx, r, e.User) {
+		if !checker.FindEdge(e.Ctx(), r, e.User) {
 			return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(r.String(), e.User.String())
 		}
 	}
-	gs, err := checker.ShowGrants(e.ctx, e.User, e.Roles)
+	gs, err := checker.ShowGrants(e.Ctx(), e.User, e.Roles)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1830,11 +1832,11 @@ func (e *ShowExec) fetchShowPrivileges() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowTriggers() error {
+func (*ShowExec) fetchShowTriggers() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowProcedureStatus() error {
+func (*ShowExec) fetchShowProcedureStatus() error {
 	return nil
 }
 
@@ -1849,7 +1851,7 @@ func (e *ShowExec) fetchShowPlugins() error {
 }
 
 func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
-	stmtCtx := e.ctx.GetSessionVars().StmtCtx
+	stmtCtx := e.Ctx().GetSessionVars().StmtCtx
 	if e.CountWarningsOrErrors {
 		errCount, warnCount := stmtCtx.NumErrorWarnings()
 		if errOnly {
@@ -1897,7 +1899,7 @@ func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 		if n.State == node.Offline {
 			continue
 		}
-		e.appendRow([]interface{}{n.NodeID, n.Addr, n.State, n.MaxCommitTS, util.TSOToRoughTime(n.UpdateTS).Format(types.TimeFormat)})
+		e.appendRow([]interface{}{n.NodeID, n.Addr, n.State, n.MaxCommitTS, oracle.GetTimeFromTS(uint64(n.UpdateTS)).Format(types.TimeFormat)})
 	}
 
 	return nil
@@ -1932,7 +1934,7 @@ func (e *ShowExec) getTable() (table.Table, error) {
 }
 
 func (e *ShowExec) dbAccessDenied() error {
-	user := e.ctx.GetSessionVars().User
+	user := e.Ctx().GetSessionVars().User
 	u := user.Username
 	h := user.Hostname
 	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
@@ -1943,7 +1945,7 @@ func (e *ShowExec) dbAccessDenied() error {
 }
 
 func (e *ShowExec) tableAccessDenied(access string, table string) error {
-	user := e.ctx.GetSessionVars().User
+	user := e.Ctx().GetSessionVars().User
 	u := user.Username
 	h := user.Hostname
 	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
@@ -1993,7 +1995,7 @@ func (e *ShowExec) appendRow(row []interface{}) {
 }
 
 func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
-	store := e.ctx.GetStore()
+	store := e.Ctx().GetStore()
 	tikvStore, ok := store.(helper.Storage)
 	if !ok {
 		return nil
@@ -2009,6 +2011,7 @@ func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 	}
 
 	physicalIDs := []int64{}
+	hasGlobalIndex := false
 	if pi := tb.Meta().GetPartitionInfo(); pi != nil {
 		for _, name := range e.Table.PartitionNames {
 			pid, err := tables.FindPartitionByName(tb.Meta(), name.L)
@@ -2020,6 +2023,13 @@ func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 		if len(physicalIDs) == 0 {
 			for _, p := range pi.Definitions {
 				physicalIDs = append(physicalIDs, p.ID)
+			}
+		}
+		// when table has global index, show the logical table region.
+		for _, index := range tb.Meta().Indices {
+			if index.Global {
+				hasGlobalIndex = true
+				break
 			}
 		}
 	} else {
@@ -2037,9 +2047,16 @@ func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 		if indexInfo == nil {
 			return plannercore.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
 		}
-		regions, err = getTableIndexRegions(indexInfo, physicalIDs, tikvStore, splitStore)
+		if indexInfo.Global {
+			regions, err = getTableIndexRegions(indexInfo, []int64{tb.Meta().ID}, tikvStore, splitStore)
+		} else {
+			regions, err = getTableIndexRegions(indexInfo, physicalIDs, tikvStore, splitStore)
+		}
 	} else {
 		// show table * region
+		if hasGlobalIndex {
+			physicalIDs = append([]int64{tb.Meta().ID}, physicalIDs...)
+		}
 		regions, err = getTableRegions(tb, physicalIDs, tikvStore, splitStore)
 	}
 	if err != nil {
@@ -2174,7 +2191,7 @@ func (e *ShowExec) fetchShowBuiltins() error {
 
 func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	sessionStates := &sessionstates.SessionStates{}
-	err := e.ctx.EncodeSessionStates(ctx, e.ctx, sessionStates)
+	err := e.Ctx().EncodeSessionStates(ctx, e.Ctx(), sessionStates)
 	if err != nil {
 		return err
 	}
@@ -2189,7 +2206,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	// session token
 	var token *sessionstates.SessionToken
 	// In testing, user may be nil.
-	if user := e.ctx.GetSessionVars().User; user != nil {
+	if user := e.Ctx().GetSessionVars().User; user != nil {
 		// The token may be leaked without secure transport, but the cloud can ensure security in some situations,
 		// so we don't enforce secure connections.
 		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
@@ -2258,8 +2275,8 @@ func handleImportJobInfo(info *importer.JobInfo, result *chunk.Chunk) error {
 // "Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
 func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	var hasSuperPriv bool
-	if pm := privilege.GetPrivilegeManager(e.ctx); pm != nil {
-		hasSuperPriv = pm.RequestVerification(e.ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
+	if pm := privilege.GetPrivilegeManager(e.Ctx()); pm != nil {
+		hasSuperPriv = pm.RequestVerification(e.Ctx().GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
 	}
 	// we use sessionCtx from GetTaskManager, user ctx might not have system table privileges.
 	globalTaskManager, err := fstorage.GetTaskManager()
@@ -2271,7 +2288,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		if err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
 			exec := se.(sqlexec.SQLExecutor)
 			var err2 error
-			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, e.ctx.GetSessionVars().User.String(), hasSuperPriv)
+			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
 			return err2
 		}); err != nil {
 			return err
@@ -2282,7 +2299,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	if err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		var err2 error
-		infos, err2 = importer.GetAllViewableJobs(ctx, exec, e.ctx.GetSessionVars().User.String(), hasSuperPriv)
+		infos, err2 = importer.GetAllViewableJobs(ctx, exec, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
 		return err2
 	}); err != nil {
 		return err
@@ -2331,11 +2348,11 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 }
 
 func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(sessionctx.Context) error) error {
-	b := &baseExecutor{ctx: sctx}
-	sysCtx, err := b.getSysSession()
+	b := exec.NewBaseExecutor(sctx, nil, 0)
+	sysCtx, err := b.GetSysSession()
 	if err != nil {
 		return err
 	}
-	defer b.releaseSysSession(ctx, sysCtx)
+	defer b.ReleaseSysSession(ctx, sysCtx)
 	return fn(sysCtx)
 }

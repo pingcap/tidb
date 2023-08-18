@@ -54,6 +54,8 @@ import (
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // TableImporter is a helper struct to import a table.
@@ -198,7 +200,7 @@ func (tr *TableImporter) importTable(
 	}
 
 	// 2. Do duplicate detection if needed
-	if isLocalBackend(rc.cfg) && rc.cfg.TikvImporter.OnDuplicate != "" {
+	if isLocalBackend(rc.cfg) && rc.cfg.Conflict.Strategy != "" {
 		_, uuid := backend.MakeUUID(tr.tableName, common.IndexEngineID)
 		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupDetectDirSuffix)
 		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupResultDirSuffix)
@@ -929,8 +931,21 @@ func (tr *TableImporter) postProcess(
 			maxCap := shardFmt.IncrementalBitsCapacity()
 			err = AlterAutoRandom(ctx, rc.db, tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxCap)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
-			// only alter auto increment id iff table contains auto-increment column or generated handle
-			err = AlterAutoIncrement(ctx, rc.db, tr.tableName, uint64(tr.alloc.Get(autoid.RowIDAllocType).Base())+1)
+			// only alter auto increment id iff table contains auto-increment column or generated handle.
+			// ALTER TABLE xxx AUTO_INCREMENT = yyy has a bad naming.
+			// if a table has implicit _tidb_rowid column & tbl.SepAutoID=false, then it works on _tidb_rowid
+			// allocator, even if the table has NO auto-increment column.
+			newBase := uint64(tr.alloc.Get(autoid.RowIDAllocType).Base()) + 1
+			err = AlterAutoIncrement(ctx, rc.db, tr.tableName, newBase)
+
+			if err == nil && isLocalBackend(rc.cfg) {
+				// for TiDB version >= 6.5.0, a table might have separate allocators for auto_increment column and _tidb_rowid,
+				// especially when a table has auto_increment non-clustered PK, it will use both allocators.
+				// And in this case, ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
+				// not for allocator of _tidb_rowid.
+				// So we need to rebase IDs for those 2 allocators explicitly.
+				err = common.RebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr.kvStore, tr.dbInfo.ID, tr.tableInfo.Core)
+			}
 		}
 		rc.alterTableLock.Unlock()
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)
@@ -1034,15 +1049,26 @@ func (tr *TableImporter) postProcess(
 
 			var remoteChecksum *local.RemoteChecksum
 			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo)
+			failpoint.Inject("checksum-error", func() {
+				tr.logger.Info("failpoint checksum-error injected.")
+				remoteChecksum = nil
+				err = status.Error(codes.Unknown, "Checksum meets error.")
+			})
 			if err != nil {
-				return false, err
+				if rc.cfg.PostRestore.Checksum != config.OpLevelOptional {
+					return false, err
+				}
+				tr.logger.Warn("do checksum failed, will skip this error and go on", log.ShortError(err))
+				err = nil
 			}
-			err = tr.compareChecksum(remoteChecksum, localChecksum)
-			// with post restore level 'optional', we will skip checksum error
-			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
-				if err != nil {
-					tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
-					err = nil
+			if remoteChecksum != nil {
+				err = tr.compareChecksum(remoteChecksum, localChecksum)
+				// with post restore level 'optional', we will skip checksum error
+				if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
+					if err != nil {
+						tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
+						err = nil
+					}
 				}
 			}
 		} else {
@@ -1616,8 +1642,12 @@ func (tr *TableImporter) preDeduplicate(
 		return errors.Trace(originalErr)
 	}
 	if !rc.cfg.Checkpoint.Enable {
-		return errors.Errorf("duplicate key in table %s caused by index `%s`, you can turn on checkpoint and re-run to see the conflicting rows",
+		err := errors.Errorf("duplicate key in table %s caused by index `%s`, but because checkpoint is off we can't have more details",
 			tr.tableName, idxName)
+		rc.errorMgr.RecordDuplicateOnce(
+			ctx, tr.logger, tr.tableName, "<unknown-path>", -1, err.Error(), -1, "<unknown-data>",
+		)
+		return err
 	}
 	conflictEncodedRowIDs := dupErr.Args()[1].([][]byte)
 	if len(conflictEncodedRowIDs) < 2 {
@@ -1648,6 +1678,9 @@ func (tr *TableImporter) preDeduplicate(
 		tr.logger.Error("failed to get table checkpoint", zap.Error(err))
 		return errors.Trace(err)
 	}
+	var (
+		secondConflictPath string
+	)
 	for _, engineCp := range tableCp.Engines {
 		for _, chunkCp := range engineCp.Chunks {
 			if chunkCp.Chunk.PrevRowIDMax <= rowID[0] && rowID[0] < chunkCp.Chunk.RowIDMax {
@@ -1657,6 +1690,7 @@ func (tr *TableImporter) preDeduplicate(
 					chunkCp.FileMeta.Path)
 			}
 			if chunkCp.Chunk.PrevRowIDMax <= rowID[1] && rowID[1] < chunkCp.Chunk.RowIDMax {
+				secondConflictPath = chunkCp.FileMeta.Path
 				otherConflictMsg = fmt.Sprintf("row %d counting from offset %d in file %s",
 					rowID[1]-chunkCp.Chunk.PrevRowIDMax,
 					chunkCp.Chunk.Offset,
@@ -1670,6 +1704,10 @@ func (tr *TableImporter) preDeduplicate(
 			zap.Int64("rowID[1]", rowID[1]))
 		return errors.Trace(originalErr)
 	}
-	return errors.Errorf("duplicate entry for key '%s', a pair of conflicting rows are (%s, %s)",
+	err = errors.Errorf("duplicate entry for key '%s', a pair of conflicting rows are (%s, %s)",
 		idxName, oneConflictMsg, otherConflictMsg)
+	rc.errorMgr.RecordDuplicateOnce(
+		ctx, tr.logger, tr.tableName, secondConflictPath, -1, err.Error(), rowID[1], "<unknown-data>",
+	)
+	return err
 }

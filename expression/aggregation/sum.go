@@ -30,7 +30,7 @@ func (sf *sumFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statement
 }
 
 // GetResult implements Aggregation interface.
-func (sf *sumFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
+func (*sumFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 	return evalCtx.Value
 }
 

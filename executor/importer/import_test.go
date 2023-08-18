@@ -45,6 +45,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, false, plan.Detached)
 	require.Equal(t, "utf8mb4", *plan.Charset)
 	require.Equal(t, false, plan.DisableTiKVImportMode)
+	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/importer/mockNumCpu", "return(10)"))
 	plan.initDefaultOptions()
@@ -87,7 +88,8 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		splitFileOption+", "+
 		recordErrorsOption+"=123, "+
 		detachedOption+", "+
-		disableTiKVImportModeOption,
+		disableTiKVImportModeOption+", "+
+		maxEngineSizeOption+"='100gib'",
 	)
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
@@ -108,6 +110,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, int64(123), plan.MaxRecordedErrors, sql)
 	require.True(t, plan.Detached, sql)
 	require.True(t, plan.DisableTiKVImportMode, sql)
+	require.Equal(t, config.ByteSize(100<<30), plan.MaxEngineSize, sql)
 }
 
 func TestAdjustOptions(t *testing.T) {

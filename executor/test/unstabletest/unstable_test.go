@@ -23,10 +23,12 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/skip"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCartesianJoinPanic(t *testing.T) {
+	skip.UnderShort(t)
 	// original position at join_test.go
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -44,6 +46,7 @@ func TestCartesianJoinPanic(t *testing.T) {
 }
 
 func TestGlobalMemoryControl(t *testing.T) {
+	skip.UnderShort(t)
 	// original position at executor_test.go
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
@@ -111,6 +114,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 }
 
 func TestAdminCheckTable(t *testing.T) {
+	skip.UnderShort(t)
 	// test NULL value.
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

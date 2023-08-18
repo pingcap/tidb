@@ -16,11 +16,11 @@ package tikv
 
 import (
 	"bytes"
+	"slices"
 
 	"github.com/dgryski/go-farm"
 	"github.com/pingcap/badger/y"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"golang.org/x/exp/slices"
 )
 
 func exceedEndKey(current, endKey []byte) bool {

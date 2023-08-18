@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -174,6 +175,35 @@ func TestSetAndGetOwnerOpValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, op, owner.OpNone)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/owner/MockDelOwnerKey"))
+}
+
+// TestGetOwnerOpValueBeforeSet tests get owner opValue before set this value when the etcdClient is nil.
+func TestGetOwnerOpValueBeforeSet(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/owner/MockNotSetOwnerOp", `return(true)`))
+
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	ddl := dom.DDL()
+	require.NoError(t, ddl.OwnerManager().CampaignOwner())
+	isOwner := checkOwner(ddl, true)
+	require.True(t, isOwner)
+
+	// test set/get owner info
+	manager := ddl.OwnerManager()
+	ownerID, err := manager.GetOwnerID(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, ddl.GetID(), ownerID)
+	op, err := owner.GetOwnerOpValue(context.Background(), nil, DDLOwnerKey, "log prefix")
+	require.NoError(t, err)
+	require.Equal(t, op, owner.OpNone)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/owner/MockNotSetOwnerOp"))
+	err = manager.SetOwnerOpValue(context.Background(), owner.OpGetUpgradingState)
+	require.NoError(t, err)
+	op, err = owner.GetOwnerOpValue(context.Background(), nil, DDLOwnerKey, "log prefix")
+	require.NoError(t, err)
+	require.Equal(t, op, owner.OpGetUpgradingState)
 }
 
 func TestCluster(t *testing.T) {

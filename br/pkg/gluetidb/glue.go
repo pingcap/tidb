@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -44,6 +45,7 @@ func New() Glue {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.SkipRegisterToDashboard = true
 		conf.Log.EnableSlowLog.Store(false)
+		conf.TiKVClient.CoprReqTimeout = 1800 * time.Second
 	})
 	return Glue{}
 }
@@ -186,7 +188,7 @@ func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...
 		vars.TxnCtxMu.Unlock()
 	}()
 	// Some of SQLs (like ADMIN RECOVER INDEX) may lazily take effect
-	// when we polling the result set.
+	// when we are polling the result set.
 	// At least call `next` once for triggering theirs side effect.
 	// (Maybe we'd better drain all returned rows?)
 	if rs != nil {
@@ -377,7 +379,7 @@ func (s *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...i
 		return err
 	}
 	// Some of SQLs (like ADMIN RECOVER INDEX) may lazily take effect
-	// when we polling the result set.
+	// when we are polling the result set.
 	// At least call `next` once for triggering theirs side effect.
 	// (Maybe we'd better drain all returned rows?)
 	if rs != nil {

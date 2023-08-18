@@ -52,10 +52,10 @@ component_management:
 
 flag_management:
   default_rules: # the rules that will be followed for any flag added, generally
-    carryforward: true
+    carryforward: false
     statuses:
       - type: project
-        target: 85%
+        target: auto
       - type: patch
         target: 85%
 
@@ -74,4 +74,9 @@ ignore:
   - "metrics/.*"
   - "expression/generator/.*"
   - "br/pkg/mock/.*"
+  - "testkit/.*"
+  - "server/internal/testutil/.*"
+  - "statistics/handle/cache/internal/testutil/.*"
+  - "session/testutil.go"
+  - "store/mockstore/unistore/testutil.go"
 

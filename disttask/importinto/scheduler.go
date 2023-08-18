@@ -42,7 +42,9 @@ type importStepScheduler struct {
 	sharedVars    sync.Map
 	logger        *zap.Logger
 
-	wg sync.WaitGroup
+	importCtx    context.Context
+	importCancel context.CancelFunc
+	wg           sync.WaitGroup
 }
 
 func (s *importStepScheduler) InitSubtaskExecEnv(ctx context.Context) error {
@@ -76,10 +78,13 @@ func (s *importStepScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	}
 	s.tableImporter = tableImporter
 
+	// we need this sub context since CleanupSubtaskExecEnv which wait on this routine is called
+	// before parent context is canceled in normal flow.
+	s.importCtx, s.importCancel = context.WithCancel(ctx)
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		s.tableImporter.CheckDiskQuota(ctx)
+		s.tableImporter.CheckDiskQuota(s.importCtx)
 	}()
 	return nil
 }
@@ -176,6 +181,7 @@ func (s *importStepScheduler) OnSubtaskFinished(ctx context.Context, subtaskMeta
 
 func (s *importStepScheduler) CleanupSubtaskExecEnv(_ context.Context) (err error) {
 	s.logger.Info("cleanup subtask env")
+	s.importCancel()
 	s.wg.Wait()
 	return s.tableImporter.Close()
 }
@@ -222,7 +228,8 @@ func init() {
 	}
 	scheduler.RegisterTaskType(proto.ImportInto, scheduler.WithPoolSize(int32(runtime.GOMAXPROCS(0))))
 	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepImport,
-		func(taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
+		func(ctx context.Context, taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
+			// TODO(tangenta): use context for lifetime control.
 			taskMeta, logger, err := prepareFn(taskID, bs, step)
 			if err != nil {
 				return nil, err
@@ -233,10 +240,10 @@ func init() {
 				logger:   logger,
 			}, nil
 		},
-		scheduler.WithConcurrentSubtask(),
 	)
 	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepPostProcess,
-		func(taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
+		func(ctx context.Context, taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
+			// TODO(tangenta): use context for lifetime control.
 			taskMeta, logger, err := prepareFn(taskID, bs, step)
 			if err != nil {
 				return nil, err

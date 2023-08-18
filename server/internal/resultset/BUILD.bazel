@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "resultset",
+    srcs = [
+        "cursor.go",
+        "resultset.go",
+    ],
+    importpath = "github.com/pingcap/tidb/server/internal/resultset",
+    visibility = ["//server:__subpackages__"],
+    deps = [
+        "//planner/core",
+        "//server/internal/column",
+        "//types",
+        "//util/chunk",
+        "//util/sqlexec",
+    ],
+)

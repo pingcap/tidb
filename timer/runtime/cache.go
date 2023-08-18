@@ -46,7 +46,7 @@ func (c *timerCacheItem) update(timer *api.TimerRecord, nowFunc func() time.Time
 	timer = timer.Clone()
 	c.timer = timer
 	c.nextEventTime = nil
-	c.nextTryTriggerTime = nowFunc().Add(time.Hour)
+	c.nextTryTriggerTime = time.Date(2999, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	if timer.Enable {
 		p, err := timer.CreateSchedEventPolicy()
@@ -54,6 +54,11 @@ func (c *timerCacheItem) update(timer *api.TimerRecord, nowFunc func() time.Time
 			if t, ok := p.NextEventTime(c.timer.Watermark); ok {
 				c.nextEventTime = &t
 			}
+		}
+
+		if timer.IsManualRequesting() {
+			now := nowFunc()
+			c.nextEventTime = &now
 		}
 	}
 
@@ -162,10 +167,17 @@ func (c *timersCache) setTimerProcStatus(timerID string, status runtimeProcStatu
 
 func (c *timersCache) updateNextTryTriggerTime(timerID string, time time.Time) {
 	item, ok := c.items[timerID]
-	if ok {
-		item.nextTryTriggerTime = time
-		c.resort(item)
+	if !ok {
+		return
 	}
+
+	// to make sure try trigger time is always after next event time
+	if item.timer.EventStatus == api.SchedEventIdle && (item.nextEventTime == nil || time.Before(*item.nextEventTime)) {
+		return
+	}
+
+	item.nextTryTriggerTime = time
+	c.resort(item)
 }
 
 func (c *timersCache) iterTryTriggerTimers(fn func(timer *api.TimerRecord, tryTriggerTime time.Time, nextEventTime *time.Time) bool) {

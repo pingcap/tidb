@@ -128,7 +128,7 @@ type LogicalCTETable struct {
 
 ```Go
 type CTEExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	seedExec      Executor
 	recursiveExec Executor
@@ -150,7 +150,7 @@ type CTEExec struct {
 
 ```Go
 type CTETableReaderExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	iterInTbl cteutil.Storage
 	chkIdx    int

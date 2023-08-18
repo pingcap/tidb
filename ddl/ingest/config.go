@@ -15,6 +15,8 @@
 package ingest
 
 import (
+	"context"
+	"math"
 	"path/filepath"
 	"sync/atomic"
 
@@ -34,9 +36,10 @@ var ImporterRangeConcurrencyForTest *atomic.Int32
 type Config struct {
 	Lightning    *lightning.Config
 	KeyspaceName string
+	IsRaftKV2    bool
 }
 
-func genConfig(memRoot MemRoot, jobID int64, unique bool) (*Config, error) {
+func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, unique bool, isRaftKV2 bool) (*Config, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	cfg := lightning.NewConfig()
 	cfg.TikvImporter.Backend = lightning.BackendLocal
@@ -45,15 +48,17 @@ func genConfig(memRoot MemRoot, jobID int64, unique bool) (*Config, error) {
 	if ImporterRangeConcurrencyForTest != nil {
 		cfg.TikvImporter.RangeConcurrency = int(ImporterRangeConcurrencyForTest.Load())
 	}
-	_, err := cfg.AdjustCommon()
+	err := cfg.AdjustForDDL()
 	if err != nil {
-		logutil.BgLogger().Warn(LitWarnConfigError, zap.Error(err))
+		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Error(err))
 		return nil, err
 	}
-	adjustImportMemory(memRoot, cfg)
+	adjustImportMemory(ctx, memRoot, cfg)
 	cfg.Checkpoint.Enable = true
 	if unique {
 		cfg.TikvImporter.DuplicateResolution = lightning.DupeResAlgErr
+		// TODO(lance6716): will introduce fail-fast for DDL usage later
+		cfg.Conflict.Threshold = math.MaxInt64
 	} else {
 		cfg.TikvImporter.DuplicateResolution = lightning.DupeResAlgNone
 	}
@@ -70,6 +75,7 @@ func genConfig(memRoot MemRoot, jobID int64, unique bool) (*Config, error) {
 	c := &Config{
 		Lightning:    cfg,
 		KeyspaceName: tidb.GetGlobalKeyspaceName(),
+		IsRaftKV2:    isRaftKV2,
 	}
 
 	return c, err
@@ -97,16 +103,16 @@ func generateLocalEngineConfig(id int64, dbName, tbName string) *backend.EngineC
 }
 
 // adjustImportMemory adjusts the lightning memory parameters according to the memory root's max limitation.
-func adjustImportMemory(memRoot MemRoot, cfg *lightning.Config) {
+func adjustImportMemory(ctx context.Context, memRoot MemRoot, cfg *lightning.Config) {
 	var scale int64
 	// Try aggressive resource usage successful.
-	if tryAggressiveMemory(memRoot, cfg) {
+	if tryAggressiveMemory(ctx, memRoot, cfg) {
 		return
 	}
 
 	defaultMemSize := int64(cfg.TikvImporter.LocalWriterMemCacheSize) * int64(cfg.TikvImporter.RangeConcurrency)
 	defaultMemSize += 4 * int64(cfg.TikvImporter.EngineMemCacheSize)
-	logutil.BgLogger().Info(LitInfoInitMemSetting,
+	logutil.Logger(ctx).Info(LitInfoInitMemSetting,
 		zap.Int64("local writer memory cache size", int64(cfg.TikvImporter.LocalWriterMemCacheSize)),
 		zap.Int64("engine memory cache size", int64(cfg.TikvImporter.EngineMemCacheSize)),
 		zap.Int("range concurrency", cfg.TikvImporter.RangeConcurrency))
@@ -121,14 +127,14 @@ func adjustImportMemory(memRoot MemRoot, cfg *lightning.Config) {
 	cfg.TikvImporter.LocalWriterMemCacheSize /= lightning.ByteSize(scale)
 	cfg.TikvImporter.EngineMemCacheSize /= lightning.ByteSize(scale)
 	// TODO: adjust range concurrency number to control total concurrency in the future.
-	logutil.BgLogger().Info(LitInfoChgMemSetting,
+	logutil.Logger(ctx).Info(LitInfoChgMemSetting,
 		zap.Int64("local writer memory cache size", int64(cfg.TikvImporter.LocalWriterMemCacheSize)),
 		zap.Int64("engine memory cache size", int64(cfg.TikvImporter.EngineMemCacheSize)),
 		zap.Int("range concurrency", cfg.TikvImporter.RangeConcurrency))
 }
 
 // tryAggressiveMemory lightning memory parameters according memory root's max limitation.
-func tryAggressiveMemory(memRoot MemRoot, cfg *lightning.Config) bool {
+func tryAggressiveMemory(ctx context.Context, memRoot MemRoot, cfg *lightning.Config) bool {
 	var defaultMemSize int64
 	defaultMemSize = int64(int(cfg.TikvImporter.LocalWriterMemCacheSize) * cfg.TikvImporter.RangeConcurrency)
 	defaultMemSize += int64(cfg.TikvImporter.EngineMemCacheSize)
@@ -136,7 +142,7 @@ func tryAggressiveMemory(memRoot MemRoot, cfg *lightning.Config) bool {
 	if (defaultMemSize + memRoot.CurrentUsage()) > memRoot.MaxMemoryQuota() {
 		return false
 	}
-	logutil.BgLogger().Info(LitInfoChgMemSetting,
+	logutil.Logger(ctx).Info(LitInfoChgMemSetting,
 		zap.Int64("local writer memory cache size", int64(cfg.TikvImporter.LocalWriterMemCacheSize)),
 		zap.Int64("engine memory cache size", int64(cfg.TikvImporter.EngineMemCacheSize)),
 		zap.Int("range concurrency", cfg.TikvImporter.RangeConcurrency))

@@ -666,8 +666,9 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	require.NoError(t, err)
 	keyword := "pickAndExecTask"
 	require.NoError(t, rs.Close())
-	time.Sleep(time.Millisecond * 10)
-	require.False(t, checkGoroutineExists(keyword))
+	require.Eventually(t, func() bool {
+		return !checkGoroutineExists(keyword)
+	}, time.Millisecond*100, time.Millisecond*10)
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
 }
 
@@ -1201,6 +1202,7 @@ func TestShowForNewCollations(t *testing.T) {
 		"utf8_bin utf8 83 Yes Yes 1",
 		"utf8_general_ci utf8 33  Yes 1",
 		"utf8_unicode_ci utf8 192  Yes 1",
+		"utf8mb4_0900_ai_ci utf8mb4 255  Yes 1",
 		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
 		"utf8mb4_general_ci utf8mb4 45  Yes 1",
 		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",

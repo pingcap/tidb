@@ -72,6 +72,9 @@ func GetSnapshotWithTS(s sessionctx.Context, ts uint64, interceptor kv.SnapshotI
 	if tp := s.GetSessionVars().RequestSourceType; tp != "" {
 		snap.SetOption(kv.RequestSourceType, tp)
 	}
+	if tp := s.GetSessionVars().ExplicitRequestSourceType; tp != "" {
+		snap.SetOption(kv.ExplicitRequestSourceType, tp)
+	}
 	if s.GetSessionVars().LoadBasedReplicaReadThreshold > 0 {
 		snap.SetOption(kv.LoadBasedReplicaReadThreshold, s.GetSessionVars().LoadBasedReplicaReadThreshold)
 	}

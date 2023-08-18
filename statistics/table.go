@@ -15,8 +15,10 @@
 package statistics
 
 import (
+	"cmp"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 
@@ -39,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -64,10 +65,10 @@ const (
 
 // Table represents statistics for a table.
 type Table struct {
-	HistColl
-	Version       uint64
-	Name          string
 	ExtendedStats *ExtendedStatsColl
+	Name          string
+	HistColl
+	Version uint64
 	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
 	// It is the schema version of the corresponding table. It is used to skip redundant
 	// loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
@@ -78,10 +79,10 @@ type Table struct {
 
 // ExtendedStatsItem is the cached item of a mysql.stats_extended record.
 type ExtendedStatsItem struct {
-	ColIDs     []int64
-	Tp         uint8
-	ScalarVals float64
 	StringVals string
+	ColIDs     []int64
+	ScalarVals float64
+	Tp         uint8
 }
 
 // ExtendedStatsColl is a collection of cached items for mysql.stats_extended records.
@@ -106,13 +107,13 @@ const (
 
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
-	PhysicalID int64
-	Columns    map[int64]*Column
-	Indices    map[int64]*Index
+	Columns map[int64]*Column
+	Indices map[int64]*Index
 	// Idx2ColumnIDs maps the index id to its column ids. It's used to calculate the selectivity in planner.
 	Idx2ColumnIDs map[int64][]int64
 	// ColID2IdxIDs maps the column id to a list index ids whose first column is it. It's used to calculate the selectivity in planner.
 	ColID2IdxIDs map[int64][]int64
+	PhysicalID   int64
 	// TODO: add AnalyzeCount here
 	RealtimeCount int64 // RealtimeCount is the current table row count, maintained by applying stats delta based on AnalyzeCount.
 	ModifyCount   int64 // Total modify count in a table.
@@ -125,10 +126,10 @@ type HistColl struct {
 
 // TableMemoryUsage records tbl memory usage
 type TableMemoryUsage struct {
-	TableID         int64
-	TotalMemUsage   int64
 	ColumnsMemUsage map[int64]CacheItemMemoryUsage
 	IndicesMemUsage map[int64]CacheItemMemoryUsage
+	TableID         int64
+	TotalMemUsage   int64
 }
 
 // TotalIdxTrackingMemUsage returns total indices' tracking memory usage
@@ -157,39 +158,11 @@ type TableCacheItem interface {
 	ItemID() int64
 	MemoryUsage() CacheItemMemoryUsage
 	IsAllEvicted() bool
+	GetEvictedStatus() int
 
-	dropCMS()
-	dropTopN()
-	dropHist()
-	isStatsInitialized() bool
-	getEvictedStatus() int
-	statsVer() int64
-	isCMSExist() bool
-}
-
-// DropEvicted drop stats for table column/index
-func DropEvicted(item TableCacheItem) {
-	if !item.isStatsInitialized() {
-		return
-	}
-	switch item.getEvictedStatus() {
-	case allLoaded:
-		if item.isCMSExist() && item.statsVer() < Version2 {
-			item.dropCMS()
-			return
-		}
-		// For stats version2, there is no cms thus we directly drop topn
-		item.dropTopN()
-		return
-	case onlyCmsEvicted:
-		item.dropTopN()
-		return
-	case onlyHistRemained:
-		item.dropHist()
-		return
-	default:
-		return
-	}
+	DropUnnecessaryData()
+	IsStatsInitialized() bool
+	GetStatsVer() int64
 }
 
 // CacheItemMemoryUsage indicates the memory usage of TableCacheItem
@@ -351,7 +324,7 @@ func (t *Table) String() string {
 	for _, col := range t.Columns {
 		cols = append(cols, col)
 	}
-	slices.SortFunc(cols, func(i, j *Column) bool { return i.ID < j.ID })
+	slices.SortFunc(cols, func(i, j *Column) int { return cmp.Compare(i.ID, j.ID) })
 	for _, col := range cols {
 		strs = append(strs, col.String())
 	}
@@ -359,7 +332,7 @@ func (t *Table) String() string {
 	for _, idx := range t.Indices {
 		idxs = append(idxs, idx)
 	}
-	slices.SortFunc(idxs, func(i, j *Index) bool { return i.ID < j.ID })
+	slices.SortFunc(idxs, func(i, j *Index) int { return cmp.Compare(i.ID, j.ID) })
 	for _, idx := range idxs {
 		strs = append(strs, idx.String())
 	}
@@ -388,16 +361,16 @@ func (t *Table) ColumnByName(colName string) *Column {
 }
 
 // GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch, TopN and FMSketch.
-func (t *Table) GetStatsInfo(ID int64, isIndex bool) (*Histogram, *CMSketch, *TopN, *FMSketch, bool) {
+func (t *Table) GetStatsInfo(id int64, isIndex bool) (*Histogram, *CMSketch, *TopN, *FMSketch, bool) {
 	if isIndex {
-		if idxStatsInfo, ok := t.Indices[ID]; ok {
+		if idxStatsInfo, ok := t.Indices[id]; ok {
 			return idxStatsInfo.Histogram.Copy(),
 				idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy(), true
 		}
 		// newly added index which is not analyzed yet
 		return nil, nil, nil, nil, false
 	}
-	if colStatsInfo, ok := t.Columns[ID]; ok {
+	if colStatsInfo, ok := t.Columns[id]; ok {
 		return colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(),
 			colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy(), true
 	}
@@ -408,12 +381,12 @@ func (t *Table) GetStatsInfo(ID int64, isIndex bool) (*Histogram, *CMSketch, *To
 // GetColRowCount tries to get the row count of the a column if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (t *Table) GetColRowCount() float64 {
-	IDs := make([]int64, 0, len(t.Columns))
+	ids := make([]int64, 0, len(t.Columns))
 	for id := range t.Columns {
-		IDs = append(IDs, id)
+		ids = append(ids, id)
 	}
-	slices.Sort(IDs)
-	for _, id := range IDs {
+	slices.Sort(ids)
+	for _, id := range ids {
 		col := t.Columns[id]
 		if col != nil && col.IsFullLoad() {
 			return col.TotalRowCount()
@@ -442,8 +415,8 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 }
 
 type neededStatsMap struct {
-	m     sync.RWMutex
 	items map[model.TableItemID]struct{}
+	m     sync.RWMutex
 }
 
 func (n *neededStatsMap) AllItems() []model.TableItemID {
@@ -712,19 +685,19 @@ func CETraceRange(sctx sessionctx.Context, tableID int64, colNames []string, ran
 	}
 	expr, err := ranger.RangesToString(sc, ranges, colNames)
 	if err != nil {
-		logutil.BgLogger().Debug("[OptimizerTrace] Failed to trace CE of ranges", zap.Error(err))
+		logutil.BgLogger().Debug("Failed to trace CE of ranges", zap.String("category", "OptimizerTrace"), zap.Error(err))
 	}
 	// We don't need to record meaningless expressions.
 	if expr == "" || expr == "true" || expr == "false" {
 		return
 	}
-	CERecord := tracing.CETraceRecord{
+	ceRecord := tracing.CETraceRecord{
 		TableID:  tableID,
 		Type:     tp,
 		Expr:     expr,
 		RowCount: rowCount,
 	}
-	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &CERecord)
+	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &ceRecord)
 }
 
 func (coll *HistColl) findAvailableStatsForCol(sctx sessionctx.Context, uniqueID int64) (isIndex bool, idx int64) {
@@ -1267,10 +1240,10 @@ func (coll *HistColl) getIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 	return totalCount, nil
 }
 
-const fakePhysicalID int64 = -1
-
 // PseudoTable creates a pseudo table statistics.
 func PseudoTable(tblInfo *model.TableInfo) *Table {
+	const fakePhysicalID int64 = -1
+
 	pseudoHistColl := HistColl{
 		RealtimeCount:  PseudoRowCount,
 		PhysicalID:     tblInfo.ID,

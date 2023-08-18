@@ -198,7 +198,7 @@ func ExtendedStatsFromStorage(reader *StatsReader, table *Table, physicalID int6
 			colIDs := row.GetString(3)
 			err := json.Unmarshal([]byte(colIDs), &item.ColIDs)
 			if err != nil {
-				logutil.BgLogger().Error("[stats] decode column IDs failed", zap.String("column_ids", colIDs), zap.Error(err))
+				logutil.BgLogger().Error("decode column IDs failed", zap.String("category", "stats"), zap.String("column_ids", colIDs), zap.Error(err))
 				return nil, err
 			}
 			statsStr := row.GetString(4)
@@ -206,7 +206,7 @@ func ExtendedStatsFromStorage(reader *StatsReader, table *Table, physicalID int6
 				if statsStr != "" {
 					item.ScalarVals, err = strconv.ParseFloat(statsStr, 64)
 					if err != nil {
-						logutil.BgLogger().Error("[stats] parse scalar stats failed", zap.String("stats", statsStr), zap.Error(err))
+						logutil.BgLogger().Error("parse scalar stats failed", zap.String("category", "stats"), zap.String("stats", statsStr), zap.Error(err))
 						return nil, err
 					}
 				}

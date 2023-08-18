@@ -11,6 +11,7 @@ go_library(
         "//ddl",
         "//domain",
         "//executor",
+        "//executor/mppcoordmanager",
         "//extension",
         "//extension/_import",
         "//keyspace",

@@ -785,32 +785,32 @@ func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 }
 
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
-	if isIncorrectName(stmt.Name.L) {
+	if util.IsInCorrectIdentifierName(stmt.Name.L) {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
 	// for 'ALTER DATABASE' statement, database name can be empty to alter default database.
-	if isIncorrectName(stmt.Name.L) && !stmt.AlterDefaultDatabase {
+	if util.IsInCorrectIdentifierName(stmt.Name.L) && !stmt.AlterDefaultDatabase {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
-	if isIncorrectName(stmt.Name.L) {
+	if util.IsInCorrectIdentifierName(stmt.Name.L) {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkFlashbackTableGrammar(stmt *ast.FlashBackTableStmt) {
-	if isIncorrectName(stmt.NewName) {
+	if util.IsInCorrectIdentifierName(stmt.NewName) {
 		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(stmt.NewName)
 	}
 }
 
 func (p *preprocessor) checkFlashbackDatabaseGrammar(stmt *ast.FlashBackDatabaseStmt) {
-	if isIncorrectName(stmt.NewName) {
+	if util.IsInCorrectIdentifierName(stmt.NewName) {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.NewName)
 	}
 }
@@ -874,7 +874,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 	}
 	tName := stmt.Table.Name.String()
-	if isIncorrectName(tName) {
+	if util.IsInCorrectIdentifierName(tName) {
 		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
@@ -938,8 +938,8 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	if stmt.Partition != nil {
 		for _, def := range stmt.Partition.Definitions {
 			pName := def.Name.String()
-			if isIncorrectName(pName) {
-				p.err = dbterror.ErrWrongPartitionName.GenWithStackByArgs(pName)
+			if util.IsInCorrectIdentifierName(pName) {
+				p.err = dbterror.ErrWrongPartitionName.GenWithStackByArgs()
 				return
 			}
 		}
@@ -948,12 +948,12 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 
 func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 	vName := stmt.ViewName.Name.String()
-	if isIncorrectName(vName) {
+	if util.IsInCorrectIdentifierName(vName) {
 		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(vName)
 		return
 	}
 	for _, col := range stmt.Cols {
-		if isIncorrectName(col.String()) {
+		if util.IsInCorrectIdentifierName(col.String()) {
 			p.err = dbterror.ErrWrongColumnName.GenWithStackByArgs(col)
 			return
 		}
@@ -1014,7 +1014,7 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 	currentDB := model.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
 	for _, t := range stmt.Tables {
-		if isIncorrectName(t.Name.String()) {
+		if util.IsInCorrectIdentifierName(t.Name.String()) {
 			p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
 		}
@@ -1045,7 +1045,7 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 
 func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
 	for _, t := range tables {
-		if isIncorrectName(t.Name.String()) {
+		if util.IsInCorrectIdentifierName(t.Name.String()) {
 			p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
 		}
@@ -1118,7 +1118,7 @@ func checkColumnOptions(isTempTable bool, ops []*ast.ColumnOption) (int, error) 
 
 func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 	tName := stmt.Table.Name.String()
-	if isIncorrectName(tName) {
+	if util.IsInCorrectIdentifierName(tName) {
 		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
@@ -1152,12 +1152,12 @@ func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
 }
 
 func (p *preprocessor) checkRenameTable(oldTable, newTable string) {
-	if isIncorrectName(oldTable) {
+	if util.IsInCorrectIdentifierName(oldTable) {
 		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(oldTable)
 		return
 	}
 
-	if isIncorrectName(newTable) {
+	if util.IsInCorrectIdentifierName(newTable) {
 		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(newTable)
 		return
 	}
@@ -1182,7 +1182,7 @@ func (p *preprocessor) checkRepairTableGrammar(stmt *ast.RepairTableStmt) {
 
 func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 	tName := stmt.Table.Name.String()
-	if isIncorrectName(tName) {
+	if util.IsInCorrectIdentifierName(tName) {
 		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
@@ -1190,7 +1190,7 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 	for _, spec := range specs {
 		if spec.NewTable != nil {
 			ntName := spec.NewTable.Name.String()
-			if isIncorrectName(ntName) {
+			if util.IsInCorrectIdentifierName(ntName) {
 				p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(ntName)
 				return
 			}
@@ -1217,7 +1217,7 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			}
 		case ast.AlterTableAddStatistics, ast.AlterTableDropStatistics:
 			statsName := spec.Statistics.StatsName
-			if isIncorrectName(statsName) {
+			if util.IsInCorrectIdentifierName(statsName) {
 				msg := fmt.Sprintf("Incorrect statistics name: %s", statsName)
 				p.err = ErrInternal.GenWithStack(msg)
 				return
@@ -1225,8 +1225,8 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 		case ast.AlterTableAddPartitions:
 			for _, def := range spec.PartDefinitions {
 				pName := def.Name.String()
-				if isIncorrectName(pName) {
-					p.err = dbterror.ErrWrongPartitionName.GenWithStackByArgs(pName)
+				if util.IsInCorrectIdentifierName(pName) {
+					p.err = dbterror.ErrWrongPartitionName.GenWithStackByArgs()
 					return
 				}
 			}
@@ -1334,7 +1334,7 @@ func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
 func checkColumn(colDef *ast.ColumnDef) error {
 	// Check column name.
 	cName := colDef.Name.Name.String()
-	if isIncorrectName(cName) {
+	if util.IsInCorrectIdentifierName(cName) {
 		return dbterror.ErrWrongColumnName.GenWithStackByArgs(cName)
 	}
 
@@ -1457,18 +1457,6 @@ func isInvalidDefaultValue(colDef *ast.ColumnDef) bool {
 	return false
 }
 
-// isIncorrectName checks if the identifier is incorrect.
-// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
-func isIncorrectName(name string) bool {
-	if len(name) == 0 {
-		return true
-	}
-	if name[len(name)-1] == ' ' {
-		return true
-	}
-	return false
-}
-
 // checkContainDotColumn checks field contains the table name.
 // for example :create table t (c1.c2 int default null).
 func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
@@ -1566,13 +1554,9 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		p.err = err
 		return
 	}
-	currentDB := p.sctx.GetSessionVars().CurrentDB
-	if tn.Schema.String() != "" {
-		currentDB = tn.Schema.L
-	}
 
 	if !p.skipLockMDL() {
-		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
+		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
 		if err != nil {
 			p.err = err
 			return
@@ -1687,7 +1671,7 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 
 func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 	sName := stmt.Name.Name.String()
-	if isIncorrectName(sName) {
+	if util.IsInCorrectIdentifierName(sName) {
 		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(sName)
 		return
 	}

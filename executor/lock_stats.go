@@ -19,16 +19,17 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-var _ Executor = &LockStatsExec{}
-var _ Executor = &UnlockStatsExec{}
+var _ exec.Executor = &LockStatsExec{}
+var _ exec.Executor = &UnlockStatsExec{}
 
 // LockStatsExec represents a lock statistic executor.
 type LockStatsExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	Tables []*ast.TableName
 }
 
@@ -36,7 +37,7 @@ type LockStatsExec struct {
 type lockStatsVarKeyType int
 
 // String defines a Stringer function for debugging and pretty printing.
-func (k lockStatsVarKeyType) String() string {
+func (lockStatsVarKeyType) String() string {
 	return "lock_stats_var"
 }
 
@@ -45,7 +46,7 @@ const LockStatsVarKey lockStatsVarKeyType = 0
 
 // Next implements the Executor Next interface.
 func (e *LockStatsExec) Next(_ context.Context, _ *chunk.Chunk) error {
-	do := domain.GetDomain(e.ctx)
+	do := domain.GetDomain(e.Ctx())
 	is := do.InfoSchema()
 	h := do.StatsHandle()
 	if h == nil {
@@ -76,24 +77,24 @@ func (e *LockStatsExec) Next(_ context.Context, _ *chunk.Chunk) error {
 	}
 	msg, err := h.AddLockedTables(tids, pids, e.Tables)
 	if msg != "" {
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
 	}
 	return err
 }
 
 // Close implements the Executor Close interface.
-func (e *LockStatsExec) Close() error {
+func (*LockStatsExec) Close() error {
 	return nil
 }
 
 // Open implements the Executor Open interface.
-func (e *LockStatsExec) Open(_ context.Context) error {
+func (*LockStatsExec) Open(context.Context) error {
 	return nil
 }
 
 // UnlockStatsExec represents a unlock statistic executor.
 type UnlockStatsExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	Tables []*ast.TableName
 }
 
@@ -101,7 +102,7 @@ type UnlockStatsExec struct {
 type unlockStatsVarKeyType int
 
 // String defines a Stringer function for debugging and pretty printing.
-func (k unlockStatsVarKeyType) String() string {
+func (unlockStatsVarKeyType) String() string {
 	return "unlock_stats_var"
 }
 
@@ -109,8 +110,8 @@ func (k unlockStatsVarKeyType) String() string {
 const UnlockStatsVarKey unlockStatsVarKeyType = 0
 
 // Next implements the Executor Next interface.
-func (e *UnlockStatsExec) Next(_ context.Context, _ *chunk.Chunk) error {
-	do := domain.GetDomain(e.ctx)
+func (e *UnlockStatsExec) Next(context.Context, *chunk.Chunk) error {
+	do := domain.GetDomain(e.Ctx())
 	is := do.InfoSchema()
 	h := do.StatsHandle()
 	if h == nil {
@@ -141,17 +142,17 @@ func (e *UnlockStatsExec) Next(_ context.Context, _ *chunk.Chunk) error {
 	}
 	msg, err := h.RemoveLockedTables(tids, pids, e.Tables)
 	if msg != "" {
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
 	}
 	return err
 }
 
 // Close implements the Executor Close interface.
-func (e *UnlockStatsExec) Close() error {
+func (*UnlockStatsExec) Close() error {
 	return nil
 }
 
 // Open implements the Executor Open interface.
-func (e *UnlockStatsExec) Open(_ context.Context) error {
+func (*UnlockStatsExec) Open(context.Context) error {
 	return nil
 }

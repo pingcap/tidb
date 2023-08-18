@@ -18,6 +18,7 @@ set -eux
 DB="$TEST_NAME"
 TABLE="usertable"
 DB_COUNT=3
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 # start the s3 server
 export MINIO_ACCESS_KEY='KEXI7MANNASOPDLAOIEF'
@@ -63,7 +64,7 @@ bin/mc config --config-dir "$TEST_DIR/$TEST_NAME" \
 # Fill in the database
 for i in $(seq $DB_COUNT); do
     run_sql "CREATE DATABASE $DB${i};"
-    go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
+    go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
 done
 
 bin/mc mb --config-dir "$TEST_DIR/$TEST_NAME" minio/mybucket
@@ -103,7 +104,7 @@ for p in $(seq 2); do
       exit 1
   fi
 
-  target_log="get new_collations_enabled_on_first_bootstrap config from system table"
+  target_log="get new_collation_enabled config from mysql.tidb table"
   if ! grep -i "$target_log" $BACKUP_LOG; then
       echo "${target_log} not found in log"
       exit 1

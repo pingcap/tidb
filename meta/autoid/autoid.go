@@ -591,7 +591,7 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *
 			TLS:              ebd.TLSConfig(),
 		})
 		if err != nil {
-			logutil.BgLogger().Error("[autoid client] fail to connect etcd, fallback to default", zap.Error(err))
+			logutil.BgLogger().Error("fail to connect etcd, fallback to default", zap.String("category", "autoid client"), zap.Error(err))
 			return nil
 		}
 		spa.clientDiscover = clientDiscover{etcdCli: etcdCli}

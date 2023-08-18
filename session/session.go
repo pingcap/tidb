@@ -644,6 +644,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
 	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
+	s.txn.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
 	if sessVars.StmtCtx.KvExecCounter != nil {
 		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
 		s.txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
@@ -1578,6 +1579,8 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		DiskTracker:           s.sessionVars.DiskTracker,
 		StatsInfo:             plannercore.GetStatsInfo,
 		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
+		TableIDs:              s.sessionVars.StmtCtx.TableIDs,
+		IndexNames:            s.sessionVars.StmtCtx.IndexNames,
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
 		ResourceGroupName:     s.sessionVars.ResourceGroupName,
@@ -2223,10 +2226,20 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// session resource-group might be changed by query hint, ensure restore it back when
 	// the execution finished.
 	if sessVars.ResourceGroupName != originalResourceGroup {
-		defer func() {
-			// Restore the resource group for the session
+		// if target resource group doesn't exist, fallback to the origin resource group.
+		if _, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(model.NewCIStr(sessVars.ResourceGroupName)); !ok {
+			logutil.Logger(ctx).Warn("Unknown resource group from hint", zap.String("name", sessVars.ResourceGroupName))
 			sessVars.ResourceGroupName = originalResourceGroup
-		}()
+			// if we are in a txn, should also reset the txn resource group.
+			if txn, err := s.Txn(false); err == nil && txn != nil && txn.Valid() {
+				kv.SetTxnResourceGroup(txn, originalResourceGroup)
+			}
+		} else {
+			defer func() {
+				// Restore the resource group for the session
+				sessVars.ResourceGroupName = originalResourceGroup
+			}()
+		}
 	}
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -3135,7 +3148,7 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 		ctxWithTimeout, cancel := context.WithTimeout(context.Background(), variable.DefWaitSplitRegionTimeout*time.Second)
 		var regionIDs []uint64
 		for _, id := range tableIDs {
-			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, id, variable.DefTiDBScatterRegion))
+			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, id, id, variable.DefTiDBScatterRegion))
 		}
 		if variable.DefTiDBScatterRegion {
 			ddl.WaitScatterRegionFinish(ctxWithTimeout, s, regionIDs...)
@@ -3634,8 +3647,10 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 // attachStatsCollector attaches the stats collector in the dom for the session
 func attachStatsCollector(s *session, dom *domain.Domain) *session {
 	if dom.StatsHandle() != nil && dom.StatsUpdating() {
-		s.statsCollector = dom.StatsHandle().NewSessionStatsCollector()
-		if GetIndexUsageSyncLease() > 0 {
+		if s.statsCollector == nil {
+			s.statsCollector = dom.StatsHandle().NewSessionStatsCollector()
+		}
+		if s.idxUsageCollector == nil && GetIndexUsageSyncLease() > 0 {
 			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector()
 		}
 	}
@@ -3645,9 +3660,14 @@ func attachStatsCollector(s *session, dom *domain.Domain) *session {
 
 // detachStatsCollector removes the stats collector in the session
 func detachStatsCollector(s *session) *session {
-	s.statsCollector = nil
-	s.idxUsageCollector = nil
-
+	if s.statsCollector != nil {
+		s.statsCollector.Delete()
+		s.statsCollector = nil
+	}
+	if s.idxUsageCollector != nil {
+		s.idxUsageCollector.Delete()
+		s.idxUsageCollector = nil
+	}
 	return s
 }
 

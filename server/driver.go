@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/extension"
-	"github.com/pingcap/tidb/server/internal/column"
+	"github.com/pingcap/tidb/server/internal/resultset"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -36,7 +36,7 @@ type PreparedStatement interface {
 	ID() int
 
 	// Execute executes the statement.
-	Execute(context.Context, []expression.Expression) (ResultSet, error)
+	Execute(context.Context, []expression.Expression) (resultset.ResultSet, error)
 
 	// AppendParam appends parameter to the statement.
 	AppendParam(paramID int, data []byte) error
@@ -54,13 +54,13 @@ type PreparedStatement interface {
 	GetParamsType() []byte
 
 	// StoreResultSet stores ResultSet for subsequent stmt fetching
-	StoreResultSet(rs ResultSet)
+	StoreResultSet(rs resultset.CursorResultSet)
 
 	// GetResultSet gets ResultSet associated this statement
-	GetResultSet() ResultSet
+	GetResultSet() resultset.CursorResultSet
 
-	// Reset removes all bound parameters.
-	Reset()
+	// Reset removes all bound parameters and opened resultSet/rowContainer.
+	Reset() error
 
 	// Close closes the statement.
 	Close() error
@@ -70,23 +70,11 @@ type PreparedStatement interface {
 
 	// SetCursorActive sets whether the statement has active cursor
 	SetCursorActive(active bool)
-}
 
-// ResultSet is the result set of an query.
-type ResultSet interface {
-	Columns() []*column.Info
-	NewChunk(chunk.Allocator) *chunk.Chunk
-	Next(context.Context, *chunk.Chunk) error
-	StoreFetchedRows(rows []chunk.Row)
-	GetFetchedRows() []chunk.Row
-	Close() error
-	// IsClosed checks whether the result set is closed.
-	IsClosed() bool
-}
+	// StoreRowContainer stores a row container into the prepared statement. The `rowContainer` is used to be closed at
+	// appropriate time. It's actually not used to read, because an iterator of it has been stored in the result set.
+	StoreRowContainer(container *chunk.RowContainer)
 
-// fetchNotifier represents notifier will be called in COM_FETCH.
-type fetchNotifier interface {
-	// OnFetchReturned be called when COM_FETCH returns.
-	// it will be used in server-side cursor.
-	OnFetchReturned()
+	// GetRowContainer returns the row container of the statement
+	GetRowContainer() *chunk.RowContainer
 }

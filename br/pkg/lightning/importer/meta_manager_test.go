@@ -35,43 +35,45 @@ type metaMgrSuite struct {
 	checksumMgr *testChecksumMgr
 }
 
-func newTableRestore(t *testing.T, kvStore kv.Storage) *TableImporter {
+func newTableRestore(t *testing.T,
+	db, table string,
+	dbID, tableID int64,
+	createTableSQL string, kvStore kv.Storage,
+) *TableImporter {
 	p := parser.New()
 	se := tmock.NewContext()
 
-	node, err := p.ParseOneStmt("CREATE TABLE `t1` (`c1` varchar(5) NOT NULL)", "utf8mb4", "utf8mb4_bin")
+	node, err := p.ParseOneStmt(createTableSQL, "utf8mb4", "utf8mb4_bin")
 	require.NoError(t, err)
-	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), int64(1))
+	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), tableID)
 	require.NoError(t, err)
 	tableInfo.State = model.StatePublic
 
-	schema := "test"
-	tb := "t1"
 	ti := &checkpoints.TidbTableInfo{
 		ID:   tableInfo.ID,
-		DB:   schema,
-		Name: tb,
+		DB:   db,
+		Name: table,
 		Core: tableInfo,
 	}
 	dbInfo := &checkpoints.TidbDBInfo{
-		ID:   1,
-		Name: schema,
+		ID:   dbID,
+		Name: db,
 		Tables: map[string]*checkpoints.TidbTableInfo{
-			tb: ti,
+			table: ti,
 		},
 	}
 
-	ctx := kv.WithInternalSourceType(context.Background(), "test")
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLightning)
 	err = kv.RunInNewTxn(ctx, kvStore, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
-		if err := m.CreateDatabase(&model.DBInfo{ID: dbInfo.ID}); err != nil {
+		if err := m.CreateDatabase(&model.DBInfo{ID: dbInfo.ID}); err != nil && !errors.ErrorEqual(err, meta.ErrDBExists) {
 			return err
 		}
 		return m.CreateTableOrView(dbInfo.ID, ti.Core)
 	})
 	require.NoError(t, err)
 
-	tableName := common.UniqueTable(schema, tb)
+	tableName := common.UniqueTable(db, table)
 	logger := log.With(zap.String("table", tableName))
 
 	return &TableImporter{
@@ -93,9 +95,10 @@ func newMetaMgrSuite(t *testing.T) *metaMgrSuite {
 
 	var s metaMgrSuite
 	s.mgr = &dbTableMetaMgr{
-		session:      db,
-		taskID:       1,
-		tr:           newTableRestore(t, kvStore),
+		session: db,
+		taskID:  1,
+		tr: newTableRestore(t, "test", "t1", 1, 1,
+			"CREATE TABLE `t1` (`c1` varchar(5) NOT NULL)", kvStore),
 		tableName:    common.UniqueTable("test", TableMetaTableName),
 		needChecksum: true,
 	}

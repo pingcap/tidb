@@ -39,7 +39,7 @@ type testFlowHandle struct{}
 func (*testFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
 }
 
-func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (metas [][]byte, err error) {
 	return nil, nil
 }
 
@@ -57,11 +57,11 @@ func (*testFlowHandle) IsRetryableErr(error) bool {
 	return true
 }
 
-func MockDispatcher(t *testing.T, pool *pools.ResourcePool) (dispatcher.Dispatch, *storage.TaskManager) {
+func MockDispatcherManager(t *testing.T, pool *pools.ResourcePool) (*dispatcher.Manager, *storage.TaskManager) {
 	ctx := context.Background()
 	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
 	storage.SetTaskManager(mgr)
-	dsp, err := dispatcher.NewDispatcher(util.WithInternalSourceType(ctx, "dispatcher"), mgr)
+	dsp, err := dispatcher.NewManager(util.WithInternalSourceType(ctx, "dispatcher"), mgr, "host:port")
 	require.NoError(t, err)
 	dispatcher.RegisterTaskFlowHandle(proto.TaskTypeExample, &testFlowHandle{})
 	return dsp, mgr
@@ -81,12 +81,13 @@ func TestGetInstance(t *testing.T) {
 	}, 1, 1, time.Second)
 	defer pool.Close()
 
-	dsp, mgr := MockDispatcher(t, pool)
+	dspManager, mgr := MockDispatcherManager(t, pool)
 
 	// test no server
-	gTask := &proto.Task{ID: 1}
+	task := &proto.Task{ID: 1}
+	dsp := dspManager.MockDispatcher(task)
 	handle := dispatcher.GetTaskFlowHandle(proto.TaskTypeExample)
-	instanceIDs, err := dsp.GetAllSchedulerIDs(ctx, handle, gTask)
+	instanceIDs, err := dsp.GetAllSchedulerIDs(ctx, handle, task)
 	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs when there's no subtask")
 	require.NoError(t, err)
 
@@ -108,7 +109,7 @@ func TestGetInstance(t *testing.T) {
 			Port: 65535,
 		},
 	}
-	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, handle, gTask)
+	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, handle, task)
 	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs")
 	require.NoError(t, err)
 
@@ -116,24 +117,24 @@ func TestGetInstance(t *testing.T) {
 	// subtask instance ids: uuid1
 	subtask := &proto.Subtask{
 		Type:        proto.TaskTypeExample,
-		TaskID:      gTask.ID,
+		TaskID:      task.ID,
 		SchedulerID: serverIDs[1],
 	}
-	err = mgr.AddNewSubTask(gTask.ID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(task.ID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
-	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, handle, gTask)
+	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, handle, task)
 	require.NoError(t, err)
 	require.Equal(t, []string{serverIDs[1]}, instanceIDs)
 	// server ids: uuid0, uuid1
 	// subtask instance ids: uuid0, uuid1
 	subtask = &proto.Subtask{
 		Type:        proto.TaskTypeExample,
-		TaskID:      gTask.ID,
+		TaskID:      task.ID,
 		SchedulerID: serverIDs[0],
 	}
-	err = mgr.AddNewSubTask(gTask.ID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(task.ID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
-	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, handle, gTask)
+	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, handle, task)
 	require.NoError(t, err)
 	require.Len(t, instanceIDs, len(serverIDs))
 	require.ElementsMatch(t, instanceIDs, serverIDs)
@@ -163,7 +164,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	}, 1, 1, time.Second)
 	defer pool.Close()
 
-	dsp, mgr := MockDispatcher(t, pool)
+	dsp, mgr := MockDispatcherManager(t, pool)
 	dsp.Start()
 	defer func() {
 		dsp.Stop()
@@ -177,16 +178,33 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 
 	// 3s
 	cnt := 60
-	checkGetRunningGTaskCnt := func() {
+	checkGetRunningTaskCnt := func(expected int) {
 		var retCnt int
 		for i := 0; i < cnt; i++ {
-			retCnt = dsp.(dispatcher.DispatcherForTest).GetRunningGTaskCnt()
+			retCnt = dsp.GetRunningTaskCnt()
+			if retCnt == expected {
+				break
+			}
+			time.Sleep(time.Millisecond * 50)
+		}
+		require.Equal(t, retCnt, expected)
+	}
+
+	checkTaskRunningCnt := func() []*proto.Task {
+		var retCnt int
+		var tasks []*proto.Task
+		var err error
+		for i := 0; i < cnt; i++ {
+			tasks, err = mgr.GetGlobalTasksInStates(proto.TaskStateRunning)
+			require.NoError(t, err)
+			retCnt = len(tasks)
 			if retCnt == taskCnt {
 				break
 			}
 			time.Sleep(time.Millisecond * 50)
 		}
 		require.Equal(t, retCnt, taskCnt)
+		return tasks
 	}
 
 	// Mock add tasks.
@@ -197,10 +215,8 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 		taskIDs = append(taskIDs, taskID)
 	}
 	// test normal flow
-	checkGetRunningGTaskCnt()
-	tasks, err := mgr.GetGlobalTasksInStates(proto.TaskStateRunning)
-	require.NoError(t, err)
-	require.Len(t, tasks, taskCnt)
+	checkGetRunningTaskCnt(taskCnt)
+	tasks := checkTaskRunningCnt()
 	for i, taskID := range taskIDs {
 		require.Equal(t, int64(i+1), tasks[i].ID)
 		subtasks, err := mgr.GetSubtaskInStatesCnt(taskID, proto.TaskStatePending)
@@ -211,16 +227,16 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	if taskCnt == 1 {
 		taskID, err := mgr.AddNewGlobalTask(fmt.Sprintf("%d", taskCnt), taskTypeExample, 0, nil)
 		require.NoError(t, err)
-		checkGetRunningGTaskCnt()
+		checkGetRunningTaskCnt(taskCnt)
 		// Clean the task.
 		deleteTasks(t, store, taskID)
-		dsp.(dispatcher.DispatcherForTest).DelRunningGTask(taskID)
+		dsp.DelRunningTask(taskID)
 	}
 
 	// test DetectTaskLoop
-	checkGetGTaskState := func(expectedState string) {
+	checkGetTaskState := func(expectedState string) {
 		for i := 0; i < cnt; i++ {
-			tasks, err = mgr.GetGlobalTasksInStates(expectedState)
+			tasks, err := mgr.GetGlobalTasksInStates(expectedState)
 			require.NoError(t, err)
 			if len(tasks) == taskCnt {
 				break
@@ -229,15 +245,17 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 		}
 	}
 	// Test all subtasks are successful.
+	var err error
 	if isSucc {
 		// Mock subtasks succeed.
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
 			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateSucceed, nil)
 			require.NoError(t, err)
 		}
-		checkGetGTaskState(proto.TaskStateSucceed)
+		checkGetTaskState(proto.TaskStateSucceed)
 		require.Len(t, tasks, taskCnt)
-		require.Equal(t, 0, dsp.(dispatcher.DispatcherForTest).GetRunningGTaskCnt())
+
+		checkGetRunningTaskCnt(0)
 		return
 	}
 
@@ -259,7 +277,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 		}
 	}
 
-	checkGetGTaskState(proto.TaskStateReverting)
+	checkGetTaskState(proto.TaskStateReverting)
 	require.Len(t, tasks, taskCnt)
 	// Mock all subtask reverted.
 	start := subtaskCnt * taskCnt
@@ -267,9 +285,9 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 		err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateReverted, nil)
 		require.NoError(t, err)
 	}
-	checkGetGTaskState(proto.TaskStateReverted)
+	checkGetTaskState(proto.TaskStateReverted)
 	require.Len(t, tasks, taskCnt)
-	require.Equal(t, 0, dsp.(dispatcher.DispatcherForTest).GetRunningGTaskCnt())
+	checkGetRunningTaskCnt(0)
 }
 
 func TestSimpleNormalFlow(t *testing.T) {
@@ -305,13 +323,13 @@ var _ dispatcher.TaskFlowHandle = (*NumberExampleHandle)(nil)
 func (NumberExampleHandle) OnTicker(_ context.Context, _ *proto.Task) {
 }
 
-func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
-	if gTask.State == proto.TaskStatePending {
-		gTask.Step = proto.StepInit
+func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (metas [][]byte, err error) {
+	if task.State == proto.TaskStatePending {
+		task.Step = proto.StepInit
 	}
-	switch gTask.Step {
+	switch task.Step {
 	case proto.StepInit:
-		gTask.Step = proto.StepOne
+		task.Step = proto.StepOne
 		for i := 0; i < subtaskCnt; i++ {
 			metas = append(metas, []byte{'1'})
 		}
@@ -336,4 +354,26 @@ func (NumberExampleHandle) GetEligibleInstances(ctx context.Context, _ *proto.Ta
 
 func (NumberExampleHandle) IsRetryableErr(error) bool {
 	return true
+}
+
+func TestVerifyTaskStateTransform(t *testing.T) {
+	testCases := []struct {
+		oldState string
+		newState string
+		expect   bool
+	}{
+		{proto.TaskStateRunning, proto.TaskStateRunning, true},
+		{proto.TaskStatePending, proto.TaskStateRunning, true},
+		{proto.TaskStatePending, proto.TaskStateReverting, false},
+		{proto.TaskStateRunning, proto.TaskStateReverting, true},
+		{proto.TaskStateReverting, proto.TaskStateReverted, true},
+		{proto.TaskStateReverting, proto.TaskStateSucceed, false},
+		{proto.TaskStateRunning, proto.TaskStatePausing, true},
+		{proto.TaskStateRunning, proto.TaskStateResuming, false},
+		{proto.TaskStateCancelling, proto.TaskStateRunning, false},
+		{proto.TaskStateCanceled, proto.TaskStateRunning, false},
+	}
+	for _, tc := range testCases {
+		require.Equal(t, tc.expect, dispatcher.VerifyTaskStateTransform(tc.oldState, tc.newState))
+	}
 }

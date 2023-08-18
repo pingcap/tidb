@@ -241,6 +241,8 @@ var (
 	ErrRangeNotIncreasing = ClassDDL.NewStd(mysql.ErrRangeNotIncreasing)
 	// ErrPartitionMaxvalue returns maxvalue can only be used in last partition definition.
 	ErrPartitionMaxvalue = ClassDDL.NewStd(mysql.ErrPartitionMaxvalue)
+	// ErrMaxvalueInValuesIn returns maxvalue cannot be used in values in.
+	ErrMaxvalueInValuesIn = ClassDDL.NewStd(mysql.ErrMaxvalueInValuesIn)
 	// ErrDropLastPartition returns cannot remove all partitions, use drop table instead.
 	ErrDropLastPartition = ClassDDL.NewStd(mysql.ErrDropLastPartition)
 	// ErrTooManyPartitions returns too many partitions were defined.
@@ -403,6 +405,8 @@ var (
 	ErrDDLSetting = ClassDDL.NewStd(mysql.ErrDDLSetting)
 	// ErrIngestFailed returns when the DDL ingest job is failed.
 	ErrIngestFailed = ClassDDL.NewStd(mysql.ErrIngestFailed)
+	// ErrIngestCheckEnvFailed returns when the DDL ingest env is failed to init.
+	ErrIngestCheckEnvFailed = ClassDDL.NewStd(mysql.ErrIngestCheckEnvFailed)
 
 	// ErrColumnInChange indicates there is modification on the column in parallel.
 	ErrColumnInChange = ClassDDL.NewStd(mysql.ErrColumnInChange)

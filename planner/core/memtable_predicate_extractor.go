@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // MemTablePredicateExtractor is used to extract some predicates from `WHERE` clause
@@ -711,11 +711,11 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	st, et := e.StartTime, e.EndTime
 	if st > 0 {
 		st := time.UnixMilli(st)
-		fmt.Fprintf(r, "start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat))
+		fmt.Fprintf(r, "start_time:%v, ", st.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat))
 	}
 	if et > 0 {
 		et := time.UnixMilli(et)
-		fmt.Fprintf(r, "end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat))
+		fmt.Fprintf(r, "end_time:%v, ", et.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat))
 	}
 	if len(e.NodeTypes) > 0 {
 		fmt.Fprintf(r, "node_types:[%s], ", extractStringFromStringSet(e.NodeTypes))
@@ -846,11 +846,11 @@ func (e *HotRegionsHistoryTableExtractor) explainInfo(p *PhysicalMemTable) strin
 	st, et := e.StartTime, e.EndTime
 	if st > 0 {
 		st := time.UnixMilli(st)
-		fmt.Fprintf(r, "start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(time.DateTime))
+		fmt.Fprintf(r, "start_time:%v, ", st.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone).Format(time.DateTime))
 	}
 	if et > 0 {
 		et := time.UnixMilli(et)
-		fmt.Fprintf(r, "end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(time.DateTime))
+		fmt.Fprintf(r, "end_time:%v, ", et.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone).Format(time.DateTime))
 	}
 	if len(e.RegionIDs) > 0 {
 		fmt.Fprintf(r, "region_ids:[%s], ", extractStringFromUint64Slice(e.RegionIDs))
@@ -958,13 +958,13 @@ func (e *MetricTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
-	promQL := e.GetMetricTablePromQL(p.ctx, p.Table.Name.L)
+	promQL := e.GetMetricTablePromQL(p.SCtx(), p.Table.Name.L)
 	startTime, endTime := e.StartTime, e.EndTime
-	step := time.Second * time.Duration(p.ctx.GetSessionVars().MetricSchemaStep)
+	step := time.Second * time.Duration(p.SCtx().GetSessionVars().MetricSchemaStep)
 	return fmt.Sprintf("PromQL:%v, start_time:%v, end_time:%v, step:%v",
 		promQL,
-		startTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
-		endTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
+		startTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
+		endTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
 		step,
 	)
 }
@@ -1321,10 +1321,10 @@ func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {
 		return "skip_request: true"
 	}
 	if !e.Enable {
-		return fmt.Sprintf("only search in the current '%v' file", p.ctx.GetSessionVars().SlowQueryFile)
+		return fmt.Sprintf("only search in the current '%v' file", p.SCtx().GetSessionVars().SlowQueryFile)
 	}
-	startTime := e.TimeRanges[0].StartTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone)
-	endTime := e.TimeRanges[0].EndTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone)
+	startTime := e.TimeRanges[0].StartTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone)
+	endTime := e.TimeRanges[0].EndTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone)
 	return fmt.Sprintf("start_time:%v, end_time:%v",
 		types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String(),
 		types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String())
@@ -1449,8 +1449,8 @@ func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 	if !e.Digests.Empty() {
 		fmt.Fprintf(buf, "digests: [%s], ", extractStringFromStringSet(e.Digests))
 	}
-	if e.CoarseTimeRange != nil && p.ctx.GetSessionVars() != nil && p.ctx.GetSessionVars().StmtCtx != nil {
-		stmtCtx := p.ctx.GetSessionVars().StmtCtx
+	if e.CoarseTimeRange != nil && p.SCtx().GetSessionVars() != nil && p.SCtx().GetSessionVars().StmtCtx != nil {
+		stmtCtx := p.SCtx().GetSessionVars().StmtCtx
 		startTime := e.CoarseTimeRange.StartTime.In(stmtCtx.TimeZone)
 		endTime := e.CoarseTimeRange.EndTime.In(stmtCtx.TimeZone)
 		startTimeStr := types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String()

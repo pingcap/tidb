@@ -19,11 +19,13 @@ import (
 	"fmt"
 	"runtime/trace"
 
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -34,20 +36,15 @@ import (
 
 // UnionScanExec merges the rows from dirty table and the rows from distsql request.
 type UnionScanExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	memBuf     kv.MemBuffer
 	memBufSnap kv.Getter
 
-	// usedIndex is the column offsets of the index which Src executor has used.
-	usedIndex            []int
-	desc                 bool
 	conditions           []expression.Expression
 	conditionsWithVirCol []expression.Expression
 	columns              []*model.ColumnInfo
 	table                table.Table
-	// belowHandleCols is the handle's position of the below scan plan.
-	belowHandleCols plannercore.HandleCols
 
 	addedRowsIter       memRowsIter
 	cursor4AddRows      []types.Datum
@@ -61,12 +58,14 @@ type UnionScanExec struct {
 
 	// cacheTable not nil means it's reading from cached table.
 	cacheTable kv.MemBuffer
-	collators  []collate.Collator
 
 	// If partitioned table and the physical table id is encoded in the chuck at this column index
 	// used with dynamic prune mode
 	// < 0 if not used.
 	physTblIDIdx int
+
+	keepOrder bool
+	compareExec
 }
 
 // Open implements the Executor Open interface.
@@ -74,7 +73,7 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 	r, ctx := tracing.StartRegionEx(ctx, "UnionScanExec.Open")
 	defer r.End()
 
-	if err := us.baseExecutor.Open(ctx); err != nil {
+	if err := us.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 	return us.open(ctx)
@@ -82,16 +81,16 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 
 func (us *UnionScanExec) open(ctx context.Context) error {
 	var err error
-	reader := us.children[0]
+	reader := us.Children(0)
 
 	// If the push-downed condition contains virtual column, we may build a selection upon reader. Since unionScanExec
 	// has already contained condition, we can ignore the selection.
 	if sel, ok := reader.(*SelectionExec); ok {
-		reader = sel.children[0]
+		reader = sel.Children(0)
 	}
 
 	defer trace.StartRegion(ctx, "UnionScanBuildRows").End()
-	txn, err := us.ctx.Txn(false)
+	txn, err := us.Ctx().Txn(false)
 	if err != nil {
 		return err
 	}
@@ -140,7 +139,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	// Assume req.Capacity() > 0 after GrowAndReset(), if this assumption fail,
 	// the for-loop may exit without read one single row!
-	req.GrowAndReset(us.maxChunkSize)
+	req.GrowAndReset(us.MaxChunkSize())
 
 	mutableRow := chunk.MutRowFromTypes(retTypes(us))
 	for batchSize := req.Capacity(); req.NumRows() < batchSize; {
@@ -155,13 +154,13 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		mutableRow.SetDatums(row...)
 
 		for _, idx := range us.virtualColumnIndex {
-			datum, err := us.schema.Columns[idx].EvalVirtualColumn(mutableRow.ToRow())
+			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(mutableRow.ToRow())
 			if err != nil {
 				return err
 			}
 			// Because the expression might return different type from
 			// the generated column, we should wrap a CAST on the result.
-			castDatum, err := table.CastValue(us.ctx, datum, us.columns[idx], false, true)
+			castDatum, err := table.CastValue(us.Ctx(), datum, us.columns[idx], false, true)
 			if err != nil {
 				return err
 			}
@@ -172,7 +171,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			mutableRow.SetDatum(idx, castDatum)
 		}
 
-		matched, _, err := expression.EvalBool(us.ctx, us.conditionsWithVirCol, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(us.Ctx(), us.conditionsWithVirCol, mutableRow.ToRow())
 		if err != nil {
 			return err
 		}
@@ -188,7 +187,7 @@ func (us *UnionScanExec) Close() error {
 	us.cursor4AddRows = nil
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
-	return us.children[0].Close()
+	return us.Children(0).Close()
 }
 
 // getOneRow gets one result row from dirty table or child.
@@ -210,7 +209,7 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	} else if snapshotRow == nil {
 		row = addedRow
 	} else {
-		isSnapshotRow, err = us.shouldPickFirstRow(snapshotRow, addedRow)
+		isSnapshotRow, err = us.compare(us.Ctx().GetSessionVars().StmtCtx, snapshotRow, addedRow)
 		if err != nil {
 			return nil, err
 		}
@@ -244,14 +243,14 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
 	for len(us.snapshotRows) == 0 {
-		err = Next(ctx, us.children[0], us.snapshotChunkBuffer)
+		err = Next(ctx, us.Children(0), us.snapshotChunkBuffer)
 		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
 			return nil, err
 		}
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			var snapshotHandle kv.Handle
-			snapshotHandle, err = us.belowHandleCols.BuildHandle(row)
+			snapshotHandle, err = us.handleCols.BuildHandle(row)
 			if err != nil {
 				return nil, err
 			}
@@ -267,7 +266,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 				// commit, but for simplicity, we don't handle it here.
 				continue
 			}
-			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(retTypes(us.children[0])))
+			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(retTypes(us.Children(0))))
 		}
 	}
 	return us.snapshotRows[0], nil
@@ -284,39 +283,35 @@ func (us *UnionScanExec) getAddedRow() ([]types.Datum, error) {
 	return us.cursor4AddRows, nil
 }
 
-// shouldPickFirstRow picks the suitable row in order.
-// The value returned is used to determine whether to pick the first input row.
-func (us *UnionScanExec) shouldPickFirstRow(a, b []types.Datum) (bool, error) {
-	var isFirstRow bool
-	addedCmpSrc, err := us.compare(a, b)
-	if err != nil {
-		return isFirstRow, err
-	}
-	// Compare result will never be 0.
-	if us.desc {
-		if addedCmpSrc > 0 {
-			isFirstRow = true
-		}
-	} else {
-		if addedCmpSrc < 0 {
-			isFirstRow = true
-		}
-	}
-	return isFirstRow, nil
+type compareExec struct {
+	collators []collate.Collator
+	// usedIndex is the column offsets of the index which Src executor has used.
+	usedIndex []int
+	desc      bool
+	// handleCols is the handle's position of the below scan plan.
+	handleCols plannercore.HandleCols
 }
 
-func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
-	sc := us.ctx.GetSessionVars().StmtCtx
-	for _, colOff := range us.usedIndex {
+func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum) (ret bool, err error) {
+	var cmp int
+	for _, colOff := range ce.usedIndex {
 		aColumn := a[colOff]
 		bColumn := b[colOff]
-		cmp, err := aColumn.Compare(sc, &bColumn, us.collators[colOff])
+		cmp, err = aColumn.Compare(sctx, &bColumn, ce.collators[colOff])
 		if err != nil {
-			return 0, err
+			return false, err
 		}
-		if cmp != 0 {
-			return cmp, nil
+		if cmp == 0 {
+			continue
 		}
+		if cmp > 0 && !ce.desc || cmp < 0 && ce.desc {
+			return false, nil
+		}
+		return true, nil
 	}
-	return us.belowHandleCols.Compare(a, b, us.collators)
+	cmp, err = ce.handleCols.Compare(a, b, ce.collators)
+	if cmp > 0 && !ce.desc || cmp < 0 && ce.desc {
+		return false, err
+	}
+	return true, err
 }

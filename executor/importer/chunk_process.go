@@ -115,12 +115,22 @@ type chunkProcessor struct {
 	kvCodec     tikv.Codec
 	progress    *asyncloaddata.Progress
 	startOffset int64
+
+	// total duration takes by read/encode/deliver.
+	readTotalDur    time.Duration
+	encodeTotalDur  time.Duration
+	deliverTotalDur time.Duration
 }
 
 func (p *chunkProcessor) process(ctx context.Context) (err error) {
 	task := log.BeginTask(p.logger, "process chunk")
 	defer func() {
-		task.End(zap.ErrorLevel, err)
+		task.End(zap.ErrorLevel, err,
+			zap.Duration("readDur", p.readTotalDur),
+			zap.Duration("encodeDur", p.encodeTotalDur),
+			zap.Duration("deliverDur", p.deliverTotalDur),
+			zap.Object("checksum", &p.chunkInfo.Checksum),
+		)
 	}()
 	if err2 := p.initProgress(); err2 != nil {
 		return err2
@@ -211,6 +221,9 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context) error {
 			}
 		}
 
+		p.encodeTotalDur += encodeDur
+		p.readTotalDur += readDur
+
 		if len(rowBatch) > 0 {
 			if err = send(rowBatch); err != nil {
 				return err
@@ -250,6 +263,7 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 			p.diskQuotaLock.RLock()
 			defer p.diskQuotaLock.RUnlock()
 
+			start := time.Now()
 			if err := p.dataWriter.AppendRows(ctx, nil, &kvBatch.dataKVs); err != nil {
 				if !common.IsContextCanceledError(err) {
 					p.logger.Error("write to data engine failed", log.ShortError(err))
@@ -262,6 +276,9 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 				}
 				return errors.Trace(err)
 			}
+
+			deliverDur := time.Since(start)
+			p.deliverTotalDur += deliverDur
 			return nil
 		}()
 		if err != nil {

@@ -43,12 +43,12 @@ const selectionFactor = 0.8
 
 // StatsNode is used for calculating selectivity.
 type StatsNode struct {
-	Tp int
-	ID int64
-	// mask is a bit pattern whose ith bit will indicate whether the ith expression is covered by this index/column.
-	mask int64
 	// Ranges contains all the Ranges we got.
 	Ranges []*ranger.Range
+	Tp     int
+	ID     int64
+	// mask is a bit pattern whose ith bit will indicate whether the ith expression is covered by this index/column.
+	mask int64
 	// Selectivity indicates the Selectivity of this column/index.
 	Selectivity float64
 	// numCols is the number of columns contained in the index or column(which is always 1).
@@ -671,7 +671,7 @@ func FindPrefixOfIndexByCol(cols []*expression.Column, idxColIDs []int64, cached
 func CETraceExpr(sctx sessionctx.Context, tableID int64, tp string, expr expression.Expression, rowCount float64) {
 	exprStr, err := ExprToString(expr)
 	if err != nil {
-		logutil.BgLogger().Debug("[OptimizerTrace] Failed to trace CE of an expression",
+		logutil.BgLogger().Debug("Failed to trace CE of an expression", zap.String("category", "OptimizerTrace"),
 			zap.Any("expression", expr))
 		return
 	}

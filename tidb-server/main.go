@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/extension"
 	_ "github.com/pingcap/tidb/extension/_import"
 	"github.com/pingcap/tidb/keyspace"
@@ -234,7 +235,7 @@ func main() {
 	setupMetrics()
 
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
-
+	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom := createStoreAndDomain(keyspaceName)
 	svr := createServer(storage, dom)
@@ -250,6 +251,7 @@ func main() {
 		cleanup(svr, storage, dom)
 		cpuprofile.StopCPUProfiler()
 		resourcemanager.InstanceResourceManager.Stop()
+		executor.Stop()
 		close(exited)
 	})
 	topsql.SetupTopSQL()
@@ -277,9 +279,7 @@ func syncLog() {
 func checkTempStorageQuota() {
 	// check capacity and the quota when EnableTmpStorageOnOOM is enabled
 	c := config.GetGlobalConfig()
-	if c.TempStorageQuota < 0 {
-		// means unlimited, do nothing
-	} else {
+	if c.TempStorageQuota >= 0 {
 		capacityByte, err := storageSys.GetTargetDirectoryCapacity(c.TempStoragePath)
 		if err != nil {
 			log.Fatal(err.Error())
@@ -335,6 +335,7 @@ func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	storage, err := kvstore.New(fullPath)
 	terror.MustNil(err)
 	copr.GlobalMPPFailedStoreProber.Run()
+	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.
 	dom, err := session.BootstrapSession(storage)
 	terror.MustNil(err)
@@ -634,8 +635,7 @@ func setGlobalVars() {
 					cfg.Instance.RecordPlanInSlowLog = cfg.Log.RecordPlanInSlowLog
 				}
 			case "performance":
-				switch oldName {
-				case "force-priority":
+				if oldName == "force-priority" {
 					cfg.Instance.ForcePriority = cfg.Performance.ForcePriority
 				}
 			case "plugin":
@@ -811,6 +811,7 @@ func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 		closeDomainAndStorage(storage, dom)
 		log.Fatal("failed to create the server", zap.Error(err), zap.Stack("stack"))
 	}
+	mppcoordmanager.InstanceMPPCoordinatorManager.InitServerAddr(svr.GetStatusServerAddr())
 	svr.SetDomain(dom)
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
 	go dom.MemoryUsageAlarmHandle().SetSessionManager(svr).Run()
@@ -846,6 +847,7 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	tikv.StoreShuttingDown(1)
 	dom.Close()
 	copr.GlobalMPPFailedStoreProber.Stop()
+	mppcoordmanager.InstanceMPPCoordinatorManager.Stop()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
 }

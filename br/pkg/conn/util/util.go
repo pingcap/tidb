@@ -28,11 +28,20 @@ const (
 	TiFlashOnly StoreBehavior = 2
 )
 
+// StoreMeta is the required interface for a watcher.
+// It is striped from pd.Client.
+type StoreMeta interface {
+	// GetAllStores gets all stores from pd.
+	// The store may expire later. Caller is responsible for caching and taking care
+	// of store change.
+	GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error)
+}
+
 // GetAllTiKVStores returns all TiKV stores registered to the PD client. The
 // stores must not be a tombstone and must never contain a label `engine=tiflash`.
 func GetAllTiKVStores(
 	ctx context.Context,
-	pdClient pd.Client,
+	pdClient StoreMeta,
 	storeBehavior StoreBehavior,
 ) ([]*metapb.Store, error) {
 	// get all live stores.

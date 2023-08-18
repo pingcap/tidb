@@ -1119,6 +1119,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPartitionColumnStatsMissing: mysql.Message("Build global-level stats failed due to missing partition-level column stats: %s, please run analyze table to refresh columns of all partitions", nil),
 	ErrDDLSetting:                  mysql.Message("Error happened when %s DDL: %s", nil),
 	ErrIngestFailed:                mysql.Message("Ingest failed: %s", nil),
+	ErrIngestCheckEnvFailed:        mysql.Message("Check ingest environment failed: %s", nil),
 	ErrNotSupportedWithSem:         mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
 
 	ErrPlacementPolicyCheck:            mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
@@ -1134,12 +1135,13 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrResourceGroupExists:             mysql.Message("Resource group '%-.192s' already exists", nil),
 	ErrResourceGroupNotExists:          mysql.Message("Unknown resource group '%-.192s'", nil),
 
-	ErrColumnInChange:                       mysql.Message("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", nil),
-	ErrResourceGroupSupportDisabled:         mysql.Message("Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature", nil),
-	ErrResourceGroupConfigUnavailable:       mysql.Message("Resource group configuration is unavailable", nil),
-	ErrResourceGroupThrottled:               mysql.Message("Exceeded resource group quota limitation", nil),
-	ErrResourceGroupQueryRunawayInterrupted: mysql.Message("Query execution was interrupted, identified as runaway query", nil),
-	ErrResourceGroupQueryRunawayQuarantine:  mysql.Message("Quarantined and interrupted because of being in runaway watch list", nil),
+	ErrColumnInChange:                         mysql.Message("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", nil),
+	ErrResourceGroupSupportDisabled:           mysql.Message("Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature", nil),
+	ErrResourceGroupConfigUnavailable:         mysql.Message("Resource group configuration is unavailable", nil),
+	ErrResourceGroupThrottled:                 mysql.Message("Exceeded resource group quota limitation", nil),
+	ErrResourceGroupQueryRunawayInterrupted:   mysql.Message("Query execution was interrupted, identified as runaway query", nil),
+	ErrResourceGroupQueryRunawayQuarantine:    mysql.Message("Quarantined and interrupted because of being in runaway watch list", nil),
+	ErrResourceGroupInvalidBackgroundTaskName: mysql.Message("Unknown background task name '%-.192s'", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout: %s", nil),

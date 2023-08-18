@@ -49,7 +49,7 @@ func (h *SessionHandle) appendBindRecord(hash string, meta *BindRecord) {
 	oldRecord := h.ch.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
 	err := h.ch.SetBindRecord(hash, meta)
 	if err != nil {
-		logutil.BgLogger().Warn("[sql-bind] SessionHandle.appendBindRecord", zap.Error(err))
+		logutil.BgLogger().Warn("SessionHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err))
 	}
 	updateMetrics(metrics.ScopeSession, oldRecord, meta, false)
 }

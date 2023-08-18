@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/executor/internal/exec"
+	"github.com/pingcap/tidb/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -157,7 +159,7 @@ type AfFinalResult struct {
       +--------------+          +-+ +-+          +-+
 */
 type HashAggExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	sc               *stmtctx.StatementContext
 	PartialAggFuncs  []aggfuncs.AggFunc
@@ -245,7 +247,7 @@ func (d *HashAggIntermData) getPartialResultBatch(_ *stmtctx.StatementContext, p
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
 	if e.stats != nil {
-		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
 	if e.isUnparallelExec {
 		var firstErr error
@@ -259,7 +261,7 @@ func (e *HashAggExec) Close() error {
 			firstErr = e.listInDisk.Close()
 		}
 		e.spillAction, e.tmpChkForSpill = nil, nil
-		if err := e.baseExecutor.Close(); firstErr == nil {
+		if err := e.BaseExecutor.Close(); firstErr == nil {
 			firstErr = err
 		}
 		return firstErr
@@ -289,7 +291,7 @@ func (e *HashAggExec) Close() error {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
 	}
-	return e.baseExecutor.Close()
+	return e.BaseExecutor.Close()
 }
 
 // Open implements the Executor Open interface.
@@ -300,7 +302,7 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 		}
 	})
 
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 	e.prepared = false
@@ -308,17 +310,17 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	if e.memTracker != nil {
 		e.memTracker.Reset()
 	} else {
-		e.memTracker = memory.NewTracker(e.id, -1)
+		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
-	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage {
-		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	if e.Ctx().GetSessionVars().TrackAggregateMemoryUsage {
+		e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 	}
 
 	if e.isUnparallelExec {
 		e.initForUnparallelExec()
 		return nil
 	}
-	e.initForParallelExec(e.ctx)
+	e.initForParallelExec(e.Ctx())
 	return nil
 }
 
@@ -330,23 +332,23 @@ func (e *HashAggExec) initForUnparallelExec() {
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice*(1<<e.bInMap) + setSize)
 	e.groupKeyBuffer = make([][]byte, 0, 8)
-	e.childResult = tryNewCacheChunk(e.children[0])
+	e.childResult = tryNewCacheChunk(e.Children(0))
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 
 	e.offsetOfSpilledChks, e.numOfSpilledChks = 0, 0
 	e.executed, e.isChildDrained = false, false
-	e.listInDisk = chunk.NewListInDisk(retTypes(e.children[0]))
+	e.listInDisk = chunk.NewListInDisk(retTypes(e.Children(0)))
 
-	e.tmpChkForSpill = tryNewCacheChunk(e.children[0])
-	if vars := e.ctx.GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
-		e.diskTracker = disk.NewTracker(e.id, -1)
+	e.tmpChkForSpill = tryNewCacheChunk(e.Children(0))
+	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
+		e.diskTracker = disk.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(vars.StmtCtx.DiskTracker)
 		e.listInDisk.GetDiskTracker().AttachTo(e.diskTracker)
 		vars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
 	}
 }
 
-func closeBaseExecutor(b *baseExecutor) {
+func closeBaseExecutor(b *exec.BaseExecutor) {
 	if r := recover(); r != nil {
 		// Release the resource, but throw the panic again and let the top level handle it.
 		terror.Log(b.Close())
@@ -356,7 +358,7 @@ func closeBaseExecutor(b *baseExecutor) {
 }
 
 func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
-	sessionVars := e.ctx.GetSessionVars()
+	sessionVars := e.Ctx().GetSessionVars()
 	finalConcurrency := sessionVars.HashAggFinalConcurrency()
 	partialConcurrency := sessionVars.HashAggPartialConcurrency()
 	e.isChildReturnEmpty = true
@@ -380,14 +382,14 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 	// Init partial workers.
 	for i := 0; i < partialConcurrency; i++ {
 		w := HashAggPartialWorker{
-			baseHashAggWorker: newBaseHashAggWorker(e.ctx, e.finishCh, e.PartialAggFuncs, e.maxChunkSize, e.memTracker),
+			baseHashAggWorker: newBaseHashAggWorker(e.Ctx(), e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
 			inputCh:           e.partialInputChs[i],
 			outputChs:         e.partialOutputChs,
 			giveBackCh:        e.inputCh,
 			globalOutputCh:    e.finalOutputCh,
 			partialResultsMap: make(aggPartialResultMapper),
 			groupByItems:      e.GroupByItems,
-			chk:               tryNewCacheChunk(e.children[0]),
+			chk:               tryNewCacheChunk(e.Children(0)),
 			groupKey:          make([][]byte, 0, 8),
 		}
 		// There is a bucket in the empty partialResultsMap.
@@ -400,7 +402,7 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 		e.memTracker.Consume(w.chk.MemoryUsage())
 		e.partialWorkers[i] = w
 		input := &HashAggInput{
-			chk:        newFirstChunk(e.children[0]),
+			chk:        newFirstChunk(e.Children(0)),
 			giveBackCh: w.inputCh,
 		}
 		e.memTracker.Consume(input.chk.MemoryUsage())
@@ -411,7 +413,7 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 	for i := 0; i < finalConcurrency; i++ {
 		groupSet, setSize := set.NewStringSetWithMemoryUsage()
 		w := HashAggFinalWorker{
-			baseHashAggWorker:   newBaseHashAggWorker(e.ctx, e.finishCh, e.FinalAggFuncs, e.maxChunkSize, e.memTracker),
+			baseHashAggWorker:   newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
 			partialResultMap:    make(aggPartialResultMapper),
 			groupSet:            groupSet,
 			inputCh:             e.partialOutputChs[i],
@@ -818,7 +820,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 			chk = input.chk
 		}
 		mSize := chk.MemoryUsage()
-		err = Next(ctx, e.children[0], chk)
+		err = Next(ctx, e.Children(0), chk)
 		if err != nil {
 			e.finalOutputCh <- &AfFinalResult{err: err}
 			e.memTracker.Consume(-mSize)
@@ -872,7 +874,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
 	partialStart := time.Now()
 	for i := range e.partialWorkers {
-		go e.partialWorkers[i].run(e.ctx, partialWorkerWaitGroup, len(e.finalWorkers))
+		go e.partialWorkers[i].run(e.Ctx(), partialWorkerWaitGroup, len(e.finalWorkers))
 	}
 	go func() {
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
@@ -884,7 +886,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	finalWorkerWaitGroup.Add(len(e.finalWorkers))
 	finalStart := time.Now()
 	for i := range e.finalWorkers {
-		go e.finalWorkers[i].run(e.ctx, finalWorkerWaitGroup)
+		go e.finalWorkers[i].run(e.Ctx(), finalWorkerWaitGroup)
 	}
 	go func() {
 		finalWorkerWaitGroup.Wait()
@@ -945,7 +947,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 	chk.Reset()
 	for {
 		if e.prepared {
-			// Since we return e.maxChunkSize rows every time, so we should not traverse
+			// Since we return e.MaxChunkSize() rows every time, so we should not traverse
 			// `groupSet` because of its randomness.
 			for ; e.cursor4GroupKey < len(e.groupKeys); e.cursor4GroupKey++ {
 				partialResults := e.getPartialResults(e.groupKeys[e.cursor4GroupKey])
@@ -953,7 +955,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 					chk.SetNumVirtualRows(chk.NumRows() + 1)
 				}
 				for i, af := range e.PartialAggFuncs {
-					if err := af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk); err != nil {
+					if err := af.AppendFinalResult2Chunk(e.Ctx(), partialResults[i], chk); err != nil {
 						return err
 					}
 				}
@@ -1024,7 +1026,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		if e.childResult.NumRows() == 0 {
 			return nil
 		}
-		e.groupKeyBuffer, err = getGroupKey(e.ctx, e.childResult, e.groupKeyBuffer, e.GroupByItems)
+		e.groupKeyBuffer, err = getGroupKey(e.Ctx(), e.childResult, e.groupKeyBuffer, e.GroupByItems)
 		if err != nil {
 			return err
 		}
@@ -1045,7 +1047,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			partialResults := e.getPartialResults(groupKey)
 			for i, af := range e.PartialAggFuncs {
 				tmpBuf[0] = e.childResult.GetRow(j)
-				memDelta, err := af.UpdatePartialResult(e.ctx, tmpBuf[:], partialResults[i])
+				memDelta, err := af.UpdatePartialResult(e.Ctx(), tmpBuf[:], partialResults[i])
 				if err != nil {
 					return err
 				}
@@ -1087,7 +1089,7 @@ func (e *HashAggExec) spillUnprocessedData(isFullChk bool) (err error) {
 func (e *HashAggExec) getNextChunk(ctx context.Context) (err error) {
 	e.childResult.Reset()
 	if !e.isChildDrained {
-		if err := Next(ctx, e.children[0], e.childResult); err != nil {
+		if err := Next(ctx, e.Children(0), e.childResult); err != nil {
 			return err
 		}
 		if e.childResult.NumRows() != 0 {
@@ -1129,10 +1131,10 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 }
 
 func (e *HashAggExec) initRuntimeStats() {
-	if e.runtimeStats != nil {
+	if e.RuntimeStats() != nil {
 		stats := &HashAggRuntimeStats{
-			PartialConcurrency: e.ctx.GetSessionVars().HashAggPartialConcurrency(),
-			FinalConcurrency:   e.ctx.GetSessionVars().HashAggFinalConcurrency(),
+			PartialConcurrency: e.Ctx().GetSessionVars().HashAggPartialConcurrency(),
+			FinalConcurrency:   e.Ctx().GetSessionVars().HashAggFinalConcurrency(),
 		}
 		stats.PartialStats = make([]*AggWorkerStat, 0, stats.PartialConcurrency)
 		stats.FinalStats = make([]*AggWorkerStat, 0, stats.FinalConcurrency)
@@ -1243,13 +1245,13 @@ func (*HashAggRuntimeStats) Tp() int {
 // It assumes all the input data is sorted by group by key.
 // When Next() is called, it will return a result for the same group.
 type StreamAggExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	executed bool
 	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
 	isChildReturnEmpty bool
 	defaultVal         *chunk.Chunk
-	groupChecker       *vecGroupChecker
+	groupChecker       *vecgroupchecker.VecGroupChecker
 	inputIter          *chunk.Iterator4Chunk
 	inputRow           chunk.Row
 	aggFuncs           []aggfuncs.AggFunc
@@ -1272,13 +1274,13 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 		}
 	})
 
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 	// If panic in Open, the children executor should be closed because they are open.
-	defer closeBaseExecutor(&e.baseExecutor)
+	defer closeBaseExecutor(&e.BaseExecutor)
 
-	e.childResult = tryNewCacheChunk(e.children[0])
+	e.childResult = tryNewCacheChunk(e.Children(0))
 	e.executed = false
 	e.isChildReturnEmpty = true
 	e.inputIter = chunk.NewIterator4Chunk(e.childResult)
@@ -1295,10 +1297,10 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 		e.memTracker.Reset()
 	} else {
 		// bytesLimit <= 0 means no limit, for now we just track the memory footprint
-		e.memTracker = memory.NewTracker(e.id, -1)
+		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
-	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage {
-		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	if e.Ctx().GetSessionVars().TrackAggregateMemoryUsage {
+		e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(e.childResult.MemoryUsage() + e.memUsageOfInitialPartialResult)
@@ -1311,8 +1313,8 @@ func (e *StreamAggExec) Close() error {
 		e.memTracker.Consume(-e.childResult.MemoryUsage() - e.memUsageOfInitialPartialResult)
 		e.childResult = nil
 	}
-	e.groupChecker.reset()
-	return e.baseExecutor.Close()
+	e.groupChecker.Reset()
+	return e.BaseExecutor.Close()
 }
 
 // Next implements the Executor Next interface.
@@ -1329,19 +1331,19 @@ func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 }
 
 func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (err error) {
-	if e.groupChecker.isExhausted() {
+	if e.groupChecker.IsExhausted() {
 		if err = e.consumeCurGroupRowsAndFetchChild(ctx, chk); err != nil {
 			return err
 		}
 		if e.executed {
 			return nil
 		}
-		_, err := e.groupChecker.splitIntoGroups(e.childResult)
+		_, err := e.groupChecker.SplitIntoGroups(e.childResult)
 		if err != nil {
 			return err
 		}
 	}
-	begin, end := e.groupChecker.getNextGroup()
+	begin, end := e.groupChecker.GetNextGroup()
 	for i := begin; i < end; i++ {
 		e.groupRows = append(e.groupRows, e.childResult.GetRow(i))
 	}
@@ -1352,13 +1354,13 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (
 			return err
 		}
 
-		isFirstGroupSameAsPrev, err := e.groupChecker.splitIntoGroups(e.childResult)
+		isFirstGroupSameAsPrev, err := e.groupChecker.SplitIntoGroups(e.childResult)
 		if err != nil {
 			return err
 		}
 
 		if isFirstGroupSameAsPrev {
-			begin, end = e.groupChecker.getNextGroup()
+			begin, end = e.groupChecker.GetNextGroup()
 			for i := begin; i < end; i++ {
 				e.groupRows = append(e.groupRows, e.childResult.GetRow(i))
 			}
@@ -1381,7 +1383,7 @@ func (e *StreamAggExec) consumeGroupRows() error {
 
 	allMemDelta := int64(0)
 	for i, aggFunc := range e.aggFuncs {
-		memDelta, err := aggFunc.UpdatePartialResult(e.ctx, e.groupRows, e.partialResults[i])
+		memDelta, err := aggFunc.UpdatePartialResult(e.Ctx(), e.groupRows, e.partialResults[i])
 		if err != nil {
 			return err
 		}
@@ -1401,7 +1403,7 @@ func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, ch
 	}
 
 	mSize := e.childResult.MemoryUsage()
-	err = Next(ctx, e.children[0], e.childResult)
+	err = Next(ctx, e.Children(0), e.childResult)
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 	if err != nil {
@@ -1428,7 +1430,7 @@ func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, ch
 // result chunk, and reset the evaluation context for each aggregation.
 func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 	for i, aggFunc := range e.aggFuncs {
-		err := aggFunc.AppendFinalResult2Chunk(e.ctx, e.partialResults[i], chk)
+		err := aggFunc.AppendFinalResult2Chunk(e.Ctx(), e.partialResults[i], chk)
 		if err != nil {
 			return err
 		}
@@ -1441,480 +1443,6 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 		chk.SetNumVirtualRows(chk.NumRows() + 1)
 	}
 	return nil
-}
-
-// vecGroupChecker is used to split a given chunk according to the `group by` expression in a vectorized manner
-// It is usually used for streamAgg
-type vecGroupChecker struct {
-	ctx          sessionctx.Context
-	GroupByItems []expression.Expression
-
-	// groupOffset holds the offset of the last row in each group of the current chunk
-	groupOffset []int
-	// groupCount is the count of groups in the current chunk
-	groupCount int
-	// nextGroupID records the group id of the next group to be consumed
-	nextGroupID int
-
-	// lastGroupKeyOfPrevChk is the groupKey of the last group of the previous chunk
-	lastGroupKeyOfPrevChk []byte
-	// firstGroupKey and lastGroupKey are used to store the groupKey of the first and last group of the current chunk
-	firstGroupKey []byte
-	lastGroupKey  []byte
-
-	// firstRowDatums and lastRowDatums store the results of the expression evaluation for the first and last rows of the current chunk in datum
-	// They are used to encode to get firstGroupKey and lastGroupKey
-	firstRowDatums []types.Datum
-	lastRowDatums  []types.Datum
-
-	// sameGroup is used to check whether the current row belongs to the same group as the previous row
-	sameGroup []bool
-
-	// set these functions for testing
-	allocateBuffer func(evalType types.EvalType, capacity int) (*chunk.Column, error)
-	releaseBuffer  func(buf *chunk.Column)
-}
-
-func newVecGroupChecker(ctx sessionctx.Context, items []expression.Expression) *vecGroupChecker {
-	return &vecGroupChecker{
-		ctx:          ctx,
-		GroupByItems: items,
-		groupCount:   0,
-		nextGroupID:  0,
-		sameGroup:    make([]bool, 1024),
-	}
-}
-
-// splitIntoGroups splits a chunk into multiple groups which the row in the same group have the same groupKey
-// `isFirstGroupSameAsPrev` indicates whether the groupKey of the first group of the newly passed chunk is equal to the groupKey of the last group left before
-// TODO: Since all the group by items are only a column reference, guaranteed by building projection below aggregation, we can directly compare data in a chunk.
-func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsPrev bool, err error) {
-	// The numRows can not be zero. `fetchChild` is called before `splitIntoGroups` is called.
-	// if numRows == 0, it will be returned in `fetchChild`. See `fetchChild` for more details.
-	numRows := chk.NumRows()
-
-	e.reset()
-	e.nextGroupID = 0
-	if len(e.GroupByItems) == 0 {
-		e.groupOffset = append(e.groupOffset, numRows)
-		e.groupCount = 1
-		return true, nil
-	}
-
-	for _, item := range e.GroupByItems {
-		err = e.getFirstAndLastRowDatum(item, chk, numRows)
-		if err != nil {
-			return false, err
-		}
-	}
-	e.firstGroupKey, err = codec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, e.firstGroupKey, e.firstRowDatums...)
-	if err != nil {
-		return false, err
-	}
-
-	e.lastGroupKey, err = codec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, e.lastGroupKey, e.lastRowDatums...)
-	if err != nil {
-		return false, err
-	}
-
-	if len(e.lastGroupKeyOfPrevChk) == 0 {
-		isFirstGroupSameAsPrev = false
-	} else {
-		if bytes.Equal(e.lastGroupKeyOfPrevChk, e.firstGroupKey) {
-			isFirstGroupSameAsPrev = true
-		} else {
-			isFirstGroupSameAsPrev = false
-		}
-	}
-
-	if length := len(e.lastGroupKey); len(e.lastGroupKeyOfPrevChk) >= length {
-		e.lastGroupKeyOfPrevChk = e.lastGroupKeyOfPrevChk[:length]
-	} else {
-		e.lastGroupKeyOfPrevChk = make([]byte, length)
-	}
-	copy(e.lastGroupKeyOfPrevChk, e.lastGroupKey)
-
-	if bytes.Equal(e.firstGroupKey, e.lastGroupKey) {
-		e.groupOffset = append(e.groupOffset, numRows)
-		e.groupCount = 1
-		return isFirstGroupSameAsPrev, nil
-	}
-
-	if cap(e.sameGroup) < numRows {
-		e.sameGroup = make([]bool, 0, numRows)
-	}
-	e.sameGroup = append(e.sameGroup, false)
-	for i := 1; i < numRows; i++ {
-		e.sameGroup = append(e.sameGroup, true)
-	}
-
-	for _, item := range e.GroupByItems {
-		err = e.evalGroupItemsAndResolveGroups(item, chk, numRows)
-		if err != nil {
-			return false, err
-		}
-	}
-
-	for i := 1; i < numRows; i++ {
-		if !e.sameGroup[i] {
-			e.groupOffset = append(e.groupOffset, i)
-		}
-	}
-	e.groupOffset = append(e.groupOffset, numRows)
-	e.groupCount = len(e.groupOffset)
-	return isFirstGroupSameAsPrev, nil
-}
-
-func (e *vecGroupChecker) getFirstAndLastRowDatum(item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
-	var firstRowDatum, lastRowDatum types.Datum
-	tp := item.GetType()
-	eType := tp.EvalType()
-	switch eType {
-	case types.ETInt:
-		firstRowVal, firstRowIsNull, err := item.EvalInt(e.ctx, chk.GetRow(0))
-		if err != nil {
-			return err
-		}
-		lastRowVal, lastRowIsNull, err := item.EvalInt(e.ctx, chk.GetRow(numRows-1))
-		if err != nil {
-			return err
-		}
-		if !firstRowIsNull {
-			firstRowDatum.SetInt64(firstRowVal)
-		} else {
-			firstRowDatum.SetNull()
-		}
-		if !lastRowIsNull {
-			lastRowDatum.SetInt64(lastRowVal)
-		} else {
-			lastRowDatum.SetNull()
-		}
-	case types.ETReal:
-		firstRowVal, firstRowIsNull, err := item.EvalReal(e.ctx, chk.GetRow(0))
-		if err != nil {
-			return err
-		}
-		lastRowVal, lastRowIsNull, err := item.EvalReal(e.ctx, chk.GetRow(numRows-1))
-		if err != nil {
-			return err
-		}
-		if !firstRowIsNull {
-			firstRowDatum.SetFloat64(firstRowVal)
-		} else {
-			firstRowDatum.SetNull()
-		}
-		if !lastRowIsNull {
-			lastRowDatum.SetFloat64(lastRowVal)
-		} else {
-			lastRowDatum.SetNull()
-		}
-	case types.ETDecimal:
-		firstRowVal, firstRowIsNull, err := item.EvalDecimal(e.ctx, chk.GetRow(0))
-		if err != nil {
-			return err
-		}
-		lastRowVal, lastRowIsNull, err := item.EvalDecimal(e.ctx, chk.GetRow(numRows-1))
-		if err != nil {
-			return err
-		}
-		if !firstRowIsNull {
-			// make a copy to avoid DATA RACE
-			firstDatum := types.MyDecimal{}
-			err := firstDatum.FromString(firstRowVal.ToString())
-			if err != nil {
-				return err
-			}
-			firstRowDatum.SetMysqlDecimal(&firstDatum)
-		} else {
-			firstRowDatum.SetNull()
-		}
-		if !lastRowIsNull {
-			// make a copy to avoid DATA RACE
-			lastDatum := types.MyDecimal{}
-			err := lastDatum.FromString(lastRowVal.ToString())
-			if err != nil {
-				return err
-			}
-			lastRowDatum.SetMysqlDecimal(&lastDatum)
-		} else {
-			lastRowDatum.SetNull()
-		}
-	case types.ETDatetime, types.ETTimestamp:
-		firstRowVal, firstRowIsNull, err := item.EvalTime(e.ctx, chk.GetRow(0))
-		if err != nil {
-			return err
-		}
-		lastRowVal, lastRowIsNull, err := item.EvalTime(e.ctx, chk.GetRow(numRows-1))
-		if err != nil {
-			return err
-		}
-		if !firstRowIsNull {
-			firstRowDatum.SetMysqlTime(firstRowVal)
-		} else {
-			firstRowDatum.SetNull()
-		}
-		if !lastRowIsNull {
-			lastRowDatum.SetMysqlTime(lastRowVal)
-		} else {
-			lastRowDatum.SetNull()
-		}
-	case types.ETDuration:
-		firstRowVal, firstRowIsNull, err := item.EvalDuration(e.ctx, chk.GetRow(0))
-		if err != nil {
-			return err
-		}
-		lastRowVal, lastRowIsNull, err := item.EvalDuration(e.ctx, chk.GetRow(numRows-1))
-		if err != nil {
-			return err
-		}
-		if !firstRowIsNull {
-			firstRowDatum.SetMysqlDuration(firstRowVal)
-		} else {
-			firstRowDatum.SetNull()
-		}
-		if !lastRowIsNull {
-			lastRowDatum.SetMysqlDuration(lastRowVal)
-		} else {
-			lastRowDatum.SetNull()
-		}
-	case types.ETJson:
-		firstRowVal, firstRowIsNull, err := item.EvalJSON(e.ctx, chk.GetRow(0))
-		if err != nil {
-			return err
-		}
-		lastRowVal, lastRowIsNull, err := item.EvalJSON(e.ctx, chk.GetRow(numRows-1))
-		if err != nil {
-			return err
-		}
-		if !firstRowIsNull {
-			// make a copy to avoid DATA RACE
-			firstRowDatum.SetMysqlJSON(firstRowVal.Copy())
-		} else {
-			firstRowDatum.SetNull()
-		}
-		if !lastRowIsNull {
-			// make a copy to avoid DATA RACE
-			lastRowDatum.SetMysqlJSON(lastRowVal.Copy())
-		} else {
-			lastRowDatum.SetNull()
-		}
-	case types.ETString:
-		firstRowVal, firstRowIsNull, err := item.EvalString(e.ctx, chk.GetRow(0))
-		if err != nil {
-			return err
-		}
-		lastRowVal, lastRowIsNull, err := item.EvalString(e.ctx, chk.GetRow(numRows-1))
-		if err != nil {
-			return err
-		}
-		if !firstRowIsNull {
-			// make a copy to avoid DATA RACE
-			firstDatum := string([]byte(firstRowVal))
-			firstRowDatum.SetString(firstDatum, tp.GetCollate())
-		} else {
-			firstRowDatum.SetNull()
-		}
-		if !lastRowIsNull {
-			// make a copy to avoid DATA RACE
-			lastDatum := string([]byte(lastRowVal))
-			lastRowDatum.SetString(lastDatum, tp.GetCollate())
-		} else {
-			lastRowDatum.SetNull()
-		}
-	default:
-		err = fmt.Errorf("invalid eval type %v", eType)
-		return err
-	}
-
-	e.firstRowDatums = append(e.firstRowDatums, firstRowDatum)
-	e.lastRowDatums = append(e.lastRowDatums, lastRowDatum)
-	return err
-}
-
-// evalGroupItemsAndResolveGroups evaluates the chunk according to the expression item.
-// And resolve the rows into groups according to the evaluation results
-func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
-	tp := item.GetType()
-	eType := tp.EvalType()
-	if e.allocateBuffer == nil {
-		e.allocateBuffer = expression.GetColumn
-	}
-	if e.releaseBuffer == nil {
-		e.releaseBuffer = expression.PutColumn
-	}
-	col, err := e.allocateBuffer(eType, numRows)
-	if err != nil {
-		return err
-	}
-	defer e.releaseBuffer(col)
-	err = expression.EvalExpr(e.ctx, item, eType, chk, col)
-	if err != nil {
-		return err
-	}
-
-	previousIsNull := col.IsNull(0)
-	switch eType {
-	case types.ETInt:
-		vals := col.Int64s()
-		for i := 1; i < numRows; i++ {
-			isNull := col.IsNull(i)
-			if e.sameGroup[i] {
-				switch {
-				case !previousIsNull && !isNull:
-					if vals[i] != vals[i-1] {
-						e.sameGroup[i] = false
-					}
-				case isNull != previousIsNull:
-					e.sameGroup[i] = false
-				}
-			}
-			previousIsNull = isNull
-		}
-	case types.ETReal:
-		vals := col.Float64s()
-		for i := 1; i < numRows; i++ {
-			isNull := col.IsNull(i)
-			if e.sameGroup[i] {
-				switch {
-				case !previousIsNull && !isNull:
-					if vals[i] != vals[i-1] {
-						e.sameGroup[i] = false
-					}
-				case isNull != previousIsNull:
-					e.sameGroup[i] = false
-				}
-			}
-			previousIsNull = isNull
-		}
-	case types.ETDecimal:
-		vals := col.Decimals()
-		for i := 1; i < numRows; i++ {
-			isNull := col.IsNull(i)
-			if e.sameGroup[i] {
-				switch {
-				case !previousIsNull && !isNull:
-					if vals[i].Compare(&vals[i-1]) != 0 {
-						e.sameGroup[i] = false
-					}
-				case isNull != previousIsNull:
-					e.sameGroup[i] = false
-				}
-			}
-			previousIsNull = isNull
-		}
-	case types.ETDatetime, types.ETTimestamp:
-		vals := col.Times()
-		for i := 1; i < numRows; i++ {
-			isNull := col.IsNull(i)
-			if e.sameGroup[i] {
-				switch {
-				case !previousIsNull && !isNull:
-					if vals[i].Compare(vals[i-1]) != 0 {
-						e.sameGroup[i] = false
-					}
-				case isNull != previousIsNull:
-					e.sameGroup[i] = false
-				}
-			}
-			previousIsNull = isNull
-		}
-	case types.ETDuration:
-		vals := col.GoDurations()
-		for i := 1; i < numRows; i++ {
-			isNull := col.IsNull(i)
-			if e.sameGroup[i] {
-				switch {
-				case !previousIsNull && !isNull:
-					if vals[i] != vals[i-1] {
-						e.sameGroup[i] = false
-					}
-				case isNull != previousIsNull:
-					e.sameGroup[i] = false
-				}
-			}
-			previousIsNull = isNull
-		}
-	case types.ETJson:
-		var previousKey, key types.BinaryJSON
-		if !previousIsNull {
-			previousKey = col.GetJSON(0)
-		}
-		for i := 1; i < numRows; i++ {
-			isNull := col.IsNull(i)
-			if !isNull {
-				key = col.GetJSON(i)
-			}
-			if e.sameGroup[i] {
-				if isNull == previousIsNull {
-					if !isNull && types.CompareBinaryJSON(previousKey, key) != 0 {
-						e.sameGroup[i] = false
-					}
-				} else {
-					e.sameGroup[i] = false
-				}
-			}
-			if !isNull {
-				previousKey = key
-			}
-			previousIsNull = isNull
-		}
-	case types.ETString:
-		previousKey := codec.ConvertByCollationStr(col.GetString(0), tp)
-		for i := 1; i < numRows; i++ {
-			key := codec.ConvertByCollationStr(col.GetString(i), tp)
-			isNull := col.IsNull(i)
-			if e.sameGroup[i] {
-				if isNull != previousIsNull || previousKey != key {
-					e.sameGroup[i] = false
-				}
-			}
-			previousKey = key
-			previousIsNull = isNull
-		}
-	default:
-		err = fmt.Errorf("invalid eval type %v", eType)
-	}
-	if err != nil {
-		return err
-	}
-
-	return err
-}
-
-func (e *vecGroupChecker) getNextGroup() (begin, end int) {
-	if e.nextGroupID == 0 {
-		begin = 0
-	} else {
-		begin = e.groupOffset[e.nextGroupID-1]
-	}
-	end = e.groupOffset[e.nextGroupID]
-	e.nextGroupID++
-	return begin, end
-}
-
-func (e *vecGroupChecker) isExhausted() bool {
-	return e.nextGroupID >= e.groupCount
-}
-
-func (e *vecGroupChecker) reset() {
-	if e.groupOffset != nil {
-		e.groupOffset = e.groupOffset[:0]
-	}
-	if e.sameGroup != nil {
-		e.sameGroup = e.sameGroup[:0]
-	}
-	if e.firstGroupKey != nil {
-		e.firstGroupKey = e.firstGroupKey[:0]
-	}
-	if e.lastGroupKey != nil {
-		e.lastGroupKey = e.lastGroupKey[:0]
-	}
-	if e.firstRowDatums != nil {
-		e.firstRowDatums = e.firstRowDatums[:0]
-	}
-	if e.lastRowDatums != nil {
-		e.lastRowDatums = e.lastRowDatums[:0]
-	}
 }
 
 // ActionSpill returns a AggSpillDiskAction for spilling intermediate data for hashAgg.

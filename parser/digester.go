@@ -183,7 +183,7 @@ func (d *sqlDigester) normalize(sql string, keepHint bool) {
 		if tok == invalid {
 			break
 		}
-		if pos.Offset == len(sql) {
+		if pos.Offset == len(sql) || (pos.Offset == len(sql)-1 && sql[pos.Offset] == ';') {
 			break
 		}
 		currTok := token{tok, strings.ToLower(lit)}

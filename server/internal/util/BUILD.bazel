@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "util",
-    srcs = ["util.go"],
+    srcs = [
+        "buffered_read_conn.go",
+        "util.go",
+    ],
     importpath = "github.com/pingcap/tidb/server/internal/util",
     visibility = ["//server:__subpackages__"],
     deps = [

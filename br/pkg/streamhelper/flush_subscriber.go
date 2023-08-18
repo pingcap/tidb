@@ -94,7 +94,7 @@ func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
 
 // Clear clears all the subscriptions.
 func (f *FlushSubscriber) Clear() {
-	log.Info("[log backup flush subscriber] Clearing.")
+	log.Info("Clearing.", zap.String("category", "log backup flush subscriber"))
 	for id := range f.subscriptions {
 		f.removeSubscription(id)
 	}
@@ -115,7 +115,7 @@ func (f *FlushSubscriber) HandleErrors(ctx context.Context) {
 		err := sub.loadError()
 		if err != nil {
 			retry := f.canBeRetried(err)
-			log.Warn("[log backup flush subscriber] Meet error.",
+			log.Warn("Meet error.", zap.String("category", "log backup flush subscriber"),
 				logutil.ShortError(err), zap.Bool("can-retry?", retry), zap.Uint64("store", id))
 			if retry {
 				sub.connect(f.masterCtx, f.dialer)
@@ -211,7 +211,7 @@ func (s *subscription) connect(ctx context.Context, dialer LogBackupService) {
 }
 
 func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) error {
-	log.Info("[log backup subscription manager] Adding subscription.",
+	log.Info("Adding subscription.", zap.String("category", "log backup subscription manager"),
 		zap.Uint64("store", s.storeID), zap.Uint64("boot", s.storeBootAt))
 	// We should shutdown the background task firstly.
 	// Once it yields some error during shuting down, the error won't be brought to next run.
@@ -246,13 +246,14 @@ func (s *subscription) close() {
 
 func (s *subscription) listenOver(cli eventStream) {
 	storeID := s.storeID
-	log.Info("[log backup flush subscriber] Listen starting.", zap.Uint64("store", storeID))
+	log.Info("Listen starting.", zap.String("category", "log backup flush subscriber"), zap.Uint64("store", storeID))
 	for {
 		// Shall we use RecvMsg for better performance?
 		// Note that the spans.Full requires the input slice be immutable.
 		msg, err := cli.Recv()
 		if err != nil {
-			log.Info("[log backup flush subscriber] Listen stopped.", zap.Uint64("store", storeID), logutil.ShortError(err))
+			log.Info("Listen stopped.", zap.String("category", "log backup flush subscriber"),
+				zap.Uint64("store", storeID), logutil.ShortError(err))
 			if err == io.EOF || err == context.Canceled || status.Code(err) == codes.Canceled {
 				return
 			}
@@ -293,7 +294,8 @@ func (f *FlushSubscriber) addSubscription(ctx context.Context, toStore Store) {
 func (f *FlushSubscriber) removeSubscription(toStore uint64) {
 	subs, ok := f.subscriptions[toStore]
 	if ok {
-		log.Info("[log backup subscription manager] Removing subscription.", zap.Uint64("store", toStore))
+		log.Info("Removing subscription.", zap.String("category", "log backup subscription manager"),
+			zap.Uint64("store", toStore))
 		subs.close()
 		delete(f.subscriptions, toStore)
 	}

@@ -1,0 +1,46 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "querywatch",
+    srcs = ["query_watch.go"],
+    importpath = "github.com/pingcap/tidb/executor/internal/querywatch",
+    visibility = ["//executor:__subpackages__"],
+    deps = [
+        "//domain",
+        "//domain/resourcegroup",
+        "//executor/internal/exec",
+        "//expression",
+        "//infoschema",
+        "//parser",
+        "//parser/ast",
+        "//parser/model",
+        "//sessionctx",
+        "//util/chunk",
+        "//util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/resource_manager",
+        "@com_github_tikv_pd_client//resource_group/controller",
+    ],
+)
+
+go_test(
+    name = "querywatch_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "query_watch_test.go",
+    ],
+    embed = [":querywatch"],
+    flaky = True,
+    deps = [
+        "//config",
+        "//errno",
+        "//kv",
+        "//meta/autoid",
+        "//testkit",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

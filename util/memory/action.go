@@ -44,6 +44,25 @@ type ActionOnExceed interface {
 	IsFinished() bool
 }
 
+var _ ActionOnExceed = &actionWithPriority{}
+
+type actionWithPriority struct {
+	ActionOnExceed
+	priority int64
+}
+
+// NewActionWithPriority wraps the action with a new priority
+func NewActionWithPriority(action ActionOnExceed, priority int64) *actionWithPriority {
+	return &actionWithPriority{
+		action,
+		priority,
+	}
+}
+
+func (a *actionWithPriority) GetPriority() int64 {
+	return a.priority
+}
+
 // ActionInvoker indicates the invoker of the Action.
 type ActionInvoker byte
 
@@ -94,6 +113,9 @@ const (
 	DefPanicPriority = iota
 	DefLogPriority
 	DefSpillPriority
+	// DefCursorFetchSpillPriority is higher than normal disk spill, because it can release much more memory in the future.
+	// And the performance impaction of it is less than other disk-spill action, because it's write-only in execution stage.
+	DefCursorFetchSpillPriority
 	DefRateLimitPriority
 )
 

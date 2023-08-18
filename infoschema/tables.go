@@ -15,11 +15,13 @@
 package infoschema
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -203,6 +204,8 @@ const (
 	TableMemoryUsageOpsHistory = "MEMORY_USAGE_OPS_HISTORY"
 	// TableResourceGroups is the metadata of resource groups.
 	TableResourceGroups = "RESOURCE_GROUPS"
+	// TableRunawayWatches is the query list of runaway watch.
+	TableRunawayWatches = "RUNAWAY_WATCHES"
 )
 
 const (
@@ -310,6 +313,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableMemoryUsage:              autoid.InformationSchemaDBID + 86,
 	ClusterTableMemoryUsageOpsHistory:    autoid.InformationSchemaDBID + 87,
 	TableResourceGroups:                  autoid.InformationSchemaDBID + 88,
+	TableRunawayWatches:                  autoid.InformationSchemaDBID + 89,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1014,6 +1018,9 @@ var TableTiKVRegionStatusCols = []columnInfo{
 	{name: "IS_INDEX", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "INDEX_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "IS_PARTITION", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "EPOCH_CONF_VER", tp: mysql.TypeLonglong, size: 21},
 	{name: "EPOCH_VERSION", tp: mysql.TypeLonglong, size: 21},
 	{name: "WRITTEN_BYTES", tp: mysql.TypeLonglong, size: 21},
@@ -1603,6 +1610,18 @@ var tableResourceGroupsCols = []columnInfo{
 	{name: "PRIORITY", tp: mysql.TypeVarchar, size: 6},
 	{name: "BURSTABLE", tp: mysql.TypeVarchar, size: 3},
 	{name: "QUERY_LIMIT", tp: mysql.TypeVarchar, size: 256},
+	{name: "BACKGROUND", tp: mysql.TypeVarchar, size: 256},
+}
+
+var tableRunawayWatchListCols = []columnInfo{
+	{name: "ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "RESOURCE_GROUP_NAME", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag},
+	{name: "START_TIME", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag},
+	{name: "END_TIME", tp: mysql.TypeVarchar, size: 32},
+	{name: "WATCH", tp: mysql.TypeVarchar, size: 12, flag: mysql.NotNullFlag},
+	{name: "WATCH_TEXT", tp: mysql.TypeBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "SOURCE", tp: mysql.TypeVarchar, size: 128, flag: mysql.NotNullFlag},
+	{name: "ACTION", tp: mysql.TypeVarchar, size: 12, flag: mysql.NotNullFlag},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1770,7 +1789,7 @@ func FormatTiDBVersion(TiDBVersion string, isDefaultVersion bool) string {
 		if len(nodeVersion) > 0 && nodeVersion[0] == 'v' {
 			nodeVersion = nodeVersion[1:]
 		}
-		nodeVersions := strings.Split(nodeVersion, "-")
+		nodeVersions := strings.SplitN(nodeVersion, "-", 2)
 		if len(nodeVersions) == 1 {
 			version = nodeVersions[0]
 		} else if len(nodeVersions) >= 2 {
@@ -2117,6 +2136,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableMemoryUsage:                        tableMemoryUsageCols,
 	TableMemoryUsageOpsHistory:              tableMemoryUsageOpsHistoryCols,
 	TableResourceGroups:                     tableResourceGroupsCols,
+	TableRunawayWatches:                     tableRunawayWatchListCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -2369,7 +2389,7 @@ func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, sctx sessi
 		}
 		results = append(results, result)
 	}
-	slices.SortFunc(results, func(i, j result) bool { return i.idx < j.idx })
+	slices.SortFunc(results, func(i, j result) int { return cmp.Compare(i.idx, j.idx) })
 	for _, result := range results {
 		finalRows = append(finalRows, result.rows...)
 	}

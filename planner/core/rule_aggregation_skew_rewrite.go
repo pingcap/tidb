@@ -119,7 +119,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 			}
 
 			for _, arg := range aggFunc.Args {
-				firstRow, err := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow,
+				firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx(), ast.AggFuncFirstRow,
 					[]expression.Expression{arg}, false)
 				if err != nil {
 					return nil
@@ -147,7 +147,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 				}
 			} else {
 				aggCol = &expression.Column{
-					UniqueID: agg.ctx.GetSessionVars().AllocPlanColumnID(),
+					UniqueID: agg.SCtx().GetSessionVars().AllocPlanColumnID(),
 					RetType:  newAggFunc.RetTp,
 				}
 			}
@@ -155,14 +155,14 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 
 			if newAggFunc.Name == ast.AggFuncCount {
 				cntIndexes = append(cntIndexes, i)
-				sumAggFunc, err := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncSum,
+				sumAggFunc, err := aggregation.NewAggFuncDesc(agg.SCtx(), ast.AggFuncSum,
 					[]expression.Expression{aggCol}, false)
 				if err != nil {
 					return nil
 				}
 				topAggFuncs = append(topAggFuncs, sumAggFunc)
 				topAggSchema.Columns[i] = &expression.Column{
-					UniqueID: agg.ctx.GetSessionVars().AllocPlanColumnID(),
+					UniqueID: agg.SCtx().GetSessionVars().AllocPlanColumnID(),
 					RetType:  sumAggFunc.RetTp,
 				}
 			} else {
@@ -179,7 +179,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 		// SELECT count(DISTINCT a) FROM t GROUP BY b;
 		// column b is not in the output schema, we have to add it to the bottom agg schema
 		if firstRowCols.Has(int(col.UniqueID)) {
-			firstRow, err := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow,
+			firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx(), ast.AggFuncFirstRow,
 				[]expression.Expression{col}, false)
 			if err != nil {
 				return nil
@@ -194,7 +194,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 		AggFuncs:     bottomAggFuncs,
 		GroupByItems: bottomAggGroupbyItems,
 		aggHints:     agg.aggHints,
-	}.Init(agg.ctx, agg.blockOffset)
+	}.Init(agg.SCtx(), agg.SelectBlockOffset())
 	bottomAgg.SetChildren(agg.children...)
 	bottomAgg.SetSchema(bottomAggSchema)
 
@@ -202,7 +202,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 		AggFuncs:     topAggFuncs,
 		GroupByItems: agg.GroupByItems,
 		aggHints:     agg.aggHints,
-	}.Init(agg.ctx, agg.blockOffset)
+	}.Init(agg.SCtx(), agg.SelectBlockOffset())
 	topAgg.SetChildren(bottomAgg)
 	topAgg.SetSchema(topAggSchema)
 
@@ -215,7 +215,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 	// we have to return a project operator that casts decimal to bigint
 	proj := LogicalProjection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
-	}.Init(agg.ctx, agg.blockOffset)
+	}.Init(agg.SCtx(), agg.SelectBlockOffset())
 	for _, column := range topAggSchema.Columns {
 		proj.Exprs = append(proj.Exprs, column.Clone())
 	}
@@ -225,7 +225,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 		exprType := proj.Exprs[index].GetType()
 		targetType := agg.schema.Columns[index].GetType()
 		if !exprType.Equal(targetType) {
-			proj.Exprs[index] = expression.BuildCastFunction(agg.ctx, proj.Exprs[index], targetType)
+			proj.Exprs[index] = expression.BuildCastFunction(agg.SCtx(), proj.Exprs[index], targetType)
 		}
 	}
 	proj.SetSchema(agg.schema.Clone())
