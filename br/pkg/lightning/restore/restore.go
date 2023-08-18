@@ -247,6 +247,7 @@ type LightningStatus struct {
 	backend          string
 	FinishedFileSize atomic.Int64
 	TotalFileSize    atomic.Int64
+	TotalImportSize  atomic.Int64
 }
 
 // ControllerParam contains many parameters for creating a Controller.
@@ -2732,6 +2733,7 @@ func (cr *chunkRestore) encodeLoop(
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 				kvSize += uint64(val.(int))
 			})
+			rc.status.TotalImportSize.Add(kvs.Size())
 			// pebble cannot allow > 4.0G kv in one batch.
 			// we will meet pebble panic when import sql file and each kv has the size larger than 4G / maxKvPairsCnt.
 			// so add this check.
