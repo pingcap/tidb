@@ -458,14 +458,29 @@ type TableInfo struct {
 	// 1 for the clustered index created > 5.0.0 RC.
 	CommonHandleVersion uint16 `json:"common_handle_version"`
 
-	Comment         string `json:"comment"`
-	AutoIncID       int64  `json:"auto_inc_id"`
-	AutoIdCache     int64  `json:"auto_id_cache"` //nolint:revive
-	AutoRandID      int64  `json:"auto_rand_id"`
-	MaxColumnID     int64  `json:"max_col_id"`
-	MaxIndexID      int64  `json:"max_idx_id"`
-	MaxForeignKeyID int64  `json:"max_fk_id"`
-	MaxConstraintID int64  `json:"max_cst_id"`
+	Comment   string `json:"comment"`
+	AutoIncID int64  `json:"auto_inc_id"`
+
+	// Only used by BR when:
+	// 1. SepAutoInc() is true
+	// 2. The table is nonclustered and has auto_increment column.
+	// In that case, both auto_increment_id and tidb_rowid need to be backup & recover.
+	// See also https://github.com/pingcap/tidb/issues/46093
+	//
+	// It should have been named TiDBRowID, but for historial reasons, we do not use separate meta key for _tidb_rowid and auto_increment_id,
+	// and field `AutoIncID` is used to serve both _tidb_rowid and auto_increment_id.
+	// If we introduce a TiDBRowID here, it could make furthur misunderstanding:
+	//	in most cases, AutoIncID is _tidb_rowid and TiDBRowID is null
+	//      but in some cases, AutoIncID is auto_increment_id and TiDBRowID is _tidb_rowid
+	// So let's just use another name AutoIncIDExtra to avoid misconception.
+	AutoIncIDExtra int64 `json:"auto_inc_id_extra,omitempty"`
+
+	AutoIdCache     int64 `json:"auto_id_cache"` //nolint:revive
+	AutoRandID      int64 `json:"auto_rand_id"`
+	MaxColumnID     int64 `json:"max_col_id"`
+	MaxIndexID      int64 `json:"max_idx_id"`
+	MaxForeignKeyID int64 `json:"max_fk_id"`
+	MaxConstraintID int64 `json:"max_cst_id"`
 	// UpdateTS is used to record the timestamp of updating the table's schema information.
 	// These changing schema operations don't include 'truncate table' and 'rename table'.
 	UpdateTS uint64 `json:"update_timestamp"`
