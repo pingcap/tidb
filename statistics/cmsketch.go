@@ -934,12 +934,7 @@ func GetMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMet
 }
 
 func getMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
-	slices.SortFunc(sorted, func(i, j TopNMeta) int {
-		if i.Count != j.Count {
-			return cmp.Compare(j.Count, i.Count)
-		}
-		return bytes.Compare(i.Encoded, j.Encoded)
-	})
+	SortTopnMeta(sorted)
 	n = mathutil.Min(uint32(len(sorted)), n)
 
 	var finalTopN TopN

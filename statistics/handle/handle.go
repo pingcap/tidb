@@ -972,7 +972,7 @@ func MergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wra
 	globalTopN, popedTopn := statistics.GetMergedTopNFromSortedSlice(sorted, n)
 
 	result := append(leftTopn, popedTopn...)
-	statistics.SortTopnMeta(&result)
+	statistics.SortTopnMeta(result)
 	return globalTopN, result, wrapper.AllHg, nil
 }
 

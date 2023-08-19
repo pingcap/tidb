@@ -347,7 +347,7 @@ func TestSortTopnMeta(t *testing.T) {
 		Encoded: []byte("b"),
 		Count:   2,
 	}}
-	SortTopnMeta(&data)
+	SortTopnMeta(data)
 	require.Equal(t, uint64(2), data[0].Count)
 }
 
