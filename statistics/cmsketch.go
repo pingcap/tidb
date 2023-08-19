@@ -919,8 +919,8 @@ func checkEmptyTopNs(topNs []*TopN) bool {
 }
 
 // SortTopnMeta sort topnMeta
-func SortTopnMeta(topnMetas *[]TopNMeta) {
-	slices.SortFunc(*topnMetas, func(i, j TopNMeta) int {
+func SortTopnMeta(topnMetas []TopNMeta) {
+	slices.SortFunc(topnMetas, func(i, j TopNMeta) int {
 		if i.Count != j.Count {
 			return cmp.Compare(j.Count, i.Count)
 		}
