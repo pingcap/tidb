@@ -203,7 +203,7 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	t.Cleanup(func() {
 		view.Stop()
 		gctuner.GlobalMemoryLimitTuner.Stop()
-		dom.Close()
+		dom.StatsHandle().Close()
 	})
 	return schematracker.UnwrapStorage(store), dom
 }
