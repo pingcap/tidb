@@ -691,12 +691,13 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	}
 
 	// Handle exchange partition
-	err := exchangePartitionCheckRow(e.Ctx(), row, e.Table)
-	if err != nil {
-		return nil, err
+	tbl := e.Table.Meta()
+	if tbl.ExchangePartitionInfo != nil {
+		if err := exchangePartitionCheckRow(e.Ctx(), row, e.Table); err != nil {
+			return nil, err
+		}
 	}
 
-	tbl := e.Table.Meta()
 	sc := e.Ctx().GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
 	for i, gCol := range gCols {

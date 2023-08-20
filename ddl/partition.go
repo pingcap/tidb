@@ -2457,9 +2457,19 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 				return ver, errors.Trace(err)
 			}
 		}
+		pt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
+			CurrentIsPartitionTable:      true,
+			ExchangePartitionTableID:     nt.ID,
+			ExchangePartitionPartitionID: defID,
+		}
+		err = t.UpdateTable(ptSchemaID, pt)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
-			ExchangePartitionID:    ptID,
-			ExchangePartitionDefID: defID,
+			CurrentIsPartitionTable:      false,
+			ExchangePartitionTableID:     ptID,
+			ExchangePartitionPartitionID: defID,
 		}
 		// We need an interim schema version,
 		// so there are no non-matching rows inserted
@@ -2622,6 +2632,11 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	job.SchemaState = model.StatePublic
+	pt.ExchangePartitionInfo = nil
+	err = t.UpdateTable(ptSchemaID, pt)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 	nt.ExchangePartitionInfo = nil
 	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	if err != nil {

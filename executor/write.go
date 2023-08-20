@@ -50,9 +50,9 @@ var (
 // It check if rowData inserted or updated violate partition definition or check constraints.
 func exchangePartitionCheckRow(sctx sessionctx.Context, row []types.Datum, t table.Table) error {
 	tbl := t.Meta()
-	if tbl.ExchangePartitionInfo != nil {
+	if tbl.ExchangePartitionInfo.CurrentIsPartitionTable == false {
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
+		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionTableID)
 		if !tableFound {
 			return errors.Errorf("exchange partition process table by id failed")
 		}
@@ -64,7 +64,7 @@ func exchangePartitionCheckRow(sctx sessionctx.Context, row []types.Datum, t tab
 			sctx,
 			pt.Meta().Partition,
 			row,
-			tbl.ExchangePartitionInfo.ExchangePartitionDefID,
+			tbl.ExchangePartitionInfo.ExchangePartitionPartitionID,
 		)
 		if err != nil {
 			return err
@@ -80,7 +80,7 @@ func exchangePartitionCheckRow(sctx sessionctx.Context, row []types.Datum, t tab
 				return err
 			}
 		}
-	} else if len(tbl.ExchangePartitionPartIDs) > 0 {
+	} else {
 		if variable.EnableCheckConstraint.Load() {
 			p, ok := t.(table.PartitionedTable)
 			if !ok {
@@ -90,13 +90,16 @@ func exchangePartitionCheckRow(sctx sessionctx.Context, row []types.Datum, t tab
 			if err != nil {
 				return err
 			}
-			partId := physicalTable.GetPhysicalID()
-			ntId, ok := tbl.ExchangePartitionPartIDs[partId]
-			if ok {
+			partID := physicalTable.GetPhysicalID()
+			if partID == tbl.ExchangePartitionInfo.ExchangePartitionPartitionID {
 				is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-				nt, tableFound := is.TableByID(ntId)
+				nt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionTableID)
 				if !tableFound {
-					return errors.Errorf("exchange partition process table by id failed")
+					// Now partID is nt tableID.
+					nt, tableFound = is.TableByID(partID)
+					if !tableFound {
+						return errors.Errorf("exchange partition process table by id failed")
+					}
 				}
 				cc, ok := nt.(table.CheckConstraintTable)
 				if !ok {
@@ -146,9 +149,10 @@ func updateRecord(
 	}
 
 	// Handle exchange partition
-	err := exchangePartitionCheckRow(sctx, newData, t)
-	if err != nil {
-		return false, err
+	if t.Meta().ExchangePartitionInfo != nil {
+		if err := exchangePartitionCheckRow(sctx, newData, t); err != nil {
+			return false, err
+		}
 	}
 
 	// Compare datum, then handle some flags.

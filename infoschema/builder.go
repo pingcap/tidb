@@ -315,9 +315,33 @@ func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff)
 }
 
 func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	// The partitioned table is not affected until the last stage
-	if diff.OldTableID == diff.TableID && diff.OldSchemaID == diff.SchemaID {
-		return b.applyTableUpdate(m, diff)
+	// It is not in StatePublic.
+	if len(diff.AffectedOpts) > 0 && diff.AffectedOpts[0].OldSchemaID != 0 {
+		ntSchemaID := diff.SchemaID
+		ntID := diff.TableID
+		ptSchemaID := diff.AffectedOpts[0].OldSchemaID
+		ptID := diff.AffectedOpts[0].TableID
+		currDiff := &model.SchemaDiff{
+			Type:        diff.Type,
+			Version:     diff.Version,
+			TableID:     ntID,
+			SchemaID:    ntSchemaID,
+			OldTableID:  ntID,
+			OldSchemaID: ntSchemaID,
+		}
+		ntIDs, err := b.applyTableUpdate(m, currDiff)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		currDiff.TableID = ptID
+		currDiff.SchemaID = ptSchemaID
+		currDiff.OldTableID = ptID
+		currDiff.OldSchemaID = ptSchemaID
+		ptIDs, err := b.applyTableUpdate(m, currDiff)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return append(ptIDs, ntIDs...), nil
 	}
 	ntSchemaID := diff.OldSchemaID
 	ntID := diff.OldTableID

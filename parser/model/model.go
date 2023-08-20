@@ -534,11 +534,7 @@ type TableInfo struct {
 	// StatsOptions is used when do analyze/auto-analyze for each table
 	StatsOptions *StatsOptions `json:"stats_options"`
 
-	// Current table is non-partition table.
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
-	// Current table is partition table.
-	// Key: partID, value: non-partition tableID.
-	ExchangePartitionPartIDs map[int64]int64 `json:"exchange_partition_partids"`
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
 }
@@ -1168,8 +1164,11 @@ func (p PartitionType) String() string {
 
 // ExchangePartitionInfo provides exchange partition info.
 type ExchangePartitionInfo struct {
-	ExchangePartitionID    int64 `json:"exchange_partition_id"`
-	ExchangePartitionDefID int64 `json:"exchange_partition_def_id"`
+	// Table which has the info is a partition table
+	CurrentIsPartitionTable bool
+	// nt tableID if CurrentIsPartitionTable is true, else pt tableID.
+	ExchangePartitionTableID int64 `json:"exchange_partition_table_id"`
+	ExchangePartitionPartitionID    int64 `json:"exchange_partition_partition_id"`
 	// Deprecated, not used
 	XXXExchangePartitionFlag bool `json:"exchange_partition_flag"`
 }

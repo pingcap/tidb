@@ -874,9 +874,9 @@ func TestExchangePartitionCheckConstraintStates(t *testing.T) {
 
 	tk.MustExec(`insert into pt values (60, 60)`)
 	// violate nt (b > 50)
-	//tk.MustContainErrMsg(`insert into pt values (60, 50)`, errMsg)
+	tk.MustContainErrMsg(`insert into pt values (60, 50)`, errMsg)
 	// violate nt (b > 50)
-	//tk.MustContainErrMsg(`update pt set b = 50 where b = 60`, errMsg)
+	tk.MustContainErrMsg(`update pt set b = 50 where b = 60`, errMsg)
 	// row in partition p0(less than (50)), is ok.
 	tk.MustExec(`insert into pt values (30, 50)`)
 
@@ -888,12 +888,27 @@ func TestExchangePartitionCheckConstraintStates(t *testing.T) {
 	tk.MustExec(`insert into pt values (60, 50)`)
 	tk.MustExec(`update pt set b = 50 where b = 60`)
 
-	tk.MustExec(`set @@global.tidb_enable_check_constraint = 1`)
+	tk5 := testkit.NewTestKit(t, store)
+	tk5.MustExec(`use check_constraint`)
+	tk5.MustExec("begin")
+	// Let tk5 get mdl of pt with the version of write-only state.
+	tk5.MustQuery(`select * from pt`)
 
-	// Release table mdl.
+	// Release tk2 mdl, then ddl will enter next state.
 	tk2.MustExec("commit")
-	// wait alter sql finish.
-	_ = <-alterChan
+
+	waitFor("pt", "none", 4)
+
+	tk.MustExec(`set @@global.tidb_enable_check_constraint = 1`)
+	// violate nt (b > 50)
+	// Now tk5 handle the sql with MDL: pt version state is write-only, nt version state is none.
+	tk5.MustContainErrMsg(`insert into pt values (60, 50)`, errMsg)
+
+	// Release tk5 mdl.
+	tk5.MustExec("commit")
+
+	// Wait ddl finish.
+	<-alterChan
 	tk.MustExec(`drop database check_constraint`)
 }
 
