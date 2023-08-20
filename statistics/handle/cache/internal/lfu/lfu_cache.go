@@ -196,6 +196,7 @@ func (s *LFU) Close() {
 	})
 }
 
+// Clear implements statsCacheInner
 func (s *LFU) Clear() {
 	s.cache.Clear()
 	s.resultKeySet.Clear()
