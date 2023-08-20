@@ -190,7 +190,13 @@ func (s *LFU) metrics() *ristretto.Metrics {
 // Close implements statsCacheInner
 func (s *LFU) Close() {
 	s.closeOnce.Do(func() {
+		s.Clear()
 		s.cache.Close()
 		s.cache.Wait()
 	})
+}
+
+func (s *LFU) Clear() {
+	s.cache.Clear()
+	s.resultKeySet.Clear()
 }
