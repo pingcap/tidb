@@ -351,7 +351,7 @@ func RebuildPlan4CachedPlan(p Plan) (ok bool) {
 	sc.InPreparedPlanBuilding = true
 	defer func() { sc.InPreparedPlanBuilding = false }()
 	if err := rebuildRange(p); err != nil {
-		// TODO: log or warn this error.
+		sc.AppendWarning(errors.Errorf("skip plan-cache: plan rebuild failed, %s", err.Error()))
 		return false // fail to rebuild ranges
 	}
 	if !sc.UseCache {

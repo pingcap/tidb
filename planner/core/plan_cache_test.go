@@ -2446,6 +2446,18 @@ func TestIssue45378(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
+func TestIssue46159(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a varchar(10), key(a(5)))`)
+	tk.MustExec(`prepare st from 'select a from t use index(a) where a=?'`)
+	tk.MustExec(`set @a='a'`)
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: plan rebuild failed, rebuild to get an unsafe range"))
+}
+
 func TestBuiltinFuncFlen(t *testing.T) {
 	// same as TestIssue45378 and TestIssue45253
 	store := testkit.CreateMockStore(t)
