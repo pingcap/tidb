@@ -569,7 +569,7 @@ func NewBackend(
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 	keyAdapter := KeyAdapter(NoopKeyAdapter{})
 	if config.DupeDetectEnabled {
-		keyAdapter = dupDetectKeyAdapter{}
+		keyAdapter = DupDetectKeyAdapter{}
 	}
 	var writeLimiter StoreWriteLimiter
 	if config.StoreWriteBWLimit > 0 {

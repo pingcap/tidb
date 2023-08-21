@@ -112,7 +112,15 @@ func (m *MemoryIngestData) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]
 	if firstKeyIdx < 0 || firstKeyIdx > lastKeyIdx {
 		return nil, nil, nil
 	}
-	return m.keys[firstKeyIdx], m.keys[lastKeyIdx], nil
+	firstKey, err := m.keyAdapter.Decode(nil, m.keys[firstKeyIdx])
+	if err != nil {
+		return nil, nil, err
+	}
+	lastKey, err := m.keyAdapter.Decode(nil, m.keys[lastKeyIdx])
+	if err != nil {
+		return nil, nil, err
+	}
+	return firstKey, lastKey, nil
 }
 
 type memoryDataIter struct {

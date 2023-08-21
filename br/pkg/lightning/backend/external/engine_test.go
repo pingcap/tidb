@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -136,8 +137,12 @@ func testNewIter(
 	)
 	for iter.First(); iter.Valid(); iter.Next() {
 		require.NoError(t, iter.Error())
-		keys = append(keys, iter.Key())
-		values = append(values, iter.Value())
+		key := make([]byte, len(iter.Key()))
+		copy(key, iter.Key())
+		keys = append(keys, key)
+		value := make([]byte, len(iter.Value()))
+		copy(value, iter.Value())
+		values = append(values, value)
 	}
 	require.NoError(t, iter.Error())
 	require.Equal(t, expectedKeys, keys)
@@ -186,5 +191,48 @@ func TestMemoryIngestData(t *testing.T) {
 	dir := t.TempDir()
 	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
 	require.NoError(t, err)
-	_ = db
+	keyAdapter := local.DupDetectKeyAdapter{}
+	data = &MemoryIngestData{
+		keyAdapter:         keyAdapter,
+		duplicateDetection: true,
+		duplicateDB:        db,
+		ts:                 234,
+	}
+	encodedKeys := make([][]byte, 0, len(keys)*2)
+	encodedValues := make([][]byte, 0, len(values)*2)
+	encodedZero := codec.EncodeInt(nil, 0)
+	encodedOne := codec.EncodeInt(nil, 1)
+
+	for i := range keys {
+		encodedKeys = append(encodedKeys, keyAdapter.Encode(nil, keys[i], encodedZero))
+		encodedValues = append(encodedValues, values[i])
+		if i%2 == 0 {
+			continue
+		}
+		encodedKeys = append(encodedKeys, keyAdapter.Encode(nil, keys[i], encodedOne))
+		newValues := make([]byte, len(values[i])+1)
+		copy(newValues, values[i])
+		newValues[len(values[i])] = 1
+		encodedValues = append(encodedValues, newValues)
+	}
+	data.keys = encodedKeys
+	data.values = encodedValues
+
+	require.EqualValues(t, 234, data.GetTS())
+	testGetFirstAndLastKey(t, data, nil, nil, []byte("key1"), []byte("key5"))
+	testGetFirstAndLastKey(t, data, []byte("key1"), []byte("key6"), []byte("key1"), []byte("key5"))
+	testGetFirstAndLastKey(t, data, []byte("key2"), []byte("key5"), []byte("key2"), []byte("key4"))
+	testGetFirstAndLastKey(t, data, []byte("key25"), []byte("key35"), []byte("key3"), []byte("key3"))
+	testGetFirstAndLastKey(t, data, []byte("key25"), []byte("key26"), nil, nil)
+	testGetFirstAndLastKey(t, data, []byte("key0"), []byte("key1"), nil, nil)
+	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
+
+	testNewIter(t, data, nil, nil, keys, values)
+	// TODO(lance6716): check dupDB
+	testNewIter(t, data, []byte("key1"), []byte("key6"), keys, values)
+	testNewIter(t, data, []byte("key2"), []byte("key5"), keys[1:4], values[1:4])
+	testNewIter(t, data, []byte("key25"), []byte("key35"), keys[2:3], values[2:3])
+	testNewIter(t, data, []byte("key25"), []byte("key26"), nil, nil)
+	testNewIter(t, data, []byte("key0"), []byte("key1"), nil, nil)
+	testNewIter(t, data, []byte("key6"), []byte("key9"), nil, nil)
 }
