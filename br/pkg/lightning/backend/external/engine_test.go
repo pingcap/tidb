@@ -145,8 +145,28 @@ func testNewIter(
 		values = append(values, value)
 	}
 	require.NoError(t, iter.Error())
+	require.NoError(t, iter.Close())
 	require.Equal(t, expectedKeys, keys)
 	require.Equal(t, expectedValues, values)
+}
+
+func checkDupDB(t *testing.T, db *pebble.DB, expectedKeys, expectedValues [][]byte) {
+	iter := db.NewIter(nil)
+	gotKeys := make([][]byte, 0, len(expectedKeys))
+	gotValues := make([][]byte, 0, len(expectedValues))
+	for iter.First(); iter.Valid(); iter.Next() {
+		key := make([]byte, len(iter.Key()))
+		copy(key, iter.Key())
+		gotKeys = append(gotKeys, key)
+		value := make([]byte, len(iter.Value()))
+		copy(value, iter.Value())
+		gotValues = append(gotValues, value)
+	}
+	require.NoError(t, iter.Close())
+	require.Equal(t, expectedKeys, gotKeys)
+	require.Equal(t, expectedValues, gotValues)
+	err := db.DeleteRange([]byte{0}, []byte{255}, nil)
+	require.NoError(t, err)
 }
 
 func TestMemoryIngestData(t *testing.T) {
@@ -228,7 +248,7 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
 
 	testNewIter(t, data, nil, nil, keys, values)
-	// TODO(lance6716): check dupDB
+	checkDupDB(t, db, encodedKeys, encodedValues)
 	testNewIter(t, data, []byte("key1"), []byte("key6"), keys, values)
 	testNewIter(t, data, []byte("key2"), []byte("key5"), keys[1:4], values[1:4])
 	testNewIter(t, data, []byte("key25"), []byte("key35"), keys[2:3], values[2:3])
