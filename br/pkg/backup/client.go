@@ -592,6 +592,8 @@ func BuildBackupRangeAndSchema(
 						// Print a warning in other scenes, should it be a INFO log?
 						log.Warn("get rowid error", zap.Error(err1))
 					}
+					// NextGlobalAutoID = globalAutoID  + 1
+					globalAutoID = globalAutoID + 1
 				} else {
 					globalAutoID, err = idAlloc.NextGlobalAutoID()
 				}
