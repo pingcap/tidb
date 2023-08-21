@@ -52,6 +52,7 @@ func TestWorkerPool(t *testing.T) {
 	// Create a worker pool with 3 workers.
 	pool, err := NewWorkerPool[int64]("test", util.UNKNOWN, 3, createMyWorker)
 	require.NoError(t, err)
+	pool.Start()
 	globalCnt.Store(0)
 
 	g := new(errgroup.Group)
@@ -121,6 +122,7 @@ func TestWorkerPoolNoneResult(t *testing.T) {
 			return dummyWorker[int64, None]{}
 		})
 	require.NoError(t, err)
+	pool.Start()
 	ch := pool.GetResultChan()
 	require.Nil(t, ch)
 	pool.ReleaseAndWait()
@@ -131,6 +133,7 @@ func TestWorkerPoolNoneResult(t *testing.T) {
 			return dummyWorker[int64, int64]{}
 		})
 	require.NoError(t, err)
+	pool2.Start()
 	require.NotNil(t, pool2.GetResultChan())
 	pool2.ReleaseAndWait()
 
@@ -140,6 +143,7 @@ func TestWorkerPoolNoneResult(t *testing.T) {
 			return dummyWorker[int64, struct{}]{}
 		})
 	require.NoError(t, err)
+	pool3.Start()
 	require.NotNil(t, pool3.GetResultChan())
 	pool3.ReleaseAndWait()
 }

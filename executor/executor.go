@@ -2716,6 +2716,7 @@ func (e *FastCheckTableExec) Next(context.Context, *chunk.Chunk) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	workerPool.Start()
 
 	e.wg.Add(len(e.indexInfos))
 	for i := range e.indexInfos {

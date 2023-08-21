@@ -50,15 +50,8 @@ type Option[T, R any] interface {
 	Apply(pool *WorkerPool[T, R])
 }
 
-// None is a placeholder for no destination.
+// None is a type placeholder for the worker pool that does not have a result receiver.
 type None struct{}
-
-// NewWorkerPoolWithoutCreateWorker creates a new worker pool without creating worker.
-func NewWorkerPoolWithoutCreateWorker[T, R any](name string, component util.Component,
-	numWorkers int, opts ...Option[T, R]) (*WorkerPool[T, R], error) {
-
-	return p, nil
-}
 
 // NewWorkerPool creates a new worker pool.
 func NewWorkerPool[T, R any](name string, component util.Component, numWorkers int,
@@ -71,14 +64,7 @@ func NewWorkerPool[T, R any](name string, component util.Component, numWorkers i
 		name:          name,
 		numWorkers:    int32(numWorkers),
 		originWorkers: int32(numWorkers),
-		taskChan:      make(chan T),
 		quitChan:      make(chan struct{}),
-	}
-
-	var zero R
-	var r interface{} = zero
-	if _, ok := r.(None); !ok {
-		p.resChan = make(chan R)
 	}
 
 	for _, opt := range opts {
@@ -86,12 +72,29 @@ func NewWorkerPool[T, R any](name string, component util.Component, numWorkers i
 	}
 
 	p.createWorker = createWorker
-	p.Start()
 	return p, nil
+}
+
+// SetTaskReceiver sets the task receiver for the pool.
+func (p *WorkerPool[T, R]) SetTaskReceiver(recv <-chan T) {
+	p.taskChan = recv
+}
+
+// SetResultSender sets the result sender for the pool.
+func (p *WorkerPool[T, R]) SetResultSender(sender chan<- R) {
+	p.resChan = sender
 }
 
 // Start starts default count of workers.
 func (p *WorkerPool[T, R]) Start() {
+	if p.taskChan == nil {
+		p.taskChan = make(chan T)
+	}
+	var zero R
+	var r interface{} = zero
+	if _, ok := r.(None); !ok {
+		p.resChan = make(chan R)
+	}
 	for i := 0; i < int(p.numWorkers); i++ {
 		p.runAWorker()
 	}
