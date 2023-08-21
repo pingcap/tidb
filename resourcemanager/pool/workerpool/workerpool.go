@@ -54,7 +54,7 @@ type Option[T, R any] interface {
 type None struct{}
 
 // NewWorkerPool creates a new worker pool.
-func NewWorkerPool[T, R any](name string, component util.Component, numWorkers int,
+func NewWorkerPool[T, R any](name string, _ util.Component, numWorkers int,
 	createWorker func() Worker[T, R], opts ...Option[T, R]) (*WorkerPool[T, R], error) {
 	if numWorkers <= 0 {
 		numWorkers = 1

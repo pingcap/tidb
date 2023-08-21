@@ -7,7 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//metrics",
-        "//resourcemanager",
         "//resourcemanager/util",
         "//util",
         "//util/syncutil",
