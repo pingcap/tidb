@@ -928,6 +928,15 @@ func SortTopnMeta(topnMetas []TopNMeta) {
 	})
 }
 
+// TopnMetaCompare compare topnMeta
+func TopnMetaCompare(i, j TopNMeta) int {
+	c := cmp.Compare(i.Count, j.Count)
+	if c == 0 {
+		return c
+	}
+	return bytes.Compare(i.Encoded, j.Encoded)
+}
+
 // GetMergedTopNFromSortedSlice returns merged topn
 func GetMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
 	return getMergedTopNFromSortedSlice(sorted, n)
