@@ -1177,8 +1177,12 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	return row.GetString(0), false, nil
 }
 
-// SupportUpgradeStateVer is exported for testing.
-var SupportUpgradeStateVer = version145
+var (
+	// SupportUpgradeStateVer is exported for testing.
+	SupportUpgradeStateVer int64 = version145
+	// SupportUpgradeHTTPOpVer is exported for testing.
+	SupportUpgradeHTTPOpVer int64 = version172
+)
 
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
@@ -1189,8 +1193,8 @@ func upgrade(s Session) {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
-	if ver >= int64(SupportUpgradeStateVer) {
-		isAllowedUpgrade(s)
+	if ver >= SupportUpgradeStateVer {
+		checkOrSyncUpgrade(s, ver)
 	}
 
 	// Only upgrade from under version92 and this TiDB is not owner set.
@@ -1353,7 +1357,12 @@ func IsUpgradingClusterState(s Session) (bool, error) {
 	return stateInfo.State == syncer.StateUpgrading, nil
 }
 
-func isAllowedUpgrade(s Session) {
+func checkOrSyncUpgrade(s Session, ver int64) {
+	if ver < SupportUpgradeHTTPOpVer {
+		terror.MustNil(SyncUpgradeState(s))
+		return
+	}
+
 	isUpgrading, err := IsUpgradingClusterState(s)
 	if err != nil {
 		logutil.BgLogger().Fatal("get global state failed", zap.String("category", "upgrading"), zap.Error(err))
@@ -1362,6 +1371,8 @@ func isAllowedUpgrade(s Session) {
 		logutil.BgLogger().Fatal("global state isn't upgrading, please send a request to start the upgrade first",
 			zap.String("category", "upgrading"), zap.Error(err))
 	}
+	logutil.BgLogger().Info("global state is upgrading", zap.String("category", "upgrading"),
+		zap.Int64("old version", ver), zap.Int64("latest version", currentBootstrapVersion))
 }
 
 // checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.

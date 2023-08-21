@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/server/handler"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
@@ -293,6 +294,54 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 			" PARTITION `p2` VALUES LESS THAN (3072),\n" +
 			" PARTITION `p3` VALUES LESS THAN (4096),\n" +
 			" PARTITION `p4` VALUES LESS THAN (7096))"))
+}
+
+// TestUpgradeVersionForUpgradeHTTPOp tests SupportUpgradeHTTPOpVer upgrade SupportUpgradeHTTPOpVer++.
+func TestUpgradeVersionForUpgradeHTTPOp(t *testing.T) {
+	*session.WithMockUpgrade = true
+	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seV := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(session.SupportUpgradeHTTPOpVer)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	session.MustExec(t, seV, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", session.SupportUpgradeHTTPOpVer))
+	session.UnsetStoreBootstrapped(store.UUID())
+	ver, err := session.GetBootstrapVersion(seV)
+	require.NoError(t, err)
+	require.Equal(t, session.SupportUpgradeHTTPOpVer, ver)
+	dom.Close()
+
+	// Start the upgrade test.
+	// Current cluster state is normal.
+	isUpgrading, err := session.IsUpgradingClusterState(seV)
+	require.NoError(t, err)
+	require.Equal(t, false, isUpgrading)
+	upgradeHandler := handler.NewClusterUpgradeHandler(store)
+	upgradeHandler.StartUpgrade()
+	domLatestV, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domLatestV.Close()
+	seLatestV := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seLatestV)
+	require.NoError(t, err)
+	require.Equal(t, session.SupportUpgradeHTTPOpVer+1, ver)
+	// Current cluster state is upgrading.
+	isUpgrading, err = session.IsUpgradingClusterState(seLatestV)
+	require.NoError(t, err)
+	require.Equal(t, true, isUpgrading)
+	upgradeHandler.FinishUpgrade()
+	// Upgrading is finished and current cluster state is normal.
+	isUpgrading, err = session.IsUpgradingClusterState(seV)
+	require.NoError(t, err)
+	require.Equal(t, false, isUpgrading)
 }
 
 func TestUpgradeVersionForPausedJob(t *testing.T) {
