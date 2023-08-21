@@ -183,6 +183,7 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 			if statsHandle.IsTableLocked(tableID) {
 				tbl, ok := infoSchema.TableByID(tableID)
 				if !ok {
+					logutil.BgLogger().Warn("Unknown table ID in analyze task", zap.Int64("tid", tableID))
 					continue
 				}
 				skippedTables = append(skippedTables, tbl.Meta().Name.L)
