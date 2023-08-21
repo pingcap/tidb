@@ -18,10 +18,9 @@ import (
 	"context"
 	"fmt"
 	"runtime/trace"
+	"slices"
 	"sync"
 	"sync/atomic"
-
-	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
