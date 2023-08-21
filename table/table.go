@@ -256,13 +256,6 @@ type PartitionedTable interface {
 	CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) error
 }
 
-// CheckConstraintTable is only used for ExchangePartition during write only state.
-// Function CheckRowConstraint will return error is row not satisfy check constraints.
-type CheckConstraintTable interface {
-	Table
-	CheckRowConstraint(sctx sessionctx.Context, rowToCheck []types.Datum) error
-}
-
 // TableFromMeta builds a table.Table from *model.TableInfo.
 // Currently, it is assigned to tables.TableFromMeta in tidb package's init function.
 var TableFromMeta func(allocators autoid.Allocators, tblInfo *model.TableInfo) (Table, error)

@@ -2458,7 +2458,6 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 		}
 		pt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
-			CurrentIsPartitionTable:      true,
 			ExchangePartitionTableID:     nt.ID,
 			ExchangePartitionPartitionID: defID,
 		}
@@ -2467,7 +2466,6 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			return ver, errors.Trace(err)
 		}
 		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
-			CurrentIsPartitionTable:      false,
 			ExchangePartitionTableID:     ptID,
 			ExchangePartitionPartitionID: defID,
 		}
@@ -2536,6 +2534,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	// exchange table meta id
+	pt.ExchangePartitionInfo = nil
 	partDef.ID, nt.ID = nt.ID, partDef.ID
 
 	err = t.UpdateTable(ptSchemaID, pt)
@@ -2632,11 +2631,6 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	job.SchemaState = model.StatePublic
-	pt.ExchangePartitionInfo = nil
-	err = t.UpdateTable(ptSchemaID, pt)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
 	nt.ExchangePartitionInfo = nil
 	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	if err != nil {

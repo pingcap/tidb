@@ -1164,9 +1164,7 @@ func (p PartitionType) String() string {
 
 // ExchangePartitionInfo provides exchange partition info.
 type ExchangePartitionInfo struct {
-	// Table which has the info is a partition table
-	CurrentIsPartitionTable bool
-	// nt tableID if CurrentIsPartitionTable is true, else pt tableID.
+	// It is nt tableID when table which has the info is a partition table, else pt tableID.
 	ExchangePartitionTableID int64 `json:"exchange_partition_table_id"`
 	ExchangePartitionPartitionID    int64 `json:"exchange_partition_partition_id"`
 	// Deprecated, not used

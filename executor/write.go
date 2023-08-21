@@ -50,7 +50,7 @@ var (
 // It check if rowData inserted or updated violate partition definition or check constraints.
 func exchangePartitionCheckRow(sctx sessionctx.Context, row []types.Datum, t table.Table) error {
 	tbl := t.Meta()
-	if tbl.ExchangePartitionInfo.CurrentIsPartitionTable == false {
+	if tbl.GetPartitionInfo() == nil {
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionTableID)
 		if !tableFound {
@@ -70,7 +70,10 @@ func exchangePartitionCheckRow(sctx sessionctx.Context, row []types.Datum, t tab
 			return err
 		}
 		if variable.EnableCheckConstraint.Load() {
-			cc, ok := pt.(table.CheckConstraintTable)
+			type CheckConstraintTable interface {
+				CheckRowConstraint(sctx sessionctx.Context, rowToCheck []types.Datum) error
+			}
+			cc, ok := pt.(CheckConstraintTable)
 			if !ok {
 				return errors.Errorf("exchange partition process assert check constraint failed")
 			}
@@ -101,7 +104,10 @@ func exchangePartitionCheckRow(sctx sessionctx.Context, row []types.Datum, t tab
 						return errors.Errorf("exchange partition process table by id failed")
 					}
 				}
-				cc, ok := nt.(table.CheckConstraintTable)
+				type CheckConstraintTable interface {
+					CheckRowConstraint(sctx sessionctx.Context, rowToCheck []types.Datum) error
+				}
+				cc, ok := nt.(CheckConstraintTable)
 				if !ok {
 					return errors.Errorf("exchange partition process assert check constraint failed")
 				}
