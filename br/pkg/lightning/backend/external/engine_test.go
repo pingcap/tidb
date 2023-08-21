@@ -152,8 +152,9 @@ func testNewIter(
 
 func checkDupDB(t *testing.T, db *pebble.DB, expectedKeys, expectedValues [][]byte) {
 	iter := db.NewIter(nil)
-	gotKeys := make([][]byte, 0, len(expectedKeys))
-	gotValues := make([][]byte, 0, len(expectedValues))
+	var (
+		gotKeys, gotValues [][]byte
+	)
 	for iter.First(); iter.Valid(); iter.Next() {
 		key := make([]byte, len(iter.Key()))
 		copy(key, iter.Key())
@@ -222,18 +223,29 @@ func TestMemoryIngestData(t *testing.T) {
 	encodedValues := make([][]byte, 0, len(values)*2)
 	encodedZero := codec.EncodeInt(nil, 0)
 	encodedOne := codec.EncodeInt(nil, 1)
+	duplicatedKeys := make([][]byte, 0, len(keys)*2)
+	duplicatedValues := make([][]byte, 0, len(values)*2)
 
 	for i := range keys {
-		encodedKeys = append(encodedKeys, keyAdapter.Encode(nil, keys[i], encodedZero))
+		encodedKey := keyAdapter.Encode(nil, keys[i], encodedZero)
+		encodedKeys = append(encodedKeys, encodedKey)
 		encodedValues = append(encodedValues, values[i])
 		if i%2 == 0 {
 			continue
 		}
-		encodedKeys = append(encodedKeys, keyAdapter.Encode(nil, keys[i], encodedOne))
+
+		// duplicatedKeys will be like key2_0, key2_1, key4_0, key4_1
+		duplicatedKeys = append(duplicatedKeys, encodedKey)
+		duplicatedValues = append(duplicatedValues, values[i])
+
+		encodedKey = keyAdapter.Encode(nil, keys[i], encodedOne)
+		encodedKeys = append(encodedKeys, encodedKey)
 		newValues := make([]byte, len(values[i])+1)
 		copy(newValues, values[i])
 		newValues[len(values[i])] = 1
 		encodedValues = append(encodedValues, newValues)
+		duplicatedKeys = append(duplicatedKeys, encodedKey)
+		duplicatedValues = append(duplicatedValues, newValues)
 	}
 	data.keys = encodedKeys
 	data.values = encodedValues
@@ -248,11 +260,19 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
 
 	testNewIter(t, data, nil, nil, keys, values)
-	checkDupDB(t, db, encodedKeys, encodedValues)
+	checkDupDB(t, db, duplicatedKeys, duplicatedValues)
 	testNewIter(t, data, []byte("key1"), []byte("key6"), keys, values)
+	checkDupDB(t, db, duplicatedKeys, duplicatedValues)
+	testNewIter(t, data, []byte("key1"), []byte("key3"), keys[:2], values[:2])
+	checkDupDB(t, db, duplicatedKeys[:2], duplicatedValues[:2])
 	testNewIter(t, data, []byte("key2"), []byte("key5"), keys[1:4], values[1:4])
+	checkDupDB(t, db, duplicatedKeys, duplicatedValues)
 	testNewIter(t, data, []byte("key25"), []byte("key35"), keys[2:3], values[2:3])
+	checkDupDB(t, db, nil, nil)
 	testNewIter(t, data, []byte("key25"), []byte("key26"), nil, nil)
+	checkDupDB(t, db, nil, nil)
 	testNewIter(t, data, []byte("key0"), []byte("key1"), nil, nil)
+	checkDupDB(t, db, nil, nil)
 	testNewIter(t, data, []byte("key6"), []byte("key9"), nil, nil)
+	checkDupDB(t, db, nil, nil)
 }
