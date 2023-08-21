@@ -33,10 +33,15 @@ func (p *AsyncPipeline) Execute() error {
 }
 
 // Close waits all tasks done.
-func (p *AsyncPipeline) Close() {
+func (p *AsyncPipeline) Close() error {
+	var firstErr error
 	for _, op := range p.ops {
-		op.Close()
+		err := op.Close()
+		if firstErr == nil {
+			firstErr = err
+		}
 	}
+	return firstErr
 }
 
 // NewAsyncPipeline creates a new AsyncPipeline.

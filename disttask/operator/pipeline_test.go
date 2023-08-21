@@ -37,7 +37,8 @@ func TestPipelineAsyncMultiOperators(t *testing.T) {
 	pipeline := NewAsyncPipeline(splitter, lower, counter, collector)
 	err := pipeline.Execute()
 	require.NoError(t, err)
-	pipeline.Close()
+	err = pipeline.Close()
+	require.NoError(t, err)
 	require.Equal(t, mostCommonWord, "hit")
 }
 

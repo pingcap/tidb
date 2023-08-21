@@ -30,9 +30,9 @@ type Operator interface {
 
 // AsyncOperator process the data in async way.
 //
-//	Eg: The sink of AsyncOperator op1 and the source of op2
-//  	use the same channel, Then op2's worker will handle
-//   	the result from op1.
+//		Eg: The sink of AsyncOperator op1 and the source of op2
+//	 	use the same channel, Then op2's worker will handle
+//	  	the result from op1.
 type AsyncOperator[T, R any] struct {
 	wg   *sync.WaitGroup
 	pool *workerpool.WorkerPool[T, R]

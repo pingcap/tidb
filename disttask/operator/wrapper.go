@@ -53,7 +53,7 @@ func (s *simpleSource[T]) SetSink(ch DataChannel[T]) {
 	s.sink = ch
 }
 
-func (s *simpleSource[T]) Display() string {
+func (*simpleSource[T]) Display() string {
 	return "simpleSource"
 }
 
@@ -94,7 +94,7 @@ func (s *simpleSink[T]) SetSource(ch DataChannel[T]) {
 	s.source = ch
 }
 
-func (s *simpleSink[R]) Display() string {
+func (*simpleSink[R]) Display() string {
 	return "simpleSink"
 }
 
@@ -103,7 +103,7 @@ type simpleOperator[T, R any] struct {
 	transform func(T) R
 }
 
-func (s *simpleOperator[T, R]) Display() string {
+func (*simpleOperator[T, R]) Display() string {
 	return "simpleOperator"
 }
 
@@ -125,4 +125,4 @@ func (s simpleWorker[T, R]) HandleTask(task T) R {
 	return s.transform(task)
 }
 
-func (s simpleWorker[T, R]) Close() {}
+func (simpleWorker[T, R]) Close() {}
