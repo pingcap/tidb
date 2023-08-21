@@ -93,12 +93,6 @@ type Handle struct {
 	// written only after acquiring the lock.
 	statsCache *cache.StatsCachePointer
 
-	// feedback is used to store query feedback info.
-	feedback struct {
-		data *statistics.QueryFeedbackMap
-		sync.Mutex
-	}
-
 	// globalMap contains all the delta map from collectors when we dump them to KV.
 	globalMap struct {
 		data tableDeltaMap
@@ -119,8 +113,6 @@ type Handle struct {
 
 	mu struct {
 		ctx sessionctx.Context
-		// rateMap contains the error rate delta from feedback.
-		rateMap errorRateDeltaMap
 		syncutil.RWMutex
 	}
 
@@ -460,9 +452,6 @@ func (h *Handle) Clear() {
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
-	h.feedback.Lock()
-	h.feedback.data = statistics.NewQueryFeedbackMap()
-	h.feedback.Unlock()
 	h.mu.ctx.GetSessionVars().InitChunkSize = 1
 	h.mu.ctx.GetSessionVars().MaxChunkSize = 1
 	h.mu.ctx.GetSessionVars().EnableChunkRPC = false
@@ -474,7 +463,6 @@ func (h *Handle) Clear() {
 	h.colMap.Lock()
 	h.colMap.data = make(colStatsUsageMap)
 	h.colMap.Unlock()
-	h.mu.rateMap = make(errorRateDeltaMap)
 	h.mu.Unlock()
 }
 
@@ -499,14 +487,12 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
 	handle.mu.ctx = ctx
-	handle.mu.rateMap = make(errorRateDeltaMap)
 	statsCache, err := cache.NewStatsCachePointer()
 	if err != nil {
 		return nil, err
 	}
 	handle.statsCache = statsCache
 	handle.globalMap.data = make(tableDeltaMap)
-	handle.feedback.data = statistics.NewQueryFeedbackMap()
 	handle.colMap.data = make(colStatsUsageMap)
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
@@ -527,16 +513,6 @@ func (h *Handle) Lease() time.Duration {
 // SetLease sets the stats lease.
 func (h *Handle) SetLease(lease time.Duration) {
 	h.lease.Store(lease)
-}
-
-// GetQueryFeedback gets the query feedback. It is only used in test.
-func (h *Handle) GetQueryFeedback() *statistics.QueryFeedbackMap {
-	h.feedback.Lock()
-	defer func() {
-		h.feedback.data = statistics.NewQueryFeedbackMap()
-		h.feedback.Unlock()
-	}()
-	return h.feedback.data
 }
 
 // DurationToTS converts duration to timestamp.
@@ -1233,9 +1209,6 @@ func (h *Handle) FlushStats() {
 	if err := h.DumpStatsDeltaToKV(DumpAll); err != nil {
 		logutil.BgLogger().Error("dump stats delta fail", zap.String("category", "stats"), zap.Error(err))
 	}
-	if err := h.DumpStatsFeedbackToKV(); err != nil {
-		logutil.BgLogger().Error("dump stats feedback fail", zap.String("category", "stats"), zap.Error(err))
-	}
 }
 
 // TableStatsFromStorage loads table stats info from storage.
@@ -1260,16 +1233,6 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 	}
 	if reader.IsHistory() || statsTbl == nil {
 		return statsTbl, nil
-	}
-	for histID, idx := range statsTbl.Indices {
-		if statistics.IsAnalyzed(idx.Flag) {
-			h.mu.rateMap.clear(physicalID, histID, true)
-		}
-	}
-	for histID, col := range statsTbl.Columns {
-		if statistics.IsAnalyzed(col.Flag) {
-			h.mu.rateMap.clear(physicalID, histID, false)
-		}
 	}
 	return statsTbl, nil
 }

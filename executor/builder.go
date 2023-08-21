@@ -3438,17 +3438,6 @@ func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIn
 	return idxHash
 }
 
-// containsLimit tests if the execs contains Limit because we do not know whether `Limit` has consumed all of its' source,
-// so the feedback may not be accurate.
-func containsLimit(execs []*tipb.Executor) bool {
-	for _, exec := range execs {
-		if exec.Limit != nil {
-			return true
-		}
-	}
-	return false
-}
-
 func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableReader) (*TableReaderExecutor, error) {
 	tablePlans := v.TablePlans
 	if v.StoreType == kv.TiFlash {
@@ -3499,20 +3488,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		batchCop:         v.ReadReqType == plannercore.BatchCop,
 	}
 	e.buildVirtualColumnInfo()
-	if containsLimit(dagReq.Executors) {
-		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
-	} else {
-		e.feedback = statistics.NewQueryFeedback(getFeedbackStatsTableID(e.Ctx(), tbl), ts.Hist, int64(ts.StatsCount()), ts.Desc)
-	}
-	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(ts.Ranges))
-	// Do not collect the feedback when the table is the partition table.
-	if collect && tbl.Meta().Partition != nil {
-		collect = false
-	}
-	if !collect {
-		e.feedback.Invalidate()
-	}
-	e.dagPB.CollectRangeCounts = &collect
+
 	if v.StoreType == kv.TiDB && b.ctx.GetSessionVars().User != nil {
 		// User info is used to do privilege check. It is only used in TiDB cluster memory table.
 		e.dagPB.User = &tipb.UserIdentity{
@@ -3845,24 +3821,6 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		plans:            v.IndexPlans,
 		outputColumns:    v.OutputColumns,
 	}
-	if containsLimit(dagReq.Executors) {
-		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
-	} else {
-		tblID := e.physicalTableID
-		if b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			tblID = e.table.Meta().ID
-		}
-		e.feedback = statistics.NewQueryFeedback(tblID, is.Hist, int64(is.StatsCount()), is.Desc)
-	}
-	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
-	// Do not collect the feedback when the table is the partition table.
-	if collect && tbl.Meta().Partition != nil {
-		collect = false
-	}
-	if !collect {
-		e.feedback.Invalidate()
-	}
-	e.dagPB.CollectRangeCounts = &collect
 
 	for _, col := range v.OutputColumns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
@@ -4052,23 +4010,6 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		avgRowSize:        v.GetAvgTableRowSize(),
 	}
 
-	if containsLimit(indexReq.Executors) {
-		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
-	} else {
-		e.feedback = statistics.NewQueryFeedback(getFeedbackStatsTableID(e.Ctx(), tbl), is.Hist, int64(is.StatsCount()), is.Desc)
-	}
-	// Do not collect the feedback for table request.
-	collectTable := false
-	e.tableRequest.CollectRangeCounts = &collectTable
-	collectIndex := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
-	// Do not collect the feedback when the table is the partition table.
-	if collectIndex && tbl.Meta().GetPartitionInfo() != nil {
-		collectIndex = false
-	}
-	if !collectIndex {
-		e.feedback.Invalidate()
-	}
-	e.dagPB.CollectRangeCounts = &collectIndex
 	if v.ExtraHandleCol != nil {
 		e.handleIdx = append(e.handleIdx, v.ExtraHandleCol.Index)
 		e.handleCols = []*expression.Column{v.ExtraHandleCol}
@@ -4163,17 +4104,12 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	partialDataSizes := make([]float64, 0, partialPlanCount)
 	indexes := make([]*model.IndexInfo, 0, partialPlanCount)
 	descs := make([]bool, 0, partialPlanCount)
-	feedbacks := make([]*statistics.QueryFeedback, 0, partialPlanCount)
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	isCorColInPartialFilters := make([]bool, 0, partialPlanCount)
 	isCorColInPartialAccess := make([]bool, 0, partialPlanCount)
 	for i := 0; i < partialPlanCount; i++ {
 		var tempReq *tipb.DAGRequest
 		var err error
-
-		feedback := statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
-		feedback.Invalidate()
-		feedbacks = append(feedbacks, feedback)
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
 			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, ts.HandleCols.NumCols(), v.PartialPlans[i])
@@ -4225,7 +4161,6 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		partialNetDataSizes:      partialDataSizes,
 		dataAvgRowSize:           v.GetAvgTableRowSize(),
 		dataReaderBuilder:        readerBuilder,
-		feedbacks:                feedbacks,
 		paging:                   paging,
 		handleCols:               v.HandleCols,
 		isCorColInPartialFilters: isCorColInPartialFilters,
@@ -4545,7 +4480,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*r
 		if len(ranges) == 0 {
 			continue
 		}
-		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges, nil)
+		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -4562,7 +4497,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Rang
 	for i, p := range h.partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
-		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges, nil)
+		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges)
 		if err != nil {
 			return nil, err
 		}
@@ -4616,7 +4551,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	}
 	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 	e.resultHandler = &tableResultHandler{}
-	result, err := builder.SelectResult(ctx, builder.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.ID())
+	result, err := builder.SelectResult(ctx, builder.ctx, kvReq, retTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 	if err != nil {
 		return nil, err
 	}
@@ -4900,7 +4835,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 			if indexID == -1 {
 				tmpKvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{tableID}, ranges)
 			} else {
-				tmpKvRanges, err = distsql.IndexRangesToKVRangesWithInterruptSignal(sc, tableID, indexID, ranges, nil, memTracker, interruptSignal)
+				tmpKvRanges, err = distsql.IndexRangesToKVRangesWithInterruptSignal(sc, tableID, indexID, ranges, memTracker, interruptSignal)
 			}
 			if err != nil {
 				return nil, err
@@ -4945,7 +4880,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		tmpKeyRanges, err := distsql.CommonHandleRangesToKVRanges(ctx.GetSessionVars().StmtCtx, []int64{tableID}, tmpDatumRanges)
 		return tmpKeyRanges.FirstPartitionRange(), err
 	}
-	tmpKeyRanges, err := distsql.IndexRangesToKVRangesWithInterruptSignal(ctx.GetSessionVars().StmtCtx, tableID, indexID, tmpDatumRanges, nil, memTracker, interruptSignal)
+	tmpKeyRanges, err := distsql.IndexRangesToKVRangesWithInterruptSignal(ctx.GetSessionVars().StmtCtx, tableID, indexID, tmpDatumRanges, memTracker, interruptSignal)
 	return tmpKeyRanges.FirstPartitionRange(), err
 }
 
@@ -5351,13 +5286,6 @@ func isCommonHandleRead(tbl *model.TableInfo, idx *model.IndexInfo) bool {
 
 func getPhysicalTableID(t table.Table) int64 {
 	if p, ok := t.(table.PhysicalTable); ok {
-		return p.GetPhysicalID()
-	}
-	return t.Meta().ID
-}
-
-func getFeedbackStatsTableID(ctx sessionctx.Context, t table.Table) int64 {
-	if p, ok := t.(table.PhysicalTable); ok && !ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return p.GetPhysicalID()
 	}
 	return t.Meta().ID

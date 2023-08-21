@@ -19,7 +19,6 @@ go_test(
         "//parser/mysql",
         "//session",
         "//sessionctx/variable",
-        "//statistics",
         "//testkit",
         "//util",
         "//util/memory",

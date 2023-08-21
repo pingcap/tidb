@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -429,7 +428,7 @@ func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, 
 	if err != nil {
 		return nil, err
 	}
-	return distsql.Select(ctx, c.sessCtx, kvReq, c.fieldTps, statistics.NewQueryFeedback(0, nil, 0, false))
+	return distsql.Select(ctx, c.sessCtx, kvReq, c.fieldTps)
 }
 
 func (c *copContext) fetchTableScanResult(ctx context.Context, result distsql.SelectResult,

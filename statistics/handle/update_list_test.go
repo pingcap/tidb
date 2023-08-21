@@ -17,7 +17,6 @@ package handle
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/statistics"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,7 +24,6 @@ func TestInsertAndDelete(t *testing.T) {
 	h := Handle{
 		listHead: &SessionStatsCollector{mapper: make(tableDeltaMap)},
 	}
-	h.feedback.data = statistics.NewQueryFeedbackMap()
 	var items []*SessionStatsCollector
 	for i := 0; i < 5; i++ {
 		items = append(items, h.NewSessionStatsCollector())

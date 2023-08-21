@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -135,7 +134,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		return err
 	}
 
-	e.result, err = distsql.Select(ctx, e.Ctx(), kvReq, e.RetFieldTypes(), statistics.NewQueryFeedback(0, nil, 0, false))
+	e.result, err = distsql.Select(ctx, e.Ctx(), kvReq, e.RetFieldTypes())
 	if err != nil {
 		return err
 	}
@@ -290,7 +289,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	// Actually, with limitCnt, the match datas maybe only in one region, so let the concurrency to be 1,
 	// avoid unnecessary region scan.
 	kvReq.Concurrency = 1
-	result, err := distsql.Select(ctx, e.Ctx(), kvReq, e.columnsTypes(), statistics.NewQueryFeedback(0, nil, 0, false))
+	result, err := distsql.Select(ctx, e.Ctx(), kvReq, e.columnsTypes())
 	if err != nil {
 		return nil, err
 	}
@@ -795,7 +794,7 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	sc := e.Ctx().GetSessionVars().StmtCtx
 	var builder distsql.RequestBuilder
 	ranges := ranger.FullRange()
-	keyRanges, err := distsql.IndexRangesToKVRanges(sc, e.physicalID, e.index.Meta().ID, ranges, nil)
+	keyRanges, err := distsql.IndexRangesToKVRanges(sc, e.physicalID, e.index.Meta().ID, ranges)
 	if err != nil {
 		return nil, err
 	}
@@ -817,7 +816,7 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	}
 
 	kvReq.Concurrency = 1
-	result, err := distsql.Select(ctx, e.Ctx(), kvReq, e.getIdxColTypes(), statistics.NewQueryFeedback(0, nil, 0, false))
+	result, err := distsql.Select(ctx, e.Ctx(), kvReq, e.getIdxColTypes())
 	if err != nil {
 		return nil, err
 	}

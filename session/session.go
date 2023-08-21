@@ -76,7 +76,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/txn"
@@ -444,30 +443,6 @@ func (s *session) SetSessionManager(sm util.SessionManager) {
 
 func (s *session) GetSessionManager() util.SessionManager {
 	return s.sessionManager
-}
-
-func (s *session) StoreQueryFeedback(feedback interface{}) {
-	if variable.FeedbackProbability.Load() <= 0 {
-		return
-	}
-	if fb, ok := feedback.(*statistics.QueryFeedback); !ok || fb == nil || !fb.Valid.Load() {
-		return
-	}
-	if s.statsCollector != nil {
-		do, err := GetDomain(s.store)
-		if err != nil {
-			logutil.BgLogger().Debug("domain not found", zap.Error(err))
-			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
-			return
-		}
-		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle(), s.GetSessionVars().GetEnablePseudoForOutdatedStats())
-		if err != nil {
-			logutil.BgLogger().Debug("store query feedback", zap.Error(err))
-			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
-			return
-		}
-		metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Inc()
-	}
 }
 
 func (s *session) UpdateColStatsUsage(predicateColumns []model.TableItemID) {

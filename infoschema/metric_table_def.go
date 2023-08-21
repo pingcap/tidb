@@ -541,31 +541,6 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  "sum(increase(tidb_statistics_pseudo_estimation_total{$LABEL_CONDITIONS}[$RANGE_DURATION]))",
 		Labels:  []string{"instance"},
 	},
-	"tidb_statistics_dump_feedback_ops": {
-		Comment: "TiDB dumping statistics back to kv storage times",
-		PromQL:  "sum(rate(tidb_statistics_dump_feedback_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)",
-		Labels:  []string{"instance", "type"},
-	},
-	"tidb_statistics_dump_feedback_total_count": {
-		Comment: "The total count of operations that TiDB dumping statistics back to kv storage",
-		PromQL:  "sum(increase(tidb_statistics_dump_feedback_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)",
-		Labels:  []string{"instance", "type"},
-	},
-	"tidb_statistics_store_query_feedback_qps": {
-		Comment: "TiDB store quering feedback counts",
-		PromQL:  "sum(rate(tidb_statistics_store_query_feedback_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance) ",
-		Labels:  []string{"instance", "type"},
-	},
-	"tidb_statistics_store_query_feedback_total_count": {
-		Comment: "The total count of TiDB store quering feedback",
-		PromQL:  "sum(increase(tidb_statistics_store_query_feedback_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance) ",
-		Labels:  []string{"instance", "type"},
-	},
-	"tidb_statistics_significant_feedback": {
-		Comment: "Counter of query feedback whose actual count is much different than calculated by current statistics",
-		PromQL:  "sum(rate(tidb_statistics_high_error_rate_feedback_total{$LABEL_CONDITIONS}[$RANGE_DURATION]))",
-		Labels:  []string{"instance"},
-	},
 	"tidb_statistics_update_stats_ops": {
 		Comment: "TiDB updating statistics using feed back counts",
 		PromQL:  "sum(rate(tidb_statistics_update_stats_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)",

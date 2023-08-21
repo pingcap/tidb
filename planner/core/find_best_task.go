@@ -1477,13 +1477,6 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 	if err != nil {
 		return nil, nil, false, err
 	}
-	if ts.Table.PKIsHandle {
-		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
-				ts.Hist = &ds.statisticTable.Columns[pkColInfo.ID].Histogram
-			}
-		}
-	}
 	ts.SetStats(ds.tableStats.ScaleByExpectCnt(totalRowCount))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 	if usedStats != nil && usedStats[ts.physicalTableID] != nil {
@@ -2208,13 +2201,6 @@ func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *pro
 	}.Init(s.SCtx(), s.SelectBlockOffset())
 	ts.SetStats(stats)
 	ts.SetSchema(schema.Clone())
-	if ts.Table.PKIsHandle {
-		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
-				ts.Hist = &ds.statisticTable.Columns[pkColInfo.ID].Histogram
-			}
-		}
-	}
 	return ts
 }
 
@@ -2672,13 +2658,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		filterCondition: slices.Clone(path.TableFilters),
 	}.Init(ds.SCtx(), ds.SelectBlockOffset())
 	ts.SetSchema(ds.schema.Clone())
-	if ts.Table.PKIsHandle {
-		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
-				ts.Hist = &ds.statisticTable.Columns[pkColInfo.ID].Histogram
-			}
-		}
-	}
 	rowCount := path.CountAfterAccess
 	if prop.ExpectedCnt < ds.StatsInfo().RowCount {
 		selectivity := ds.StatsInfo().RowCount / path.CountAfterAccess
@@ -2738,10 +2717,6 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		constColsByCond:  path.ConstCols,
 		prop:             prop,
 	}.Init(ds.SCtx(), ds.SelectBlockOffset())
-	statsTbl := ds.statisticTable
-	if statsTbl.Indices[idx.ID] != nil {
-		is.Hist = &statsTbl.Indices[idx.ID].Histogram
-	}
 	rowCount := path.CountAfterAccess
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), !isSingleScan)
 

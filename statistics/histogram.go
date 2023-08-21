@@ -237,17 +237,12 @@ const (
 	Version2 = 2
 )
 
-// AnalyzeFlag is set when the statistics comes from analyze and has not been modified by feedback.
+// AnalyzeFlag is set when the statistics comes from analyze.
 const AnalyzeFlag = 1
 
 // IsAnalyzed checks whether this flag contains AnalyzeFlag.
 func IsAnalyzed(flag int64) bool {
 	return (flag & AnalyzeFlag) > 0
-}
-
-// ResetAnalyzeFlag resets the AnalyzeFlag because it has been modified by feedback.
-func ResetAnalyzeFlag(flag int64) int64 {
-	return flag &^ AnalyzeFlag
 }
 
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then

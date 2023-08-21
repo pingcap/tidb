@@ -2271,7 +2271,6 @@ func (ds *datumsSorter) Len() int {
 }
 
 func (ds *datumsSorter) Less(i, j int) bool {
-	// TODO: set collation explicitly when rewrites feedback.
 	cmp, err := ds.datums[i].Compare(ds.sc, &ds.datums[j], collate.GetCollator(ds.datums[i].Collation()))
 	if err != nil {
 		ds.err = errors.Trace(err)

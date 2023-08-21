@@ -238,7 +238,7 @@ func buildTableRequest(
 	var builder distsql.RequestBuilder
 	// Use low priority to reducing impact to other requests.
 	builder.Request.Priority = kv.PriorityLow
-	return builder.SetHandleRanges(nil, tableID, tableInfo.IsCommonHandle, ranges, nil).
+	return builder.SetHandleRanges(nil, tableID, tableInfo.IsCommonHandle, ranges).
 		SetStartTS(startTS).
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).

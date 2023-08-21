@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -54,15 +53,15 @@ var _ exec.Executor = &TableReaderExecutor{}
 // selectResultHook is used to hack distsql.SelectWithRuntimeStats safely for testing.
 type selectResultHook struct {
 	selectResultFunc func(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int) (distsql.SelectResult, error)
+		fieldTypes []*types.FieldType, copPlanIDs []int) (distsql.SelectResult, error)
 }
 
 func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int, rootPlanID int) (distsql.SelectResult, error) {
+	fieldTypes []*types.FieldType, copPlanIDs []int, rootPlanID int) (distsql.SelectResult, error) {
 	if sr.selectResultFunc == nil {
-		return distsql.SelectWithRuntimeStats(ctx, sctx, kvReq, fieldTypes, fb, copPlanIDs, rootPlanID)
+		return distsql.SelectWithRuntimeStats(ctx, sctx, kvReq, fieldTypes, copPlanIDs, rootPlanID)
 	}
-	return sr.selectResultFunc(ctx, sctx, kvReq, fieldTypes, fb, copPlanIDs)
+	return sr.selectResultFunc(ctx, sctx, kvReq, fieldTypes, copPlanIDs)
 }
 
 type kvRangeBuilder interface {
@@ -101,7 +100,6 @@ type TableReaderExecutor struct {
 	// resultHandler handles the order of the result. Since (MAXInt64, MAXUint64] stores before [0, MaxInt64] physically
 	// for unsigned int.
 	resultHandler *tableResultHandler
-	feedback      *statistics.QueryFeedback
 	plans         []plannercore.PhysicalPlan
 	tablePlan     plannercore.PhysicalPlan
 
@@ -184,14 +182,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	}
 
 	e.resultHandler = &tableResultHandler{}
-	if e.feedback != nil && e.feedback.Hist != nil {
-		// EncodeInt don't need *statement.Context.
-		var ok bool
-		e.ranges, ok = e.feedback.Hist.SplitRange(nil, e.ranges, false)
-		if !ok {
-			e.feedback.Invalidate()
-		}
-	}
 
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
 
@@ -227,7 +217,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
-		e.feedback.Invalidate()
 		return err
 	}
 	if len(secondPartRanges) == 0 {
@@ -237,7 +226,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	var secondResult distsql.SelectResult
 	secondResult, err = e.buildResp(ctx, secondPartRanges)
 	if err != nil {
-		e.feedback.Invalidate()
 		return err
 	}
 	e.resultHandler.open(firstResult, secondResult)
@@ -261,7 +249,6 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		return tableName
 	}), e.ranges)
 	if err := e.resultHandler.nextChunk(ctx, req); err != nil {
-		e.feedback.Invalidate()
 		return err
 	}
 
@@ -283,7 +270,6 @@ func (e *TableReaderExecutor) Close() error {
 	if e.dummy {
 		return nil
 	}
-	e.Ctx().StoreQueryFeedback(e.feedback)
 	return err
 }
 
@@ -299,7 +285,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 			}
 			var results []distsql.SelectResult
 			for _, kvReq := range kvReqs {
-				result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.ID())
+				result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 				if err != nil {
 					return nil, err
 				}
@@ -312,7 +298,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		if err != nil {
 			return nil, err
 		}
-		result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.ID())
+		result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 		if err != nil {
 			return nil, err
 		}
@@ -327,7 +313,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		}
 		var results []distsql.SelectResult
 		for _, kvReq := range kvReqs {
-			result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.ID())
+			result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 			if err != nil {
 				return nil, err
 			}
@@ -348,7 +334,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	})
 	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 
-	result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.ID())
+	result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 	if err != nil {
 		return nil, err
 	}
@@ -442,7 +428,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		}
 		reqBuilder = builder.SetPartitionKeyRanges(kvRange)
 	} else {
-		reqBuilder = builder.SetHandleRanges(e.Ctx().GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges, e.feedback)
+		reqBuilder = builder.SetHandleRanges(e.Ctx().GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges)
 	}
 	if e.table != nil && e.table.Type().IsClusterTable() {
 		copDestination := infoschema.GetClusterTableCopDestination(e.table.Meta().Name.L)

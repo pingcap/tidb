@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
@@ -300,7 +299,6 @@ type selectResult struct {
 	respChkIdx       int
 	respChunkDecoder *chunk.Decoder
 
-	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 	sqlType      string
 
@@ -398,9 +396,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		for _, warning := range r.selectResp.Warnings {
 			sc.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
-		if r.feedback != nil {
-			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts, r.selectResp.Ndvs)
-		}
+
 		r.partialCount++
 
 		hasStats, ok := resultSubset.(CopRuntimeStats)
@@ -451,7 +447,6 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 
 	resultSubset, err := r.resp.Next(ctx)
 	r.partialCount++
-	r.feedback.Invalidate()
 	if resultSubset != nil && err == nil {
 		data = resultSubset.GetData()
 	}
@@ -629,9 +624,6 @@ func (r *selectResult) memConsume(bytes int64) {
 
 // Close closes selectResult.
 func (r *selectResult) Close() error {
-	if r.feedback.Actual() >= 0 {
-		metrics.DistSQLScanKeysHistogram.Observe(float64(r.feedback.Actual()))
-	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
 	respSize := atomic.SwapInt64(&r.selectRespSize, 0)
 	if respSize > 0 {

@@ -59,7 +59,6 @@ go_library(
         "//sessiontxn",
         "//sessiontxn/isolation",
         "//sessiontxn/staleread",
-        "//statistics",
         "//statistics/handle",
         "//store/driver/error",
         "//store/driver/txn",

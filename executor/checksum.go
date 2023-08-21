@@ -243,7 +243,7 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, tableID int6
 
 	var builder distsql.RequestBuilder
 	builder.SetResourceGroupTagger(ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
-	return builder.SetHandleRanges(ctx.GetSessionVars().StmtCtx, tableID, c.TableInfo.IsCommonHandle, ranges, nil).
+	return builder.SetHandleRanges(ctx.GetSessionVars().StmtCtx, tableID, c.TableInfo.IsCommonHandle, ranges).
 		SetChecksumRequest(checksum).
 		SetStartTS(c.StartTs).
 		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).

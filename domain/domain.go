@@ -2383,16 +2383,12 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	lease := do.statsLease
 	deltaUpdateTicker := time.NewTicker(20 * lease)
 	gcStatsTicker := time.NewTicker(100 * lease)
-	dumpFeedbackTicker := time.NewTicker(200 * lease)
-	loadFeedbackTicker := time.NewTicker(5 * lease)
 	loadLockedTablesTicker := time.NewTicker(5 * lease)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
 	readMemTricker := time.NewTicker(memory.ReadMemInterval)
 	statsHandle := do.StatsHandle()
 	defer func() {
 		dumpColStatsUsageTicker.Stop()
-		loadFeedbackTicker.Stop()
-		dumpFeedbackTicker.Stop()
 		gcStatsTicker.Stop()
 		deltaUpdateTicker.Stop()
 		readMemTricker.Stop()
@@ -2417,25 +2413,10 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if err != nil {
 				logutil.BgLogger().Debug("dump stats delta failed", zap.Error(err))
 			}
-			statsHandle.UpdateErrorRate(do.InfoSchema())
-		case <-loadFeedbackTicker.C:
-			statsHandle.UpdateStatsByLocalFeedback(do.InfoSchema())
-			if !owner.IsOwner() {
-				continue
-			}
-			err := statsHandle.HandleUpdateStats(do.InfoSchema())
-			if err != nil {
-				logutil.BgLogger().Debug("update stats using feedback failed", zap.Error(err))
-			}
 		case <-loadLockedTablesTicker.C:
 			err := statsHandle.LoadLockedTables()
 			if err != nil {
 				logutil.BgLogger().Debug("load locked table failed", zap.Error(err))
-			}
-		case <-dumpFeedbackTicker.C:
-			err := statsHandle.DumpStatsFeedbackToKV()
-			if err != nil {
-				logutil.BgLogger().Debug("dump stats feedback failed", zap.Error(err))
 			}
 		case <-gcStatsTicker.C:
 			if !owner.IsOwner() {

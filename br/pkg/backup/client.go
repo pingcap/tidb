@@ -471,7 +471,7 @@ func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
 	}
 
 	retRanges := make([]kv.KeyRange, 0, 1+len(tbl.Indices))
-	kvRanges, err := distsql.TableHandleRangesToKVRanges(nil, []int64{tblID}, tbl.IsCommonHandle, ranges, nil)
+	kvRanges, err := distsql.TableHandleRangesToKVRanges(nil, []int64{tblID}, tbl.IsCommonHandle, ranges)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -482,7 +482,7 @@ func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
 			continue
 		}
 		ranges = ranger.FullRange()
-		idxRanges, err := distsql.IndexRangesToKVRanges(nil, tblID, index.ID, ranges, nil)
+		idxRanges, err := distsql.IndexRangesToKVRanges(nil, tblID, index.ID, ranges)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
