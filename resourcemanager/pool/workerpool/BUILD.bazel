@@ -24,6 +24,7 @@ go_test(
     embed = [":workerpool"],
     flaky = True,
     race = "on",
+    shard_count = 3,
     deps = [
         "//resourcemanager/util",
         "//testkit/testsetup",
