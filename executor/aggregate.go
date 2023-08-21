@@ -237,15 +237,15 @@ type HashAggIntermData struct {
 }
 
 // getPartialResultBatch fetches a batch of partial results from HashAggIntermData.
-func (d *HashAggIntermData) getPartialResultBatch(_ *stmtctx.StatementContext, prs [][]aggfuncs.PartialResult, _ []aggfuncs.AggFunc, maxChunkSize int) (_ [][]aggfuncs.PartialResult, groupKeys []string, reachEnd bool) {
+func (d *HashAggIntermData) getPartialResultBatch(_ *stmtctx.StatementContext, partialResult [][]aggfuncs.PartialResult, _ []aggfuncs.AggFunc, maxChunkSize int) (_ [][]aggfuncs.PartialResult, groupKeys []string, reachEnd bool) {
 	keyStart := d.cursor
-	for ; d.cursor < len(d.groupKeys) && len(prs) < maxChunkSize; d.cursor++ {
-		prs = append(prs, d.partialResultMap[d.groupKeys[d.cursor]])
+	for ; d.cursor < len(d.groupKeys) && len(partialResult) < maxChunkSize; d.cursor++ {
+		partialResult = append(partialResult, d.partialResultMap[d.groupKeys[d.cursor]])
 	}
 	if d.cursor == len(d.groupKeys) {
 		reachEnd = true
 	}
-	return prs, d.groupKeys[keyStart:d.cursor], reachEnd
+	return partialResult, d.groupKeys[keyStart:d.cursor], reachEnd
 }
 
 // Close implements the Executor Close interface.
@@ -705,9 +705,9 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 				if !w.groupSet.Exist(groupKey) {
 					allMemDelta += w.groupSet.Insert(groupKey)
 				}
-				prs := intermDataBuffer[i]
+				partialResult := intermDataBuffer[i]
 				for j, af := range w.aggFuncs {
-					memDelta, err := af.MergePartialResult(sctx, prs[j], finalPartialResults[i][j])
+					memDelta, err := af.MergePartialResult(sctx, partialResult[j], finalPartialResults[i][j])
 					if err != nil {
 						return err
 					}
@@ -861,6 +861,7 @@ func (e *HashAggExec) waitAllWorkersAndCloseFinalOutputCh(waitGroups ...*sync.Wa
 }
 
 func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
+	// Start data fetcher
 	fetchChildWorkerWaitGroup := &sync.WaitGroup{}
 	fetchChildWorkerWaitGroup.Add(1)
 	go e.fetchChildData(ctx, fetchChildWorkerWaitGroup)
@@ -876,24 +877,30 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		partialWallTimePtr = &e.stats.PartialWallTime
 		finalWallTimePtr = &e.stats.FinalWallTime
 	}
+
+	// Start partial worker
 	partialWorkerWaitGroup := &sync.WaitGroup{}
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
 	partialStart := time.Now()
 	for i := range e.partialWorkers {
 		go e.partialWorkers[i].run(e.Ctx(), partialWorkerWaitGroup, len(e.finalWorkers))
 	}
+
 	go func() {
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
 		if partialWallTimePtr != nil {
 			atomic.AddInt64(partialWallTimePtr, int64(time.Since(partialStart)))
 		}
 	}()
+
+	// Start final worker
 	finalWorkerWaitGroup := &sync.WaitGroup{}
 	finalWorkerWaitGroup.Add(len(e.finalWorkers))
 	finalStart := time.Now()
 	for i := range e.finalWorkers {
 		go e.finalWorkers[i].run(e.Ctx(), finalWorkerWaitGroup)
 	}
+
 	go func() {
 		finalWorkerWaitGroup.Wait()
 		if finalWallTimePtr != nil {
