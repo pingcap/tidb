@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
@@ -57,4 +58,27 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 		return nil, errors.Trace(err)
 	}
 	return iter, nil
+}
+
+type MemoryIngestData struct {
+	ts uint64
+}
+
+func (m *MemoryIngestData) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (m *MemoryIngestData) NewIter(ctx context.Context, lowerBound, upperBound []byte) local.ForwardIter {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (m *MemoryIngestData) GetTS() uint64 {
+	return m.ts
+}
+
+func (m *MemoryIngestData) Finish(totalBytes, totalCount int64) {
+	//TODO implement me
+	panic("implement me")
 }

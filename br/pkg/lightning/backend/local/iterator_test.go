@@ -16,9 +16,11 @@ package local
 
 import (
 	"bytes"
+	"fmt"
 	"math/rand"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"testing"
 	"time"
 
@@ -239,4 +241,33 @@ func TestKeyAdapterEncoding(t *testing.T) {
 	resKey, err = keyAdapter.Decode(nil, v)
 	require.NoError(t, err)
 	require.EqualValues(t, srcKey, resKey)
+}
+
+func BenchmarkDupDetectIter(b *testing.B) {
+	keyAdapter := dupDetectKeyAdapter{}
+	db, _ := pebble.Open(filepath.Join(b.TempDir(), "kv"), &pebble.Options{})
+	wb := db.NewBatch()
+	val := []byte("value")
+	for i := 0; i < 100_000; i++ {
+		keyNum := i
+		// mimic we have 20% duplication
+		if keyNum%5 == 0 {
+			keyNum--
+		}
+		keyStr := fmt.Sprintf("%09d", keyNum)
+		rowID := strconv.Itoa(i)
+		key := keyAdapter.Encode(nil, []byte(keyStr), []byte(rowID))
+		wb.Set(key, val, nil)
+	}
+	wb.Commit(pebble.Sync)
+
+	dupDB, _ := pebble.Open(filepath.Join(b.TempDir(), "dup"), &pebble.Options{})
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		iter := newDupDetectIter(db, keyAdapter, &pebble.IterOptions{}, dupDB, log.L(), DupDetectOpt{})
+		keyCnt := 0
+		for iter.First(); iter.Valid(); iter.Next() {
+			keyCnt++
+		}
+	}
 }

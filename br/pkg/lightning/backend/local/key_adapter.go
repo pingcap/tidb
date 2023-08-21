@@ -22,7 +22,8 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
-// KeyAdapter is used to encode and decode keys.
+// KeyAdapter is used to encode and decode keys so that duplicate key can be
+// identified by rowID and avoid overwritten.
 type KeyAdapter interface {
 	// Encode encodes the key with its corresponding rowID. It appends the encoded key to dst and returns the
 	// resulting slice. The encoded key is guaranteed to be in ascending order for comparison.
