@@ -227,8 +227,9 @@ func (d *dispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, 
 			}
 		}
 	})
+	retryable := true
 	for i := 0; i < retryTimes; i++ {
-		retryable, err := d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.task, newSubTasks, prevState)
+		retryable, err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.task, newSubTasks, prevState)
 		if err == nil || !retryable {
 			break
 		}
@@ -462,7 +463,7 @@ func VerifyTaskStateTransform(oldState, newState string) bool {
 		proto.TaskStateRevertPending: {},
 		proto.TaskStateReverted:      {},
 	}
-	logutil.BgLogger().Info(fmt.Sprintf("task state transform, from %s to %s", oldState, newState))
+	logutil.BgLogger().Info("task state transform", zap.String("oldState", oldState), zap.String("newState", newState))
 
 	if oldState == newState {
 		return true
