@@ -52,6 +52,7 @@ func (s *SimpleDataChannel[T]) Channel() chan T {
 	return s.channel
 }
 
+// Finish closes the underlying channel of the SimpleDataChannel.
 func (s *SimpleDataChannel[T]) Finish() {
 	close(s.channel)
 }
