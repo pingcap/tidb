@@ -108,14 +108,14 @@ func (c checkpoint) equal(o checkpoint) bool {
 		bytes.Equal(c.EndKey, o.EndKey) && c.TS == o.TS
 }
 
-// if a checkpoint stay in a time too long(1 min)
+// if a checkpoint stay in a time too long(3 min)
 // we should try to resolve lock for the range
-// to keep the RPO in a short value.
+// to keep the RPO in 5 min.
 func (c checkpoint) needResolveLocks() bool {
 	failpoint.Inject("NeedResolveLocks", func(val failpoint.Value) {
 		failpoint.Return(val.(bool))
 	})
-	return time.Since(c.resolveLockTime) > time.Minute
+	return time.Since(c.resolveLockTime) > 3*time.Minute
 }
 
 // NewCheckpointAdvancer creates a checkpoint advancer with the env.
