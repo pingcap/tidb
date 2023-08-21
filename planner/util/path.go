@@ -15,6 +15,8 @@
 package util
 
 import (
+	"slices"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -23,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
-	"golang.org/x/exp/slices"
 )
 
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,

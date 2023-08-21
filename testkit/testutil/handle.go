@@ -17,6 +17,7 @@
 package testutil
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 )
 
 // MustNewCommonHandle create a common handle with given values.

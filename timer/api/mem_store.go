@@ -17,12 +17,12 @@ package api
 import (
 	"context"
 	"encoding/hex"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"golang.org/x/exp/slices"
 )
 
 type memStoreWatcher struct {
