@@ -21,6 +21,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor/internal/exec"
@@ -38,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // IndexLookUpMergeJoin realizes IndexLookUpJoin by merge join
@@ -450,23 +451,29 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	// Because the necessary condition of merge join is both outer and inner keep order of join keys.
 	// In this case, we need sort the outer side.
 	if imw.outerMergeCtx.needOuterSort {
-		slices.SortFunc(task.outerOrderIdx, func(idxI, idxJ chunk.RowPtr) bool {
+		slices.SortFunc(task.outerOrderIdx, func(idxI, idxJ chunk.RowPtr) int {
 			rowI, rowJ := task.outerResult.GetRow(idxI), task.outerResult.GetRow(idxJ)
-			var cmp int64
+			var c int64
 			var err error
 			for _, keyOff := range imw.keyOff2KeyOffOrderByIdx {
 				joinKey := imw.outerMergeCtx.joinKeys[keyOff]
-				cmp, _, err = imw.outerMergeCtx.compareFuncs[keyOff](imw.ctx, joinKey, joinKey, rowI, rowJ)
+				c, _, err = imw.outerMergeCtx.compareFuncs[keyOff](imw.ctx, joinKey, joinKey, rowI, rowJ)
 				terror.Log(err)
-				if cmp != 0 {
+				if c != 0 {
 					break
 				}
 			}
-			if cmp != 0 || imw.nextColCompareFilters == nil {
-				return (cmp < 0 && !imw.desc) || (cmp > 0 && imw.desc)
+			if c != 0 || imw.nextColCompareFilters == nil {
+				if imw.desc {
+					return int(-c)
+				}
+				return int(c)
 			}
-			cmp = int64(imw.nextColCompareFilters.CompareRow(rowI, rowJ))
-			return (cmp < 0 && !imw.desc) || (cmp > 0 && imw.desc)
+			c = int64(imw.nextColCompareFilters.CompareRow(rowI, rowJ))
+			if imw.desc {
+				return int(-c)
+			}
+			return int(c)
 		})
 	}
 	dLookUpKeys, err := imw.constructDatumLookupKeys(task)
