@@ -1173,6 +1173,7 @@ func syncUpgradeState(s Session) {
 		time.Sleep(interval)
 	}
 
+<<<<<<< HEAD
 	retryTimes = 60
 	interval = 500 * time.Millisecond
 	for i := 0; i < retryTimes; i++ {
@@ -1198,6 +1199,10 @@ func syncUpgradeState(s Session) {
 		time.Sleep(interval)
 	}
 	logutil.BgLogger().Info("[upgrading] update global state to upgrading", zap.String("state", syncer.StateUpgrading))
+=======
+	logutil.BgLogger().Info("update global state to upgrading", zap.String("category", "upgrading"), zap.String("state", syncer.StateUpgrading))
+	return nil
+>>>>>>> 8c1d2c851e1 (session: remove pause all jobs when upgrading (#46234))
 }
 
 func syncNormalRunning(s Session) {
