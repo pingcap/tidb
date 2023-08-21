@@ -21,11 +21,11 @@ const (
 	// RootTaskType stands for the tasks that executed in the TiDB layer.
 	RootTaskType TaskType = iota
 
-	// CopSingleReadTaskType stands for the a TableScan or IndexScan tasks
+	// CopSingleReadTaskType stands for the TableScan or IndexScan tasks
 	// executed in the coprocessor layer.
 	CopSingleReadTaskType
 
-	// CopMultiReadTaskType stands for the a IndexLookup tasks executed in the
+	// CopMultiReadTaskType stands for the IndexLookup tasks executed in the
 	// coprocessor layer.
 	CopMultiReadTaskType
 
