@@ -1189,6 +1189,10 @@ func upgrade(s Session) {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
+	if ver >= int64(SupportUpgradeStateVer) {
+		isAllowedUpgrade(s)
+	}
+
 	// Only upgrade from under version92 and this TiDB is not owner set.
 	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
 	if ver < version92 {
@@ -1208,9 +1212,6 @@ func upgrade(s Session) {
 		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
 	}
 
-	if ver >= int64(SupportUpgradeStateVer) {
-		terror.MustNil(SyncUpgradeState(s))
-	}
 	if isNull {
 		upgradeToVer99Before(s)
 	}
@@ -1222,9 +1223,6 @@ func upgrade(s Session) {
 	}
 	if isNull {
 		upgradeToVer99After(s)
-	}
-	if ver >= int64(SupportUpgradeStateVer) {
-		terror.MustNil(SyncNormalRunning(s))
 	}
 
 	variable.DDLForce2Queue.Store(false)
@@ -1353,6 +1351,17 @@ func IsUpgradingClusterState(s Session) (bool, error) {
 	}
 
 	return stateInfo.State == syncer.StateUpgrading, nil
+}
+
+func isAllowedUpgrade(s Session) {
+	isUpgrading, err := IsUpgradingClusterState(s)
+	if err != nil {
+		logutil.BgLogger().Fatal("get global state failed", zap.String("category", "upgrading"), zap.Error(err))
+	}
+	if !isUpgrading {
+		logutil.BgLogger().Fatal("global state isn't upgrading, please send a request to start the upgrade first",
+			zap.String("category", "upgrading"), zap.Error(err))
+	}
 }
 
 // checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.
