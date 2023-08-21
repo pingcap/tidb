@@ -1605,6 +1605,8 @@ func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 	if !s.EnableReuseCheck {
 		return
 	}
+	s.ChunkPool.mu.Lock()
+	defer s.ChunkPool.mu.Unlock()
 	s.ChunkPool.Alloc = alloc
 }
 
