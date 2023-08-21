@@ -14,6 +14,8 @@
 
 package operator
 
+import "strings"
+
 // AsyncPipeline wraps a list of Operators.
 // The dataflow is from the first operator to the last operator.
 type AsyncPipeline struct {
@@ -53,17 +55,9 @@ func NewAsyncPipeline(ops ...Operator) *AsyncPipeline {
 
 // Display shows the pipeline.
 func (p *AsyncPipeline) Display() string {
-	level := 0
-	res := ""
+	opStrs := make([]string, len(p.ops))
 	for i, op := range p.ops {
-		for j := 0; j < level; j++ {
-			res += " "
-		}
-		res += op.Display()
-		if i != len(p.ops)-1 {
-			res += "\n"
-		}
-		level++
+		opStrs[i] = op.Display()
 	}
-	return res
+	return "AsyncPipeline[" + strings.Join(opStrs, " -> ") + "]"
 }

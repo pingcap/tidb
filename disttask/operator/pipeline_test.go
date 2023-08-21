@@ -15,6 +15,7 @@
 package operator
 
 import (
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -27,14 +28,17 @@ func TestPipelineAsyncMultiOperators(t *testing.T) {
 	var mostCommonWord string
 	splitter := makeSplitter(words)
 	lower := makeLower()
+	trimmer := makeTrimmer()
 	counter := makeCounter()
 	collector := makeCollector(&mostCommonWord)
 
 	Compose[string](splitter, lower)
-	Compose[string](lower, counter)
+	Compose[string](lower, trimmer)
+	Compose[string](trimmer, counter)
 	Compose[strCnt](counter, collector)
 
-	pipeline := NewAsyncPipeline(splitter, lower, counter, collector)
+	pipeline := NewAsyncPipeline(splitter, lower, trimmer, counter, collector)
+	require.Equal(t, pipeline.Display(), "AsyncPipeline[simpleSource -> simpleOperator(AsyncOp[string, string]) -> simpleOperator(AsyncOp[string, string]) -> simpleOperator(AsyncOp[string, operator.strCnt]) -> simpleSink]")
 	err := pipeline.Execute()
 	require.NoError(t, err)
 	err = pipeline.Close()
@@ -62,6 +66,13 @@ func makeSplitter(s string) *simpleSource[string] {
 
 func makeLower() *simpleOperator[string, string] {
 	return newSimpleOperator(strings.ToLower, 3)
+}
+
+func makeTrimmer() *simpleOperator[string, string] {
+	var nonAlphaRegex = regexp.MustCompile(`[^a-zA-Z0-9]+`)
+	return newSimpleOperator(func(s string) string {
+		return nonAlphaRegex.ReplaceAllString(s, "")
+	}, 3)
 }
 
 func makeCounter() *simpleOperator[string, strCnt] {

@@ -15,6 +15,10 @@
 package operator
 
 import (
+	"fmt"
+
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -36,6 +40,7 @@ func (s *simpleSource[T]) Open() error {
 			if res == zT {
 				break
 			}
+			logutil.BgLogger().Info("generate 1 string", zap.Any("s", res))
 			s.sink.Channel() <- res
 		}
 		s.sink.Finish()
@@ -97,8 +102,8 @@ type simpleOperator[T, R any] struct {
 	*AsyncOperator[T, R]
 }
 
-func (*simpleOperator[T, R]) Display() string {
-	return "simpleOperator"
+func (s *simpleOperator[T, R]) Display() string {
+	return fmt.Sprintf("simpleOperator(%s)", s.AsyncOperator.Display())
 }
 
 func newSimpleOperator[T, R any](transform func(task T) R, concurrency int) *simpleOperator[T, R] {

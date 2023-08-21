@@ -2711,11 +2711,8 @@ func (e *FastCheckTableExec) Next(context.Context, *chunk.Chunk) error {
 		e.Ctx().GetSessionVars().OptimizerUseInvisibleIndexes = false
 	}()
 
-	workerPool, err := workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
+	workerPool := workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
 		poolutil.CheckTable, 3, e.createWorker)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	workerPool.Start()
 
 	e.wg.Add(len(e.indexInfos))

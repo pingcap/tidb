@@ -39,7 +39,7 @@ type AsyncOperator[T, R any] struct {
 
 // NewAsyncOperator create an AsyncOperator.
 func NewAsyncOperator[T, R any](name string, workerNum int, transform func(T) R) *AsyncOperator[T, R] {
-	pool, _ := workerpool.NewWorkerPool(name, util.DistTask, workerNum, newAsyncWorker(transform))
+	pool := workerpool.NewWorkerPool(name, util.DistTask, workerNum, newAsyncWorker(transform))
 	return &AsyncOperator[T, R]{
 		pool: pool,
 	}
@@ -53,7 +53,8 @@ func (c *AsyncOperator[T, R]) Open() error {
 
 // Close implements the Operator's Close interface.
 func (c *AsyncOperator[T, R]) Close() error {
-	c.pool.WaitAndRelease()
+	c.pool.Wait()
+	c.pool.Release()
 	return nil
 }
 
@@ -61,7 +62,7 @@ func (c *AsyncOperator[T, R]) Close() error {
 func (*AsyncOperator[T, R]) Display() string {
 	var zT T
 	var zR R
-	return fmt.Sprintf("AsyncOperator[%T, %T]", zT, zR)
+	return fmt.Sprintf("AsyncOp[%T, %T]", zT, zR)
 }
 
 // SetSource set the source channel.
@@ -90,4 +91,4 @@ func (s *asyncWorker[T, R]) HandleTask(task T) R {
 	return s.transform(task)
 }
 
-func (s *asyncWorker[T, R]) Close() {}
+func (*asyncWorker[T, R]) Close() {}
