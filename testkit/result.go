@@ -87,14 +87,7 @@ func Rows(args ...string) [][]interface{} {
 // Sort sorts and return the result.
 func (res *Result) Sort() *Result {
 	slices.SortFunc(res.rows, func(a, b []string) int {
-		for i := range a {
-			if a[i] < b[i] {
-				return -1
-			} else if a[i] > b[i] {
-				return 1
-			}
-		}
-		return 1
+		return slices.Compare(a, b)
 	})
 	return res
 }
