@@ -577,8 +577,7 @@ func BuildBackupRangeAndSchema(
 				// no auto ID for views or table without either rowID nor auto_increment ID.
 			default:
 				if tableInfo.SepAutoInc() {
-					// NextXXXID = XXXID + 1
-					globalAutoID, err = autoIDAccess.IncrementID(tableInfo.Version).Get() + 1
+					globalAutoID, err = autoIDAccess.IncrementID(tableInfo.Version).Get()
 					// For a nonclustered table with auto_increment column, both auto_increment_id and _tidb_rowid are required.
 					// See also https://github.com/pingcap/tidb/issues/46093
 					if rowID, err1 := autoIDAccess.RowID().Get(); err1 == nil {
@@ -593,6 +592,8 @@ func BuildBackupRangeAndSchema(
 						// Print a warning in other scenes, should it be a INFO log?
 						log.Warn("get rowid error", zap.Error(err1))
 					}
+					// NextGlobalAutoID = globalAutoID  + 1
+					globalAutoID = globalAutoID + 1
 				} else {
 					globalAutoID, err = idAlloc.NextGlobalAutoID()
 				}
