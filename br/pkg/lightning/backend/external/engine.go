@@ -20,8 +20,10 @@ import (
 	"encoding/hex"
 	"sort"
 
+	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
@@ -62,11 +64,16 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 	return iter, nil
 }
 
+// MemoryIngestData is the in-memory implementation of IngestData.
 type MemoryIngestData struct {
-	keyAdaptor local.KeyAdapter
-	keys       [][]byte
-	values     [][]byte
-	ts         uint64
+	keyAdapter         local.KeyAdapter
+	duplicateDetection bool
+	duplicateDB        *pebble.DB
+	dupDetectOpt       local.DupDetectOpt
+
+	keys   [][]byte
+	values [][]byte
+	ts     uint64
 }
 
 var _ local.IngestData = (*MemoryIngestData)(nil)
@@ -74,7 +81,7 @@ var _ local.IngestData = (*MemoryIngestData)(nil)
 func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (int, int) {
 	firstKeyIdx := 0
 	if len(lowerBound) > 0 {
-		lowerBound = m.keyAdaptor.Encode(nil, lowerBound, local.MinRowID)
+		lowerBound = m.keyAdapter.Encode(nil, lowerBound, local.MinRowID)
 		firstKeyIdx = sort.Search(len(m.keys), func(i int) bool {
 			return bytes.Compare(lowerBound, m.keys[i]) <= 0
 		})
@@ -85,7 +92,7 @@ func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (
 
 	lastKeyIdx := len(m.keys) - 1
 	if len(upperBound) > 0 {
-		upperBound = m.keyAdaptor.Encode(nil, upperBound, local.MinRowID)
+		upperBound = m.keyAdapter.Encode(nil, upperBound, local.MinRowID)
 		i := sort.Search(len(m.keys), func(i int) bool {
 			reverseIdx := len(m.keys) - 1 - i
 			return bytes.Compare(upperBound, m.keys[reverseIdx]) > 0
@@ -102,7 +109,7 @@ func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (
 // GetFirstAndLastKey implements IngestData.GetFirstAndLastKey.
 func (m *MemoryIngestData) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
 	firstKeyIdx, lastKeyIdx := m.firstAndLastKeyIndex(lowerBound, upperBound)
-	if firstKeyIdx < 0 {
+	if firstKeyIdx < 0 || firstKeyIdx > lastKeyIdx {
 		return nil, nil, nil
 	}
 	return m.keys[firstKeyIdx], m.keys[lastKeyIdx], nil
@@ -119,6 +126,9 @@ type memoryDataIter struct {
 
 // First implements ForwardIter.
 func (m *memoryDataIter) First() bool {
+	if m.firstKeyIdx < 0 {
+		return false
+	}
 	m.curIdx = m.firstKeyIdx
 	return true
 }
@@ -215,11 +225,20 @@ func (m *memoryDataDupDetectIter) Error() error {
 // NewIter implements IngestData.NewIter.
 func (m *MemoryIngestData) NewIter(ctx context.Context, lowerBound, upperBound []byte) local.ForwardIter {
 	firstKeyIdx, lastKeyIdx := m.firstAndLastKeyIndex(lowerBound, upperBound)
-	return &memoryDataIter{
+	iter := &memoryDataIter{
 		keys:        m.keys,
 		values:      m.values,
 		firstKeyIdx: firstKeyIdx,
 		lastKeyIdx:  lastKeyIdx,
+	}
+	if !m.duplicateDetection {
+		return iter
+	}
+	logger := log.FromContext(ctx)
+	detector := local.NewDupDetector(m.keyAdapter, m.duplicateDB.NewBatch(), logger, m.dupDetectOpt)
+	return &memoryDataDupDetectIter{
+		iter:        iter,
+		dupDetector: detector,
 	}
 }
 

@@ -567,7 +567,7 @@ func NewBackend(
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
-	keyAdapter := KeyAdapter(noopKeyAdapter{})
+	keyAdapter := KeyAdapter(NoopKeyAdapter{})
 	if config.DupeDetectEnabled {
 		keyAdapter = dupDetectKeyAdapter{}
 	}

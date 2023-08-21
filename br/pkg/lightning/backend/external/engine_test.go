@@ -17,11 +17,14 @@ package external
 import (
 	"bytes"
 	"context"
+	"path"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -106,4 +109,82 @@ func TestIter(t *testing.T) {
 	}
 	// the first key must be less than or equal to startKey
 	require.True(t, bytes.Compare(got[0].Key, startKey) <= 0)
+}
+
+func testGetFirstAndLastKey(
+	t *testing.T,
+	data local.IngestData,
+	lowerBound, upperBound []byte,
+	expectedFirstKey, expectedLastKey []byte,
+) {
+	firstKey, lastKey, err := data.GetFirstAndLastKey(lowerBound, upperBound)
+	require.NoError(t, err)
+	require.Equal(t, expectedFirstKey, firstKey)
+	require.Equal(t, expectedLastKey, lastKey)
+}
+
+func testNewIter(
+	t *testing.T,
+	data local.IngestData,
+	lowerBound, upperBound []byte,
+	expectedKeys, expectedValues [][]byte,
+) {
+	ctx := context.Background()
+	iter := data.NewIter(ctx, lowerBound, upperBound)
+	var (
+		keys, values [][]byte
+	)
+	for iter.First(); iter.Valid(); iter.Next() {
+		require.NoError(t, iter.Error())
+		keys = append(keys, iter.Key())
+		values = append(values, iter.Value())
+	}
+	require.NoError(t, iter.Error())
+	require.Equal(t, expectedKeys, keys)
+	require.Equal(t, expectedValues, values)
+}
+
+func TestMemoryIngestData(t *testing.T) {
+	keys := [][]byte{
+		[]byte("key1"),
+		[]byte("key2"),
+		[]byte("key3"),
+		[]byte("key4"),
+		[]byte("key5"),
+	}
+	values := [][]byte{
+		[]byte("value1"),
+		[]byte("value2"),
+		[]byte("value3"),
+		[]byte("value4"),
+		[]byte("value5"),
+	}
+	data := &MemoryIngestData{
+		keyAdapter: local.NoopKeyAdapter{},
+		keys:       keys,
+		values:     values,
+		ts:         123,
+	}
+
+	require.EqualValues(t, 123, data.GetTS())
+	testGetFirstAndLastKey(t, data, nil, nil, []byte("key1"), []byte("key5"))
+	testGetFirstAndLastKey(t, data, []byte("key1"), []byte("key6"), []byte("key1"), []byte("key5"))
+	testGetFirstAndLastKey(t, data, []byte("key2"), []byte("key5"), []byte("key2"), []byte("key4"))
+	testGetFirstAndLastKey(t, data, []byte("key25"), []byte("key35"), []byte("key3"), []byte("key3"))
+	testGetFirstAndLastKey(t, data, []byte("key25"), []byte("key26"), nil, nil)
+	testGetFirstAndLastKey(t, data, []byte("key0"), []byte("key1"), nil, nil)
+	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
+
+	testNewIter(t, data, nil, nil, keys, values)
+	testNewIter(t, data, []byte("key1"), []byte("key6"), keys, values)
+	testNewIter(t, data, []byte("key2"), []byte("key5"), keys[1:4], values[1:4])
+	testNewIter(t, data, []byte("key25"), []byte("key35"), keys[2:3], values[2:3])
+	testNewIter(t, data, []byte("key25"), []byte("key26"), nil, nil)
+	testNewIter(t, data, []byte("key0"), []byte("key1"), nil, nil)
+	testNewIter(t, data, []byte("key6"), []byte("key9"), nil, nil)
+
+	dir := t.TempDir()
+	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
+	require.NoError(t, err)
+	_ = db
 }
