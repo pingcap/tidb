@@ -346,7 +346,20 @@ func RebuildPlan4CachedPlan(p Plan) error {
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	sc.InPreparedPlanBuilding = true
 	defer func() { sc.InPreparedPlanBuilding = false }()
+<<<<<<< HEAD
 	return rebuildRange(p)
+=======
+	if err := rebuildRange(p); err != nil {
+		sc.AppendWarning(errors.Errorf("skip plan-cache: plan rebuild failed, %s", err.Error()))
+		return false // fail to rebuild ranges
+	}
+	if !sc.UseCache {
+		// in this case, the UseCache flag changes from `true` to `false`, then there must be some
+		// over-optimized operations were triggered, return `false` for safety here.
+		return false
+	}
+	return true
+>>>>>>> 94cfa8b0713 (planner: output a warning if plan rebuilding fails when reusing a cached plan (#46278))
 }
 
 func updateRange(p PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
