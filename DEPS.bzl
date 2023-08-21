@@ -3703,8 +3703,9 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:xL9X0pr5wZn8onnW6i98sf7KjaZmk0OIQnDhW1z+hRQ=",
-        version = "v2.0.4-0.20230817162610-e5fe1779769d",
+        replace = "github.com/crazycs520/client-go/v2",
+        sum = "h1:Artr8uQKxInKgoUDEEmzHIA7aPCkTFEQ4Dl4PIBd6ic=",
+        version = "v2.0.0-alpha.0.20230821035741-a5adaf4d1357",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
