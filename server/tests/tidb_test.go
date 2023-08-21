@@ -2751,6 +2751,7 @@ func TestExtensionConnEvent(t *testing.T) {
 		require.NotEmpty(t, conn1.ConnectionID)
 		require.Nil(t, conn1.ActiveRoles)
 		require.NoError(t, conn1.Error)
+		require.Empty(t, conn1.SessionAlias)
 
 		expectedConn2 = *(conn1.ConnectionInfo)
 		expectedConn2.User = "root"
@@ -2758,6 +2759,7 @@ func TestExtensionConnEvent(t *testing.T) {
 		require.Equal(t, []*auth.RoleIdentity{}, logs.infos[1].ActiveRoles)
 		require.Nil(t, logs.infos[1].Error)
 		require.Equal(t, expectedConn2, *(logs.infos[1].ConnectionInfo))
+		require.Empty(t, logs.infos[1].SessionAlias)
 	})
 
 	_, err = conn.ExecContext(context.TODO(), "create role r1@'%'")
@@ -2765,6 +2767,8 @@ func TestExtensionConnEvent(t *testing.T) {
 	_, err = conn.ExecContext(context.TODO(), "grant r1 TO root")
 	require.NoError(t, err)
 	_, err = conn.ExecContext(context.TODO(), "set role all")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.TODO(), "set @@tidb_session_alias='alias123'")
 	require.NoError(t, err)
 
 	require.NoError(t, conn.Close())
@@ -2779,6 +2783,7 @@ func TestExtensionConnEvent(t *testing.T) {
 		}, *logs.infos[2].ActiveRoles[0])
 		require.Nil(t, logs.infos[2].Error)
 		require.Equal(t, expectedConn2, *(logs.infos[2].ConnectionInfo))
+		require.Equal(t, "alias123", logs.infos[2].SessionAlias)
 	})
 
 	// test for login failed
@@ -2814,6 +2819,7 @@ func TestExtensionConnEvent(t *testing.T) {
 		require.NotEmpty(t, conn1.ConnectionID)
 		require.Nil(t, conn1.ActiveRoles)
 		require.NoError(t, conn1.Error)
+		require.Empty(t, conn1.SessionAlias)
 
 		expectedConn2 = *(conn1.ConnectionInfo)
 		expectedConn2.User = "noexist"
@@ -2821,6 +2827,7 @@ func TestExtensionConnEvent(t *testing.T) {
 		require.Equal(t, []*auth.RoleIdentity{}, logs.infos[1].ActiveRoles)
 		require.EqualError(t, logs.infos[1].Error, "[server:1045]Access denied for user 'noexist'@'127.0.0.1' (using password: NO)")
 		require.Equal(t, expectedConn2, *(logs.infos[1].ConnectionInfo))
+		require.Empty(t, logs.infos[2].SessionAlias)
 	})
 }
 
