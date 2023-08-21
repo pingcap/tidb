@@ -17,8 +17,6 @@ package operator
 import (
 	"fmt"
 
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -40,7 +38,6 @@ func (s *simpleSource[T]) Open() error {
 			if res == zT {
 				break
 			}
-			logutil.BgLogger().Info("generate 1 string", zap.Any("s", res))
 			s.sink.Channel() <- res
 		}
 		s.sink.Finish()
