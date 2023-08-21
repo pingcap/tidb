@@ -268,7 +268,7 @@ type ingestBackfillScheduler struct {
 
 	copReqSenderPool *copReqSenderPool
 
-	writerPool    *workerpool.WorkerPool[idxRecResult]
+	writerPool    *workerpool.WorkerPool[idxRecResult, workerpool.None]
 	writerMaxID   int
 	poolErr       chan error
 	backendCtx    ingest.BackendCtx
@@ -308,12 +308,12 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	}
 	b.copReqSenderPool = copReqSenderPool
 	readerCnt, writerCnt := b.expectedWorkerSize()
-	skipReg := workerpool.OptionSkipRegister[idxRecResult]{}
 	writerPool, err := workerpool.NewWorkerPool[idxRecResult]("ingest_writer",
-		poolutil.DDL, writerCnt, b.createWorker, skipReg)
+		poolutil.DDL, writerCnt, b.createWorker)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	writerPool.Start()
 	b.writerPool = writerPool
 	b.copReqSenderPool.chunkSender = writerPool
 	b.copReqSenderPool.adjustSize(readerCnt)
@@ -382,7 +382,7 @@ func (b *ingestBackfillScheduler) adjustWorkerSize() error {
 	return nil
 }
 
-func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult] {
+func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult, workerpool.None] {
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
 	sessCtx, err := newSessCtx(reorgInfo)
@@ -447,7 +447,7 @@ func (*ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize
 	return readerSize, writerSize
 }
 
-func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
+func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) (_ workerpool.None) {
 	defer util.Recover(metrics.LabelDDL, "ingestWorker.HandleTask", func() {
 		w.resultCh <- &backfillResult{taskID: rs.id, err: dbterror.ErrReorgPanic}
 	}, false)
@@ -494,6 +494,7 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 		ResultCounterForTest.Add(1)
 	}
 	w.resultCh <- result
+	return
 }
 
 func (*addIndexIngestWorker) Close() {}

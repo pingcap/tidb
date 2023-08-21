@@ -2350,7 +2350,7 @@ func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]grou
 }
 
 // HandleTask implements the Worker interface.
-func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
+func (w *checkIndexWorker) HandleTask(task checkIndexTask) (_ workerpool.None) {
 	defer w.e.wg.Done()
 	idxInfo := w.indexInfos[task.indexOffset]
 	bucketSize := int(CheckTableFastBucketSize.Load())
@@ -2688,12 +2688,13 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 			}
 		}
 	}
+	return
 }
 
 // Close implements the Worker interface.
 func (*checkIndexWorker) Close() {}
 
-func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask] {
+func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask, workerpool.None] {
 	return &checkIndexWorker{sctx: e.Ctx(), dbName: e.dbName, table: e.table, indexInfos: e.indexInfos, e: e}
 }
 
@@ -2711,10 +2712,11 @@ func (e *FastCheckTableExec) Next(context.Context, *chunk.Chunk) error {
 	}()
 
 	workerPool, err := workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
-		poolutil.CheckTable, 3, e.createWorker, workerpool.OptionSkipRegister[checkIndexTask]{})
+		poolutil.CheckTable, 3, e.createWorker)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	workerPool.Start()
 
 	e.wg.Add(len(e.indexInfos))
 	for i := range e.indexInfos {
