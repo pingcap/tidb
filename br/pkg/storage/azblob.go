@@ -157,10 +157,12 @@ type sharedKeyClientBuilder struct {
 	cred        *azblob.SharedKeyCredential
 	accountName string
 	serviceURL  string
+
+	clientOptions *azblob.ClientOptions
 }
 
 func (b *sharedKeyClientBuilder) GetServiceClient() (*azblob.Client, error) {
-	return azblob.NewClientWithSharedKeyCredential(b.serviceURL, b.cred, getDefaultClientOptions())
+	return azblob.NewClientWithSharedKeyCredential(b.serviceURL, b.cred, b.clientOptions)
 }
 
 func (b *sharedKeyClientBuilder) GetAccountName() string {
@@ -172,10 +174,12 @@ type sasClientBuilder struct {
 	accountName string
 	// Example of serviceURL: https://<account>.blob.core.windows.net/?<sas token>
 	serviceURL string
+
+	clientOptions *azblob.ClientOptions
 }
 
 func (b *sasClientBuilder) GetServiceClient() (*azblob.Client, error) {
-	return azblob.NewClientWithNoCredential(b.serviceURL, getDefaultClientOptions())
+	return azblob.NewClientWithNoCredential(b.serviceURL, b.clientOptions)
 }
 
 func (b *sasClientBuilder) GetAccountName() string {
@@ -187,10 +191,12 @@ type tokenClientBuilder struct {
 	cred        *azidentity.ClientSecretCredential
 	accountName string
 	serviceURL  string
+
+	clientOptions *azblob.ClientOptions
 }
 
 func (b *tokenClientBuilder) GetServiceClient() (*azblob.Client, error) {
-	return azblob.NewClient(b.serviceURL, b.cred, getDefaultClientOptions())
+	return azblob.NewClient(b.serviceURL, b.cred, b.clientOptions)
 }
 
 func (b *tokenClientBuilder) GetAccountName() string {
@@ -209,6 +215,11 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 		return nil, errors.New("bucket(container) cannot be empty to access azure blob storage")
 	}
 
+	clientOptions := getDefaultClientOptions()
+	if opts != nil && opts.HTTPClient != nil {
+		clientOptions.Transport = opts.HTTPClient
+	}
+
 	if len(options.AccountName) > 0 && len(options.AccessSig) > 0 {
 		serviceURL := options.Endpoint
 		if len(serviceURL) == 0 {
@@ -221,6 +232,8 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 		return &sasClientBuilder{
 			options.AccountName,
 			serviceURL,
+
+			clientOptions,
 		}, nil
 	}
 
@@ -237,6 +250,8 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 			cred,
 			options.AccountName,
 			serviceURL,
+
+			clientOptions,
 		}, nil
 	}
 
@@ -265,6 +280,8 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 				cred,
 				accountName,
 				serviceURL,
+
+				clientOptions,
 			}, nil
 		}
 		log.Warn("Failed to get azure token credential but environment variables exist, try to use shared key.", zap.String("tenantId", tenantID), zap.String("clientId", clientID), zap.String("clientSecret", "?"))
@@ -292,6 +309,8 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 		cred,
 		accountName,
 		serviceURL,
+
+		clientOptions,
 	}, nil
 }
 

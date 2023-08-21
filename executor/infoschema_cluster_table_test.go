@@ -307,7 +307,7 @@ func TestTikvRegionStatus(t *testing.T) {
 	))
 
 	tk.MustExec("drop table if exists test_t2")
-	tk.MustExec(`CREATE TABLE test_t2 ( a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, c int(11) DEFAULT NULL) 
+	tk.MustExec(`CREATE TABLE test_t2 ( a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, c int(11) DEFAULT NULL)
 		PARTITION BY RANGE (c) (
 		PARTITION p0 VALUES LESS THAN (10),
 		PARTITION p1 VALUES LESS THAN (MAXVALUE))`)

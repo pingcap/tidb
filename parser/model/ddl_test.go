@@ -76,6 +76,8 @@ func TestMayNeedReorg(t *testing.T) {
 	//TODO(bb7133): add more test cases for different ActionType.
 	reorgJobTypes := []model.ActionType{
 		model.ActionReorganizePartition,
+		model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning,
 		model.ActionAddIndex,
 		model.ActionAddPrimaryKey,
 	}

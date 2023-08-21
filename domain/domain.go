@@ -1173,10 +1173,6 @@ func (do *Domain) Init(
 	if err != nil {
 		return err
 	}
-	err = do.initResourceGroupsController(ctx, pdCli)
-	if err != nil {
-		return err
-	}
 	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdCli)
 	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
@@ -1207,6 +1203,12 @@ func (do *Domain) Init(
 		}
 	} else {
 		do.connIDAllocator = globalconn.NewSimpleAllocator()
+	}
+
+	// should put `initResourceGroupsController` after fetching server ID
+	err = do.initResourceGroupsController(ctx, pdCli, do.ServerID())
+	if err != nil {
+		return err
 	}
 
 	startReloadTime := time.Now()
@@ -1452,12 +1454,12 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		defer func() {
 			storage.SetTaskManager(nil)
 		}()
-		do.distTaskFrameworkLoop(ctx, taskManager, schedulerManager)
+		do.distTaskFrameworkLoop(ctx, taskManager, schedulerManager, serverID)
 	}, "distTaskFrameworkLoop")
 	return nil
 }
 
-func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager) {
+func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager, serverID string) {
 	schedulerManager.Start()
 	logutil.BgLogger().Info("dist task scheduler started")
 	defer func() {
@@ -1472,7 +1474,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 			return
 		}
 		var err error
-		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager)
+		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager, serverID)
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
 			return

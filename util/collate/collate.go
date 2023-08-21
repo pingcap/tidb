@@ -325,7 +325,8 @@ func runeLen(b byte) int {
 // IsCICollation returns if the collation is case-insensitive
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
-		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci" || collate == "gbk_chinese_ci"
+		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci" || collate == "gbk_chinese_ci" ||
+		collate == "utf8mb4_0900_ai_ci"
 }
 
 // ConvertAndGetBinCollation converts collator to binary collator
@@ -338,6 +339,8 @@ func ConvertAndGetBinCollation(collate string) Collator {
 	case "utf8mb4_general_ci":
 		return GetCollator("utf8mb4_bin")
 	case "utf8mb4_unicode_ci":
+		return GetCollator("utf8mb4_bin")
+	case "utf8mb4_0900_ai_ci":
 		return GetCollator("utf8mb4_bin")
 	case "gbk_chinese_ci":
 		return GetCollator("gbk_bin")
@@ -407,6 +410,8 @@ func init() {
 	newCollatorIDMap[CollationName2ID("utf8_general_ci")] = &generalCICollator{}
 	newCollatorMap["utf8mb4_unicode_ci"] = &unicodeCICollator{}
 	newCollatorIDMap[CollationName2ID("utf8mb4_unicode_ci")] = &unicodeCICollator{}
+	newCollatorMap["utf8mb4_0900_ai_ci"] = &unicode0900AICICollator{}
+	newCollatorIDMap[CollationName2ID("utf8mb4_0900_ai_ci")] = &unicode0900AICICollator{}
 	newCollatorMap["utf8_unicode_ci"] = &unicodeCICollator{}
 	newCollatorIDMap[CollationName2ID("utf8_unicode_ci")] = &unicodeCICollator{}
 	newCollatorMap["utf8mb4_zh_pinyin_tidb_as_cs"] = &zhPinyinTiDBASCSCollator{}
