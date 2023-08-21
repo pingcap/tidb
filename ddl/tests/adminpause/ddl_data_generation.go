@@ -121,36 +121,30 @@ func (tu *TestTableUser) generateAttributes(id int) (err error) {
 	return nil
 }
 
-func (tu *TestTableUser) insertStmt(tableName string) string {
-	return fmt.Sprintf("INSERT INTO %s(tenant, name, age, province, city, phone, created_time, updated_time) "+
-		"VALUES ('%s', '%s', %d, '%s', '%s', '%s', '%s', '%s')",
-		tableName, tu.tenant, tu.name, tu.age, tu.province, tu.city, tu.phone, tu.createdTime, tu.updatedTime)
+func (tu *TestTableUser) insertStmt(tableName string, count int) string {
+	sql := fmt.Sprintf("INSERT INTO %s(tenant, name, age, province, city, phone, created_time, updated_time) VALUES ", tableName)
+	for n := 0; n < count; n++ {
+		_ = tu.generateAttributes(n)
+		sql += fmt.Sprintf("('%s', '%s', %d, '%s', '%s', '%s', '%s', '%s')",
+			tu.tenant, tu.name, tu.age, tu.province, tu.city, tu.phone, tu.createdTime, tu.updatedTime)
+		if n != count-1 {
+			sql += ", "
+		}
+	}
+	return sql
 }
 
 func generateTblUser(tk *testkit.TestKit, rowCount int) error {
 	tk.MustExec(adminPauseTestTableStmt)
-
-	tu := &TestTableUser{}
-	for idx := 0; idx < rowCount; {
-		_ = tu.generateAttributes(idx)
-		tk.MustExec(tu.insertStmt(adminPauseTestTable))
-
-		idx++
+	if rowCount == 0 {
+		return nil
 	}
-
+	tu := &TestTableUser{}
+	tk.MustExec(tu.insertStmt(adminPauseTestTable, rowCount))
 	return nil
 }
 
-func generateTblUserParition(tk *testkit.TestKit, rowCount int) error {
+func generateTblUserParition(tk *testkit.TestKit) error {
 	tk.MustExec(adminPauseTestPartitionTableStmt)
-
-	tu := &TestTableUser{}
-	for idx := 0; idx < rowCount; {
-		_ = tu.generateAttributes(idx)
-		tk.MustExec(tu.insertStmt(adminPauseTestPartitionTable))
-
-		idx++
-	}
-
 	return nil
 }

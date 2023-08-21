@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -424,6 +425,7 @@ func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, 
 		Build()
 	kvReq.RequestSource.RequestSourceInternal = true
 	kvReq.RequestSource.RequestSourceType = getDDLRequestSource(model.ActionAddIndex)
+	kvReq.RequestSource.ExplicitRequestSourceType = kvutil.ExplicitTypeDDL
 	if err != nil {
 		return nil, err
 	}
@@ -482,7 +484,7 @@ func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo,
 
 func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
+	_, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
 	sc := sCtx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()
 	for i := range colInfos {

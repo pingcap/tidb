@@ -306,10 +306,10 @@ func (stm *TaskManager) AddNewSubTask(globalTaskID int64, step int64, designated
 }
 
 // GetSubtaskInStates gets the subtask in the states.
-func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, states ...interface{}) (*proto.Subtask, error) {
-	args := []interface{}{tidbID, taskID}
+func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, step int64, states ...interface{}) (*proto.Subtask, error) {
+	args := []interface{}{tidbID, taskID, step}
 	args = append(args, states...)
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select * from mysql.tidb_background_subtask where exec_id = %? and task_key = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select * from mysql.tidb_background_subtask where exec_id = %? and task_key = %? and step = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -409,10 +409,10 @@ func (stm *TaskManager) CollectSubTaskError(taskID int64) ([]error, error) {
 }
 
 // HasSubtasksInStates checks if there are subtasks in the states.
-func (stm *TaskManager) HasSubtasksInStates(tidbID string, taskID int64, states ...interface{}) (bool, error) {
-	args := []interface{}{tidbID, taskID}
+func (stm *TaskManager) HasSubtasksInStates(tidbID string, taskID int64, step int64, states ...interface{}) (bool, error) {
+	args := []interface{}{tidbID, taskID, step}
 	args = append(args, states...)
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select 1 from mysql.tidb_background_subtask where exec_id = %? and task_key = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select 1 from mysql.tidb_background_subtask where exec_id = %? and task_key = %? and step = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
 	if err != nil {
 		return false, err
 	}
@@ -468,10 +468,10 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 }
 
 // UpdateGlobalTaskAndAddSubTasks update the global task and add new subtasks
-func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask) error {
+func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, prevState string) error {
 	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
-		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %? where id = %?",
-			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Meta, serializeErr(gTask.Error), gTask.ID)
+		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %? where id = %? and state = %?",
+			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Meta, serializeErr(gTask.Error), gTask.ID, prevState)
 		if err != nil {
 			return err
 		}

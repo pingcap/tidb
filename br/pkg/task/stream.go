@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -58,7 +59,6 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -135,6 +135,7 @@ func (cfg *StreamConfig) makeStorage(ctx context.Context) (storage.ExternalStora
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
+		HTTPClient:      storage.GetDefaultHttpClient(cfg.MetadataDownloadBatchSize),
 	}
 	storage, err := storage.New(ctx, u, &opts)
 	if err != nil {
@@ -414,8 +415,8 @@ func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, erro
 
 	mRange := stream.BuildObserveMetaRange()
 	rs := append([]kv.KeyRange{*mRange}, dRanges...)
-	slices.SortFunc(rs, func(i, j kv.KeyRange) bool {
-		return bytes.Compare(i.StartKey, j.StartKey) < 0
+	slices.SortFunc(rs, func(i, j kv.KeyRange) int {
+		return bytes.Compare(i.StartKey, j.StartKey)
 	})
 
 	return rs, nil
@@ -1471,6 +1472,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
+		HTTPClient:      storage.GetDefaultHttpClient(cfg.MetadataDownloadBatchSize),
 	}
 	if err = client.SetStorage(ctx, u, &opts); err != nil {
 		return nil, errors.Trace(err)

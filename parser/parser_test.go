@@ -2709,6 +2709,9 @@ func TestDDL(t *testing.T) {
 		{`alter table m add partition (partition p1 values less than (200) learner_constraints="ww");`, false, ""},
 		{`alter table m add partition (partition p1 values less than (200) placement policy="ww");`, true, "ALTER TABLE `m` ADD PARTITION (PARTITION `p1` VALUES LESS THAN (200) PLACEMENT POLICY = `ww`)"},
 		{`alter table m add partition (partition p1 values less than (200) /*T![placement] placement policy="ww" */);`, true, "ALTER TABLE `m` ADD PARTITION (PARTITION `p1` VALUES LESS THAN (200) PLACEMENT POLICY = `ww`)"},
+		{`alter table m add column a int, add partition (partition p1 values less than (200))`, true, "ALTER TABLE `m` ADD COLUMN `a` INT, ADD PARTITION (PARTITION `p1` VALUES LESS THAN (200))"},
+		// TODO: Do not allow this order!
+		{`alter table m add partition (partition p1 values less than (200)), add column a int`, true, "ALTER TABLE `m` ADD PARTITION (PARTITION `p1` VALUES LESS THAN (200)), ADD COLUMN `a` INT"},
 		// for check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)) not enforced, check (c2 in (0, 1)))", true, "CREATE TABLE `t` (`c1` TINYINT(1),`c2` TINYINT(1),CHECK(`c1` IN (0,1)) NOT ENFORCED,CHECK(`c2` IN (0,1)) ENFORCED)"},
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true, "CREATE TABLE `Customer` (`SD` INT CHECK(`SD`>0) ENFORCED,`First_Name` VARCHAR(30))"},
@@ -3166,11 +3169,15 @@ func TestDDL(t *testing.T) {
 		{"alter table t analyze partition a index b with 4 buckets", true, "ANALYZE TABLE `t` PARTITION `a` INDEX `b` WITH 4 BUCKETS"},
 
 		{"alter table t partition by hash(a)", true, "ALTER TABLE `t` PARTITION BY HASH (`a`) PARTITIONS 1"},
+		{"alter table t add column a int partition by hash(a)", true, "ALTER TABLE `t` ADD COLUMN `a` INT PARTITION BY HASH (`a`) PARTITIONS 1"},
 		{"alter table t partition by range(a)", false, ""},
 		{"alter table t partition by range(a) (partition x values less than (75))", true, "ALTER TABLE `t` PARTITION BY RANGE (`a`) (PARTITION `x` VALUES LESS THAN (75))"},
+		{"alter table t add column a int, partition by range(a) (partition x values less than (75))", false, ""},
 		{"alter table t comment 'cmt' partition by hash(a)", true, "ALTER TABLE `t` COMMENT = 'cmt' PARTITION BY HASH (`a`) PARTITIONS 1"},
 		{"alter table t enable keys, comment = 'cmt' partition by hash(a)", true, "ALTER TABLE `t` ENABLE KEYS, COMMENT = 'cmt' PARTITION BY HASH (`a`) PARTITIONS 1"},
 		{"alter table t enable keys, comment = 'cmt', partition by hash(a)", false, ""},
+		{"alter table t partition by hash(a) enable keys", false, ""},
+		{"alter table t partition by hash(a), enable keys", false, ""},
 
 		// Test keyword `FIELDS`
 		{"alter table t partition by range FIELDS(a) (partition x values less than maxvalue)", true, "ALTER TABLE `t` PARTITION BY RANGE COLUMNS (`a`) (PARTITION `x` VALUES LESS THAN (MAXVALUE))"},
@@ -3385,6 +3392,12 @@ func TestDDL(t *testing.T) {
 		{"alter table t remove partitioning", true, "ALTER TABLE `t` REMOVE PARTITIONING"},
 		{"alter table db.ident remove partitioning", true, "ALTER TABLE `db`.`ident` REMOVE PARTITIONING"},
 		{"alter table t lock = default remove partitioning", true, "ALTER TABLE `t` LOCK = DEFAULT REMOVE PARTITIONING"},
+		{"alter table t add column a int remove partitioning", true, "ALTER TABLE `t` ADD COLUMN `a` INT REMOVE PARTITIONING"},
+		{"alter table t add column a int, add index (c) remove partitioning", true, "ALTER TABLE `t` ADD COLUMN `a` INT, ADD INDEX(`c`) REMOVE PARTITIONING"},
+		{"alter table t add column a int, remove partitioning", false, ""},
+		{"alter table t add column a int, add index (c), remove partitioning", false, ""},
+		{"alter table t remove partitioning add column a int", false, ""},
+		{"alter table t remove partitioning, add column a int", false, ""},
 
 		// for references without IndexColNameList
 		{"alter table t add column a double (4,2) zerofill references b match full on update set null first", true, "ALTER TABLE `t` ADD COLUMN `a` DOUBLE(4,2) UNSIGNED ZEROFILL REFERENCES `b` MATCH FULL ON UPDATE SET NULL FIRST"},
@@ -3892,6 +3905,10 @@ func TestHintError(t *testing.T) {
 	_, warns, err = p.Parse("create global binding for select /*+ max_execution_time(1) */ 1 using select /*+ max_execution_time(1) */ 1;\n", "", "")
 	require.NoError(t, err)
 	require.Len(t, warns, 0)
+
+	_, warns, err = p.Parse("create global binding for select /*+ tidb_kv_read_timeout(1) */ 1 using select /*+ tidb_kv_read_timeout(1) */ 1;\n", "", "")
+	require.NoError(t, err)
+	require.Len(t, warns, 0)
 }
 
 func TestErrorMsg(t *testing.T) {
@@ -4301,6 +4318,23 @@ func TestOptimizerHints(t *testing.T) {
 		require.Len(t, hints, 1)
 		require.Equal(t, "max_execution_time", hints[0].HintName.L, "case", i)
 		require.Equal(t, uint64(1000), hints[0].HintData.(uint64))
+	}
+
+	// Test TIDB_KV_READ_TIMEOUT
+	queries = []string{
+		"SELECT /*+ TIDB_KV_READ_TIMEOUT(200) */ * FROM t1 INNER JOIN t2 where t1.c1 = t2.c1",
+		"SELECT /*+ TIDB_KV_READ_TIMEOUT(200) */ 1",
+		"SELECT /*+ TIDB_KV_READ_TIMEOUT(200) */ SLEEP(20)",
+		"SELECT /*+ TIDB_KV_READ_TIMEOUT(200) */ 1 FROM DUAL",
+	}
+	for i, query := range queries {
+		stmt, _, err = p.Parse(query, "", "")
+		require.NoError(t, err)
+		selectStmt = stmt[0].(*ast.SelectStmt)
+		hints = selectStmt.TableHints
+		require.Len(t, hints, 1)
+		require.Equal(t, "tidb_kv_read_timeout", hints[0].HintName.L, "case", i)
+		require.Equal(t, uint64(200), hints[0].HintData.(uint64))
 	}
 
 	// Test NTH_PLAN
@@ -4978,6 +5012,7 @@ func TestSubquery(t *testing.T) {
 		{"select exists((select 1));", true, "SELECT EXISTS (SELECT 1)"},
 		{"select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b", true, "SELECT * FROM ((SELECT 1 AS `a`,3 AS `b`) UNION (SELECT 2,1) ORDER BY (SELECT 2)) AS `t` ORDER BY `a`,`b`"},
 		{"select (select * from t1 where a != t.a union all (select * from t2 where a != t.a) order by a limit 1) from t1 t", true, "SELECT (SELECT * FROM `t1` WHERE `a`!=`t`.`a` UNION ALL (SELECT * FROM `t2` WHERE `a`!=`t`.`a`) ORDER BY `a` LIMIT 1) FROM `t1` AS `t`"},
+		{"(WITH v0 AS (SELECT TRUE) (SELECT 'abc' EXCEPT (SELECT TRUE)))", true, "WITH `v0` AS (SELECT TRUE) (SELECT _UTF8MB4'abc' EXCEPT (SELECT TRUE))"},
 	}
 	RunTest(t, table, false)
 
@@ -6913,6 +6948,7 @@ func TestCTE(t *testing.T) {
 		{"with cte(a) as (select 1) delete t from t, cte where t.a=cte.a;", true, "WITH `cte` (`a`) AS (SELECT 1) DELETE `t` FROM (`t`) JOIN `cte` WHERE `t`.`a`=`cte`.`a`"},
 		{"WITH cte1 AS (SELECT 1) SELECT * FROM (WITH cte2 AS (SELECT 2) SELECT * FROM cte2 JOIN cte1) AS dt;", true, "WITH `cte1` AS (SELECT 1) SELECT * FROM (WITH `cte2` AS (SELECT 2) SELECT * FROM `cte2` JOIN `cte1`) AS `dt`"},
 		{"WITH cte AS (SELECT 1) SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT 1) SELECT /*+ MAX_EXECUTION_TIME(1000)*/ * FROM `cte`"},
+		{"WITH cte AS (SELECT 1) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT 1) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000)*/ * FROM `cte`"},
 		{"with cte as (table t) table cte;", true, "WITH `cte` AS (TABLE `t`) TABLE `cte`"},
 		{"with cte as (select 1) select 1 union with cte as (select 1) select * from cte;", false, ""},
 		{"with cte as (select 1) (select 1);", true, "WITH `cte` AS (SELECT 1) (SELECT 1)"},
@@ -6937,6 +6973,7 @@ func TestCTEMerge(t *testing.T) {
 		{"with cte(a) as (select 1) delete t from t, cte where t.a=cte.a;", true, "WITH `cte` (`a`) AS (SELECT 1) DELETE `t` FROM (`t`) JOIN `cte` WHERE `t`.`a`=`cte`.`a`"},
 		{"WITH cte1 AS (SELECT 1) SELECT * FROM (WITH cte2 AS (SELECT 2) SELECT * FROM cte2 JOIN cte1) AS dt;", true, "WITH `cte1` AS (SELECT 1) SELECT * FROM (WITH `cte2` AS (SELECT 2) SELECT * FROM `cte2` JOIN `cte1`) AS `dt`"},
 		{"WITH cte AS (SELECT 1) SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT 1) SELECT /*+ MAX_EXECUTION_TIME(1000)*/ * FROM `cte`"},
+		{"WITH cte AS (SELECT 1) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT 1) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000)*/ * FROM `cte`"},
 		{"with cte as (table t) table cte;", true, "WITH `cte` AS (TABLE `t`) TABLE `cte`"},
 		{"with cte as (select 1) select 1 union with cte as (select 1) select * from cte;", false, ""},
 		{"with cte as (select 1) (select 1);", true, "WITH `cte` AS (SELECT 1) (SELECT 1)"},
@@ -7090,6 +7127,7 @@ func TestCTEBindings(t *testing.T) {
 		{"with cte(a) as (select * from t) delete t from t, cte where t.a=cte.a;", true, "WITH `cte` (`a`) AS (SELECT * FROM `test`.`t`) DELETE `test`.`t` FROM (`test`.`t`) JOIN `cte` WHERE `t`.`a` = `cte`.`a`"},
 		{"WITH cte1 AS (SELECT * from t) SELECT * FROM (WITH cte2 AS (SELECT * from cte1) SELECT * FROM cte2 JOIN cte1) AS dt;", true, "WITH `cte1` AS (SELECT * FROM `test`.`t`) SELECT * FROM (WITH `cte2` AS (SELECT * FROM `cte1`) SELECT * FROM `cte2` JOIN `cte1`) AS `dt`"},
 		{"WITH cte AS (SELECT * from t) SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT * FROM `test`.`t`) SELECT /*+ MAX_EXECUTION_TIME(1000)*/ * FROM `cte`"},
+		{"WITH cte AS (SELECT * from t) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT * FROM `test`.`t`) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000)*/ * FROM `cte`"},
 		{"with cte as (table t) table cte;", true, "WITH `cte` AS (TABLE `test`.`t`) TABLE `cte`"},
 		{"with cte as (select * from t) select 1 union with cte as (select * from t) select * from cte;", false, ""},
 		{"with cte as (select * from t) (select * from t);", true, "WITH `cte` AS (SELECT * FROM `test`.`t`) (SELECT * FROM `test`.`t`)"},
@@ -7387,6 +7425,18 @@ func TestTTLTableOption(t *testing.T) {
 	}
 
 	RunTest(t, table, false)
+}
+
+func TestIssue45898(t *testing.T) {
+	p := parser.New()
+	p.ParseSQL("a.")
+	stmts, _, err := p.ParseSQL("select count(1) from t")
+	require.NoError(t, err)
+	var sb strings.Builder
+	restoreCtx := NewRestoreCtx(DefaultRestoreFlags, &sb)
+	sb.Reset()
+	stmts[0].Restore(restoreCtx)
+	require.Equal(t, "SELECT COUNT(1) FROM `t`", sb.String())
 }
 
 func TestMultiStmt(t *testing.T) {

@@ -1,7 +1,4 @@
 set tidb_cost_model_version=1;
-# prepare database
-create database collation_misc;
-use collation_misc;
 
 # ChangingCharsetToUtf8
 create table t1(a varchar(20) charset utf8);

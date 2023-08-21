@@ -169,21 +169,21 @@ ORDER BY te.expect_time asc
 LIMIT 0, 5;
 id	estRows	task	access object	operator info
 Limit	0.00	root		offset:0, count:5
-└─IndexJoin	0.00	root		left outer join, inner:IndexReader, outer key:test.tr.id, inner key:test.p.relate_id, equal cond:eq(test.tr.id, test.p.relate_id)
-  ├─TopN(Build)	0.00	root		test.te.expect_time, offset:0, count:5
-  │ └─IndexJoin	0.00	root		inner join, inner:IndexLookUp, outer key:test.tr.id, inner key:test.te.trade_id, equal cond:eq(test.tr.id, test.te.trade_id)
+└─IndexJoin	0.00	root		left outer join, inner:IndexReader, outer key:topn_push_down.tr.id, inner key:topn_push_down.p.relate_id, equal cond:eq(topn_push_down.tr.id, topn_push_down.p.relate_id)
+  ├─TopN(Build)	0.00	root		topn_push_down.te.expect_time, offset:0, count:5
+  │ └─IndexJoin	0.00	root		inner join, inner:IndexLookUp, outer key:topn_push_down.tr.id, inner key:topn_push_down.te.trade_id, equal cond:eq(topn_push_down.tr.id, topn_push_down.te.trade_id)
   │   ├─IndexLookUp(Build)	0.00	root		
-  │   │ ├─Selection(Build)	0.00	cop[tikv]		eq(test.tr.business_type, 18), eq(test.tr.trade_type, 1)
+  │   │ ├─Selection(Build)	0.00	cop[tikv]		eq(topn_push_down.tr.business_type, 18), eq(topn_push_down.tr.trade_type, 1)
   │   │ │ └─IndexRangeScan	10.00	cop[tikv]	table:tr, index:idx_shop_identy_trade_status_business_type(shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date)	range:[810094178,810094178], keep order:false, stats:pseudo
-  │   │ └─Selection(Probe)	0.00	cop[tikv]		eq(test.tr.brand_identy, 32314), eq(test.tr.domain_type, 2)
+  │   │ └─Selection(Probe)	0.00	cop[tikv]		eq(topn_push_down.tr.brand_identy, 32314), eq(topn_push_down.tr.domain_type, 2)
   │   │   └─TableRowIDScan	0.00	cop[tikv]	table:tr	keep order:false, stats:pseudo
   │   └─IndexLookUp(Probe)	0.00	root		
-  │     ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:te, index:idx_trade_id(trade_id)	range: decided by [eq(test.te.trade_id, test.tr.id)], keep order:false, stats:pseudo
-  │     └─Selection(Probe)	0.00	cop[tikv]		ge(test.te.expect_time, 2018-04-23 00:00:00.000000), le(test.te.expect_time, 2018-04-23 23:59:59.000000)
+  │     ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:te, index:idx_trade_id(trade_id)	range: decided by [eq(topn_push_down.te.trade_id, topn_push_down.tr.id)], keep order:false, stats:pseudo
+  │     └─Selection(Probe)	0.00	cop[tikv]		ge(topn_push_down.te.expect_time, 2018-04-23 00:00:00.000000), le(topn_push_down.te.expect_time, 2018-04-23 23:59:59.000000)
   │       └─TableRowIDScan	0.00	cop[tikv]	table:te	keep order:false, stats:pseudo
   └─IndexReader(Probe)	0.00	root		index:Selection
-    └─Selection	0.00	cop[tikv]		not(isnull(test.p.relate_id))
-      └─IndexRangeScan	0.00	cop[tikv]	table:p, index:payment_relate_id(relate_id)	range: decided by [eq(test.p.relate_id, test.tr.id)], keep order:false, stats:pseudo
+    └─Selection	0.00	cop[tikv]		not(isnull(topn_push_down.p.relate_id))
+      └─IndexRangeScan	0.00	cop[tikv]	table:p, index:payment_relate_id(relate_id)	range: decided by [eq(topn_push_down.p.relate_id, topn_push_down.tr.id)], keep order:false, stats:pseudo
 desc select 1 as a from dual order by a limit 1;
 id	estRows	task	access object	operator info
 Projection_6	1.00	root		1->Column#1
@@ -194,51 +194,51 @@ create table t1(a bigint, b bigint);
 create table t2(a bigint, b bigint);
 desc select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b limit 1);
 id	estRows	task	access object	operator info
-Apply_15	9990.00	root		semi join, equal:[eq(test.t1.a, test.t2.a)]
+Apply_15	9990.00	root		semi join, equal:[eq(topn_push_down.t1.a, topn_push_down.t2.a)]
 ├─TableReader_18(Build)	9990.00	root		data:Selection_17
-│ └─Selection_17	9990.00	cop[tikv]		not(isnull(test.t1.a))
+│ └─Selection_17	9990.00	cop[tikv]		not(isnull(topn_push_down.t1.a))
 │   └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Selection_19(Probe)	7992.00	root		not(isnull(test.t2.a))
+└─Selection_19(Probe)	7992.00	root		not(isnull(topn_push_down.t2.a))
   └─Limit_20	9990.00	root		offset:0, count:1
     └─TableReader_25	9990.00	root		data:Limit_24
       └─Limit_24	9990.00	cop[tikv]		offset:0, count:1
-        └─Selection_23	9990.00	cop[tikv]		gt(test.t2.b, test.t1.b)
+        └─Selection_23	9990.00	cop[tikv]		gt(topn_push_down.t2.b, topn_push_down.t1.b)
           └─TableFullScan_22	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 desc select * from t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t2 where t2.b > t1.b) x order by b limit 1);
 id	estRows	task	access object	operator info
-Apply_17	9990.00	root		semi join, equal:[eq(test.t1.a, test.t2.a)]
+Apply_17	9990.00	root		semi join, equal:[eq(topn_push_down.t1.a, topn_push_down.t2.a)]
 ├─TableReader_20(Build)	9990.00	root		data:Selection_19
-│ └─Selection_19	9990.00	cop[tikv]		not(isnull(test.t1.a))
+│ └─Selection_19	9990.00	cop[tikv]		not(isnull(topn_push_down.t1.a))
 │   └─TableFullScan_18	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Selection_21(Probe)	7992.00	root		not(isnull(test.t2.a))
+└─Selection_21(Probe)	7992.00	root		not(isnull(topn_push_down.t2.a))
   └─Limit_23	9990.00	root		offset:0, count:1
     └─TableReader_28	9990.00	root		data:Limit_27
       └─Limit_27	9990.00	cop[tikv]		offset:0, count:1
-        └─Selection_26	9990.00	cop[tikv]		gt(test.t2.b, test.t1.b)
+        └─Selection_26	9990.00	cop[tikv]		gt(topn_push_down.t2.b, topn_push_down.t1.b)
           └─TableFullScan_25	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int not null, index idx(a));
 explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
 id	estRows	task	access object	operator info
 Limit	5.00	root		offset:0, count:5
-└─IndexJoin	5.00	root		inner join, inner:IndexReader, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
+└─IndexJoin	5.00	root		inner join, inner:IndexReader, outer key:topn_push_down.t.a, inner key:topn_push_down.t.a, equal cond:eq(topn_push_down.t.a, topn_push_down.t.a)
   ├─TableReader(Build)	4.00	root		data:TableFullScan
   │ └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─IndexReader(Probe)	5.00	root		index:IndexRangeScan
-    └─IndexRangeScan	5.00	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo
+    └─IndexRangeScan	5.00	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(topn_push_down.t.a, topn_push_down.t.a)], keep order:false, stats:pseudo
 explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
 id	estRows	task	access object	operator info
 Limit	5.00	root		offset:0, count:5
-└─Selection	5.00	root		isnull(test.t.a)
-  └─IndexJoin	5.00	root		left outer join, inner:IndexReader, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
+└─Selection	5.00	root		isnull(topn_push_down.t.a)
+  └─IndexJoin	5.00	root		left outer join, inner:IndexReader, outer key:topn_push_down.t.a, inner key:topn_push_down.t.a, equal cond:eq(topn_push_down.t.a, topn_push_down.t.a)
     ├─TableReader(Build)	4.00	root		data:TableFullScan
     │ └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─IndexReader(Probe)	5.00	root		index:IndexRangeScan
-      └─IndexRangeScan	5.00	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo
+      └─IndexRangeScan	5.00	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(topn_push_down.t.a, topn_push_down.t.a)], keep order:false, stats:pseudo
 explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
 id	estRows	task	access object	operator info
 Limit	5.00	root		offset:0, count:5
-└─MergeJoin	5.00	root		inner join, left key:test.t.a, right key:test.t.a
+└─MergeJoin	5.00	root		inner join, left key:topn_push_down.t.a, right key:topn_push_down.t.a
   ├─IndexReader(Build)	4.00	root		index:IndexFullScan
   │ └─IndexFullScan	4.00	cop[tikv]	table:t2, index:idx(a)	keep order:true, stats:pseudo
   └─IndexReader(Probe)	4.00	root		index:IndexFullScan
@@ -246,8 +246,8 @@ Limit	5.00	root		offset:0, count:5
 explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
 id	estRows	task	access object	operator info
 Limit	5.00	root		offset:0, count:5
-└─Selection	5.00	root		isnull(test.t.a)
-  └─MergeJoin	5.00	root		left outer join, left key:test.t.a, right key:test.t.a
+└─Selection	5.00	root		isnull(topn_push_down.t.a)
+  └─MergeJoin	5.00	root		left outer join, left key:topn_push_down.t.a, right key:topn_push_down.t.a
     ├─IndexReader(Build)	4.00	root		index:IndexFullScan
     │ └─IndexFullScan	4.00	cop[tikv]	table:t2, index:idx(a)	keep order:true, stats:pseudo
     └─IndexReader(Probe)	4.00	root		index:IndexFullScan
@@ -255,7 +255,7 @@ Limit	5.00	root		offset:0, count:5
 explain format = 'brief' select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
 id	estRows	task	access object	operator info
 Limit	5.00	root		offset:0, count:5
-└─HashJoin	5.00	root		inner join, equal:[eq(test.t.a, test.t.a)]
+└─HashJoin	5.00	root		inner join, equal:[eq(topn_push_down.t.a, topn_push_down.t.a)]
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader(Probe)	4.00	root		data:TableFullScan
@@ -263,8 +263,8 @@ Limit	5.00	root		offset:0, count:5
 explain format = 'brief' select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
 id	estRows	task	access object	operator info
 Limit	5.00	root		offset:0, count:5
-└─Selection	5.00	root		isnull(test.t.a)
-  └─HashJoin	5.00	root		left outer join, equal:[eq(test.t.a, test.t.a)]
+└─Selection	5.00	root		isnull(topn_push_down.t.a)
+  └─HashJoin	5.00	root		left outer join, equal:[eq(topn_push_down.t.a, topn_push_down.t.a)]
     ├─TableReader(Build)	4.00	root		data:TableFullScan
     │ └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan

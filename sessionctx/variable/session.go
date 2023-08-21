@@ -24,6 +24,7 @@ import (
 	"math"
 	"math/rand"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,7 +66,6 @@ import (
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 )
 
 var (
@@ -1070,6 +1070,10 @@ type SessionVars struct {
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
 
+	// TidbKvReadTimeout is the timeout for readonly kv request in milliseconds, 0 means using default value
+	// See https://github.com/pingcap/tidb/blob/7105505a78fc886c33258caa5813baf197b15247/docs/design/2023-06-30-configurable-kv-timeout.md?plain=1#L14-L15
+	TidbKvReadTimeout uint64
+
 	// Killed is a flag to indicate that this query is killed.
 	Killed uint32
 
@@ -1530,6 +1534,9 @@ type SessionVars struct {
 	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
 	// When set to false, give up merging partition stats to global stats.
 	SkipMissingPartitionStats bool
+
+	// SessionAlias is the identifier of the session
+	SessionAlias string
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -3498,6 +3505,14 @@ func (s *SessionVars) GetRuntimeFilterTypes() []RuntimeFilterType {
 // GetRuntimeFilterMode return the session variable runtimeFilterMode
 func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 	return s.runtimeFilterMode
+}
+
+// GetTidbKvReadTimeout returns readonly kv request timeout, prefer query hint over session variable
+func (s *SessionVars) GetTidbKvReadTimeout() uint64 {
+	if s.StmtCtx.HasTidbKvReadTimeout {
+		return s.StmtCtx.TidbKvReadTimeout
+	}
+	return s.TidbKvReadTimeout
 }
 
 // RuntimeFilterType type of runtime filter "IN"

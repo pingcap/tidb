@@ -15,8 +15,10 @@
 package statistics
 
 import (
+	"cmp"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 
@@ -39,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -157,19 +158,11 @@ type TableCacheItem interface {
 	ItemID() int64
 	MemoryUsage() CacheItemMemoryUsage
 	IsAllEvicted() bool
+	GetEvictedStatus() int
 
-	dropUnnecessaryData()
-	isStatsInitialized() bool
-	getEvictedStatus() int
-	statsVer() int64
-}
-
-// DropEvicted drop stats for table column/index
-func DropEvicted(item TableCacheItem) {
-	if !item.isStatsInitialized() || item.getEvictedStatus() == allEvicted {
-		return
-	}
-	item.dropUnnecessaryData()
+	DropUnnecessaryData()
+	IsStatsInitialized() bool
+	GetStatsVer() int64
 }
 
 // CacheItemMemoryUsage indicates the memory usage of TableCacheItem
@@ -331,7 +324,7 @@ func (t *Table) String() string {
 	for _, col := range t.Columns {
 		cols = append(cols, col)
 	}
-	slices.SortFunc(cols, func(i, j *Column) bool { return i.ID < j.ID })
+	slices.SortFunc(cols, func(i, j *Column) int { return cmp.Compare(i.ID, j.ID) })
 	for _, col := range cols {
 		strs = append(strs, col.String())
 	}
@@ -339,7 +332,7 @@ func (t *Table) String() string {
 	for _, idx := range t.Indices {
 		idxs = append(idxs, idx)
 	}
-	slices.SortFunc(idxs, func(i, j *Index) bool { return i.ID < j.ID })
+	slices.SortFunc(idxs, func(i, j *Index) int { return cmp.Compare(i.ID, j.ID) })
 	for _, idx := range idxs {
 		strs = append(strs, idx.String())
 	}
@@ -1247,10 +1240,10 @@ func (coll *HistColl) getIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 	return totalCount, nil
 }
 
-const fakePhysicalID int64 = -1
-
 // PseudoTable creates a pseudo table statistics.
 func PseudoTable(tblInfo *model.TableInfo) *Table {
+	const fakePhysicalID int64 = -1
+
 	pseudoHistColl := HistColl{
 		RealtimeCount:  PseudoRowCount,
 		PhysicalID:     tblInfo.ID,

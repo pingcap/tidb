@@ -15,10 +15,10 @@
 package handle
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,15 +50,14 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const (
 	// TiDBGlobalStats represents the global-stats for a partitioned table.
 	TiDBGlobalStats = "global"
 
-	// maxPartitionMergeBatchSize indicates the max batch size for a worker to merge partition stats
-	maxPartitionMergeBatchSize = 256
+	// MaxPartitionMergeBatchSize indicates the max batch size for a worker to merge partition stats
+	MaxPartitionMergeBatchSize = 256
 )
 
 // Handle can update stats info periodically.
@@ -858,7 +857,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
 		var popedTopN []statistics.TopNMeta
 		wrapper := statistics.NewStatsWrapper(allHg[i], allTopN[i])
-		globalStats.TopN[i], popedTopN, allHg[i], err = h.mergeGlobalStatsTopN(sc, wrapper, sc.GetSessionVars().StmtCtx.TimeZone, sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex == 1)
+		globalStats.TopN[i], popedTopN, allHg[i], err = mergeGlobalStatsTopN(sc, wrapper, sc.GetSessionVars().StmtCtx.TimeZone, sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex == 1)
 		if err != nil {
 			return
 		}
@@ -890,7 +889,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 	return
 }
 
-func (h *Handle) mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics.StatsWrapper,
+func mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics.StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
@@ -902,17 +901,17 @@ func (h *Handle) mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics
 	batchSize := len(wrapper.AllTopN) / mergeConcurrency
 	if batchSize < 1 {
 		batchSize = 1
-	} else if batchSize > maxPartitionMergeBatchSize {
-		batchSize = maxPartitionMergeBatchSize
+	} else if batchSize > MaxPartitionMergeBatchSize {
+		batchSize = MaxPartitionMergeBatchSize
 	}
-	return h.mergeGlobalStatsTopNByConcurrency(mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killed)
+	return MergeGlobalStatsTopNByConcurrency(mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killed)
 }
 
-// mergeGlobalStatsTopNByConcurrency merge partition topN by concurrency
+// MergeGlobalStatsTopNByConcurrency merge partition topN by concurrency
 // To merge global stats topn by concurrency, we will separate the partition topn in concurrency part and deal it with different worker.
 // mergeConcurrency is used to control the total concurrency of the running worker, and mergeBatchSize is sued to control
 // the partition size for each worker to solve it
-func (*Handle) mergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wrapper *statistics.StatsWrapper,
+func MergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wrapper *statistics.StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool, killed *uint32) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	if len(wrapper.AllTopN) < mergeConcurrency {
@@ -948,19 +947,15 @@ func (*Handle) mergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSiz
 
 	// handle Error
 	hasErr := false
+	errMsg := make([]string, 0)
 	for resp := range respCh {
 		if resp.Err != nil {
 			hasErr = true
+			errMsg = append(errMsg, resp.Err.Error())
 		}
 		resps = append(resps, resp)
 	}
 	if hasErr {
-		errMsg := make([]string, 0)
-		for _, resp := range resps {
-			if resp.Err != nil {
-				errMsg = append(errMsg, resp.Err.Error())
-			}
-		}
 		return nil, nil, nil, errors.New(strings.Join(errMsg, ","))
 	}
 
@@ -972,21 +967,13 @@ func (*Handle) mergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSiz
 			sorted = append(sorted, resp.TopN.TopN...)
 		}
 		leftTopn = append(leftTopn, resp.PopedTopn...)
-		for i, removeTopn := range resp.RemoveVals {
-			// Remove the value from the Hists.
-			if len(removeTopn) > 0 {
-				tmp := removeTopn
-				slices.SortFunc(tmp, func(i, j statistics.TopNMeta) bool {
-					cmpResult := bytes.Compare(i.Encoded, j.Encoded)
-					return cmpResult < 0
-				})
-				wrapper.AllHg[i].RemoveVals(tmp)
-			}
-		}
 	}
 
 	globalTopN, popedTopn := statistics.GetMergedTopNFromSortedSlice(sorted, n)
-	return globalTopN, statistics.SortTopnMeta(append(leftTopn, popedTopn...)), wrapper.AllHg, nil
+
+	result := append(leftTopn, popedTopn...)
+	statistics.SortTopnMeta(result)
+	return globalTopN, result, wrapper.AllHg, nil
 }
 
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
