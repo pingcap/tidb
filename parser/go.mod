@@ -13,7 +13,7 @@ require (
 	go.uber.org/zap v1.25.0
 	golang.org/x/exp v0.0.0-20230519143937-03e91628a987
 	golang.org/x/text v0.12.0
-	modernc.org/parser v1.0.7
+	modernc.org/parser v1.0.8
 	modernc.org/y v1.0.9
 )
 
@@ -27,9 +27,9 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/golex v1.0.5 // indirect
-	modernc.org/mathutil v1.5.0 // indirect
+	modernc.org/mathutil v1.6.0 // indirect
 	modernc.org/sortutil v1.1.1 // indirect
-	modernc.org/strutil v1.1.3 // indirect
+	modernc.org/strutil v1.2.0 // indirect
 )
 
 go 1.18
