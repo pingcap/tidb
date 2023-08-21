@@ -438,7 +438,7 @@ func (cp *TableCheckpoint) Apply(cpd *TableCheckpointDiff) {
 		for key, diff := range engineDiff.chunks {
 			checkpointKey := key
 			index := sort.Search(len(engine.Chunks), func(i int) bool {
-				return engine.Chunks[i].Key.less(&checkpointKey) < 0
+				return engine.Chunks[i].Key.less(&checkpointKey) > 0
 			})
 			if index >= len(engine.Chunks) {
 				continue
