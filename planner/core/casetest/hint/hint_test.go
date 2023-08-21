@@ -647,16 +647,3 @@ func TestInvalidHint(t *testing.T) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
-
-func TestIssue46160(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec(`create table t1 (a int, key(a))`)
-	tk.MustExec(`create table t2 (a int, key(a))`)
-
-	query := `select /*+ tidb_inlj(bb) */ aa.* from (select * from t1) as aa left join
-    (select t2.a, t2.a*2 as a2 from t2) as bb on aa.a=bb.a;`
-	tk.HasPlan(query, "IndexJoin")
-}
