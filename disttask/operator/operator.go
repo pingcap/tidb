@@ -21,32 +21,30 @@ import (
 	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
 )
 
-// Operator defines the interface for each operator.
 // Operator is the basic operation unit in the task execution.
-// In each Operator, it will use a `workerpool` to run several workers.
 type Operator interface {
 	Open() error
 	Close() error
 	Display() string
 }
 
-// AsyncOperator can serve as DataSource and DataSink.
-// Each Operator can use it to pass tasks.
+// AsyncOperator process the data in async way.
 //
-//	Eg: op1 use AsyncOperator as sink, op2 use AsyncOperator as source.
-//	    op1 call sink.Write, then op2's worker will handle the task.
+//	Eg: The sink of AsyncOperator op1 and the source of op2
+//  	use the same channel, Then op2's worker will handle
+//   	the result from op1.
 type AsyncOperator[T, R any] struct {
 	wg   *sync.WaitGroup
 	pool *workerpool.WorkerPool[T, R]
 }
 
-// Open implements the DataSource Start.
+// Open implements the Operator's Open interface.
 func (c *AsyncOperator[T, R]) Open() error {
 	c.pool.Start()
 	return nil
 }
 
-// Close implement the DataSource Close.
+// Close implements the Operator's Close interface.
 func (c *AsyncOperator[T, R]) Close() error {
 	c.pool.ReleaseAndWait()
 	return nil
@@ -59,10 +57,12 @@ func (*AsyncOperator[T, R]) Display() string {
 	return fmt.Sprintf("AsyncOperator[%T, %T]", zT, zR)
 }
 
+// SetSource set the source channel.
 func (c *AsyncOperator[T, R]) SetSource(ch DataChannel[T]) {
 	c.pool.SetTaskReceiver(ch.Channel())
 }
 
+// SetSink set the sink channel.
 func (c *AsyncOperator[T, R]) SetSink(ch DataChannel[R]) {
 	c.pool.SetResultSender(ch.Channel())
 }

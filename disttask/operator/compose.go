@@ -14,10 +14,12 @@
 
 package operator
 
+// HasSource is an interface that can be used to set the source of an operator.
 type HasSource[T any] interface {
 	SetSource(channel DataChannel[T])
 }
 
+// HasSink is an interface that can be used to set the sink of an operator.
 type HasSink[T any] interface {
 	SetSink(channel DataChannel[T])
 }

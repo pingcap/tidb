@@ -14,13 +14,13 @@
 
 package operator
 
-// AsyncPipeline wraps a list of BaseAsyncOperatorImpl.
+// AsyncPipeline wraps a list of Operators.
 // The dataflow is from the first operator to the last operator.
 type AsyncPipeline struct {
 	ops []Operator
 }
 
-// Execute start all operators waiting to handle tasks.
+// Execute starts all operators waiting to handle tasks.
 func (p *AsyncPipeline) Execute() error {
 	// Start running each operator.
 	for _, op := range p.ops {
@@ -32,21 +32,21 @@ func (p *AsyncPipeline) Execute() error {
 	return nil
 }
 
-// Close wait all tasks done.
+// Close waits all tasks done.
 func (p *AsyncPipeline) Close() {
 	for _, op := range p.ops {
 		op.Close()
 	}
 }
 
-// NewAsyncPipeline create a new AsyncPipeline.
+// NewAsyncPipeline creates a new AsyncPipeline.
 func NewAsyncPipeline(ops ...Operator) *AsyncPipeline {
 	return &AsyncPipeline{
 		ops: ops,
 	}
 }
 
-// Display show the pipeline.
+// Display shows the pipeline.
 func (p *AsyncPipeline) Display() string {
 	level := 0
 	res := ""
