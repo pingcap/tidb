@@ -227,13 +227,13 @@ func tableHandleKeyRanges(tableInfo *model.TableInfo) (*tidbkv.KeyRanges, error)
 		ranges = ranger.FullRange()
 	}
 	tableIDs := physicalTableIDs(tableInfo)
-	return distsql.TableHandleRangesToKVRanges(nil, tableIDs, tableInfo.IsCommonHandle, ranges, nil)
+	return distsql.TableHandleRangesToKVRanges(nil, tableIDs, tableInfo.IsCommonHandle, ranges)
 }
 
 // tableIndexKeyRanges returns all key ranges associated with the tableInfo and indexInfo.
 func tableIndexKeyRanges(tableInfo *model.TableInfo, indexInfo *model.IndexInfo) (*tidbkv.KeyRanges, error) {
 	tableIDs := physicalTableIDs(tableInfo)
-	return distsql.IndexRangesToKVRangesForTables(nil, tableIDs, indexInfo.ID, ranger.FullRange(), nil)
+	return distsql.IndexRangesToKVRangesForTables(nil, tableIDs, indexInfo.ID, ranger.FullRange())
 }
 
 // DupKVStream is a streaming interface for collecting duplicate key-value pairs.

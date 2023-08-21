@@ -272,6 +272,7 @@ const (
 	);`
 
 	// CreateStatsFeedbackTable stores the feedback info which is used to update stats.
+	// NOTE: Feedback is deprecated, but we still need to create this table for compatibility.
 	CreateStatsFeedbackTable = `CREATE TABLE IF NOT EXISTS mysql.stats_feedback (
 		table_id 	BIGINT(64) NOT NULL,
 		is_index 	TINYINT(2) NOT NULL,
@@ -1597,6 +1598,7 @@ func upgradeToVer20(s Session, ver int64) {
 	if ver >= version20 {
 		return
 	}
+	// NOTE: Feedback is deprecated, but we still need to create this table for compatibility.
 	doReentrantDDL(s, CreateStatsFeedbackTable)
 }
 
@@ -2844,6 +2846,7 @@ func doDDLWorks(s Session) {
 	// Create gc_delete_range_done table.
 	mustExecute(s, CreateGCDeleteRangeDoneTable)
 	// Create stats_feedback table.
+	// NOTE: Feedback is deprecated, but we still need to create this table for compatibility.
 	mustExecute(s, CreateStatsFeedbackTable)
 	// Create role_edges table.
 	mustExecute(s, CreateRoleEdgesTable)
