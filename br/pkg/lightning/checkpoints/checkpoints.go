@@ -250,7 +250,7 @@ func (key *ChunkCheckpointKey) String() string {
 func (key *ChunkCheckpointKey) less(other *ChunkCheckpointKey) int {
 	c := strings.Compare(key.Path, other.Path)
 	if c != 0 {
-		return c
+		return -c
 	}
 	return cmp.Compare(key.Offset, other.Offset)
 }
