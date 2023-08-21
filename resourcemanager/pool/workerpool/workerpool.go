@@ -76,12 +76,12 @@ func NewWorkerPool[T, R any](name string, component util.Component, numWorkers i
 }
 
 // SetTaskReceiver sets the task receiver for the pool.
-func (p *WorkerPool[T, R]) SetTaskReceiver(recv <-chan T) {
+func (p *WorkerPool[T, R]) SetTaskReceiver(recv chan T) {
 	p.taskChan = recv
 }
 
 // SetResultSender sets the result sender for the pool.
-func (p *WorkerPool[T, R]) SetResultSender(sender chan<- R) {
+func (p *WorkerPool[T, R]) SetResultSender(sender chan R) {
 	p.resChan = sender
 }
 
@@ -90,11 +90,15 @@ func (p *WorkerPool[T, R]) Start() {
 	if p.taskChan == nil {
 		p.taskChan = make(chan T)
 	}
-	var zero R
-	var r interface{} = zero
-	if _, ok := r.(None); !ok {
-		p.resChan = make(chan R)
+
+	if p.resChan == nil {
+		var zero R
+		var r interface{} = zero
+		if _, ok := r.(None); !ok {
+			p.resChan = make(chan R)
+		}
 	}
+
 	for i := 0; i < int(p.numWorkers); i++ {
 		p.runAWorker()
 	}
