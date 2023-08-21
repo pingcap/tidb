@@ -15,8 +15,10 @@
 package external
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
+	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
@@ -61,23 +63,172 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 }
 
 type MemoryIngestData struct {
-	ts uint64
+	keyAdaptor local.KeyAdapter
+	keys       [][]byte
+	values     [][]byte
+	ts         uint64
 }
 
+var _ local.IngestData = (*MemoryIngestData)(nil)
+
+func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (int, int) {
+	firstKeyIdx := 0
+	if len(lowerBound) > 0 {
+		lowerBound = m.keyAdaptor.Encode(nil, lowerBound, local.MinRowID)
+		firstKeyIdx = sort.Search(len(m.keys), func(i int) bool {
+			return bytes.Compare(lowerBound, m.keys[i]) <= 0
+		})
+		if firstKeyIdx == len(m.keys) {
+			return -1, -1
+		}
+	}
+
+	lastKeyIdx := len(m.keys) - 1
+	if len(upperBound) > 0 {
+		upperBound = m.keyAdaptor.Encode(nil, upperBound, local.MinRowID)
+		i := sort.Search(len(m.keys), func(i int) bool {
+			reverseIdx := len(m.keys) - 1 - i
+			return bytes.Compare(upperBound, m.keys[reverseIdx]) > 0
+		})
+		if i == len(m.keys) {
+			// should not happen
+			return -1, -1
+		}
+		lastKeyIdx = len(m.keys) - 1 - i
+	}
+	return firstKeyIdx, lastKeyIdx
+}
+
+// GetFirstAndLastKey implements IngestData.GetFirstAndLastKey.
 func (m *MemoryIngestData) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
-	//TODO implement me
-	panic("implement me")
+	firstKeyIdx, lastKeyIdx := m.firstAndLastKeyIndex(lowerBound, upperBound)
+	if firstKeyIdx < 0 {
+		return nil, nil, nil
+	}
+	return m.keys[firstKeyIdx], m.keys[lastKeyIdx], nil
 }
 
+type memoryDataIter struct {
+	keys   [][]byte
+	values [][]byte
+
+	firstKeyIdx int
+	lastKeyIdx  int
+	curIdx      int
+}
+
+// First implements ForwardIter.
+func (m *memoryDataIter) First() bool {
+	m.curIdx = m.firstKeyIdx
+	return true
+}
+
+// Valid implements ForwardIter.
+func (m *memoryDataIter) Valid() bool {
+	return m.firstKeyIdx <= m.curIdx && m.curIdx <= m.lastKeyIdx
+}
+
+// Next implements ForwardIter.
+func (m *memoryDataIter) Next() bool {
+	m.curIdx++
+	return m.Valid()
+}
+
+// Key implements ForwardIter.
+func (m *memoryDataIter) Key() []byte {
+	return m.keys[m.curIdx]
+}
+
+// Value implements ForwardIter.
+func (m *memoryDataIter) Value() []byte {
+	return m.values[m.curIdx]
+}
+
+// Close implements ForwardIter.
+func (m *memoryDataIter) Close() error {
+	return nil
+}
+
+// Error implements ForwardIter.
+func (m *memoryDataIter) Error() error {
+	return nil
+}
+
+type memoryDataDupDetectIter struct {
+	iter           *memoryDataIter
+	dupDetector    *local.DupDetector
+	err            error
+	curKey, curVal []byte
+}
+
+// First implements ForwardIter.
+func (m *memoryDataDupDetectIter) First() bool {
+	if m.err != nil || !m.iter.First() {
+		return false
+	}
+	m.curKey, m.curVal, m.err = m.dupDetector.Init(m.iter)
+	return m.Valid()
+}
+
+// Valid implements ForwardIter.
+func (m *memoryDataDupDetectIter) Valid() bool {
+	return m.err == nil && m.iter.Valid()
+}
+
+// Next implements ForwardIter.
+func (m *memoryDataDupDetectIter) Next() bool {
+	if m.err != nil {
+		return false
+	}
+	key, val, ok, err := m.dupDetector.Next(m.iter)
+	if err != nil {
+		m.err = err
+		return false
+	}
+	if !ok {
+		return false
+	}
+	m.curKey, m.curVal = key, val
+	return true
+}
+
+// Key implements ForwardIter.
+func (m *memoryDataDupDetectIter) Key() []byte {
+	return m.curKey
+}
+
+// Value implements ForwardIter.
+func (m *memoryDataDupDetectIter) Value() []byte {
+	return m.curVal
+}
+
+// Close implements ForwardIter.
+func (m *memoryDataDupDetectIter) Close() error {
+	return m.dupDetector.Close()
+}
+
+// Error implements ForwardIter.
+func (m *memoryDataDupDetectIter) Error() error {
+	return m.err
+}
+
+// NewIter implements IngestData.NewIter.
 func (m *MemoryIngestData) NewIter(ctx context.Context, lowerBound, upperBound []byte) local.ForwardIter {
-	//TODO implement me
-	panic("implement me")
+	firstKeyIdx, lastKeyIdx := m.firstAndLastKeyIndex(lowerBound, upperBound)
+	return &memoryDataIter{
+		keys:        m.keys,
+		values:      m.values,
+		firstKeyIdx: firstKeyIdx,
+		lastKeyIdx:  lastKeyIdx,
+	}
 }
 
+// GetTS implements IngestData.GetTS.
 func (m *MemoryIngestData) GetTS() uint64 {
 	return m.ts
 }
 
+// Finish implements IngestData.Finish.
 func (m *MemoryIngestData) Finish(totalBytes, totalCount int64) {
 	//TODO implement me
 	panic("implement me")
