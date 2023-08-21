@@ -16,9 +16,9 @@ package operator
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
+	"github.com/pingcap/tidb/resourcemanager/util"
 )
 
 // Operator is the basic operation unit in the task execution.
@@ -34,8 +34,15 @@ type Operator interface {
 //	 	use the same channel, Then op2's worker will handle
 //	  	the result from op1.
 type AsyncOperator[T, R any] struct {
-	wg   *sync.WaitGroup
 	pool *workerpool.WorkerPool[T, R]
+}
+
+// NewAsyncOperator create an AsyncOperator.
+func NewAsyncOperator[T, R any](name string, workerNum int, transform func(T) R) *AsyncOperator[T, R] {
+	pool, _ := workerpool.NewWorkerPool(name, util.DistTask, workerNum, newAsyncWorker(transform))
+	return &AsyncOperator[T, R]{
+		pool: pool,
+	}
 }
 
 // Open implements the Operator's Open interface.
@@ -46,7 +53,7 @@ func (c *AsyncOperator[T, R]) Open() error {
 
 // Close implements the Operator's Close interface.
 func (c *AsyncOperator[T, R]) Close() error {
-	c.pool.ReleaseAndWait()
+	c.pool.WaitAndRelease()
 	return nil
 }
 
@@ -66,3 +73,21 @@ func (c *AsyncOperator[T, R]) SetSource(ch DataChannel[T]) {
 func (c *AsyncOperator[T, R]) SetSink(ch DataChannel[R]) {
 	c.pool.SetResultSender(ch.Channel())
 }
+
+type asyncWorker[T, R any] struct {
+	transform func(T) R
+}
+
+func newAsyncWorker[T, R any](transform func(T) R) func() workerpool.Worker[T, R] {
+	return func() workerpool.Worker[T, R] {
+		return &asyncWorker[T, R]{
+			transform: transform,
+		}
+	}
+}
+
+func (s *asyncWorker[T, R]) HandleTask(task T) R {
+	return s.transform(task)
+}
+
+func (s *asyncWorker[T, R]) Close() {}

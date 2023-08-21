@@ -15,8 +15,6 @@
 package operator
 
 import (
-	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
-	"github.com/pingcap/tidb/resourcemanager/util"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -40,6 +38,7 @@ func (s *simpleSource[T]) Open() error {
 			}
 			s.sink.Channel() <- res
 		}
+		s.sink.Finish()
 		return nil
 	})
 	return nil
@@ -59,7 +58,6 @@ func (*simpleSource[T]) Display() string {
 
 type simpleSink[R any] struct {
 	errGroup errgroup.Group
-	quitCh   chan struct{}
 	drainer  func(R)
 	source   DataChannel[R]
 }
@@ -67,26 +65,23 @@ type simpleSink[R any] struct {
 func newSimpleSink[R any](drainer func(R)) *simpleSink[R] {
 	return &simpleSink[R]{
 		drainer: drainer,
-		quitCh:  make(chan struct{}),
 	}
 }
 
 func (s *simpleSink[R]) Open() error {
 	s.errGroup.Go(func() error {
 		for {
-			select {
-			case data := <-s.source.Channel():
-				s.drainer(data)
-			case <-s.quitCh:
+			data, ok := <-s.source.Channel()
+			if !ok {
 				return nil
 			}
+			s.drainer(data)
 		}
 	})
 	return nil
 }
 
 func (s *simpleSink[R]) Close() error {
-	close(s.quitCh)
 	return s.errGroup.Wait()
 }
 
@@ -99,8 +94,7 @@ func (*simpleSink[R]) Display() string {
 }
 
 type simpleOperator[T, R any] struct {
-	AsyncOperator[T, R]
-	transform func(T) R
+	*AsyncOperator[T, R]
 }
 
 func (*simpleOperator[T, R]) Display() string {
@@ -108,21 +102,7 @@ func (*simpleOperator[T, R]) Display() string {
 }
 
 func newSimpleOperator[T, R any](transform func(task T) R, concurrency int) *simpleOperator[T, R] {
-	pool, _ := workerpool.NewWorkerPool("simple", util.UNKNOWN, concurrency,
-		func() workerpool.Worker[T, R] {
-			return simpleWorker[T, R]{transform: transform}
-		})
 	return &simpleOperator[T, R]{
-		AsyncOperator: AsyncOperator[T, R]{pool: pool},
+		AsyncOperator: NewAsyncOperator("simple", concurrency, transform),
 	}
 }
-
-type simpleWorker[T, R any] struct {
-	transform func(T) R
-}
-
-func (s simpleWorker[T, R]) HandleTask(task T) R {
-	return s.transform(task)
-}
-
-func (simpleWorker[T, R]) Close() {}

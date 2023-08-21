@@ -34,6 +34,7 @@ func Compose[T any](op1 HasSink[T], op2 HasSource[T]) {
 // DataChannel is a channel that can be used to transfer data between operators.
 type DataChannel[T any] interface {
 	Channel() chan T
+	Finish()
 }
 
 // SimpleDataChannel is a simple implementation of DataChannel.
@@ -49,4 +50,8 @@ func NewSimpleDataChannel[T any](ch chan T) *SimpleDataChannel[T] {
 // Channel returns the underlying channel of the SimpleDataChannel.
 func (s *SimpleDataChannel[T]) Channel() chan T {
 	return s.channel
+}
+
+func (s *SimpleDataChannel[T]) Finish() {
+	close(s.channel)
 }

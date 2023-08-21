@@ -125,7 +125,11 @@ func (p *WorkerPool[T, R]) runAWorker() {
 	p.wg.Run(func() {
 		for {
 			select {
-			case task := <-p.taskChan:
+			case task, ok := <-p.taskChan:
+				if !ok {
+					w.Close()
+					return
+				}
 				p.handleTaskWithRecover(w, task)
 			case <-p.quitChan:
 				w.Close()
@@ -193,6 +197,14 @@ func (p *WorkerPool[T, R]) Name() string {
 // ReleaseAndWait releases the pool and wait for complete.
 func (p *WorkerPool[T, R]) ReleaseAndWait() {
 	close(p.quitChan)
+	p.wg.Wait()
+	if p.resChan != nil {
+		close(p.resChan)
+	}
+}
+
+// WaitAndRelease waits for all workers to complete and then releases the pool.
+func (p *WorkerPool[T, R]) WaitAndRelease() {
 	p.wg.Wait()
 	if p.resChan != nil {
 		close(p.resChan)
