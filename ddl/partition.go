@@ -2454,7 +2454,15 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			return ver, errors.Trace(err)
 		}
 		if variable.EnableCheckConstraint.Load() {
-			err = verifyExchangePartitionRecordCheckConstraint(w, pt, nt, ptDbInfo.Name.L, ntDbInfo.Name.L, partName)
+			ntbl, err := getTable(d.store, job.SchemaID, nt)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			ptbl, err := getTable(d.store, ptSchemaID, pt)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			err = verifyExchangePartitionRecordCheckConstraint(w, ptbl, ntbl, ptDbInfo.Name.L, ntDbInfo.Name.L, partName)
 			if err != nil {
 				job.State = model.JobStateRollingback
 				return ver, errors.Trace(err)
@@ -3327,22 +3335,8 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	return nil
 }
 
-func verifyExchangePartitionRecordCheckConstraint(w *worker, pt, nt *model.TableInfo, pschemaName, nschemaName, partitionName string) error {
-	getWriteableConstraintExpr := func(constraints []*model.ConstraintInfo) []string {
-		writeableConstraintExpr := make([]string, 0, len(constraints))
-		for _, con := range constraints {
-			if !con.Enforced {
-				continue
-			}
-			if con.State == model.StateDeleteOnly || con.State == model.StateDeleteReorganization {
-				continue
-			}
-			writeableConstraintExpr = append(writeableConstraintExpr, con.ExprString)
-		}
-		return writeableConstraintExpr
-	}
-
-	verifyFunc := func(schemaName, tableName, partitionName string, constraintExprs []string) error {
+func verifyExchangePartitionRecordCheckConstraint(w *worker, ptbl, ntbl table.Table, pschemaName, nschemaName, partitionName string) error {
+	verifyFunc := func(schemaName, tableName, partitionName string, constraints []*table.Constraint) error {
 		var sql string
 		paramList := make([]interface{}, 0, 3)
 		var buf strings.Builder
@@ -3353,11 +3347,11 @@ func verifyExchangePartitionRecordCheckConstraint(w *worker, pt, nt *model.Table
 			paramList = append(paramList, partitionName)
 		}
 		buf.WriteString(" where not (")
-		for i, con := range constraintExprs {
+		for i, cons := range constraints {
 			if i != 0 {
 				buf.WriteString(" and ")
 			}
-			buf.WriteString(fmt.Sprintf("(%s)", con))
+			buf.WriteString(fmt.Sprintf("(%s)", cons.ExprString))
 		}
 		buf.WriteString(") limit 1")
 		sql = buf.String()
@@ -3381,15 +3375,26 @@ func verifyExchangePartitionRecordCheckConstraint(w *worker, pt, nt *model.Table
 		return nil
 	}
 
-	pCons := getWriteableConstraintExpr(pt.Constraints)
-	nCons := getWriteableConstraintExpr(nt.Constraints)
+	type CheckConstraintTable interface {
+		WritableConstraint() []*table.Constraint
+	}
+	pcc, ok := ptbl.(CheckConstraintTable)
+	if !ok {
+		return errors.Errorf("exchange partition process assert table partition failed")
+	}
+	ncc, ok := ntbl.(CheckConstraintTable)
+	if !ok {
+		return errors.Errorf("exchange partition process assert table partition failed")
+	}
+	pCons := pcc.WritableConstraint()
+	nCons := ncc.WritableConstraint()
 	if len(pCons) > 0 {
-		if err := verifyFunc(nschemaName, nt.Name.L, "", pCons); err != nil {
+		if err := verifyFunc(nschemaName, ntbl.Meta().Name.L, "", pCons); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	if len(nCons) > 0 {
-		if err := verifyFunc(pschemaName, pt.Name.L, partitionName, nCons); err != nil {
+		if err := verifyFunc(pschemaName, ptbl.Meta().Name.L, partitionName, nCons); err != nil {
 			return errors.Trace(err)
 		}
 	}
