@@ -147,3 +147,33 @@ func TestWorkerPoolNoneResult(t *testing.T) {
 	require.NotNil(t, pool3.GetResultChan())
 	pool3.ReleaseAndWait()
 }
+
+func TestWorkerPoolCustomChan(t *testing.T) {
+	pool, err := NewWorkerPool[int64, int64](
+		"test", util.UNKNOWN, 3,
+		func() Worker[int64, int64] {
+			return dummyWorker[int64, int64]{}
+		})
+	require.NoError(t, err)
+
+	taskCh := make(chan int64)
+	pool.SetTaskReceiver(taskCh)
+	resultCh := make(chan int64)
+	pool.SetResultSender(resultCh)
+	count := 0
+	g := new(errgroup.Group)
+	g.Go(func() error {
+		for range resultCh {
+			count++
+		}
+		return nil
+	})
+
+	pool.Start()
+	for i := 0; i < 5; i++ {
+		taskCh <- int64(i)
+	}
+	pool.ReleaseAndWait()
+	require.NoError(t, g.Wait())
+	require.Equal(t, 5, count)
+}
