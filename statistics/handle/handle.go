@@ -63,6 +63,7 @@ const (
 
 // Handle can update stats info periodically.
 type Handle struct {
+	// this gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
 	gpool *gp.Pool
 
 	pool sessionPool
@@ -486,7 +487,7 @@ type sessionPool interface {
 func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
 	handle := &Handle{
-		gpool:                   gp.New(math.MaxInt16, 15*time.Minute),
+		gpool:                   gp.New(math.MaxInt16, time.Minute),
 		ddlEventCh:              make(chan *ddlUtil.Event, 1000),
 		listHead:                &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		idxUsageListHead:        &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
