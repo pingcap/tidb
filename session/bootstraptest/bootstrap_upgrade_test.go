@@ -554,6 +554,10 @@ func execute(ctx context.Context, s sessionctx.Context, query string) ([]chunk.R
 	return rows, nil
 }
 
+// TestUpgradeWithPauseDDL adds a user and a system DB's DDL operations, before every test bootstrap(DDL operation). It tests:
+//
+//	1.Before and after each test bootstrap, the DDL of the user DB is paused, but the DDL of the system DB is not paused.
+//	2.Check user DDLs are handled after system DDLs.
 func TestUpgradeWithPauseDDL(t *testing.T) {
 	session.SupportUpgradeStateVer--
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
@@ -563,6 +567,12 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	_, err = execute(context.Background(), se, "create table test.pause_user_ddl_t(a int, b int)")
+	require.NoError(t, err)
+	_, err = execute(context.Background(), se, "create table mysql.pause_user_ddl_t(a int, b int)")
+	require.NoError(t, err)
+	_, err = execute(context.Background(), se, "create table test.pause_user_ddl_t1(a int, b int)")
+	require.NoError(t, err)
+	_, err = execute(context.Background(), se, "create table mysql.pause_user_ddl_t1(a int, b int)")
 	require.NoError(t, err)
 
 	tc := session.TestCallback{Cnt: atomicutil.NewInt32(0)}
@@ -574,16 +584,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	}
 
 	wg := sync.WaitGroup{}
-	tc.OnBootstrapExported = func(s session.Session) {
-		var query string
-		switch tc.Cnt.Load() % 2 {
-		case 0:
-			query = fmt.Sprintf("alter table test.pause_user_ddl_t add index idx_%d(a)", tc.Cnt.Load())
-		case 1:
-			query = fmt.Sprintf("alter table test.pause_user_ddl_t add column c_%d int", tc.Cnt.Load())
-		}
-		tc.Cnt.Add(1)
-
+	asyncExecDDL := func(query string) {
 		ch := make(chan struct{})
 		wg.Add(1)
 		go func() {
@@ -598,6 +599,22 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			}
 		}()
 		<-ch
+	}
+	// Before every test bootstrap(DDL operation), we add a user and a system DB's DDL operations.
+	tc.OnBootstrapExported = func(s session.Session) {
+		var query1, query2 string
+		switch tc.Cnt.Load() % 2 {
+		case 0:
+			query1 = fmt.Sprintf("alter table mysql.pause_user_ddl_t add index idx_%d(a)", tc.Cnt.Load())
+			query2 = fmt.Sprintf("alter table test.pause_user_ddl_t add column c_%d int", tc.Cnt.Load())
+		case 1:
+			// Make sure case0 and case1 use different table ID. Then case1's table won't be filtered because they use the same table ID.
+			query1 = fmt.Sprintf("alter table test.pause_user_ddl_t1 add index idx_%d(a)", tc.Cnt.Load())
+			query2 = fmt.Sprintf("alter table mysql.pause_user_ddl_t1 add column c_%d int", tc.Cnt.Load())
+		}
+		tc.Cnt.Add(1)
+		asyncExecDDL(query1)
+		asyncExecDDL(query2)
 
 		rows, err := execute(context.Background(), s, sql)
 		require.NoError(t, err)
