@@ -227,7 +227,7 @@ func (d *dispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, 
 			}
 		}
 	})
-	retryable := true
+	var retryable bool
 	for i := 0; i < retryTimes; i++ {
 		retryable, err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.task, newSubTasks, prevState)
 		if err == nil || !retryable {
