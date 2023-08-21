@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -485,7 +486,7 @@ type sessionPool interface {
 func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
 	handle := &Handle{
-		gpool:                   gp.New(20, 15*time.Minute),
+		gpool:                   gp.New(math.MaxInt16, 15*time.Minute),
 		ddlEventCh:              make(chan *ddlUtil.Event, 1000),
 		listHead:                &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		idxUsageListHead:        &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
@@ -2327,4 +2328,5 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 // Close stops the background
 func (h *Handle) Close() {
 	h.statsCache.Load().Close()
+	h.gpool.Close()
 }
