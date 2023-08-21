@@ -2453,13 +2453,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
-	}
-
-	if variable.EnableCheckConstraint.Load() {
-		err = verifyExchangePartitionRecordCheckConstraint(w, pt, nt, ptDbInfo.Name.L, ntDbInfo.Name.L, partName)
-		if err != nil {
-			job.State = model.JobStateRollingback
-			return ver, errors.Trace(err)
+		if variable.EnableCheckConstraint.Load() {
+			err = verifyExchangePartitionRecordCheckConstraint(w, pt, nt, ptDbInfo.Name.L, ntDbInfo.Name.L, partName)
+			if err != nil {
+				job.State = model.JobStateRollingback
+				return ver, errors.Trace(err)
+			}
 		}
 	}
 
@@ -3355,11 +3354,10 @@ func verifyExchangePartitionRecordCheckConstraint(w *worker, pt, nt *model.Table
 		}
 		buf.WriteString(" where not (")
 		for i, con := range constraintExprs {
-			if i == 0 {
-				buf.WriteString(con)
-			} else {
-				buf.WriteString(fmt.Sprintf(" and %s", con))
+			if i != 0 {
+				buf.WriteString(" and ")
 			}
+			buf.WriteString(fmt.Sprintf("(%s)", con))
 		}
 		buf.WriteString(") limit 1")
 		sql = buf.String()

@@ -3372,12 +3372,10 @@ func TestExchangePartitionCheckConstraint(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec(`create database db_one`)
-	defer tk.MustExec(`drop database db_one`)
 	tk.MustExec(`create database db_two`)
-	defer tk.MustExec(`drop database db_two`)
 
 	ntSQL := "create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED)"
-	ptSQL := "create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) )"
+	ptSQL := "create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) )"
 	alterSQL := "alter table db_two.pt exchange partition p1 with table db_one.nt"
 	dropSQL := "drop table db_one.nt, db_two.pt"
 	errMsg := "[ddl:1737]Found a row that does not match the partition"
@@ -3408,6 +3406,14 @@ func TestExchangePartitionCheckConstraint(t *testing.T) {
 			ok: false,
 		},
 		{
+			t:  []record{{60, 120}},
+			ok: true,
+		},
+		{
+			t:  []record{{80, 120}},
+			ok: false,
+		},
+		{
 			pt: []record{{60, 60}},
 			ok: true,
 		},
@@ -3429,6 +3435,16 @@ func TestExchangePartitionCheckConstraint(t *testing.T) {
 			t:  []record{{60, 60}},
 			pt: []record{{70, 70}, {30, 50}},
 			ok: true,
+		},
+		{
+			t:  []record{{60, 60}, {60, 120}},
+			pt: []record{{70, 70}, {30, 50}},
+			ok: true,
+		},
+		{
+			t:  []record{{60, 60}, {80, 120}},
+			pt: []record{{70, 70}, {30, 50}},
+			ok: false,
 		},
 		{
 			t:  []record{{60, 60}},
