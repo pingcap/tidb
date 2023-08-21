@@ -347,8 +347,8 @@ func TestSortTopnMeta(t *testing.T) {
 		Encoded: []byte("b"),
 		Count:   2,
 	}}
-	sortedData := SortTopnMeta(data)
-	require.Equal(t, uint64(2), sortedData[0].Count)
+	SortTopnMeta(data)
+	require.Equal(t, uint64(2), data[0].Count)
 }
 
 func TestMergePartTopN2GlobalTopNWithHists(t *testing.T) {
