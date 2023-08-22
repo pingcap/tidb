@@ -4734,7 +4734,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	// To achieve this, we copy the statsTbl and reset the real-time stats fields (set ModifyCount to 0 and set
 	// RealtimeCount to the row count from the ANALYZE, which is fetched from loaded stats in GetAnalyzeRowCount()).
 	if ctx.GetSessionVars().GetOptObjective() == variable.OptObjectiveDetermined {
-		analyzeCount := mathutil.Max(int64(statsTbl.GetAnalyzeRowCount()), 0)
+		analyzeCount := max(int64(statsTbl.GetAnalyzeRowCount()), 0)
 		// If the two fields are already the values we want, we don't need to modify it, and also we don't need to copy.
 		if statsTbl.RealtimeCount != analyzeCount || statsTbl.ModifyCount != 0 {
 			// Here is a case that we need specially care about:
@@ -4799,7 +4799,7 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 	// 2. Table row count from statistics is zero. Pseudo stats table.
 	realtimeRowCount := statsTbl.RealtimeCount
 	if ctx.GetSessionVars().GetOptObjective() == variable.OptObjectiveDetermined {
-		realtimeRowCount = mathutil.Max(int64(statsTbl.GetAnalyzeRowCount()), 0)
+		realtimeRowCount = max(int64(statsTbl.GetAnalyzeRowCount()), 0)
 	}
 	if realtimeRowCount == 0 {
 		return 0
@@ -4807,10 +4807,10 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 
 	// 3. Not pseudo stats table. Return the max LastUpdateVersion among all Columns and Indices
 	for _, col := range statsTbl.Columns {
-		version = mathutil.Max(version, col.LastUpdateVersion)
+		version = max(version, col.LastUpdateVersion)
 	}
 	for _, idx := range statsTbl.Indices {
-		version = mathutil.Max(version, idx.LastUpdateVersion)
+		version = max(version, idx.LastUpdateVersion)
 	}
 	return version
 }
