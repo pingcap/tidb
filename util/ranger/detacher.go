@@ -15,8 +15,6 @@
 package ranger
 
 import (
-	"math"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
@@ -29,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
+	"math"
 )
 
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
@@ -98,69 +97,186 @@ func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.
 	return accessConditions, hasResidualConditions
 }
 
+// todo: consider more no precision-loss downcast cases.
+func downCastCompatible(cast, argCol *types.FieldType) bool {
+	// now only consider varchar type and integer.
+	if !(types.IsTypeVarchar(cast.GetType()) && types.IsTypeVarchar(argCol.GetType()) ||
+		mysql.IsIntegerType(cast.GetType()) && mysql.IsIntegerType(argCol.GetType())){
+		// varchar type and integer on the storage layer is quite same, while the char type has its padding suffix.
+		return false
+	}
+	if types.IsTypeVarchar(cast.GetType()) {
+		// cast varchar function only bear the flen extension.
+		if cast.GetFlen() < argCol.GetFlen() {
+			return false
+		}
+	} else {
+		// For integers, we should ignore the potential display length represented by flen, using the default flen of the type.
+		castFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(cast.GetType())
+		originFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(argCol.GetType())
+		// cast integer function only bear the flen extension and signed symbol unchanged.
+		if castFlen < originFlen {
+			return false
+		}
+		if mysql.HasUnsignedFlag(cast.GetFlag()) != mysql.HasUnsignedFlag(argCol.GetFlag()) {
+			return false
+		}
+	}
+	return true
+}
+
 // getPotentialEqOrInColOffset checks if the expression is a eq/le/ge/lt/gt function that one side is constant and another is column or an
 // in function which is `column in (constant list)`.
 // If so, it will return the offset of this column in the slice, otherwise return -1 for not found.
 // Since combining `x >= 2` and `x <= 2` can lead to an eq condition `x = 2`, we take le/ge/lt/gt into consideration.
-func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expression, cols []*expression.Column) int {
+// 1@param: return the expression passed, returning the new expression if it's downcast.
+// 2@param: indicate the expression returned is changed or not.
+// 3@param: indicate the related column offset with the expression.
+func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expression, cols []*expression.Column) (expression.Expression, bool, int) {
 	f, ok := expr.(*expression.ScalarFunction)
 	if !ok {
-		return -1
+		return expr, false, -1
 	}
 	_, collation := expr.CharsetAndCollation()
 	switch f.FuncName.L {
 	case ast.LogicOr:
 		dnfItems := expression.FlattenDNFConditions(f)
 		offset := int(-1)
-		for _, dnfItem := range dnfItems {
-			curOffset := getPotentialEqOrInColOffset(sctx, dnfItem, cols)
+		downcast := false
+		downcastItems := make([]expression.Expression, len(dnfItems))
+		for i, dnfItem := range dnfItems {
+			newExpr, curDowncast, curOffset := getPotentialEqOrInColOffset(sctx, dnfItem, cols)
 			if curOffset == -1 {
-				return -1
+				return expr, false, -1
 			}
 			if offset != -1 && curOffset != offset {
-				return -1
+				return expr, false, -1
+			}
+			downcastItems[i] = newExpr
+			if curDowncast {
+				downcast = true
 			}
 			offset = curOffset
 		}
-		return offset
+		if downcast {
+			// compose the new DNF expression.
+			return expression.ComposeDNFCondition(sctx, downcastItems...), true, offset
+		}
+		return expr, false, offset
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
-		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
-			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
-				return -1
+		// for case: eq(cast(test.t2.a, varchar(100), "aaaaa"), once t2.a is covered by index or pk, try deconstructing it out.
+		if cast, ok := f.GetArgs()[0].(*expression.ScalarFunction); ok && cast.FuncName.L == ast.Cast {
+			if cast.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(cast.RetType.GetCollate(), collation) {
+				return expr, false, -1
 			}
-			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
-				return -1
+			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && cast.RetType.EvalType() != types.ETInt {
+				return expr, false, -1
 			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
 				val, err := constVal.Eval(chunk.Row{})
 				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
 					// treat col<=>null as range scan instead of point get to avoid incorrect results
 					// when nullable unique index has multiple matches for filter x is null
-					return -1
+					return expr, false, -1
+				}
+				// the direct args of cast function should be column.
+				c, ok := cast.GetArgs()[0].(*expression.Column)
+				if !ok {
+					return expr, false, -1
+				}
+
+				// the column is covered by indexes, deconstructing it out.
+				for i, col := range cols {
+					// When cols are a generated expression col, compare them in terms of virtual expr.
+					if col.EqualByExprAndID(nil, c) {
+						// cast function shouldn't tolerate precision loss. (like int <-> float)
+						if cast.RetType.GetType() != c.RetType.GetType() {
+							return expr, false, -1
+						}
+						// current only consider varchar and integer
+						if !downCastCompatible(cast.RetType, c.RetType) {
+							return expr, false, -1
+						}
+						return expression.NewFunctionInternal(sctx, f.FuncName.L, f.RetType, col, f.GetArgs()[1]), true, i
+					}
+				}
+			}
+		}
+		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
+				return expr, false, -1
+			}
+			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
+				return expr, false, -1
+			}
+			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
+				val, err := constVal.Eval(chunk.Row{})
+				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
+					// treat col<=>null as range scan instead of point get to avoid incorrect results
+					// when nullable unique index has multiple matches for filter x is null
+					return expr, false, -1
 				}
 				for i, col := range cols {
 					// When cols are a generated expression col, compare them in terms of virtual expr.
 					if col.EqualByExprAndID(nil, c) {
-						return i
+						return expr, false, i
 					}
 				}
 			}
 		}
 		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
-				return -1
+				return expr, false, -1
 			}
 			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
-				return -1
+				return expr, false, -1
 			}
 			if constVal, ok := f.GetArgs()[0].(*expression.Constant); ok {
 				val, err := constVal.Eval(chunk.Row{})
 				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
-					return -1
+					return expr, false, -1
 				}
 				for i, col := range cols {
 					if col.Equal(nil, c) {
-						return i
+						return expr, false, i
+					}
+				}
+			}
+		}
+		// for case: eq("aaaaa"， cast(test.t2.a, varchar(100)), once t2.a is covered by index or pk, try deconstructing it out.
+		if cast, ok := f.GetArgs()[1].(*expression.ScalarFunction); ok && cast.FuncName.L == ast.Cast {
+			if cast.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(cast.RetType.GetCollate(), collation) {
+				return expr, false, -1
+			}
+			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && cast.RetType.EvalType() != types.ETInt {
+				return expr, false, -1
+			}
+			if constVal, ok := f.GetArgs()[0].(*expression.Constant); ok {
+				val, err := constVal.Eval(chunk.Row{})
+				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
+					// treat col<=>null as range scan instead of point get to avoid incorrect results
+					// when nullable unique index has multiple matches for filter x is null
+					return expr, false, -1
+				}
+				// the direct args of cast function should be column.
+				c, ok := cast.GetArgs()[0].(*expression.Column)
+				if !ok {
+					return expr, false, -1
+				}
+
+				// the column is covered by indexes, deconstructing it out.
+				for i, col := range cols {
+					// When cols are a generated expression col, compare them in terms of virtual expr.
+					if col.EqualByExprAndID(nil, c) {
+						// cast function shouldn't tolerate precision loss. (like int <-> float)
+						if cast.RetType.GetType() != c.RetType.GetType() {
+							return expr, false, -1
+						}
+						// current only consider varchar and integer
+						if !downCastCompatible(cast.RetType, c.RetType) {
+							return expr, false, -1
+						}
+						return expression.NewFunctionInternal(sctx, f.FuncName.L, f.RetType, col, f.GetArgs()[0]), true, i
 					}
 				}
 			}
@@ -168,23 +284,23 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 	case ast.In:
 		c, ok := f.GetArgs()[0].(*expression.Column)
 		if !ok {
-			return -1
+			return expr, false, -1
 		}
 		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
-			return -1
+			return expr, false, -1
 		}
 		for _, arg := range f.GetArgs()[1:] {
 			if _, ok := arg.(*expression.Constant); !ok {
-				return -1
+				return expr, false, -1
 			}
 		}
 		for i, col := range cols {
 			if col.Equal(nil, c) {
-				return i
+				return expr, false, i
 			}
 		}
 	}
-	return -1
+	return expr, false, -1
 }
 
 type cnfItemRangeResult struct {
@@ -616,7 +732,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 	columnValues := make([]*valueInfo, len(cols))
 	offsets := make([]int, len(conditions))
 	for i, cond := range conditions {
-		offset := getPotentialEqOrInColOffset(sctx, cond, cols)
+		cond, _, offset := getPotentialEqOrInColOffset(sctx, cond, cols)
 		offsets[i] = offset
 		if offset == -1 {
 			continue
@@ -1202,7 +1318,7 @@ func AddExpr4EqAndInCondition(sctx sessionctx.Context, conditions []expression.E
 	// e.g. the original condition is `WHERE b = 100 AND a = 200 AND c = 300`, the definition of
 	// index is (tidb_shard(a), a, b), then accesses is "[a = 200, b = 100]"
 	for i, cond := range conditions {
-		offset := getPotentialEqOrInColOffset(sctx, cond, cols)
+		cond, _, offset := getPotentialEqOrInColOffset(sctx, cond, cols)
 		offsets[i] = offset
 		if offset == -1 {
 			continue

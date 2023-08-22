@@ -74,11 +74,46 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 				}
 				return true, !isFullLength
 			}
+			if c.downcastMatchColumn(scalar.GetArgs()[1]) {
+				cast := scalar.GetArgs()[1].(*expression.ScalarFunction)
+				// Checks whether the scalar function is calculated use the collation compatible with the column.
+				if cast.GetType().EvalType() == types.ETString && !collate.CompatibleCollate(cast.GetType().GetCollate(), collation) {
+					return false, true
+				}
+				// cast function shouldn't tolerate precision loss. (like int <-> float)
+				// current only consider varchar and integer
+				if !downCastCompatible(cast.RetType, cast.GetArgs()[0].GetType()) {
+					return false, true
+				}
+				isFullLength := c.isFullLengthColumn()
+				if scalar.FuncName.L == ast.NE {
+					return isFullLength, !isFullLength
+				}
+				return true, !isFullLength
+			}
 		}
 		if _, ok := scalar.GetArgs()[1].(*expression.Constant); ok {
 			if c.matchColumn(scalar.GetArgs()[0]) {
 				// Checks whether the scalar function is calculated use the collation compatible with the column.
 				if scalar.GetArgs()[0].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().GetCollate(), collation) {
+					return false, true
+				}
+				isFullLength := c.isFullLengthColumn()
+				if scalar.FuncName.L == ast.NE {
+					return isFullLength, !isFullLength
+				}
+				return true, !isFullLength
+			}
+			if c.downcastMatchColumn(scalar.GetArgs()[0]) {
+				cast := scalar.GetArgs()[0].(*expression.ScalarFunction)
+				// Checks whether the scalar function is calculated use the collation compatible with the column.
+				if cast.GetType().EvalType() == types.ETString && !collate.CompatibleCollate(cast.GetType().GetCollate(), collation) {
+					return false, true
+				}
+
+				// cast function shouldn't tolerate precision loss. (like int <-> float)
+				// otherwise, the downcast access filter is incorrect! current only consider varchar and integer.
+				if !downCastCompatible(cast.RetType, cast.GetArgs()[0].GetType()) {
 					return false, true
 				}
 				isFullLength := c.isFullLengthColumn()
@@ -210,6 +245,15 @@ func (c *conditionChecker) matchColumn(expr expression.Expression) bool {
 	// Check if virtual expression column matched
 	if c.checkerCol != nil {
 		return c.checkerCol.EqualByExprAndID(nil, expr)
+	}
+	return false
+}
+
+func (c *conditionChecker) downcastMatchColumn(expr expression.Expression) bool {
+	if c.checkerCol != nil {
+		if f, ok := expr.(*expression.ScalarFunction); ok && f.FuncName.L == ast.Cast {
+			return c.checkerCol.EqualByExprAndID(nil, f.GetArgs()[0])
+		}
 	}
 	return false
 }
