@@ -50,8 +50,7 @@ func createMyWorker() Worker[int64, struct{}] {
 
 func TestWorkerPool(t *testing.T) {
 	// Create a worker pool with 3 workers.
-	pool, err := NewWorkerPool[int64]("test", util.UNKNOWN, 3, createMyWorker)
-	require.NoError(t, err)
+	pool := NewWorkerPool[int64]("test", util.UNKNOWN, 3, createMyWorker)
 	pool.Start()
 	globalCnt.Store(0)
 
@@ -116,45 +115,41 @@ func (d dummyWorker[T, R]) HandleTask(task T) R {
 func (d dummyWorker[T, R]) Close() {}
 
 func TestWorkerPoolNoneResult(t *testing.T) {
-	pool, err := NewWorkerPool[int64, None](
+	pool := NewWorkerPool[int64, None](
 		"test", util.UNKNOWN, 3,
 		func() Worker[int64, None] {
 			return dummyWorker[int64, None]{}
 		})
-	require.NoError(t, err)
 	pool.Start()
 	ch := pool.GetResultChan()
 	require.Nil(t, ch)
 	pool.ReleaseAndWait()
 
-	pool2, err := NewWorkerPool[int64, int64](
+	pool2 := NewWorkerPool[int64, int64](
 		"test", util.UNKNOWN, 3,
 		func() Worker[int64, int64] {
 			return dummyWorker[int64, int64]{}
 		})
-	require.NoError(t, err)
 	pool2.Start()
 	require.NotNil(t, pool2.GetResultChan())
 	pool2.ReleaseAndWait()
 
-	pool3, err := NewWorkerPool[int64, struct{}](
+	pool3 := NewWorkerPool[int64, struct{}](
 		"test", util.UNKNOWN, 3,
 		func() Worker[int64, struct{}] {
 			return dummyWorker[int64, struct{}]{}
 		})
-	require.NoError(t, err)
 	pool3.Start()
 	require.NotNil(t, pool3.GetResultChan())
 	pool3.ReleaseAndWait()
 }
 
 func TestWorkerPoolCustomChan(t *testing.T) {
-	pool, err := NewWorkerPool[int64, int64](
+	pool := NewWorkerPool[int64, int64](
 		"test", util.UNKNOWN, 3,
 		func() Worker[int64, int64] {
 			return dummyWorker[int64, int64]{}
 		})
-	require.NoError(t, err)
 
 	taskCh := make(chan int64)
 	pool.SetTaskReceiver(taskCh)
