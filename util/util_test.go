@@ -94,3 +94,21 @@ line3`))
 	require.Equal(t, io.EOF, err)
 	require.Len(t, line, 0)
 }
+
+func TestIsInCorrectIdentifierName(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		correct bool
+	}{
+		{"Empty identifier", "", true},
+		{"Ending space", "test ", true},
+		{"Correct identifier", "test", false},
+		{"Other correct Identifier", "aaa --\n\txyz", false},
+	}
+
+	for _, tc := range tests {
+		got := IsInCorrectIdentifierName(tc.input)
+		require.Equalf(t, tc.correct, got, "IsInCorrectIdentifierName(%v) != %v", tc.name, tc.correct)
+	}
+}

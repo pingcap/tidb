@@ -746,19 +746,9 @@ func testAnalyzeIncremental(tk *testkit.TestKit, t *testing.T, dom *domain.Domai
 	// Result should not change.
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
 
-	// Test analyze incremental with feedback.
-	// paging is not compatible with feedback.
 	tk.MustExec("set @@tidb_enable_paging = off")
 
 	tk.MustExec("insert into t values (3,3)")
-	oriProbability := statistics.FeedbackProbability.Load()
-	oriMinLogCount := handle.MinLogScanCount.Load()
-	defer func() {
-		statistics.FeedbackProbability.Store(oriProbability)
-		handle.MinLogScanCount.Store(oriMinLogCount)
-	}()
-	statistics.FeedbackProbability.Store(1)
-	handle.MinLogScanCount.Store(0)
 	is := dom.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
@@ -767,17 +757,15 @@ func testAnalyzeIncremental(tk *testkit.TestKit, t *testing.T, dom *domain.Domai
 	tk.MustQuery("select * from t where a > 1")
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.NoError(t, h.DumpStatsFeedbackToKV())
-	require.NoError(t, h.HandleUpdateStats(is))
 	require.NoError(t, h.Update(is))
 	require.NoError(t, h.LoadNeededHistograms())
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 3 0 2 2147483647 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
 	tblStats := h.GetTableStats(tblInfo)
 	val, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(3))
 	require.NoError(t, err)
-	require.Equal(t, uint64(1), tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(nil, val))
-	require.False(t, statistics.IsAnalyzed(tblStats.Indices[tblInfo.Indices[0].ID].Flag))
-	require.False(t, statistics.IsAnalyzed(tblStats.Columns[tblInfo.Columns[0].ID].Flag))
+	require.Equal(t, uint64(0), tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(nil, val))
+	require.True(t, statistics.IsAnalyzed(tblStats.Indices[tblInfo.Indices[0].ID].Flag))
+	require.True(t, statistics.IsAnalyzed(tblStats.Columns[tblInfo.Columns[0].ID].Flag))
 
 	tk.MustExec("analyze incremental table t index")
 	require.NoError(t, h.LoadNeededHistograms())

@@ -671,10 +671,6 @@ type PhysicalIndexScan struct {
 	// will be different. The schema of index scan will decode all columns of index but the TiDB only need some of them.
 	dataSourceSchema *expression.Schema
 
-	// Hist is the histogram when the query was issued.
-	// It is used for query feedback.
-	Hist *statistics.Histogram
-
 	rangeInfo string
 
 	// The index scan may be on a partition.
@@ -734,9 +730,7 @@ func (p *PhysicalIndexScan) Clone() (PhysicalPlan, error) {
 	if p.dataSourceSchema != nil {
 		cloned.dataSourceSchema = p.dataSourceSchema.Clone()
 	}
-	if p.Hist != nil {
-		cloned.Hist = p.Hist.Copy()
-	}
+
 	return cloned, nil
 }
 
@@ -846,10 +840,6 @@ type PhysicalTableScan struct {
 
 	TableAsName *model.CIStr
 
-	// Hist is the histogram when the query was issued.
-	// It is used for query feedback.
-	Hist *statistics.Histogram
-
 	physicalTableID int64
 
 	rangeInfo string
@@ -915,9 +905,6 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 	clonedScan.Columns = util.CloneColInfos(ts.Columns)
 	clonedScan.Ranges = util.CloneRanges(ts.Ranges)
 	clonedScan.TableAsName = ts.TableAsName
-	if ts.Hist != nil {
-		clonedScan.Hist = ts.Hist.Copy()
-	}
 	clonedScan.rangeInfo = ts.rangeInfo
 	clonedScan.runtimeFilterList = make([]*RuntimeFilter, len(ts.runtimeFilterList))
 	for i, rf := range ts.runtimeFilterList {

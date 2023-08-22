@@ -1534,6 +1534,9 @@ type SessionVars struct {
 	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
 	// When set to false, give up merging partition stats to global stats.
 	SkipMissingPartitionStats bool
+
+	// SessionAlias is the identifier of the session
+	SessionAlias string
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -42,7 +43,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // Histogram represents statistics for a column or index.
@@ -237,17 +237,12 @@ const (
 	Version2 = 2
 )
 
-// AnalyzeFlag is set when the statistics comes from analyze and has not been modified by feedback.
+// AnalyzeFlag is set when the statistics comes from analyze.
 const AnalyzeFlag = 1
 
 // IsAnalyzed checks whether this flag contains AnalyzeFlag.
 func IsAnalyzed(flag int64) bool {
 	return (flag & AnalyzeFlag) > 0
-}
-
-// ResetAnalyzeFlag resets the AnalyzeFlag because it has been modified by feedback.
-func ResetAnalyzeFlag(flag int64) int64 {
-	return flag &^ AnalyzeFlag
 }
 
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
@@ -347,8 +342,8 @@ func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
 // AddIdxVals adds the given values to the histogram.
 func (hg *Histogram) AddIdxVals(idxValCntPairs []TopNMeta) {
 	totalAddCnt := int64(0)
-	slices.SortFunc(idxValCntPairs, func(i, j TopNMeta) bool {
-		return bytes.Compare(i.Encoded, j.Encoded) < 0
+	slices.SortFunc(idxValCntPairs, func(i, j TopNMeta) int {
+		return bytes.Compare(i.Encoded, j.Encoded)
 	})
 	for bktIdx, pairIdx := 0, 0; bktIdx < hg.Len(); bktIdx++ {
 		for pairIdx < len(idxValCntPairs) {
@@ -1540,19 +1535,19 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	buckets = buckets[:tail]
 
 	var sortError error
-	slices.SortFunc(buckets, func(i, j *bucket4Merging) bool {
+	slices.SortFunc(buckets, func(i, j *bucket4Merging) int {
 		res, err := i.upper.Compare(sc, j.upper, collate.GetBinaryCollator())
 		if err != nil {
 			sortError = err
 		}
 		if res != 0 {
-			return res < 0
+			return res
 		}
 		res, err = i.lower.Compare(sc, j.lower, collate.GetBinaryCollator())
 		if err != nil {
 			sortError = err
 		}
-		return res < 0
+		return res
 	})
 	if sortError != nil {
 		return nil, sortError
