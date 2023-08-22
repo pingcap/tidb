@@ -201,9 +201,14 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 func warnLockedTableMsg(sessionVars *variable.SessionVars, tids map[int64]struct{}, skippedTables []string) {
 	if len(skippedTables) > 0 {
 		tables := strings.Join(skippedTables, ", ")
-		msg := "skip analyze locked table: %s"
-		if len(skippedTables) > 1 && len(tids) > len(skippedTables) {
-			msg = "skip analyze locked tables: %s, other tables will be analyzed"
+		var msg string
+		if len(skippedTables) > 1 {
+			msg = "skip analyze locked tables: %s"
+			if len(tids) > 0 {
+				msg = "skip analyze locked tables: %s, other tables will be analyzed"
+			}
+		} else {
+			msg = "skip analyze locked table: %s"
 		}
 		sessionVars.StmtCtx.AppendWarning(errors.Errorf(msg, tables))
 	}
