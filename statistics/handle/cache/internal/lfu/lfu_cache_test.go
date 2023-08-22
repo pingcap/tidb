@@ -222,7 +222,7 @@ func checkTable(t *testing.T, tbl *statistics.Table) {
 			require.Equal(t, 0, cap(column.Histogram.Buckets))
 		} else {
 			require.NotNil(t, column.TopN)
-			require.Greater(t, 0, cap(column.Histogram.Buckets))
+			require.Greater(t, cap(column.Histogram.Buckets), 0)
 		}
 	}
 	for _, idx := range tbl.Indices {
@@ -231,7 +231,7 @@ func checkTable(t *testing.T, tbl *statistics.Table) {
 			require.Equal(t, 0, cap(idx.Histogram.Buckets))
 		} else {
 			require.NotNil(t, idx.TopN)
-			require.Greater(t, 0, cap(idx.Histogram.Buckets))
+			require.Greater(t, cap(idx.Histogram.Buckets), 0)
 		}
 	}
 
