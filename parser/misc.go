@@ -995,13 +995,6 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 	// An identifier before or after '.' means it is part of a qualified identifier.
 	// We do not parse it as keyword.
 	if s.r.peek() == '.' {
-<<<<<<< HEAD
-		return 0
-	}
-	if offset > 0 && s.r.s[offset-1] == '.' {
-		return 0
-	}
-=======
 		return 0
 	}
 
@@ -1015,7 +1008,6 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 		}
 	}
 
->>>>>>> 1769f3a1ac3 (parser: fix parser identifier with dot (#46314))
 	buf := &s.buf
 	buf.Reset()
 	buf.Grow(len(lit))
