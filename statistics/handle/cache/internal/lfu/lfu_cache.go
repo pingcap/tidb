@@ -80,7 +80,7 @@ func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
 func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
 	cost := tbl.MemoryUsage().TotalTrackingMemUsage()
 	s.resultKeySet.AddKeyValue(tblID, tbl)
-	s.cost.Add(cost)
+	s.addCost(cost)
 	ok := s.cache.Set(tblID, tbl, cost)
 	metrics.CostGauge.Set(float64(s.cost.Load()))
 	return ok
@@ -147,7 +147,7 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	after := table.MemoryUsage().TotalTrackingMemUsage()
 	// why add before again? because the cost will be subtracted in onExit.
 	// in fact, it is  -(before - after) + after = after + after - before
-	s.cost.Add(2*after - before)
+	s.addCost(2*after - before)
 }
 
 func (s *LFU) onExit(val any) {
@@ -156,10 +156,8 @@ func (s *LFU) onExit(val any) {
 		// and in the second invocation, the value is empty, so it should not be processed.
 		return
 	}
-	s.cost.Add(
-		-1 * val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage(),
-	)
-	metrics.CostGauge.Set(float64(s.cost.Load()))
+	s.addCost(
+		-1 * val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
 }
 
 // Len implements statsCacheInner
@@ -192,4 +190,9 @@ func (s *LFU) metrics() *ristretto.Metrics {
 func (s *LFU) Close() {
 	s.cache.Close()
 	s.cache.Wait()
+}
+
+func (s *LFU) addCost(v int64) {
+	newv := s.cost.Add(v)
+	metrics.CostGauge.Set(float64(newv))
 }
