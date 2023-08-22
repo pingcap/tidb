@@ -23,14 +23,14 @@ run_sql "CREATE DATABASE $DB"
 
 run_sql "CREATE TABLE $DB.kv(k varchar(256) primary key, v int)"
 
-run_sql "CREATE TABLE $DB.partition_kv(
-    k BIGINT,
-    v INT,
-    PRIMARY KEY(k) CLUSTERED
-) PARTITION BY RANGE(k) (
-    PARTITION p0 VALUES LESS THAN (200),
-    PARTITION p1 VALUES LESS THAN (400),
-    PARTITION p2 VALUES LESS THAN (600)
+run_sql "CREATE TABLE $DB.partition_kv( \
+    k BIGINT, \
+    v INT, \
+    PRIMARY KEY(k) CLUSTERED \
+) PARTITION BY RANGE(k) ( \
+    PARTITION p0 VALUES LESS THAN (200), \
+    PARTITION p1 VALUES LESS THAN (400), \
+    PARTITION p2 VALUES LESS THAN (600) \
 );"
 
 stmt="INSERT INTO $DB.kv(k, v) VALUES ('1-record', 1)"
