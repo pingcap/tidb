@@ -81,9 +81,7 @@ func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
 	cost := tbl.MemoryUsage().TotalTrackingMemUsage()
 	s.resultKeySet.AddKeyValue(tblID, tbl)
 	s.addCost(cost)
-	ok := s.cache.Set(tblID, tbl, cost)
-	metrics.CostGauge.Set(float64(s.cost.Load()))
-	return ok
+	return s.cache.Set(tblID, tbl, cost)
 }
 
 // Del implements statsCacheInner
