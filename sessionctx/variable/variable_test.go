@@ -19,11 +19,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/types"
@@ -686,4 +688,29 @@ func TestTimeValidationWithTimezone(t *testing.T) {
 	val, err = sv.Validate(vars, "23:59", ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "23:59 +0800", val)
+}
+
+func TestOrderByDependency(t *testing.T) {
+	// Some other exceptions:
+	// - tidb_snapshot and tidb_read_staleness can not be set at the same time. It doesn't affect dependency.
+	vars := map[string]string{
+		"unknown":                               "1",
+		TxReadOnly:                              "1",
+		SQLAutoIsNull:                           "1",
+		TiDBEnableNoopFuncs:                     "1",
+		TiDBEnforceMPPExecution:                 "1",
+		TiDBAllowMPPExecution:                   "1",
+		TiDBTxnScope:                            kv.LocalTxnScope,
+		TiDBEnableLocalTxn:                      "1",
+		TiDBEnablePlanReplayerContinuousCapture: "1",
+		TiDBEnableHistoricalStats:               "1",
+	}
+	names := OrderByDependency(vars)
+	require.Greater(t, slices.Index(names, TxReadOnly), slices.Index(names, TiDBEnableNoopFuncs))
+	require.Greater(t, slices.Index(names, SQLAutoIsNull), slices.Index(names, TiDBEnableNoopFuncs))
+	require.Greater(t, slices.Index(names, TiDBEnforceMPPExecution), slices.Index(names, TiDBAllowMPPExecution))
+	// Depended variables below are global variables, so actually it doesn't matter.
+	require.Greater(t, slices.Index(names, TiDBTxnScope), slices.Index(names, TiDBEnableLocalTxn))
+	require.Greater(t, slices.Index(names, TiDBEnablePlanReplayerContinuousCapture), slices.Index(names, TiDBEnableHistoricalStats))
+	require.Contains(t, names, "unknown")
 }

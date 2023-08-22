@@ -171,6 +171,28 @@ func TestSystemVars(t *testing.T) {
 			checkStmt:       "select rand()",
 			expectedValue:   "0.11641535266900002",
 		},
+		{
+			// tidb_enforce_mpp depends on tidb_allow_mpp.
+			stmts: []string{
+				"set @@global.tidb_allow_mpp=0",
+				"set @@tidb_allow_mpp=1",
+				"set @@tidb_enforce_mpp=1",
+			},
+			inSessionStates: true,
+			varName:         variable.TiDBEnforceMPPExecution,
+			expectedValue:   "1",
+		},
+		{
+			// tx_read_only depends on tidb_enable_noop_functions.
+			stmts: []string{
+				"set @@global.tidb_enable_noop_functions=0",
+				"set @@tidb_enable_noop_functions=1",
+				"set @@tx_read_only=1",
+			},
+			inSessionStates: true,
+			varName:         variable.TxReadOnly,
+			expectedValue:   "1",
+		},
 	}
 
 	if !sem.IsEnabled() {

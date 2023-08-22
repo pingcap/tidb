@@ -4317,7 +4317,10 @@ func (s *session) DecodeSessionStates(ctx context.Context,
 	}
 
 	// Decode session variables.
-	for name, val := range sessionStates.SystemVars {
+	names := variable.OrderByDependency(sessionStates.SystemVars)
+	// Some variables must be set before others, e.g. tidb_enable_noop_functions should be before noop variables.
+	for _, name := range names {
+		val := sessionStates.SystemVars[name]
 		// Experimental system variables may change scope, data types, or even be removed.
 		// We just ignore the errors and continue.
 		if err := s.sessionVars.SetSystemVar(name, val); err != nil {
