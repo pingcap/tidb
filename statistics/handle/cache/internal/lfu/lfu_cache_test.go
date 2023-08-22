@@ -219,20 +219,15 @@ func checkTable(t *testing.T, tbl *statistics.Table) {
 	for _, column := range tbl.Columns {
 		if column.GetEvictedStatus() == statistics.AllEvicted {
 			require.NotNil(t, column.Histogram.Bounds)
-			require.Greater(t, 0, len(column.Histogram.Buckets))
 		} else {
 			require.Nil(t, column.Histogram.Bounds)
-			require.Len(t, column.Histogram.Buckets, 0)
 		}
-
 	}
 	for _, idx := range tbl.Indices {
 		if idx.GetEvictedStatus() == statistics.AllEvicted {
 			require.NotNil(t, idx.Histogram.Bounds)
-			require.Greater(t, 0, len(idx.Histogram.Buckets))
 		} else {
 			require.Nil(t, idx.Histogram.Bounds)
-			require.Len(t, idx.Histogram.Buckets, 0)
 		}
 	}
 

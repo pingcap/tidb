@@ -41,7 +41,6 @@ func NewMockStatisticsTable(columns int, indices int, withCMS, withTopN, withHis
 		}
 		if withHist {
 			t.Columns[int64(i)].Histogram = *statistics.NewHistogram(0, 10, 0, 0, types.NewFieldType(mysql.TypeBlob), 1, 0)
-			t.Columns[int64(i)].Buckets = append(t.Columns[int64(i)].Buckets, statistics.Bucket{Repeat: 10, Count: 20})
 		}
 	}
 	for i := 1; i <= indices; i++ {
@@ -58,7 +57,6 @@ func NewMockStatisticsTable(columns int, indices int, withCMS, withTopN, withHis
 		}
 		if withHist {
 			t.Indices[int64(i)].Histogram = *statistics.NewHistogram(0, 10, 0, 0, types.NewFieldType(mysql.TypeBlob), 1, 0)
-			t.Indices[int64(i)].Buckets = append(t.Indices[int64(i)].Buckets, statistics.Bucket{Repeat: 10, Count: 20})
 		}
 	}
 	return t
