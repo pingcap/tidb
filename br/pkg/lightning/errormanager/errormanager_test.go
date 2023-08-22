@@ -260,11 +260,11 @@ func TestReplaceConflictKeys(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mockDB.ExpectQuery("\\QSELECT raw_key FROM `lightning_task_info`.conflict_error_v1 WHERE table_name = ? AND index_name <> 'PRIMARY' GROUP BY raw_key\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key"}).
-			AddRow("t\\ufffd\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000K_i\\ufffd\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0001\\u0003\\ufffd\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0006"))
+			AddRow("dIAAAAAAAABLX2mAAAAAAAAAAQOAAAAAAAAABg=="))
 	mockDB.ExpectQuery("\\QSELECT index_name, raw_value, hex(raw_handle) FROM `lightning_task_info`.conflict_error_v1 WHERE table_name = ? AND raw_key = ?\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"index_name", "raw_value", "hex(raw_handle)"}).
-			AddRow("uni_b", "AAAAAAAAAAE=", "74800000000000004B5F728000000000000001").
-			AddRow("uni_b", "AAAAAAAAAAI=", "74800000000000004B5F728000000000000002"))
+			AddRow("uni_b", "AAAAAAAAAAE=", "NzQ4MDAwMDAwMDAwMDAwMDRCNUY3MjgwMDAwMDAwMDAwMDAwMDE=").
+			AddRow("uni_b", "AAAAAAAAAAI=", "NzQ4MDAwMDAwMDAwMDAwMDRCNUY3MjgwMDAwMDAwMDAwMDAwMDI="))
 
 	decoder, err := tidbkv.NewTableKVDecoder(tbl, "test", &encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
