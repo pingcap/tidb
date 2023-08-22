@@ -15,11 +15,17 @@
 package api
 
 import (
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/duration"
+	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/robfig/cron/v3"
 )
+
+// TimeZoneTiDB indicates to use the tidb timezone.
+const TimeZoneTiDB = "TIDB"
 
 // SchedPolicyType is the type of the event schedule policy.
 type SchedPolicyType string
@@ -27,6 +33,8 @@ type SchedPolicyType string
 const (
 	// SchedEventInterval indicates to schedule events every fixed interval.
 	SchedEventInterval SchedPolicyType = "INTERVAL"
+	// SchedEventCron indicates to schedule events by cron expression.
+	SchedEventCron SchedPolicyType = "CRON"
 )
 
 // SchedEventPolicy is an interface to tell the runtime how to schedule a timer's events.
@@ -62,6 +70,29 @@ func (p *SchedIntervalPolicy) NextEventTime(watermark time.Time) (time.Time, boo
 		return watermark, true
 	}
 	return watermark.Add(p.interval), true
+}
+
+// CronPolicy implements SchedEventPolicy, it is the policy of type `SchedEventCron`.
+type CronPolicy struct {
+	cronSchedule cron.Schedule
+}
+
+// NewCronPolicy creates a new CronPolicy.
+func NewCronPolicy(expr string) (*CronPolicy, error) {
+	cronSchedule, err := cron.ParseStandard(expr)
+	if err != nil {
+		return nil, errors.Wrapf(err, "invalid cron expr '%s'", expr)
+	}
+
+	return &CronPolicy{
+		cronSchedule: cronSchedule,
+	}, nil
+}
+
+// NextEventTime returns the next time of the timer event.
+func (p *CronPolicy) NextEventTime(watermark time.Time) (time.Time, bool) {
+	next := p.cronSchedule.Next(watermark)
+	return next, !next.IsZero()
 }
 
 // ManualRequest is the request info to trigger timer manually.
@@ -111,6 +142,8 @@ type TimerSpec struct {
 	Tags []string
 	// Data is a binary which is defined by user.
 	Data []byte
+	// TimeZone is the time zone name of the timer to evaluate the schedule policy.
+	TimeZone string
 	// SchedPolicyType is the type of the event schedule policy.
 	SchedPolicyType SchedPolicyType
 	// SchedPolicyExpr is the expression of event schedule policy with the type specified by SchedPolicyType.
@@ -140,6 +173,10 @@ func (t *TimerSpec) Validate() error {
 		return errors.New("field 'Key' should not be empty")
 	}
 
+	if err := ValidateTimeZone(t.TimeZone); err != nil {
+		return err
+	}
+
 	if t.SchedPolicyType == "" {
 		return errors.New("field 'SchedPolicyType' should not be empty")
 	}
@@ -161,6 +198,8 @@ func CreateSchedEventPolicy(tp SchedPolicyType, expr string) (SchedEventPolicy, 
 	switch tp {
 	case SchedEventInterval:
 		return NewSchedIntervalPolicy(expr)
+	case SchedEventCron:
+		return NewCronPolicy(expr)
 	default:
 		return nil, errors.Errorf("invalid schedule event type: '%s'", tp)
 	}
@@ -203,6 +242,28 @@ type TimerRecord struct {
 	CreateTime time.Time
 	// Version is the version of the record, when the record updated, version will be increased.
 	Version uint64
+	// Location is used to get the alias of TiDB timezone.
+	Location *time.Location
+}
+
+// NextEventTime returns the next time for timer to schedule
+func (r *TimerRecord) NextEventTime() (tm time.Time, _ bool, _ error) {
+	if !r.Enable {
+		return tm, false, nil
+	}
+
+	watermark := r.Watermark
+	if loc := r.Location; loc != nil {
+		watermark = watermark.In(loc)
+	}
+
+	policy, err := CreateSchedEventPolicy(r.SchedPolicyType, r.SchedPolicyExpr)
+	if err != nil {
+		return tm, false, err
+	}
+
+	tm, ok := policy.NextEventTime(watermark)
+	return tm, ok, nil
 }
 
 // Clone returns a cloned TimerRecord.
@@ -210,4 +271,14 @@ func (r *TimerRecord) Clone() *TimerRecord {
 	cloned := *r
 	cloned.TimerSpec = *r.TimerSpec.Clone()
 	return &cloned
+}
+
+// ValidateTimeZone validates the TimeZone field.
+func ValidateTimeZone(tz string) error {
+	if tz != "" && !strings.EqualFold(tz, TimeZoneTiDB) {
+		if _, ok := timeutil.ParseTimeZone(tz); !ok {
+			return errors.Errorf("Invalid timezone '%s'", tz)
+		}
+	}
+	return nil
 }

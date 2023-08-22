@@ -80,3 +80,49 @@ func TestInferOneStepLinkForPath(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, -1, strings.Index(link3, link1.Name()))
 }
+
+func TestParseTimeZone(t *testing.T) {
+	SetSystemTZ("Asia/Tokyo")
+	cases := []struct {
+		name    string
+		offset  int64
+		invalid bool
+	}{
+		{
+			name:   "SYSTEM",
+			offset: int64(9 * 3600),
+		},
+		{
+			name:   "system",
+			offset: int64(9 * 3600),
+		},
+		{
+			name:   "Asia/Shanghai",
+			offset: int64(8 * 3600),
+		},
+		{
+			name:   "Pacific/Honolulu",
+			offset: int64(-10 * 3600),
+		},
+		{
+			name:   "-07:00",
+			offset: int64(-7 * 3600),
+		},
+		{
+			name:   "+02:00",
+			offset: int64(2 * 3600),
+		},
+	}
+
+	for _, c := range cases {
+		loc, ok := ParseTimeZone(c.name)
+		if c.invalid {
+			require.False(t, ok, c.name)
+			require.Nil(t, loc, c.name)
+			continue
+		}
+		require.NotNil(t, loc, c.name)
+		_, offset := Zone(loc)
+		require.Equal(t, c.offset, offset, c.name)
+	}
+}
