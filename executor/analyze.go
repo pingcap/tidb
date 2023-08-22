@@ -179,7 +179,7 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 	for _, task := range tasks {
 		tableID := getTableIDFromTask(task)
 		isLocked := statsHandle.IsTableLocked(tableID)
-		if isLocked {
+		if !isLocked {
 			filteredTasks = append(filteredTasks, task)
 		}
 		if _, ok := tids[tableID]; !ok {
