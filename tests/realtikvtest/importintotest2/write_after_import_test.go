@@ -26,7 +26,7 @@ import (
 )
 
 func (s *mockGCSSuite) TestWriteAfterImport() {
-	// 2 files, each with 18 bytes, divide by column count, the calculated id
+	// 2 files, each with 18 bytes, divide by column count 2, the calculated id
 	// range is [1, 9], [10, 18], the max id if it's used during encoding will be 11.
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "write_after_import", Name: "1.csv"},
