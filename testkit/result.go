@@ -19,11 +19,11 @@ package testkit
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 )
 
 // Result is the result returned by MustQuery.
@@ -86,15 +86,8 @@ func Rows(args ...string) [][]interface{} {
 
 // Sort sorts and return the result.
 func (res *Result) Sort() *Result {
-	slices.SortFunc(res.rows, func(a, b []string) bool {
-		for i := range a {
-			if a[i] < b[i] {
-				return true
-			} else if a[i] > b[i] {
-				return false
-			}
-		}
-		return false
+	slices.SortFunc(res.rows, func(a, b []string) int {
+		return slices.Compare(a, b)
 	})
 	return res
 }

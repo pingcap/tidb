@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -231,13 +230,11 @@ func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
 	col, cst := &expression.Column{RetType: types.NewFieldType(mysql.TypeString)}, &expression.Constant{RetType: types.NewFieldType(mysql.TypeLonglong)}
 	schema := expression.NewSchema(col)
 	tblInfo := &model.TableInfo{}
-	hist := &statistics.Histogram{Bounds: chunk.New(nil, 0, 0)}
 
 	// table scan
 	tableScan := &PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
-		Hist:            hist,
 	}
 	tableScan = tableScan.Init(ctx, 0)
 	tableScan.SetSchema(schema)
@@ -263,7 +260,6 @@ func TestPhysicalPlanClone(t *testing.T) {
 	schema := expression.NewSchema(col)
 	tblInfo := &model.TableInfo{}
 	idxInfo := &model.IndexInfo{}
-	hist := &statistics.Histogram{Bounds: chunk.New(nil, 0, 0)}
 	aggDesc1, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	aggDesc2, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncCount, []expression.Expression{cst}, true)
@@ -274,7 +270,6 @@ func TestPhysicalPlanClone(t *testing.T) {
 	tableScan := &PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
-		Hist:            hist,
 	}
 	tableScan = tableScan.Init(ctx, 0)
 	tableScan.SetSchema(schema)
@@ -294,7 +289,6 @@ func TestPhysicalPlanClone(t *testing.T) {
 		AccessCondition:  []expression.Expression{col, cst},
 		Table:            tblInfo,
 		Index:            idxInfo,
-		Hist:             hist,
 		dataSourceSchema: schema,
 	}
 	indexScan = indexScan.Init(ctx, 0)
