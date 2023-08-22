@@ -425,3 +425,17 @@ func randMVIndexValue(opts randMVIndexValOpts) string {
 	}
 	return ""
 }
+
+func TestIndexMergeJSONMemberOf2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(
+a int, j0 json, j1 json,
+index j0_0((cast(j0->'$.path0' as signed array))));`)
+	tk.MustExec("insert into t values(1, '{\"path0\" : [1,2,3]}', null ); ")
+	tk.MustQuery("select /*+ no_index_merge() */ a from t where (1 member of (j0->'$.path0')); ").Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ no_index_merge() */ a from t where ('1' member of (j0->'$.path0')); ").Check(testkit.Rows())
+	tk.MustQuery("select /*+ use_index_merge(t, j0_0) */ a from t where (1 member of (j0->'$.path0')); ").Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ use_index_merge(t, j0_0) */ a from t where ('1' member of (j0->'$.path0')); ").Check(testkit.Rows())
+}
