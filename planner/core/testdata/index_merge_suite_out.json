@@ -85,106 +85,95 @@
       {
         "SQL": "select /*+ use_index_merge(t, j0_0) */ * from t where (1 member of (j0->'$.path0'))",
         "Plan": [
-          "Selection 8.00 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j0, \"$.path0\"))",
-          "└─IndexMerge 10.00 root  type: union",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 10.00 root  type: union",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ use_index_merge(t, j0_1) */ * from t where (1 member of (j0->'$.path1')) and a<10",
         "Plan": [
-          "Selection 8.00 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j0, \"$.path1\"))",
-          "└─IndexMerge 3.32 root  type: union",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_1(cast(json_extract(`j0`, _utf8mb4'$.path1') as signed array)) range:[1,1], keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 3.32 cop[tikv]  lt(test.t.a, 10)",
-          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 3.32 root  type: union",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_1(cast(json_extract(`j0`, _utf8mb4'$.path1') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 3.32 cop[tikv]  lt(test.t.a, 10)",
+          "  └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ use_index_merge(t, j0_1) */ * from t where (1 member of (j0->'$.XXX')) and a<10",
         "Plan": [
-          "Selection 2658.67 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j0, \"$.XXX\"))",
-          "└─TableReader 3323.33 root  data:Selection",
-          "  └─Selection 3323.33 cop[tikv]  lt(test.t.a, 10)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 2658.67 root  data:Selection",
+          "└─Selection 2658.67 cop[tikv]  json_memberof(cast(1, json BINARY), json_extract(test.t.j0, \"$.XXX\")), lt(test.t.a, 10)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ use_index_merge(t, j0_1) */ * from t where (1 member of (j0->'$.path1')) and (2 member of (j1)) and a<10",
         "Plan": [
-          "Selection 8.00 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j0, \"$.path1\")), json_memberof(cast(2, json BINARY), test.t.j1)",
-          "└─IndexMerge 3.32 root  type: union",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_1(cast(json_extract(`j0`, _utf8mb4'$.path1') as signed array)) range:[1,1], keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 3.32 cop[tikv]  lt(test.t.a, 10)",
-          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 2.66 root  type: union",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_1(cast(json_extract(`j0`, _utf8mb4'$.path1') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 2.66 cop[tikv]  json_memberof(cast(2, json BINARY), test.t.j1), lt(test.t.a, 10)",
+          "  └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ use_index(t, j0_0) */ * from t where (1 member of (j0->'$.path0'))",
         "Plan": [
-          "Selection 8000.00 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j0, \"$.path0\"))",
-          "└─IndexMerge 10.00 root  type: union",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 10.00 root  type: union",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ use_index(t, j0_1) */ * from t where (1 member of (j0->'$.path1')) and a<10",
         "Plan": [
-          "Selection 2658.67 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j0, \"$.path1\"))",
-          "└─IndexMerge 3.32 root  type: union",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_1(cast(json_extract(`j0`, _utf8mb4'$.path1') as signed array)) range:[1,1], keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 3.32 cop[tikv]  lt(test.t.a, 10)",
-          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 3.32 root  type: union",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_1(cast(json_extract(`j0`, _utf8mb4'$.path1') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 3.32 cop[tikv]  lt(test.t.a, 10)",
+          "  └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select * from t use index(j0_0) where (1 member of (j0->'$.path0'))",
         "Plan": [
-          "Selection 8000.00 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j0, \"$.path0\"))",
-          "└─IndexMerge 10.00 root  type: union",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 10.00 root  type: union",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select * from t use index(j0_1) where (1 member of (j0->'$.path1')) and a<10",
         "Plan": [
-          "Selection 2658.67 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j0, \"$.path1\"))",
-          "└─IndexMerge 3.32 root  type: union",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_1(cast(json_extract(`j0`, _utf8mb4'$.path1') as signed array)) range:[1,1], keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 3.32 cop[tikv]  lt(test.t.a, 10)",
-          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 3.32 root  type: union",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_1(cast(json_extract(`j0`, _utf8mb4'$.path1') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 3.32 cop[tikv]  lt(test.t.a, 10)",
+          "  └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select * from t force index(j0_0) where (1 member of (j0->'$.path0'))",
         "Plan": [
-          "Selection 8000.00 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j0, \"$.path0\"))",
-          "└─IndexMerge 10.00 root  type: union",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 10.00 root  type: union",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select * from t force index(j0_1) where (1 member of (j0->'$.path1')) and a<10",
         "Plan": [
-          "Selection 2658.67 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j0, \"$.path1\"))",
-          "└─IndexMerge 3.32 root  type: union",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_1(cast(json_extract(`j0`, _utf8mb4'$.path1') as signed array)) range:[1,1], keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 3.32 cop[tikv]  lt(test.t.a, 10)",
-          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 3.32 root  type: union",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_1(cast(json_extract(`j0`, _utf8mb4'$.path1') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 3.32 cop[tikv]  lt(test.t.a, 10)",
+          "  └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ use_index_merge(t, j1) */ * from t where (1 member of (j0->'$.path1')) and (2 member of (j1)) and a<10",
         "Plan": [
-          "Selection 8.00 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j0, \"$.path1\")), json_memberof(cast(2, json BINARY), test.t.j1)",
-          "└─IndexMerge 3.32 root  type: union",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_1(cast(json_extract(`j0`, _utf8mb4'$.path1') as signed array)) range:[1,1], keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 3.32 cop[tikv]  lt(test.t.a, 10)",
-          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 2.66 root  type: union",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_1(cast(json_extract(`j0`, _utf8mb4'$.path1') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 2.66 cop[tikv]  json_memberof(cast(2, json BINARY), test.t.j1), lt(test.t.a, 10)",
+          "  └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -312,20 +301,18 @@
       {
         "SQL": "select /*+ use_index_merge(t, j0_string) */ * from t where (\"a\" member of (j0->'$.path_string'))",
         "Plan": [
-          "Selection 8.00 root  json_memberof(cast(\"a\", json BINARY), json_extract(test.t.j0, \"$.path_string\"))",
-          "└─IndexMerge 10.00 root  type: union",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_string(cast(json_extract(`j0`, _utf8mb4'$.path_string') as char(10) array)) range:[0x61,0x61], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 10.00 root  type: union",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_string(cast(json_extract(`j0`, _utf8mb4'$.path_string') as char(10) array)) range:[0x61,0x61], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ use_index_merge(t, j0_string) */ * from t where (\"a\" member of (j0->'$.path_string')) and a<10",
         "Plan": [
-          "Selection 8.00 root  json_memberof(cast(\"a\", json BINARY), json_extract(test.t.j0, \"$.path_string\"))",
-          "└─IndexMerge 3.32 root  type: union",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_string(cast(json_extract(`j0`, _utf8mb4'$.path_string') as char(10) array)) range:[0x61,0x61], keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 3.32 cop[tikv]  lt(test.t.a, 10)",
-          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 3.32 root  type: union",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_string(cast(json_extract(`j0`, _utf8mb4'$.path_string') as char(10) array)) range:[0x61,0x61], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 3.32 cop[tikv]  lt(test.t.a, 10)",
+          "  └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -375,20 +362,18 @@
       {
         "SQL": "select /*+ use_index_merge(t, j0_date) */ * from t where (\"2023-01-01\" member of (j0->'$.path_date'))",
         "Plan": [
-          "Selection 8.00 root  json_memberof(cast(\"2023-01-01\", json BINARY), json_extract(test.t.j0, \"$.path_date\"))",
-          "└─IndexMerge 10.00 root  type: union",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_date(cast(json_extract(`j0`, _utf8mb4'$.path_date') as date array)) range:[2023-01-01,2023-01-01], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 10.00 root  type: union",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_date(cast(json_extract(`j0`, _utf8mb4'$.path_date') as date array)) range:[2023-01-01,2023-01-01], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ use_index_merge(t, j0_date) */ * from t where (\"2023-01-01\" member of (j0->'$.path_date')) and a<10",
         "Plan": [
-          "Selection 8.00 root  json_memberof(cast(\"2023-01-01\", json BINARY), json_extract(test.t.j0, \"$.path_date\"))",
-          "└─IndexMerge 3.32 root  type: union",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_date(cast(json_extract(`j0`, _utf8mb4'$.path_date') as date array)) range:[2023-01-01,2023-01-01], keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 3.32 cop[tikv]  lt(test.t.a, 10)",
-          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 3.32 root  type: union",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_date(cast(json_extract(`j0`, _utf8mb4'$.path_date') as date array)) range:[2023-01-01,2023-01-01], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 3.32 cop[tikv]  lt(test.t.a, 10)",
+          "  └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
