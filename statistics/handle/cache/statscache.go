@@ -15,7 +15,6 @@
 package cache
 
 import (
-	"runtime"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/config"
@@ -49,8 +48,6 @@ func (s *StatsCachePointer) Replace(newCache *StatsCache) {
 	old := s.Swap(newCache)
 	if old != nil {
 		old.Close()
-		//nolint: revive
-		runtime.GC()
 	}
 	metrics.CostGauge.Set(float64(newCache.Cost()))
 }
