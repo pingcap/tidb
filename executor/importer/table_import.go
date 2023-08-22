@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/config"
 	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
@@ -472,6 +473,11 @@ func (ti *TableImporter) setLastInsertID(id uint64) {
 	if ti.lastInsertID == 0 || id < ti.lastInsertID {
 		ti.lastInsertID = id
 	}
+}
+
+// Allocators returns allocators used to record max used ID, i.e. PanickingAllocators.
+func (ti *TableImporter) Allocators() autoid.Allocators {
+	return ti.encTable.Allocators(nil)
 }
 
 // CheckDiskQuota checks disk quota.

@@ -237,6 +237,11 @@ func rebaseAllocatorBases(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *
 	defer func() {
 		callLog.End(zap.ErrorLevel, err)
 	}()
+
+	if !common.TableHasAutoID(taskMeta.Plan.TableInfo) {
+		return nil
+	}
+
 	tidbCfg := tidb.GetGlobalConfig()
 	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
 	tls, err2 := common.NewTLS(

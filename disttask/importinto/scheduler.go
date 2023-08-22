@@ -176,7 +176,7 @@ func (s *importStepScheduler) OnSubtaskFinished(ctx context.Context, subtaskMeta
 		LoadedRowCnt: uint64(dataKVCount),
 		ColSizeMap:   sharedVars.Progress.GetColSize(),
 	}
-	allocators := sharedVars.TableImporter.Table.Allocators(nil)
+	allocators := sharedVars.TableImporter.Allocators()
 	subtaskMeta.MaxIDs = map[autoid.AllocatorType]int64{
 		autoid.RowIDAllocType:    allocators.Get(autoid.RowIDAllocType).Base(),
 		autoid.AutoIncrementType: allocators.Get(autoid.AutoIncrementType).Base(),
