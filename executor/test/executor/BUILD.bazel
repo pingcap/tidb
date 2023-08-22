@@ -33,7 +33,6 @@ go_test(
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//sessiontxn",
-        "//statistics",
         "//store/driver/error",
         "//store/mockstore",
         "//table/tables",
