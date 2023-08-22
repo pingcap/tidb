@@ -15,6 +15,8 @@
 package ranger
 
 import (
+	"math"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
@@ -27,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
-	"math"
 )
 
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
@@ -101,7 +102,7 @@ func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.
 func downCastCompatible(cast, argCol *types.FieldType) bool {
 	// now only consider varchar type and integer.
 	if !(types.IsTypeVarchar(cast.GetType()) && types.IsTypeVarchar(argCol.GetType()) ||
-		mysql.IsIntegerType(cast.GetType()) && mysql.IsIntegerType(argCol.GetType())){
+		mysql.IsIntegerType(cast.GetType()) && mysql.IsIntegerType(argCol.GetType())) {
 		// varchar type and integer on the storage layer is quite same, while the char type has its padding suffix.
 		return false
 	}

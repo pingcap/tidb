@@ -279,8 +279,8 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 		return
 	}
 	var (
-		ok bool
-		col *expression.Column
+		ok   bool
+		col  *expression.Column
 		cast *expression.ScalarFunction
 	)
 	if col, ok = expr.GetArgs()[0].(*expression.Column); ok {
