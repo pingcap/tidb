@@ -87,6 +87,10 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+	// Note:
+	// For the dumping for SQL file case (len(e.DumpInfo.Path) > 0), the DumpInfo.dump() is called in
+	// handleFileTransInConn(), which is after TxnManager.OnTxnEnd(), where we can't access the TxnManager anymore.
+	// So we must fetch the startTS now.
 	startTS, err := sessiontxn.GetTxnManager(e.Ctx()).GetStmtReadTS()
 	if err != nil {
 		return err

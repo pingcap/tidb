@@ -116,6 +116,7 @@ func TestIssue46197(t *testing.T) {
 
 	// Mock the content of the SQL file in PacketIO buffer.
 	// First 4 bytes are the header, followed by the actual content.
+	// This acts like we are sending "select * from t1;" from the client when tidb requests the "a.txt" file.
 	var inBuffer bytes.Buffer
 	_, err = inBuffer.Write([]byte{0x11, 0x00, 0x00, 0x01})
 	require.NoError(t, err)
@@ -139,6 +140,7 @@ func TestIssue46197(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int, b int)")
 
+	// 3 is mysql.ComQuery, followed by the SQL text.
 	require.NoError(t, cc.dispatch(ctx, []byte("\u0003plan replayer dump explain 'a.txt'")))
 
 	// clean up
