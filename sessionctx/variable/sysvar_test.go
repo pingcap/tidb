@@ -146,6 +146,25 @@ func TestCollationServer(t *testing.T) {
 	require.Equal(t, "utf8mb4", vars.systems[CharacterSetServer]) // check it also changes charset.
 }
 
+func TestDefaultCollationForUTF8MB4(t *testing.T) {
+	sv := GetSysVar(DefaultCollationForUTF8MB4)
+	vars := NewSessionVars(nil)
+
+	// test normalization
+	val, err := sv.Validate(vars, "utf8mb4_BIN", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "utf8mb4_bin", val)
+	val, err = sv.Validate(vars, "utf8mb4_GENeral_CI", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "utf8mb4_general_ci", val)
+	val, err = sv.Validate(vars, "utf8mb4_0900_AI_CI", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "utf8mb4_0900_ai_ci", val)
+	// test set variable failed
+	val, err = sv.Validate(vars, "LATIN1_bin", ScopeSession)
+	require.EqualError(t, err, ErrInvalidDefaultUTF8MB4Collation.GenWithStackByArgs("latin1_bin").Error())
+}
+
 func TestTimeZone(t *testing.T) {
 	sv := GetSysVar(TimeZone)
 	vars := NewSessionVars(nil)
