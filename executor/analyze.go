@@ -93,8 +93,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	sessionVars := e.Ctx().GetSessionVars()
 
 	// Filter the locked tables.
-	tasks, tids, skippedTables := filterAndCollectTasks(e.tasks, statsHandle, infoSchema)
-	warnLockedTableMsg(sessionVars, tids, skippedTables)
+	tasks, needAnalyzeTableCnt, skippedTables := filterAndCollectTasks(e.tasks, statsHandle, infoSchema)
+	warnLockedTableMsg(sessionVars, needAnalyzeTableCnt, skippedTables)
 
 	if len(tasks) == 0 {
 		return nil
@@ -170,18 +170,20 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 }
 
 // filterAndCollectTasks filters the tasks that are not locked and collects the table IDs.
-func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, infoSchema infoschema.InfoSchema) ([]*analyzeTask, map[int64]struct{}, []string) {
+func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, infoSchema infoschema.InfoSchema) ([]*analyzeTask, uint, []string) {
 	var filteredTasks []*analyzeTask
 	tids := make(map[int64]struct{})
 	var skippedTables []string
+	needAnalyzeTableCnt := uint(0)
 
 	for _, task := range tasks {
 		tableID := getTableIDFromTask(task)
-		if !statsHandle.IsTableLocked(tableID) {
+		isLocked := statsHandle.IsTableLocked(tableID)
+		if isLocked {
 			filteredTasks = append(filteredTasks, task)
 		}
 		if _, ok := tids[tableID]; !ok {
-			if statsHandle.IsTableLocked(tableID) {
+			if isLocked {
 				tbl, ok := infoSchema.TableByID(tableID)
 				if !ok {
 					logutil.BgLogger().Warn("Unknown table ID in analyze task", zap.Int64("tid", tableID))
@@ -189,22 +191,24 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 					continue
 				}
 				skippedTables = append(skippedTables, tbl.Meta().Name.L)
+			} else {
+				needAnalyzeTableCnt += 1
 			}
 			tids[tableID] = struct{}{}
 		}
 	}
 
-	return filteredTasks, tids, skippedTables
+	return filteredTasks, needAnalyzeTableCnt, skippedTables
 }
 
 // warnLockedTableMsg warns the locked table IDs.
-func warnLockedTableMsg(sessionVars *variable.SessionVars, tids map[int64]struct{}, skippedTables []string) {
+func warnLockedTableMsg(sessionVars *variable.SessionVars, needAnalyzeTableCnt uint, skippedTables []string) {
 	if len(skippedTables) > 0 {
 		tables := strings.Join(skippedTables, ", ")
 		var msg string
 		if len(skippedTables) > 1 {
 			msg = "skip analyze locked tables: %s"
-			if len(tids) > 0 {
+			if needAnalyzeTableCnt > 0 {
 				msg = "skip analyze locked tables: %s, other tables will be analyzed"
 			}
 		} else {
