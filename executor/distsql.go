@@ -42,7 +42,6 @@ import (
 	plannerutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -193,8 +192,7 @@ type IndexReaderExecutor struct {
 	// outputColumns are only required by union scan.
 	outputColumns []*expression.Column
 
-	feedback *statistics.QueryFeedback
-	paging   bool
+	paging bool
 
 	keepOrder bool
 	desc      bool
@@ -235,7 +233,6 @@ func (e *IndexReaderExecutor) Close() (err error) {
 	if e.dummy {
 		return nil
 	}
-	e.Ctx().StoreQueryFeedback(e.feedback)
 	return err
 }
 
@@ -246,11 +243,7 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		return nil
 	}
 
-	err := e.result.Next(ctx, req)
-	if err != nil {
-		e.feedback.Invalidate()
-	}
-	return err
+	return e.result.Next(ctx, req)
 }
 
 // TODO: cleanup this method.
@@ -262,7 +255,7 @@ func (e *IndexReaderExecutor) buildKeyRanges(sc *stmtctx.StatementContext, range
 	if e.index.ID == -1 {
 		rRanges, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, ranges)
 	} else {
-		rRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges, e.feedback)
+		rRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges)
 	}
 	return rRanges.FirstPartitionRange(), err
 }
@@ -390,12 +383,10 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	if e.byItems == nil || len(e.partitions) <= 1 {
 		kvReq, err := e.buildKVReq(kvRanges)
 		if err != nil {
-			e.feedback.Invalidate()
 			return err
 		}
-		e.result, err = e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.ID())
+		e.result, err = e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 		if err != nil {
-			e.feedback.Invalidate()
 			return err
 		}
 	} else {
@@ -403,16 +394,14 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		for _, kvRange := range kvRanges {
 			kvReq, err := e.buildKVReq([]kv.KeyRange{kvRange})
 			if err != nil {
-				e.feedback.Invalidate()
 				return err
 			}
 			kvReqs = append(kvReqs, kvReq)
 		}
 		var results []distsql.SelectResult
 		for _, kvReq := range kvReqs {
-			result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.ID())
+			result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 			if err != nil {
-				e.feedback.Invalidate()
 				return err
 			}
 			results = append(results, result)
@@ -457,7 +446,6 @@ type IndexLookUpExecutor struct {
 
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
-	feedback   *statistics.QueryFeedback
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
@@ -527,7 +515,6 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	}
 	err = e.buildTableKeyRanges()
 	if err != nil {
-		e.feedback.Invalidate()
 		return err
 	}
 
@@ -536,17 +523,12 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		return nil
 	}
 
-	err = e.open(ctx)
-	if err != nil {
-		e.feedback.Invalidate()
-	}
-	return err
+	return e.open(ctx)
 }
 
 func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 	sc := e.Ctx().GetSessionVars().StmtCtx
 	if e.partitionTableMode {
-		e.feedback.Invalidate() // feedback for partition tables is not ready
 		e.partitionKVRanges = make([][]kv.KeyRange, 0, len(e.prunedPartitions))
 		for _, p := range e.prunedPartitions {
 			// TODO: prune and adjust e.ranges for each partition again, since not all e.ranges are suitable for all e.prunedPartitions.
@@ -561,7 +543,7 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 			if e.index.ID == -1 {
 				kvRange, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, ranges)
 			} else {
-				kvRange, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges, e.feedback)
+				kvRange, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges)
 			}
 			if err != nil {
 				return err
@@ -574,7 +556,7 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 		if e.index.ID == -1 {
 			kvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, e.ranges)
 		} else {
-			kvRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, e.ranges, e.feedback)
+			kvRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, e.ranges)
 		}
 		e.kvRanges = kvRanges.FirstPartitionRange()
 	}
@@ -755,7 +737,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				worker.syncErr(err)
 				break
 			}
-			result, err := distsql.SelectWithRuntimeStats(ctx, e.Ctx(), kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), idxID)
+			result, err := distsql.SelectWithRuntimeStats(ctx, e.Ctx(), kvReq, tps, getPhysicalPlanIDs(e.idxPlans), idxID)
 			if err != nil {
 				worker.syncErr(err)
 				break
@@ -769,17 +751,14 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			results = []distsql.SelectResult{ssr}
 		}
 		ctx1, cancel := context.WithCancel(ctx)
-		fetchErr := worker.fetchHandles(ctx1, results)
-		if fetchErr != nil { // this error is synced in fetchHandles(), don't sync it again
-			e.feedback.Invalidate()
-		}
+		// this error is synced in fetchHandles(), don't sync it again
+		_ = worker.fetchHandles(ctx1, results)
 		cancel()
 		for _, result := range results {
 			if err := result.Close(); err != nil {
 				logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
 			}
 		}
-		e.Ctx().StoreQueryFeedback(e.feedback)
 		close(workCh)
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
@@ -827,7 +806,6 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		readReplicaScope: e.readReplicaScope,
 		isStaleness:      e.isStaleness,
 		columns:          e.columns,
-		feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
 		corColInFilter:   e.corColInTblSide,
 		plans:            e.tblPlans,
 		netDataSize:      e.avgRowSize * float64(len(task.handles)),

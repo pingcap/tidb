@@ -16,6 +16,7 @@ package importer
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/dbutil"
 	"github.com/pingcap/tidb/util/extsort"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 )
 
 var (

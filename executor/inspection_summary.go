@@ -272,12 +272,9 @@ var inspectionSummaryRules = map[string][]string{
 	"stats": {
 		"tidb_statistics_auto_analyze_duration",
 		"tidb_statistics_auto_analyze_ops",
-		"tidb_statistics_dump_feedback_ops",
 		"tidb_statistics_fast_analyze_status",
 		"tidb_statistics_pseudo_estimation_ops",
-		"tidb_statistics_significant_feedback",
 		"tidb_statistics_stats_inaccuracy_rate",
-		"tidb_statistics_store_query_feedback_qps",
 		"tidb_statistics_update_stats_ops",
 	},
 	"gc": {

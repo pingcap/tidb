@@ -564,6 +564,27 @@ bazel_importintotest: failpoint-enable bazel_ci_simple_prepare
 		-- //tests/realtikvtest/importintotest/...
 	./build/jenkins_collect_coverage.sh
 
+# on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
+bazel_importintotest2: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/importintotest2/...
+	./build/jenkins_collect_coverage.sh
+
+# on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
+bazel_importintotest3: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/importintotest3/...
+	./build/jenkins_collect_coverage.sh
+
+# on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
+bazel_importintotest4: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/importintotest4/...
+	./build/jenkins_collect_coverage.sh
+
 bazel_lint: bazel_prepare
 	bazel build //... --//build:with_nogo_flag=true
 
