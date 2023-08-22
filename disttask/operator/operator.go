@@ -25,21 +25,26 @@ import (
 type Operator interface {
 	Open() error
 	Close() error
-	Display() string
+	String() string
 }
 
 // AsyncOperator process the data in async way.
 //
-//		Eg: The sink of AsyncOperator op1 and the source of op2
-//	 	use the same channel, Then op2's worker will handle
-//	  	the result from op1.
+// Eg: The sink of AsyncOperator op1 and the source of op2
+// use the same channel, Then op2's worker will handle
+// the result from op1.
 type AsyncOperator[T, R any] struct {
 	pool *workerpool.WorkerPool[T, R]
 }
 
+// NewAsyncOperatorWithTransform create an AsyncOperator with a transform function.
+func NewAsyncOperatorWithTransform[T, R any](name string, workerNum int, transform func(T) R) *AsyncOperator[T, R] {
+	pool := workerpool.NewWorkerPool(name, util.DistTask, workerNum, newAsyncWorkerCtor(transform))
+	return NewAsyncOperator(pool)
+}
+
 // NewAsyncOperator create an AsyncOperator.
-func NewAsyncOperator[T, R any](name string, workerNum int, transform func(T) R) *AsyncOperator[T, R] {
-	pool := workerpool.NewWorkerPool(name, util.DistTask, workerNum, newAsyncWorker(transform))
+func NewAsyncOperator[T, R any](pool *workerpool.WorkerPool[T, R]) *AsyncOperator[T, R] {
 	return &AsyncOperator[T, R]{
 		pool: pool,
 	}
@@ -53,13 +58,16 @@ func (c *AsyncOperator[T, R]) Open() error {
 
 // Close implements the Operator's Close interface.
 func (c *AsyncOperator[T, R]) Close() error {
+	// Wait all tasks done.
+	// We don't need to close the task channel because
+	// it is closed by the workerpool.
 	c.pool.Wait()
 	c.pool.Release()
 	return nil
 }
 
-// Display show the name.
-func (*AsyncOperator[T, R]) Display() string {
+// String show the name.
+func (*AsyncOperator[T, R]) String() string {
 	var zT T
 	var zR R
 	return fmt.Sprintf("AsyncOp[%T, %T]", zT, zR)
@@ -79,7 +87,7 @@ type asyncWorker[T, R any] struct {
 	transform func(T) R
 }
 
-func newAsyncWorker[T, R any](transform func(T) R) func() workerpool.Worker[T, R] {
+func newAsyncWorkerCtor[T, R any](transform func(T) R) func() workerpool.Worker[T, R] {
 	return func() workerpool.Worker[T, R] {
 		return &asyncWorker[T, R]{
 			transform: transform,

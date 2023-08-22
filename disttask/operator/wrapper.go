@@ -54,7 +54,7 @@ func (s *simpleSource[T]) SetSink(ch DataChannel[T]) {
 	s.sink = ch
 }
 
-func (*simpleSource[T]) Display() string {
+func (*simpleSource[T]) String() string {
 	return "simpleSource"
 }
 
@@ -91,7 +91,7 @@ func (s *simpleSink[T]) SetSource(ch DataChannel[T]) {
 	s.source = ch
 }
 
-func (*simpleSink[R]) Display() string {
+func (*simpleSink[R]) String() string {
 	return "simpleSink"
 }
 
@@ -99,12 +99,13 @@ type simpleOperator[T, R any] struct {
 	*AsyncOperator[T, R]
 }
 
-func (s *simpleOperator[T, R]) Display() string {
-	return fmt.Sprintf("simpleOperator(%s)", s.AsyncOperator.Display())
+func (s *simpleOperator[T, R]) String() string {
+	return fmt.Sprintf("simpleOperator(%s)", s.AsyncOperator.String())
 }
 
 func newSimpleOperator[T, R any](transform func(task T) R, concurrency int) *simpleOperator[T, R] {
+	asyncOp := NewAsyncOperatorWithTransform("simple", concurrency, transform)
 	return &simpleOperator[T, R]{
-		AsyncOperator: NewAsyncOperator("simple", concurrency, transform),
+		AsyncOperator: asyncOp,
 	}
 }

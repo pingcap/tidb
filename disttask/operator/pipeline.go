@@ -25,9 +25,13 @@ type AsyncPipeline struct {
 // Execute starts all operators waiting to handle tasks.
 func (p *AsyncPipeline) Execute() error {
 	// Start running each operator.
-	for _, op := range p.ops {
+	for i, op := range p.ops {
 		err := op.Open()
 		if err != nil {
+			// Close all operators that have been opened.
+			for j := i - 1; j >= 0; j-- {
+				_ = p.ops[j].Close()
+			}
 			return err
 		}
 	}
@@ -53,11 +57,11 @@ func NewAsyncPipeline(ops ...Operator) *AsyncPipeline {
 	}
 }
 
-// Display shows the pipeline.
-func (p *AsyncPipeline) Display() string {
+// String shows the pipeline.
+func (p *AsyncPipeline) String() string {
 	opStrs := make([]string, len(p.ops))
 	for i, op := range p.ops {
-		opStrs[i] = op.Display()
+		opStrs[i] = op.String()
 	}
 	return "AsyncPipeline[" + strings.Join(opStrs, " -> ") + "]"
 }
