@@ -578,6 +578,9 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				zap.Binary("rawKey", rawKey))
 
 			value, err := fnGetLatest(gCtx, rawKey)
+			em.logger.Debug("got value from fnGetLatest",
+				zap.Binary("rawKey", rawKey),
+				zap.Binary("value", value))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -608,6 +611,9 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					zap.String("handle", handle.String()),
 					zap.Error(err))
 				overwrittenRow, err := fnGetLatest(gCtx, rawHandle)
+				em.logger.Debug("got overwrittenRow from fnGetLatest",
+					zap.Binary("rawHandle", rawKey),
+					zap.Binary("overwrittenRow", value))
 				if tikverr.IsErrNotFound(err) || overwrittenRow == nil {
 					continue
 				}
@@ -633,6 +639,8 @@ func (em *ErrorManager) ReplaceConflictKeys(
 						if err := fnDeleteKey(gCtx, rawHandle); err != nil {
 							return errors.Trace(err)
 						}
+						em.logger.Debug("delete key from fnDeleteKey",
+							zap.Binary("rawHandle", rawHandle))
 						break
 					}
 				}

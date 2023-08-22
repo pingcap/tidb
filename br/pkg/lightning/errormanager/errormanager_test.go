@@ -289,14 +289,14 @@ func TestReplaceConflictKeys(t *testing.T) {
 	err = em.Init(ctx)
 	require.NoError(t, err)
 
-	fnGetLatestCount := atomic.NewInt64(0)
-	fnDeleteKeyCount := atomic.NewInt64(0)
+	fnGetLatestCount := atomic.NewInt32(0)
+	fnDeleteKeyCount := atomic.NewInt32(0)
 	pool := utils.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
 		ctx, tbl, "test", pool, decoder,
 		func(ctx context.Context, key []byte) ([]byte, error) {
 			fnGetLatestCount.Add(1)
-			return nil, nil
+			return rawValue1, nil
 		},
 		func(ctx context.Context, key []byte) error {
 			fnDeleteKeyCount.Add(1)
@@ -304,8 +304,8 @@ func TestReplaceConflictKeys(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	require.Equal(t, 1, fnGetLatestCount.Load())
-	require.Equal(t, 1, fnDeleteKeyCount.Load())
+	require.Equal(t, int32(2), fnGetLatestCount.Load())
+	require.Equal(t, int32(1), fnDeleteKeyCount.Load())
 }
 
 func TestErrorMgrHasError(t *testing.T) {
