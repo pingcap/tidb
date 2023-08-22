@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
@@ -32,10 +31,8 @@ func TestMain(m *testing.M) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 		conf.Experimental.AllowsExpressionIndex = true
-		conf.Performance.EnableStatsCacheMemQuota = true
 	})
 	tikv.EnableFailpoints()
-	variable.StatsCacheMemQuota.Store(1000)
 
 	opts := []goleak.Option{
 		goleak.Cleanup(func(_ int) {
