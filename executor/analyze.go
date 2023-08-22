@@ -194,7 +194,7 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 				}
 				skippedTables = append(skippedTables, tbl.Meta().Name.L)
 			} else {
-				needAnalyzeTableCnt += 1
+				needAnalyzeTableCnt++
 			}
 			tids[tableID] = struct{}{}
 		}
