@@ -215,8 +215,12 @@ func (d *dispatcher) handleRunning() error {
 func (d *dispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
 	prevState := d.task.State
 	d.task.State = taskState
+	if !VerifyTaskStateTransform(prevState, taskState) {
+		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
+	}
+
 	for i := 0; i < retryTimes; i++ {
-		err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.task, newSubTasks)
+		err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.task, newSubTasks, prevState)
 		if err == nil {
 			break
 		}
@@ -306,7 +310,6 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, handle TaskFlowHandle, me
 		// TODO: Consider using TS.
 		nowTime := time.Now().UTC()
 		task.StartTime = nowTime
-		task.State = proto.TaskStateRunning
 		task.StateUpdateTime = nowTime
 		retryTimes = nonRetrySQLTime
 	}
@@ -341,7 +344,7 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, handle TaskFlowHandle, me
 		subTasks = append(subTasks, proto.NewSubtask(task.ID, task.Type, instanceID, meta))
 	}
 
-	return d.updateTask(task.State, subTasks, retrySQLTimes)
+	return d.updateTask(proto.TaskStateRunning, subTasks, retrySQLTimes)
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.
@@ -406,4 +409,60 @@ func (d *dispatcher) WithNewSession(fn func(se sessionctx.Context) error) error 
 // WithNewTxn executes the fn in a new transaction.
 func (d *dispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
 	return d.taskMgr.WithNewTxn(ctx, fn)
+}
+
+// VerifyTaskStateTransform verifies whether the task state transform is valid.
+func VerifyTaskStateTransform(oldState, newState string) bool {
+	rules := map[string][]string{
+		proto.TaskStatePending: {
+			proto.TaskStateRunning,
+			proto.TaskStateCancelling,
+			proto.TaskStatePausing,
+			proto.TaskStateSucceed,
+			proto.TaskStateReverted,
+		},
+		proto.TaskStateRunning: {
+			proto.TaskStateSucceed,
+			proto.TaskStateReverting,
+			proto.TaskStateReverted,
+			proto.TaskStateCancelling,
+			proto.TaskStatePausing,
+		},
+		proto.TaskStateSucceed: {},
+		proto.TaskStateReverting: {
+			proto.TaskStateReverted,
+			// no revert_failed now
+			// proto.TaskStateRevertFailed,
+		},
+		proto.TaskStateFailed:       {},
+		proto.TaskStateRevertFailed: {},
+		proto.TaskStateCancelling: {
+			proto.TaskStateReverting,
+			// no canceled now
+			// proto.TaskStateCanceled,
+		},
+		proto.TaskStateCanceled: {},
+		proto.TaskStatePausing: {
+			proto.TaskStatePaused,
+		},
+		proto.TaskStatePaused: {
+			proto.TaskStateResuming,
+		},
+		proto.TaskStateResuming: {
+			proto.TaskStateRunning,
+		},
+		proto.TaskStateRevertPending: {},
+		proto.TaskStateReverted:      {},
+	}
+
+	if oldState == newState {
+		return true
+	}
+
+	for _, state := range rules[oldState] {
+		if state == newState {
+			return true
+		}
+	}
+	return false
 }

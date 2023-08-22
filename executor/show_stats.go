@@ -15,8 +15,10 @@
 package executor
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -28,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/tikv/client-go/v2/oracle"
-	"golang.org/x/exp/slices"
 )
 
 func (e *ShowExec) fetchShowStatsExtended() error {
@@ -384,7 +385,7 @@ func stableColsStats(colStats map[int64]*statistics.Column) (cols []*statistics.
 	for _, col := range colStats {
 		cols = append(cols, col)
 	}
-	slices.SortFunc(cols, func(i, j *statistics.Column) bool { return i.ID < j.ID })
+	slices.SortFunc(cols, func(i, j *statistics.Column) int { return cmp.Compare(i.ID, j.ID) })
 	return
 }
 
@@ -392,7 +393,7 @@ func stableIdxsStats(idxStats map[int64]*statistics.Index) (idxs []*statistics.I
 	for _, idx := range idxStats {
 		idxs = append(idxs, idx)
 	}
-	slices.SortFunc(idxs, func(i, j *statistics.Index) bool { return i.ID < j.ID })
+	slices.SortFunc(idxs, func(i, j *statistics.Index) int { return cmp.Compare(i.ID, j.ID) })
 	return
 }
 

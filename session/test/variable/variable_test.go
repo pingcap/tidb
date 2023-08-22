@@ -608,3 +608,24 @@ func TestSysdateIsNow(t *testing.T) {
 	tk.MustQuery("show variables like '%tidb_sysdate_is_now%'").Check(testkit.Rows("tidb_sysdate_is_now ON"))
 	require.True(t, tk.Session().GetSessionVars().SysdateIsNow)
 }
+
+func TestSessionAlias(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@tidb_session_alias").Check(testkit.Rows(""))
+	// normal set
+	tk.MustExec("set @@tidb_session_alias='alias123'")
+	tk.MustQuery("select @@tidb_session_alias").Check(testkit.Rows("alias123"))
+	// set a long value
+	val := "0123456789012345678901234567890123456789012345678901234567890123456789"
+	tk.MustExec("set @@tidb_session_alias=?", val)
+	tk.MustQuery("select @@tidb_session_alias").Check(testkit.Rows(val[:64]))
+	// an invalid value
+	err := tk.ExecToErr("set @@tidb_session_alias='abc '")
+	require.EqualError(t, err, "[variable:1231]Incorrect value for variable @@tidb_session_alias 'abc '")
+	tk.MustQuery("select @@tidb_session_alias").Check(testkit.Rows(val[:64]))
+	// reset to empty
+	tk.MustExec("set @@tidb_session_alias=''")
+	tk.MustQuery("select @@tidb_session_alias").Check(testkit.Rows(""))
+}

@@ -15,7 +15,6 @@
 package handle
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"fmt"
@@ -28,27 +27,18 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -147,24 +137,21 @@ func (m colStatsUsageMap) merge(other colStatsUsageMap) {
 	}
 }
 
-func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, rateMap errorRateDeltaMap, feedback *statistics.QueryFeedbackMap, colMap colStatsUsageMap) {
+func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, rateMap errorRateDeltaMap, colMap colStatsUsageMap) {
 	deltaMap.merge(s.mapper)
 	s.mapper = make(tableDeltaMap)
 	rateMap.merge(s.rateMap)
 	s.rateMap = make(errorRateDeltaMap)
-	feedback.Merge(s.feedback)
-	s.feedback = statistics.NewQueryFeedbackMap()
 	colMap.merge(s.colMap)
 	s.colMap = make(colStatsUsageMap)
 }
 
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
 type SessionStatsCollector struct {
-	mapper   tableDeltaMap
-	feedback *statistics.QueryFeedbackMap
-	rateMap  errorRateDeltaMap
-	colMap   colStatsUsageMap
-	next     *SessionStatsCollector
+	mapper  tableDeltaMap
+	rateMap errorRateDeltaMap
+	colMap  colStatsUsageMap
+	next    *SessionStatsCollector
 	sync.Mutex
 
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
@@ -185,58 +172,15 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64, colSi
 	s.mapper.update(id, delta, count, colSize)
 }
 
-// ClearForTest clears the mapper and feedback for test.
+// ClearForTest clears the mapper for test.
 func (s *SessionStatsCollector) ClearForTest() {
 	s.Lock()
 	defer s.Unlock()
 	s.mapper = make(tableDeltaMap)
-	s.feedback = statistics.NewQueryFeedbackMap()
 	s.rateMap = make(errorRateDeltaMap)
 	s.colMap = make(colStatsUsageMap)
 	s.next = nil
 	s.deleted = false
-}
-
-var (
-	// MinLogScanCount is the minimum scan count for a feedback to be logged.
-	MinLogScanCount = atomic.NewInt64(1000)
-	// MinLogErrorRate is the minimum error rate for a feedback to be logged.
-	MinLogErrorRate = atomic.NewFloat64(0.5)
-)
-
-// StoreQueryFeedback merges the feedback into stats collector. Deprecated.
-func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle, enablePseudoForOutdatedStats bool) error {
-	q := feedback.(*statistics.QueryFeedback)
-	if !q.Valid.Load() || q.Hist == nil {
-		return nil
-	}
-
-	// if table locked, skip
-	if h.IsTableLocked(q.PhysicalID) {
-		return nil
-	}
-
-	err := h.RecalculateExpectCount(q, enablePseudoForOutdatedStats)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rate := q.CalcErrorRate()
-	minScanCnt := MinLogScanCount.Load()
-	minErrRate := MinLogErrorRate.Load()
-	if !(rate >= minErrRate && (q.Actual() >= minScanCnt || q.Expected >= minScanCnt)) {
-		return nil
-	}
-	metrics.SignificantFeedbackCounter.Inc()
-	metrics.StatsInaccuracyRate.Observe(rate)
-	if log.GetLevel() == zap.DebugLevel {
-		h.logDetailedInfo(q)
-	}
-	s.Lock()
-	defer s.Unlock()
-	isIndex := q.Tp == statistics.IndexType
-	s.rateMap.update(q.PhysicalID, q.Hist.ID, rate, isIndex)
-	s.feedback.Append(q)
-	return nil
 }
 
 // UpdateColStatsUsage updates the last time when the column stats are used(needed).
@@ -251,11 +195,10 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	h.listHead.Lock()
 	defer h.listHead.Unlock()
 	newCollector := &SessionStatsCollector{
-		mapper:   make(tableDeltaMap),
-		rateMap:  make(errorRateDeltaMap),
-		next:     h.listHead.next,
-		feedback: statistics.NewQueryFeedbackMap(),
-		colMap:   make(colStatsUsageMap),
+		mapper:  make(tableDeltaMap),
+		rateMap: make(errorRateDeltaMap),
+		next:    h.listHead.next,
+		colMap:  make(colStatsUsageMap),
 	}
 	h.listHead.next = newCollector
 	return newCollector
@@ -466,14 +409,13 @@ const (
 func (h *Handle) sweepList() {
 	deltaMap := make(tableDeltaMap)
 	errorRateMap := make(errorRateDeltaMap)
-	feedback := statistics.NewQueryFeedbackMap()
 	colMap := make(colStatsUsageMap)
 	prev := h.listHead
 	prev.Lock()
 	for curr := prev.next; curr != nil; curr = curr.next {
 		curr.Lock()
-		// Merge the session stats into deltaMap, errorRateMap and feedback respectively.
-		merge(curr, deltaMap, errorRateMap, feedback, colMap)
+		// Merge the session stats into deltaMap, errorRateMap respectively.
+		merge(curr, deltaMap, errorRateMap, colMap)
 		if curr.deleted {
 			prev.next = curr.next
 			// Since the session is already closed, we can safely unlock it here.
@@ -488,13 +430,6 @@ func (h *Handle) sweepList() {
 	h.globalMap.Lock()
 	h.globalMap.data.merge(deltaMap)
 	h.globalMap.Unlock()
-	h.mu.Lock()
-	h.mu.rateMap.merge(errorRateMap)
-	h.mu.Unlock()
-	h.feedback.Lock()
-	h.feedback.data.Merge(feedback)
-	h.feedback.data.SiftFeedbacks()
-	h.feedback.Unlock()
 	h.colMap.Lock()
 	h.colMap.data.merge(colMap)
 	h.colMap.Unlock()
@@ -638,304 +573,6 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
 		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
 	_, _, err := h.execRestrictedSQL(ctx, sql)
-	return errors.Trace(err)
-}
-
-// DumpStatsFeedbackToKV dumps the stats feedback to KV. Deprecated.
-func (h *Handle) DumpStatsFeedbackToKV() error {
-	h.feedback.Lock()
-	feedback := h.feedback.data
-	h.feedback.data = statistics.NewQueryFeedbackMap()
-	h.feedback.Unlock()
-	var err error
-	for _, fbs := range feedback.Feedbacks {
-		for _, fb := range fbs {
-			if fb.Tp == statistics.PkType {
-				err = h.DumpFeedbackToKV(fb)
-			} else {
-				t, ok := h.statsCache.Load().GetFromInternal(fb.PhysicalID)
-				if !ok {
-					continue
-				}
-				idx, ok := t.Indices[fb.Hist.ID]
-				if !ok {
-					continue
-				}
-				if idx.GetStatsVer() == statistics.Version1 {
-					err = h.DumpFeedbackForIndex(fb, t)
-				} else {
-					err = h.DumpFeedbackToKV(fb)
-				}
-			}
-			if err != nil {
-				// For simplicity, we just drop other feedbacks in case of error.
-				break
-			}
-		}
-	}
-	return errors.Trace(err)
-}
-
-// DumpFeedbackToKV dumps the given feedback to physical kv layer.
-func (h *Handle) DumpFeedbackToKV(fb *statistics.QueryFeedback) error {
-	vals, err := statistics.EncodeFeedback(fb)
-	if err != nil {
-		logutil.BgLogger().Debug("error occurred when encoding feedback", zap.Error(err))
-		return nil
-	}
-	var isIndex int64
-	if fb.Tp == statistics.IndexType {
-		isIndex = 1
-	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	const sql = "insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values (%?, %?, %?, %?)"
-	h.mu.Lock()
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, fb.PhysicalID, fb.Hist.ID, isIndex, vals)
-	h.mu.Unlock()
-	if err != nil {
-		metrics.DumpFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
-	} else {
-		metrics.DumpFeedbackCounter.WithLabelValues(metrics.LblOK).Inc()
-	}
-	return errors.Trace(err)
-}
-
-// UpdateStatsByLocalFeedback will update statistics by the local feedback.
-// Currently, we dump the feedback with the period of 10 minutes, which means
-// it takes 10 minutes for a feedback to take effect. However, we can use the
-// feedback locally on this tidb-server, so it could be used more timely.
-func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
-	h.sweepList()
-	h.feedback.Lock()
-	feedback := h.feedback.data
-	h.feedback.data = statistics.NewQueryFeedbackMap()
-	h.feedback.Unlock()
-OUTER:
-	for _, fbs := range feedback.Feedbacks {
-		for _, fb := range fbs {
-			table, ok := h.getTableByPhysicalID(is, fb.PhysicalID)
-			if !ok {
-				continue
-			}
-			if table.Meta().Partition != nil {
-				// If the table is partition table, the feedback will not work.
-				continue
-			}
-			tblStats := h.GetPartitionStats(table.Meta(), fb.PhysicalID)
-			newTblStats := tblStats.Copy()
-			if fb.Tp == statistics.IndexType {
-				idx, ok := tblStats.Indices[fb.Hist.ID]
-				if !ok || idx.Histogram.Len() == 0 {
-					continue
-				}
-				newIdx := *idx
-				eqFB, ranFB := statistics.SplitFeedbackByQueryType(fb.Feedback)
-				if idx.GetStatsVer() >= statistics.Version2 {
-					// // For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
-					// ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
-					continue OUTER
-				}
-				newIdx.CMSketch, newIdx.TopN = statistics.UpdateCMSketchAndTopN(idx.CMSketch, idx.TopN, eqFB)
-				newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB}, int(idx.GetStatsVer()))
-				newIdx.Histogram.PreCalculateScalar()
-				newIdx.Flag = statistics.ResetAnalyzeFlag(newIdx.Flag)
-				newTblStats.Indices[fb.Hist.ID] = &newIdx
-			} else {
-				col, ok := tblStats.Columns[fb.Hist.ID]
-				if !ok || col.Histogram.Len() == 0 {
-					continue
-				}
-				if col.GetStatsVer() >= statistics.Version2 {
-					// // For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
-					// ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
-					continue OUTER
-				}
-				newCol := *col
-				// only use the range query to update primary key
-				_, ranFB := statistics.SplitFeedbackByQueryType(fb.Feedback)
-				newFB := &statistics.QueryFeedback{Feedback: ranFB}
-				newFB = newFB.DecodeIntValues()
-				newCol.Histogram = *statistics.UpdateHistogram(&col.Histogram, newFB, statistics.Version1)
-				newCol.Flag = statistics.ResetAnalyzeFlag(newCol.Flag)
-				newTblStats.Columns[fb.Hist.ID] = &newCol
-			}
-			for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
-				oldCache := h.statsCache.Load()
-				if h.updateStatsCache(oldCache, []*statistics.Table{newTblStats}, nil) {
-					break
-				}
-			}
-		}
-	}
-}
-
-// UpdateErrorRate updates the error rate of columns from h.rateMap to cache.
-func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
-	h.mu.Lock()
-	tbls := make([]*statistics.Table, 0, len(h.mu.rateMap))
-	for id, item := range h.mu.rateMap {
-		table, ok := h.getTableByPhysicalID(is, id)
-		if !ok {
-			continue
-		}
-		tbl := h.GetPartitionStats(table.Meta(), id).Copy()
-		if item.PkErrorRate != nil && tbl.Columns[item.PkID] != nil {
-			col := *tbl.Columns[item.PkID]
-			col.ErrorRate.Merge(item.PkErrorRate)
-			tbl.Columns[item.PkID] = &col
-		}
-		for key, val := range item.IdxErrorRate {
-			if tbl.Indices[key] == nil {
-				continue
-			}
-			idx := *tbl.Indices[key]
-			idx.ErrorRate.Merge(val)
-			tbl.Indices[key] = &idx
-		}
-		tbls = append(tbls, tbl)
-		delete(h.mu.rateMap, id)
-	}
-	h.mu.Unlock()
-	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
-		oldCache := h.statsCache.Load()
-		if h.updateStatsCache(oldCache, tbls, nil) {
-			break
-		}
-	}
-}
-
-// HandleUpdateStats update the stats using feedback.
-func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	tables, _, err := h.execRestrictedSQL(ctx, "SELECT distinct table_id from mysql.stats_feedback")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(tables) == 0 {
-		return nil
-	}
-
-	for _, ptbl := range tables {
-		tableID, histID, isIndex := ptbl.GetInt64(0), int64(-1), int64(-1)
-		for {
-			// fetch at most 100000 rows each time to avoid OOM
-			const sql = "select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id = %? and is_index >= %? and hist_id > %? order by is_index, hist_id limit 100000"
-			rows, _, err := h.execRestrictedSQL(ctx, sql, tableID, histID, isIndex)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if len(rows) == 0 {
-				break
-			}
-			startIdx := 0
-			for i, row := range rows {
-				if row.GetInt64(1) != histID || row.GetInt64(2) != isIndex {
-					if i > 0 {
-						if err = h.handleSingleHistogramUpdate(is, rows[startIdx:i]); err != nil {
-							return errors.Trace(err)
-						}
-					}
-					histID, isIndex = row.GetInt64(1), row.GetInt64(2)
-					startIdx = i
-				}
-			}
-			if err = h.handleSingleHistogramUpdate(is, rows[startIdx:]); err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-	return nil
-}
-
-// handleSingleHistogramUpdate updates the Histogram and CM Sketch using these feedbacks. All the feedbacks for
-// the same index or column are gathered in `rows`.
-func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []chunk.Row) (err error) {
-	physicalTableID, histID, isIndex := rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
-	defer func() {
-		if err == nil {
-			err = errors.Trace(h.deleteOutdatedFeedback(physicalTableID, histID, isIndex))
-		}
-	}()
-	table, ok := h.getTableByPhysicalID(is, physicalTableID)
-	// The table has been deleted.
-	if !ok {
-		return nil
-	}
-	var tbl *statistics.Table
-	// feedback for partition is not ready
-	if table.Meta().GetPartitionInfo() != nil {
-		return nil
-	}
-	tbl = h.GetTableStats(table.Meta())
-	var cms *statistics.CMSketch
-	var hist *statistics.Histogram
-	var topN *statistics.TopN
-	var statsVer int64 = statistics.Version1
-	if isIndex == 1 {
-		idx, ok := tbl.Indices[histID]
-		statsVer = idx.GetStatsVer()
-		if statsVer >= 2 {
-			logutil.BgLogger().Warn("Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
-				"Please consider setting feedback-probability to 0.0 in config file to disable query feedback.",
-				zap.String("category", "stats"), zap.Int64("table_id", physicalTableID), zap.Int64("hist_id", histID), zap.Int64("is_index", isIndex))
-			return err
-		}
-		if ok && idx.Histogram.Len() > 0 {
-			statsVer = idx.GetStatsVer()
-			idxHist := idx.Histogram
-			hist = &idxHist
-			cms = idx.CMSketch.Copy()
-			topN = idx.TopN.Copy()
-		}
-	} else {
-		col, ok := tbl.Columns[histID]
-		if ok && col.GetStatsVer() >= 2 {
-			logutil.BgLogger().Warn("Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
-				"Please consider setting feedback-probability to 0.0 in config file to disable query feedback.",
-				zap.String("category", "stats"), zap.Int64("table_id", physicalTableID), zap.Int64("hist_id", histID), zap.Int64("is_index", isIndex))
-			return err
-		}
-		if ok && col.Histogram.Len() > 0 {
-			colHist := col.Histogram
-			hist = &colHist
-		}
-	}
-	// The column or index has been deleted.
-	if hist == nil {
-		return nil
-	}
-	q := &statistics.QueryFeedback{}
-	for _, row := range rows {
-		err1 := statistics.DecodeFeedback(row.GetBytes(3), q, cms, topN, hist.Tp)
-		if err1 != nil {
-			logutil.BgLogger().Debug("decode feedback failed", zap.Error(err1))
-		}
-	}
-	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms, topN, statsVer)
-	return errors.Trace(err)
-}
-
-func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	hasData := true
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	for hasData {
-		sql := "delete from mysql.stats_feedback where table_id = %? and hist_id = %? and is_index = %? limit 10000"
-		_, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, tableID, histID, isIndex)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		hasData = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
-	}
-	return nil
-}
-
-func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int64) error {
-	hist = statistics.UpdateHistogram(hist, q, int(statsVersion))
-	// feedback for partition is not ready.
-	err := h.SaveStatsToStorage(tableID, -1, 0, int(isIndex), hist, cms, topN, int(statsVersion), 0, false, StatsMetaHistorySourceFeedBack)
-	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }
 
@@ -1319,352 +956,4 @@ func (h *Handle) execAutoAnalyze(statsVer int, analyzeSnapshot bool, sql string,
 	} else {
 		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
 	}
-}
-
-// formatBuckets formats bucket from lowBkt to highBkt.
-func formatBuckets(hg *statistics.Histogram, lowBkt, highBkt, idxCols int) string {
-	if lowBkt == highBkt {
-		return hg.BucketToString(lowBkt, idxCols)
-	}
-	if lowBkt+1 == highBkt {
-		return fmt.Sprintf("%s, %s", hg.BucketToString(lowBkt, idxCols), hg.BucketToString(highBkt, idxCols))
-	}
-	// do not care the middle buckets
-	return fmt.Sprintf("%s, (%d buckets, total count %d), %s", hg.BucketToString(lowBkt, idxCols),
-		highBkt-lowBkt-1, hg.Buckets[highBkt-1].Count-hg.Buckets[lowBkt].Count, hg.BucketToString(highBkt, idxCols))
-}
-
-func colRangeToStr(c *statistics.Column, ran *ranger.Range, actual int64, factor float64) string {
-	lowCount, lowBkt := c.LessRowCountWithBktIdx(nil, ran.LowVal[0])
-	highCount, highBkt := c.LessRowCountWithBktIdx(nil, ran.HighVal[0])
-	return fmt.Sprintf("range: %s, actual: %d, expected: %d, buckets: {%s}", ran.String(), actual,
-		int64((highCount-lowCount)*factor), formatBuckets(&c.Histogram, lowBkt, highBkt, 0))
-}
-
-func logForIndexRange(idx *statistics.Index, ran *ranger.Range, actual int64, factor float64) string {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	lb, err := codec.EncodeKey(sc, nil, ran.LowVal...)
-	if err != nil {
-		return ""
-	}
-	rb, err := codec.EncodeKey(sc, nil, ran.HighVal...)
-	if err != nil {
-		return ""
-	}
-	if idx.CMSketch != nil && bytes.Compare(kv.Key(lb).PrefixNext(), rb) >= 0 {
-		str, err := types.DatumsToString(ran.LowVal, true)
-		if err != nil {
-			return ""
-		}
-		return fmt.Sprintf("value: %s, actual: %d, expected: %d", str, actual, int64(float64(idx.QueryBytes(nil, lb))*factor))
-	}
-	l, r := types.NewBytesDatum(lb), types.NewBytesDatum(rb)
-	lowCount, lowBkt := idx.LessRowCountWithBktIdx(nil, l)
-	highCount, highBkt := idx.LessRowCountWithBktIdx(nil, r)
-	return fmt.Sprintf("range: %s, actual: %d, expected: %d, histogram: {%s}", ran.String(), actual,
-		int64((highCount-lowCount)*factor), formatBuckets(&idx.Histogram, lowBkt, highBkt, len(idx.Info.Columns)))
-}
-
-func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, ranges []*ranger.Range, actual []int64, factor float64) {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	if idx.CMSketch == nil || idx.GetStatsVer() != statistics.Version1 {
-		for i, ran := range ranges {
-			logutil.BgLogger().Debug(prefix, zap.String("index", idx.Info.Name.O), zap.String("rangeStr", logForIndexRange(idx, ran, actual[i], factor)))
-		}
-		return
-	}
-	for i, ran := range ranges {
-		rangePosition := statistics.GetOrdinalOfRangeCond(sc, ran)
-		// only contains range or equality query
-		if rangePosition == 0 || rangePosition == len(ran.LowVal) {
-			logutil.BgLogger().Debug(prefix, zap.String("index", idx.Info.Name.O), zap.String("rangeStr", logForIndexRange(idx, ran, actual[i], factor)))
-			continue
-		}
-		equalityString, err := types.DatumsToString(ran.LowVal[:rangePosition], true)
-		if err != nil {
-			continue
-		}
-		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
-		if err != nil {
-			continue
-		}
-		equalityCount := idx.QueryBytes(nil, bytes)
-		rang := ranger.Range{
-			LowVal:    []types.Datum{ran.LowVal[rangePosition]},
-			HighVal:   []types.Datum{ran.HighVal[rangePosition]},
-			Collators: collate.GetBinaryCollatorSlice(1),
-		}
-		colName := idx.Info.Columns[rangePosition].Name.L
-		// prefer index stats over column stats
-		if idxHist := t.IndexStartWithColumn(colName); idxHist != nil && idxHist.Histogram.Len() > 0 {
-			rangeString := logForIndexRange(idxHist, &rang, -1, factor)
-			logutil.BgLogger().Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
-				zap.String("equality", equalityString), zap.Uint64("expected equality", equalityCount),
-				zap.String("range", rangeString))
-		} else if colHist := t.ColumnByName(colName); colHist != nil && colHist.Histogram.Len() > 0 {
-			err = convertRangeType(&rang, colHist.Tp, time.UTC)
-			if err == nil {
-				rangeString := colRangeToStr(colHist, &rang, -1, factor)
-				logutil.BgLogger().Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
-					zap.String("equality", equalityString), zap.Uint64("expected equality", equalityCount),
-					zap.String("range", rangeString))
-			}
-		} else {
-			count, err := statistics.GetPseudoRowCountByColumnRanges(sc, float64(t.RealtimeCount), []*ranger.Range{&rang}, 0)
-			if err == nil {
-				logutil.BgLogger().Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
-					zap.String("equality", equalityString), zap.Uint64("expected equality", equalityCount),
-					zap.Stringer("range", &rang), zap.Float64("pseudo count", math.Round(count)))
-			}
-		}
-	}
-}
-
-func (h *Handle) logDetailedInfo(q *statistics.QueryFeedback) {
-	t, ok := h.statsCache.Load().GetFromInternal(q.PhysicalID)
-	if !ok {
-		return
-	}
-	isIndex := q.Hist.IsIndexHist()
-	ranges, err := q.DecodeToRanges(isIndex)
-	if err != nil {
-		logutil.BgLogger().Debug("decode to ranges failed", zap.Error(err))
-		return
-	}
-	actual := make([]int64, 0, len(q.Feedback))
-	for _, fb := range q.Feedback {
-		actual = append(actual, fb.Count)
-	}
-	logPrefix := fmt.Sprintf("[stats-feedback] %s", t.Name)
-	if isIndex {
-		idx := t.Indices[q.Hist.ID]
-		if idx == nil || idx.Histogram.Len() == 0 {
-			return
-		}
-		logForIndex(logPrefix, t, idx, ranges, actual, idx.GetIncreaseFactor(t.RealtimeCount))
-	} else {
-		c := t.Columns[q.Hist.ID]
-		if c == nil || c.Histogram.Len() == 0 {
-			return
-		}
-		logForPK(logPrefix, c, ranges, actual, c.GetIncreaseFactor(t.RealtimeCount))
-	}
-}
-
-func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actual []int64, factor float64) {
-	for i, ran := range ranges {
-		if ran.LowVal[0].GetInt64()+1 >= ran.HighVal[0].GetInt64() {
-			continue
-		}
-		logutil.BgLogger().Debug(prefix, zap.String("column", c.Info.Name.O), zap.String("rangeStr", colRangeToStr(c, ran, actual[i], factor)))
-	}
-}
-
-// RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo. Deprecated.
-func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback, enablePseudoForOutdatedStats bool) error {
-	t, ok := h.statsCache.Load().GetFromInternal(q.PhysicalID)
-	if !ok {
-		return nil
-	}
-	tablePseudo := t.Pseudo
-	if enablePseudoForOutdatedStats {
-		tablePseudo = t.Pseudo || t.IsOutdated()
-	}
-	if !tablePseudo {
-		return nil
-	}
-	isIndex := q.Hist.Tp.GetType() == mysql.TypeBlob
-	id := q.Hist.ID
-	if isIndex && (t.Indices[id] == nil || !t.Indices[id].NotAccurate()) {
-		return nil
-	}
-	if !isIndex && (t.Columns[id] == nil || !t.Columns[id].NotAccurate()) {
-		return nil
-	}
-
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	sctx := se.(sessionctx.Context)
-	timeZone := sctx.GetSessionVars().StmtCtx.TimeZone
-	defer func() {
-		sctx.GetSessionVars().StmtCtx.TimeZone = timeZone
-		h.pool.Put(se)
-	}()
-	sctx.GetSessionVars().StmtCtx.TimeZone = time.UTC
-
-	ranges, err := q.DecodeToRanges(isIndex)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	expected := 0.0
-	if isIndex {
-		idx := t.Indices[id]
-		expected, err = idx.GetRowCount(sctx, nil, ranges, t.RealtimeCount, t.ModifyCount)
-	} else {
-		c := t.Columns[id]
-		expected, err = c.GetColumnRowCount(sctx, ranges, t.RealtimeCount, t.ModifyCount, true)
-	}
-	q.Expected = int64(expected)
-	return err
-}
-
-func (h *Handle) dumpRangeFeedback(sc *stmtctx.StatementContext, ran *ranger.Range, rangeCount float64, q *statistics.QueryFeedback) error {
-	lowIsNull := ran.LowVal[0].IsNull()
-	if q.Tp == statistics.IndexType {
-		lower, err := codec.EncodeKey(sc, nil, ran.LowVal[0])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		upper, err := codec.EncodeKey(sc, nil, ran.HighVal[0])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		ran.LowVal[0].SetBytes(lower)
-		ran.HighVal[0].SetBytes(upper)
-	} else {
-		if !statistics.SupportColumnType(q.Hist.Tp) {
-			return nil
-		}
-		if ran.LowVal[0].Kind() == types.KindMinNotNull {
-			ran.LowVal[0] = types.GetMinValue(q.Hist.Tp)
-		}
-		if ran.HighVal[0].Kind() == types.KindMaxValue {
-			ran.HighVal[0] = types.GetMaxValue(q.Hist.Tp)
-		}
-	}
-	ranges, ok := q.Hist.SplitRange(sc, []*ranger.Range{ran}, q.Tp == statistics.IndexType)
-	if !ok {
-		logutil.BgLogger().Debug("type of histogram and ranges mismatch")
-		return nil
-	}
-	counts := make([]float64, 0, len(ranges))
-	sum := 0.0
-	for i, r := range ranges {
-		// Though after `SplitRange`, we may have ranges like `[l, r]`, we still use
-		// `betweenRowCount` to compute the estimation since the ranges of feedback are all in `[l, r)`
-		// form, that is to say, we ignore the exclusiveness of ranges from `SplitRange` and just use
-		// its result of boundary values.
-		count := q.Hist.BetweenRowCount(nil, r.LowVal[0], r.HighVal[0])
-		// We have to include `NullCount` of histogram for [l, r) cases where l is null because `betweenRowCount`
-		// does not include null values of lower bound.
-		if i == 0 && lowIsNull {
-			count += float64(q.Hist.NullCount)
-		}
-		sum += count
-		counts = append(counts, count)
-	}
-	if sum <= 1 {
-		return nil
-	}
-	// We assume that each part contributes the same error rate.
-	adjustFactor := rangeCount / sum
-	for i, r := range ranges {
-		q.Feedback = append(q.Feedback, statistics.Feedback{Lower: &r.LowVal[0], Upper: &r.HighVal[0], Count: int64(counts[i] * adjustFactor)})
-	}
-	return errors.Trace(h.DumpFeedbackToKV(q))
-}
-
-func convertRangeType(ran *ranger.Range, ft *types.FieldType, loc *time.Location) error {
-	err := statistics.ConvertDatumsType(ran.LowVal, ft, loc)
-	if err != nil {
-		return err
-	}
-	return statistics.ConvertDatumsType(ran.HighVal, ft, loc)
-}
-
-// DumpFeedbackForIndex dumps the feedback for index. Deprecated.
-// For queries that contains both equality and range query, we will split them and Update accordingly.
-func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics.Table) error {
-	idx, ok := t.Indices[q.Hist.ID]
-	if !ok {
-		return nil
-	}
-
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	sctx := se.(sessionctx.Context)
-	sc := sctx.GetSessionVars().StmtCtx
-	timeZone := sc.TimeZone
-	defer func() {
-		sctx.GetSessionVars().StmtCtx.TimeZone = timeZone
-		h.pool.Put(se)
-	}()
-	sc.TimeZone = time.UTC
-
-	if idx.CMSketch == nil || idx.GetStatsVer() < statistics.Version1 {
-		return h.DumpFeedbackToKV(q)
-	}
-	ranges, err := q.DecodeToRanges(true)
-	if err != nil {
-		logutil.BgLogger().Debug("decode feedback ranges fail", zap.Error(err))
-		return nil
-	}
-	for i, ran := range ranges {
-		rangePosition := statistics.GetOrdinalOfRangeCond(sc, ran)
-		// only contains range or equality query
-		if rangePosition == 0 || rangePosition == len(ran.LowVal) {
-			continue
-		}
-		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
-		if err != nil {
-			logutil.BgLogger().Debug("encode keys fail", zap.Error(err))
-			continue
-		}
-		equalityCount := float64(idx.QueryBytes(nil, bytes)) * idx.GetIncreaseFactor(t.RealtimeCount)
-		rang := &ranger.Range{
-			LowVal:    []types.Datum{ran.LowVal[rangePosition]},
-			HighVal:   []types.Datum{ran.HighVal[rangePosition]},
-			Collators: collate.GetBinaryCollatorSlice(1),
-		}
-		colName := idx.Info.Columns[rangePosition].Name.L
-		var rangeCount float64
-		rangeFB := &statistics.QueryFeedback{PhysicalID: q.PhysicalID}
-		// prefer index stats over column stats
-		if idx := t.IndexStartWithColumn(colName); idx != nil && idx.Histogram.Len() != 0 {
-			rangeCount, err = t.GetRowCountByIndexRanges(sctx, idx.ID, []*ranger.Range{rang})
-			rangeFB.Tp, rangeFB.Hist = statistics.IndexType, &idx.Histogram
-		} else if col := t.ColumnByName(colName); col != nil && col.Histogram.Len() != 0 {
-			err = convertRangeType(rang, col.Tp, time.UTC)
-			if err == nil {
-				rangeCount, err = t.GetRowCountByColumnRanges(sctx, col.ID, []*ranger.Range{rang})
-				rangeFB.Tp, rangeFB.Hist = statistics.ColType, &col.Histogram
-			}
-		} else {
-			continue
-		}
-		if err != nil {
-			logutil.BgLogger().Debug("get row count by ranges fail", zap.Error(err))
-			continue
-		}
-
-		equalityCount, rangeCount = getNewCountForIndex(equalityCount, rangeCount, float64(t.RealtimeCount), float64(q.Feedback[i].Count))
-		value := types.NewBytesDatum(bytes)
-		q.Feedback[i] = statistics.Feedback{Lower: &value, Upper: &value, Count: int64(equalityCount)}
-		err = h.dumpRangeFeedback(sc, rang, rangeCount, rangeFB)
-		if err != nil {
-			logutil.BgLogger().Debug("dump range feedback fail", zap.Error(err))
-			continue
-		}
-	}
-	return errors.Trace(h.DumpFeedbackToKV(q))
-}
-
-// minAdjustFactor is the minimum adjust factor of each index feedback.
-// We use it to avoid adjusting too much when the assumption of independence failed.
-const minAdjustFactor = 0.7
-
-// getNewCountForIndex adjust the estimated `eqCount` and `rangeCount` according to the real count.
-// We assumes that `eqCount` and `rangeCount` contribute the same error rate.
-func getNewCountForIndex(eqCount, rangeCount, totalCount, realCount float64) (equalityCount, rangeCnt float64) {
-	estimate := (eqCount / totalCount) * (rangeCount / totalCount) * totalCount
-	if estimate <= 1 {
-		return eqCount, rangeCount
-	}
-	adjustFactor := math.Sqrt(realCount / estimate)
-	adjustFactor = math.Max(adjustFactor, minAdjustFactor)
-	return eqCount * adjustFactor, rangeCount * adjustFactor
 }

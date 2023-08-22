@@ -80,8 +80,9 @@ func TestGlobalTaskTable(t *testing.T) {
 	require.Len(t, task4, 1)
 	require.Equal(t, task, task4[0])
 
+	prevState := task.State
 	task.State = proto.TaskStateRunning
-	err = gm.UpdateGlobalTaskAndAddSubTasks(task, nil)
+	err = gm.UpdateGlobalTaskAndAddSubTasks(task, nil, prevState)
 	require.NoError(t, err)
 
 	task5, err := gm.GetGlobalTasksInStates(proto.TaskStateRunning)
@@ -238,6 +239,7 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	require.Equal(t, proto.TaskStatePending, task.State)
 
 	// isSubTaskRevert: false
+	prevState := task.State
 	task.State = proto.TaskStateRunning
 	subTasks := []*proto.Subtask{
 		{
@@ -251,7 +253,7 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 			Meta:        []byte("m2"),
 		},
 	}
-	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks)
+	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks, prevState)
 	require.NoError(t, err)
 
 	task, err = sm.GetGlobalTaskByID(1)
@@ -275,6 +277,7 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	require.Equal(t, int64(2), cnt)
 
 	// isSubTaskRevert: true
+	prevState = task.State
 	task.State = proto.TaskStateReverting
 	subTasks = []*proto.Subtask{
 		{
@@ -288,7 +291,7 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 			Meta:        []byte("m4"),
 		},
 	}
-	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks)
+	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks, prevState)
 	require.NoError(t, err)
 
 	task, err = sm.GetGlobalTaskByID(1)
@@ -317,8 +320,9 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr"))
 	}()
+	prevState = task.State
 	task.State = proto.TaskStateFailed
-	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks)
+	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks, prevState)
 	require.EqualError(t, err, "updateTaskErr")
 
 	task, err = sm.GetGlobalTaskByID(1)
