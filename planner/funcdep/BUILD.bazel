@@ -41,7 +41,6 @@ go_test(
         "//util/hint",
         "@com_github_stretchr_testify//require",
         "@org_golang_x_exp//maps",
-        "@org_golang_x_exp//slices",
         "@org_golang_x_tools//container/intsets",
         "@org_uber_go_goleak//:goleak",
     ],

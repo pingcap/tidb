@@ -188,7 +188,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 			data := hack.Slice(string(value))
 			sorted = append(sorted, TopNMeta{Encoded: data, Count: uint64(cnt)})
 		}
-		globalTopN, leftTopN := getMergedTopNFromSortedSlice(sorted, n)
+		globalTopN, leftTopN := GetMergedTopNFromSortedSlice(sorted, n)
 		resp.TopN = globalTopN
 		resp.PopedTopn = leftTopN
 		worker.respCh <- resp

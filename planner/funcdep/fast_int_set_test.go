@@ -19,13 +19,13 @@ import (
 	"math/rand"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 	"golang.org/x/tools/container/intsets"
 )
 

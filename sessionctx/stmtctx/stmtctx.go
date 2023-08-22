@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -45,7 +46,6 @@ import (
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 )
 
 const (
