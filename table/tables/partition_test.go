@@ -909,7 +909,6 @@ func TestExchangePartitionCheckConstraintStates(t *testing.T) {
 
 	// Wait ddl finish.
 	<-alterChan
-	tk.MustExec(`drop database check_constraint`)
 }
 
 func TestAddKeyPartitionStates(t *testing.T) {
