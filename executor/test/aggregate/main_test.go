@@ -17,6 +17,7 @@ package aggregate
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
@@ -29,6 +30,12 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	testDataMap.LoadTestSuiteData("testdata", "agg_suite")
 	aggMergeSuiteData = testDataMap["agg_suite"]
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+		conf.Experimental.AllowsExpressionIndex = true
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),

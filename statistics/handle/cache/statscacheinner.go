@@ -161,7 +161,6 @@ func (sc *StatsCache) SetCapacity(c int64) {
 // Close stops the cache.
 func (sc *StatsCache) Close() {
 	sc.c.Close()
-	logutil.BgLogger().Info("closed LFU cache")
 }
 
 // Version returns the version of the current cache, which is defined as

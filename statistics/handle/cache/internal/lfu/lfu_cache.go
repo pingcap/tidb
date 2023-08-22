@@ -15,6 +15,7 @@
 package lfu
 
 import (
+	"sync"
 	"sync/atomic"
 
 	"github.com/dgraph-io/ristretto"
@@ -31,6 +32,7 @@ type LFU struct {
 	cache        *ristretto.Cache
 	resultKeySet *keySetShard
 	cost         atomic.Int64
+	closeOnce    sync.Once
 }
 
 // NewLFU creates a new LFU cache.
@@ -187,6 +189,15 @@ func (s *LFU) metrics() *ristretto.Metrics {
 
 // Close implements statsCacheInner
 func (s *LFU) Close() {
-	s.cache.Close()
-	s.cache.Wait()
+	s.closeOnce.Do(func() {
+		s.Clear()
+		s.cache.Close()
+		s.cache.Wait()
+	})
+}
+
+// Clear implements statsCacheInner
+func (s *LFU) Clear() {
+	s.cache.Clear()
+	s.resultKeySet.Clear()
 }

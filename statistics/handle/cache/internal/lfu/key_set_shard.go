@@ -61,3 +61,9 @@ func (kss *keySetShard) Len() int {
 	}
 	return result
 }
+
+func (kss *keySetShard) Clear() {
+	for idx := range kss.resultKeySet {
+		kss.resultKeySet[idx].Clear()
+	}
+}

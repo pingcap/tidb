@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
@@ -120,7 +121,11 @@ func TestEqualDatumsAsBinary(t *testing.T) {
 		{[]interface{}{1}, []interface{}{1, 1}, false},
 		{[]interface{}{nil}, []interface{}{1}, false},
 	}
-	base := exec.NewBaseExecutor(core.MockContext(), nil, 0)
+	ctx := core.MockContext()
+	base := exec.NewBaseExecutor(ctx, nil, 0)
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
 	e := &InsertValues{BaseExecutor: base}
 	for _, tt := range tests {
 		res, err := e.equalDatumsAsBinary(types.MakeDatums(tt.a...), types.MakeDatums(tt.b...))
