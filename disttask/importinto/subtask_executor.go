@@ -238,7 +238,7 @@ func rebaseAllocatorBases(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *
 		callLog.End(zap.ErrorLevel, err)
 	}()
 
-	if !common.TableHasAutoID(taskMeta.Plan.TableInfo) {
+	if !common.TableHasAutoID(taskMeta.Plan.DesiredTableInfo) {
 		return nil
 	}
 

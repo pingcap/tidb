@@ -16,13 +16,17 @@ package importintotest
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
+	"unsafe"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 func (s *mockGCSSuite) TestWriteAfterImport() {
@@ -122,6 +126,9 @@ func (s *mockGCSSuite) TestWriteAfterImport() {
 	s.prepareAndUseDB("write_after_import")
 	loadDataSQL := fmt.Sprintf(
 		`import into t FROM 'gs://write_after_import/*.csv?endpoint=%s'`, gcsEndpoint)
+	s.T().Cleanup(func() {
+		s.tk.MustExec("drop table if exists t;")
+	})
 	for _, c := range cases {
 		fmt.Println("current case ", c.createTableSQL)
 		s.tk.MustExec("drop table if exists t;")
@@ -147,12 +154,24 @@ func (s *mockGCSSuite) TestWriteAfterImport() {
 			s.Equal(c.nextGlobalAutoID, nextGlobalAutoID)
 		}
 
-		// when autoIDCache1, the id service is not started in real-tikv-test, cannot insert.
+		// when autoIDCache1=true, the id service is not started in real-tikv-test, cannot insert.
 		if !c.autoIDCache1 {
 			s.tk.MustExec(c.insertSQL)
 			newAllData := append(allData, c.insertedData)
 			slices.Sort(newAllData)
 			s.tk.MustQuery(querySQL).Sort().Check(testkit.Rows(newAllData...))
+		}
+
+		// workaround for issue https://github.com/pingcap/tidb/issues/46324,
+		// and we MUST drop the table after test.
+		if tableObj.Meta().SepAutoInc() && tableObj.Meta().GetAutoIncrementColInfo() != nil {
+			allocators := tableObj.Allocators(nil)
+			alloc := allocators.Get(autoid.AutoIncrementType)
+			cf := reflect.ValueOf(alloc).Elem().FieldByName("clientDiscover")
+			cliF := cf.FieldByName("etcdCli")
+			elem := reflect.NewAt(cliF.Type(), unsafe.Pointer(cliF.UnsafeAddr())).Elem()
+			client := elem.Interface().(*clientv3.Client)
+			s.NoError(client.Close())
 		}
 	}
 }
