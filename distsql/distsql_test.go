@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -338,7 +337,7 @@ func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionctx.Cont
 
 	// Test Next.
 	var response SelectResult
-	response, _ = Select(context.TODO(), ctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
+	response, _ = Select(context.TODO(), ctx, request, colTypes)
 
 	result, _ := response.(*selectResult)
 	resp, _ := result.resp.(*mockResponse)
@@ -413,9 +412,9 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 	// Test Next.
 	var response SelectResult
 	if planIDs == nil {
-		response, err = Select(context.TODO(), sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
+		response, err = Select(context.TODO(), sctx, request, colTypes)
 	} else {
-		response, err = SelectWithRuntimeStats(context.TODO(), sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDs, 1)
+		response, err = SelectWithRuntimeStats(context.TODO(), sctx, request, colTypes, planIDs, 1)
 	}
 
 	require.NoError(t, err)

@@ -118,7 +118,7 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 		sumTopN   uint64
 		sampleNDV = uint32(len(sorted))
 	)
-	numTop = mathutil.Min(sampleNDV, numTop) // Ensure numTop no larger than sampNDV.
+	numTop = min(sampleNDV, numTop) // Ensure numTop no larger than sampNDV.
 	// Only element whose frequency is not smaller than 2/3 multiples the
 	// frequency of the n-th element are added to the TopN statistics. We chose
 	// 2/3 as an empirical value because the average cardinality estimation
@@ -876,7 +876,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 		data := hack.Slice(string(value))
 		sorted = append(sorted, TopNMeta{Encoded: data, Count: uint64(cnt)})
 	}
-	globalTopN, leftTopN := getMergedTopNFromSortedSlice(sorted, n)
+	globalTopN, leftTopN := GetMergedTopNFromSortedSlice(sorted, n)
 	return globalTopN, leftTopN, hists, nil
 }
 
@@ -907,7 +907,7 @@ func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 		data := hack.Slice(string(value))
 		sorted = append(sorted, TopNMeta{Encoded: data, Count: cnt})
 	}
-	return getMergedTopNFromSortedSlice(sorted, n)
+	return GetMergedTopNFromSortedSlice(sorted, n)
 }
 
 func checkEmptyTopNs(topNs []*TopN) bool {
@@ -919,29 +919,28 @@ func checkEmptyTopNs(topNs []*TopN) bool {
 }
 
 // SortTopnMeta sort topnMeta
-func SortTopnMeta(topnMetas []TopNMeta) []TopNMeta {
+func SortTopnMeta(topnMetas []TopNMeta) {
 	slices.SortFunc(topnMetas, func(i, j TopNMeta) int {
 		if i.Count != j.Count {
 			return cmp.Compare(j.Count, i.Count)
 		}
 		return bytes.Compare(i.Encoded, j.Encoded)
 	})
-	return topnMetas
+}
+
+// TopnMetaCompare compare topnMeta
+func TopnMetaCompare(i, j TopNMeta) int {
+	c := cmp.Compare(i.Count, j.Count)
+	if c == 0 {
+		return c
+	}
+	return bytes.Compare(i.Encoded, j.Encoded)
 }
 
 // GetMergedTopNFromSortedSlice returns merged topn
 func GetMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
-	return getMergedTopNFromSortedSlice(sorted, n)
-}
-
-func getMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
-	slices.SortFunc(sorted, func(i, j TopNMeta) int {
-		if i.Count != j.Count {
-			return cmp.Compare(j.Count, i.Count)
-		}
-		return bytes.Compare(i.Encoded, j.Encoded)
-	})
-	n = mathutil.Min(uint32(len(sorted)), n)
+	SortTopnMeta(sorted)
+	n = min(uint32(len(sorted)), n)
 
 	var finalTopN TopN
 	finalTopN.TopN = sorted[:n]

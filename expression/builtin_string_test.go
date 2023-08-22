@@ -2604,6 +2604,10 @@ func TestWeightString(t *testing.T) {
 			f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{str, padding, length}))
 		}
 		require.NoError(t, err)
+
+		retType := f.getRetTp()
+		require.Equal(t, charset.CollationBin, retType.GetCollate())
+
 		// Reset warnings.
 		ctx.GetSessionVars().StmtCtx.ResetForRetry()
 		result, err := evalBuiltinFunc(f, chunk.Row{})

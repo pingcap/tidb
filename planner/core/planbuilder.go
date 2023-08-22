@@ -2790,18 +2790,6 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			return nil, err
 		}
 		var commonHandleInfo *model.IndexInfo
-		// If we want to analyze this table with analyze version 2 but the existing stats is version 1 and stats feedback is enabled,
-		// we will switch back to analyze version 1.
-		if statistics.FeedbackProbability.Load() > 0 && version == statistics.Version2 {
-			statsHandle := domain.GetDomain(b.ctx).StatsHandle()
-			versionIsSame := statsHandle.CheckAnalyzeVersion(tbl.TableInfo, physicalIDs, &version)
-			if !versionIsSame {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Use analyze version 1 on table `%s` "+
-					"because this table already has version 1 statistics and query feedback is also enabled. "+
-					"If you want to switch to version 2 statistics, please first disable query feedback by setting feedback-probability to 0.0 in the config file.", tbl.Name))
-			}
-		}
-
 		if version == statistics.Version2 {
 			p.ColTasks, err = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, partitionNames, tbl, version, usePersistedOptions, p.OptionsMap)
 			if err != nil {

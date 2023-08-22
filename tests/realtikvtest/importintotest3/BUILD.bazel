@@ -1,0 +1,22 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "importintotest3_test",
+    timeout = "moderate",
+    srcs = [
+        "dummy_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    deps = [
+        "//config",
+        "//kv",
+        "//testkit",
+        "//tests/realtikvtest",
+        "@com_github_fsouza_fake_gcs_server//fakestorage",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//suite",
+    ],
+)
