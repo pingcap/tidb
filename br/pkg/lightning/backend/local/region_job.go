@@ -358,6 +358,11 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		}
 	}
 
+	failpoint.Inject("NoLeader", func() {
+		log.FromContext(ctx).Warn("enter failpoint NoLeader")
+		leaderPeerMetas = nil
+	})
+
 	// if there is not leader currently, we don't forward the stage to wrote and let caller
 	// handle the retry.
 	if len(leaderPeerMetas) == 0 {
