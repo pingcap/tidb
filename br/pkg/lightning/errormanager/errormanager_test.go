@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/base64"
 	"io"
 	"math/rand"
 	"strconv"
@@ -258,13 +259,23 @@ func TestReplaceConflictKeys(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v1.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
+	rawKeyBase64 := "dIAAAAAAAABLX2mAAAAAAAAAAQOAAAAAAAAABg=="
+	rawKey, err := base64.StdEncoding.DecodeString(rawKeyBase64)
 	mockDB.ExpectQuery("\\QSELECT raw_key FROM `lightning_task_info`.conflict_error_v1 WHERE table_name = ? AND index_name <> 'PRIMARY' GROUP BY raw_key\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key"}).
-			AddRow("dIAAAAAAAABLX2mAAAAAAAAAAQOAAAAAAAAABg=="))
+			AddRow(rawKey))
+	rawValue1Base64 := "AAAAAAAAAAE="
+	rawValue1, err := base64.StdEncoding.DecodeString(rawValue1Base64)
+	rawValue2Base64 := "AAAAAAAAAAI="
+	rawValue2, err := base64.StdEncoding.DecodeString(rawValue2Base64)
+	rawHandle1Base64 := "NzQ4MDAwMDAwMDAwMDAwMDRCNUY3MjgwMDAwMDAwMDAwMDAwMDE="
+	rawHandle1, err := base64.StdEncoding.DecodeString(rawHandle1Base64)
+	rawHandle2Base64 := "NzQ4MDAwMDAwMDAwMDAwMDRCNUY3MjgwMDAwMDAwMDAwMDAwMDI="
+	rawHandle2, err := base64.StdEncoding.DecodeString(rawHandle2Base64)
 	mockDB.ExpectQuery("\\QSELECT index_name, raw_value, hex(raw_handle) FROM `lightning_task_info`.conflict_error_v1 WHERE table_name = ? AND raw_key = ?\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"index_name", "raw_value", "hex(raw_handle)"}).
-			AddRow("uni_b", "AAAAAAAAAAE=", "NzQ4MDAwMDAwMDAwMDAwMDRCNUY3MjgwMDAwMDAwMDAwMDAwMDE=").
-			AddRow("uni_b", "AAAAAAAAAAI=", "NzQ4MDAwMDAwMDAwMDAwMDRCNUY3MjgwMDAwMDAwMDAwMDAwMDI="))
+			AddRow("uni_b", rawValue1, rawHandle1).
+			AddRow("uni_b", rawValue2, rawHandle2))
 
 	decoder, err := tidbkv.NewTableKVDecoder(tbl, "test", &encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,

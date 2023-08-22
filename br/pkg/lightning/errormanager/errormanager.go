@@ -575,8 +575,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				return errors.Trace(err)
 			}
 			em.logger.Debug("got rawKey from table",
-				zap.Binary("rawKey", rawKey),
-				zap.ByteString("rawKey", rawKey))
+				zap.Binary("rawKey", rawKey))
 
 			value, err := fnGetLatest(gCtx, rawKey)
 			if err != nil {
@@ -598,9 +597,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				em.logger.Debug("got index_name, raw_value, hex(raw_handle) from table",
 					zap.String("index_name", indexName),
 					zap.Binary("raw_value", rawValue),
-					zap.ByteString("raw_value", rawValue),
 					zap.Binary("raw_handle", rawHandle),
-					zap.ByteString("raw_handle", rawHandle),
 					zap.Binary("latest value", value))
 				if bytes.Equal(rawValue, value) {
 					continue
@@ -611,7 +608,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					zap.String("handle", handle.String()),
 					zap.Error(err))
 				overwrittenRow, err := fnGetLatest(gCtx, rawHandle)
-				if tikverr.IsErrNotFound(err) {
+				if tikverr.IsErrNotFound(err) || overwrittenRow == nil {
 					continue
 				}
 				if err != nil {
