@@ -54,6 +54,8 @@ run_sql "DROP DATABASE $DB"
 run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --wait-tiflash-ready=true
 
 # check TiFlash sync
+echo "wait 3 seconds for tiflash tick puller triggered"
+sleep 3
 if ! [ $(run_sql "select * from information_schema.tiflash_replica" | grep "PROGRESS" | sed "s/[^0-9]//g") -eq 1 ]; then
     echo "restore didn't wait tiflash synced after set --wait-tiflash-ready=true."
     exit 1
