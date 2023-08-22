@@ -178,7 +178,7 @@ func TestRebaseTableAllocators(t *testing.T) {
 		require.Equal(t, int64(1), id)
 	}
 	ctx := context.Background()
-	var allocatorTypes []autoid.AllocatorType
+	allocatorTypes := make([]autoid.AllocatorType, 0, len(allocators))
 	// rebase to 123
 	for _, alloc := range allocators {
 		require.NoError(t, alloc.Rebase(ctx, 123, false))
