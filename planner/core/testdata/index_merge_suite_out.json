@@ -428,19 +428,17 @@
       {
         "SQL": "select /*+ use_index_merge(t, idx) */ * from t where a=1 and b=2 and (3 member of (j)) and c=4",
         "Plan": [
-          "Selection 0.00 root  json_memberof(cast(3, json BINARY), test.t.j)",
-          "└─IndexMerge 0.00 root  type: union",
-          "  ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1 2 3 4,1 2 3 4], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 0.00 root  type: union",
+          "├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1 2 3 4,1 2 3 4], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ use_index_merge(t, idx) */ * from t where a=1 and b=2 and (3 member of (j))",
         "Plan": [
-          "Selection 0.08 root  json_memberof(cast(3, json BINARY), test.t.j)",
-          "└─IndexMerge 0.00 root  type: union",
-          "  ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1 2 3,1 2 3], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 0.00 root  type: union",
+          "├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1 2 3,1 2 3], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -462,19 +460,17 @@
       {
         "SQL": "select /*+ use_index_merge(t, idx2) */ * from t where a=1 and b=2 and ('3' member of (j->'$.str')) and c=4",
         "Plan": [
-          "Selection 0.00 root  json_memberof(cast(\"3\", json BINARY), json_extract(test.t.j, \"$.str\"))",
-          "└─IndexMerge 0.00 root  type: union",
-          "  ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx2(a, b, cast(json_extract(`j`, _utf8mb4'$.str') as char(10) array), c) range:[1 2 0x33 4,1 2 0x33 4], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 0.00 root  type: union",
+          "├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx2(a, b, cast(json_extract(`j`, _utf8mb4'$.str') as char(10) array), c) range:[1 2 0x33 4,1 2 0x33 4], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ use_index_merge(t, idx2) */ * from t where a=1 and b=2 and ('3' member of (j->'$.str'))",
         "Plan": [
-          "Selection 0.08 root  json_memberof(cast(\"3\", json BINARY), json_extract(test.t.j, \"$.str\"))",
-          "└─IndexMerge 0.00 root  type: union",
-          "  ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx2(a, b, cast(json_extract(`j`, _utf8mb4'$.str') as char(10) array), c) range:[1 2 0x33,1 2 0x33], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 0.00 root  type: union",
+          "├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx2(a, b, cast(json_extract(`j`, _utf8mb4'$.str') as char(10) array), c) range:[1 2 0x33,1 2 0x33], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -496,19 +492,17 @@
       {
         "SQL": "select /*+ use_index(t, idx) */ * from t where a=1 and b=2 and (3 member of (j)) and c=4",
         "Plan": [
-          "Selection 0.00 root  json_memberof(cast(3, json BINARY), test.t.j)",
-          "└─IndexMerge 0.00 root  type: union",
-          "  ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1 2 3 4,1 2 3 4], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 0.00 root  type: union",
+          "├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1 2 3 4,1 2 3 4], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select * from t use index(idx) where a=1 and b=2 and (3 member of (j))",
         "Plan": [
-          "Selection 0.08 root  json_memberof(cast(3, json BINARY), test.t.j)",
-          "└─IndexMerge 0.00 root  type: union",
-          "  ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1 2 3,1 2 3], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 0.00 root  type: union",
+          "├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1 2 3,1 2 3], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -530,10 +524,9 @@
       {
         "SQL": "select * from t force index(idx) where a=1 and b=2 and (3 member of (j))",
         "Plan": [
-          "Selection 0.08 root  json_memberof(cast(3, json BINARY), test.t.j)",
-          "└─IndexMerge 0.00 root  type: union",
-          "  ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1 2 3,1 2 3], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 0.00 root  type: union",
+          "├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1 2 3,1 2 3], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
