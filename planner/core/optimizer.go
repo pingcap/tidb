@@ -354,14 +354,14 @@ func refineCETrace(sctx sessionctx.Context) {
 			return 1
 		}
 
-		if i.TableID != j.TableID {
-			return cmp.Compare(i.TableID, j.TableID)
+		if c := cmp.Compare(i.TableID, j.TableID); c != 0 {
+			return c
 		}
-		if i.Type != j.Type {
-			return cmp.Compare(i.Type, j.Type)
+		if c := cmp.Compare(i.Type, j.Type); c != 0 {
+			return c
 		}
-		if i.Expr != j.Expr {
-			return cmp.Compare(i.Expr, j.Expr)
+		if c := cmp.Compare(i.Expr, j.Expr); c != 0 {
+			return c
 		}
 		return cmp.Compare(i.RowCount, j.RowCount)
 	})
