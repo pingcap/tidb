@@ -230,6 +230,10 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	}
 
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
+		if schemaTs > 0 {
+			// try to insert here as well to correct the schemaTs if previous is wrong
+			do.infoCache.Insert(is, uint64(schemaTs))
+		}
 		return is, true, 0, nil, nil
 	}
 
