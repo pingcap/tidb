@@ -62,12 +62,7 @@ go_test(
     ],
     embed = [":ingest"],
     flaky = True,
-<<<<<<< HEAD
     shard_count = 12,
-=======
-    race = "on",
-    shard_count = 15,
->>>>>>> 5a305400a94 (ddl: use the correct timezone to encode record for adding index (#46055))
     deps = [
         "//config",
         "//ddl/internal/session",
