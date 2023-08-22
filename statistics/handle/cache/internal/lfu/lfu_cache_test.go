@@ -173,6 +173,7 @@ func TestLFUCachePutGetWithManyConcurrency2(t *testing.T) {
 
 func TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency(t *testing.T) {
 	// to test DATA RACE
+
 	capacity := int64(100)
 	lfu, err := NewLFU(capacity)
 	require.NoError(t, err)
@@ -181,23 +182,30 @@ func TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		go func() {
 			defer wg.Done()
-			for n := 0; n < 1000; n++ {
-				t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
-				lfu.Put(int64(n), t1)
+			for c := 0; c < 1000; c++ {
+				for n := 0; n < 50; n++ {
+					t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
+					lfu.Put(int64(n), t1)
+				}
 			}
 		}()
 	}
+	time.Sleep(1 * time.Second)
 	for i := 0; i < 5; i++ {
 		go func() {
 			defer wg.Done()
-			for n := 0; n < 1000; n++ {
-				lfu.Get(int64(n), true)
+			for c := 0; c < 1000; c++ {
+				for n := 0; n < 50; n++ {
+					tbl, ok := lfu.Get(int64(n), true)
+					require.True(t, ok)
+					checkTable(t, tbl)
+				}
 			}
 		}()
 	}
 	wg.Wait()
 	lfu.wait()
-	v, ok := lfu.Get(rand.Int63n(1000), false)
+	v, ok := lfu.Get(rand.Int63n(50), false)
 	require.True(t, ok)
 	for _, c := range v.Columns {
 		require.Equal(t, c.GetEvictedStatus(), statistics.AllEvicted)
@@ -207,6 +215,28 @@ func TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency(t *testing.T) {
 	}
 }
 
+func checkTable(t *testing.T, tbl *statistics.Table) {
+	for _, column := range tbl.Columns {
+		if column.GetEvictedStatus() == statistics.AllEvicted {
+			require.NotNil(t, column.Histogram.Bounds)
+			require.Greater(t, 0, len(column.Histogram.Buckets))
+		} else {
+			require.Nil(t, column.Histogram.Bounds)
+			require.Len(t, column.Histogram.Buckets, 0)
+		}
+
+	}
+	for _, idx := range tbl.Indices {
+		if idx.GetEvictedStatus() == statistics.AllEvicted {
+			require.NotNil(t, idx.Histogram.Bounds)
+			require.Greater(t, 0, len(idx.Histogram.Buckets))
+		} else {
+			require.Nil(t, idx.Histogram.Bounds)
+			require.Len(t, idx.Histogram.Buckets, 0)
+		}
+	}
+
+}
 func TestLFUReject(t *testing.T) {
 	capacity := int64(100000000000)
 	lfu, err := NewLFU(capacity)
