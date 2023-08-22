@@ -16,13 +16,13 @@ package statistics
 
 import (
 	"encoding/json"
+	"slices"
 
 	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 )
 
 /*
