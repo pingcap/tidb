@@ -15,6 +15,7 @@
 package lfu
 
 import (
+	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -168,6 +169,42 @@ func TestLFUCachePutGetWithManyConcurrency2(t *testing.T) {
 	lfu.wait()
 	require.Equal(t, uint64(lfu.Cost()), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
 	require.Equal(t, 1000, len(lfu.Values()))
+}
+
+func TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency(t *testing.T) {
+	// to test DATA RACE
+	capacity := int64(100)
+	lfu, err := NewLFU(capacity)
+	require.NoError(t, err)
+	var wg sync.WaitGroup
+	wg.Add(10)
+	for i := 0; i < 5; i++ {
+		go func() {
+			defer wg.Done()
+			for n := 0; n < 1000; n++ {
+				t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
+				lfu.Put(int64(n), t1)
+			}
+		}()
+	}
+	for i := 0; i < 5; i++ {
+		go func() {
+			defer wg.Done()
+			for n := 0; n < 1000; n++ {
+				lfu.Get(int64(n), true)
+			}
+		}()
+	}
+	wg.Wait()
+	lfu.wait()
+	v, ok := lfu.Get(rand.Int63n(1000), false)
+	require.True(t, ok)
+	for _, c := range v.Columns {
+		require.Equal(t, c.GetEvictedStatus(), statistics.AllEvicted)
+	}
+	for _, i := range v.Indices {
+		require.Equal(t, i.GetEvictedStatus(), statistics.AllEvicted)
+	}
 }
 
 func TestLFUReject(t *testing.T) {
