@@ -55,7 +55,7 @@ type None struct{}
 
 // NewWorkerPool creates a new worker pool.
 func NewWorkerPool[T, R any](name string, _ util.Component, numWorkers int,
-	createWorker func() Worker[T, R], opts ...Option[T, R]) (*WorkerPool[T, R], error) {
+	createWorker func() Worker[T, R], opts ...Option[T, R]) *WorkerPool[T, R] {
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
@@ -72,7 +72,7 @@ func NewWorkerPool[T, R any](name string, _ util.Component, numWorkers int,
 	}
 
 	p.createWorker = createWorker
-	return p, nil
+	return p
 }
 
 // SetTaskReceiver sets the task receiver for the pool.
@@ -125,7 +125,11 @@ func (p *WorkerPool[T, R]) runAWorker() {
 	p.wg.Run(func() {
 		for {
 			select {
-			case task := <-p.taskChan:
+			case task, ok := <-p.taskChan:
+				if !ok {
+					w.Close()
+					return
+				}
 				p.handleTaskWithRecover(w, task)
 			case <-p.quitChan:
 				w.Close()
@@ -194,6 +198,18 @@ func (p *WorkerPool[T, R]) Name() string {
 func (p *WorkerPool[T, R]) ReleaseAndWait() {
 	close(p.quitChan)
 	p.wg.Wait()
+	if p.resChan != nil {
+		close(p.resChan)
+	}
+}
+
+// Wait waits for all workers to complete.
+func (p *WorkerPool[T, R]) Wait() {
+	p.wg.Wait()
+}
+
+// Release releases the pool.
+func (p *WorkerPool[T, R]) Release() {
 	if p.resChan != nil {
 		close(p.resChan)
 	}
