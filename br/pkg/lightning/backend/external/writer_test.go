@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
-	"golang.org/x/exp/slices"
 )
 
 func TestWriter(t *testing.T) {
@@ -62,8 +62,8 @@ func TestWriter(t *testing.T) {
 	_, err = writer.Close(ctx)
 	require.NoError(t, err)
 
-	slices.SortFunc(kvs, func(i, j common.KvPair) bool {
-		return bytes.Compare(i.Key, j.Key) < 0
+	slices.SortFunc(kvs, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
 	})
 
 	bufSize := rand.Intn(100) + 1
