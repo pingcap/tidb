@@ -171,10 +171,12 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 // filterAndCollectTasks filters the tasks that are not locked and collects the table IDs.
 func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, infoSchema infoschema.InfoSchema) ([]*analyzeTask, uint, []string) {
-	var filteredTasks []*analyzeTask
-	tids := make(map[int64]struct{})
-	var skippedTables []string
-	needAnalyzeTableCnt := uint(0)
+	var (
+		filteredTasks       []*analyzeTask
+		skippedTables       []string
+		needAnalyzeTableCnt uint
+		tids                = make(map[int64]struct{})
+	)
 
 	for _, task := range tasks {
 		tableID := getTableIDFromTask(task)
