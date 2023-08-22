@@ -234,8 +234,8 @@ func checkTable(t *testing.T, tbl *statistics.Table) {
 			require.Greater(t, cap(idx.Histogram.Buckets), 0)
 		}
 	}
-
 }
+
 func TestLFUReject(t *testing.T) {
 	capacity := int64(100000000000)
 	lfu, err := NewLFU(capacity)
