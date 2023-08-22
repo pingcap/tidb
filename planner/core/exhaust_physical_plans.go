@@ -3215,6 +3215,14 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	// Is this aggregate a final stage aggregate?
 	// Final agg can't be split into multi-stage aggregate
 	hasFinalAgg := len(la.AggFuncs) > 0 && la.AggFuncs[0].Mode == aggregation.FinalMode
+	// count final agg should become sum for MPP execution path. (TiDB and TiKV can tell the partialMode but MPP doesn't)
+	finalAggAdjust := func(aggFuncs []*aggregation.AggFuncDesc) {
+		for _, agg := range aggFuncs {
+			if agg.Mode == aggregation.FinalMode && agg.Name == ast.AggFuncCount {
+				agg.Name = ast.AggFuncSum
+			}
+		}
+	}
 
 	if len(la.GroupByItems) > 0 {
 		partitionCols := la.GetPotentialPartitionKeys()
@@ -3247,6 +3255,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.schema.Clone())
 			agg.MppRunMode = Mpp1Phase
+			finalAggAdjust(agg.AggFuncs)
 			hashAggs = append(hashAggs, agg)
 		}
 

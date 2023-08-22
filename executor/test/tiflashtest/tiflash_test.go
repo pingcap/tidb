@@ -1239,6 +1239,28 @@ func TestAggPushDownCountStar(t *testing.T) {
 	tk.MustQuery("select count(*) from c, o where c.c_id=o.c_id").Check(testkit.Rows("5"))
 }
 
+func TestAggPushDownUnionAndMPP(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("set @@tidb_allow_mpp=1;")
+	tk.MustExec("set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_opt_agg_push_down=1")
+
+	tk.MustQuery("select a, b from t " +
+		"union all " +
+		"select a, b from t" +
+		") t group by a order by a limit 10;").Check(testkit.Rows("1 10"))
+}
+
 func TestGroupStreamAggOnTiFlash(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
