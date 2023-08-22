@@ -408,6 +408,11 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		}
 	}
 
+	failpoint.Inject("NoLeader", func() {
+		log.FromContext(ctx).Warn("enter failpoint NoLeader")
+		leaderPeerMetas = nil
+	})
+
 	// if there is not leader currently, we don't forward the stage to wrote and let caller
 	// handle the retry.
 	if len(leaderPeerMetas) == 0 {
@@ -415,8 +420,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			logutil.Region(region), logutil.Leader(j.region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
 			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize))
-		return errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
-			region.Id, leaderID)
+		return common.ErrNoLeader.GenWithStackByArgs(region.Id, leaderID)
 	}
 
 	takeTime := time.Since(begin)

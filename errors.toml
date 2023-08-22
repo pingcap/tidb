@@ -406,6 +406,11 @@ error = '''
 raft proposal dropped
 '''
 
+["Lightning:KV:ErrNoLeader"]
+error = '''
+write to tikv with no leader returned, region '%d', leader: %d
+'''
+
 ["Lightning:KV:NotLeader"]
 error = '''
 not leader
