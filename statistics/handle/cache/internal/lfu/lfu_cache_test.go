@@ -184,7 +184,7 @@ func TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency(t *testing.T) {
 			defer wg.Done()
 			for c := 0; c < 1000; c++ {
 				for n := 0; n < 50; n++ {
-					t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
+					t1 := testutil.NewMockStatisticsTable(1, 1, true, true, true)
 					lfu.Put(int64(n), t1)
 				}
 			}
@@ -218,16 +218,20 @@ func TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency(t *testing.T) {
 func checkTable(t *testing.T, tbl *statistics.Table) {
 	for _, column := range tbl.Columns {
 		if column.GetEvictedStatus() == statistics.AllEvicted {
-			require.NotNil(t, column.Histogram.Bounds)
+			require.Nil(t, column.TopN)
+			require.Equal(t, 0, cap(column.Histogram.Buckets))
 		} else {
-			require.Nil(t, column.Histogram.Bounds)
+			require.NotNil(t, column.TopN)
+			require.Greater(t, 0, cap(column.Histogram.Buckets))
 		}
 	}
 	for _, idx := range tbl.Indices {
 		if idx.GetEvictedStatus() == statistics.AllEvicted {
-			require.NotNil(t, idx.Histogram.Bounds)
+			require.Nil(t, idx.TopN)
+			require.Equal(t, 0, cap(idx.Histogram.Buckets))
 		} else {
-			require.Nil(t, idx.Histogram.Bounds)
+			require.NotNil(t, idx.TopN)
+			require.Greater(t, 0, cap(idx.Histogram.Buckets))
 		}
 	}
 
