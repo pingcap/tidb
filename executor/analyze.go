@@ -184,7 +184,7 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 			if statsHandle.IsTableLocked(tableID) {
 				tbl, ok := infoSchema.TableByID(tableID)
 				if !ok {
-					logutil.BgLogger().Debug("Unknown table ID in analyze task", zap.Int64("tid", tableID))
+					logutil.BgLogger().Warn("Unknown table ID in analyze task", zap.Int64("tid", tableID))
 					// Ignore this table because it may have been dropped.
 					continue
 				}
@@ -202,10 +202,8 @@ func warnLockedTableMsg(sessionVars *variable.SessionVars, tids map[int64]struct
 	if len(skippedTables) > 0 {
 		tables := strings.Join(skippedTables, ", ")
 		msg := "skip analyze locked table: %s"
-		if len(tids) > 1 {
-			if len(tids) > len(skippedTables) {
-				msg = "skip analyze locked tables: %s, other tables will be analyzed"
-			}
+		if len(skippedTables) > 1 && len(tids) > len(skippedTables) {
+			msg = "skip analyze locked tables: %s, other tables will be analyzed"
 		}
 		sessionVars.StmtCtx.AppendWarning(errors.Errorf(msg, tables))
 	}
