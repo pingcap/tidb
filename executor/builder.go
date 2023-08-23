@@ -1771,6 +1771,7 @@ func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 	replicaReadType := sessVars.GetReplicaRead()
 	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
 	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
+	snapshot.SetOption(kv.TidbKvReadTimeout, sessVars.GetTidbKvReadTimeout())
 
 	if replicaReadType.IsClosestRead() && b.readReplicaScope != kv.GlobalTxnScope {
 		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{

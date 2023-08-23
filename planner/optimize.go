@@ -586,7 +586,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	}
 	hintOffs := make(map[string]int, len(hints))
 	var forceNthPlan *ast.TableOptimizerHint
-	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt int
+	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, tidbKvReadTimeoutCnt, forceNthPlanCnt, straightJoinHintCnt int
 	setVars := make(map[string]string)
 	setVarsOffs := make([]int, 0, len(hints))
 	for i, hint := range hints {
@@ -609,6 +609,9 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		case "max_execution_time":
 			hintOffs[hint.HintName.L] = i
 			maxExecutionTimeCnt++
+		case "tidb_kv_read_timeout":
+			hintOffs[hint.HintName.L] = i
+			tidbKvReadTimeoutCnt++
 		case "nth_plan":
 			forceNthPlanCnt++
 			forceNthPlan = hint
@@ -716,6 +719,16 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		}
 		stmtHints.HasMaxExecutionTime = true
 		stmtHints.MaxExecutionTime = maxExecutionTime.HintData.(uint64)
+	}
+	// Handle TIDB_KV_READ_TIMEOUT
+	if tidbKvReadTimeoutCnt != 0 {
+		tidbKvReadTimeout := hints[hintOffs["tidb_kv_read_timeout"]]
+		if tidbKvReadTimeoutCnt > 1 {
+			warn := errors.Errorf("TIDB_KV_READ_TIMEOUT() is defined more than once, only the last definition takes effect: TIDB_KV_READ_TIMEOUT(%v)", tidbKvReadTimeout.HintData.(uint64))
+			warns = append(warns, warn)
+		}
+		stmtHints.HasTidbKvReadTimeout = true
+		stmtHints.TidbKvReadTimeout = tidbKvReadTimeout.HintData.(uint64)
 	}
 	// Handle NTH_PLAN
 	if forceNthPlanCnt != 0 {
