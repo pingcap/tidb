@@ -2457,13 +2457,16 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 				return ver, errors.Trace(err)
 			}
 		}
-		pt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
-			ExchangePartitionTableID:     nt.ID,
-			ExchangePartitionPartitionID: defID,
-		}
-		err = t.UpdateTable(ptSchemaID, pt)
-		if err != nil {
-			return ver, errors.Trace(err)
+		var ptInfo []schemaIDAndTableInfo
+		if len(nt.Constraints) > 0 {
+			pt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
+				ExchangePartitionTableID:     nt.ID,
+				ExchangePartitionPartitionID: defID,
+			}
+			ptInfo = append(ptInfo, schemaIDAndTableInfo{
+				schemaID: ptSchemaID,
+				tblInfo:  pt,
+			})
 		}
 		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
 			ExchangePartitionTableID:     ptID,
@@ -2474,7 +2477,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		// into the table using the schema version
 		// before the exchange is made.
 		job.SchemaState = model.StateWriteOnly
-		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
+		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true, ptInfo...)
 	}
 	// From now on, nt (the non-partitioned table) has
 	// ExchangePartitionInfo set, meaning it is restricted

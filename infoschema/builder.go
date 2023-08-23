@@ -316,28 +316,26 @@ func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff)
 
 func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	// It is not in StatePublic.
-	if len(diff.AffectedOpts) > 0 && diff.AffectedOpts[0].OldSchemaID != 0 {
-		ntSchemaID := diff.SchemaID
-		ntID := diff.TableID
-		ptSchemaID := diff.AffectedOpts[0].OldSchemaID
-		ptID := diff.AffectedOpts[0].TableID
-		currDiff := &model.SchemaDiff{
-			Type:        diff.Type,
-			Version:     diff.Version,
-			TableID:     ntID,
-			SchemaID:    ntSchemaID,
-			OldTableID:  ntID,
-			OldSchemaID: ntSchemaID,
-		}
-		ntIDs, err := b.applyTableUpdate(m, currDiff)
+	if diff.OldTableID == diff.TableID && diff.OldSchemaID == diff.SchemaID {
+		ntIDs, err := b.applyTableUpdate(m, diff)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		currDiff.TableID = ptID
-		currDiff.SchemaID = ptSchemaID
-		currDiff.OldTableID = ptID
-		currDiff.OldSchemaID = ptSchemaID
-		ptIDs, err := b.applyTableUpdate(m, currDiff)
+		if diff.AffectedOpts == nil || diff.AffectedOpts[0].OldSchemaID == 0 {
+			return ntIDs, err
+		}
+		// Reload parition tabe.
+		ptSchemaID := diff.AffectedOpts[0].OldSchemaID
+		ptID := diff.AffectedOpts[0].TableID
+		ptDiff := &model.SchemaDiff{
+			Type:        diff.Type,
+			Version:     diff.Version,
+			TableID:     ptID,
+			SchemaID:    ptSchemaID,
+			OldTableID:  ptID,
+			OldSchemaID: ptSchemaID,
+		}
+		ptIDs, err := b.applyTableUpdate(m, ptDiff)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
