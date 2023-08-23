@@ -65,3 +65,9 @@ func (ks *keySet) Get(key int64) (*statistics.Table, bool) {
 	ks.mu.RUnlock()
 	return value, ok
 }
+
+func (ks *keySet) Clear() {
+	ks.mu.Lock()
+	ks.set = make(map[int64]*statistics.Table)
+	ks.mu.Unlock()
+}

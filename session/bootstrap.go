@@ -272,6 +272,7 @@ const (
 	);`
 
 	// CreateStatsFeedbackTable stores the feedback info which is used to update stats.
+	// NOTE: Feedback is deprecated, but we still need to create this table for compatibility.
 	CreateStatsFeedbackTable = `CREATE TABLE IF NOT EXISTS mysql.stats_feedback (
 		table_id 	BIGINT(64) NOT NULL,
 		is_index 	TINYINT(2) NOT NULL,
@@ -1282,31 +1283,6 @@ func SyncUpgradeState(s Session) error {
 		time.Sleep(interval)
 	}
 
-	retryTimes = 60
-	interval = 500 * time.Millisecond
-	for i := 0; i < retryTimes; i++ {
-		jobErrs, err := ddl.PauseAllJobsBySystem(s)
-		if err == nil && len(jobErrs) == 0 {
-			break
-		}
-		jobErrStrs := make([]string, 0, len(jobErrs))
-		for _, jobErr := range jobErrs {
-			if dbterror.ErrPausedDDLJob.Equal(jobErr) {
-				continue
-			}
-			jobErrStrs = append(jobErrStrs, jobErr.Error())
-		}
-		if err == nil && len(jobErrStrs) == 0 {
-			break
-		}
-
-		if i == retryTimes-1 {
-			logutil.BgLogger().Error("pause all jobs failed", zap.String("category", "upgrading"), zap.Strings("errs", jobErrStrs), zap.Error(err))
-			return err
-		}
-		logutil.BgLogger().Warn("pause all jobs failed", zap.String("category", "upgrading"), zap.Strings("errs", jobErrStrs), zap.Error(err))
-		time.Sleep(interval)
-	}
 	logutil.BgLogger().Info("update global state to upgrading", zap.String("category", "upgrading"), zap.String("state", syncer.StateUpgrading))
 	return nil
 }
@@ -1622,6 +1598,7 @@ func upgradeToVer20(s Session, ver int64) {
 	if ver >= version20 {
 		return
 	}
+	// NOTE: Feedback is deprecated, but we still need to create this table for compatibility.
 	doReentrantDDL(s, CreateStatsFeedbackTable)
 }
 
@@ -2869,6 +2846,7 @@ func doDDLWorks(s Session) {
 	// Create gc_delete_range_done table.
 	mustExecute(s, CreateGCDeleteRangeDoneTable)
 	// Create stats_feedback table.
+	// NOTE: Feedback is deprecated, but we still need to create this table for compatibility.
 	mustExecute(s, CreateStatsFeedbackTable)
 	// Create role_edges table.
 	mustExecute(s, CreateRoleEdgesTable)

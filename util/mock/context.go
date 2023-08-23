@@ -331,9 +331,6 @@ func (c *Context) GoCtx() context.Context {
 	return c.ctx
 }
 
-// StoreQueryFeedback stores the query feedback.
-func (*Context) StoreQueryFeedback(_ interface{}) {}
-
 // UpdateColStatsUsage updates the column stats usage.
 func (*Context) UpdateColStatsUsage(_ []model.TableItemID) {}
 

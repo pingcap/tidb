@@ -1066,8 +1066,18 @@ var hintTokenMap = map[string]int{
 func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 	// An identifier before or after '.' means it is part of a qualified identifier.
 	// We do not parse it as keyword.
-	if s.r.peek() == '.' || (offset > 0 && s.r.s[offset-1] == '.') {
+	if s.r.peek() == '.' {
 		return 0
+	}
+
+	for idx := offset - 1; idx >= 0; idx-- {
+		if s.r.s[idx] == ' ' {
+			continue
+		} else if s.r.s[idx] == '.' {
+			return 0
+		} else {
+			break
+		}
 	}
 
 	buf := &s.buf
