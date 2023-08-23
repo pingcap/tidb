@@ -468,12 +468,18 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 }
 
 // UpdateGlobalTaskAndAddSubTasks update the global task and add new subtasks
-func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, prevState string) error {
-	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
+func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, prevState string) (bool, error) {
+	retryable := true
+	err := stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
 		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %? where id = %? and state = %?",
 			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Meta, serializeErr(gTask.Error), gTask.ID, prevState)
 		if err != nil {
 			return err
+		}
+
+		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+			retryable = false
+			return errors.New("invalid task state transform, state already changed")
 		}
 
 		failpoint.Inject("MockUpdateTaskErr", func(val failpoint.Value) {
@@ -498,6 +504,8 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 
 		return nil
 	})
+
+	return retryable, err
 }
 
 func serializeErr(err error) []byte {

@@ -82,8 +82,9 @@ func TestGlobalTaskTable(t *testing.T) {
 
 	prevState := task.State
 	task.State = proto.TaskStateRunning
-	err = gm.UpdateGlobalTaskAndAddSubTasks(task, nil, prevState)
+	retryable, err := gm.UpdateGlobalTaskAndAddSubTasks(task, nil, prevState)
 	require.NoError(t, err)
+	require.Equal(t, true, retryable)
 
 	task5, err := gm.GetGlobalTasksInStates(proto.TaskStateRunning)
 	require.NoError(t, err)
@@ -253,8 +254,9 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 			Meta:        []byte("m2"),
 		},
 	}
-	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks, prevState)
+	retryable, err := sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks, prevState)
 	require.NoError(t, err)
+	require.Equal(t, true, retryable)
 
 	task, err = sm.GetGlobalTaskByID(1)
 	require.NoError(t, err)
@@ -291,8 +293,9 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 			Meta:        []byte("m4"),
 		},
 	}
-	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks, prevState)
+	retryable, err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks, prevState)
 	require.NoError(t, err)
+	require.Equal(t, true, retryable)
 
 	task, err = sm.GetGlobalTaskByID(1)
 	require.NoError(t, err)
@@ -322,8 +325,9 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	}()
 	prevState = task.State
 	task.State = proto.TaskStateFailed
-	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks, prevState)
+	retryable, err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks, prevState)
 	require.EqualError(t, err, "updateTaskErr")
+	require.Equal(t, true, retryable)
 
 	task, err = sm.GetGlobalTaskByID(1)
 	require.NoError(t, err)
