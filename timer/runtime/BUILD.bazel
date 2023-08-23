@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//timer/api",
         "//timer/metrics",
+        "//util",
         "//util/logutil",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
@@ -33,10 +34,11 @@ go_test(
     embed = [":runtime"],
     flaky = True,
     race = "on",
-    shard_count = 19,
+    shard_count = 22,
     deps = [
         "//testkit/testsetup",
         "//timer/api",
+        "//util",
         "//util/mock",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
