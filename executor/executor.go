@@ -15,10 +15,12 @@
 package executor
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
 	"runtime/pprof"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -82,7 +84,6 @@ import (
 	tikvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 var (
@@ -2475,8 +2476,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) (_ workerpool.None) {
 			trySaveErr(err)
 			return
 		}
-		slices.SortFunc(tableChecksum, func(i, j groupByChecksum) bool {
-			return i.bucket < j.bucket
+		slices.SortFunc(tableChecksum, func(i, j groupByChecksum) int {
+			return cmp.Compare(i.bucket, j.bucket)
 		})
 
 		// compute index side checksum.
@@ -2485,8 +2486,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) (_ workerpool.None) {
 			trySaveErr(err)
 			return
 		}
-		slices.SortFunc(indexChecksum, func(i, j groupByChecksum) bool {
-			return i.bucket < j.bucket
+		slices.SortFunc(indexChecksum, func(i, j groupByChecksum) int {
+			return cmp.Compare(i.bucket, j.bucket)
 		})
 
 		currentOffset := 0
@@ -2711,11 +2712,8 @@ func (e *FastCheckTableExec) Next(context.Context, *chunk.Chunk) error {
 		e.Ctx().GetSessionVars().OptimizerUseInvisibleIndexes = false
 	}()
 
-	workerPool, err := workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
+	workerPool := workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
 		poolutil.CheckTable, 3, e.createWorker)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	workerPool.Start()
 
 	e.wg.Add(len(e.indexInfos))

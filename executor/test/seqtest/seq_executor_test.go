@@ -1203,6 +1203,7 @@ func TestShowForNewCollations(t *testing.T) {
 		"utf8_general_ci utf8 33  Yes 1",
 		"utf8_unicode_ci utf8 192  Yes 1",
 		"utf8mb4_0900_ai_ci utf8mb4 255  Yes 1",
+		"utf8mb4_0900_bin utf8mb4 309  Yes 1",
 		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
 		"utf8mb4_general_ci utf8mb4 45  Yes 1",
 		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
