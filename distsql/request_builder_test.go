@@ -617,7 +617,6 @@ func TestRequestBuilderTidbKvReadTimeout(t *testing.T) {
 		SchemaVar:         0,
 		ReadReplicaScope:  kv.GlobalReplicaScope,
 		TidbKvReadTimeout: 100,
-		ResourceGroupName: resourcegroup.DefaultResourceGroupName,
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
 	expect.Paging.MaxPagingSize = paging.MaxPagingSize
