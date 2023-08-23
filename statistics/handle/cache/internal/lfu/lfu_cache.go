@@ -134,6 +134,7 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	}
 	// We do not need to calculate the cost during onEvict,
 	// because the onexit function is also called when the evict event occurs.
+	// TODO(hawkingrei): not copy the useless part.
 	table := item.Value.(*statistics.Table).Copy()
 	before := table.MemoryUsage().TotalTrackingMemUsage()
 	for _, column := range table.Columns {
