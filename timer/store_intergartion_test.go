@@ -90,7 +90,7 @@ func runClusterTimeZoneTest(t *testing.T, store *api.TimerStore, setClusterTZ fu
 		TimerSpec: api.TimerSpec{
 			Namespace:       "n1",
 			Key:             "/path/to/testtz",
-			TimeZone:        "tidb",
+			TimeZone:        "",
 			SchedPolicyType: api.SchedEventCron,
 			SchedPolicyExpr: "* 1 * * *",
 		},
@@ -98,13 +98,13 @@ func runClusterTimeZoneTest(t *testing.T, store *api.TimerStore, setClusterTZ fu
 	require.NoError(t, err)
 	timer, err := store.GetByID(context.Background(), timerID)
 	require.NoError(t, err)
-	require.Equal(t, "tidb", timer.TimeZone)
+	require.Equal(t, "", timer.TimeZone)
 	require.Equal(t, timeutil.SystemLocation(), timer.Location)
 
 	setClusterTZ("UTC")
 	timer, err = store.GetByID(context.Background(), timerID)
 	require.NoError(t, err)
-	require.Equal(t, "tidb", timer.TimeZone)
+	require.Equal(t, "", timer.TimeZone)
 	require.Equal(t, time.UTC, timer.Location)
 }
 
@@ -125,7 +125,7 @@ func runTimerStoreInsertAndGet(ctx context.Context, t *testing.T, store *api.Tim
 		TimerSpec: api.TimerSpec{
 			Namespace:       "n1",
 			Key:             "/path/to/key",
-			TimeZone:        "tidb",
+			TimeZone:        "",
 			SchedPolicyType: api.SchedEventInterval,
 			SchedPolicyExpr: "1h",
 			Data:            []byte("data1"),
@@ -186,6 +186,11 @@ func runTimerStoreInsertAndGet(ctx context.Context, t *testing.T, store *api.Tim
 	invalid.SchedPolicyExpr = "1x"
 	_, err = store.Create(ctx, invalid)
 	require.EqualError(t, err, "schedule event configuration is not valid: invalid schedule event expr '1x': unknown unit x")
+
+	invalid.SchedPolicyExpr = "1h"
+	invalid.TimeZone = "tidb"
+	_, err = store.Create(ctx, invalid)
+	require.ErrorContains(t, err, "Unknown or incorrect time zone: 'tidb'")
 
 	return &recordTpl
 }
@@ -357,7 +362,15 @@ func runTimerStoreUpdate(ctx context.Context, t *testing.T, store *api.TimerStor
 	err = store.Update(ctx, tpl.ID, &api.TimerUpdate{
 		TimeZone: api.NewOptionalVal("invalid"),
 	})
-	require.EqualError(t, err, "Invalid timezone 'invalid'")
+	require.ErrorContains(t, err, "Unknown or incorrect time zone: 'invalid'")
+	record, err = store.GetByID(ctx, tpl.ID)
+	require.NoError(t, err)
+	require.Equal(t, *tpl, *record)
+
+	err = store.Update(ctx, tpl.ID, &api.TimerUpdate{
+		TimeZone: api.NewOptionalVal("tidb"),
+	})
+	require.ErrorContains(t, err, "Unknown or incorrect time zone: 'tidb'")
 	record, err = store.GetByID(ctx, tpl.ID)
 	require.NoError(t, err)
 	require.Equal(t, *tpl, *record)

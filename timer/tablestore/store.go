@@ -216,14 +216,15 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 		}
 
 		tz := timer.TimeZone
-		if tz == "" || strings.EqualFold(tz, api.TimeZoneTiDB) {
+		// handling value "TIDB" is for compatibility of version 7.3.0
+		if tz == "" || strings.EqualFold(tz, "TIDB") {
 			if tz, err = sctx.GetSessionVars().GetGlobalSystemVar(ctx, variable.TimeZone); err != nil {
 				return nil, err
 			}
 		}
 
-		loc, ok := timeutil.ParseTimeZone(tz)
-		if ok {
+		loc, err := timeutil.ParseTimeZone(tz)
+		if err == nil {
 			timer.Location = loc
 		} else {
 			timer.Location = timeutil.SystemLocation()

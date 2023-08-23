@@ -15,7 +15,6 @@
 package api
 
 import (
-	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -23,9 +22,6 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/robfig/cron/v3"
 )
-
-// TimeZoneTiDB indicates to use the tidb timezone.
-const TimeZoneTiDB = "TIDB"
 
 // SchedPolicyType is the type of the event schedule policy.
 type SchedPolicyType string
@@ -143,6 +139,7 @@ type TimerSpec struct {
 	// Data is a binary which is defined by user.
 	Data []byte
 	// TimeZone is the time zone name of the timer to evaluate the schedule policy.
+	// If TimeZone is empty, it means to use the tidb cluster's time zone.
 	TimeZone string
 	// SchedPolicyType is the type of the event schedule policy.
 	SchedPolicyType SchedPolicyType
@@ -275,9 +272,9 @@ func (r *TimerRecord) Clone() *TimerRecord {
 
 // ValidateTimeZone validates the TimeZone field.
 func ValidateTimeZone(tz string) error {
-	if tz != "" && !strings.EqualFold(tz, TimeZoneTiDB) {
-		if _, ok := timeutil.ParseTimeZone(tz); !ok {
-			return errors.Errorf("Invalid timezone '%s'", tz)
+	if tz != "" {
+		if _, err := timeutil.ParseTimeZone(tz); err != nil {
+			return err
 		}
 	}
 	return nil

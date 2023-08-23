@@ -224,14 +224,14 @@ func WithinDayTimePeriod(start, end, now time.Time) bool {
 }
 
 // ParseTimeZone parses the time zone string, returns the location and whether the time zone is valid.
-func ParseTimeZone(s string) (*time.Location, bool) {
+func ParseTimeZone(s string) (*time.Location, error) {
 	if strings.EqualFold(s, "SYSTEM") {
-		return SystemLocation(), true
+		return SystemLocation(), nil
 	}
 
 	loc, err := time.LoadLocation(s)
 	if err == nil {
-		return loc, true
+		return loc, nil
 	}
 
 	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
@@ -241,11 +241,11 @@ func ParseTimeZone(s string) (*time.Location, bool) {
 		if err == nil {
 			if s[0] == '-' {
 				if d.Duration > 12*time.Hour+59*time.Minute {
-					return nil, false
+					return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
 				}
 			} else {
 				if d.Duration > 14*time.Hour {
-					return nil, false
+					return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
 				}
 			}
 
@@ -253,9 +253,9 @@ func ParseTimeZone(s string) (*time.Location, bool) {
 			if s[0] == '-' {
 				ofst = -ofst
 			}
-			return time.FixedZone("", ofst), true
+			return time.FixedZone("", ofst), nil
 		}
 	}
 
-	return nil, false
+	return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
 }

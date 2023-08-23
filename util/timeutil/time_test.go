@@ -112,15 +112,20 @@ func TestParseTimeZone(t *testing.T) {
 			name:   "+02:00",
 			offset: int64(2 * 3600),
 		},
+		{
+			name:    "aa",
+			invalid: true,
+		},
 	}
 
 	for _, c := range cases {
-		loc, ok := ParseTimeZone(c.name)
+		loc, err := ParseTimeZone(c.name)
 		if c.invalid {
-			require.False(t, ok, c.name)
+			require.True(t, ErrUnknownTimeZone.Equal(err))
 			require.Nil(t, loc, c.name)
 			continue
 		}
+		require.NoError(t, err)
 		require.NotNil(t, loc, c.name)
 		_, offset := Zone(loc)
 		require.Equal(t, c.offset, offset, c.name)

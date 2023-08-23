@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/hex"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -294,11 +293,11 @@ func (n *memTimerWatchEventNotifier) Close() {
 }
 
 func getMemStoreTimeZoneLoc(tz string) *time.Location {
-	if tz == "" || strings.EqualFold(tz, TimeZoneTiDB) {
+	if tz == "" {
 		return timeutil.SystemLocation()
 	}
 
-	if loc, ok := timeutil.ParseTimeZone(tz); ok {
+	if loc, err := timeutil.ParseTimeZone(tz); err == nil {
 		return loc
 	}
 

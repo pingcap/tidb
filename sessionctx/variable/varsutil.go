@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -347,13 +346,6 @@ func tidbOptFloat64(opt string, defaultVal float64) float64 {
 		return defaultVal
 	}
 	return val
-}
-
-func parseTimeZone(s string) (*time.Location, error) {
-	if l, ok := timeutil.ParseTimeZone(s); ok {
-		return l, nil
-	}
-	return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
 }
 
 func parseMemoryLimit(s *SessionVars, normalizedValue string, originalValue string) (byteSize uint64, normalizedStr string, err error) {

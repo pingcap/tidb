@@ -49,18 +49,16 @@ func TestTimerValidate(t *testing.T) {
 
 	record.TimeZone = "a123"
 	err = record.Validate()
-	require.EqualError(t, err, "Invalid timezone 'a123'")
+	require.ErrorContains(t, err, "Unknown or incorrect time zone: 'a123'")
+
+	record.TimeZone = "tidb"
+	err = record.Validate()
+	require.ErrorContains(t, err, "Unknown or incorrect time zone: 'tidb'")
 
 	record.TimeZone = "+0800"
 	require.NoError(t, record.Validate())
 
 	record.TimeZone = "Asia/Shanghai"
-	require.NoError(t, record.Validate())
-
-	record.TimeZone = "TiDB"
-	require.NoError(t, record.Validate())
-
-	record.TimeZone = "tidb"
 	require.NoError(t, record.Validate())
 
 	record.TimeZone = ""
