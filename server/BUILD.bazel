@@ -137,7 +137,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":server"],
     flaky = True,
-    shard_count = 46,
+    shard_count = 47,
     deps = [
         "//config",
         "//domain",
