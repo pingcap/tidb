@@ -1746,3 +1746,156 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 		tk.MustExec("admin check table admin_test")
 	}
 }
+
+func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	executor.CheckTableFastBucketSize.Store(8)
+
+	seed := time.Now().UnixNano()
+	rand := rand.New(rand.NewSource(seed))
+	logutil.BgLogger().Info("random generator", zap.Int64("seed", seed))
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 mediumint, c2 int, primary key(c1) clustered, key(c2))")
+	tk.MustExec("set cte_max_recursion_depth=10000;")
+	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 10000) select * from cte;")
+
+	// Make some corrupted index. Build the index information.
+	ctx := mock.NewContext()
+	ctx.Store = store
+	is := domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_test")
+	tbl, err := is.TableByName(dbName, tblName)
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	sc := ctx.GetSessionVars().StmtCtx
+
+	pattern := "handle:\\s(\\d+)"
+	r := regexp.MustCompile(pattern)
+
+	getCommonHandle := func(randomRow int) *kv.CommonHandle {
+		h, err := codec.EncodeKey(sc, nil, types.MakeDatums(randomRow)...)
+		require.NoError(t, err)
+		ch, err := kv.NewCommonHandle(h)
+		require.NoError(t, err)
+		return ch
+	}
+
+	// Delete an index record randomly.
+	for i := 0; i < 10; i++ {
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		randomRow := rand.Intn(10000) + 1
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(randomRow), getCommonHandle(randomRow))
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+		err = tk.ExecToErr("admin check table admin_test")
+		require.Error(t, err)
+		match := r.FindStringSubmatch(err.Error())
+		require.Greater(t, len(match), 0)
+		handle, err := strconv.Atoi(match[1])
+		require.NoError(t, err)
+		require.Equalf(t, randomRow, handle, "i :%d", i)
+		tk.MustQuery("admin recover index admin_test c2")
+		tk.MustExec("set @@tidb_enable_fast_table_check = 0")
+		tk.MustExec("admin check table admin_test")
+		tk.MustExec("set @@tidb_enable_fast_table_check = 1")
+	}
+
+	// Add an index record randomly on exists row.
+	for i := 0; i < 10; i++ {
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		randomRow := rand.Intn(10000) + 1
+		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow), nil)
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+		err = tk.ExecToErr("admin check table admin_test")
+		require.Error(t, err)
+		match := r.FindStringSubmatch(err.Error())
+		require.Greater(t, len(match), 0)
+		handle, err := strconv.Atoi(match[1])
+		require.NoError(t, err)
+		require.Equalf(t, randomRow, handle, "i :%d", i)
+		txn, err = store.Begin()
+		require.NoError(t, err)
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow))
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		tk.MustExec("admin check table admin_test")
+	}
+
+	// Add an index record randomly on not exists row.
+	for i := 0; i < 10; i++ {
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		randomRow := rand.Intn(10000) + 10000
+		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow), nil)
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+		err = tk.ExecToErr("admin check table admin_test")
+		require.Error(t, err)
+		match := r.FindStringSubmatch(err.Error())
+		require.Greater(t, len(match), 0)
+		handle, err := strconv.Atoi(match[1])
+		require.NoError(t, err)
+		require.Equalf(t, randomRow, handle, "i :%d", i)
+		txn, err = store.Begin()
+		require.NoError(t, err)
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow))
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		tk.MustExec("admin check table admin_test")
+	}
+
+	// Modify an index record randomly.
+	for i := 0; i < 10; i++ {
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		randomRow := rand.Intn(10000) + 1
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(randomRow), getCommonHandle(randomRow))
+		require.NoError(t, err)
+		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow), nil)
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+		err = tk.ExecToErr("admin check table admin_test")
+		require.Error(t, err)
+		match := r.FindStringSubmatch(err.Error())
+		require.Greater(t, len(match), 0)
+		handle, err := strconv.Atoi(match[1])
+		require.NoError(t, err)
+		require.Equalf(t, randomRow, handle, "i :%d", i)
+
+		txn, err = store.Begin()
+		require.NoError(t, err)
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow))
+		require.NoError(t, err)
+		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow), getCommonHandle(randomRow), nil)
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		tk.MustExec("admin check table admin_test")
+	}
+}
+
+func TestAdminCheckTableErrorLocateBigTable(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, primary key(c1), key(c2))")
+	tk.MustExec("set cte_max_recursion_depth=100000;")
+	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 100000) select * from cte;")
+	tk.MustQuery("select /*+ read_from_storage(tikv[`test`.`admin_test`]) */ bit_xor(crc32(md5(concat_ws(0x2, `c1`, `c2`)))), ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024), count(*) from `test`.`admin_test` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024)")
+	tk.MustQuery("select bit_xor(crc32(md5(concat_ws(0x2, `c1`, `c2`)))), ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024), count(*) from `test`.`admin_test` use index(`c2`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024)")
+}
