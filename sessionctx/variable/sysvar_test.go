@@ -161,7 +161,7 @@ func TestDefaultCollationForUTF8MB4(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "utf8mb4_0900_ai_ci", val)
 	// test set variable failed
-	val, err = sv.Validate(vars, "LATIN1_bin", ScopeSession)
+	_, err = sv.Validate(vars, "LATIN1_bin", ScopeSession)
 	require.EqualError(t, err, ErrInvalidDefaultUTF8MB4Collation.GenWithStackByArgs("latin1_bin").Error())
 }
 

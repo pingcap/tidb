@@ -1596,11 +1596,11 @@ func isUTF8MB4AndDefaultCollation(sessVars *variable.SessionVars, cs, co string)
 	if cs != charset.CharsetUTF8MB4 {
 		return false, false, nil
 	}
-	str, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), variable.DefaultCollationForUTF8MB4)
+	defaultCollation, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), variable.DefaultCollationForUTF8MB4)
 	if err != nil {
 		return false, false, err
 	}
-	if co == str {
+	if co == defaultCollation {
 		return true, true, nil
 	}
 	return true, false, nil

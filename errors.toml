@@ -3286,6 +3286,11 @@ error = '''
 %s variable '%s' is read-only. Use SET %s to assign the value
 '''
 
+["variable:3721"]
+error = '''
+Invalid default collation %s: utf8mb4_0900_ai_ci or utf8mb4_general_ci or utf8mb4_bin expected
+'''
+
 ["variable:8047"]
 error = '''
 variable '%s' does not yet support value: %s

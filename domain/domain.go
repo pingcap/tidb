@@ -1160,7 +1160,7 @@ func (do *Domain) Init(
 	})
 	if ddlInjector != nil {
 		checker := ddlInjector(do.ddl)
-		checker.CreateTestDB()
+		checker.CreateTestDB(nil)
 		do.ddl = checker
 	}
 
