@@ -33,7 +33,7 @@ func randBytes(n int) []byte {
 }
 
 func TestNoopKeyAdapter(t *testing.T) {
-	keyAdapter := noopKeyAdapter{}
+	keyAdapter := NoopKeyAdapter{}
 	key := randBytes(32)
 	require.Len(t, key, keyAdapter.EncodedLen(key, ZeroRowID))
 	encodedKey := keyAdapter.Encode(nil, key, ZeroRowID)
@@ -67,7 +67,7 @@ func TestDupDetectKeyAdapter(t *testing.T) {
 		},
 	}
 
-	keyAdapter := dupDetectKeyAdapter{}
+	keyAdapter := DupDetectKeyAdapter{}
 	for _, input := range inputs {
 		encodedRowID := common.EncodeIntRowID(input.rowID)
 		result := keyAdapter.Encode(nil, input.key, encodedRowID)
@@ -88,7 +88,7 @@ func TestDupDetectKeyOrder(t *testing.T) {
 		{0x0, 0x1, 0x3, 0x4, 0x0},
 		{0x0, 0x1, 0x3, 0x4, 0x0, 0x0, 0x0},
 	}
-	keyAdapter := dupDetectKeyAdapter{}
+	keyAdapter := DupDetectKeyAdapter{}
 	encodedKeys := make([][]byte, 0, len(keys))
 	for _, key := range keys {
 		encodedKeys = append(encodedKeys, keyAdapter.Encode(nil, key, common.EncodeIntRowID(1)))
@@ -100,7 +100,7 @@ func TestDupDetectKeyOrder(t *testing.T) {
 }
 
 func TestDupDetectEncodeDupKey(t *testing.T) {
-	keyAdapter := dupDetectKeyAdapter{}
+	keyAdapter := DupDetectKeyAdapter{}
 	key := randBytes(32)
 	result1 := keyAdapter.Encode(nil, key, common.EncodeIntRowID(10))
 	result2 := keyAdapter.Encode(nil, key, common.EncodeIntRowID(20))
@@ -112,7 +112,7 @@ func startWithSameMemory(x []byte, y []byte) bool {
 }
 
 func TestEncodeKeyToPreAllocatedBuf(t *testing.T) {
-	keyAdapters := []KeyAdapter{noopKeyAdapter{}, dupDetectKeyAdapter{}}
+	keyAdapters := []KeyAdapter{NoopKeyAdapter{}, DupDetectKeyAdapter{}}
 	for _, keyAdapter := range keyAdapters {
 		key := randBytes(32)
 		buf := make([]byte, 256)
@@ -130,7 +130,7 @@ func TestDecodeKeyToPreAllocatedBuf(t *testing.T) {
 		0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0xff, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf7,
 		0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0x0, 0x8,
 	}
-	keyAdapters := []KeyAdapter{noopKeyAdapter{}, dupDetectKeyAdapter{}}
+	keyAdapters := []KeyAdapter{NoopKeyAdapter{}, DupDetectKeyAdapter{}}
 	for _, keyAdapter := range keyAdapters {
 		key, err := keyAdapter.Decode(nil, data)
 		require.NoError(t, err)
@@ -147,7 +147,7 @@ func TestDecodeKeyDstIsInsufficient(t *testing.T) {
 		0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0xff, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf7,
 		0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0x0, 0x8,
 	}
-	keyAdapters := []KeyAdapter{noopKeyAdapter{}, dupDetectKeyAdapter{}}
+	keyAdapters := []KeyAdapter{NoopKeyAdapter{}, DupDetectKeyAdapter{}}
 	for _, keyAdapter := range keyAdapters {
 		key, err := keyAdapter.Decode(nil, data)
 		require.NoError(t, err)

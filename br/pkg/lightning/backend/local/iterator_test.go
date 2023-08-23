@@ -16,9 +16,11 @@ package local
 
 import (
 	"bytes"
+	"fmt"
 	"math/rand"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"testing"
 	"time"
 
@@ -101,7 +103,7 @@ func TestDupDetectIterator(t *testing.T) {
 		i = j
 	}
 
-	keyAdapter := dupDetectKeyAdapter{}
+	keyAdapter := DupDetectKeyAdapter{}
 
 	// Write pairs to db after shuffling the pairs.
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -206,7 +208,7 @@ func TestDupDetectIterSeek(t *testing.T) {
 	db, err := pebble.Open(filepath.Join(storeDir, "kv"), &pebble.Options{})
 	require.NoError(t, err)
 
-	keyAdapter := dupDetectKeyAdapter{}
+	keyAdapter := DupDetectKeyAdapter{}
 	wb := db.NewBatch()
 	for _, p := range pairs {
 		key := keyAdapter.Encode(nil, p.Key, p.RowID)
@@ -228,7 +230,7 @@ func TestDupDetectIterSeek(t *testing.T) {
 }
 
 func TestKeyAdapterEncoding(t *testing.T) {
-	keyAdapter := dupDetectKeyAdapter{}
+	keyAdapter := DupDetectKeyAdapter{}
 	srcKey := []byte{1, 2, 3}
 	v := keyAdapter.Encode(nil, srcKey, common.EncodeIntRowID(1))
 	resKey, err := keyAdapter.Decode(nil, v)
@@ -239,4 +241,33 @@ func TestKeyAdapterEncoding(t *testing.T) {
 	resKey, err = keyAdapter.Decode(nil, v)
 	require.NoError(t, err)
 	require.EqualValues(t, srcKey, resKey)
+}
+
+func BenchmarkDupDetectIter(b *testing.B) {
+	keyAdapter := DupDetectKeyAdapter{}
+	db, _ := pebble.Open(filepath.Join(b.TempDir(), "kv"), &pebble.Options{})
+	wb := db.NewBatch()
+	val := []byte("value")
+	for i := 0; i < 100_000; i++ {
+		keyNum := i
+		// mimic we have 20% duplication
+		if keyNum%5 == 0 {
+			keyNum--
+		}
+		keyStr := fmt.Sprintf("%09d", keyNum)
+		rowID := strconv.Itoa(i)
+		key := keyAdapter.Encode(nil, []byte(keyStr), []byte(rowID))
+		wb.Set(key, val, nil)
+	}
+	wb.Commit(pebble.Sync)
+
+	dupDB, _ := pebble.Open(filepath.Join(b.TempDir(), "dup"), &pebble.Options{})
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		iter := newDupDetectIter(db, keyAdapter, &pebble.IterOptions{}, dupDB, log.L(), DupDetectOpt{})
+		keyCnt := 0
+		for iter.First(); iter.Valid(); iter.Next() {
+			keyCnt++
+		}
+	}
 }
