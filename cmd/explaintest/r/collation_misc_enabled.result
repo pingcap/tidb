@@ -70,6 +70,8 @@ utf8
 select @@collation_database;
 @@collation_database
 utf8_bin
+drop database if exists cd_test_utf8;
+drop database if exists cd_test_latin1;
 create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;
 Error 1273: Unsupported collation when new collation is enabled: 'latin1_swedish_ci'
 with cte as (select cast('2010-09-09' as date) a union select  '2010-09-09  ') select count(*) from cte;
@@ -133,4 +135,3 @@ utf8mb4_0900_ai_ci	utf8mb4	255		Yes	1
 utf8mb4_bin	utf8mb4	46	Yes	Yes	1
 utf8mb4_general_ci	utf8mb4	45		Yes	1
 utf8mb4_unicode_ci	utf8mb4	224		Yes	1
-use test;

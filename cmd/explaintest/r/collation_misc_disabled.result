@@ -68,6 +68,8 @@ latin1
 select @@collation_database;
 @@collation_database
 latin1_swedish_ci
+drop database if exists cd_test_utf8;
+drop database if exists cd_test_latin1;
 create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;
 with cte as (select cast('2010-09-09' as date) a union select  '2010-09-09  ') select count(*) from cte;
 count(*)
@@ -118,4 +120,3 @@ binary	binary	63	Yes	Yes	1
 ascii_bin	ascii	65	Yes	Yes	1
 utf8_bin	utf8	83	Yes	Yes	1
 gbk_bin	gbk	87	Yes	Yes	1
-use test;
