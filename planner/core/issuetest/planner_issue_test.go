@@ -51,6 +51,7 @@ func TestIssue43178(t *testing.T) {
 func TestIssue43461(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	t.Log("starting test")
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int, index b(b), index b_c(b, c)) partition by hash(a) partitions 4;")
 	tk.MustExec("analyze table t")
