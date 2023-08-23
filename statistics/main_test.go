@@ -44,7 +44,6 @@ func TestMain(m *testing.M) {
 	})
 
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
-	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
 	testDataMap.LoadTestSuiteData("testdata", "trace_suite")
 
 	opts := []goleak.Option{
@@ -63,10 +62,6 @@ func TestMain(m *testing.M) {
 
 func GetIntegrationSuiteData() testdata.TestData {
 	return testDataMap["integration_suite"]
-}
-
-func GetStatsSuiteData() testdata.TestData {
-	return testDataMap["stats_suite"]
 }
 
 func GetTraceSuiteData() testdata.TestData {

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/planner/cardinality"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -248,7 +249,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(tblInfos[i], dsSchemaCols[i])
-		_, _, err = histColl.Selectivity(sctx, selConditions[i], nil)
+		_, _, err = cardinality.Selectivity(sctx, histColl, selConditions[i], nil)
 		require.NoError(t, err, sql, "For ver2")
 		traceInfo := stmtCtx.OptimizerDebugTrace
 		buf.Reset()
@@ -272,7 +273,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(tblInfos[i], dsSchemaCols[i])
-		_, _, err = histColl.Selectivity(sctx, selConditions[i], nil)
+		_, _, err = cardinality.Selectivity(sctx, histColl, selConditions[i], nil)
 		require.NoError(t, err, sql, "For ver1")
 		traceInfo := stmtCtx.OptimizerDebugTrace
 		buf.Reset()

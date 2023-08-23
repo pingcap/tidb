@@ -338,6 +338,7 @@
   },
   "lll": {
     "exclude_files": {
+      ".*_test\\.go$": "ignore test code",
       "/cgo/": "ignore cgo code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
