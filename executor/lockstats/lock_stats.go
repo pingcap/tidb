@@ -24,17 +24,17 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-var _ exec.Executor = &Exec{}
-var _ exec.Executor = &UnlockStatsExec{}
+var _ exec.Executor = &LockExec{}
+var _ exec.Executor = &UnlockExec{}
 
-// Exec represents a lock statistic executor.
-type Exec struct {
+// LockExec represents a lock statistic executor.
+type LockExec struct {
 	exec.BaseExecutor
 	Tables []*ast.TableName
 }
 
 // Next implements the Executor Next interface.
-func (e *Exec) Next(_ context.Context, _ *chunk.Chunk) error {
+func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 	do := domain.GetDomain(e.Ctx())
 	is := do.InfoSchema()
 	h := do.StatsHandle()
@@ -72,23 +72,23 @@ func (e *Exec) Next(_ context.Context, _ *chunk.Chunk) error {
 }
 
 // Close implements the Executor Close interface.
-func (*Exec) Close() error {
+func (*LockExec) Close() error {
 	return nil
 }
 
 // Open implements the Executor Open interface.
-func (*Exec) Open(context.Context) error {
+func (*LockExec) Open(context.Context) error {
 	return nil
 }
 
-// UnlockStatsExec represents a unlock statistic executor.
-type UnlockStatsExec struct {
+// UnlockExec represents a unlock statistic executor.
+type UnlockExec struct {
 	exec.BaseExecutor
 	Tables []*ast.TableName
 }
 
 // Next implements the Executor Next interface.
-func (e *UnlockStatsExec) Next(context.Context, *chunk.Chunk) error {
+func (e *UnlockExec) Next(context.Context, *chunk.Chunk) error {
 	do := domain.GetDomain(e.Ctx())
 	is := do.InfoSchema()
 	h := do.StatsHandle()
@@ -126,11 +126,11 @@ func (e *UnlockStatsExec) Next(context.Context, *chunk.Chunk) error {
 }
 
 // Close implements the Executor Close interface.
-func (*UnlockStatsExec) Close() error {
+func (*UnlockExec) Close() error {
 	return nil
 }
 
 // Open implements the Executor Open interface.
-func (*UnlockStatsExec) Open(context.Context) error {
+func (*UnlockExec) Open(context.Context) error {
 	return nil
 }
