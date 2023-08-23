@@ -102,7 +102,7 @@ type regionJob struct {
 	// writeResult is available only in wrote and ingested stage
 	writeResult *tikvWriteResult
 
-	ingestData      ingestData
+	ingestData      IngestData
 	regionSplitSize int64
 	regionSplitKeys int64
 	metrics         *metric.Metrics
@@ -122,10 +122,9 @@ type tikvWriteResult struct {
 	remainingStartKey []byte
 }
 
-// ingestData describes a common interface that is needed by TiKV write +
+// IngestData describes a common interface that is needed by TiKV write +
 // ingest RPC.
-// TODO(lance6716): make it public to remote backend can use it.
-type ingestData interface {
+type IngestData interface {
 	// GetFirstAndLastKey returns the first and last key of the data reader in the
 	// range [lowerBound, upperBound). Empty or nil bounds means unbounded.
 	// lowerBound must be less than upperBound.
