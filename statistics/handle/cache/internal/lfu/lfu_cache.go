@@ -142,6 +142,7 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	for _, indix := range table.Indices {
 		DropEvicted(indix)
 	}
+	s.resultKeySet.AddKeyValue(int64(item.Key), table)
 	after := table.MemoryUsage().TotalTrackingMemUsage()
 	// why add before again? because the cost will be subtracted in onExit.
 	// in fact, it is  -(before - after) + after = after + after - before
