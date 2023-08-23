@@ -1007,38 +1007,6 @@ func (hg *Histogram) TruncateHistogram(numBkt int) *Histogram {
 	return hist
 }
 
-// ErrorRate is the error rate of estimate row count by bucket and cm sketch.
-type ErrorRate struct {
-	ErrorTotal float64
-	QueryTotal int64
-}
-
-// MaxErrorRate is the max error rate of estimate row count of a not pseudo column.
-// If the table is pseudo, but the average error rate is less than MaxErrorRate,
-// then the column is not pseudo.
-const MaxErrorRate = 0.25
-
-// NotAccurate is true when the total of query is zero or the average error
-// rate is greater than MaxErrorRate.
-func (e *ErrorRate) NotAccurate() bool {
-	if e.QueryTotal == 0 {
-		return true
-	}
-	return e.ErrorTotal/float64(e.QueryTotal) > MaxErrorRate
-}
-
-// Update updates the ErrorRate.
-func (e *ErrorRate) Update(rate float64) {
-	e.QueryTotal++
-	e.ErrorTotal += rate
-}
-
-// Merge range merges two ErrorRate.
-func (e *ErrorRate) Merge(rate *ErrorRate) {
-	e.QueryTotal += rate.QueryTotal
-	e.ErrorTotal += rate.ErrorTotal
-}
-
 type countByRangeFunc = func(sessionctx.Context, int64, []*ranger.Range) (float64, error)
 
 // newHistogramBySelectivity fulfills the content of new histogram by the given selectivity result.

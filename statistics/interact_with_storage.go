@@ -227,12 +227,9 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 	nullCount := row.GetInt64(5)
 	statsVer := row.GetInt64(7)
 	idx := table.Indices[histID]
-	errorRate := ErrorRate{}
 	flag := row.GetInt64(8)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
-	if (!IsAnalyzed(flag) || reader.IsHistory()) && idx != nil {
-		errorRate = idx.ErrorRate
-	}
+
 	for _, idxInfo := range tableInfo.Indices {
 		if histID != idxInfo.ID {
 			continue
@@ -249,7 +246,6 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 		if notNeedLoad {
 			idx = &Index{
 				Histogram:  *NewHistogram(histID, distinct, nullCount, histVer, types.NewFieldType(mysql.TypeBlob), 0, 0),
-				ErrorRate:  errorRate,
 				StatsVer:   statsVer,
 				Info:       idxInfo,
 				Flag:       flag,
@@ -285,7 +281,6 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 				TopN:       topN,
 				FMSketch:   fmSketch,
 				Info:       idxInfo,
-				ErrorRate:  errorRate,
 				StatsVer:   statsVer,
 				Flag:       flag,
 				PhysicalID: table.PhysicalID,
@@ -315,11 +310,8 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 	correlation := row.GetFloat64(9)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
 	col := table.Columns[histID]
-	errorRate := ErrorRate{}
 	flag := row.GetInt64(8)
-	if (!IsAnalyzed(flag) || reader.IsHistory()) && col != nil {
-		errorRate = col.ErrorRate
-	}
+
 	for _, colInfo := range tableInfo.Columns {
 		if histID != colInfo.ID {
 			continue
@@ -350,7 +342,6 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 				PhysicalID: table.PhysicalID,
 				Histogram:  *NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
 				Info:       colInfo,
-				ErrorRate:  errorRate,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       flag,
 				StatsVer:   statsVer,
@@ -387,7 +378,6 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 				CMSketch:   cms,
 				TopN:       topN,
 				FMSketch:   fmSketch,
-				ErrorRate:  errorRate,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       flag,
 				StatsVer:   statsVer,
