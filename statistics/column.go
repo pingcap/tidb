@@ -41,7 +41,6 @@ type Column struct {
 	FMSketch       *FMSketch
 	Info           *model.ColumnInfo
 	Histogram
-	ErrorRate
 
 	// StatsLoadedStatus indicates the status of column statistics
 	StatsLoadedStatus
@@ -133,7 +132,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) 
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
-	if collPseudo && c.NotAccurate() {
+	if collPseudo {
 		inValidForCollPseudo = true
 		return true
 	}
