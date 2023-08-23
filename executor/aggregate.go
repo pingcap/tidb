@@ -484,6 +484,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 	for {
 		waitStart := time.Now()
 		ok := w.getChildInput()
+		// TODO check if we need to enter spill mode
 		if w.stats != nil {
 			w.stats.WaitTime += int64(time.Since(waitStart))
 		}
@@ -554,6 +555,8 @@ func (w *HashAggPartialWorker) shuffleIntermData(_ *stmtctx.StatementContext, fi
 		}
 		groupKeysSlice[finalWorkerIdx] = append(groupKeysSlice[finalWorkerIdx], groupKey)
 	}
+
+	// TODO tell the final worker to start spill mode when we spill the data
 
 	for i := range groupKeysSlice {
 		if groupKeysSlice[i] == nil {
