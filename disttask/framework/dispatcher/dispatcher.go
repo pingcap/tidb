@@ -243,7 +243,7 @@ func (d *dispatcher) processErrFlow(receiveErr []error) error {
 	handle := GetTaskFlowHandle(d.task.Type)
 	if handle == nil {
 		logutil.Logger(d.logCtx).Warn("gen task flow handle failed, this type handle doesn't register")
-		return d.updateTask(proto.TaskStateReverted, nil, retrySQLTimes)
+		return d.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
 	}
 	meta, err := handle.ProcessErrFlow(d.ctx, d, d.task, receiveErr)
 	if err != nil {
@@ -262,10 +262,6 @@ func (d *dispatcher) dispatchSubTask4Revert(task *proto.Task, handle TaskFlowHan
 		return err
 	}
 
-	if len(instanceIDs) == 0 {
-		return d.updateTask(proto.TaskStateReverted, nil, retrySQLTimes)
-	}
-
 	subTasks := make([]*proto.Subtask, 0, len(instanceIDs))
 	for _, id := range instanceIDs {
 		subTasks = append(subTasks, proto.NewSubtask(task.ID, task.Type, id, meta))
@@ -279,7 +275,7 @@ func (d *dispatcher) processNormalFlow() error {
 	if handle == nil {
 		logutil.Logger(d.logCtx).Warn("gen task flow handle failed, this type handle doesn't register", zap.String("type", d.task.Type))
 		d.task.Error = errors.New("unsupported task type")
-		return d.updateTask(proto.TaskStateReverted, nil, retrySQLTimes)
+		return d.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
 	}
 	metas, err := handle.ProcessNormalFlow(d.ctx, d, d.task)
 	if err != nil {
@@ -288,7 +284,7 @@ func (d *dispatcher) processNormalFlow() error {
 			return err
 		}
 		d.task.Error = err
-		return d.updateTask(proto.TaskStateReverted, nil, retrySQLTimes)
+		return d.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
 	}
 	// 2. dispatch dist-plan to EligibleInstances.
 	return d.dispatchSubTask(d.task, handle, metas)
@@ -419,12 +415,12 @@ func VerifyTaskStateTransform(oldState, newState string) bool {
 			proto.TaskStateCancelling,
 			proto.TaskStatePausing,
 			proto.TaskStateSucceed,
-			proto.TaskStateReverted,
+			proto.TaskStateFailed,
 		},
 		proto.TaskStateRunning: {
 			proto.TaskStateSucceed,
 			proto.TaskStateReverting,
-			proto.TaskStateReverted,
+			proto.TaskStateFailed,
 			proto.TaskStateCancelling,
 			proto.TaskStatePausing,
 		},
