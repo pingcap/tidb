@@ -28,7 +28,7 @@ go_test(
     embed = [":lfu"],
     flaky = True,
     race = "on",
-    shard_count = 7,
+    shard_count = 8,
     deps = [
         "//statistics",
         "//statistics/handle/cache/internal/testutil",

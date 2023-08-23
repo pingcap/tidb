@@ -81,16 +81,9 @@ func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
 // Put implements statsCacheInner
 func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
 	cost := tbl.MemoryUsage().TotalTrackingMemUsage()
-	// Here we need to insert resultKeySet first and then write to LFU,
-	// in order to prevent data race. If the LFU cost is already full,
-	// a rejection may occur, triggering the onEvict event.
-	// Both inserting into resultKeySet and evicting will modify the memory cost,
-	// so we need to stagger these two actions.
 	s.resultKeySet.AddKeyValue(tblID, tbl)
-	s.cost.Add(cost)
-	ok := s.cache.Set(tblID, tbl, cost)
-	metrics.CostGauge.Set(float64(s.cost.Load()))
-	return ok
+	s.addCost(cost)
+	return s.cache.Set(tblID, tbl, cost)
 }
 
 // Del implements statsCacheInner
@@ -117,7 +110,8 @@ func (s *LFU) Values() []*statistics.Table {
 
 // DropEvicted drop stats for table column/index
 func DropEvicted(item statistics.TableCacheItem) {
-	if !item.IsStatsInitialized() || item.GetEvictedStatus() == statistics.AllEvicted {
+	if !item.IsStatsInitialized() ||
+		item.GetEvictedStatus() == statistics.AllEvicted {
 		return
 	}
 	item.DropUnnecessaryData()
@@ -125,19 +119,25 @@ func DropEvicted(item statistics.TableCacheItem) {
 
 func (s *LFU) onReject(item *ristretto.Item) {
 	metrics.RejectCounter.Add(1.0)
-	s.onEvict(item)
+	s.dropMemory(item)
 }
 
 func (s *LFU) onEvict(item *ristretto.Item) {
+	s.dropMemory(item)
+	metrics.EvictCounter.Inc()
+}
+
+func (s *LFU) dropMemory(item *ristretto.Item) {
 	if item.Value == nil {
-		// Sometimes the same key may be passed to the "onEvict/onExit" function twice,
-		// and in the second invocation, the value is empty, so it should not be processed.
+		// Sometimes the same key may be passed to the "onEvict/onExit"
+		// function twice, and in the second invocation, the value is empty,
+		// so it should not be processed.
 		return
 	}
-	// We do not need to calculate the cost during onEvict, because the onexit function
-	// is also called when the evict event occurs.
-	metrics.EvictCounter.Inc()
-	table := item.Value.(*statistics.Table)
+	// We do not need to calculate the cost during onEvict,
+	// because the onexit function is also called when the evict event occurs.
+	// TODO(hawkingrei): not copy the useless part.
+	table := item.Value.(*statistics.Table).Copy()
 	before := table.MemoryUsage().TotalTrackingMemUsage()
 	for _, column := range table.Columns {
 		DropEvicted(column)
@@ -145,20 +145,21 @@ func (s *LFU) onEvict(item *ristretto.Item) {
 	for _, indix := range table.Indices {
 		DropEvicted(indix)
 	}
+	s.resultKeySet.AddKeyValue(int64(item.Key), table)
 	after := table.MemoryUsage().TotalTrackingMemUsage()
 	// why add before again? because the cost will be subtracted in onExit.
 	// in fact, it is  -(before - after) + after = after + after - before
-	s.cost.Add(2*after - before)
+	s.addCost(2*after - before)
 }
 
-func (s *LFU) onExit(val interface{}) {
+func (s *LFU) onExit(val any) {
 	if val == nil {
 		// Sometimes the same key may be passed to the "onEvict/onExit" function twice,
 		// and in the second invocation, the value is empty, so it should not be processed.
 		return
 	}
-	s.cost.Add(-1 * val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
-	metrics.CostGauge.Set(float64(s.cost.Load()))
+	s.addCost(
+		-1 * val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
 }
 
 // Len implements statsCacheInner
@@ -200,4 +201,9 @@ func (s *LFU) Close() {
 func (s *LFU) Clear() {
 	s.cache.Clear()
 	s.resultKeySet.Clear()
+}
+
+func (s *LFU) addCost(v int64) {
+	newv := s.cost.Add(v)
+	metrics.CostGauge.Set(float64(newv))
 }
