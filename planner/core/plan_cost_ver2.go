@@ -396,6 +396,7 @@ func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanC
 
 	rows := getCardinality(p.children[0], option.CostFlag)
 	n := math.Max(1, float64(p.Count+p.Offset))
+	n = math.Min(n, rows)
 	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
