@@ -305,11 +305,10 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 		col, ok = expr.GetArgs()[1].(*expression.Column)
 		if !ok {
 			// deconstructing the column out.
-			if cast, ok = expr.GetArgs()[1].(*expression.ScalarFunction); ok && cast.FuncName.L == ast.Cast {
-				if col, ok = cast.GetArgs()[0].(*expression.Column); !ok {
-					return nil
-				}
-			} else {
+			if cast, ok = expr.GetArgs()[1].(*expression.ScalarFunction); !(ok && cast.FuncName.L == ast.Cast) {
+				return nil
+			}
+			if col, ok = cast.GetArgs()[0].(*expression.Column); !ok {
 				return nil
 			}
 		}
