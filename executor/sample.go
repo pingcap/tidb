@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-
 	"slices"
 
 	"github.com/pingcap/errors"
