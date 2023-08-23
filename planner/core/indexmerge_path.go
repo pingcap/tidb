@@ -761,11 +761,8 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 func isSafeTypeConversion4MVIndexRange(valType, mvIndexType *types.FieldType) (safe bool) {
 	// for safety, forbid type conversion when building ranges for MVIndexes.
 	// TODO: loose this restriction.
-	if valType.EvalType() != mvIndexType.EvalType() {
-		// for example, converting '1' to 1 to access INT MVIndex may cause some wrong result.
-		return false
-	}
-	return true
+	// for example, converting '1' to 1 to access INT MVIndex may cause some wrong result.
+	return valType.EvalType() == mvIndexType.EvalType()
 }
 
 // buildPartialPath4MVIndex builds a partial path on this MVIndex with these accessFilters.
