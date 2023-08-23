@@ -138,9 +138,6 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 					// Get the encodedVal from the hists[j]
 					datum, exists := datumMap.Get(encodedVal)
 					if !exists {
-						// If the datumMap does not have the encodedVal datum,
-						// we should generate the datum based on the encoded value.
-						// This part is copied from the function MergePartitionHist2GlobalHist.
 						d, err := datumMap.Put(val, encodedVal, allHists[0].Tp.GetType(), isIndex, timeZone)
 						if err != nil {
 							resp.Err = err
