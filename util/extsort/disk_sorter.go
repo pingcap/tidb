@@ -210,10 +210,8 @@ func (sw *sstWriter) Close() (retErr error) {
 		meta := &fileMetadata{
 			fileNum: sw.fileNum,
 		}
-		smallest := writerMeta.Smallest(pebble.DefaultComparer.Compare)
-		largest := writerMeta.Largest(pebble.DefaultComparer.Compare)
-		meta.startKey = slices.Clone(smallest.UserKey)
-		meta.lastKey = slices.Clone(largest.UserKey)
+		meta.startKey = slices.Clone(writerMeta.SmallestPoint.UserKey)
+		meta.lastKey = slices.Clone(writerMeta.LargestPoint.UserKey)
 		// Make endKey is exclusive. To avoid unnecessary overlap,
 		// we append 0 to make endKey is the smallest key which is
 		// greater than the last key.
@@ -339,12 +337,12 @@ type sstIter struct {
 }
 
 func (si *sstIter) Seek(key []byte) bool {
-	si.key, si.value = si.iter.SeekGE(key)
+	si.key, si.value = si.iter.SeekGE(key, false)
 	return si.key != nil
 }
 
 func (si *sstIter) First() bool {
-	si.key, si.value = si.iter.SeekGE(nil)
+	si.key, si.value = si.iter.SeekGE(nil, false)
 	return si.key != nil
 }
 
