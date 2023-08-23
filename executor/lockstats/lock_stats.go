@@ -24,17 +24,17 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-var _ exec.Executor = &LockStatsExec{}
+var _ exec.Executor = &Exec{}
 var _ exec.Executor = &UnlockStatsExec{}
 
-// LockStatsExec represents a lock statistic executor.
-type LockStatsExec struct {
+// Exec represents a lock statistic executor.
+type Exec struct {
 	exec.BaseExecutor
 	Tables []*ast.TableName
 }
 
 // Next implements the Executor Next interface.
-func (e *LockStatsExec) Next(_ context.Context, _ *chunk.Chunk) error {
+func (e *Exec) Next(_ context.Context, _ *chunk.Chunk) error {
 	do := domain.GetDomain(e.Ctx())
 	is := do.InfoSchema()
 	h := do.StatsHandle()
@@ -72,12 +72,12 @@ func (e *LockStatsExec) Next(_ context.Context, _ *chunk.Chunk) error {
 }
 
 // Close implements the Executor Close interface.
-func (*LockStatsExec) Close() error {
+func (*Exec) Close() error {
 	return nil
 }
 
 // Open implements the Executor Open interface.
-func (*LockStatsExec) Open(context.Context) error {
+func (*Exec) Open(context.Context) error {
 	return nil
 }
 

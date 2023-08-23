@@ -1073,7 +1073,7 @@ func (b *executorBuilder) buildLoadStats(v *plannercore.LoadStats) exec.Executor
 }
 
 func (b *executorBuilder) buildLockStats(v *plannercore.LockStats) exec.Executor {
-	e := &lockstats.LockStatsExec{
+	e := &lockstats.Exec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, v.ID()),
 		Tables:       v.Tables,
 	}
