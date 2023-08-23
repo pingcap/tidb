@@ -6765,7 +6765,6 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 	}
 
 	cmpDataType := expression.GetAccurateCmpType(orderByItems[0].Col, bound.CalcFuncs[0])
-	
 
 	switch cmpDataType {
 	case types.ETInt:
