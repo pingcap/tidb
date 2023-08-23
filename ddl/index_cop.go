@@ -526,10 +526,3 @@ func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
 	}
 	return kv.IntHandle(pkDts[0].GetInt64()), nil
 }
-
-type idxRecResult struct {
-	id    int
-	chunk *chunk.Chunk
-	err   error
-	done  bool
-}

@@ -46,7 +46,7 @@ func (s *simpleSource[T]) Open() error {
 	return nil
 }
 
-func (s *simpleSource[T]) Close() error {
+func (s *simpleSource[T]) Close(_ bool) error {
 	return s.errGroup.Wait()
 }
 
@@ -83,7 +83,7 @@ func (s *simpleSink[R]) Open() error {
 	return nil
 }
 
-func (s *simpleSink[R]) Close() error {
+func (s *simpleSink[R]) Close(_ bool) error {
 	return s.errGroup.Wait()
 }
 

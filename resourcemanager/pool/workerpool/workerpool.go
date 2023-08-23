@@ -197,10 +197,8 @@ func (p *WorkerPool[T, R]) Name() string {
 // ReleaseAndWait releases the pool and wait for complete.
 func (p *WorkerPool[T, R]) ReleaseAndWait() {
 	close(p.quitChan)
-	p.wg.Wait()
-	if p.resChan != nil {
-		close(p.resChan)
-	}
+	p.Release()
+	p.Wait()
 }
 
 // Wait waits for all workers to complete.
@@ -212,6 +210,7 @@ func (p *WorkerPool[T, R]) Wait() {
 func (p *WorkerPool[T, R]) Release() {
 	if p.resChan != nil {
 		close(p.resChan)
+		p.resChan = nil
 	}
 }
 

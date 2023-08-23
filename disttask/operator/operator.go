@@ -57,7 +57,11 @@ func (c *AsyncOperator[T, R]) Open() error {
 }
 
 // Close implements the Operator's Close interface.
-func (c *AsyncOperator[T, R]) Close() error {
+func (c *AsyncOperator[T, R]) Close(force bool) error {
+	if force {
+		c.pool.ReleaseAndWait()
+		return nil
+	}
 	// Wait all tasks done.
 	// We don't need to close the task channel because
 	// it is closed by the workerpool.
