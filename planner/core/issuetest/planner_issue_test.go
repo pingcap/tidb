@@ -30,6 +30,7 @@ import (
 func TestIssue43178(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	t.Log("starting test")
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE aa311c3c (
 		57fd8d09 year(4) DEFAULT '1913',
@@ -84,6 +85,7 @@ func TestIssue43461(t *testing.T) {
 func TestIssue43645(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	t.Log("starting test")
 
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t1(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));")
@@ -98,6 +100,7 @@ func TestIssue43645(t *testing.T) {
 func TestIssue29221(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	t.Log("starting test")
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_index_merge=on;")
 	tk.MustExec("drop table if exists t;")
@@ -132,6 +135,7 @@ func TestIssue29221(t *testing.T) {
 func TestIssue44051(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	t.Log("starting test")
 
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t1(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));")
@@ -146,6 +150,7 @@ func TestIssue44051(t *testing.T) {
 func TestIssue42732(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	t.Log("starting test")
 
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t1 (a INT, b INT)")
@@ -159,6 +164,7 @@ func TestIssue42732(t *testing.T) {
 func TestIssue45036(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	t.Log("starting test")
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE ads_txn (\n" +
 		"  `cusno` varchar(10) NOT NULL,\n" +
@@ -185,6 +191,7 @@ func TestIssue45036(t *testing.T) {
 func TestIssue45758(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	t.Log("starting test")
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE tb1 (cid INT, code INT, class VARCHAR(10))")
 	tk.MustExec("CREATE TABLE tb2 (cid INT, code INT, class VARCHAR(10))")
@@ -195,6 +202,7 @@ func TestIssue45758(t *testing.T) {
 func TestIssue46083(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	t.Log("starting test")
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TEMPORARY TABLE v0(v1 int)")
 	tk.MustExec("INSERT INTO v0 WITH ta2 AS (TABLE v0) TABLE ta2 FOR UPDATE OF ta2;")
