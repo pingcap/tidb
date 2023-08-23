@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package lockstats
 
 import (
 	"context"
@@ -24,28 +24,17 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-var _ exec.Executor = &LockStatsExec{}
-var _ exec.Executor = &UnlockStatsExec{}
+var _ exec.Executor = &LockExec{}
+var _ exec.Executor = &UnlockExec{}
 
-// LockStatsExec represents a lock statistic executor.
-type LockStatsExec struct {
+// LockExec represents a lock statistic executor.
+type LockExec struct {
 	exec.BaseExecutor
 	Tables []*ast.TableName
 }
 
-// lockStatsVarKeyType is a dummy type to avoid naming collision in context.
-type lockStatsVarKeyType int
-
-// String defines a Stringer function for debugging and pretty printing.
-func (lockStatsVarKeyType) String() string {
-	return "lock_stats_var"
-}
-
-// LockStatsVarKey is a variable key for lock statistic.
-const LockStatsVarKey lockStatsVarKeyType = 0
-
 // Next implements the Executor Next interface.
-func (e *LockStatsExec) Next(_ context.Context, _ *chunk.Chunk) error {
+func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 	do := domain.GetDomain(e.Ctx())
 	is := do.InfoSchema()
 	h := do.StatsHandle()
@@ -83,34 +72,23 @@ func (e *LockStatsExec) Next(_ context.Context, _ *chunk.Chunk) error {
 }
 
 // Close implements the Executor Close interface.
-func (*LockStatsExec) Close() error {
+func (*LockExec) Close() error {
 	return nil
 }
 
 // Open implements the Executor Open interface.
-func (*LockStatsExec) Open(context.Context) error {
+func (*LockExec) Open(context.Context) error {
 	return nil
 }
 
-// UnlockStatsExec represents a unlock statistic executor.
-type UnlockStatsExec struct {
+// UnlockExec represents a unlock statistic executor.
+type UnlockExec struct {
 	exec.BaseExecutor
 	Tables []*ast.TableName
 }
 
-// unlockStatsVarKeyType is a dummy type to avoid naming collision in context.
-type unlockStatsVarKeyType int
-
-// String defines a Stringer function for debugging and pretty printing.
-func (unlockStatsVarKeyType) String() string {
-	return "unlock_stats_var"
-}
-
-// UnlockStatsVarKey is a variable key for unlock statistic.
-const UnlockStatsVarKey unlockStatsVarKeyType = 0
-
 // Next implements the Executor Next interface.
-func (e *UnlockStatsExec) Next(context.Context, *chunk.Chunk) error {
+func (e *UnlockExec) Next(context.Context, *chunk.Chunk) error {
 	do := domain.GetDomain(e.Ctx())
 	is := do.InfoSchema()
 	h := do.StatsHandle()
@@ -148,11 +126,11 @@ func (e *UnlockStatsExec) Next(context.Context, *chunk.Chunk) error {
 }
 
 // Close implements the Executor Close interface.
-func (*UnlockStatsExec) Close() error {
+func (*UnlockExec) Close() error {
 	return nil
 }
 
 // Open implements the Executor Open interface.
-func (*UnlockStatsExec) Open(context.Context) error {
+func (*UnlockExec) Open(context.Context) error {
 	return nil
 }
