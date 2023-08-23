@@ -60,6 +60,7 @@ select * from t_slim;
 # Txn_start_ts: 427578666238083075
 # User@Host: root[root] @ 172.16.0.0 [172.16.0.0]
 # Conn_ID: 40507
+# Session_alias: alias123
 # Query_time: 25.571605962
 # Parse_time: 0.002923536
 # Compile_time: 0.006800973

@@ -35,9 +35,11 @@ func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) 
 
 	var connInfo *variable.ConnectionInfo
 	var activeRoles []*auth.RoleIdentity
+	var sessionAlias string
 	if ctx := cc.getCtx(); ctx != nil {
 		sessVars := ctx.GetSessionVars()
 		connInfo = sessVars.ConnectionInfo
+		sessionAlias = sessVars.SessionAlias
 		activeRoles = sessVars.ActiveRoles
 	}
 
@@ -47,6 +49,7 @@ func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) 
 
 	info := &extension.ConnEventInfo{
 		ConnectionInfo: connInfo,
+		SessionAlias:   sessionAlias,
 		ActiveRoles:    activeRoles,
 		Error:          err,
 	}
@@ -133,6 +136,10 @@ type stmtEventInfo struct {
 
 func (e *stmtEventInfo) ConnectionInfo() *variable.ConnectionInfo {
 	return e.sessVars.ConnectionInfo
+}
+
+func (e *stmtEventInfo) SessionAlias() string {
+	return e.sessVars.SessionAlias
 }
 
 func (e *stmtEventInfo) StmtNode() ast.StmtNode {

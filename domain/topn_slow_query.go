@@ -212,6 +212,7 @@ type SlowQueryInfo struct {
 	Duration   time.Duration
 	Detail     execdetails.ExecDetails
 	ConnID     uint64
+	SessAlias  string
 	TxnTS      uint64
 	User       string
 	DB         string

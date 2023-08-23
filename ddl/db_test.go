@@ -1260,7 +1260,7 @@ func TestLogAndShowSlowLog(t *testing.T) {
 	_, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 
 	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "aaa", Duration: time.Second, Internal: true})
-	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
+	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second, SessAlias: "alias1"})
 	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
 	// Collecting slow queries is asynchronous, wait a while to ensure it's done.
 	time.Sleep(5 * time.Millisecond)
@@ -1268,9 +1268,11 @@ func TestLogAndShowSlowLog(t *testing.T) {
 	result := dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2})
 	require.Len(t, result, 2)
 	require.Equal(t, "bbb", result[0].SQL)
+	require.Equal(t, "alias1", result[0].SessAlias)
 	require.Equal(t, 3*time.Second, result[0].Duration)
 	require.Equal(t, "ccc", result[1].SQL)
 	require.Equal(t, 2*time.Second, result[1].Duration)
+	require.Empty(t, result[1].SessAlias)
 
 	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2, Kind: ast.ShowSlowKindInternal})
 	require.Len(t, result, 1)
@@ -1282,18 +1284,23 @@ func TestLogAndShowSlowLog(t *testing.T) {
 	require.Len(t, result, 3)
 	require.Equal(t, "bbb", result[0].SQL)
 	require.Equal(t, 3*time.Second, result[0].Duration)
+	require.Equal(t, "alias1", result[0].SessAlias)
 	require.Equal(t, "ccc", result[1].SQL)
 	require.Equal(t, 2*time.Second, result[1].Duration)
+	require.Empty(t, result[1].SessAlias)
 	require.Equal(t, "aaa", result[2].SQL)
 	require.Equal(t, time.Second, result[2].Duration)
 	require.True(t, result[2].Internal)
+	require.Empty(t, result[2].SessAlias)
 
 	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowRecent, Count: 2})
 	require.Len(t, result, 2)
 	require.Equal(t, "ccc", result[0].SQL)
 	require.Equal(t, 2*time.Second, result[0].Duration)
+	require.Empty(t, result[0].SessAlias)
 	require.Equal(t, "bbb", result[1].SQL)
 	require.Equal(t, 3*time.Second, result[1].Duration)
+	require.Equal(t, "alias1", result[1].SessAlias)
 }
 
 func TestReportingMinStartTimestamp(t *testing.T) {
