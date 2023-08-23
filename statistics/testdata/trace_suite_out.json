@@ -338,7 +338,6 @@
                     "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
-                      "NotAccurate": true,
                       "TotalCount": 3080
                     }
                   },
@@ -552,7 +551,6 @@
                     "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
-                      "NotAccurate": true,
                       "TotalCount": 3080
                     }
                   },
@@ -903,7 +901,6 @@
                     "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
-                      "NotAccurate": true,
                       "TotalCount": 2980
                     }
                   },
@@ -995,7 +992,6 @@
                     "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
-                      "NotAccurate": true,
                       "TotalCount": 2980
                     }
                   },
@@ -1386,7 +1382,6 @@
                     "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
-                      "NotAccurate": true,
                       "TotalCount": 3080
                     }
                   },
@@ -1538,7 +1533,6 @@
                     "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
-                      "NotAccurate": true,
                       "TotalCount": 3080
                     }
                   },
@@ -2395,7 +2389,6 @@
                     "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
-                      "NotAccurate": true,
                       "TotalCount": 2980
                     }
                   },
@@ -2525,7 +2518,6 @@
                     "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
-                      "NotAccurate": true,
                       "TotalCount": 2980
                     }
                   },
