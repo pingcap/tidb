@@ -161,7 +161,7 @@
       {
         "ResultForV1": [
           {
-            "github.com/pingcap/tidb/statistics.(*HistColl).Selectivity": [
+            "github.com/pingcap/tidb/planner/cardinality.Selectivity": [
               {
                 "Input Expressions": [
                   "eq(test.t.a, 100)",
@@ -718,7 +718,7 @@
         ],
         "ResultForV2": [
           {
-            "github.com/pingcap/tidb/statistics.(*HistColl).Selectivity": [
+            "github.com/pingcap/tidb/planner/cardinality.Selectivity": [
               {
                 "Input Expressions": [
                   "eq(test.t.a, 100)",
@@ -1089,7 +1089,7 @@
       {
         "ResultForV1": [
           {
-            "github.com/pingcap/tidb/statistics.(*HistColl).Selectivity": [
+            "github.com/pingcap/tidb/planner/cardinality.Selectivity": [
               {
                 "Input Expressions": [
                   "lt(test.t.a, -1500)",
@@ -2080,7 +2080,7 @@
         ],
         "ResultForV2": [
           {
-            "github.com/pingcap/tidb/statistics.(*HistColl).Selectivity": [
+            "github.com/pingcap/tidb/planner/cardinality.Selectivity": [
               {
                 "Input Expressions": [
                   "lt(test.t.a, -1500)",

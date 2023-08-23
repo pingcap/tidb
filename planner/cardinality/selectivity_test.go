@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package statistics_test
+package cardinality_test
 
 import (
 	"context"
@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"runtime/pprof"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/cardinality"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -64,7 +66,7 @@ func TestCollationColumnEstimate(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := 0; i < len(input); i++ {
 		testdata.OnRecord(func() {
@@ -103,7 +105,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	b.Run("Selectivity", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _, err := statsTbl.Selectivity(sctx, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions, nil)
+			_, _, err := cardinality.Selectivity(sctx, &statsTbl.HistColl, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions, nil)
 			require.NoError(b, err)
 		}
 		b.ReportAllocs()
@@ -144,7 +146,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 		End   int64
 		Count float64
 	}
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	increasedTblRowCount := int64(float64(statsTbl.RealtimeCount) * 1.5)
 	modifyCount := int64(float64(statsTbl.RealtimeCount) * 0.5)
@@ -186,7 +188,7 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 			Result []string
 		}
 	)
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := range input {
 		testdata.OnRecord(func() {
@@ -314,7 +316,7 @@ func TestPrimaryKeySelectivity(t *testing.T) {
 	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	testKit.MustExec("create table t(a char(10) primary key, b int)")
 	var input, output [][]string
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, ts := range input {
 		for j, tt := range ts {
@@ -391,7 +393,7 @@ func TestStatsVer2(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := range input {
 		testdata.OnRecord(func() {
@@ -428,7 +430,7 @@ func TestTopNOutOfHist(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := range input {
 		testdata.OnRecord(func() {
@@ -452,7 +454,7 @@ func TestColumnIndexNullEstimation(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := 0; i < 5; i++ {
 		testdata.OnRecord(func() {
@@ -486,7 +488,7 @@ func TestUniqCompEqualEst(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := 0; i < 1; i++ {
 		testdata.OnRecord(func() {
@@ -576,13 +578,13 @@ func TestSelectivity(t *testing.T) {
 
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.TableInfo(), ds.Schema().Columns)
 
-		ratio, _, err := histColl.Selectivity(sctx, sel.Conditions, nil)
+		ratio, _, err := cardinality.Selectivity(sctx, histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Truef(t, math.Abs(ratio-tt.selectivity) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio)
 
 		histColl.RealtimeCount *= 10
 		histColl.ModifyCount = histColl.RealtimeCount * 9
-		ratio, _, err = histColl.Selectivity(sctx, sel.Conditions, nil)
+		ratio, _, err = cardinality.Selectivity(sctx, histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Truef(t, math.Abs(ratio-tt.selectivityAfterIncrease) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivityAfterIncrease, ratio)
 	}
@@ -608,7 +610,7 @@ func TestDiscreteDistribution(t *testing.T) {
 		output [][]string
 	)
 
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 
 	for i, tt := range input {
@@ -632,7 +634,7 @@ func TestSelectCombinedLowBound(t *testing.T) {
 		output [][]string
 	)
 
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 
 	for i, tt := range input {
@@ -670,7 +672,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 			Selectivity float64
 		}
 	)
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		sctx := testKit.Session().(sessionctx.Context)
@@ -689,7 +691,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.TableInfo(), ds.Schema().Columns)
 
-		ratio, _, err := histColl.Selectivity(sctx, sel.Conditions, nil)
+		ratio, _, err := cardinality.Selectivity(sctx, histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "error %v, for expr %s", err, tt)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -703,7 +705,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 
 	// Test issue 22134
 	// Information about column n will not be in stats immediately after this SQL executed.
-	// If we don't have a check against this, DNF condition could lead to infinite recursion in Selectivity().
+	// If we don't have a check against this, DNF condition could lead to infinite recursion in cardinality.Selectivity().
 	testKit.MustExec("alter table t add column n timestamp;")
 	testKit.MustExec("select * from t where n = '2000-01-01' or n = '2000-01-02';")
 
@@ -784,7 +786,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 		End   int64
 		Count float64
 	}
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, ran := range input {
 		count, err := col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
@@ -917,19 +919,19 @@ func getRanges(start, end []int64) (res ranger.Ranges) {
 }
 
 func TestSelectivityGreedyAlgo(t *testing.T) {
-	nodes := make([]*statistics.StatsNode, 3)
-	nodes[0] = statistics.MockStatsNode(1, 3, 2)
-	nodes[1] = statistics.MockStatsNode(2, 5, 2)
-	nodes[2] = statistics.MockStatsNode(3, 9, 2)
+	nodes := make([]*cardinality.StatsNode, 3)
+	nodes[0] = cardinality.MockStatsNode(1, 3, 2)
+	nodes[1] = cardinality.MockStatsNode(2, 5, 2)
+	nodes[2] = cardinality.MockStatsNode(3, 9, 2)
 
 	// Sets should not overlap on mask, so only nodes[0] is chosen.
-	usedSets := statistics.GetUsableSetsByGreedy(nodes)
+	usedSets := cardinality.GetUsableSetsByGreedy(nodes)
 	require.Equal(t, 1, len(usedSets))
 	require.Equal(t, int64(1), usedSets[0].ID)
 
 	nodes[0], nodes[1] = nodes[1], nodes[0]
 	// Sets chosen should be stable, so the returned node is still the one with ID 1.
-	usedSets = statistics.GetUsableSetsByGreedy(nodes)
+	usedSets = cardinality.GetUsableSetsByGreedy(nodes)
 	require.Equal(t, 1, len(usedSets))
 	require.Equal(t, int64(1), usedSets[0].ID)
 }
@@ -949,7 +951,7 @@ func TestDefaultSelectivityForStrMatch(t *testing.T) {
 		}
 	)
 
-	statsSuiteData := statistics.GetIntegrationSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 
 	matchExplain, err := regexp.Compile("^explain")
@@ -977,7 +979,7 @@ func TestTopNAssistedEstimationWithoutNewCollation(t *testing.T) {
 		input  []string
 		output []outputType
 	)
-	statsSuiteData := statistics.GetIntegrationSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	testTopNAssistedEstimationInner(t, input, output, store, dom)
 }
@@ -989,7 +991,7 @@ func TestTopNAssistedEstimationWithNewCollation(t *testing.T) {
 		input  []string
 		output []outputType
 	)
-	statsSuiteData := statistics.GetIntegrationSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	testTopNAssistedEstimationInner(t, input, output, store, dom)
 }
@@ -1076,7 +1078,7 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 			Result []string
 		}
 	)
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := range input {
 		testdata.OnRecord(func() {
@@ -1156,4 +1158,148 @@ func TestIssue39593(t *testing.T) {
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table
 	require.Equal(t, float64(3600), count)
+}
+
+func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, index idx(b))")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Mock the stats:
+	// The two columns are the same.
+	// From 0 to 499, each value has 1000 rows. Therefore, NDV is 500 and total row count is 500000.
+	mockStatsTbl := mockStatsTable(tblInfo, 500000)
+	colValues, err := generateIntDatum(1, 500)
+	require.NoError(t, err)
+	for i := 1; i <= 2; i++ {
+		mockStatsTbl.Columns[int64(i)] = &statistics.Column{
+			Histogram:         *mockStatsHistogram(int64(i), colValues, 1000, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              tblInfo.Columns[i-1],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		}
+	}
+	generateMapsForMockStatsTbl(mockStatsTbl)
+	stat := h.GetTableStats(tblInfo)
+	stat.HistColl = mockStatsTbl.HistColl
+
+	query := "explain format = 'brief' " +
+		"select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b"
+
+	testKit.MustQuery(query).Check(testkit.Rows(
+		"IndexJoin 1000000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+		"├─TableReader(Build) 1000.00 root  data:Selection",
+		"│ └─Selection 1000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
+		"│   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"└─IndexLookUp(Probe) 1000000.00 root  ",
+		"  ├─Selection(Build) 500000000.00 cop[tikv]  not(isnull(test.t.b))",
+		"  │ └─IndexRangeScan 500000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+		"  └─Selection(Probe) 1000000.00 cop[tikv]  eq(test.t.a, 0)",
+		"    └─TableRowIDScan 500000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+	))
+
+	testKit.MustExec("set @@tidb_opt_fix_control = '44855:ON'")
+	testKit.MustQuery(query).Check(testkit.Rows(
+		"IndexJoin 1000000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+		"├─TableReader(Build) 1000.00 root  data:Selection",
+		"│ └─Selection 1000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
+		"│   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"└─IndexLookUp(Probe) 1000000.00 root  ",
+		"  ├─Selection(Build) 1000000.00 cop[tikv]  not(isnull(test.t.b))",
+		"  │ └─IndexRangeScan 1000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+		"  └─Selection(Probe) 1000000.00 cop[tikv]  eq(test.t.a, 0)",
+		"    └─TableRowIDScan 1000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+	))
+}
+
+func TestOrderingIdxSelectivityThreshold(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int primary key , b int, c int, index ib(b), index ic(c))")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Mock the stats:
+	// total row count 100000
+	// column a: PK, from 0 to 100000, NDV 100000
+	// column b, c: from 0 to 10000, each value has 10 rows, NDV 10000
+	// indexes are created on (b), (c) respectively
+	mockStatsTbl := mockStatsTable(tblInfo, 100000)
+	pkColValues, err := generateIntDatum(1, 100000)
+	require.NoError(t, err)
+	mockStatsTbl.Columns[1] = &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, pkColValues, 1, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	colValues, err := generateIntDatum(1, 10000)
+	require.NoError(t, err)
+	idxValues := make([]types.Datum, 0)
+	for _, val := range colValues {
+		b, err := codec.EncodeKey(sc, nil, val)
+		require.NoError(t, err)
+		idxValues = append(idxValues, types.NewBytesDatum(b))
+	}
+
+	for i := 2; i <= 3; i++ {
+		mockStatsTbl.Columns[int64(i)] = &statistics.Column{
+			Histogram:         *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              tblInfo.Columns[i-1],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		}
+	}
+	for i := 1; i <= 2; i++ {
+		mockStatsTbl.Indices[int64(i)] = &statistics.Index{
+			Histogram:         *mockStatsHistogram(int64(i), idxValues, 10, types.NewFieldType(mysql.TypeBlob)),
+			Info:              tblInfo.Indices[i-1],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		}
+	}
+	generateMapsForMockStatsTbl(mockStatsTbl)
+	stat := h.GetTableStats(tblInfo)
+	stat.HistColl = mockStatsTbl.HistColl
+
+	var (
+		input  []string
+		output []struct {
+			Query  string
+			Result []string
+		}
+	)
+
+	integrationSuiteData := cardinality.GetCardinalitySuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i := 0; i < len(input); i++ {
+		testdata.OnRecord(func() {
+			output[i].Query = input[i]
+		})
+		if !strings.HasPrefix(input[i], "explain") {
+			testKit.MustExec(input[i])
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
 }
