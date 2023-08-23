@@ -73,6 +73,7 @@ type Manager struct {
 		// cancelFunc is used to fast cancel the scheduler.Run.
 		handlingTasks map[int64]context.CancelFunc
 	}
+	// server id, it's host:port for now.
 	id           string
 	wg           sync.WaitGroup
 	ctx          context.Context
