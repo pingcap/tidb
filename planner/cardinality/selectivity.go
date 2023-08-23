@@ -36,7 +36,8 @@ import (
 
 // Selectivity is a function calculate the selectivity of the expressions on the specified HistColl.
 // The definition of selectivity is (row count after filter / row count before filter).
-// And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
+// And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]`
+// should be held when you call this.
 // Currently the time complexity is o(n^2).
 func Selectivity(
 	ctx sessionctx.Context,
@@ -70,7 +71,8 @@ func Selectivity(
 	if len(exprs) > 63 || (len(coll.Columns) == 0 && len(coll.Indices) == 0) {
 		ret = pseudoSelectivity(coll, exprs)
 		if sc.EnableOptimizerCETrace {
-			CETraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression", expression.ComposeCNFCondition(ctx, exprs...), ret*float64(coll.RealtimeCount))
+			CETraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression",
+				expression.ComposeCNFCondition(ctx, exprs...), ret*float64(coll.RealtimeCount))
 		}
 		return ret, nil, nil
 	}
@@ -159,7 +161,8 @@ func Selectivity(
 			if len(idxCols) > len(idxStats.Info.Columns) {
 				lengths = append(lengths, types.UnspecifiedLength)
 			}
-			maskCovered, ranges, partCover, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, id2Paths[idxStats.ID], idxCols...)
+			maskCovered, ranges, partCover, err := getMaskAndRanges(ctx, remainedExprs,
+				ranger.IndexRangeType, lengths, id2Paths[idxStats.ID], idxCols...)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -547,7 +550,8 @@ func isColEqCorCol(filter expression.Expression) *expression.Column {
 
 // FindPrefixOfIndexByCol will find columns in index by checking the unique id or the virtual expression.
 // So it will return at once no matching column is found.
-func FindPrefixOfIndexByCol(cols []*expression.Column, idxColIDs []int64, cachedPath *planutil.AccessPath) []*expression.Column {
+func FindPrefixOfIndexByCol(cols []*expression.Column, idxColIDs []int64,
+	cachedPath *planutil.AccessPath) []*expression.Column {
 	if cachedPath != nil {
 		idxCols := cachedPath.IdxCols
 		retCols := make([]*expression.Column, 0, len(idxCols))
@@ -567,16 +571,20 @@ func FindPrefixOfIndexByCol(cols []*expression.Column, idxColIDs []int64, cached
 	return expression.FindPrefixOfIndex(cols, idxColIDs)
 }
 
-func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, rangeType ranger.RangeType, lengths []int, cachedPath *planutil.AccessPath, cols ...*expression.Column) (mask int64, ranges []*ranger.Range, partCover bool, err error) {
+func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, rangeType ranger.RangeType,
+	lengths []int, cachedPath *planutil.AccessPath, cols ...*expression.Column) (
+	mask int64, ranges []*ranger.Range, partCover bool, err error) {
 	isDNF := false
 	var accessConds, remainedConds []expression.Expression
 	switch rangeType {
 	case ranger.ColumnRangeType:
 		accessConds = ranger.ExtractAccessConditionsForColumn(ctx, exprs, cols[0])
-		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx, cols[0].RetType, types.UnspecifiedLength, ctx.GetSessionVars().RangeMaxSize)
+		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx, cols[0].RetType,
+			types.UnspecifiedLength, ctx.GetSessionVars().RangeMaxSize)
 	case ranger.IndexRangeType:
 		if cachedPath != nil {
-			ranges, accessConds, remainedConds, isDNF = cachedPath.Ranges, cachedPath.AccessConds, cachedPath.TableFilters, cachedPath.IsDNFCond
+			ranges, accessConds, remainedConds, isDNF = cachedPath.Ranges,
+				cachedPath.AccessConds, cachedPath.TableFilters, cachedPath.IsDNFCond
 			break
 		}
 		var res *ranger.DetachRangeResult
