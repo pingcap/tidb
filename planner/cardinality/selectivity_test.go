@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package statistics_test
+package cardinality_test
 
 import (
 	"context"
@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/cardinality"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -64,7 +65,7 @@ func TestCollationColumnEstimate(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := 0; i < len(input); i++ {
 		testdata.OnRecord(func() {
@@ -103,7 +104,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	b.Run("Selectivity", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _, err := statsTbl.Selectivity(sctx, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions, nil)
+			_, _, err := cardinality.Selectivity(sctx, &statsTbl.HistColl, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions, nil)
 			require.NoError(b, err)
 		}
 		b.ReportAllocs()
@@ -144,7 +145,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 		End   int64
 		Count float64
 	}
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	increasedTblRowCount := int64(float64(statsTbl.RealtimeCount) * 1.5)
 	modifyCount := int64(float64(statsTbl.RealtimeCount) * 0.5)
@@ -186,7 +187,7 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 			Result []string
 		}
 	)
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := range input {
 		testdata.OnRecord(func() {
@@ -314,7 +315,7 @@ func TestPrimaryKeySelectivity(t *testing.T) {
 	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	testKit.MustExec("create table t(a char(10) primary key, b int)")
 	var input, output [][]string
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, ts := range input {
 		for j, tt := range ts {
@@ -391,7 +392,7 @@ func TestStatsVer2(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := range input {
 		testdata.OnRecord(func() {
@@ -428,7 +429,7 @@ func TestTopNOutOfHist(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := range input {
 		testdata.OnRecord(func() {
@@ -452,7 +453,7 @@ func TestColumnIndexNullEstimation(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := 0; i < 5; i++ {
 		testdata.OnRecord(func() {
@@ -486,7 +487,7 @@ func TestUniqCompEqualEst(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := 0; i < 1; i++ {
 		testdata.OnRecord(func() {
@@ -576,13 +577,13 @@ func TestSelectivity(t *testing.T) {
 
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.TableInfo(), ds.Schema().Columns)
 
-		ratio, _, err := histColl.Selectivity(sctx, sel.Conditions, nil)
+		ratio, _, err := cardinality.Selectivity(sctx, histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Truef(t, math.Abs(ratio-tt.selectivity) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio)
 
 		histColl.RealtimeCount *= 10
 		histColl.ModifyCount = histColl.RealtimeCount * 9
-		ratio, _, err = histColl.Selectivity(sctx, sel.Conditions, nil)
+		ratio, _, err = cardinality.Selectivity(sctx, histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Truef(t, math.Abs(ratio-tt.selectivityAfterIncrease) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivityAfterIncrease, ratio)
 	}
@@ -608,7 +609,7 @@ func TestDiscreteDistribution(t *testing.T) {
 		output [][]string
 	)
 
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 
 	for i, tt := range input {
@@ -632,7 +633,7 @@ func TestSelectCombinedLowBound(t *testing.T) {
 		output [][]string
 	)
 
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 
 	for i, tt := range input {
@@ -670,7 +671,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 			Selectivity float64
 		}
 	)
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		sctx := testKit.Session().(sessionctx.Context)
@@ -689,7 +690,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.TableInfo(), ds.Schema().Columns)
 
-		ratio, _, err := histColl.Selectivity(sctx, sel.Conditions, nil)
+		ratio, _, err := cardinality.Selectivity(sctx, histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "error %v, for expr %s", err, tt)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -703,7 +704,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 
 	// Test issue 22134
 	// Information about column n will not be in stats immediately after this SQL executed.
-	// If we don't have a check against this, DNF condition could lead to infinite recursion in Selectivity().
+	// If we don't have a check against this, DNF condition could lead to infinite recursion in cardinality.Selectivity().
 	testKit.MustExec("alter table t add column n timestamp;")
 	testKit.MustExec("select * from t where n = '2000-01-01' or n = '2000-01-02';")
 
@@ -784,7 +785,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 		End   int64
 		Count float64
 	}
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, ran := range input {
 		count, err := col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
@@ -917,19 +918,19 @@ func getRanges(start, end []int64) (res ranger.Ranges) {
 }
 
 func TestSelectivityGreedyAlgo(t *testing.T) {
-	nodes := make([]*statistics.StatsNode, 3)
-	nodes[0] = statistics.MockStatsNode(1, 3, 2)
-	nodes[1] = statistics.MockStatsNode(2, 5, 2)
-	nodes[2] = statistics.MockStatsNode(3, 9, 2)
+	nodes := make([]*cardinality.StatsNode, 3)
+	nodes[0] = cardinality.MockStatsNode(1, 3, 2)
+	nodes[1] = cardinality.MockStatsNode(2, 5, 2)
+	nodes[2] = cardinality.MockStatsNode(3, 9, 2)
 
 	// Sets should not overlap on mask, so only nodes[0] is chosen.
-	usedSets := statistics.GetUsableSetsByGreedy(nodes)
+	usedSets := cardinality.GetUsableSetsByGreedy(nodes)
 	require.Equal(t, 1, len(usedSets))
 	require.Equal(t, int64(1), usedSets[0].ID)
 
 	nodes[0], nodes[1] = nodes[1], nodes[0]
 	// Sets chosen should be stable, so the returned node is still the one with ID 1.
-	usedSets = statistics.GetUsableSetsByGreedy(nodes)
+	usedSets = cardinality.GetUsableSetsByGreedy(nodes)
 	require.Equal(t, 1, len(usedSets))
 	require.Equal(t, int64(1), usedSets[0].ID)
 }
@@ -949,7 +950,7 @@ func TestDefaultSelectivityForStrMatch(t *testing.T) {
 		}
 	)
 
-	statsSuiteData := statistics.GetIntegrationSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 
 	matchExplain, err := regexp.Compile("^explain")
@@ -977,7 +978,7 @@ func TestTopNAssistedEstimationWithoutNewCollation(t *testing.T) {
 		input  []string
 		output []outputType
 	)
-	statsSuiteData := statistics.GetIntegrationSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	testTopNAssistedEstimationInner(t, input, output, store, dom)
 }
@@ -989,7 +990,7 @@ func TestTopNAssistedEstimationWithNewCollation(t *testing.T) {
 		input  []string
 		output []outputType
 	)
-	statsSuiteData := statistics.GetIntegrationSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	testTopNAssistedEstimationInner(t, input, output, store, dom)
 }
@@ -1076,7 +1077,7 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 			Result []string
 		}
 	)
-	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := range input {
 		testdata.OnRecord(func() {
