@@ -185,6 +185,9 @@ type Lightning struct {
 
 	MaxError           MaxError `toml:"max-error" json:"max-error"`
 	TaskInfoSchemaName string   `toml:"task-info-schema-name" json:"task-info-schema-name"`
+
+	MaxDeliverBytes uint64 `toml:"max-deliver-bytes" json:"max-deliver-bytes"`
+	MaxDeliverRows  uint64 `toml:"max-deliver-rows" json:"max-deliver-rows"`
 }
 
 type PostOpLevel int

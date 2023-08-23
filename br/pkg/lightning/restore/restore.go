@@ -2224,7 +2224,12 @@ func newChunkRestore(
 	tableInfo *checkpoints.TidbTableInfo,
 ) (*chunkRestore, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
-
+	if cfg.App.MaxDeliverBytes > 0 {
+		maxDeliverBytes = cfg.App.MaxDeliverBytes
+	}
+	if cfg.App.MaxDeliverRows > 0 {
+		maxDeliverRows = cfg.App.MaxDeliverRows
+	}
 	reader, err := openReader(ctx, chunk.FileMeta, store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -2309,7 +2314,8 @@ func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
 
 var (
 	maxKVQueueSize         = 32             // Cache at most this number of rows before blocking the encode loop
-	minDeliverBytes uint64 = 96 * units.KiB // 96 KB (data + index). batch at least this amount of bytes to reduce number of messages
+	maxDeliverBytes uint64 = 96 * units.KiB // 96 KB (data + index). send at most this amount of bytes at a time
+	maxDeliverRows  uint64 = 5000           // send at most this amount of rows at a time
 )
 
 type deliveredKVs struct {
@@ -2362,7 +2368,7 @@ func (cr *chunkRestore) deliverLoop(
 		rowID := cr.chunk.Chunk.PrevRowIDMax
 
 	populate:
-		for dataChecksum.SumSize()+indexChecksum.SumSize() < minDeliverBytes {
+		for dataChecksum.SumSize()+indexChecksum.SumSize() < maxDeliverBytes && dataChecksum.SumKVS()+indexChecksum.SumKVS() < maxDeliverRows {
 			select {
 			case kvPacket = <-kvsCh:
 				if len(kvPacket) == 0 {
