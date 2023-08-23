@@ -1255,10 +1255,19 @@ func TestAggPushDownUnionAndMPP(t *testing.T) {
 	tk.MustExec("set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set @@tidb_opt_agg_push_down=1")
 
-	tk.MustQuery("select a, b from t " +
+	tk.MustExec("create table c(c_id int)")
+	tk.MustExec("create table o(o_id int, c_id int)")
+	tk.MustExec("insert into c values(1),(1),(1),(1)")
+	tk.MustExec("insert into o values(1,1),(1,1),(1,2)")
+	tk.MustExec("alter table c set tiflash replica 1")
+	tk.MustExec("alter table o set tiflash replica 1")
+
+	tk.MustQuery("select a, count(*) from (select a, b from t " +
 		"union all " +
 		"select a, b from t" +
 		") t group by a order by a limit 10;").Check(testkit.Rows("1 10"))
+
+	tk.MustQuery("select o.o_id, count(*) from c, o where c.c_id=o.o_id group by o.o_id").Check(testkit.Rows("1 12"))
 }
 
 func TestGroupStreamAggOnTiFlash(t *testing.T) {
