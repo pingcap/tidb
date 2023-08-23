@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 )
 
 func TestIsIngestRetryable(t *testing.T) {
@@ -256,4 +258,28 @@ func TestRegionJobRetryer(t *testing.T) {
 	require.True(t, ok)
 	cancel()
 	jobWg.Wait()
+}
+
+func TestWriteWhenServerIsGone(t *testing.T) {
+	//t.Skip("need mock server")
+
+	ctx := context.Background()
+	conn, err := grpc.DialContext(ctx, "[::]:40401", grpc.WithInsecure())
+	require.NoError(t, err)
+	for {
+		client := sst.NewImportSSTClient(conn)
+		stream, err := client.Write(ctx)
+		require.NoError(t, err)
+		err = stream.Send(&sst.WriteRequest{
+			Chunk: &sst.WriteRequest_Meta{
+				Meta: &sst.SSTMeta{
+					Uuid: []byte("test"),
+				},
+			},
+		})
+		require.NoError(t, err)
+		resp, err := stream.CloseAndRecv()
+		require.NoError(t, err)
+		fmt.Printf("resp: %v\n", resp)
+	}
 }
