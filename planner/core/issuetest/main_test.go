@@ -32,6 +32,8 @@ func TestMain(m *testing.M) {
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "issue_test")
 	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 		conf.Performance.EnableStatsCacheMemQuota = true
 	})
 	opts := []goleak.Option{
