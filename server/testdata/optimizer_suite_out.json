@@ -159,7 +159,6 @@
                                       "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                                         "CollPseudo": true,
                                         "IsInvalid": true,
-                                        "NotAccurate": true,
                                         "TotalCount": 0
                                       }
                                     },
@@ -214,7 +213,6 @@
                                           "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                                             "CollPseudo": true,
                                             "IsInvalid": true,
-                                            "NotAccurate": true,
                                             "TotalCount": 0
                                           }
                                         },
@@ -429,7 +427,6 @@
                                       "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                                         "CollPseudo": true,
                                         "IsInvalid": true,
-                                        "NotAccurate": true,
                                         "TotalCount": 0
                                       }
                                     },
@@ -640,7 +637,6 @@
                                       "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                                         "CollPseudo": true,
                                         "IsInvalid": true,
-                                        "NotAccurate": true,
                                         "TotalCount": 0
                                       }
                                     },
@@ -698,7 +694,6 @@
                                           "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                                             "CollPseudo": true,
                                             "IsInvalid": true,
-                                            "NotAccurate": true,
                                             "TotalCount": 0
                                           }
                                         },
