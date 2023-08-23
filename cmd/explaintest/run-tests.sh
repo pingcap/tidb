@@ -26,6 +26,7 @@ record=0
 record_case=""
 stats="s"
 collation_opt=2
+concurrency=2
 
 set -eu
 trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
@@ -60,6 +61,7 @@ function help_message()
 
     -p <portgenerator-path>: Use port generator in <portgenerator-path> for generating port numbers.
 
+    -c <concurrency>: Run tests with specify concurrency number [default 2].
 "
 }
 
@@ -88,7 +90,7 @@ function build_mysql_tester()
 {
     echo "building mysql-tester binary: $mysql_tester"
     rm -rf $mysql_tester
-    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@d8e560cf13cdca9e23bf6e6a717efae83b844863
+    GOBIN=$PWD go install github.com/Defined2014/mysql-tester/src@de74b371d7a467063d0e19b751774e6147c27e06
     mv src mysql_tester
 }
 
@@ -145,6 +147,9 @@ while getopts "t:s:r:b:d:c:i:h:p" opt; do
             ;;
         p)  
             portgenerator="$OPTARG"
+            ;;
+        c)
+            concurrency="$OPTARG"
             ;;
         *)
             help_message 1>&2
@@ -232,10 +237,10 @@ function run_mysql_tester()
     if [ $record -eq 1 ]; then
       if [ "$record_case" = 'all' ]; then
           echo "record all cases"
-          $mysql_tester -port "$port" --collation-disable=$coll_disabled --record
+          $mysql_tester -port "$port" --max-concurrency-num=$concurrency --collation-disable=$coll_disabled --record
       else
           echo "record result for case: \"$record_case\""
-          $mysql_tester -port "$port" --collation-disable=$coll_disabled --record $record_case
+          $mysql_tester -port "$port" --max-concurrency-num=$concurrency --collation-disable=$coll_disabled --record $record_case
       fi
     else
       if [ -z "$tests" ]; then
@@ -243,7 +248,7 @@ function run_mysql_tester()
       else
           echo "run explain test cases($coll_msg): $tests"
       fi
-      $mysql_tester -port "$port" --collation-disable=$coll_disabled $tests
+      $mysql_tester -port "$port" --max-concurrency-num=$concurrency --collation-disable=$coll_disabled $tests
     fi
 }
 
