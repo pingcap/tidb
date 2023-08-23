@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -737,4 +738,78 @@ func TestIssue44369(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	tk.MustExec("alter table t rename column b to bb;")
 	tk.MustExec("select * from t where a = 10 and bb > 20;")
+}
+
+func TestGlobalIndexStatistics(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	originLease := h.Lease()
+	defer h.SetLease(originLease)
+	h.SetLease(time.Millisecond)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for _, version := range []string{"1", "2"} {
+		tk.MustExec("set @@session.tidb_analyze_version = " + version)
+
+		// analyze table t
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, key(a) )" +
+			"PARTITION BY RANGE (a) (" +
+			"PARTITION p0 VALUES LESS THAN (10)," +
+			"PARTITION p1 VALUES LESS THAN (20)," +
+			"PARTITION p2 VALUES LESS THAN (30)," +
+			"PARTITION p3 VALUES LESS THAN (40))")
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
+		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b)")
+		require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+		tk.MustExec("analyze table t")
+		require.Nil(t, h.Update(dom.InfoSchema()))
+		tk.MustQuery("SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
+			Check(testkit.Rows("1", "2", "3", "15"))
+		tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
+			Check(testkit.Rows("IndexReader_12 4.00 root partition:all index:IndexRangeScan_11",
+				"└─IndexRangeScan_11 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
+
+		// analyze table t index idx
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered )" +
+			"PARTITION BY RANGE (a) (" +
+			"PARTITION p0 VALUES LESS THAN (10)," +
+			"PARTITION p1 VALUES LESS THAN (20)," +
+			"PARTITION p2 VALUES LESS THAN (30)," +
+			"PARTITION p3 VALUES LESS THAN (40));")
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
+		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b);")
+		require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+		tk.MustExec("analyze table t index idx")
+		require.Nil(t, h.Update(dom.InfoSchema()))
+		rows := tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").Rows()
+		require.Equal(t, "4.00", rows[0][1])
+
+		// analyze table t index
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered )" +
+			"PARTITION BY RANGE (a) (" +
+			"PARTITION p0 VALUES LESS THAN (10)," +
+			"PARTITION p1 VALUES LESS THAN (20)," +
+			"PARTITION p2 VALUES LESS THAN (30)," +
+			"PARTITION p3 VALUES LESS THAN (40));")
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
+		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b);")
+		require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+		tk.MustExec("analyze table t index")
+		require.Nil(t, h.Update(dom.InfoSchema()))
+		tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").
+			Check(testkit.Rows("IndexReader_12 4.00 root partition:all index:IndexRangeScan_11",
+				"└─IndexRangeScan_11 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
+	}
 }
