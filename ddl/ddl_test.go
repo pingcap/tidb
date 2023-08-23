@@ -16,13 +16,9 @@ package ddl
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
-	tidbkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -33,11 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
@@ -294,64 +286,4 @@ func TestError(t *testing.T) {
 		require.NotEqual(t, mysql.ErrUnknown, code)
 		require.Equal(t, uint16(err.Code()), code)
 	}
-}
-
-func TestNewBaseKVEncoder(t *testing.T) {
-	err := log.InitLogger(&log.Config{}, "info")
-	require.NoError(t, err)
-
-	var tbl table.Table
-	p := parser.New()
-	node, _, err := p.ParseSQL("create table t (a varchar(10) primary key, b int, index idx(b));")
-	require.NoError(t, err)
-	mockSctx := mock.NewContext()
-	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	info, err := MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 1)
-	require.NoError(t, err)
-	info.State = model.StatePublic
-	require.True(t, info.IsCommonHandle)
-	tbl, err = tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), info)
-	require.NoError(t, err)
-
-	sessionOpts := encode.SessionOptions{
-		SQLMode:   mysql.ModeStrictAllTables,
-		Timestamp: 1234567890,
-	}
-	var encoder *tidbkv.BaseKVEncoder
-	encoder, err = tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{
-		Table:          tbl,
-		SessionOptions: sessionOpts,
-		Logger:         log.L(),
-	})
-	require.NoError(t, err)
-	data := []types.Datum{
-		types.NewStringDatum("a"),
-		types.NewIntDatum(1),
-	}
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data)
-	require.NoError(t, err)
-	kvPairs := encoder.SessionCtx.TakeKvPairs()
-	require.Equal(t, 2, len(kvPairs.Pairs))
-	fmt.Printf("key: %x, value: %x\n", kvPairs.Pairs[0].Key, kvPairs.Pairs[0].Val)
-	fmt.Printf("key: %x, value: %x\n", kvPairs.Pairs[1].Key, kvPairs.Pairs[1].Val)
-
-	rowKey := kvPairs.Pairs[0].Key
-	rowValue := kvPairs.Pairs[0].Val
-	indexKey := kvPairs.Pairs[1].Key
-	indexValue := kvPairs.Pairs[1].Val
-
-	handle, err := tablecodec.DecodeRowKey(rowKey)
-	require.NoError(t, err)
-	fmt.Printf("handle: %v\n", handle.String())
-	var decodedData []types.Datum
-	decodedData, _, err = tables.DecodeRawRowData(encoder.SessionCtx, tbl.Meta(), handle, tbl.Cols(), rowValue)
-	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
-	require.NoError(t, err)
-	kvPairs2 := encoder.SessionCtx.TakeKvPairs()
-	require.Equal(t, 2, len(kvPairs2.Pairs))
-	fmt.Printf("key: %x, value: %x\n", kvPairs2.Pairs[0].Key, kvPairs2.Pairs[0].Val)
-	fmt.Printf("key: %x, value: %x\n", kvPairs2.Pairs[1].Key, kvPairs2.Pairs[1].Val)
-	require.Equal(t, indexKey, kvPairs2.Pairs[1].Key)
-	require.Equal(t, indexValue, kvPairs2.Pairs[1].Val)
 }

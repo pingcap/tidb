@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	tidbtbl "github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -141,16 +142,10 @@ const (
 	`
 
 	selectIndexConflictKeysReplace = `
-		SELECT raw_key
+		SELECT raw_key, index_name, raw_value, raw_handle
 		FROM %s.` + ConflictErrorTableName + `
 		WHERE table_name = ? AND index_name <> 'PRIMARY'
-		GROUP BY raw_key;
-	`
-
-	selectConflictKeysReplaceByRawKey = `
-		SELECT index_name, raw_value, hex(raw_handle)
-		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND raw_key = ?;
+		ORDER BY raw_key;
 	`
 
 	selectConflictKeysReplaceByRawHandle = `
@@ -570,86 +565,71 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			return errors.Trace(err)
 		}
 		for rawKeyRows.Next() {
-			var rawKey []byte
-			if err := rawKeyRows.Scan(&rawKey); err != nil {
+			var rawKey, rawValue, rawHandle []byte
+			var indexName string
+			if err := rawKeyRows.Scan(&rawKey, &indexName, &rawValue, &rawHandle); err != nil {
 				return errors.Trace(err)
 			}
-			em.logger.Debug("got rawKey from table",
-				zap.Binary("rawKey", rawKey))
+			em.logger.Debug("got rawKey, index_name, raw_value, raw_handle from table",
+				zap.Binary("rawKey", rawKey),
+				zap.String("index_name", indexName),
+				zap.Binary("raw_value", rawValue),
+				zap.Binary("raw_handle", rawHandle))
 
 			value, err := fnGetLatest(gCtx, rawKey)
-			em.logger.Debug("got value from fnGetLatest",
+			if err != nil {
+				return errors.Trace(err)
+			}
+			em.logger.Debug("got latest value from fnGetLatest",
 				zap.Binary("rawKey", rawKey),
-				zap.Binary("value", value))
+				zap.Binary("latest value", value))
+
+			if bytes.Equal(rawValue, value) {
+				continue
+			}
+			indexInfo := tbl.Meta().FindIndexByName(indexName)
+			handle, err := decoder.DecodeHandleFromIndex(indexInfo, rawKey, rawValue)
+			em.logger.Debug("got handle from index",
+				zap.String("handle", handle.String()),
+				zap.Error(err))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, handle)
+			overwrittenRow, err := fnGetLatest(gCtx, rowKey)
+			em.logger.Debug("got overwrittenRow from fnGetLatest",
+				zap.Binary("rowKey", rowKey),
+				zap.Binary("overwrittenRow", overwrittenRow))
+			if tikverr.IsErrNotFound(err) || overwrittenRow == nil {
+				continue
+			}
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			rows, err := em.db.QueryContext(
-				gCtx, fmt.Sprintf(selectConflictKeysReplaceByRawKey, em.schemaEscaped),
-				tableName, rawKey)
+			decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx, tbl.Meta(), handle, tbl.Cols(), overwrittenRow)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			for rows.Next() {
-				var indexName string
-				var rawValue, rawHandle []byte
-				if err := rows.Scan(&indexName, &rawValue, &rawHandle); err != nil {
-					return errors.Trace(err)
-				}
-				em.logger.Debug("got index_name, raw_value, hex(raw_handle) from table",
-					zap.String("index_name", indexName),
-					zap.Binary("raw_value", rawValue),
-					zap.Binary("raw_handle", rawHandle),
-					zap.Binary("latest value", value))
-				if bytes.Equal(rawValue, value) {
-					continue
-				}
-				indexInfo := tbl.Meta().FindIndexByName(indexName)
-				handle, err := decoder.DecodeHandleFromIndex(indexInfo, rawKey, rawValue)
-				em.logger.Debug("got handle from index",
-					zap.String("handle", handle.String()),
-					zap.Error(err))
-				overwrittenRow, err := fnGetLatest(gCtx, rawHandle)
-				em.logger.Debug("got overwrittenRow from fnGetLatest",
-					zap.Binary("rawHandle", rawKey),
-					zap.Binary("overwrittenRow", value))
-				if tikverr.IsErrNotFound(err) || overwrittenRow == nil {
-					continue
-				}
-				if err != nil {
-					return errors.Trace(err)
-				}
-				decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx, tbl.Meta(), handle, tbl.Cols(), overwrittenRow)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				kvPairs := encoder.SessionCtx.TakeKvPairs()
-				for _, kvPair := range kvPairs.Pairs {
-					em.logger.Debug("got encoded KV",
-						logutil.Key("key", kvPair.Key),
-						zap.Binary("value", kvPair.Val),
-						logutil.Key("rawKey", rawHandle),
-						zap.Binary("rawValue", rawValue))
-					if bytes.Equal(kvPair.Key, rawKey) && bytes.Equal(kvPair.Val, rawValue) {
-						if err := fnDeleteKey(gCtx, rawHandle); err != nil {
-							return errors.Trace(err)
-						}
-						em.logger.Debug("delete key from fnDeleteKey",
-							zap.Binary("rawHandle", rawHandle))
-						break
+			_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			kvPairs := encoder.SessionCtx.TakeKvPairs()
+			for _, kvPair := range kvPairs.Pairs {
+				em.logger.Debug("got encoded KV",
+					logutil.Key("key", kvPair.Key),
+					zap.Binary("value", kvPair.Val),
+					logutil.Key("rawKey", rawKey),
+					zap.Binary("rawValue", rawValue))
+				if bytes.Equal(kvPair.Key, rawKey) && bytes.Equal(kvPair.Val, rawValue) {
+					if err := fnDeleteKey(gCtx, rowKey); err != nil {
+						return errors.Trace(err)
 					}
+					em.logger.Debug("delete key from fnDeleteKey",
+						zap.Binary("rowKey", rowKey))
+					break
 				}
-			}
-			if err := rows.Err(); err != nil {
-				return errors.Trace(err)
-			}
-			if err := rows.Close(); err != nil {
-				return errors.Trace(err)
 			}
 		}
 		if err := rawKeyRows.Err(); err != nil {
