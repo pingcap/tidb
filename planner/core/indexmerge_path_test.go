@@ -437,6 +437,5 @@ index j0_0((cast(j0->'$.path0' as signed array))));`)
 	tk.MustQuery("select /*+ no_index_merge() */ a from t where (1 member of (j0->'$.path0')); ").Check(testkit.Rows("1"))
 	tk.MustQuery("select /*+ no_index_merge() */ a from t where ('1' member of (j0->'$.path0')); ").Check(testkit.Rows())
 	tk.MustQuery("select /*+ use_index_merge(t, j0_0) */ a from t where (1 member of (j0->'$.path0')); ").Check(testkit.Rows("1"))
-	// Fix: string type should not use signed array index for member of function.
-	// tk.MustQuery("select /*+ use_index_merge(t, j0_0) */ a from t where ('1' member of (j0->'$.path0')); ").Check(testkit.Rows())
+	tk.MustQuery("select /*+ use_index_merge(t, j0_0) */ a from t where ('1' member of (j0->'$.path0')); ").Check(testkit.Rows())
 }
