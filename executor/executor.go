@@ -1118,6 +1118,7 @@ func (e *ShowSlowExec) Next(_ context.Context, req *chunk.Chunk) error {
 			req.AppendInt64(11, 0)
 		}
 		req.AppendString(12, slow.Digest)
+		req.AppendString(13, slow.SessAlias)
 		e.cursor++
 	}
 	return nil

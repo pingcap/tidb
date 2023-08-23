@@ -184,6 +184,36 @@ func TestLogSlowLogIndex(t *testing.T) {
 		Check(testkit.Rows("[t:idx]"))
 }
 
+func TestSlowQuerySessionAlias(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
+	}()
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	defer func() {
+		tk.MustExec("set tidb_slow_log_threshold=300;")
+		tk.MustExec("set tidb_redact_log=0;")
+	}()
+
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+	tk.MustExec("set tidb_slow_log_threshold=0;")
+	tk.MustExec("set @@tidb_session_alias='alias123'")
+	tk.MustQuery("select sleep(0.0123);")
+	tk.MustQuery("select Session_alias from `information_schema`.`slow_query` " +
+		"where Query='select sleep(0.0123);' limit 1").
+		Check(testkit.Rows("alias123"))
+}
+
 func TestSlowQuery(t *testing.T) {
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)

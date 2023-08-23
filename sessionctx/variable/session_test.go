@@ -150,6 +150,7 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.User = &auth.UserIdentity{Username: "root", Hostname: "192.168.0.1"}
 	seVar.ConnectionInfo = &variable.ConnectionInfo{ClientIP: "192.168.0.1"}
 	seVar.ConnectionID = 1
+	seVar.SessionAlias = "aliasabc"
 	// the out put of the loged CurrentDB should be 'test', should be to lower cased.
 	seVar.CurrentDB = "TeST"
 	seVar.InRestrictedSQL = true
@@ -223,6 +224,7 @@ func TestSlowLogFormat(t *testing.T) {
 # Keyspace_ID: 1
 # User@Host: root[root] @ 192.168.0.1 [192.168.0.1]
 # Conn_ID: 1
+# Session_alias: aliasabc
 # Exec_retry_time: 5.1 Exec_retry_count: 3
 # Query_time: 1
 # Parse_time: 0.00000001
