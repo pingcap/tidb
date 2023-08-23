@@ -1824,11 +1824,28 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 				zap.Stringer("table", tbl.OldTable.Info.Name),
 				zap.Stringer("db", tbl.OldTable.DB.Name))
 			for {
-				progress, err := infosync.CalculateTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, tiFlashStores)
-				if err != nil {
-					log.Warn("failed to get tiflash replica progress, wait for next retry", zap.Error(err))
-					time.Sleep(time.Second)
-					continue
+				var progress float64
+				if pi := tbl.Table.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+					for _, p := range pi.Definitions {
+						progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+						if err != nil {
+							log.Warn("failed to get progress for tiflash partition replica, retry it",
+								zap.Int64("tableID", tbl.Table.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
+							time.Sleep(time.Second)
+							continue
+						}
+						progress += progressOfPartition
+					}
+					progress = progress / float64(len(pi.Definitions))
+				} else {
+					var err error
+					progress, err = infosync.MustGetTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+					if err != nil {
+						log.Warn("failed to get progress for tiflash replica, retry it",
+							zap.Int64("tableID", tbl.Table.ID), zap.Error(err))
+						time.Sleep(time.Second)
+						continue
+					}
 				}
 				// check until progress is 1
 				if progress == 1 {
