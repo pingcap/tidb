@@ -225,9 +225,6 @@ go_test(
     shard_count = 50,
     deps = [
         "//autoid_service",
-        "//br/pkg/lightning/backend/encode",
-        "//br/pkg/lightning/backend/kv",
-        "//br/pkg/lightning/log",
         "//config",
         "//ddl/ingest",
         "//ddl/internal/session",
