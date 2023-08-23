@@ -94,6 +94,14 @@ type SessionStatsCollector struct {
 	deleted bool
 }
 
+// NewSessionStatsCollector initializes a new SessionStatsCollector.
+func NewSessionStatsCollector() *SessionStatsCollector {
+	return &SessionStatsCollector{
+		mapper: make(tableDeltaMap),
+		colMap: make(colStatsUsageMap),
+	}
+}
+
 // Delete only sets the deleted flag true, it will be deleted from list when DumpStatsDeltaToKV is called.
 func (s *SessionStatsCollector) Delete() {
 	s.Lock()

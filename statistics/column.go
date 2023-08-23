@@ -113,9 +113,13 @@ func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
 var HistogramNeededItems = neededStatsMap{items: map[model.TableItemID]struct{}{}}
 
-// IsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
-// as need histogram.
-func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) {
+// IsInvalid checks if this column is invalid.
+// If this column has histogram but not loaded yet,
+// then we mark it as need histogram.
+func (c *Column) IsInvalid(
+	sctx sessionctx.Context,
+	collPseudo bool,
+) (res bool) {
 	var totalCount float64
 	var ndv int64
 	var inValidForCollPseudo, essentialLoaded bool
