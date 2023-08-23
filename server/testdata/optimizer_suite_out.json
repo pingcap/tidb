@@ -171,7 +171,7 @@
                               },
                               {
                                 "github.com/pingcap/tidb/planner/core.(*DataSource).deriveStatsByFilter": {
-                                  "github.com/pingcap/tidb/statistics.(*HistColl).Selectivity": [
+                                  "github.com/pingcap/tidb/planner/cardinality.Selectivity": [
                                     {
                                       "Input Expressions": [
                                         "lt(test.t.col1, 127)",
@@ -386,7 +386,7 @@
                         "github.com/pingcap/tidb/planner/core.(*DataSource).DeriveStats": [
                           {
                             "github.com/pingcap/tidb/planner/core.(*DataSource).deriveStatsByFilter": {
-                              "github.com/pingcap/tidb/statistics.(*HistColl).Selectivity": [
+                              "github.com/pingcap/tidb/planner/cardinality.Selectivity": [
                                 {
                                   "Input Expressions": [
                                     "eq(test.t.col1, 100)"
@@ -649,7 +649,7 @@
                               },
                               {
                                 "github.com/pingcap/tidb/planner/core.(*DataSource).deriveStatsByFilter": {
-                                  "github.com/pingcap/tidb/statistics.(*HistColl).Selectivity": [
+                                  "github.com/pingcap/tidb/planner/cardinality.Selectivity": [
                                     {
                                       "Input Expressions": [
                                         "in(test.t.col1, 1, 2, 3)"
