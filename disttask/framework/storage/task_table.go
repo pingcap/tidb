@@ -470,6 +470,7 @@ func (stm *TaskManager) FinishSubtask(id int64, meta []byte) error {
 }
 
 // UpdateSubtaskHeartbeat updates the heartbeat of the subtask.
+// not used now.
 // TODO: not sure whether we really need this method, don't update state_update_time now,
 func (stm *TaskManager) UpdateSubtaskHeartbeat(instanceID string, taskID int64, heartbeat time.Time) error {
 	_, err := stm.executeSQLWithNewSession(stm.ctx, `update mysql.tidb_background_subtask
