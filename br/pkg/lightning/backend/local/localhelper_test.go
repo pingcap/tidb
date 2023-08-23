@@ -426,11 +426,18 @@ func (s *localSuite) doTestBatchSplitRegionByRanges(ctx context.Context, c *C, h
 		start = end
 	}
 
+<<<<<<< HEAD
 	err = local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true, 1000)
 	if len(errPat) == 0 {
 		c.Assert(err, IsNil)
 	} else {
 		c.Assert(err, ErrorMatches, errPat)
+=======
+	err = local.SplitAndScatterRegionByRanges(ctx, ranges, true)
+	if len(errPat) != 0 {
+		require.Error(t, err)
+		require.Regexp(t, errPat, err.Error())
+>>>>>>> f15ba117bc2 (pkg/lightning : remove get_regions call in physical backend (#46202))
 		return
 	}
 
@@ -449,8 +456,98 @@ func (s *localSuite) doTestBatchSplitRegionByRanges(ctx context.Context, c *C, h
 	checkRegionRanges(c, regions, result)
 }
 
+<<<<<<< HEAD
 func (s *localSuite) TestBatchSplitRegionByRanges(c *C) {
 	s.doTestBatchSplitRegionByRanges(context.Background(), c, nil, "", nil)
+=======
+func TestBatchSplitRegionByRanges(t *testing.T) {
+	doTestBatchSplitRegionByRanges(context.Background(), t, nil, "", nil)
+}
+
+type checkScatterClient struct {
+	*testSplitClient
+
+	mu                sync.Mutex
+	notFoundFirstTime map[uint64]struct{}
+	scatterCounter    atomic.Int32
+}
+
+func newCheckScatterClient(inner *testSplitClient) *checkScatterClient {
+	return &checkScatterClient{
+		testSplitClient:   inner,
+		notFoundFirstTime: map[uint64]struct{}{},
+		scatterCounter:    atomic.Int32{},
+	}
+}
+
+func (c *checkScatterClient) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
+	c.scatterCounter.Add(1)
+	return nil
+}
+
+func (c *checkScatterClient) GetRegionByID(ctx context.Context, regionID uint64) (*split.RegionInfo, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.notFoundFirstTime[regionID]; !ok {
+		c.notFoundFirstTime[regionID] = struct{}{}
+		return nil, nil
+	}
+	return c.testSplitClient.GetRegionByID(ctx, regionID)
+}
+
+func TestMissingScatter(t *testing.T) {
+	ctx := context.Background()
+	splitHook := defaultHook{}
+	deferFunc := splitHook.setup(t)
+	defer deferFunc()
+
+	keys := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
+	client := initTestSplitClient(keys, nil)
+	checkClient := newCheckScatterClient(client)
+	local := &Backend{
+		splitCli: checkClient,
+		logger:   log.L(),
+	}
+	local.RegionSplitBatchSize = 4
+	local.RegionSplitConcurrency = 4
+
+	// current region ranges: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+	rangeStart := codec.EncodeBytes([]byte{}, []byte("b"))
+	rangeEnd := codec.EncodeBytes([]byte{}, []byte("c"))
+	regions, err := split.PaginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
+	require.NoError(t, err)
+	// regions is: [aay, bba), [bba, bbh), [bbh, cca)
+	checkRegionRanges(t, regions, [][]byte{[]byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca")})
+
+	// generate:  ranges [b, ba), [ba, bb), [bb, bc), ... [by, bz)
+	ranges := make([]Range, 0)
+	start := []byte{'b'}
+	for i := byte('a'); i <= 'z'; i++ {
+		end := []byte{'b', i}
+		ranges = append(ranges, Range{start: start, end: end})
+		start = end
+	}
+
+	err = local.SplitAndScatterRegionByRanges(ctx, ranges, true)
+	require.NoError(t, err)
+
+	splitHook.check(t, client)
+
+	// check split ranges
+	regions, err = split.PaginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
+	require.NoError(t, err)
+	result := [][]byte{
+		[]byte("b"), []byte("ba"), []byte("bb"), []byte("bba"), []byte("bbh"), []byte("bc"),
+		[]byte("bd"), []byte("be"), []byte("bf"), []byte("bg"), []byte("bh"), []byte("bi"), []byte("bj"),
+		[]byte("bk"), []byte("bl"), []byte("bm"), []byte("bn"), []byte("bo"), []byte("bp"), []byte("bq"),
+		[]byte("br"), []byte("bs"), []byte("bt"), []byte("bu"), []byte("bv"), []byte("bw"), []byte("bx"),
+		[]byte("by"), []byte("bz"), []byte("cca"),
+	}
+	checkRegionRanges(t, regions, result)
+
+	// the old regions will not be scattered. They are [..., bba), [bba, bbh), [..., cca)
+	require.Equal(t, len(result)-3, int(checkClient.scatterCounter.Load()))
+>>>>>>> f15ba117bc2 (pkg/lightning : remove get_regions call in physical backend (#46202))
 }
 
 type batchSizeHook struct{}
@@ -587,8 +684,13 @@ func (s *localSuite) TestSplitAndScatterRegionInBatches(c *C) {
 		})
 	}
 
+<<<<<<< HEAD
 	err := local.SplitAndScatterRegionInBatches(ctx, ranges, nil, true, 1000, 4)
 	c.Check(err, IsNil)
+=======
+	err := local.SplitAndScatterRegionInBatches(ctx, ranges, true, 4)
+	require.NoError(t, err)
+>>>>>>> f15ba117bc2 (pkg/lightning : remove get_regions call in physical backend (#46202))
 
 	rangeStart := codec.EncodeBytes([]byte{}, []byte("a"))
 	rangeEnd := codec.EncodeBytes([]byte{}, []byte("b"))
@@ -683,8 +785,13 @@ func (s *localSuite) doTestBatchSplitByRangesWithClusteredIndex(c *C, hook clien
 		start = e
 	}
 
+<<<<<<< HEAD
 	err := local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true, 1000)
 	c.Assert(err, IsNil)
+=======
+	err := local.SplitAndScatterRegionByRanges(ctx, ranges, true)
+	require.NoError(t, err)
+>>>>>>> f15ba117bc2 (pkg/lightning : remove get_regions call in physical backend (#46202))
 
 	startKey := codec.EncodeBytes([]byte{}, rangeKeys[0])
 	endKey := codec.EncodeBytes([]byte{}, rangeKeys[len(rangeKeys)-1])

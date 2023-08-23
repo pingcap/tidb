@@ -63,9 +63,7 @@ var (
 func (local *local) SplitAndScatterRegionInBatches(
 	ctx context.Context,
 	ranges []Range,
-	tableInfo *checkpoints.TidbTableInfo,
 	needSplit bool,
-	regionSplitSize int64,
 	batchCnt int,
 ) error {
 	for i := 0; i < len(ranges); i += batchCnt {
@@ -73,7 +71,7 @@ func (local *local) SplitAndScatterRegionInBatches(
 		if len(batch) > batchCnt {
 			batch = batch[:batchCnt]
 		}
-		if err := local.SplitAndScatterRegionByRanges(ctx, batch, tableInfo, needSplit, regionSplitSize); err != nil {
+		if err := local.SplitAndScatterRegionByRanges(ctx, batch, needSplit); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -87,10 +85,13 @@ func (local *local) SplitAndScatterRegionInBatches(
 func (local *local) SplitAndScatterRegionByRanges(
 	ctx context.Context,
 	ranges []Range,
-	tableInfo *checkpoints.TidbTableInfo,
 	needSplit bool,
+<<<<<<< HEAD
 	regionSplitSize int64,
 ) error {
+=======
+) (err error) {
+>>>>>>> f15ba117bc2 (pkg/lightning : remove get_regions call in physical backend (#46202))
 	if len(ranges) == 0 {
 		return nil
 	}
@@ -106,9 +107,14 @@ func (local *local) SplitAndScatterRegionByRanges(
 	scatterRegions := make([]*split.RegionInfo, 0)
 	var retryKeys [][]byte
 	waitTime := splitRegionBaseBackOffTime
+<<<<<<< HEAD
 	skippedKeys := 0
 	for i := 0; i < SplitRetryTimes; i++ {
 		log.L().Info("split and scatter region",
+=======
+	for i := 0; i < splitRetryTimes; i++ {
+		log.FromContext(ctx).Info("split and scatter region",
+>>>>>>> f15ba117bc2 (pkg/lightning : remove get_regions call in physical backend (#46202))
 			logutil.Key("minKey", minKey),
 			logutil.Key("maxKey", maxKey),
 			zap.Int("retry", i),
@@ -168,6 +174,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 			return nil
 		}
 
+<<<<<<< HEAD
 		var tableRegionStats map[uint64]int64
 		if tableInfo != nil {
 			tableRegionStats, err = fetchTableRegionSizeStats(ctx, db, tableInfo.ID)
@@ -178,6 +185,8 @@ func (local *local) SplitAndScatterRegionByRanges(
 			}
 		}
 
+=======
+>>>>>>> f15ba117bc2 (pkg/lightning : remove get_regions call in physical backend (#46202))
 		regionMap := make(map[uint64]*split.RegionInfo)
 		for _, region := range regions {
 			regionMap[region.Region.GetId()] = region
@@ -287,6 +296,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 		}
 	sendLoop:
 		for regionID, keys := range splitKeyMap {
+<<<<<<< HEAD
 			// if region not in tableRegionStats, that means this region is newly split, so
 			// we can skip split it again.
 			regionSize, ok := tableRegionStats[regionID]
@@ -296,6 +306,8 @@ func (local *local) SplitAndScatterRegionByRanges(
 			if len(keys) == 1 && regionSize < regionSplitSize {
 				skippedKeys++
 			}
+=======
+>>>>>>> f15ba117bc2 (pkg/lightning : remove get_regions call in physical backend (#46202))
 			select {
 			case ch <- &splitInfo{region: regionMap[regionID], keys: keys}:
 			case <-ctx.Done():
@@ -338,12 +350,19 @@ func (local *local) SplitAndScatterRegionByRanges(
 		scatterCount++
 	}
 	if scatterCount == len(scatterRegions) {
+<<<<<<< HEAD
 		log.L().Info("waiting for scattering regions done",
 			zap.Int("skipped_keys", skippedKeys),
 			zap.Int("regions", len(scatterRegions)), zap.Duration("take", time.Since(startTime)))
 	} else {
 		log.L().Info("waiting for scattering regions timeout",
 			zap.Int("skipped_keys", skippedKeys),
+=======
+		log.FromContext(ctx).Info("waiting for scattering regions done",
+			zap.Int("regions", len(scatterRegions)), zap.Duration("take", time.Since(startTime)))
+	} else {
+		log.FromContext(ctx).Info("waiting for scattering regions timeout",
+>>>>>>> f15ba117bc2 (pkg/lightning : remove get_regions call in physical backend (#46202))
 			zap.Int("scatterCount", scatterCount),
 			zap.Int("regions", len(scatterRegions)),
 			zap.Duration("take", time.Since(startTime)))
