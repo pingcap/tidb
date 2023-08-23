@@ -15,29 +15,12 @@
 package statistics
 
 import (
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
-	"golang.org/x/exp/maps"
 )
-
-var datumMapCachePool = sync.Pool{
-	New: func() any {
-		return newDatumMapCache()
-	},
-}
-
-func getDatumMapCache() *datumMapCache {
-	return datumMapCachePool.Get().(*datumMapCache)
-}
-
-func putDatumMapCache(d *datumMapCache) {
-	d.Reset()
-	datumMapCachePool.Put(d)
-}
 
 type datumMapCache struct {
 	datumMap map[hack.MutableString]types.Datum
@@ -74,8 +57,4 @@ func (d *datumMapCache) Put(val TopNMeta, encodedVal hack.MutableString,
 	}
 	d.datumMap[encodedVal] = dat
 	return dat, nil
-}
-
-func (d *datumMapCache) Reset() {
-	maps.Clear(d.datumMap)
 }

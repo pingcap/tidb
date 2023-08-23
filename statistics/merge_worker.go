@@ -104,7 +104,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 		counter := make(map[hack.MutableString]float64)
 		// datumMap is used to store the mapping from the string type to datum type.
 		// The datum is used to find the value in the histogram.
-		datumMap := getDatumMapCache()
+		datumMap := newDatumMapCache()
 
 		for i, topN := range checkTopNs {
 			if atomic.LoadUint32(worker.killed) == 1 {
@@ -161,7 +161,6 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 				}
 			}
 		}
-		putDatumMapCache(datumMap)
 		numTop := len(counter)
 		if numTop == 0 {
 			worker.respCh <- resp

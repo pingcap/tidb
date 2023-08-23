@@ -804,7 +804,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 	counter := make(map[hack.MutableString]float64)
 	// datumMap is used to store the mapping from the string type to datum type.
 	// The datum is used to find the value in the histogram.
-	datumMap := getDatumMapCache()
+	datumMap := newDatumMapCache()
 	for i, topN := range topNs {
 		if atomic.LoadUint32(killed) == 1 {
 			return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
@@ -849,7 +849,6 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 			}
 		}
 	}
-	putDatumMapCache(datumMap)
 	numTop := len(counter)
 	if numTop == 0 {
 		return nil, nil, hists, nil
