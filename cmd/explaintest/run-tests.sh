@@ -90,7 +90,7 @@ function build_mysql_tester()
 {
     echo "building mysql-tester binary: $mysql_tester"
     rm -rf $mysql_tester
-    GOBIN=$PWD go install github.com/Defined2014/mysql-tester/src@de74b371d7a467063d0e19b751774e6147c27e06
+    GOBIN=$PWD go install github.com/defined2014/mysql-tester/src@d58efc03661db47b15211e55f67b95a60a372c07
     mv src mysql_tester
 }
 
