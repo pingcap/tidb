@@ -408,6 +408,7 @@
       "ttl/ttlworker/": "ignore ttlworker code",
       "ttl/sqlbuilder/sql_test.go": "ignore sql_test code",
       "planner/core/": "ignore core code",
+      "planner/core/cardinality/": "ignore cardinality code",
       "planner/optimize.go": "ignore optimize code",
       "planner/cascades/": "ignore cascades code",
       "planner/funcdep/extract_fd_test.go": "ignore extract_fd code",
