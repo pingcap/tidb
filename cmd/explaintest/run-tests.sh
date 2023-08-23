@@ -26,7 +26,7 @@ record=0
 record_case=""
 stats="s"
 collation_opt=2
-concurrency=2
+concurrency=4
 
 set -eu
 trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
@@ -90,7 +90,7 @@ function build_mysql_tester()
 {
     echo "building mysql-tester binary: $mysql_tester"
     rm -rf $mysql_tester
-    GOBIN=$PWD go install github.com/defined2014/mysql-tester/src@d58efc03661db47b15211e55f67b95a60a372c07
+    GOBIN=$PWD go install github.com/defined2014/mysql-tester/src@9ff30cad0699597b91bf057ed976799c51b46d0f
     mv src mysql_tester
 }
 
