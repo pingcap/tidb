@@ -3289,6 +3289,7 @@ func buildShowSlowSchema() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "INDEX_IDS", mysql.TypeVarchar, 256))
 	schema.Append(buildColumnWithName("", "INTERNAL", mysql.TypeTiny, tinySize))
 	schema.Append(buildColumnWithName("", "DIGEST", mysql.TypeVarchar, 64))
+	schema.Append(buildColumnWithName("", "SESSION_ALIAS", mysql.TypeVarchar, 64))
 	return schema.col2Schema(), schema.names
 }
 
