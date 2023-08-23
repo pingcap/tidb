@@ -175,7 +175,7 @@ func TestRangeProperties(t *testing.T) {
 	for _, p := range cases {
 		v := make([]byte, p.vLen)
 		for i := 0; i < p.count; i++ {
-			_ = collector.Add(pebble.InternalKey{UserKey: p.key, Trailer: pebble.InternalKeyKindSet}, v)
+			_ = collector.Add(pebble.InternalKey{UserKey: p.key, Trailer: uint64(pebble.InternalKeyKindSet)}, v)
 		}
 	}
 
@@ -291,7 +291,7 @@ func TestRangePropertiesWithPebble(t *testing.T) {
 			binary.BigEndian.PutUint64(key, uint64(i*100+j))
 			err := wb.Set(key, value[:valueLen], writeOpt)
 			require.NoError(t, err)
-			err = collector.Add(pebble.InternalKey{UserKey: key, Trailer: pebble.InternalKeyKindSet}, value[:valueLen])
+			err = collector.Add(pebble.InternalKey{UserKey: key, Trailer: uint64(pebble.InternalKeyKindSet)}, value[:valueLen])
 			require.NoError(t, err)
 		}
 		require.NoError(t, wb.Commit(writeOpt))
