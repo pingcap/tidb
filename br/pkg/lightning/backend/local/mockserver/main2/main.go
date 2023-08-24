@@ -17,10 +17,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
@@ -29,13 +30,14 @@ func main() {
 
 	conn, err := grpc.DialContext(ctx, os.Args[1], grpc.WithInsecure())
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("fail to dial", zap.Error(err))
 	}
 	for {
 		client := sst.NewImportSSTClient(conn)
 		stream, err := client.Write(ctx)
 		if err != nil {
-			log.Fatal(err)
+			log.Error("fail to write", zap.Error(err))
+			continue
 		}
 		err = stream.Send(&sst.WriteRequest{
 			Chunk: &sst.WriteRequest_Meta{
@@ -45,11 +47,13 @@ func main() {
 			},
 		})
 		if err != nil {
-			log.Fatal(err)
+			log.Error("fail to send", zap.Error(err))
+			continue
 		}
 		resp, err := stream.CloseAndRecv()
 		if err != nil {
-			log.Fatal(err)
+			log.Error("fail to close and recv", zap.Error(err))
+			continue
 		}
 		fmt.Printf("resp: %v\n", resp)
 	}

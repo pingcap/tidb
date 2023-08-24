@@ -26,7 +26,8 @@ import (
 )
 
 func main() {
-	lis, err := net.Listen("tcp", ":0")
+	portStr := os.Args[1]
+	lis, err := net.Listen("tcp", ":"+portStr)
 	if err != nil {
 		log.Fatal(err)
 	}
