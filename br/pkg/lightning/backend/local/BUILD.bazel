@@ -41,6 +41,7 @@ go_library(
         "//br/pkg/membuf",
         "//br/pkg/pdutil",
         "//br/pkg/restore/split",
+        "//br/pkg/storage",
         "//br/pkg/utils",
         "//br/pkg/version",
         "//distsql",
