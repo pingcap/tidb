@@ -355,7 +355,7 @@ func (c *Column) DropUnnecessaryData() {
 	c.TopN = nil
 	c.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
 	c.Histogram.Buckets = make([]Bucket, 0)
-	c.Histogram.scalars = make([]scalar, 0)
+	c.Histogram.Scalars = make([]scalar, 0)
 	c.evictedStatus = AllEvicted
 }
 

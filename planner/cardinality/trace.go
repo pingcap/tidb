@@ -29,9 +29,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// CETraceExpr appends an expression and related information into CE trace
-func CETraceExpr(sctx sessionctx.Context, tableID int64, tp string, expr expression.Expression, rowCount float64) {
-	exprStr, err := ExprToString(expr)
+// ceTraceExpr appends an expression and related information into CE trace
+func ceTraceExpr(sctx sessionctx.Context, tableID int64, tp string, expr expression.Expression, rowCount float64) {
+	exprStr, err := exprToString(expr)
 	if err != nil {
 		logutil.BgLogger().Debug("Failed to trace CE of an expression", zap.String("category", "OptimizerTrace"),
 			zap.Any("expression", expr))
@@ -47,7 +47,7 @@ func CETraceExpr(sctx sessionctx.Context, tableID int64, tp string, expr express
 	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &rec)
 }
 
-// ExprToString prints an Expression into a string which can appear in a SQL.
+// exprToString prints an Expression into a string which can appear in a SQL.
 //
 // It might be too tricky because it makes use of TiDB allowing using internal function name in SQL.
 // For example, you can write `eq`(a, 1), which is the same as a = 1.
@@ -58,7 +58,7 @@ func CETraceExpr(sctx sessionctx.Context, tableID int64, tp string, expr express
 // It may be more appropriate to put this in expression package. But currently we only use it for CE trace,
 //
 //	and it may not be general enough to handle all possible expressions. So we put it here for now.
-func ExprToString(e expression.Expression) (string, error) {
+func exprToString(e expression.Expression) (string, error) {
 	switch expr := e.(type) {
 	case *expression.ScalarFunction:
 		var buffer bytes.Buffer
@@ -66,7 +66,7 @@ func ExprToString(e expression.Expression) (string, error) {
 		switch expr.FuncName.L {
 		case ast.Cast:
 			for _, arg := range expr.GetArgs() {
-				argStr, err := ExprToString(arg)
+				argStr, err := exprToString(arg)
 				if err != nil {
 					return "", err
 				}
@@ -76,7 +76,7 @@ func ExprToString(e expression.Expression) (string, error) {
 			}
 		default:
 			for i, arg := range expr.GetArgs() {
-				argStr, err := ExprToString(arg)
+				argStr, err := exprToString(arg)
 				if err != nil {
 					return "", err
 				}

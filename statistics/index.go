@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -73,7 +72,7 @@ func (idx *Index) DropUnnecessaryData() {
 	idx.TopN = nil
 	idx.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
 	idx.Histogram.Buckets = make([]Bucket, 0)
-	idx.Histogram.scalars = make([]scalar, 0)
+	idx.Histogram.Scalars = make([]scalar, 0)
 	idx.evictedStatus = AllEvicted
 }
 
@@ -460,54 +459,6 @@ func (idx *Index) checkStats() {
 		return
 	}
 	HistogramNeededItems.insert(model.TableItemID{TableID: idx.PhysicalID, ID: idx.Info.ID, IsIndex: true})
-}
-
-func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode *StatsNode) (*Index, error) {
-	var (
-		ranLowEncode, ranHighEncode []byte
-		err                         error
-	)
-	newIndexHist := &Index{Info: idx.Info, StatsVer: idx.StatsVer, CMSketch: idx.CMSketch, PhysicalID: idx.PhysicalID}
-	newIndexHist.Histogram = *NewHistogram(idx.Histogram.ID, int64(float64(idx.Histogram.NDV)*statsNode.Selectivity), 0, 0, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
-
-	lowBucketIdx, highBucketIdx := 0, 0
-	var totCnt int64
-
-	// Bucket bound of index is encoded one, so we need to decode it if we want to calculate the fraction accurately.
-	// TODO: enhance its calculation.
-	// Now just remove the bucket that no range fell in.
-	for _, ran := range statsNode.Ranges {
-		lowBucketIdx = highBucketIdx
-		ranLowEncode, ranHighEncode, err = ran.Encode(sc, ranLowEncode, ranHighEncode)
-		if err != nil {
-			return nil, err
-		}
-		for ; highBucketIdx < idx.Histogram.Len(); highBucketIdx++ {
-			// Encoded value can only go to its next quickly. So ranHighEncode is actually range.HighVal's PrefixNext value.
-			// So the Bound should also go to its PrefixNext.
-			bucketLowerEncoded := idx.Histogram.Bounds.GetRow(highBucketIdx * 2).GetBytes(0)
-			if bytes.Compare(ranHighEncode, kv.Key(bucketLowerEncoded).PrefixNext()) < 0 {
-				break
-			}
-		}
-		for ; lowBucketIdx < highBucketIdx; lowBucketIdx++ {
-			bucketUpperEncoded := idx.Histogram.Bounds.GetRow(lowBucketIdx*2 + 1).GetBytes(0)
-			if bytes.Compare(ranLowEncode, bucketUpperEncoded) <= 0 {
-				break
-			}
-		}
-		if lowBucketIdx >= idx.Histogram.Len() {
-			break
-		}
-		for i := lowBucketIdx; i < highBucketIdx; i++ {
-			newIndexHist.Histogram.Bounds.AppendRow(idx.Histogram.Bounds.GetRow(i * 2))
-			newIndexHist.Histogram.Bounds.AppendRow(idx.Histogram.Bounds.GetRow(i*2 + 1))
-			totCnt += idx.Histogram.bucketCount(i)
-			newIndexHist.Histogram.Buckets = append(newIndexHist.Histogram.Buckets, Bucket{Repeat: idx.Histogram.Buckets[i].Repeat, Count: totCnt})
-			newIndexHist.Histogram.scalars = append(newIndexHist.Histogram.scalars, idx.Histogram.scalars[i])
-		}
-	}
-	return newIndexHist, nil
 }
 
 func (idx *Index) outOfRange(val types.Datum) bool {
