@@ -3219,9 +3219,9 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	// In the traditional case, TiDB take up the final agg role and push partial agg to TiKV,
 	// while TiDB can tell the partialMode and do the sum computation rather than counting but MPP doesn't
 	finalAggAdjust := func(aggFuncs []*aggregation.AggFuncDesc) {
-		for _, agg := range aggFuncs {
+		for i, agg := range aggFuncs {
 			if agg.Mode == aggregation.FinalMode && agg.Name == ast.AggFuncCount {
-				agg.Name = ast.AggFuncSum
+				aggFuncs[i], _ = aggregation.NewAggFuncDesc(la.SCtx(), ast.AggFuncSum, agg.Args, false)
 			}
 		}
 	}
