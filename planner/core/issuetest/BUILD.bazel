@@ -5,22 +5,7 @@ go_test(
     timeout = "short",
     srcs = ["planner_issue_test.go"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 5,
-    deps = ["//testkit"],
-=======
     race = "on",
-    shard_count = 8,
-    deps = [
-        "//parser",
-        "//planner",
-        "//planner/core",
-        "//testkit",
-        "//testkit/testdata",
-        "//testkit/testmain",
-        "//testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
-    ],
->>>>>>> 209bb090a56 (planner: refactor Join and Limit's ResolveIndices (#45831))
+    shard_count = 6,
+    deps = ["//testkit"],
 )
