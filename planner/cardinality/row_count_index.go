@@ -451,7 +451,7 @@ func GetIndexRowCount(sctx sessionctx.Context, idx *statistics.Index, coll *stat
 			}
 		}
 		if !expBackoffSuccess {
-			count += idx.BetweenRowCount(sctx, l, r)
+			count += IndexBetweenRowCount(sctx, idx, l, r)
 		}
 
 		// If the current table row count has changed, we should scale the row count accordingly.
