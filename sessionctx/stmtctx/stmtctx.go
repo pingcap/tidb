@@ -448,6 +448,8 @@ func (sh *StmtHints) Clone() *StmtHints {
 		HasMemQuotaHint:                sh.HasMemQuotaHint,
 		HasReplicaReadHint:             sh.HasReplicaReadHint,
 		HasMaxExecutionTime:            sh.HasMaxExecutionTime,
+		HasTidbKvReadTimeout:           sh.HasTidbKvReadTimeout,
+		TidbKvReadTimeout:              sh.TidbKvReadTimeout,
 		HasEnableCascadesPlannerHint:   sh.HasEnableCascadesPlannerHint,
 		SetVars:                        vars,
 		OriginalTableHints:             tableHints,
