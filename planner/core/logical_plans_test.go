@@ -2251,3 +2251,21 @@ func TestRollupExpand(t *testing.T) {
 	require.NotNil(t, gm)
 	require.Equal(t, len(gm), 2)
 }
+
+// Issue: 45785
+func TestEliminateDNFConditionAlwaysFalse(t *testing.T) {
+	s := createPlannerSuite()
+	sql := "select * from t where a=1 or ((a=123 or NULL) or False) or 1=0"
+	comment := fmt.Sprintf("for %s", sql)
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, comment)
+	p, _, err := BuildLogicalPlanForTest(context.Background(), s.ctx, stmt, s.is)
+	require.NoError(t, err, comment)
+	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
+	require.NoError(t, err, comment)
+	dataSource, ok := p.(*LogicalProjection).children[0].(*DataSource)
+	require.True(t, ok, comment)
+	allConds := fmt.Sprintf("%s", dataSource.allConds)
+	// Check that allConds which's always have has been eliminated
+	require.Equal(t, "[or(eq(test.t.a, 1), eq(test.t.a, 123))]", allConds, comment)
+}

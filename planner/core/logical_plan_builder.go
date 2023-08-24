@@ -1375,8 +1375,12 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 	if len(cnfExpres) == 0 {
 		return p, nil
 	}
+	newCNFExpres, err := eliminateFalseOrs(b.ctx, cnfExpres)
+	if err != nil {
+		return nil, err
+	}
 	// check expr field types.
-	for i, expr := range cnfExpres {
+	for i, expr := range newCNFExpres {
 		if expr.GetType().EvalType() == types.ETString {
 			tp := &types.FieldType{}
 			tp.SetType(mysql.TypeDouble)
@@ -1384,12 +1388,73 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 			tp.SetFlen(mysql.MaxRealWidth)
 			tp.SetDecimal(types.UnspecifiedLength)
 			types.SetBinChsClnFlag(tp)
-			cnfExpres[i] = expression.TryPushCastIntoControlFunctionForHybridType(b.ctx, expr, tp)
+			newCNFExpres[i] = expression.TryPushCastIntoControlFunctionForHybridType(b.ctx, expr, tp)
 		}
 	}
-	selection.Conditions = cnfExpres
+	selection.Conditions = newCNFExpres
 	selection.SetChildren(p)
 	return selection, nil
+}
+
+// eliminateFalseOrs removes OR conditions that are always false from a list of DNF expressions.
+func eliminateFalseOrs(ctx sessionctx.Context, cnfExpressions []expression.Expression) ([]expression.Expression, error) {
+	finalCNFExprs := make([]expression.Expression, 0)
+
+	for _, expr := range cnfExpressions {
+		switch v := expr.(type) {
+		case *expression.ScalarFunction:
+			var exprs []expression.Expression
+			switch v.FuncName.L {
+			case ast.LogicOr:
+				// Handle OR conditions by recursively calling the function.
+				dnfItems := expression.SplitDNFItems(expr)
+				items, err := eliminateFalseOrs(ctx, dnfItems)
+				if err != nil {
+					return nil, err
+				}
+				for _, item := range items {
+					if con, ok := item.(*expression.Constant); ok && con.ConstItem(ctx.GetSessionVars().StmtCtx) {
+						ret, _, err := expression.EvalBool(ctx, expression.CNFExprs{con}, chunk.Row{})
+						if err != nil {
+							return nil, errors.Trace(err)
+						}
+						if !ret {
+							continue
+						}
+					}
+					exprs = append(exprs, item)
+				}
+
+			case ast.LogicAnd:
+				// Handle AND conditions by recursively calling the function.
+				andList, err := eliminateFalseOrs(ctx, v.GetArgs())
+				if err != nil {
+					return nil, err
+				}
+				exprs = append(exprs, andList...)
+
+			default:
+				// For other scalar functions, simply add them to the final CNF expressions.
+				exprs = append(exprs, expr)
+			}
+
+			// If there are expressions to add, compose the appropriate CNF/DNF condition.
+			if len(exprs) > 0 {
+				if v.FuncName.L == ast.LogicOr {
+					finalCNFExprs = append(finalCNFExprs, expression.ComposeDNFCondition(ctx, exprs...))
+				} else {
+					finalCNFExprs = append(finalCNFExprs, expression.ComposeCNFCondition(ctx, exprs...))
+				}
+			}
+
+		default:
+			// For non-scalar function expressions, add them to the final CNF expressions.
+			finalCNFExprs = append(finalCNFExprs, expr)
+
+		}
+	}
+
+	return finalCNFExprs, nil
 }
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
