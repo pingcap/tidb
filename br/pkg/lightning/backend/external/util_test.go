@@ -180,7 +180,7 @@ func TestCleanUpFiles(t *testing.T) {
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, 0, "/subtask")
+		Build(store, "/subtask", 0)
 	kvPairs := make([]common.KvPair, 0, 30)
 	for i := 0; i < 30; i++ {
 		kvPairs = append(kvPairs, common.KvPair{
