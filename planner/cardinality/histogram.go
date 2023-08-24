@@ -91,7 +91,7 @@ func NewHistCollBySelectivity(sctx sessionctx.Context, coll *statistics.HistColl
 			})
 		} else {
 			err = newHistogramBySelectivity(sctx, node.ID, &oldCol.Histogram, &newCol.Histogram, splitRanges, func(sctx sessionctx.Context, id int64, ranges []*ranger.Range) (float64, error) {
-				return GetRowCountByIntColumnRanges(sctx, coll, id, ranges)
+				return GetRowCountByColumnRanges(sctx, coll, id, ranges)
 			})
 		}
 		if err != nil {
