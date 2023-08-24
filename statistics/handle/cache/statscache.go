@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // StatsCachePointer is used to cache the stats of a table.
@@ -48,6 +50,7 @@ func (s *StatsCachePointer) Replace(newCache *StatsCache) {
 	old := s.Swap(newCache)
 	if old != nil {
 		old.Close()
+		logutil.BgLogger().Warn("it should not be nil", zap.Stack("stack"))
 	}
 	metrics.CostGauge.Set(float64(newCache.Cost()))
 }
