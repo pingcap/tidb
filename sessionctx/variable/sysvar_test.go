@@ -1289,3 +1289,26 @@ func TestTiDBTiFlashReplicaRead(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, DefTiFlashReplicaRead, val)
 }
+
+func TestSetTiDBGlobalSortURI(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	globalSortURI := GetSysVar(TiDBGlobalSortURI)
+
+	// Default empty
+	require.Len(t, globalSortURI.Value, 0)
+
+	// Set to noop
+	err := mock.SessionVars.SetSystemVar(TiDBGlobalSortURI, "noop://blackhole")
+	require.NoError(t, err)
+	val, err1 := mock.SessionVars.GetSessionOrGlobalSystemVar(context.TODO(), TiDBGlobalSortURI)
+	require.NoError(t, err1)
+	require.Equal(t, "noop://blackhole", val)
+
+	// Set to s3, should fail
+	err = mock.SessionVars.SetSystemVar(TiDBGlobalSortURI, "s3://blackhole")
+	t.Log(err)
+	require.ErrorContains(t, err, "bucket blackhole")
+}

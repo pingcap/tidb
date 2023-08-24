@@ -1537,6 +1537,9 @@ type SessionVars struct {
 
 	// SessionAlias is the identifier of the session
 	SessionAlias string
+
+	// GlobalSortURI is the uri of global sort
+	GlobalSortURI string
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.

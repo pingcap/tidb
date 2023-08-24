@@ -2227,6 +2227,17 @@ var defaultSysVars = []*SysVar{
 		DDLDiskQuota.Store(TidbOptUint64(val, DefTiDBDDLDiskQuota))
 		return nil
 	}},
+	{Scope: ScopeSession, Name: TiDBGlobalSortURI, Value: "", Type: TypeStr, Validation: func(sv *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if err := ValidGlobalSortURI(normalizedValue); err != nil {
+			return "", err
+		}
+		return normalizedValue, nil
+	}, GetSession: func(sv *SessionVars) (string, error) {
+		return sv.GlobalSortURI, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		s.GlobalSortURI = val
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(config.GetGlobalConfig().PessimisticTxn.ConstraintCheckInPlacePessimistic), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.ConstraintCheckInPlacePessimistic = TiDBOptOn(val)

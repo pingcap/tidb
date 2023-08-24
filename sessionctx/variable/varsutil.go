@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -611,4 +612,23 @@ func ParseAnalyzeSkipColumnTypes(val string) map[string]struct{} {
 		}
 	}
 	return skipTypes
+}
+
+// ValidGlobalSortURI makes validation for tidb_global_sort_uri.
+func ValidGlobalSortURI(uri string) error {
+	b, err := storage.ParseBackend(uri, nil)
+	if err != nil {
+		return err
+	}
+	_, err = storage.New(context.TODO(), b, &storage.ExternalStorageOptions{
+		CheckPermissions: []storage.Permission{
+			storage.ListObjects,
+			storage.GetObject,
+			storage.PutObject,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	return nil
 }
