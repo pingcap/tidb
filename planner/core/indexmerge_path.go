@@ -736,6 +736,12 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 	}
 
 	for _, v := range virColVals {
+		if !isSafeTypeConversion4MVIndexRange(v.GetType(), virCol.GetType()) {
+			return nil, false, false, nil
+		}
+	}
+
+	for _, v := range virColVals {
 		// rewrite json functions to EQ to calculate range, `(1 member of j)` -> `j=1`.
 		eq, err := expression.NewFunction(ds.SCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), virCol, v)
 		if err != nil {
@@ -750,6 +756,14 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 		partialPaths = append(partialPaths, partialPath)
 	}
 	return partialPaths, isIntersection, true, nil
+}
+
+// isSafeTypeConversion4MVIndexRange checks whether it is safe to convert valType to mvIndexType when building ranges for MVIndexes.
+func isSafeTypeConversion4MVIndexRange(valType, mvIndexType *types.FieldType) (safe bool) {
+	// for safety, forbid type conversion when building ranges for MVIndexes.
+	// TODO: loose this restriction.
+	// for example, converting '1' to 1 to access INT MVIndex may cause some wrong result.
+	return valType.EvalType() == mvIndexType.EvalType()
 }
 
 // buildPartialPath4MVIndex builds a partial path on this MVIndex with these accessFilters.

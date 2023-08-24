@@ -259,27 +259,26 @@ func TestMVIndexInvisible(t *testing.T) {
 
 	tk.MustExec(`create table t(a int, j json, index kj((cast(j as signed array))))`)
 	tk.MustQuery(`explain format='brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j))`).Check(testkit.Rows(
-		`Selection 8000.00 root  json_memberof(cast(1, json BINARY), test.t.j)`,
-		`└─IndexMerge 10.00 root  type: union`,
-		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[1,1], keep order:false, stats:pseudo",
-		`  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+		"IndexMerge 10.00 root  type: union",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[1,1], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
 
 	tk.MustExec(`ALTER TABLE t ALTER INDEX kj INVISIBLE`)
 	tk.MustQuery(`explain format='brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j))`).Check(testkit.Rows(
-		"Selection 8000.00 root  json_memberof(cast(1, json BINARY), test.t.j)",
-		"└─TableReader 10000.00 root  data:TableFullScan",
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  json_memberof(cast(1, json BINARY), test.t.j)",
 		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery(`explain format='brief' select /*+ use_index_merge(t, kj) */ * from t where (1 member of (j))`).Check(testkit.Rows(
-		"Selection 8000.00 root  json_memberof(cast(1, json BINARY), test.t.j)",
-		"└─TableReader 10000.00 root  data:TableFullScan",
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  json_memberof(cast(1, json BINARY), test.t.j)",
 		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 
 	tk.MustExec(`ALTER TABLE t ALTER INDEX kj VISIBLE`)
 	tk.MustQuery(`explain format='brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j))`).Check(testkit.Rows(
-		`Selection 8000.00 root  json_memberof(cast(1, json BINARY), test.t.j)`,
-		`└─IndexMerge 10.00 root  type: union`,
-		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[1,1], keep order:false, stats:pseudo",
-		`  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+		`IndexMerge 10.00 root  type: union`,
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[1,1], keep order:false, stats:pseudo",
+		`└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo`))
 }
 
 func TestMVIndexFullScan(t *testing.T) {
@@ -424,4 +423,18 @@ func randMVIndexValue(opts randMVIndexValOpts) string {
 		return fmt.Sprintf(`"2000-01-%v"`, rand.Intn(opts.distinct)+1)
 	}
 	return ""
+}
+
+func TestIndexMergeJSONMemberOf2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(
+a int, j0 json, j1 json,
+index j0_0((cast(j0->'$.path0' as signed array))));`)
+	tk.MustExec("insert into t values(1, '{\"path0\" : [1,2,3]}', null ); ")
+	tk.MustQuery("select /*+ no_index_merge() */ a from t where (1 member of (j0->'$.path0')); ").Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ no_index_merge() */ a from t where ('1' member of (j0->'$.path0')); ").Check(testkit.Rows())
+	tk.MustQuery("select /*+ use_index_merge(t, j0_0) */ a from t where (1 member of (j0->'$.path0')); ").Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ use_index_merge(t, j0_0) */ a from t where ('1' member of (j0->'$.path0')); ").Check(testkit.Rows())
 }
