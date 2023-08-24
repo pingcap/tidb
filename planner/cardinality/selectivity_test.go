@@ -17,7 +17,6 @@ package cardinality_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/chunk"
 	"math"
 	"os"
 	"regexp"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
