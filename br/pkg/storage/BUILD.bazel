@@ -91,6 +91,6 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_stretchr_testify//require",
-        "@org_uber_go_mock//gomock:go_default_library",
+        "@org_uber_go_mock//gomock",
     ],
 )

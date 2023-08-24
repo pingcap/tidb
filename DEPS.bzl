@@ -2709,6 +2709,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_golang_mock",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/golang/mock",
+        sha256 = "fa25916b546f90da49418f436e3a61e4c5dae898cf3c82b0007b5a6fab74261b",
+        strip_prefix = "github.com/golang/mock@v1.6.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golang/mock/com_github_golang_mock-v1.6.0.zip",
+            "http://ats.apps.svc/gomod/github.com/golang/mock/com_github_golang_mock-v1.6.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/golang/mock/com_github_golang_mock-v1.6.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golang/mock/com_github_golang_mock-v1.6.0.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_golang_protobuf",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/golang/protobuf",

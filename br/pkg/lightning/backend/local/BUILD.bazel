@@ -169,6 +169,6 @@ go_test(
         "@org_golang_google_grpc//encoding",
         "@org_golang_google_grpc//status",
         "@org_uber_go_atomic//:atomic",
-        "@org_uber_go_mock//gomock:go_default_library",
+        "@org_uber_go_mock//gomock",
     ],
 )

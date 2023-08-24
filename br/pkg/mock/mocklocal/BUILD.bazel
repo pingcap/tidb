@@ -8,6 +8,6 @@ go_library(
     deps = [
         "//br/pkg/lightning/backend",
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
-        "@org_uber_go_mock//gomock:go_default_library",
+        "@org_uber_go_mock//gomock",
     ],
 )
