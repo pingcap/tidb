@@ -4,6 +4,7 @@ go_library(
     name = "mockstore",
     srcs = [
         "mockstore.go",
+        "mocktikvstore.go",
         "redirector.go",
         "tikv.go",
         "unistore.go",
@@ -13,11 +14,15 @@ go_library(
     deps = [
         "//config",
         "//kv",
+        "//store/helper",
         "//store/mockstore/mockcopr",
         "//store/mockstore/mockstorage",
         "//store/mockstore/unistore",
+        "//tablecodec",
         "//testkit/testenv",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",

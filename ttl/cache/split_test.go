@@ -18,191 +18,19 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
 	"testing"
 
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client"
 )
-
-func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
-	leader := &metapb.Peer{
-		Id:      regionID,
-		StoreId: 1,
-		Role:    metapb.PeerRole_Voter,
-	}
-
-	return &pd.Region{
-		Meta: &metapb.Region{
-			Id:       regionID,
-			StartKey: startKey,
-			EndKey:   endKey,
-			Peers:    []*metapb.Peer{leader},
-		},
-		Leader: leader,
-	}
-}
-
-type mockPDClient struct {
-	t *testing.T
-	pd.Client
-	regions       []*pd.Region
-	regionsSorted bool
-}
-
-func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit int) ([]*pd.Region, error) {
-	if len(c.regions) == 0 {
-		return []*pd.Region{newMockRegion(1, []byte{}, []byte{0xFF, 0xFF})}, nil
-	}
-
-	if !c.regionsSorted {
-		sort.Slice(c.regions, func(i, j int) bool {
-			return kv.Key(c.regions[i].Meta.StartKey).Cmp(c.regions[j].Meta.StartKey) < 0
-		})
-		c.regionsSorted = true
-	}
-
-	regions := []*pd.Region{newMockRegion(1, []byte{}, c.regions[0].Meta.StartKey)}
-	regions = append(regions, c.regions...)
-	regions = append(regions, newMockRegion(2, c.regions[len(c.regions)-1].Meta.EndKey, []byte{0xFF, 0xFF, 0xFF}))
-
-	result := make([]*pd.Region, 0)
-	for _, r := range regions {
-		if kv.Key(r.Meta.StartKey).Cmp(endKey) >= 0 {
-			continue
-		}
-
-		if kv.Key(r.Meta.EndKey).Cmp(key) <= 0 {
-			continue
-		}
-
-		if len(result) >= limit {
-			break
-		}
-
-		result = append(result, r)
-	}
-	return result, nil
-}
-
-func (c *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Store, error) {
-	return &metapb.Store{
-		Id:      storeID,
-		Address: fmt.Sprintf("127.0.0.%d", storeID),
-	}, nil
-}
-
-type mockTiKVStore struct {
-	t *testing.T
-	helper.Storage
-	pdClient     *mockPDClient
-	cache        *tikv.RegionCache
-	nextRegionID uint64
-}
-
-func newMockTiKVStore(t *testing.T) *mockTiKVStore {
-	pdClient := &mockPDClient{t: t}
-	s := &mockTiKVStore{
-		t:            t,
-		pdClient:     pdClient,
-		cache:        tikv.NewRegionCache(pdClient),
-		nextRegionID: 1000,
-	}
-	s.refreshCache()
-	t.Cleanup(func() {
-		s.cache.Close()
-	})
-	return s
-}
-
-func (s *mockTiKVStore) addRegionBeginWithTablePrefix(tableID int64, handle kv.Handle) *mockTiKVStore {
-	start := tablecodec.GenTablePrefix(tableID)
-	end := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
-	return s.addRegion(start, end)
-}
-
-func (s *mockTiKVStore) addRegionEndWithTablePrefix(handle kv.Handle, tableID int64) *mockTiKVStore {
-	start := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
-	end := tablecodec.GenTablePrefix(tableID + 1)
-	return s.addRegion(start, end)
-}
-
-func (s *mockTiKVStore) addRegionWithTablePrefix(tableID int64, start kv.Handle, end kv.Handle) *mockTiKVStore {
-	startKey := tablecodec.EncodeRowKeyWithHandle(tableID, start)
-	endKey := tablecodec.EncodeRowKeyWithHandle(tableID, end)
-	return s.addRegion(startKey, endKey)
-}
-
-func (s *mockTiKVStore) addRegion(key, endKey []byte) *mockTiKVStore {
-	require.True(s.t, kv.Key(endKey).Cmp(key) > 0)
-	if len(s.pdClient.regions) > 0 {
-		lastRegion := s.pdClient.regions[len(s.pdClient.regions)-1]
-		require.True(s.t, kv.Key(endKey).Cmp(lastRegion.Meta.EndKey) >= 0)
-	}
-
-	regionID := s.nextRegionID
-	s.nextRegionID++
-	leader := &metapb.Peer{
-		Id:      regionID,
-		StoreId: 1,
-		Role:    metapb.PeerRole_Voter,
-	}
-
-	s.pdClient.regions = append(s.pdClient.regions, &pd.Region{
-		Meta: &metapb.Region{
-			Id:       regionID,
-			StartKey: key,
-			EndKey:   endKey,
-			Peers:    []*metapb.Peer{leader},
-		},
-		Leader: leader,
-	})
-
-	s.pdClient.regionsSorted = false
-	s.refreshCache()
-	return s
-}
-
-func (s *mockTiKVStore) refreshCache() {
-	_, err := s.cache.LoadRegionsInKeyRange(
-		tikv.NewBackofferWithVars(context.Background(), 1000, nil),
-		[]byte{},
-		[]byte{0xFF},
-	)
-	require.NoError(s.t, err)
-}
-
-func (s *mockTiKVStore) batchAddIntHandleRegions(tblID int64, regionCnt, regionSize int,
-	offset int64) (end kv.IntHandle) {
-	for i := 0; i < regionCnt; i++ {
-		start := kv.IntHandle(offset + int64(i*regionSize))
-		end = kv.IntHandle(start.IntValue() + int64(regionSize))
-		s.addRegionWithTablePrefix(tblID, start, end)
-	}
-	return
-}
-
-func (s *mockTiKVStore) clearRegions() {
-	s.pdClient.regions = nil
-	s.cache.Close()
-	s.cache = tikv.NewRegionCache(s.pdClient)
-	s.refreshCache()
-}
-
-func (s *mockTiKVStore) GetRegionCache() *tikv.RegionCache {
-	return s.cache
-}
 
 func bytesHandle(t *testing.T, data []byte) kv.Handle {
 	encoded, err := codec.EncodeKey(nil, nil, types.NewBytesDatum(data))
@@ -273,18 +101,18 @@ func TestSplitTTLScanRangesWithSignedInt(t *testing.T) {
 		create2PKTTLTable(t, tk, "t7", "tinyint"),
 	}
 
-	tikvStore := newMockTiKVStore(t)
+	tikvStore := mockstore.NewMockTiKVStore(t)
 	for _, tbl := range tbls {
 		// test only one region
-		tikvStore.clearRegions()
+		tikvStore.ClearRegions()
 		ranges, err := tbl.SplitScanRanges(context.TODO(), tikvStore, 4)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(ranges))
 		checkRange(t, ranges[0], types.Datum{}, types.Datum{})
 
 		// test share regions with other table
-		tikvStore.clearRegions()
-		tikvStore.addRegion(
+		tikvStore.ClearRegions()
+		tikvStore.AddRegion(
 			tablecodec.GenTablePrefix(tbl.ID-1),
 			tablecodec.GenTablePrefix(tbl.ID+1),
 		)
@@ -294,10 +122,10 @@ func TestSplitTTLScanRangesWithSignedInt(t *testing.T) {
 		checkRange(t, ranges[0], types.Datum{}, types.Datum{})
 
 		// test one table has multiple regions
-		tikvStore.clearRegions()
-		tikvStore.addRegionBeginWithTablePrefix(tbl.ID, kv.IntHandle(0))
-		end := tikvStore.batchAddIntHandleRegions(tbl.ID, 8, 100, 0)
-		tikvStore.addRegionEndWithTablePrefix(end, tbl.ID)
+		tikvStore.ClearRegions()
+		tikvStore.AddRegionBeginWithTablePrefix(tbl.ID, kv.IntHandle(0))
+		end := tikvStore.BatchAddIntHandleRegions(tbl.ID, 8, 100, 0)
+		tikvStore.AddRegionEndWithTablePrefix(end, tbl.ID)
 		ranges, err = tbl.SplitScanRanges(context.TODO(), tikvStore, 4)
 		require.NoError(t, err)
 		require.Equal(t, 4, len(ranges))
@@ -307,10 +135,10 @@ func TestSplitTTLScanRangesWithSignedInt(t *testing.T) {
 		checkRange(t, ranges[3], types.NewIntDatum(700), types.Datum{})
 
 		// test one table has multiple regions and one table region across 0
-		tikvStore.clearRegions()
-		tikvStore.addRegionBeginWithTablePrefix(tbl.ID, kv.IntHandle(-350))
-		end = tikvStore.batchAddIntHandleRegions(tbl.ID, 8, 100, -350)
-		tikvStore.addRegionEndWithTablePrefix(end, tbl.ID)
+		tikvStore.ClearRegions()
+		tikvStore.AddRegionBeginWithTablePrefix(tbl.ID, kv.IntHandle(-350))
+		end = tikvStore.BatchAddIntHandleRegions(tbl.ID, 8, 100, -350)
+		tikvStore.AddRegionEndWithTablePrefix(end, tbl.ID)
 		ranges, err = tbl.SplitScanRanges(context.TODO(), tikvStore, 5)
 		require.NoError(t, err)
 		require.Equal(t, 5, len(ranges))
@@ -335,18 +163,18 @@ func TestSplitTTLScanRangesWithUnsignedInt(t *testing.T) {
 		create2PKTTLTable(t, tk, "t6", "tinyint unsigned"),
 	}
 
-	tikvStore := newMockTiKVStore(t)
+	tikvStore := mockstore.NewMockTiKVStore(t)
 	for _, tbl := range tbls {
 		// test only one region
-		tikvStore.clearRegions()
+		tikvStore.ClearRegions()
 		ranges, err := tbl.SplitScanRanges(context.TODO(), tikvStore, 4)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(ranges))
 		checkRange(t, ranges[0], types.Datum{}, types.Datum{})
 
 		// test share regions with other table
-		tikvStore.clearRegions()
-		tikvStore.addRegion(
+		tikvStore.ClearRegions()
+		tikvStore.AddRegion(
 			tablecodec.GenTablePrefix(tbl.ID-1),
 			tablecodec.GenTablePrefix(tbl.ID+1),
 		)
@@ -356,10 +184,10 @@ func TestSplitTTLScanRangesWithUnsignedInt(t *testing.T) {
 		checkRange(t, ranges[0], types.Datum{}, types.Datum{})
 
 		// test one table has multiple regions: [MinInt64, a) [a, b) [b, 0) [0, c) [c, d) [d, MaxInt64]
-		tikvStore.clearRegions()
-		tikvStore.addRegionBeginWithTablePrefix(tbl.ID, kv.IntHandle(-200))
-		end := tikvStore.batchAddIntHandleRegions(tbl.ID, 4, 100, -200)
-		tikvStore.addRegionEndWithTablePrefix(end, tbl.ID)
+		tikvStore.ClearRegions()
+		tikvStore.AddRegionBeginWithTablePrefix(tbl.ID, kv.IntHandle(-200))
+		end := tikvStore.BatchAddIntHandleRegions(tbl.ID, 4, 100, -200)
+		tikvStore.AddRegionEndWithTablePrefix(end, tbl.ID)
 		ranges, err = tbl.SplitScanRanges(context.TODO(), tikvStore, 6)
 		require.NoError(t, err)
 		require.Equal(t, 6, len(ranges))
@@ -377,10 +205,10 @@ func TestSplitTTLScanRangesWithUnsignedInt(t *testing.T) {
 			types.NewUintDatum(200), types.NewUintDatum(uint64(math.MaxInt64)+1))
 
 		// test one table has multiple regions: [MinInt64, a) [a, b) [b, c) [c, d) [d, MaxInt64], b < 0 < c
-		tikvStore.clearRegions()
-		tikvStore.addRegionBeginWithTablePrefix(tbl.ID, kv.IntHandle(-150))
-		end = tikvStore.batchAddIntHandleRegions(tbl.ID, 3, 100, -150)
-		tikvStore.addRegionEndWithTablePrefix(end, tbl.ID)
+		tikvStore.ClearRegions()
+		tikvStore.AddRegionBeginWithTablePrefix(tbl.ID, kv.IntHandle(-150))
+		end = tikvStore.BatchAddIntHandleRegions(tbl.ID, 3, 100, -150)
+		tikvStore.AddRegionEndWithTablePrefix(end, tbl.ID)
 		ranges, err = tbl.SplitScanRanges(context.TODO(), tikvStore, 5)
 		require.NoError(t, err)
 		require.Equal(t, 6, len(ranges))
@@ -411,18 +239,18 @@ func TestSplitTTLScanRangesWithBytes(t *testing.T) {
 		create2PKTTLTable(t, tk, "t5", "binary(32)"),
 	}
 
-	tikvStore := newMockTiKVStore(t)
+	tikvStore := mockstore.NewMockTiKVStore(t)
 	for _, tbl := range tbls {
 		// test only one region
-		tikvStore.clearRegions()
+		tikvStore.ClearRegions()
 		ranges, err := tbl.SplitScanRanges(context.TODO(), tikvStore, 4)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(ranges))
 		checkRange(t, ranges[0], types.Datum{}, types.Datum{})
 
 		// test share regions with other table
-		tikvStore.clearRegions()
-		tikvStore.addRegion(
+		tikvStore.ClearRegions()
+		tikvStore.AddRegion(
 			tablecodec.GenTablePrefix(tbl.ID-1),
 			tablecodec.GenTablePrefix(tbl.ID+1),
 		)
@@ -432,17 +260,17 @@ func TestSplitTTLScanRangesWithBytes(t *testing.T) {
 		checkRange(t, ranges[0], types.Datum{}, types.Datum{})
 
 		// test one table has multiple regions
-		tikvStore.clearRegions()
-		tikvStore.addRegionBeginWithTablePrefix(tbl.ID, bytesHandle(t, []byte{1, 2, 3}))
-		tikvStore.addRegionWithTablePrefix(
+		tikvStore.ClearRegions()
+		tikvStore.AddRegionBeginWithTablePrefix(tbl.ID, bytesHandle(t, []byte{1, 2, 3}))
+		tikvStore.AddRegionWithTablePrefix(
 			tbl.ID, bytesHandle(t, []byte{1, 2, 3}), bytesHandle(t, []byte{1, 2, 3, 4}))
-		tikvStore.addRegionWithTablePrefix(
+		tikvStore.AddRegionWithTablePrefix(
 			tbl.ID, bytesHandle(t, []byte{1, 2, 3, 4}), bytesHandle(t, []byte{1, 2, 3, 4, 5}))
-		tikvStore.addRegionWithTablePrefix(
+		tikvStore.AddRegionWithTablePrefix(
 			tbl.ID, bytesHandle(t, []byte{1, 2, 3, 4, 5}), bytesHandle(t, []byte{1, 2, 4}))
-		tikvStore.addRegionWithTablePrefix(
+		tikvStore.AddRegionWithTablePrefix(
 			tbl.ID, bytesHandle(t, []byte{1, 2, 4}), bytesHandle(t, []byte{1, 2, 5}))
-		tikvStore.addRegionEndWithTablePrefix(bytesHandle(t, []byte{1, 2, 5}), tbl.ID)
+		tikvStore.AddRegionEndWithTablePrefix(bytesHandle(t, []byte{1, 2, 5}), tbl.ID)
 		ranges, err = tbl.SplitScanRanges(context.TODO(), tikvStore, 4)
 		require.NoError(t, err)
 		require.Equal(t, 4, len(ranges))
@@ -464,18 +292,18 @@ func TestNoTTLSplitSupportTables(t *testing.T) {
 		create2PKTTLTable(t, tk, "t5", "char(32)  CHARACTER SET UTF8MB4"),
 	}
 
-	tikvStore := newMockTiKVStore(t)
+	tikvStore := mockstore.NewMockTiKVStore(t)
 	for _, tbl := range tbls {
 		// test only one region
-		tikvStore.clearRegions()
+		tikvStore.ClearRegions()
 		ranges, err := tbl.SplitScanRanges(context.TODO(), tikvStore, 4)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(ranges))
 		checkRange(t, ranges[0], types.Datum{}, types.Datum{})
 
 		// test share regions with other table
-		tikvStore.clearRegions()
-		tikvStore.addRegion(
+		tikvStore.ClearRegions()
+		tikvStore.AddRegion(
 			tablecodec.GenTablePrefix(tbl.ID-1),
 			tablecodec.GenTablePrefix(tbl.ID+1),
 		)
@@ -485,10 +313,10 @@ func TestNoTTLSplitSupportTables(t *testing.T) {
 		checkRange(t, ranges[0], types.Datum{}, types.Datum{})
 
 		// test one table has multiple regions
-		tikvStore.clearRegions()
-		tikvStore.addRegionBeginWithTablePrefix(tbl.ID, bytesHandle(t, []byte{1, 2, 3}))
-		tikvStore.addRegionWithTablePrefix(tbl.ID, bytesHandle(t, []byte{1, 2, 3}), bytesHandle(t, []byte{1, 2, 3, 4}))
-		tikvStore.addRegionEndWithTablePrefix(bytesHandle(t, []byte{1, 2, 3, 4}), tbl.ID)
+		tikvStore.ClearRegions()
+		tikvStore.AddRegionBeginWithTablePrefix(tbl.ID, bytesHandle(t, []byte{1, 2, 3}))
+		tikvStore.AddRegionWithTablePrefix(tbl.ID, bytesHandle(t, []byte{1, 2, 3}), bytesHandle(t, []byte{1, 2, 3, 4}))
+		tikvStore.AddRegionEndWithTablePrefix(bytesHandle(t, []byte{1, 2, 3, 4}), tbl.ID)
 		ranges, err = tbl.SplitScanRanges(context.TODO(), tikvStore, 3)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(ranges))
