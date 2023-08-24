@@ -15,14 +15,15 @@
 package cardinality
 
 import (
+	"math"
+	"testing"
+
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
-	"math"
-	"testing"
 )
 
 func TestPseudoTable(t *testing.T) {
