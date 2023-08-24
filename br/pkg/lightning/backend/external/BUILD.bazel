@@ -57,6 +57,7 @@ go_test(
         "//br/pkg/lightning/backend/local",
         "//br/pkg/lightning/common",
         "//br/pkg/storage",
+        "//kv",
         "//util/codec",
         "@com_github_cockroachdb_pebble//:pebble",
         "@com_github_pingcap_errors//:errors",

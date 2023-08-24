@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -805,7 +804,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 	counter := make(map[hack.MutableString]float64)
 	// datumMap is used to store the mapping from the string type to datum type.
 	// The datum is used to find the value in the histogram.
-	datumMap := make(map[hack.MutableString]types.Datum)
+	datumMap := newDatumMapCache()
 	for i, topN := range topNs {
 		if atomic.LoadUint32(killed) == 1 {
 			return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
@@ -832,29 +831,12 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 					continue
 				}
 				// Get the encodedVal from the hists[j]
-				datum, exists := datumMap[encodedVal]
+				datum, exists := datumMap.Get(encodedVal)
 				if !exists {
-					// If the datumMap does not have the encodedVal datum,
-					// we should generate the datum based on the encoded value.
-					// This part is copied from the function MergePartitionHist2GlobalHist.
-					var d types.Datum
-					if isIndex {
-						d.SetBytes(val.Encoded)
-					} else {
-						var err error
-						if types.IsTypeTime(hists[0].Tp.GetType()) {
-							// Handle date time values specially since they are encoded to int and we'll get int values if using DecodeOne.
-							_, d, err = codec.DecodeAsDateTime(val.Encoded, hists[0].Tp.GetType(), loc)
-						} else if types.IsTypeFloat(hists[0].Tp.GetType()) {
-							_, d, err = codec.DecodeAsFloat32(val.Encoded, hists[0].Tp.GetType())
-						} else {
-							_, d, err = codec.DecodeOne(val.Encoded)
-						}
-						if err != nil {
-							return nil, nil, nil, err
-						}
+					d, err := datumMap.Put(val, encodedVal, hists[0].Tp.GetType(), isIndex, loc)
+					if err != nil {
+						return nil, nil, nil, err
 					}
-					datumMap[encodedVal] = d
 					datum = d
 				}
 				// Get the row count which the value is equal to the encodedVal from histogram.
