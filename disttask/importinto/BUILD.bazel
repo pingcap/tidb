@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "dispatcher.go",
         "job.go",
+        "planner.go",
         "proto.go",
         "scheduler.go",
         "subtask_executor.go",
@@ -24,6 +25,7 @@ go_library(
         "//br/pkg/utils",
         "//disttask/framework/dispatcher",
         "//disttask/framework/handle",
+        "//disttask/framework/planner",
         "//disttask/framework/proto",
         "//disttask/framework/scheduler",
         "//disttask/framework/storage",

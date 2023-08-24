@@ -1,0 +1,100 @@
+// Copyright 2023 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package planner
+
+import (
+	"context"
+)
+
+// PlanCtx is the context for planning.
+type PlanCtx struct {
+	Ctx context.Context
+	// PreviousSubtaskMetas is a list of subtask metas from previous step.
+	// We can remove this field if we find a better way to pass the result between steps.
+	PreviousSubtaskMetas [][]byte
+}
+
+// LogicalPlan represents a logical plan in distribute framework.
+// A normal flow of distribute framework is: logical plan -> physical plan -> operators.
+// To integrate with current distribute framework, the flow becomes:
+// logical plan -> task meta -> physical plan -> subtaskmetas -> operators.
+type LogicalPlan interface {
+	ToTaskMeta() ([]byte, error)
+	FromTaskMeta([]byte) error
+	ToPhysicalPlan(PlanCtx) (*PhysicalPlan, error)
+}
+
+// PhysicalPlan is a DAG of processors in distribute framework.
+type PhysicalPlan struct {
+	Processors []ProcessorSpec
+}
+
+// AddProcessor adds a node to the DAG.
+func (p *PhysicalPlan) AddProcessor(processor ProcessorSpec) {
+	p.Processors = append(p.Processors, processor)
+}
+
+// ToSubtaskMetas converts the physical plan to a list of subtask metas.
+func (p *PhysicalPlan) ToSubtaskMetas(ctx PlanCtx, step int64) ([][]byte, error) {
+	subtaskMetas := make([][]byte, 0, len(p.Processors))
+	for _, processor := range p.Processors {
+		if processor.Step != step {
+			continue
+		}
+		subtaskMeta, err := processor.Operator.ToSubtaskMeta(ctx)
+		if err != nil {
+			return nil, err
+		}
+		subtaskMetas = append(subtaskMetas, subtaskMeta)
+	}
+	return subtaskMetas, nil
+}
+
+// ProcessorSpec is the specification of a processor.
+// A processor is a node in the DAG.
+// It contains input streams from other processors, as well as output streams to other processors.
+// It also contains an operator which is the actual logic of the processor.
+type ProcessorSpec struct {
+	ID       int
+	Input    InputSpec
+	Operator OperatorSpec
+	Output   OutputSpec
+	// We can remove this field if we find a better way to pass the result between steps.
+	Step int64
+}
+
+// InputSpec is the specification of an input.
+type InputSpec struct {
+	ColumnTypes []byte
+	Streams     []StreamSpec
+}
+
+// OutputSpec is the specification of an output.
+type OutputSpec struct {
+	Streams []StreamSpec
+}
+
+// StreamSpec is the specification of a stream.
+type StreamSpec struct {
+	ProcessorID int
+	// Support endpoint for communication between processors.
+	// Endpoint string
+}
+
+// OperatorSpec is the specification of an operator.
+type OperatorSpec interface {
+	// ToSubtaskMeta converts the operator to a subtask meta
+	ToSubtaskMeta(PlanCtx) ([]byte, error)
+}
