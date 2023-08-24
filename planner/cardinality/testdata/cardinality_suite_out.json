@@ -2301,7 +2301,7 @@
                     "TopN total count": 0
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*HistColl).getIndexRowCount": [
+                    "github.com/pingcap/tidb/statistics.(*HistColl).GetIndexRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2514,7 +2514,7 @@
                     "TopN total count": 0
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*HistColl).getIndexRowCount": [
+                    "github.com/pingcap/tidb/statistics.(*HistColl).GetIndexRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -3345,7 +3345,7 @@
                     "TopN total count": 0
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*HistColl).getIndexRowCount": [
+                    "github.com/pingcap/tidb/statistics.(*HistColl).GetIndexRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -3496,7 +3496,7 @@
                     "TopN total count": 0
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*HistColl).getIndexRowCount": [
+                    "github.com/pingcap/tidb/statistics.(*HistColl).GetIndexRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
