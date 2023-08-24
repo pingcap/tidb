@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -36,6 +35,8 @@ type LFU struct {
 	cost         atomic.Int64
 	closeOnce    sync.Once
 }
+
+var testMode = false
 
 // NewLFU creates a new LFU cache.
 func NewLFU(totalMemCost int64) (*LFU, error) {
@@ -57,8 +58,8 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 		OnEvict:            result.onEvict,
 		OnExit:             result.onExit,
 		OnReject:           result.onReject,
-		IgnoreInternalCost: intest.InTest,
-		Metrics:            intest.InTest,
+		IgnoreInternalCost: testMode,
+		Metrics:            testMode,
 	})
 	if err != nil {
 		return nil, err
