@@ -2830,10 +2830,7 @@ func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
 		if c := cmp.Compare(i.GetMaxTs(), j.GetMaxTs()); c != 0 {
 			return c
 		}
-		if c := cmp.Compare(i.GetResolvedTs(), j.GetResolvedTs()); c != 0 {
-			return c
-		}
-		return 0
+		return cmp.Compare(i.GetResolvedTs(), j.GetResolvedTs())
 	})
 	return files
 }
