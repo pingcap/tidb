@@ -273,15 +273,6 @@ func (c *Column) AvgColSizeListInDisk(count int64) float64 {
 	return math.Round((avgSize-math.Log2(avgSize))*100) / 100
 }
 
-// BetweenRowCount estimates the row count for interval [l, r).
-func (c *Column) BetweenRowCount(sctx sessionctx.Context, l, r types.Datum, lowEncoded, highEncoded []byte) float64 {
-	histBetweenCnt := c.Histogram.BetweenRowCount(sctx, l, r)
-	if c.StatsVer <= Version1 {
-		return histBetweenCnt
-	}
-	return float64(c.TopN.BetweenCount(sctx, lowEncoded, highEncoded)) + histBetweenCnt
-}
-
 // StatusToString gets the string info of StatsLoadedStatus
 func (s StatsLoadedStatus) StatusToString() string {
 	if !s.statsInitialized {

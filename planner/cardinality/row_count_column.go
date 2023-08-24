@@ -266,7 +266,7 @@ func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*
 		}
 
 		// case 3: it's an interval
-		cnt := c.BetweenRowCount(sctx, lowVal, highVal, lowEncoded, highEncoded)
+		cnt := columnBetweenRowCount(sctx, c, lowVal, highVal, lowEncoded, highEncoded)
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boundaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
 		//   where null is the lower bound.
@@ -325,7 +325,7 @@ func ColumnBetweenRowCount(sctx sessionctx.Context, t *statistics.Table, a, b ty
 	if err != nil {
 		return 0, err
 	}
-	count := c.BetweenRowCount(sctx, a, b, aEncoded, bEncoded)
+	count := columnBetweenRowCount(sctx, c, a, b, aEncoded, bEncoded)
 	if a.IsNull() {
 		count += float64(c.NullCount)
 	}
@@ -348,4 +348,13 @@ func ColumnGreaterRowCount(sctx sessionctx.Context, t *statistics.Table, value t
 		return float64(t.RealtimeCount) / pseudoLessRate
 	}
 	return c.GreaterRowCount(value) * c.GetIncreaseFactor(t.RealtimeCount)
+}
+
+// columnBetweenRowCount estimates the row count for interval [l, r).
+func columnBetweenRowCount(sctx sessionctx.Context, c *statistics.Column, l, r types.Datum, lowEncoded, highEncoded []byte) float64 {
+	histBetweenCnt := c.Histogram.BetweenRowCount(sctx, l, r)
+	if c.StatsVer <= statistics.Version1 {
+		return histBetweenCnt
+	}
+	return float64(c.TopN.BetweenCount(sctx, lowEncoded, highEncoded)) + histBetweenCnt
 }

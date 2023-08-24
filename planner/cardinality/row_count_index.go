@@ -609,3 +609,13 @@ func indexEqualRowCount(sctx sessionctx.Context, idx *statistics.Index, b []byte
 	}
 	return idx.Histogram.NotNullCount() / histNDV
 }
+
+// IndexBetweenRowCount estimates the row count for interval [l, r).
+// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+func IndexBetweenRowCount(sctx sessionctx.Context, idx *statistics.Index, l, r types.Datum) float64 {
+	histBetweenCnt := idx.Histogram.BetweenRowCount(sctx, l, r)
+	if idx.StatsVer == statistics.Version1 {
+		return histBetweenCnt
+	}
+	return float64(idx.TopN.BetweenCount(sctx, l.GetBytes(), r.GetBytes())) + histBetweenCnt
+}

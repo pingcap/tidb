@@ -205,16 +205,6 @@ func (idx *Index) GetIncreaseFactor(realtimeRowCount int64) float64 {
 	return float64(realtimeRowCount) / columnCount
 }
 
-// BetweenRowCount estimates the row count for interval [l, r).
-// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (idx *Index) BetweenRowCount(sctx sessionctx.Context, l, r types.Datum) float64 {
-	histBetweenCnt := idx.Histogram.BetweenRowCount(sctx, l, r)
-	if idx.StatsVer == Version1 {
-		return histBetweenCnt
-	}
-	return float64(idx.TopN.BetweenCount(sctx, l.GetBytes(), r.GetBytes())) + histBetweenCnt
-}
-
 // matchPrefix checks whether ad is the prefix of value
 func matchPrefix(row chunk.Row, colIdx int, ad *types.Datum) bool {
 	switch ad.Kind() {
