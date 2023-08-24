@@ -132,7 +132,7 @@ func CleanUpFiles(ctx context.Context,
 		return err
 	}
 
-	eg, _ := errgroup.WithContext(context.Background())
+	eg, _ := errgroup.WithContext(ctx)
 	workerPool := utils.NewWorkerPool(concurrency, "delete global sort files")
 	for i := range dataNames {
 		data := dataNames[i]
