@@ -411,6 +411,7 @@
       "planner/core/": "ignore core code",
       "planner/optimize.go": "ignore optimize code",
       "planner/cascades/": "ignore cascades code",
+      "planner/cardinality/": "ignore cardinality code",
       "planner/funcdep/extract_fd_test.go": "ignore extract_fd code",
       "planner/funcdep/only_full_group_by_test.go": "ignore only_full_group_by code",
       "dumpling/export": "ignore export code",
