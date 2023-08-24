@@ -52,6 +52,38 @@ import (
 
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult
 
+type parallelHashAggSpillHelper struct {
+	lock             sync.Mutex
+	spilledFiles     [][]string
+	isSpillTriggered bool
+
+	// Final worker will decrease this var after reading it
+	partitionNeedRestore int
+}
+
+func (p *parallelHashAggSpillHelper) addSpillFile(partitionNum int, fileName string) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	p.isSpillTriggered = true
+	p.spilledFiles[partitionNum] = append(p.spilledFiles[partitionNum], fileName)
+}
+
+func (p *parallelHashAggSpillHelper) getSpillFiles(partitionNum int) []string {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	if len(p.spilledFiles[partitionNum]) == 0 {
+		return make([]string, 0)
+	}
+
+	return p.spilledFiles[partitionNum]
+}
+
+func (p *parallelHashAggSpillHelper) isInSpillMode() bool {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	return p.isSpillTriggered
+}
+
 // baseHashAggWorker stores the common attributes of HashAggFinalWorker and HashAggPartialWorker.
 // nolint:structcheck
 type baseHashAggWorker struct {
@@ -78,6 +110,56 @@ func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggF
 	return baseWorker
 }
 
+// Exist is split into three stage: 1. wait running workers 2. do something 3. wait alive workers
+//
+//	Stage 1. decrease one running partial worker number and wait for the existence of the rest of workers
+//	Stage 2. do something
+//	Stage 3. check if we need to enter spill mode, descrease one alive partial worker number and notify final worker to execute
+type partialWorkerSync struct {
+	lock                  sync.Mutex
+	totalFinalWorkerNum   int
+	totalPartialWorkerNum int
+	runningWorkerNum      int
+	aliveWorkerNum        int
+
+	// The last running partial worker will send msg to this channel
+	// so that the waiting workers can step to the next stage.
+	partialWorkDoneNotifier chan struct{}
+
+	// The last alive partial worker will send msg to this channel
+	// so that the final workers will start their tasks.
+	partialAndFinalNotifier chan struct{}
+}
+
+func (p *partialWorkerSync) waitForRunningWorkers() {
+	p.lock.Lock()
+	p.runningWorkerNum--
+	isTheLastWorker := (p.runningWorkerNum == 0)
+	p.lock.Unlock()
+
+	if isTheLastWorker {
+		// sendNum starts from 1 as it should not send to itself
+		for sendNum := 1; sendNum < p.totalPartialWorkerNum; sendNum++ {
+			p.partialWorkDoneNotifier <- struct{}{}
+		}
+	} else {
+		<-p.partialAndFinalNotifier
+	}
+}
+
+func (p *partialWorkerSync) waitForExitOfAliveWorkers() {
+	p.lock.Lock()
+	p.aliveWorkerNum--
+	isTheLastWorker := (p.aliveWorkerNum == 0)
+	p.lock.Unlock()
+
+	if isTheLastWorker {
+		for sendNum := 0; sendNum < p.totalFinalWorkerNum; sendNum++ {
+			p.partialAndFinalNotifier <- struct{}{}
+		}
+	}
+}
+
 // HashAggPartialWorker indicates the partial workers of parallel hash agg execution,
 // the number of the worker can be set by `tidb_hashagg_partial_concurrency`.
 type HashAggPartialWorker struct {
@@ -97,6 +179,10 @@ type HashAggPartialWorker struct {
 	// chk stores the input data from child,
 	// and is reused by childExec and partial worker.
 	chk *chunk.Chunk
+
+	isDataSpilled bool
+	workerSync    *partialWorkerSync
+	spillHelper   *parallelHashAggSpillHelper
 }
 
 // HashAggFinalWorker indicates the final workers of parallel hash agg execution,
@@ -112,6 +198,11 @@ type HashAggFinalWorker struct {
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
 	groupKeys           [][]byte
+
+	// It means that all partial workers have be finished when we receive data from this chan
+	partialAndFinalNotifier chan struct{}
+
+	spillHelper *parallelHashAggSpillHelper
 }
 
 // AfFinalResult indicates aggregation functions final result.
@@ -472,19 +563,30 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.globalOutputCh, r)
 		}
-		if needShuffle {
+
+		w.workerSync.waitForRunningWorkers()
+
+		if w.spillHelper.isInSpillMode() {
+			// Do not put w.spillHelper.needSpill() and !w.isDataSpilled judgement in one line
+			if !w.isDataSpilled {
+				// TODO do spill
+			}
+		} else if needShuffle {
 			w.shuffleIntermData(sc, finalConcurrency)
 		}
+
+		w.workerSync.waitForExitOfAliveWorkers()
+
 		w.memTracker.Consume(-w.chk.MemoryUsage())
 		if w.stats != nil {
 			w.stats.WorkerTime += int64(time.Since(start))
 		}
 		waitGroup.Done()
 	}()
+
 	for {
 		waitStart := time.Now()
 		ok := w.getChildInput()
-		// TODO check if we need to enter spill mode
 		if w.stats != nil {
 			w.stats.WaitTime += int64(time.Since(waitStart))
 		}
@@ -555,8 +657,6 @@ func (w *HashAggPartialWorker) shuffleIntermData(_ *stmtctx.StatementContext, fi
 		}
 		groupKeysSlice[finalWorkerIdx] = append(groupKeysSlice[finalWorkerIdx], groupKey)
 	}
-
-	// TODO tell the final worker to start spill mode when we spill the data
 
 	for i := range groupKeysSlice {
 		if groupKeysSlice[i] == nil {
@@ -788,10 +888,20 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 		}
 		waitGroup.Done()
 	}()
-	if err := w.consumeIntermData(ctx); err != nil {
-		w.outputCh <- &AfFinalResult{err: err}
+
+	// Wait for the finish of all partial workers
+	<-w.partialAndFinalNotifier
+
+	if w.spillHelper.isInSpillMode() {
+		// TODO restore data
+	} else {
+		// TODO research more
+		if err := w.consumeIntermData(ctx); err != nil {
+			w.outputCh <- &AfFinalResult{err: err}
+		}
+		w.loadFinalResult(ctx)
+		// TODO Above codes should be changed
 	}
-	w.loadFinalResult(ctx)
 }
 
 // Next implements the Executor Next interface.
