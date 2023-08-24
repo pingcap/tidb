@@ -175,14 +175,17 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 		if err2 != nil {
 			return err2
 		}
-		task := TaskMeta{
+
+		// TODO: use planner.Run to run the logical plan
+		// now creating import job and submitting distributed task should be in the same transaction.
+		logicalPlan := &LogicalPlan{
 			JobID:             jobID,
 			Plan:              *plan,
 			Stmt:              ti.stmt,
 			EligibleInstances: instances,
 			ChunkMap:          ti.chunkMap,
 		}
-		taskMeta, err2 := json.Marshal(task)
+		taskMeta, err2 := logicalPlan.ToTaskMeta()
 		if err2 != nil {
 			return err2
 		}

@@ -16,11 +16,20 @@ package planner
 
 import (
 	"context"
+
+	"github.com/pingcap/tidb/sessionctx"
 )
 
 // PlanCtx is the context for planning.
 type PlanCtx struct {
 	Ctx context.Context
+
+	// integrate with current distribute framework
+	SessionCtx sessionctx.Context
+	TaskKey    string
+	TaskType   string
+	ThreadCnt  int
+
 	// PreviousSubtaskMetas is a list of subtask metas from previous step.
 	// We can remove this field if we find a better way to pass the result between steps.
 	PreviousSubtaskMetas [][]byte

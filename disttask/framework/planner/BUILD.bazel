@@ -2,7 +2,14 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "planner",
-    srcs = ["plan.go"],
+    srcs = [
+        "plan.go",
+        "planner.go",
+    ],
     importpath = "github.com/pingcap/tidb/disttask/framework/planner",
     visibility = ["//visibility:public"],
+    deps = [
+        "//disttask/framework/storage",
+        "//sessionctx",
+    ],
 )
