@@ -257,9 +257,12 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
 	dom.Close()
+	startUpgrade(store, session.CurrentBootstrapVersion-1)
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
+
+	finishUpgrade(store)
 
 	seLatestV := session.CreateSessionAndSetID(t, store)
 	ver, err = session.GetBootstrapVersion(seLatestV)
@@ -383,6 +386,7 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	<-ch
 	dom.Close()
 	// Make sure upgrade is successful.
+	startUpgrade(store, session.CurrentBootstrapVersion-1)
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -390,6 +394,8 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	ver, err = session.GetBootstrapVersion(seLatestV)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+	finishUpgrade(store)
 
 	// Resume the DDL job, then add index operation can be executed successfully.
 	session.MustExec(t, seLatestV, fmt.Sprintf("admin resume ddl jobs %d", jobID))
@@ -465,6 +471,7 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	<-ch
 	dom.Close()
 	// Make sure upgrade is successful.
+	startUpgrade(store, session.CurrentBootstrapVersion-1)
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -472,6 +479,8 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	ver, err = session.GetBootstrapVersion(seLatestV)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion+1, ver)
+
+	finishUpgrade(store)
 
 	checkDDLJobExecSucc(t, seLatestV, jobID)
 }
@@ -551,6 +560,7 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 	<-ch
 	dom.Close()
 	// Make sure upgrade is successful.
+	startUpgrade(store, session.CurrentBootstrapVersion-1)
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -563,6 +573,7 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
 
 	wg.Wait()
+	finishUpgrade(store)
 	require.Equal(t, 3, times)
 	// Make sure the second add index operation is successful.
 	sql := fmt.Sprintf("select job_meta from mysql.tidb_ddl_history where job_id=%d or job_id=%d order by job_id", jobID, jobID+1)
@@ -601,6 +612,20 @@ func execute(ctx context.Context, s sessionctx.Context, query string) ([]chunk.R
 		return nil, errors.Trace(err)
 	}
 	return rows, nil
+}
+
+func startUpgrade(store kv.Storage, currVer int64) {
+	// It's used for compatible tests upgraded from previous versions of SupportUpgradeHTTPOpVer.
+	if currVer < session.SupportUpgradeHTTPOpVer {
+		return
+	}
+	upgradeHandler := handler.NewClusterUpgradeHandler(store)
+	upgradeHandler.StartUpgrade()
+}
+
+func finishUpgrade(store kv.Storage) {
+	upgradeHandler := handler.NewClusterUpgradeHandler(store)
+	upgradeHandler.FinishUpgrade()
 }
 
 // TestUpgradeWithPauseDDL adds a user and a system DB's DDL operations, before every test bootstrap(DDL operation). It tests:
@@ -714,6 +739,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
 	dom.Close()
+	startUpgrade(store, session.CurrentBootstrapVersion-1)
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -724,6 +750,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	require.Equal(t, session.CurrentBootstrapVersion+1, ver)
 
 	wg.Wait()
+	finishUpgrade(store)
 
 	tk := testkit.NewTestKit(t, store)
 	var rows []chunk.Row
