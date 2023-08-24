@@ -71,7 +71,7 @@ func Selectivity(
 	if len(exprs) > 63 || (len(coll.Columns) == 0 && len(coll.Indices) == 0) {
 		ret = pseudoSelectivity(coll, exprs)
 		if sc.EnableOptimizerCETrace {
-			CETraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression",
+			ceTraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression",
 				expression.ComposeCNFCondition(ctx, exprs...), ret*float64(coll.RealtimeCount))
 		}
 		return ret, nil, nil
@@ -150,7 +150,7 @@ func Selectivity(
 	slices.Sort(idxIDs)
 	for _, id := range idxIDs {
 		idxStats := coll.Indices[id]
-		idxCols := FindPrefixOfIndexByCol(extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
+		idxCols := findPrefixOfIndexByCol(extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
 			for i := 0; i < len(idxCols) && i < len(idxStats.Info.Columns); i++ {
@@ -206,7 +206,7 @@ func Selectivity(
 				}
 			}
 			expr := expression.ComposeCNFCondition(ctx, curExpr...)
-			CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.RealtimeCount))
+			ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.RealtimeCount))
 		} else if sc.EnableOptimizerDebugTrace {
 			var strs []string
 			for i := range remainedExprs {
@@ -329,7 +329,7 @@ OUTER:
 		}
 		if sc.EnableOptimizerCETrace {
 			// Tracing for the expression estimation results of this DNF.
-			CETraceExpr(ctx, tableID, "Table Stats-Expression-DNF", scalarCond, selectivity*float64(coll.RealtimeCount))
+			ceTraceExpr(ctx, tableID, "Table Stats-Expression-DNF", scalarCond, selectivity*float64(coll.RealtimeCount))
 		} else if sc.EnableOptimizerDebugTrace {
 			debugtrace.RecordAnyValuesWithNames(ctx, "Expression", remainedExprStrs[i], "Selectivity", selectivity)
 		}
@@ -343,7 +343,7 @@ OUTER:
 			// Tracing for the expression estimation results after applying the DNF estimation result.
 			curExpr = append(curExpr, remainedExprs[i])
 			expr := expression.ComposeCNFCondition(ctx, curExpr...)
-			CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.RealtimeCount))
+			ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.RealtimeCount))
 		}
 	}
 
@@ -405,7 +405,7 @@ OUTER:
 	if sc.EnableOptimizerCETrace {
 		// Tracing for the expression estimation results after applying the default selectivity.
 		totalExpr := expression.ComposeCNFCondition(ctx, remainedExprs...)
-		CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.RealtimeCount))
+		ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.RealtimeCount))
 	}
 	return ret, nodes, nil
 }
@@ -548,9 +548,9 @@ func isColEqCorCol(filter expression.Expression) *expression.Column {
 	return nil
 }
 
-// FindPrefixOfIndexByCol will find columns in index by checking the unique id or the virtual expression.
+// findPrefixOfIndexByCol will find columns in index by checking the unique id or the virtual expression.
 // So it will return at once no matching column is found.
-func FindPrefixOfIndexByCol(cols []*expression.Column, idxColIDs []int64,
+func findPrefixOfIndexByCol(cols []*expression.Column, idxColIDs []int64,
 	cachedPath *planutil.AccessPath) []*expression.Column {
 	if cachedPath != nil {
 		idxCols := cachedPath.IdxCols
