@@ -16,7 +16,6 @@ package handletest
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/planner/cardinality"
 	"math"
 	"strconv"
 	"strings"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
