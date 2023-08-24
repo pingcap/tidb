@@ -12,7 +12,6 @@ go_test(
     race = "on",
     shard_count = 17,
     deps = [
-        "//config",
         "//domain",
         "//executor",
         "//parser/model",
