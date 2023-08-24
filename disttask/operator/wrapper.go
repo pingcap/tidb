@@ -15,6 +15,7 @@
 package operator
 
 import (
+	"context"
 	"fmt"
 
 	"golang.org/x/sync/errgroup"
@@ -46,7 +47,7 @@ func (s *simpleSource[T]) Open() error {
 	return nil
 }
 
-func (s *simpleSource[T]) Close(_ bool) error {
+func (s *simpleSource[T]) Close() error {
 	return s.errGroup.Wait()
 }
 
@@ -83,7 +84,7 @@ func (s *simpleSink[R]) Open() error {
 	return nil
 }
 
-func (s *simpleSink[R]) Close(_ bool) error {
+func (s *simpleSink[R]) Close() error {
 	return s.errGroup.Wait()
 }
 
@@ -104,7 +105,7 @@ func (s *simpleOperator[T, R]) String() string {
 }
 
 func newSimpleOperator[T, R any](transform func(task T) R, concurrency int) *simpleOperator[T, R] {
-	asyncOp := NewAsyncOperatorWithTransform("simple", concurrency, transform)
+	asyncOp := NewAsyncOperatorWithTransform(context.Background(), "simple", concurrency, transform)
 	return &simpleOperator[T, R]{
 		AsyncOperator: asyncOp,
 	}

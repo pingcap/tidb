@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -29,15 +30,28 @@ import (
 	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
 var (
-	_ operator.Operator = (*tableScanTaskSource)(nil)
-	_ operator.Operator = (*tableScanOperator)(nil)
+	_ operator.Operator                = (*tableScanTaskSource)(nil)
+	_ operator.WithSink[tableScanTask] = (*tableScanTaskSource)(nil)
+
+	_ operator.WithSource[tableScanTask] = (*tableScanOperator)(nil)
+	_ operator.Operator                  = (*tableScanOperator)(nil)
+	_ operator.WithSink[idxRecResult]    = (*tableScanOperator)(nil)
+
+	_ operator.WithSource[idxRecResult] = (*indexIngestOperator)(nil)
+	_ operator.Operator                 = (*indexIngestOperator)(nil)
+	_ operator.WithSink[backfillResult] = (*indexIngestOperator)(nil)
+
+	_ operator.WithSource[backfillResult] = (*backfillResultSink)(nil)
+	_ operator.Operator                   = (*backfillResultSink)(nil)
 )
 
 type tableScanTask struct {
@@ -59,8 +73,7 @@ type idxRecResult struct {
 }
 
 type tableScanTaskSource struct {
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx context.Context
 
 	errGroup errgroup.Group
 	sink     operator.DataChannel[tableScanTask]
@@ -80,10 +93,8 @@ func newTableScanTaskSource(
 	startKey kv.Key,
 	endKey kv.Key,
 ) *tableScanTaskSource {
-	ctxWithCancel, cancel := context.WithCancel(ctx)
 	return &tableScanTaskSource{
-		ctx:           ctxWithCancel,
-		cancel:        cancel,
+		ctx:           ctx,
 		errGroup:      errgroup.Group{},
 		sink:          nil,
 		physicalTable: physicalTable,
@@ -94,9 +105,14 @@ func newTableScanTaskSource(
 	}
 }
 
+func (src *tableScanTaskSource) SetSink(sink operator.DataChannel[tableScanTask]) {
+	src.sink = sink
+}
+
 func (src *tableScanTaskSource) Open() error {
 	src.errGroup.Go(func() error {
 		taskIDAlloc := newTaskIDAllocator()
+		defer src.sink.Finish()
 		for {
 			kvRanges, err := splitTableRanges(src.physicalTable, src.store, src.startKey, src.endKey, backfillTaskChanSize)
 			if err != nil {
@@ -110,14 +126,11 @@ func (src *tableScanTaskSource) Open() error {
 			for _, task := range batchTasks {
 				select {
 				case <-src.ctx.Done():
-					src.sink.Finish()
 					return nil
 				case src.sink.Channel() <- task:
 				}
-
 			}
 		}
-		src.sink.Finish()
 		return nil
 	})
 	return nil
@@ -164,10 +177,7 @@ func getBatchTableScanTask(
 	return batchTasks
 }
 
-func (src *tableScanTaskSource) Close(force bool) error {
-	if force {
-		src.cancel()
-	}
+func (src *tableScanTaskSource) Close() error {
 	return src.errGroup.Wait()
 }
 
@@ -187,7 +197,7 @@ func newTableScanOperator(
 	concurrency int,
 ) *tableScanOperator {
 	pool := workerpool.NewWorkerPool(
-		"tableScanWorkerPool",
+		"tableScanOperator",
 		util.DDL,
 		concurrency,
 		func() workerpool.Worker[tableScanTask, idxRecResult] {
@@ -200,7 +210,7 @@ func newTableScanOperator(
 			}
 		})
 	return &tableScanOperator{
-		AsyncOperator: operator.NewAsyncOperator[tableScanTask, idxRecResult](pool),
+		AsyncOperator: operator.NewAsyncOperator[tableScanTask, idxRecResult](ctx, pool),
 	}
 }
 
@@ -278,17 +288,159 @@ func (w *tableScanWorker) recycleChunk(chk *chunk.Chunk) {
 	w.srcChkPool <- chk
 }
 
-type ingestWriterOperator struct {
-	operator.AsyncOperator[idxRecResult, backfillResult]
-
-	reorgInfo   *reorgInfo
-	poolErr     error
-	backendCtx  ingest.BackendCtx
-	writerMaxID int
-	ctx         context.Context
-	tbl         table.PhysicalTable
+type indexIngestOperator struct {
+	*operator.AsyncOperator[idxRecResult, backfillResult]
 }
 
-func (w *indexIngestWorker) Close(force bool) {
+func newIndexIngestOperator(
+	ctx context.Context,
+	concurrency int,
+	tbl table.PhysicalTable,
+	index table.Index,
+	copCtx *copContext,
+	sessPool *sess.Pool,
+	writer ingest.Writer,
+	srcChunkPool chan *chunk.Chunk,
+	metricCounter prometheus.Counter,
+) *indexIngestOperator {
+	pool := workerpool.NewWorkerPool(
+		"indexIngestOperator",
+		util.DDL,
+		concurrency,
+		func() workerpool.Worker[idxRecResult, backfillResult] {
+			return &indexIngestWorker{
+				ctx:           ctx,
+				tbl:           tbl,
+				index:         index,
+				copCtx:        copCtx,
+				se:            nil,
+				sessPool:      sessPool,
+				writer:        writer,
+				srcChunkPool:  srcChunkPool,
+				metricCounter: metricCounter,
+			}
+		})
+	return &indexIngestOperator{
+		AsyncOperator: operator.NewAsyncOperator[idxRecResult, backfillResult](ctx, pool),
+	}
+}
 
+type indexIngestWorker struct {
+	ctx context.Context
+
+	tbl   table.PhysicalTable
+	index table.Index
+
+	copCtx   *copContext
+	sessPool *sess.Pool
+	se       *sess.Session
+
+	writer       ingest.Writer
+	srcChunkPool chan *chunk.Chunk
+
+	metricCounter prometheus.Counter
+}
+
+func (w *indexIngestWorker) HandleTask(rs idxRecResult) backfillResult {
+	result := backfillResult{
+		taskID: rs.id,
+		err:    rs.err,
+	}
+	if w.se == nil {
+		sessCtx, err := w.sessPool.Get()
+		if err != nil {
+			result.err = err
+			return result
+		}
+		w.se = sess.NewSession(sessCtx)
+	}
+	defer func() {
+		w.srcChunkPool <- rs.chunk
+	}()
+	if result.err != nil {
+		logutil.Logger(w.ctx).Error("encounter error when handle index chunk",
+			zap.Int("id", rs.id), zap.Error(rs.err))
+		return result
+	}
+	count, nextKey, err := w.WriteLocal(&rs)
+	if err != nil {
+		result.err = err
+		return result
+	}
+	if count == 0 {
+		logutil.Logger(w.ctx).Info("finish a cop-request task", zap.Int("id", rs.id))
+		return result
+	}
+	result.addedCount = count
+	result.scanCount = count
+	result.nextKey = nextKey
+	if ResultCounterForTest != nil && result.err == nil {
+		ResultCounterForTest.Add(1)
+	}
+	return result
+}
+
+func (w *indexIngestWorker) Close() {
+
+}
+
+// WriteLocal will write index records to lightning engine.
+func (w *indexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey kv.Key, err error) {
+	oprStartTime := time.Now()
+	vars := w.se.GetSessionVars()
+	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, w.copCtx, vars, rs.chunk)
+	if err != nil || cnt == 0 {
+		return 0, nil, err
+	}
+	w.metricCounter.Add(float64(cnt))
+	logSlowOperations(time.Since(oprStartTime), "writeChunkToLocal", 3000)
+	nextKey = tablecodec.EncodeRecordKey(w.tbl.RecordPrefix(), lastHandle)
+	return cnt, nextKey, nil
+}
+
+type backfillResultSink struct {
+	ctx context.Context
+
+	errGroup errgroup.Group
+	source   operator.DataChannel[backfillResult]
+}
+
+func newBackfillResultSink(
+	ctx context.Context,
+) *backfillResultSink {
+	return &backfillResultSink{
+		ctx:      ctx,
+		errGroup: errgroup.Group{},
+	}
+}
+
+func (s *backfillResultSink) SetSource(source operator.DataChannel[backfillResult]) {
+	s.source = source
+}
+
+func (s *backfillResultSink) Open() error {
+	s.errGroup.Go(func() error {
+		for {
+			select {
+			case <-s.ctx.Done():
+				return nil
+			case result, ok := <-s.source.Channel():
+				if !ok {
+					return nil
+				}
+				if result.err != nil {
+					return result.err
+				}
+			}
+		}
+	})
+	return nil
+}
+
+func (s *backfillResultSink) Close() error {
+	return s.errGroup.Wait()
+}
+
+func (s *backfillResultSink) String() string {
+	return "backfillResultSink"
 }

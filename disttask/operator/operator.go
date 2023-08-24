@@ -15,6 +15,7 @@
 package operator
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
@@ -34,17 +35,23 @@ type Operator interface {
 // use the same channel, Then op2's worker will handle
 // the result from op1.
 type AsyncOperator[T, R any] struct {
+	ctx  context.Context
 	pool *workerpool.WorkerPool[T, R]
 }
 
 // NewAsyncOperatorWithTransform create an AsyncOperator with a transform function.
-func NewAsyncOperatorWithTransform[T, R any](name string, workerNum int, transform func(T) R) *AsyncOperator[T, R] {
+func NewAsyncOperatorWithTransform[T, R any](
+	ctx context.Context,
+	name string,
+	workerNum int,
+	transform func(T) R,
+) *AsyncOperator[T, R] {
 	pool := workerpool.NewWorkerPool(name, util.DistTask, workerNum, newAsyncWorkerCtor(transform))
-	return NewAsyncOperator(pool)
+	return NewAsyncOperator(ctx, pool)
 }
 
 // NewAsyncOperator create an AsyncOperator.
-func NewAsyncOperator[T, R any](pool *workerpool.WorkerPool[T, R]) *AsyncOperator[T, R] {
+func NewAsyncOperator[T, R any](ctx context.Context, pool *workerpool.WorkerPool[T, R]) *AsyncOperator[T, R] {
 	return &AsyncOperator[T, R]{
 		pool: pool,
 	}
@@ -52,16 +59,12 @@ func NewAsyncOperator[T, R any](pool *workerpool.WorkerPool[T, R]) *AsyncOperato
 
 // Open implements the Operator's Open interface.
 func (c *AsyncOperator[T, R]) Open() error {
-	c.pool.Start()
+	c.pool.Start(c.ctx)
 	return nil
 }
 
 // Close implements the Operator's Close interface.
-func (c *AsyncOperator[T, R]) Close(force bool) error {
-	if force {
-		c.pool.ReleaseAndWait()
-		return nil
-	}
+func (c *AsyncOperator[T, R]) Close() error {
 	// Wait all tasks done.
 	// We don't need to close the task channel because
 	// it is closed by the workerpool.

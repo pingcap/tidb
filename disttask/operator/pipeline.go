@@ -30,7 +30,7 @@ func (p *AsyncPipeline) Execute() error {
 		if err != nil {
 			// Close all operators that have been opened.
 			for j := i - 1; j >= 0; j-- {
-				_ = p.ops[j].Close(true)
+				_ = p.ops[j].Close()
 			}
 			return err
 		}
@@ -42,7 +42,7 @@ func (p *AsyncPipeline) Execute() error {
 func (p *AsyncPipeline) Close() error {
 	var firstErr error
 	for _, op := range p.ops {
-		err := op.Close(false)
+		err := op.Close()
 		if firstErr == nil {
 			firstErr = err
 		}

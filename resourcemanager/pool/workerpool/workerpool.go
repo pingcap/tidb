@@ -15,6 +15,7 @@
 package workerpool
 
 import (
+	"context"
 	"time"
 
 	"github.com/pingcap/tidb/metrics"
@@ -32,6 +33,7 @@ type Worker[T, R any] interface {
 
 // WorkerPool is a pool of workers.
 type WorkerPool[T, R any] struct {
+	ctx           context.Context
 	name          string
 	numWorkers    int32
 	originWorkers int32
@@ -86,7 +88,7 @@ func (p *WorkerPool[T, R]) SetResultSender(sender chan R) {
 }
 
 // Start starts default count of workers.
-func (p *WorkerPool[T, R]) Start() {
+func (p *WorkerPool[T, R]) Start(ctx context.Context) {
 	if p.taskChan == nil {
 		p.taskChan = make(chan T)
 	}
@@ -98,6 +100,8 @@ func (p *WorkerPool[T, R]) Start() {
 			p.resChan = make(chan R)
 		}
 	}
+
+	p.ctx = ctx
 
 	for i := 0; i < int(p.numWorkers); i++ {
 		p.runAWorker()
@@ -113,7 +117,10 @@ func (p *WorkerPool[T, R]) handleTaskWithRecover(w Worker[T, R], task T) {
 
 	r := w.HandleTask(task)
 	if p.resChan != nil {
-		p.resChan <- r
+		select {
+		case p.resChan <- r:
+		case <-p.ctx.Done():
+		}
 	}
 }
 
@@ -132,6 +139,9 @@ func (p *WorkerPool[T, R]) runAWorker() {
 				}
 				p.handleTaskWithRecover(w, task)
 			case <-p.quitChan:
+				w.Close()
+				return
+			case <-p.ctx.Done():
 				w.Close()
 				return
 			}

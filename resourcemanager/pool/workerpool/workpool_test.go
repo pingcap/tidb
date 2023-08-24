@@ -15,6 +15,7 @@
 package workerpool
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -51,7 +52,7 @@ func createMyWorker() Worker[int64, struct{}] {
 func TestWorkerPool(t *testing.T) {
 	// Create a worker pool with 3 workers.
 	pool := NewWorkerPool[int64]("test", util.UNKNOWN, 3, createMyWorker)
-	pool.Start()
+	pool.Start(context.Background())
 	globalCnt.Store(0)
 
 	g := new(errgroup.Group)
@@ -120,7 +121,7 @@ func TestWorkerPoolNoneResult(t *testing.T) {
 		func() Worker[int64, None] {
 			return dummyWorker[int64, None]{}
 		})
-	pool.Start()
+	pool.Start(context.Background())
 	ch := pool.GetResultChan()
 	require.Nil(t, ch)
 	pool.ReleaseAndWait()
@@ -130,7 +131,7 @@ func TestWorkerPoolNoneResult(t *testing.T) {
 		func() Worker[int64, int64] {
 			return dummyWorker[int64, int64]{}
 		})
-	pool2.Start()
+	pool2.Start(context.Background())
 	require.NotNil(t, pool2.GetResultChan())
 	pool2.ReleaseAndWait()
 
@@ -139,7 +140,7 @@ func TestWorkerPoolNoneResult(t *testing.T) {
 		func() Worker[int64, struct{}] {
 			return dummyWorker[int64, struct{}]{}
 		})
-	pool3.Start()
+	pool3.Start(context.Background())
 	require.NotNil(t, pool3.GetResultChan())
 	pool3.ReleaseAndWait()
 }
@@ -164,11 +165,26 @@ func TestWorkerPoolCustomChan(t *testing.T) {
 		return nil
 	})
 
-	pool.Start()
+	pool.Start(context.Background())
 	for i := 0; i < 5; i++ {
 		taskCh <- int64(i)
 	}
 	pool.ReleaseAndWait()
 	require.NoError(t, g.Wait())
 	require.Equal(t, 5, count)
+}
+
+func TestWorkerPoolCancelContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	pool := NewWorkerPool[int64, int64](
+		"test", util.UNKNOWN, 3,
+		func() Worker[int64, int64] {
+			return dummyWorker[int64, int64]{}
+		})
+	pool.Start(ctx)
+	pool.AddTask(1)
+
+	cancel()
+	pool.Wait() // Should not be blocked by the result channel.
+	require.Equal(t, 0, int(pool.Running()))
 }
