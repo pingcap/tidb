@@ -437,11 +437,15 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 }
 
 func (*ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
+	return expectedIngestWorkerCnt()
+}
+
+func expectedIngestWorkerCnt() (readerCnt, writerCnt int) {
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	readerSize = mathutil.Min(workerCnt/2, maxBackfillWorkerSize)
-	readerSize = mathutil.Max(readerSize, 1)
-	writerSize = mathutil.Min(workerCnt/2+2, maxBackfillWorkerSize)
-	return readerSize, writerSize
+	readerCnt = mathutil.Min(workerCnt/2, maxBackfillWorkerSize)
+	readerCnt = mathutil.Max(readerCnt, 1)
+	writerCnt = mathutil.Min(workerCnt/2+2, maxBackfillWorkerSize)
+	return readerCnt, writerCnt
 }
 
 func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) (_ workerpool.None) {

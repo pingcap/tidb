@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -26,25 +27,27 @@ import (
 	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/disttask/operator"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/resourcemanager/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
 var (
-	_ operator.Operator                = (*tableScanTaskSource)(nil)
-	_ operator.WithSink[tableScanTask] = (*tableScanTaskSource)(nil)
+	_ operator.Operator                  = (*OpSourceTableScanTask)(nil)
+	_ operator.WithSink[OpTaskTableScan] = (*OpSourceTableScanTask)(nil)
 
-	_ operator.WithSource[tableScanTask] = (*tableScanOperator)(nil)
-	_ operator.Operator                  = (*tableScanOperator)(nil)
-	_ operator.WithSink[idxRecResult]    = (*tableScanOperator)(nil)
+	_ operator.WithSource[OpTaskTableScan] = (*tableScanOperator)(nil)
+	_ operator.Operator                    = (*tableScanOperator)(nil)
+	_ operator.WithSink[idxRecResult]      = (*tableScanOperator)(nil)
 
 	_ operator.WithSource[idxRecResult] = (*indexIngestOperator)(nil)
 	_ operator.Operator                 = (*indexIngestOperator)(nil)
@@ -54,15 +57,52 @@ var (
 	_ operator.Operator                   = (*backfillResultSink)(nil)
 )
 
-type tableScanTask struct {
-	id       int
-	startKey kv.Key
-	endKey   kv.Key
+// NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
+func NewAddIndexIngestPipeline(
+	ctx context.Context,
+	store kv.Storage,
+	sessPool *sess.Pool,
+	engine ingest.Engine,
+	sessCtx sessionctx.Context,
+	tbl table.PhysicalTable,
+	idxInfo *model.IndexInfo,
+	startKey, endKey kv.Key,
+) (*operator.AsyncPipeline, error) {
+	index := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+	copCtx, err := newCopContext(tbl.Meta(), idxInfo, sessCtx)
+	if err != nil {
+		return nil, err
+	}
+	poolSize := copReadChunkPoolSize()
+	srcChkPool := make(chan *chunk.Chunk, poolSize)
+	for i := 0; i < poolSize; i++ {
+		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.fieldTps, copReadBatchSize())
+	}
+	readerCnt, writerCnt := expectedIngestWorkerCnt()
+
+	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
+	scanOp := newTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
+	ingestOp := newIndexIngestOperator(ctx, copCtx, sessPool, tbl, index, engine, srcChkPool, writerCnt)
+	sinkOp := newBackfillResultSink(ctx)
+
+	operator.Compose[OpTaskTableScan](srcOp, scanOp)
+	operator.Compose[idxRecResult](scanOp, ingestOp)
+	operator.Compose[backfillResult](ingestOp, sinkOp)
+
+	return operator.NewAsyncPipeline(
+		srcOp, scanOp, ingestOp, sinkOp,
+	), nil
 }
 
-func (t *tableScanTask) String() string {
-	return fmt.Sprintf("tableScanTask: id=%d, startKey=%s, endKey=%s",
-		t.id, hex.EncodeToString(t.startKey), hex.EncodeToString(t.endKey))
+type OpTaskTableScan struct {
+	ID    int
+	Start kv.Key
+	End   kv.Key
+}
+
+func (t *OpTaskTableScan) String() string {
+	return fmt.Sprintf("OpTaskTableScan: id=%d, startKey=%s, endKey=%s",
+		t.ID, hex.EncodeToString(t.Start), hex.EncodeToString(t.End))
 }
 
 type idxRecResult struct {
@@ -72,49 +112,54 @@ type idxRecResult struct {
 	done  bool
 }
 
-type tableScanTaskSource struct {
+type OpSourceTableScanTask struct {
 	ctx context.Context
 
 	errGroup errgroup.Group
-	sink     operator.DataChannel[tableScanTask]
+	sink     operator.DataChannel[OpTaskTableScan]
 
 	physicalTable table.PhysicalTable
-	reorgInfo     *reorgInfo
 	store         kv.Storage
 	startKey      kv.Key
 	endKey        kv.Key
 }
 
-func newTableScanTaskSource(
+func NewTableScanTaskSource(
 	ctx context.Context,
-	physicalTable table.PhysicalTable,
-	reorgInfo *reorgInfo,
 	store kv.Storage,
+	physicalTable table.PhysicalTable,
 	startKey kv.Key,
 	endKey kv.Key,
-) *tableScanTaskSource {
-	return &tableScanTaskSource{
+) *OpSourceTableScanTask {
+	return &OpSourceTableScanTask{
 		ctx:           ctx,
 		errGroup:      errgroup.Group{},
 		sink:          nil,
 		physicalTable: physicalTable,
-		reorgInfo:     reorgInfo,
 		store:         store,
 		startKey:      startKey,
 		endKey:        endKey,
 	}
 }
 
-func (src *tableScanTaskSource) SetSink(sink operator.DataChannel[tableScanTask]) {
+func (src *OpSourceTableScanTask) SetSink(sink operator.DataChannel[OpTaskTableScan]) {
 	src.sink = sink
 }
 
-func (src *tableScanTaskSource) Open() error {
+func (src *OpSourceTableScanTask) Open() error {
 	src.errGroup.Go(func() error {
 		taskIDAlloc := newTaskIDAllocator()
 		defer src.sink.Finish()
+		startKey := src.startKey
+		endKey := src.endKey
 		for {
-			kvRanges, err := splitTableRanges(src.physicalTable, src.store, src.startKey, src.endKey, backfillTaskChanSize)
+			kvRanges, err := splitTableRanges(
+				src.physicalTable,
+				src.store,
+				src.startKey,
+				src.endKey,
+				backfillTaskChanSize,
+			)
 			if err != nil {
 				return err
 			}
@@ -122,13 +167,17 @@ func (src *tableScanTaskSource) Open() error {
 				break
 			}
 
-			batchTasks := getBatchTableScanTask(src.physicalTable, src.reorgInfo, kvRanges, taskIDAlloc)
+			batchTasks := getBatchTableScanTask(src.physicalTable, kvRanges, taskIDAlloc)
 			for _, task := range batchTasks {
 				select {
 				case <-src.ctx.Done():
 					return nil
 				case src.sink.Channel() <- task:
 				}
+			}
+			startKey = kvRanges[len(kvRanges)-1].EndKey
+			if startKey.Cmp(endKey) >= 0 {
+				break
 			}
 		}
 		return nil
@@ -138,15 +187,12 @@ func (src *tableScanTaskSource) Open() error {
 
 func getBatchTableScanTask(
 	t table.PhysicalTable,
-	reorgInfo *reorgInfo,
 	kvRanges []kv.KeyRange,
 	taskIDAlloc *taskIDAllocator,
-) []tableScanTask {
-	batchTasks := make([]tableScanTask, 0, len(kvRanges))
+) []OpTaskTableScan {
+	batchTasks := make([]OpTaskTableScan, 0, len(kvRanges))
 	prefix := t.RecordPrefix()
 	// Build reorg tasks.
-	job := reorgInfo.Job
-	jobCtx := reorgInfo.d.jobContext(job.ID)
 	for _, keyRange := range kvRanges {
 		taskID := taskIDAlloc.alloc()
 		startKey := keyRange.StartKey
@@ -157,36 +203,27 @@ func getBatchTableScanTask(
 		if len(endKey) == 0 {
 			endKey = prefix.PrefixNext()
 		}
-		endK, err := GetRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, prefix, startKey, endKey)
-		if err != nil {
-			logutil.BgLogger().Info("get backfill range task, get reverse key failed", zap.String("category", "ddl"), zap.Error(err))
-		} else {
-			logutil.BgLogger().Info("get backfill range task, change end key", zap.String("category", "ddl"),
-				zap.Int("id", taskID), zap.Int64("pTbl", t.GetPhysicalID()),
-				zap.String("end key", hex.EncodeToString(endKey)), zap.String("current end key", hex.EncodeToString(endK)))
-			endKey = endK
-		}
 
-		task := tableScanTask{
-			id:       taskID,
-			startKey: startKey,
-			endKey:   endKey,
+		task := OpTaskTableScan{
+			ID:    taskID,
+			Start: startKey,
+			End:   endKey,
 		}
 		batchTasks = append(batchTasks, task)
 	}
 	return batchTasks
 }
 
-func (src *tableScanTaskSource) Close() error {
+func (src *OpSourceTableScanTask) Close() error {
 	return src.errGroup.Wait()
 }
 
-func (src *tableScanTaskSource) String() string {
-	return "tableScanTaskSource"
+func (src *OpSourceTableScanTask) String() string {
+	return "OpSourceTableScanTask"
 }
 
 type tableScanOperator struct {
-	*operator.AsyncOperator[tableScanTask, idxRecResult]
+	*operator.AsyncOperator[OpTaskTableScan, idxRecResult]
 }
 
 func newTableScanOperator(
@@ -200,7 +237,7 @@ func newTableScanOperator(
 		"tableScanOperator",
 		util.DDL,
 		concurrency,
-		func() workerpool.Worker[tableScanTask, idxRecResult] {
+		func() workerpool.Worker[OpTaskTableScan, idxRecResult] {
 			return &tableScanWorker{
 				ctx:        ctx,
 				copCtx:     copCtx,
@@ -210,7 +247,7 @@ func newTableScanOperator(
 			}
 		})
 	return &tableScanOperator{
-		AsyncOperator: operator.NewAsyncOperator[tableScanTask, idxRecResult](ctx, pool),
+		AsyncOperator: operator.NewAsyncOperator[OpTaskTableScan, idxRecResult](ctx, pool),
 	}
 }
 
@@ -222,7 +259,7 @@ type tableScanWorker struct {
 	srcChkPool chan *chunk.Chunk
 }
 
-func (w *tableScanWorker) HandleTask(task tableScanTask) idxRecResult {
+func (w *tableScanWorker) HandleTask(task OpTaskTableScan) idxRecResult {
 	if w.se == nil {
 		sessCtx, err := w.sessPool.Get()
 		if err != nil {
@@ -231,20 +268,20 @@ func (w *tableScanWorker) HandleTask(task tableScanTask) idxRecResult {
 		}
 		w.se = sess.NewSession(sessCtx)
 	}
-	return w.transform(task)
+	return w.scanRecords(task)
 }
 
 func (w *tableScanWorker) Close() {
 	w.sessPool.Put(w.se.Context)
 }
 
-func (w *tableScanWorker) transform(task tableScanTask) idxRecResult {
+func (w *tableScanWorker) scanRecords(task OpTaskTableScan) idxRecResult {
 	logutil.Logger(w.ctx).Info("start a cop-request task",
-		zap.Int("id", task.id), zap.String("task", task.String()))
+		zap.Int("id", task.ID), zap.String("task", task.String()))
 
 	var idxResult idxRecResult
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
-		rs, err := w.copCtx.buildTableScan(w.ctx, startTS, task.startKey, task.endKey)
+		rs, err := w.copCtx.buildTableScan(w.ctx, startTS, task.Start, task.End)
 		if err != nil {
 			return err
 		}
@@ -262,7 +299,7 @@ func (w *tableScanWorker) transform(task tableScanTask) idxRecResult {
 				terror.Call(rs.Close)
 				return err
 			}
-			idxResult = idxRecResult{id: task.id, chunk: srcChk, done: done}
+			idxResult = idxRecResult{id: task.ID, chunk: srcChk, done: done}
 			failpoint.Inject("mockCopSenderError", func() {
 				idxResult.err = errors.New("mock cop error")
 			})
@@ -294,30 +331,35 @@ type indexIngestOperator struct {
 
 func newIndexIngestOperator(
 	ctx context.Context,
-	concurrency int,
-	tbl table.PhysicalTable,
-	index table.Index,
 	copCtx *copContext,
 	sessPool *sess.Pool,
-	writer ingest.Writer,
+	tbl table.PhysicalTable,
+	index table.Index,
+	engine ingest.Engine,
 	srcChunkPool chan *chunk.Chunk,
-	metricCounter prometheus.Counter,
+	concurrency int,
 ) *indexIngestOperator {
+	var writerIDAlloc atomic.Int32
 	pool := workerpool.NewWorkerPool(
 		"indexIngestOperator",
 		util.DDL,
 		concurrency,
 		func() workerpool.Worker[idxRecResult, backfillResult] {
+			writerID := int(writerIDAlloc.Add(1))
+			writer, err := engine.CreateWriter(writerID, index.Meta().Unique)
+			if err != nil {
+				logutil.Logger(ctx).Error("create index ingest worker failed", zap.Error(err))
+				return nil
+			}
 			return &indexIngestWorker{
-				ctx:           ctx,
-				tbl:           tbl,
-				index:         index,
-				copCtx:        copCtx,
-				se:            nil,
-				sessPool:      sessPool,
-				writer:        writer,
-				srcChunkPool:  srcChunkPool,
-				metricCounter: metricCounter,
+				ctx:          ctx,
+				tbl:          tbl,
+				index:        index,
+				copCtx:       copCtx,
+				se:           nil,
+				sessPool:     sessPool,
+				writer:       writer,
+				srcChunkPool: srcChunkPool,
 			}
 		})
 	return &indexIngestOperator{
@@ -337,8 +379,6 @@ type indexIngestWorker struct {
 
 	writer       ingest.Writer
 	srcChunkPool chan *chunk.Chunk
-
-	metricCounter prometheus.Counter
 }
 
 func (w *indexIngestWorker) HandleTask(rs idxRecResult) backfillResult {
@@ -381,7 +421,6 @@ func (w *indexIngestWorker) HandleTask(rs idxRecResult) backfillResult {
 }
 
 func (w *indexIngestWorker) Close() {
-
 }
 
 // WriteLocal will write index records to lightning engine.
@@ -392,7 +431,6 @@ func (w *indexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey kv.
 	if err != nil || cnt == 0 {
 		return 0, nil, err
 	}
-	w.metricCounter.Add(float64(cnt))
 	logSlowOperations(time.Since(oprStartTime), "writeChunkToLocal", 3000)
 	nextKey = tablecodec.EncodeRecordKey(w.tbl.RecordPrefix(), lastHandle)
 	return cnt, nextKey, nil
