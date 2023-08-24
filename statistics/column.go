@@ -65,9 +65,9 @@ func (c *Column) TotalRowCount() float64 {
 
 func (c *Column) notNullCount() float64 {
 	if c.StatsVer >= Version2 {
-		return c.Histogram.notNullCount() + float64(c.TopN.TotalCount())
+		return c.Histogram.NotNullCount() + float64(c.TopN.TotalCount())
 	}
-	return c.Histogram.notNullCount()
+	return c.Histogram.NotNullCount()
 }
 
 // GetIncreaseFactor get the increase factor to adjust the final estimated count when the table is modified.
@@ -212,7 +212,7 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 	if histNDV <= 0 {
 		return 0, nil
 	}
-	return c.Histogram.notNullCount() / histNDV, nil
+	return c.Histogram.NotNullCount() / histNDV, nil
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.

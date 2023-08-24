@@ -148,7 +148,7 @@
                             "github.com/pingcap/tidb/planner/core.(*DataSource).DeriveStats": [
                               {
                                 "github.com/pingcap/tidb/planner/core.(*DataSource).fillIndexPath": {
-                                  "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                                  "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                                     {
                                       "ID": 1,
                                       "Ranges": [
@@ -179,7 +179,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+                                      "github.com/pingcap/tidb/planner/cardinality.GetRowCountByColumnRanges": [
                                         {
                                           "ID": 1,
                                           "Ranges": [
@@ -202,7 +202,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                                      "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                                         {
                                           "ID": 1,
                                           "Ranges": [
@@ -393,7 +393,7 @@
                                   ]
                                 },
                                 {
-                                  "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+                                  "github.com/pingcap/tidb/planner/cardinality.GetRowCountByColumnRanges": [
                                     {
                                       "ID": 1,
                                       "Ranges": [
@@ -416,7 +416,7 @@
                                   ]
                                 },
                                 {
-                                  "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                                  "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                                     {
                                       "ID": 1,
                                       "Ranges": [
@@ -624,7 +624,7 @@
                             "github.com/pingcap/tidb/planner/core.(*DataSource).DeriveStats": [
                               {
                                 "github.com/pingcap/tidb/planner/core.(*DataSource).fillIndexPath": {
-                                  "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                                  "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                                     {
                                       "ID": 1,
                                       "Ranges": [
@@ -656,7 +656,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+                                      "github.com/pingcap/tidb/planner/cardinality.GetRowCountByColumnRanges": [
                                         {
                                           "ID": 1,
                                           "Ranges": [
@@ -681,7 +681,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                                      "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                                         {
                                           "ID": 1,
                                           "Ranges": [

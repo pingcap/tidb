@@ -2018,13 +2018,13 @@ func getColumnRangeCounts(sctx sessionctx.Context, colID int64, ranges []*ranger
 			if idxHist == nil || idxHist.IsInvalid(sctx, false) {
 				return nil, false
 			}
-			count, err = histColl.GetRowCountByIndexRanges(sctx, idxID, []*ranger.Range{ran})
+			count, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran})
 		} else {
 			colHist, ok := histColl.Columns[colID]
 			if !ok || colHist.IsInvalid(sctx, false) {
 				return nil, false
 			}
-			count, err = histColl.GetRowCountByColumnRanges(sctx, colID, []*ranger.Range{ran})
+			count, err = cardinality.GetRowCountByColumnRanges(sctx, histColl, colID, []*ranger.Range{ran})
 		}
 		if err != nil {
 			return nil, false
@@ -2113,9 +2113,9 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expre
 	}
 	var rangeCount float64
 	if idxExists {
-		rangeCount, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(ds.SCtx(), idxID, convertedRanges)
+		rangeCount, err = cardinality.GetRowCountByIndexRanges(ds.SCtx(), ds.tableStats.HistColl, idxID, convertedRanges)
 	} else {
-		rangeCount, err = ds.tableStats.HistColl.GetRowCountByColumnRanges(ds.SCtx(), colID, convertedRanges)
+		rangeCount, err = cardinality.GetRowCountByColumnRanges(ds.SCtx(), ds.tableStats.HistColl, colID, convertedRanges)
 	}
 	if err != nil {
 		return 0, false, corr

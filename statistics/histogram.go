@@ -406,14 +406,14 @@ func (hg *Histogram) equalRowCount(sctx sessionctx.Context, value types.Datum, h
 	if hasBucketNDV && hg.Buckets[bucketIdx].NDV > 1 {
 		return float64(hg.BucketCount(bucketIdx)-hg.Buckets[bucketIdx].Repeat) / float64(hg.Buckets[bucketIdx].NDV-1), true
 	}
-	return hg.notNullCount() / float64(hg.NDV), false
+	return hg.NotNullCount() / float64(hg.NDV), false
 }
 
 // greaterRowCount estimates the row count where the column greater than value.
 // It's deprecated. Only used for test.
 func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
 	histRowCount, _ := hg.equalRowCount(nil, value, false)
-	gtCount := hg.notNullCount() - hg.lessRowCount(nil, value) - histRowCount
+	gtCount := hg.NotNullCount() - hg.lessRowCount(nil, value) - histRowCount
 	return math.Max(0, gtCount)
 }
 
@@ -482,7 +482,7 @@ func (hg *Histogram) LessRowCountWithBktIdx(sctx sessionctx.Context, value types
 	}
 	exceed, bucketIdx, inBucket, match := hg.locateBucket(sctx, value)
 	if exceed {
-		return hg.notNullCount(), hg.Len() - 1
+		return hg.NotNullCount(), hg.Len() - 1
 	}
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugTraceBuckets(sctx, hg, []int{bucketIdx - 1, bucketIdx})
@@ -516,21 +516,21 @@ func (hg *Histogram) BetweenRowCount(sctx sessionctx.Context, a, b types.Datum) 
 	// the fraction, so we use `totalCount / NDV` to estimate the row count, but the result should not greater than
 	// lessCountB or notNullCount-lessCountA.
 	if lessCountA >= lessCountB && hg.NDV > 0 {
-		result := math.Min(lessCountB, hg.notNullCount()-lessCountA)
-		return math.Min(result, hg.notNullCount()/float64(hg.NDV))
+		result := math.Min(lessCountB, hg.NotNullCount()-lessCountA)
+		return math.Min(result, hg.NotNullCount()/float64(hg.NDV))
 	}
 	return lessCountB - lessCountA
 }
 
 // TotalRowCount returns the total count of this histogram.
 func (hg *Histogram) TotalRowCount() float64 {
-	return hg.notNullCount() + float64(hg.NullCount)
+	return hg.NotNullCount() + float64(hg.NullCount)
 }
 
-// notNullCount indicates the count of non-null values in column histogram and single-column index histogram,
+// NotNullCount indicates the count of non-null values in column histogram and single-column index histogram,
 // for multi-column index histogram, since we cannot define null for the row, we treat all rows as non-null, that means,
 // notNullCount would return same value as TotalRowCount for multi-column index histograms.
-func (hg *Histogram) notNullCount() float64 {
+func (hg *Histogram) NotNullCount() float64 {
 	if hg.Len() == 0 {
 		return 0
 	}
@@ -814,7 +814,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 // AvgCountPerNotNullValue gets the average row count per value by the data of histogram.
 func (hg *Histogram) AvgCountPerNotNullValue(totalCount int64) float64 {
 	factor := hg.GetIncreaseFactor(totalCount)
-	totalNotNull := hg.notNullCount() * factor
+	totalNotNull := hg.NotNullCount() * factor
 	curNDV := float64(hg.NDV) * factor
 	curNDV = math.Max(curNDV, 1)
 	return totalNotNull / curNDV
@@ -965,7 +965,7 @@ func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum 
 	if totalPercent > 1 {
 		totalPercent = 1
 	}
-	rowCount = totalPercent * hg.notNullCount()
+	rowCount = totalPercent * hg.NotNullCount()
 
 	// Use the modifyCount as the upper bound. Note that modifyCount contains insert, delete and update. So this is
 	// a rather loose upper bound.
@@ -1036,7 +1036,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 	dataCnts := make([]dataCnt, 0, hg.Bounds.NumRows())
 	hg.PreCalculateScalar()
 	// Set a limit on the frequency of boundary values to avoid extract values with low frequency.
-	limit := hg.notNullCount() / float64(hg.Len())
+	limit := hg.NotNullCount() / float64(hg.Len())
 	// Since our histogram are equal depth, they must occurs on the boundaries of buckets.
 	for i := 0; i < hg.Bounds.NumRows(); i++ {
 		data := hg.Bounds.GetRow(i).GetBytes(0)

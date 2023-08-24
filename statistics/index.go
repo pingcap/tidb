@@ -207,7 +207,7 @@ func (idx *Index) equalRowCount(sctx sessionctx.Context, b []byte, realtimeRowCo
 	if histNDV <= 0 {
 		return 0
 	}
-	return idx.Histogram.notNullCount() / histNDV
+	return idx.Histogram.NotNullCount() / histNDV
 }
 
 // QueryBytes is used to query the count of specified bytes.
@@ -405,7 +405,7 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 		)
 		if col, ok := coll.Columns[colID]; ok && !col.IsInvalid(sctx, coll.Pseudo) {
 			foundStats = true
-			count, err = coll.GetRowCountByColumnRanges(sctx, colID, tmpRan)
+			count, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
 		}
 		if idxIDs, ok := coll.ColID2IdxIDs[colID]; ok && !foundStats && len(indexRange.LowVal) > 1 {
 			// Note the `len(indexRange.LowVal) > 1` condition here, it means we only recursively call
@@ -416,7 +416,7 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 					continue
 				}
 				foundStats = true
-				count, err = coll.GetRowCountByIndexRanges(sctx, idxID, tmpRan)
+				count, err = GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan)
 				if err == nil {
 					break
 				}

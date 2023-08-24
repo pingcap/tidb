@@ -124,14 +124,14 @@ func Selectivity(
 			if colStats.IsHandle {
 				nodes[len(nodes)-1].Tp = PkType
 				var cnt float64
-				cnt, err = coll.GetRowCountByIntColumnRanges(ctx, id, ranges)
+				cnt, err = GetRowCountByIntColumnRanges(ctx, coll, id, ranges)
 				if err != nil {
 					return 0, nil, errors.Trace(err)
 				}
 				nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
 				continue
 			}
-			cnt, err := coll.GetRowCountByColumnRanges(ctx, id, ranges)
+			cnt, err := GetRowCountByColumnRanges(ctx, coll, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -166,7 +166,7 @@ func Selectivity(
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			cnt, err := coll.GetRowCountByIndexRanges(ctx, id, ranges)
+			cnt, err := GetRowCountByIndexRanges(ctx, coll, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}

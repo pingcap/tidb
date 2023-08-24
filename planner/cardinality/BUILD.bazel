@@ -5,6 +5,8 @@ go_library(
     srcs = [
         "histogram.go",
         "pseudo.go",
+        "row_count_column.go",
+        "row_count_index.go",
         "selectivity.go",
         "trace.go",
     ],
@@ -15,6 +17,7 @@ go_library(
         "//kv",
         "//parser/ast",
         "//parser/format",
+        "//parser/model",
         "//parser/mysql",
         "//planner/util",
         "//planner/util/debugtrace",
