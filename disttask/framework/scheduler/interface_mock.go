@@ -39,6 +39,12 @@ func (t *MockTaskTable) GetGlobalTasksInStates(states ...interface{}) ([]*proto.
 	}
 }
 
+// StartSubtask implements TaskTable.StartSubtask.
+func (t *MockTaskTable) StartSubtask(id int64) error {
+	args := t.Called(id)
+	return args.Error(0)
+}
+
 // GetGlobalTaskByID implements TaskTable.GetTaskByID.
 func (t *MockTaskTable) GetGlobalTaskByID(id int64) (*proto.Task, error) {
 	args := t.Called(id)
