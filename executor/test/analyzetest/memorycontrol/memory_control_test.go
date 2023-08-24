@@ -85,6 +85,7 @@ func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 	sqlExecute := "execute stmt;"                                                                                 // Need about 100MB
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/ReadMemStats", `return(536870912)`)) // 512MB
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
+	runtime.GC()
 	// won't be killed by tidb_mem_quota_query
 	tk0.MustExec(sqlPrepare)
 	tk0.MustExec(sqlExecute)
