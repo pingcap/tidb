@@ -1331,22 +1331,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 
 	for _, meta := range popedTopN {
 		totCount += int64(meta.Count)
-		var d types.Datum
-		if isIndex {
-			d.SetBytes(meta.Encoded)
-		} else {
-			var err error
-			if types.IsTypeTime(hists[0].Tp.GetType()) {
-				// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
-				_, d, err = codec.DecodeAsDateTime(meta.Encoded, hists[0].Tp.GetType(), sc.TimeZone)
-			} else if types.IsTypeFloat(hists[0].Tp.GetType()) {
-				_, d, err = codec.DecodeAsFloat32(meta.Encoded, hists[0].Tp.GetType())
-			} else {
-				_, d, err = codec.DecodeOne(meta.Encoded)
-			}
-			if err != nil {
-				return nil, err
-			}
+		d, err := topNMetaToDatum(meta, hists[0].Tp.GetType(), isIndex, sc.TimeZone)
+		if err != nil {
+			return nil, err
 		}
 		if minValue == nil {
 			minValue = d.Clone()
