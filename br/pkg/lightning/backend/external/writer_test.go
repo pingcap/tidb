@@ -19,12 +19,15 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/kv"
@@ -170,14 +173,43 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	_, err = writer.Close(ctx)
 	require.NoError(t, err)
 
+	keys := make([][]byte, 0, kvCount)
+	values := make([][]byte, 0, kvCount)
+
 	kvReader, err := newKVReader(ctx, "/test/0/0", memStore, 0, 100)
 	require.NoError(t, err)
 	for i := 0; i < kvCount; i++ {
 		key, value, err := kvReader.nextKV()
 		require.NoError(t, err)
-		require.Equal(t, kvs[i].Key, key)
 		require.Equal(t, kvs[i].Val, value)
+		clonedKey := make([]byte, len(key))
+		copy(clonedKey, key)
+		clonedVal := make([]byte, len(value))
+		copy(clonedVal, value)
+		keys = append(keys, clonedKey)
+		values = append(values, clonedVal)
 	}
 	_, _, err = kvReader.nextKV()
 	require.Equal(t, io.EOF, err)
+
+	dir := t.TempDir()
+	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
+	require.NoError(t, err)
+	keyAdapter := local.DupDetectKeyAdapter{}
+	data := &MemoryIngestData{
+		keyAdapter:         keyAdapter,
+		duplicateDetection: true,
+		duplicateDB:        db,
+		dupDetectOpt:       local.DupDetectOpt{ReportErrOnDup: true},
+		keys:               keys,
+		values:             values,
+		ts:                 123,
+	}
+	iter := data.NewIter(ctx, nil, nil)
+
+	for iter.First(); iter.Valid(); iter.Next() {
+	}
+	err = iter.Error()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "found duplicate key")
 }
