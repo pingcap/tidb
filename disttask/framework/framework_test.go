@@ -351,10 +351,10 @@ func TestFrameworkCancelThenSubmitSubTask(t *testing.T) {
 	defer dispatcher.ClearTaskFlowHandle()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
-	RegisterTaskMeta(&m)
+	RegisterTaskMeta(&m, &testFlowHandle{})
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelBeforeUpdate", "return()"))
-	DispatchTaskAndCheckFail("😊", t, &m)
+	DispatchTaskAndCheckState("😊", t, &m, proto.TaskStateReverted)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelBeforeUpdate"))
 	distContext.Close()
 }
