@@ -23,6 +23,12 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
+func init() {
+	statistics.GetRowCountByColumnRanges = GetRowCountByColumnRanges
+	statistics.GetRowCountByIntColumnRanges = GetRowCountByIntColumnRanges
+	statistics.GetRowCountByIndexRanges = GetRowCountByIndexRanges
+}
+
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
 func GetRowCountByColumnRanges(sctx sessionctx.Context, coll *statistics.HistColl, colID int64, colRanges []*ranger.Range) (result float64, err error) {
 	var name string
