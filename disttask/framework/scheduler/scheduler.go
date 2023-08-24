@@ -35,7 +35,7 @@ var TestSyncChan = make(chan struct{})
 type InternalSchedulerImpl struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	// server id, it's host:port for now.
+	// id, it's the same as server id now, i.e. host:port.
 	id        string
 	taskID    int64
 	taskTable TaskTable
