@@ -10,7 +10,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
+	gomock "go.uber.org/mock/gomock"
 	import_kvpb "github.com/pingcap/kvproto/pkg/import_kvpb"
 	grpc "google.golang.org/grpc"
 	metadata "google.golang.org/grpc/metadata"

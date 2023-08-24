@@ -8,7 +8,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
+	gomock "go.uber.org/mock/gomock"
 	encode "github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	verification "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	types "github.com/pingcap/tidb/types"

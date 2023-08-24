@@ -10,7 +10,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
+	gomock "go.uber.org/mock/gomock"
 	storage "github.com/pingcap/tidb/br/pkg/storage"
 )
 

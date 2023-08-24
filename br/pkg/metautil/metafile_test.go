@@ -7,7 +7,7 @@ import (
 	"crypto/sha256"
 	"testing"
 
-	"github.com/golang/mock/gomock"
+	"go.uber.org/mock/gomock"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	mockstorage "github.com/pingcap/tidb/br/pkg/mock/storage"

@@ -8,7 +8,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
+	gomock "go.uber.org/mock/gomock"
 	import_sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
 )
