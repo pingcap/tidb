@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
@@ -383,6 +384,26 @@ func checkTiFlashVersion(ctx context.Context, db *sql.DB, checkCtx *backend.Chec
 	}
 	return nil
 }
+
+// CommonEngine describes the common interface of local and external engine that
+// local backend uses.
+type CommonEngine interface {
+	// LoadIngestData returns an IngestData that contains the data in [start, end).
+	LoadIngestData(ctx context.Context, start, end []byte) (IngestData, error)
+	// TODO(lance6716): add more methods
+}
+
+// NewExternalEngine will be initialised by lightning/backend/external.
+var NewExternalEngine func(
+	storage storage.ExternalStorage,
+	dataFiles []string,
+	statsFiles []string,
+	keyAdapter KeyAdapter,
+	duplicateDetection bool,
+	duplicateDB *pebble.DB,
+	dupDetectOpt DupDetectOpt,
+	ts uint64,
+) CommonEngine
 
 // BackendConfig is the config for local backend.
 type BackendConfig struct {
@@ -1123,18 +1144,20 @@ func (local *Backend) prepareAndSendJob(
 // generateAndSendJob scans the region in ranges and send region jobs to jobToWorkerCh.
 func (local *Backend) generateAndSendJob(
 	ctx context.Context,
-	engine *Engine,
+	engine CommonEngine,
 	jobRanges []Range,
 	regionSplitSize, regionSplitKeys int64,
 	jobToWorkerCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
 ) error {
 	logger := log.FromContext(ctx)
+	// TODO(lance6716): external engine should also support it
+	localEngine, ok := engine.(*Engine)
 
 	// when use dynamic region feature, the region may be very big, we need
 	// to split to smaller ranges to increase the concurrency.
-	if regionSplitSize > 2*int64(config.SplitRegionSize) {
-		sizeProps, err := getSizePropertiesFn(logger, engine.getDB(), local.keyAdapter)
+	if regionSplitSize > 2*int64(config.SplitRegionSize) && ok {
+		sizeProps, err := getSizePropertiesFn(logger, localEngine.getDB(), local.keyAdapter)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1156,7 +1179,10 @@ func (local *Backend) generateAndSendJob(
 		data, err := engine.LoadIngestData(ctx, r.start, r.end)
 		if err != nil {
 			cancel()
-			eg.Wait()
+			err2 := eg.Wait()
+			if err2 != nil && !common.IsContextCanceledError(err2) {
+				logger.Warn("meet error when canceling", log.ShortError(err2))
+			}
 			return errors.Trace(err)
 		}
 		eg.Go(func() error {
@@ -1413,8 +1439,6 @@ func (local *Backend) executeJob(
 
 // ImportEngine imports an engine to TiKV.
 func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
-	// TODO(lance6716): make Engine an interface so local pebble engine and remote s3 engine
-	// can share same caller logic.
 	lf := local.lockEngine(engineUUID, importMutexStateImport)
 	if lf == nil {
 		// skip if engine not exist. See the comment of `CloseEngine` for more detail.

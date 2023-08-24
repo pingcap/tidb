@@ -52,6 +52,35 @@ type Engine struct {
 	importedKVCount *atomic.Int64
 }
 
+func init() {
+	local.NewExternalEngine = NewExternalEngine
+}
+
+func NewExternalEngine(
+	storage storage.ExternalStorage,
+	dataFiles []string,
+	statsFiles []string,
+	keyAdapter local.KeyAdapter,
+	duplicateDetection bool,
+	duplicateDB *pebble.DB,
+	dupDetectOpt local.DupDetectOpt,
+	ts uint64,
+) local.CommonEngine {
+	return &Engine{
+		storage:            storage,
+		dataFiles:          dataFiles,
+		statsFiles:         statsFiles,
+		bufPool:            membuf.NewPool(),
+		keyAdapter:         keyAdapter,
+		duplicateDetection: duplicateDetection,
+		duplicateDB:        duplicateDB,
+		dupDetectOpt:       dupDetectOpt,
+		ts:                 ts,
+		importedKVSize:     atomic.NewInt64(0),
+		importedKVCount:    atomic.NewInt64(0),
+	}
+}
+
 // LoadIngestData loads the data from the external storage to memory in [start,
 // end) range, so local backend can ingest it. The used byte slice of ingest data
 // are allocated from Engine.bufPool and must be released by
