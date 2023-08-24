@@ -77,7 +77,7 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 	// However, our current implementation requires generating it for each step.
 	// Only the first step needs to generate import specs.
 	// This is a fast path to bypass generating import spec multiple times (as we need to access the source data).
-	if len(planCtx.PreviousSubtaskMetas) != 0 {
+	if len(planCtx.PreviousSubtaskMetas) == 0 {
 		importSpecs, err := generateImportSpecs(planCtx.Ctx, p)
 		if err != nil {
 			return nil, err

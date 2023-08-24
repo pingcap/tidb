@@ -268,6 +268,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		return nil, err
 	}
 	gTask.Step = nextStep
+	logger.Info("generate subtasks", zap.Int64("step", nextStep), zap.Int("subtask-count", len(metaBytes)))
 	return metaBytes, nil
 }
 
