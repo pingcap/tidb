@@ -2123,7 +2123,7 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+                "github.com/pingcap/tidb/planner/cardinality.GetRowCountByColumnRanges": [
                   {
                     "ID": 1,
                     "Ranges": [
@@ -2192,7 +2192,7 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+                "github.com/pingcap/tidb/planner/cardinality.GetRowCountByColumnRanges": [
                   {
                     "ID": 2,
                     "Ranges": [
@@ -2281,7 +2281,7 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                   {
                     "ID": 1,
                     "Ranges": [
@@ -2301,7 +2301,7 @@
                     "TopN total count": 0
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*HistColl).getIndexRowCount": [
+                    "github.com/pingcap/tidb/statistics.(*HistColl).GetIndexRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2494,7 +2494,7 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                   {
                     "ID": 2,
                     "Ranges": [
@@ -2514,7 +2514,7 @@
                     "TopN total count": 0
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*HistColl).getIndexRowCount": [
+                    "github.com/pingcap/tidb/statistics.(*HistColl).GetIndexRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2680,7 +2680,7 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+                "github.com/pingcap/tidb/planner/cardinality.GetRowCountByColumnRanges": [
                   {
                     "ID": 1,
                     "Ranges": [
@@ -2749,7 +2749,7 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+                "github.com/pingcap/tidb/planner/cardinality.GetRowCountByColumnRanges": [
                   {
                     "ID": 2,
                     "Ranges": [
@@ -2844,7 +2844,7 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                   {
                     "ID": 1,
                     "Ranges": [
@@ -2935,7 +2935,7 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                   {
                     "ID": 2,
                     "Ranges": [
@@ -3052,7 +3052,7 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+                "github.com/pingcap/tidb/planner/cardinality.GetRowCountByColumnRanges": [
                   {
                     "ID": 1,
                     "Ranges": [
@@ -3187,7 +3187,7 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+                "github.com/pingcap/tidb/planner/cardinality.GetRowCountByColumnRanges": [
                   {
                     "ID": 2,
                     "Ranges": [
@@ -3325,7 +3325,7 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                   {
                     "ID": 1,
                     "Ranges": [
@@ -3345,7 +3345,7 @@
                     "TopN total count": 0
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*HistColl).getIndexRowCount": [
+                    "github.com/pingcap/tidb/statistics.(*HistColl).GetIndexRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -3476,7 +3476,7 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                   {
                     "ID": 2,
                     "Ranges": [
@@ -3496,7 +3496,7 @@
                     "TopN total count": 0
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*HistColl).getIndexRowCount": [
+                    "github.com/pingcap/tidb/statistics.(*HistColl).GetIndexRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -4043,7 +4043,7 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+                "github.com/pingcap/tidb/planner/cardinality.GetRowCountByColumnRanges": [
                   {
                     "ID": 1,
                     "Ranges": [
@@ -4183,7 +4183,7 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+                "github.com/pingcap/tidb/planner/cardinality.GetRowCountByColumnRanges": [
                   {
                     "ID": 2,
                     "Ranges": [
@@ -4332,7 +4332,7 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                   {
                     "ID": 1,
                     "Ranges": [
@@ -4461,7 +4461,7 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                   {
                     "ID": 2,
                     "Ranges": [
