@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -1399,7 +1400,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 	}
 	ts.filterCondition = newFilterConds
 	if len(ts.filterCondition) > 0 {
-		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.SCtx(), ts.filterCondition, nil)
+		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, ts.filterCondition, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = SelectionFactor
@@ -1477,13 +1478,6 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 	if err != nil {
 		return nil, nil, false, err
 	}
-	if ts.Table.PKIsHandle {
-		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
-				ts.Hist = &ds.statisticTable.Columns[pkColInfo.ID].Histogram
-			}
-		}
-	}
 	ts.SetStats(ds.tableStats.ScaleByExpectCnt(totalRowCount))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 	if usedStats != nil && usedStats[ts.physicalTableID] != nil {
@@ -1499,7 +1493,7 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 		pushedFilters = pushedFilters1
 		remainingFilters = append(remainingFilters, remainingFilters1...)
 		if len(pushedFilters) != 0 {
-			selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.SCtx(), pushedFilters, nil)
+			selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, pushedFilters, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = SelectionFactor
@@ -1909,7 +1903,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		copTask.finishIndexPlan()
 		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.SCtx(), finalStats, is.SelectBlockOffset())
 		if len(copTask.rootTaskConds) != 0 {
-			selectivity, _, err := copTask.tblColHists.Selectivity(is.SCtx(), tableConds, nil)
+			selectivity, _, err := cardinality.Selectivity(is.SCtx(), copTask.tblColHists, tableConds, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = SelectionFactor
@@ -2208,13 +2202,6 @@ func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *pro
 	}.Init(s.SCtx(), s.SelectBlockOffset())
 	ts.SetStats(stats)
 	ts.SetSchema(schema.Clone())
-	if ts.Table.PKIsHandle {
-		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
-				ts.Hist = &ds.statisticTable.Columns[pkColInfo.ID].Histogram
-			}
-		}
-	}
 	return ts
 }
 
@@ -2632,7 +2619,7 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *pro
 	if len(ts.filterCondition) > 0 {
 		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.SCtx(), stats, ts.SelectBlockOffset())
 		if len(copTask.rootTaskConds) != 0 {
-			selectivity, _, err := copTask.tblColHists.Selectivity(ts.SCtx(), ts.filterCondition, nil)
+			selectivity, _, err := cardinality.Selectivity(ts.SCtx(), copTask.tblColHists, ts.filterCondition, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = SelectionFactor
@@ -2672,13 +2659,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		filterCondition: slices.Clone(path.TableFilters),
 	}.Init(ds.SCtx(), ds.SelectBlockOffset())
 	ts.SetSchema(ds.schema.Clone())
-	if ts.Table.PKIsHandle {
-		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
-				ts.Hist = &ds.statisticTable.Columns[pkColInfo.ID].Histogram
-			}
-		}
-	}
 	rowCount := path.CountAfterAccess
 	if prop.ExpectedCnt < ds.StatsInfo().RowCount {
 		selectivity := ds.StatsInfo().RowCount / path.CountAfterAccess
@@ -2738,10 +2718,6 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		constColsByCond:  path.ConstCols,
 		prop:             prop,
 	}.Init(ds.SCtx(), ds.SelectBlockOffset())
-	statsTbl := ds.statisticTable
-	if statsTbl.Indices[idx.ID] != nil {
-		is.Hist = &statsTbl.Indices[idx.ID].Histogram
-	}
 	rowCount := path.CountAfterAccess
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), !isSingleScan)
 

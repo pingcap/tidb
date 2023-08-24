@@ -61,7 +61,7 @@ func TestGetEngineSizeWhenImport(t *testing.T) {
 		ctx:          engineCtx,
 		cancel:       cancel,
 		sstMetasChan: make(chan metaOrFlush, 64),
-		keyAdapter:   noopKeyAdapter{},
+		keyAdapter:   NoopKeyAdapter{},
 		logger:       log.L(),
 	}
 	f.db.Store(db)
@@ -99,7 +99,7 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 		ctx:          engineCtx,
 		cancel:       cancel,
 		sstMetasChan: make(chan metaOrFlush, 64),
-		keyAdapter:   noopKeyAdapter{},
+		keyAdapter:   NoopKeyAdapter{},
 		logger:       log.L(),
 	}
 	f.db.Store(db)

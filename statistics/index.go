@@ -44,7 +44,6 @@ type Index struct {
 	FMSketch       *FMSketch
 	Info           *model.IndexInfo
 	Histogram
-	ErrorRate
 	StatsLoadedStatus
 	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
 	Flag       int64
@@ -115,7 +114,6 @@ func (idx *Index) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool)
 	if !collPseudo {
 		idx.checkStats()
 	}
-	var notAccurate bool
 	var totalCount float64
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -123,15 +121,13 @@ func (idx *Index) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool)
 			debugtrace.RecordAnyValuesWithNames(sctx,
 				"IsInvalid", res,
 				"CollPseudo", collPseudo,
-				"NotAccurate", notAccurate,
 				"TotalCount", totalCount,
 			)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
-	notAccurate = idx.ErrorRate.NotAccurate()
 	totalCount = idx.TotalRowCount()
-	return (collPseudo && notAccurate) || totalCount == 0
+	return (collPseudo) || totalCount == 0
 }
 
 // EvictAllStats evicts all stats
