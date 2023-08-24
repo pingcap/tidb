@@ -219,9 +219,16 @@ func (d *dispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, 
 		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
 	}
 
+	failpoint.Inject("cancelBeforeUpdate", func() {
+		err := d.taskMgr.CancelGlobalTask(d.task.ID)
+		if err != nil {
+			logutil.Logger(d.logCtx).Error("cancel task failed", zap.Error(err))
+		}
+	})
+	var retryable bool
 	for i := 0; i < retryTimes; i++ {
-		err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.task, newSubTasks, prevState)
-		if err == nil {
+		retryable, err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.task, newSubTasks, prevState)
+		if err == nil || !retryable {
 			break
 		}
 		if i%10 == 0 {
@@ -260,10 +267,6 @@ func (d *dispatcher) dispatchSubTask4Revert(task *proto.Task, handle TaskFlowHan
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("get task's all instances failed", zap.Error(err))
 		return err
-	}
-
-	if len(instanceIDs) == 0 {
-		return d.updateTask(proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 
 	subTasks := make([]*proto.Subtask, 0, len(instanceIDs))
@@ -343,7 +346,6 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, handle TaskFlowHandle, me
 		logutil.Logger(d.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(task.ID, task.Type, instanceID, meta))
 	}
-
 	return d.updateTask(proto.TaskStateRunning, subTasks, retrySQLTimes)
 }
 
@@ -412,7 +414,7 @@ func (d *dispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.Conte
 }
 
 // VerifyTaskStateTransform verifies whether the task state transform is valid.
-func VerifyTaskStateTransform(oldState, newState string) bool {
+func VerifyTaskStateTransform(from, to string) bool {
 	rules := map[string][]string{
 		proto.TaskStatePending: {
 			proto.TaskStateRunning,
@@ -454,13 +456,14 @@ func VerifyTaskStateTransform(oldState, newState string) bool {
 		proto.TaskStateRevertPending: {},
 		proto.TaskStateReverted:      {},
 	}
+	logutil.BgLogger().Info("task state transform", zap.String("from", from), zap.String("to", to))
 
-	if oldState == newState {
+	if from == to {
 		return true
 	}
 
-	for _, state := range rules[oldState] {
-		if state == newState {
+	for _, state := range rules[from] {
+		if state == to {
 			return true
 		}
 	}

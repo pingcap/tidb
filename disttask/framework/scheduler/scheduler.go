@@ -33,8 +33,9 @@ var TestSyncChan = make(chan struct{})
 
 // InternalSchedulerImpl is the implementation of InternalScheduler.
 type InternalSchedulerImpl struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
+	ctx    context.Context
+	cancel context.CancelFunc
+	// id, it's the same as server id now, i.e. host:port.
 	id        string
 	taskID    int64
 	taskTable TaskTable
@@ -145,7 +146,7 @@ func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error
 		if subtask == nil {
 			break
 		}
-		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateRunning, nil)
+		s.startSubtask(subtask.ID)
 		if err := s.getError(); err != nil {
 			break
 		}
@@ -376,6 +377,13 @@ func (s *InternalSchedulerImpl) resetError() {
 	defer s.mu.Unlock()
 	s.mu.err = nil
 	s.mu.handled = false
+}
+
+func (s *InternalSchedulerImpl) startSubtask(id int64) {
+	err := s.taskTable.StartSubtask(id)
+	if err != nil {
+		s.onError(err)
+	}
 }
 
 func (s *InternalSchedulerImpl) updateSubtaskStateAndError(id int64, state string, subTaskErr error) {
