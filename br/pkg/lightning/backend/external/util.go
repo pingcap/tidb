@@ -118,3 +118,26 @@ func GetAllFileNames(
 	sort.Strings(stats)
 	return data, stats, nil
 }
+
+// CleanUpFiles delete all data and stat files under one subDir.
+func CleanUpFiles(ctx context.Context,
+	store storage.ExternalStorage,
+	subDir string) error {
+	dataNames, statNames, err := GetAllFileNames(ctx, store, subDir)
+	if err != nil {
+		return err
+	}
+	for _, data := range dataNames {
+		err := store.DeleteFile(ctx, data)
+		if err != nil {
+			return err
+		}
+	}
+	for _, stat := range statNames {
+		err := store.DeleteFile(ctx, stat)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
