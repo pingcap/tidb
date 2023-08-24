@@ -47,9 +47,6 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 	metrics.CapacityGauge.Set(float64(totalMemCost))
 	result := &LFU{}
 	bufferItems := int64(64)
-	if intest.InTest {
-		bufferItems = 1
-	}
 
 	cache, err := ristretto.NewCache(&ristretto.Config{
 		NumCounters:        mathutil.Max(totalMemCost/128*2, 10), // assume the cost per table stats is 128

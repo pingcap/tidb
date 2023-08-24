@@ -18,6 +18,7 @@ import (
 	"flag"
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/testkit/testsetup"
@@ -31,7 +32,11 @@ func TestMain(m *testing.M) {
 
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "flat_plan_suite")
-
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
