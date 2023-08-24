@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
@@ -124,14 +125,14 @@ func Selectivity(
 			if colStats.IsHandle {
 				nodes[len(nodes)-1].Tp = PkType
 				var cnt float64
-				cnt, err = coll.GetRowCountByIntColumnRanges(ctx, id, ranges)
+				cnt, err = GetRowCountByIntColumnRanges(ctx, coll, id, ranges)
 				if err != nil {
 					return 0, nil, errors.Trace(err)
 				}
 				nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
 				continue
 			}
-			cnt, err := coll.GetRowCountByColumnRanges(ctx, id, ranges)
+			cnt, err := GetRowCountByColumnRanges(ctx, coll, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -166,7 +167,7 @@ func Selectivity(
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			cnt, err := coll.GetRowCountByIndexRanges(ctx, id, ranges)
+			cnt, err := GetRowCountByIndexRanges(ctx, coll, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -612,4 +613,155 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 		}
 	}
 	return mask, ranges, false, nil
+}
+
+// getEqualCondSelectivity gets the selectivity of the equal conditions.
+func getEqualCondSelectivity(sctx sessionctx.Context, coll *statistics.HistColl, idx *statistics.Index, bytes []byte, usedColsLen int, idxPointRange *ranger.Range) (result float64, err error) {
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer func() {
+			var idxName string
+			if idx != nil && idx.Info != nil {
+				idxName = idx.Info.Name.O
+			}
+			debugtrace.RecordAnyValuesWithNames(
+				sctx,
+				"Index Name", idxName,
+				"Encoded", bytes,
+				"UsedColLen", usedColsLen,
+				"Range", idxPointRange.String(),
+				"Result", result,
+				"error", err,
+			)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
+	coverAll := len(idx.Info.Columns) == usedColsLen
+	// In this case, the row count is at most 1.
+	if idx.Info.Unique && coverAll {
+		return 1.0 / idx.TotalRowCount(), nil
+	}
+	val := types.NewBytesDatum(bytes)
+	if idx.OutOfRange(val) {
+		// When the value is out of range, we could not found this value in the CM Sketch,
+		// so we use heuristic methods to estimate the selectivity.
+		if idx.NDV > 0 && coverAll {
+			return outOfRangeEQSelectivity(sctx, idx.NDV, coll.RealtimeCount, int64(idx.TotalRowCount())), nil
+		}
+		// The equal condition only uses prefix columns of the index.
+		colIDs := coll.Idx2ColumnIDs[idx.ID]
+		var ndv int64
+		for i, colID := range colIDs {
+			if i >= usedColsLen {
+				break
+			}
+			if col, ok := coll.Columns[colID]; ok {
+				ndv = max(ndv, col.Histogram.NDV)
+			}
+		}
+		return outOfRangeEQSelectivity(sctx, ndv, coll.RealtimeCount, int64(idx.TotalRowCount())), nil
+	}
+
+	minRowCount, crossValidationSelectivity, err := crossValidationSelectivity(sctx, coll, idx, usedColsLen, idxPointRange)
+	if err != nil {
+		return 0, err
+	}
+
+	idxCount := float64(idx.QueryBytes(sctx, bytes))
+	if minRowCount < idxCount {
+		return crossValidationSelectivity, nil
+	}
+	return idxCount / idx.TotalRowCount(), nil
+}
+
+// outOfRangeEQSelectivity estimates selectivities for out-of-range values.
+// It assumes all modifications are insertions and all new-inserted rows are uniformly distributed
+// and has the same distribution with analyzed rows, which means each unique value should have the
+// same number of rows(Tot/NDV) of it.
+// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+func outOfRangeEQSelectivity(sctx sessionctx.Context, ndv, realtimeRowCount, columnRowCount int64) (result float64) {
+	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
+	increaseRowCount := realtimeRowCount - columnRowCount
+	if increaseRowCount <= 0 {
+		return 0 // it must be 0 since the histogram contains the whole data
+	}
+	if ndv < outOfRangeBetweenRate {
+		ndv = outOfRangeBetweenRate // avoid inaccurate selectivity caused by small NDV
+	}
+	selectivity := 1 / float64(ndv)
+	if selectivity*float64(columnRowCount) > float64(increaseRowCount) {
+		selectivity = float64(increaseRowCount) / float64(columnRowCount)
+	}
+	return selectivity
+}
+
+// crossValidationSelectivity gets the selectivity of multi-column equal conditions by cross validation.
+func crossValidationSelectivity(
+	sctx sessionctx.Context,
+	coll *statistics.HistColl,
+	idx *statistics.Index,
+	usedColsLen int,
+	idxPointRange *ranger.Range,
+) (
+	minRowCount float64,
+	crossValidationSelectivity float64,
+	err error,
+) {
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer func() {
+			var idxName string
+			if idx != nil && idx.Info != nil {
+				idxName = idx.Info.Name.O
+			}
+			debugtrace.RecordAnyValuesWithNames(
+				sctx,
+				"Index Name", idxName,
+				"minRowCount", minRowCount,
+				"crossValidationSelectivity", crossValidationSelectivity,
+				"error", err,
+			)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
+	minRowCount = math.MaxFloat64
+	cols := coll.Idx2ColumnIDs[idx.ID]
+	crossValidationSelectivity = 1.0
+	totalRowCount := idx.TotalRowCount()
+	for i, colID := range cols {
+		if i >= usedColsLen {
+			break
+		}
+		if col, ok := coll.Columns[colID]; ok {
+			if col.IsInvalid(sctx, coll.Pseudo) {
+				continue
+			}
+			// Since the column range is point range(LowVal is equal to HighVal), we need to set both LowExclude and HighExclude to false.
+			// Otherwise we would get 0.0 estRow from GetColumnRowCount.
+			rang := ranger.Range{
+				LowVal:      []types.Datum{idxPointRange.LowVal[i]},
+				LowExclude:  false,
+				HighVal:     []types.Datum{idxPointRange.HighVal[i]},
+				HighExclude: false,
+				Collators:   []collate.Collator{idxPointRange.Collators[i]},
+			}
+
+			rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
+			if err != nil {
+				return 0, 0, err
+			}
+			crossValidationSelectivity = crossValidationSelectivity * (rowCount / totalRowCount)
+
+			if rowCount < minRowCount {
+				minRowCount = rowCount
+			}
+		}
+	}
+	return minRowCount, crossValidationSelectivity, nil
 }

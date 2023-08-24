@@ -267,7 +267,7 @@ func debugTraceEndEstimateRange(
 }
 
 /*
- Below is debug trace for (*Histogram).locateBucket().
+ Below is debug trace for (*Histogram).LocateBucket().
 */
 
 type locateBucketInfo struct {
@@ -307,7 +307,8 @@ type bucketInfo struct {
 	Repeat int64
 }
 
-func debugTraceBuckets(s sessionctx.Context, hg *Histogram, bucketIdxs []int) {
+// DebugTraceBuckets is used to trace the buckets used in the histogram during estimation.
+func DebugTraceBuckets(s sessionctx.Context, hg *Histogram, bucketIdxs []int) {
 	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	buckets := make([]bucketInfo, len(bucketIdxs))
 	for i := range buckets {

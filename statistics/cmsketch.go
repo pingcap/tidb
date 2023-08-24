@@ -261,7 +261,8 @@ func (c *CMSketch) SubValue(h1, h2 uint64, count uint64) {
 	}
 }
 
-func queryValue(sctx sessionctx.Context, c *CMSketch, t *TopN, val types.Datum) (uint64, error) {
+// QueryValue is used to query the count of specified value.
+func QueryValue(sctx sessionctx.Context, c *CMSketch, t *TopN, val types.Datum) (uint64, error) {
 	var sc *stmtctx.StatementContext
 	if sctx != nil {
 		sc = sctx.GetSessionVars().StmtCtx
@@ -858,7 +859,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 					datum = d
 				}
 				// Get the row count which the value is equal to the encodedVal from histogram.
-				count, _ := hists[j].equalRowCount(nil, datum, isIndex)
+				count, _ := hists[j].EqualRowCount(nil, datum, isIndex)
 				if count != 0 {
 					counter[encodedVal] += count
 					// Remove the value corresponding to encodedVal from the histogram.

@@ -90,7 +90,7 @@ func buildCMSketchTopNAndMap(d, w, n, sample int32, seed int64, total, imax uint
 func averageAbsoluteError(cms *CMSketch, topN *TopN, mp map[int64]uint32) (uint64, error) {
 	var total uint64
 	for num, count := range mp {
-		estimate, err := queryValue(nil, cms, topN, types.NewIntDatum(num))
+		estimate, err := QueryValue(nil, cms, topN, types.NewIntDatum(num))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
