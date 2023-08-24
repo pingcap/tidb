@@ -998,6 +998,12 @@ func (e *Engine) Finish(totalBytes, totalCount int64) {
 	e.importedKVCount.Add(totalCount)
 }
 
+// LoadIngestData return (local) Engine itself because Engine has implemented
+// IngestData interface.
+func (e *Engine) LoadIngestData(_ context.Context, _, _ []byte) (IngestData, error) {
+	return e, nil
+}
+
 type sstMeta struct {
 	path       string
 	minKey     []byte

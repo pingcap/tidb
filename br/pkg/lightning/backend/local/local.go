@@ -1147,17 +1147,25 @@ func (local *Backend) generateAndSendJob(
 	}
 	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(local.WorkerConcurrency)
 	for _, jobRange := range jobRanges {
 		r := jobRange
+		data, err := engine.LoadIngestData(ctx, r.start, r.end)
+		if err != nil {
+			cancel()
+			eg.Wait()
+			return errors.Trace(err)
+		}
 		eg.Go(func() error {
 			if egCtx.Err() != nil {
 				return nil
 			}
 
 			failpoint.Inject("beforeGenerateJob", nil)
-			jobs, err := local.generateJobForRange(egCtx, engine, r, regionSplitSize, regionSplitKeys)
+			jobs, err := local.generateJobForRange(egCtx, data, r, regionSplitSize, regionSplitKeys)
 			if err != nil {
 				if common.IsContextCanceledError(err) {
 					return nil
@@ -1193,7 +1201,7 @@ var fakeRegionJobs map[[2]string]struct {
 // It will retry internally when scan region meet error.
 func (local *Backend) generateJobForRange(
 	ctx context.Context,
-	engine IngestData,
+	data IngestData,
 	keyRange Range,
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {
@@ -1212,7 +1220,7 @@ func (local *Backend) generateJobForRange(
 	})
 
 	start, end := keyRange.start, keyRange.end
-	pairStart, pairEnd, err := engine.GetFirstAndLastKey(start, end)
+	pairStart, pairEnd, err := data.GetFirstAndLastKey(start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -1249,7 +1257,7 @@ func (local *Backend) generateJobForRange(
 			keyRange:        intersectRange(region.Region, Range{start: start, end: end}),
 			region:          region,
 			stage:           regionScanned,
-			ingestData:      engine,
+			ingestData:      data,
 			regionSplitSize: regionSplitSize,
 			regionSplitKeys: regionSplitKeys,
 			metrics:         local.metrics,
@@ -1405,6 +1413,8 @@ func (local *Backend) executeJob(
 
 // ImportEngine imports an engine to TiKV.
 func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
+	// TODO(lance6716): make Engine an interface so local pebble engine and remote s3 engine
+	// can share same caller logic.
 	lf := local.lockEngine(engineUUID, importMutexStateImport)
 	if lf == nil {
 		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
@@ -1476,16 +1486,22 @@ func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, re
 		}()
 	}
 
-	log.FromContext(ctx).Info("start import engine", zap.Stringer("uuid", engineUUID),
-		zap.Int("region ranges", len(regionRanges)), zap.Int64("count", lfLength), zap.Int64("size", lfTotalSize))
+	log.FromContext(ctx).Info("start import engine",
+		zap.Stringer("uuid", engineUUID),
+		zap.Int("region ranges", len(regionRanges)),
+		zap.Int64("count", lfLength),
+		zap.Int64("size", lfTotalSize))
 
 	failpoint.Inject("ReadyForImportEngine", func() {})
 
 	err = local.doImport(ctx, lf, regionRanges, regionSplitSize, regionSplitKeys)
 	if err == nil {
-		log.FromContext(ctx).Info("import engine success", zap.Stringer("uuid", engineUUID),
-			zap.Int64("size", lfTotalSize), zap.Int64("kvs", lfLength),
-			zap.Int64("importedSize", lf.importedKVSize.Load()), zap.Int64("importedCount", lf.importedKVCount.Load()))
+		log.FromContext(ctx).Info("import engine success",
+			zap.Stringer("uuid", engineUUID),
+			zap.Int64("size", lfTotalSize),
+			zap.Int64("kvs", lfLength),
+			zap.Int64("importedSize", lf.importedKVSize.Load()),
+			zap.Int64("importedCount", lf.importedKVCount.Load()))
 	}
 	return err
 }
