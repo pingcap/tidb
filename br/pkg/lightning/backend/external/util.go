@@ -132,12 +132,11 @@ func CleanUpFiles(ctx context.Context,
 		return err
 	}
 
-	eg, _ := errgroup.WithContext(ctx)
+	eg := &errgroup.Group{}
 	workerPool := utils.NewWorkerPool(concurrency, "delete global sort files")
 	for i := range dataNames {
 		data := dataNames[i]
 		workerPool.ApplyOnErrorGroup(eg, func() error {
-			logutil.BgLogger().Info("data", zap.Any("data", data))
 			err := store.DeleteFile(ctx, data)
 			if err != nil {
 				return err
