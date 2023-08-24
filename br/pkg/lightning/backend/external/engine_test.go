@@ -63,7 +63,7 @@ func TestIter(t *testing.T) {
 			SetMemorySizeLimit(uint64(rand.Intn(100)+1)).
 			SetPropSizeDistance(uint64(rand.Intn(50)+1)).
 			SetPropKeysDistance(uint64(rand.Intn(10)+1)).
-			Build(store, i, "/subtask")
+			Build(store, "/subtask", i)
 		kvStart := i * 100
 		kvEnd := (i + 1) * 100
 		err := w.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs[kvStart:kvEnd]))
