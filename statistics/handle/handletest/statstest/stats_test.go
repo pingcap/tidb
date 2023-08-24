@@ -16,6 +16,7 @@ package statstest
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"testing"
 	"time"
 
@@ -335,9 +336,9 @@ func TestLoadStats(t *testing.T) {
 	require.Nil(t, cms)
 
 	// Column stats are loaded after they are needed.
-	_, err = stat.ColumnEqualRowCount(testKit.Session(), types.NewIntDatum(1), colAID)
+	_, err = cardinality.ColumnEqualRowCount(testKit.Session(), stat, types.NewIntDatum(1), colAID)
 	require.NoError(t, err)
-	_, err = stat.ColumnEqualRowCount(testKit.Session(), types.NewIntDatum(1), colCID)
+	_, err = cardinality.ColumnEqualRowCount(testKit.Session(), stat, types.NewIntDatum(1), colCID)
 	require.NoError(t, err)
 	require.NoError(t, h.LoadNeededHistograms())
 	stat = h.GetTableStats(tableInfo)
