@@ -762,7 +762,7 @@ func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 func (b *PlanBuilder) Init(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
 	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName.Load()
 	if processor == nil {
-		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(nil)
+		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&[]ast.HintTable{})
 	} else {
 		newPlannerSelectBlockAsName := make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&newPlannerSelectBlockAsName)
