@@ -16,10 +16,11 @@ package planner
 
 import "github.com/pingcap/tidb/disttask/framework/storage"
 
+// Planner represents a distribute plan planner.
 type Planner struct{}
 
 // Run runs the distribute plan.
-func (p *Planner) Run(planCtx PlanCtx, plan LogicalPlan) (int64, error) {
+func (*Planner) Run(planCtx PlanCtx, plan LogicalPlan) (int64, error) {
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return 0, err
@@ -30,5 +31,11 @@ func (p *Planner) Run(planCtx PlanCtx, plan LogicalPlan) (int64, error) {
 		return 0, err
 	}
 
-	return globalTaskManager.AddGlobalTaskWithSession(planCtx.SessionCtx, planCtx.TaskKey, planCtx.TaskType, planCtx.ThreadCnt, taskMeta)
+	return globalTaskManager.AddGlobalTaskWithSession(
+		planCtx.SessionCtx,
+		planCtx.TaskKey,
+		planCtx.TaskType,
+		planCtx.ThreadCnt,
+		taskMeta,
+	)
 }
