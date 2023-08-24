@@ -16,6 +16,7 @@ package handletest
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"math"
 	"strconv"
 	"strings"
@@ -79,7 +80,7 @@ func TestColumnIDs(t *testing.T) {
 		HighExclude: true,
 		Collators:   collate.GetBinaryCollatorSlice(1),
 	}
-	count, err := statsTbl.GetRowCountByColumnRanges(sctx, tableInfo.Columns[0].ID, []*ranger.Range{ran})
+	count, err := cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran})
 	require.NoError(t, err)
 	require.Equal(t, float64(1), count)
 
@@ -94,7 +95,7 @@ func TestColumnIDs(t *testing.T) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	// At that time, we should get c2's stats instead of c1's.
-	count, err = statsTbl.GetRowCountByColumnRanges(sctx, tableInfo.Columns[0].ID, []*ranger.Range{ran})
+	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran})
 	require.NoError(t, err)
 	require.Equal(t, 0.0, count)
 }
