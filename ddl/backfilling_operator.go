@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/ingest"
-	sess "github.com/pingcap/tidb/ddl/internal/session"
+	"github.com/pingcap/tidb/ddl/session"
 	"github.com/pingcap/tidb/disttask/operator"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -42,16 +42,16 @@ import (
 )
 
 var (
-	_ operator.Operator                  = (*OpSourceTableScanTask)(nil)
-	_ operator.WithSink[OpTaskTableScan] = (*OpSourceTableScanTask)(nil)
+	_ operator.Operator                = (*TableScanTaskSource)(nil)
+	_ operator.WithSink[TableScanTask] = (*TableScanTaskSource)(nil)
 
-	_ operator.WithSource[OpTaskTableScan] = (*tableScanOperator)(nil)
-	_ operator.Operator                    = (*tableScanOperator)(nil)
-	_ operator.WithSink[idxRecResult]      = (*tableScanOperator)(nil)
+	_ operator.WithSource[TableScanTask]  = (*TableScanOperator)(nil)
+	_ operator.Operator                   = (*TableScanOperator)(nil)
+	_ operator.WithSink[IndexRecordChunk] = (*TableScanOperator)(nil)
 
-	_ operator.WithSource[idxRecResult] = (*indexIngestOperator)(nil)
-	_ operator.Operator                 = (*indexIngestOperator)(nil)
-	_ operator.WithSink[backfillResult] = (*indexIngestOperator)(nil)
+	_ operator.WithSource[IndexRecordChunk] = (*indexIngestOperator)(nil)
+	_ operator.Operator                     = (*indexIngestOperator)(nil)
+	_ operator.WithSink[backfillResult]     = (*indexIngestOperator)(nil)
 
 	_ operator.WithSource[backfillResult] = (*backfillResultSink)(nil)
 	_ operator.Operator                   = (*backfillResultSink)(nil)
@@ -61,7 +61,7 @@ var (
 func NewAddIndexIngestPipeline(
 	ctx context.Context,
 	store kv.Storage,
-	sessPool *sess.Pool,
+	sessPool *session.Pool,
 	engine ingest.Engine,
 	sessCtx sessionctx.Context,
 	tbl table.PhysicalTable,
@@ -69,7 +69,7 @@ func NewAddIndexIngestPipeline(
 	startKey, endKey kv.Key,
 ) (*operator.AsyncPipeline, error) {
 	index := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
-	copCtx, err := newCopContext(tbl.Meta(), idxInfo, sessCtx)
+	copCtx, err := NewCopContext(tbl.Meta(), idxInfo, sessCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -81,12 +81,12 @@ func NewAddIndexIngestPipeline(
 	readerCnt, writerCnt := expectedIngestWorkerCnt()
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
-	scanOp := newTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
+	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	ingestOp := newIndexIngestOperator(ctx, copCtx, sessPool, tbl, index, engine, srcChkPool, writerCnt)
 	sinkOp := newBackfillResultSink(ctx)
 
-	operator.Compose[OpTaskTableScan](srcOp, scanOp)
-	operator.Compose[idxRecResult](scanOp, ingestOp)
+	operator.Compose[TableScanTask](srcOp, scanOp)
+	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
 	operator.Compose[backfillResult](ingestOp, sinkOp)
 
 	return operator.NewAsyncPipeline(
@@ -94,29 +94,29 @@ func NewAddIndexIngestPipeline(
 	), nil
 }
 
-type OpTaskTableScan struct {
+type TableScanTask struct {
 	ID    int
 	Start kv.Key
 	End   kv.Key
 }
 
-func (t *OpTaskTableScan) String() string {
-	return fmt.Sprintf("OpTaskTableScan: id=%d, startKey=%s, endKey=%s",
+func (t *TableScanTask) String() string {
+	return fmt.Sprintf("TableScanTask: id=%d, startKey=%s, endKey=%s",
 		t.ID, hex.EncodeToString(t.Start), hex.EncodeToString(t.End))
 }
 
-type idxRecResult struct {
-	id    int
-	chunk *chunk.Chunk
-	err   error
-	done  bool
+type IndexRecordChunk struct {
+	ID    int
+	Chunk *chunk.Chunk
+	Err   error
+	Done  bool
 }
 
-type OpSourceTableScanTask struct {
+type TableScanTaskSource struct {
 	ctx context.Context
 
 	errGroup errgroup.Group
-	sink     operator.DataChannel[OpTaskTableScan]
+	sink     operator.DataChannel[TableScanTask]
 
 	physicalTable table.PhysicalTable
 	store         kv.Storage
@@ -130,8 +130,8 @@ func NewTableScanTaskSource(
 	physicalTable table.PhysicalTable,
 	startKey kv.Key,
 	endKey kv.Key,
-) *OpSourceTableScanTask {
-	return &OpSourceTableScanTask{
+) *TableScanTaskSource {
+	return &TableScanTaskSource{
 		ctx:           ctx,
 		errGroup:      errgroup.Group{},
 		sink:          nil,
@@ -142,11 +142,11 @@ func NewTableScanTaskSource(
 	}
 }
 
-func (src *OpSourceTableScanTask) SetSink(sink operator.DataChannel[OpTaskTableScan]) {
+func (src *TableScanTaskSource) SetSink(sink operator.DataChannel[TableScanTask]) {
 	src.sink = sink
 }
 
-func (src *OpSourceTableScanTask) Open() error {
+func (src *TableScanTaskSource) Open() error {
 	src.errGroup.Go(func() error {
 		taskIDAlloc := newTaskIDAllocator()
 		defer src.sink.Finish()
@@ -189,8 +189,8 @@ func getBatchTableScanTask(
 	t table.PhysicalTable,
 	kvRanges []kv.KeyRange,
 	taskIDAlloc *taskIDAllocator,
-) []OpTaskTableScan {
-	batchTasks := make([]OpTaskTableScan, 0, len(kvRanges))
+) []TableScanTask {
+	batchTasks := make([]TableScanTask, 0, len(kvRanges))
 	prefix := t.RecordPrefix()
 	// Build reorg tasks.
 	for _, keyRange := range kvRanges {
@@ -204,7 +204,7 @@ func getBatchTableScanTask(
 			endKey = prefix.PrefixNext()
 		}
 
-		task := OpTaskTableScan{
+		task := TableScanTask{
 			ID:    taskID,
 			Start: startKey,
 			End:   endKey,
@@ -214,30 +214,30 @@ func getBatchTableScanTask(
 	return batchTasks
 }
 
-func (src *OpSourceTableScanTask) Close() error {
+func (src *TableScanTaskSource) Close() error {
 	return src.errGroup.Wait()
 }
 
-func (src *OpSourceTableScanTask) String() string {
-	return "OpSourceTableScanTask"
+func (src *TableScanTaskSource) String() string {
+	return "TableScanTaskSource"
 }
 
-type tableScanOperator struct {
-	*operator.AsyncOperator[OpTaskTableScan, idxRecResult]
+type TableScanOperator struct {
+	*operator.AsyncOperator[TableScanTask, IndexRecordChunk]
 }
 
-func newTableScanOperator(
+func NewTableScanOperator(
 	ctx context.Context,
-	sessPool *sess.Pool,
+	sessPool *session.Pool,
 	copCtx *copContext,
 	srcChkPool chan *chunk.Chunk,
 	concurrency int,
-) *tableScanOperator {
+) *TableScanOperator {
 	pool := workerpool.NewWorkerPool(
-		"tableScanOperator",
+		"TableScanOperator",
 		util.DDL,
 		concurrency,
-		func() workerpool.Worker[OpTaskTableScan, idxRecResult] {
+		func() workerpool.Worker[TableScanTask, IndexRecordChunk] {
 			return &tableScanWorker{
 				ctx:        ctx,
 				copCtx:     copCtx,
@@ -246,27 +246,27 @@ func newTableScanOperator(
 				srcChkPool: srcChkPool,
 			}
 		})
-	return &tableScanOperator{
-		AsyncOperator: operator.NewAsyncOperator[OpTaskTableScan, idxRecResult](ctx, pool),
+	return &TableScanOperator{
+		AsyncOperator: operator.NewAsyncOperator[TableScanTask, IndexRecordChunk](ctx, pool),
 	}
 }
 
 type tableScanWorker struct {
 	ctx        context.Context
 	copCtx     *copContext
-	sessPool   *sess.Pool
-	se         *sess.Session
+	sessPool   *session.Pool
+	se         *session.Session
 	srcChkPool chan *chunk.Chunk
 }
 
-func (w *tableScanWorker) HandleTask(task OpTaskTableScan) idxRecResult {
+func (w *tableScanWorker) HandleTask(task TableScanTask) IndexRecordChunk {
 	if w.se == nil {
 		sessCtx, err := w.sessPool.Get()
 		if err != nil {
 			logutil.Logger(w.ctx).Error("copReqSender get session from pool failed", zap.Error(err))
-			return idxRecResult{err: err}
+			return IndexRecordChunk{Err: err}
 		}
-		w.se = sess.NewSession(sessCtx)
+		w.se = session.NewSession(sessCtx)
 	}
 	return w.scanRecords(task)
 }
@@ -275,11 +275,11 @@ func (w *tableScanWorker) Close() {
 	w.sessPool.Put(w.se.Context)
 }
 
-func (w *tableScanWorker) scanRecords(task OpTaskTableScan) idxRecResult {
+func (w *tableScanWorker) scanRecords(task TableScanTask) IndexRecordChunk {
 	logutil.Logger(w.ctx).Info("start a cop-request task",
 		zap.Int("id", task.ID), zap.String("task", task.String()))
 
-	var idxResult idxRecResult
+	var idxResult IndexRecordChunk
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
 		rs, err := w.copCtx.buildTableScan(w.ctx, startTS, task.Start, task.End)
 		if err != nil {
@@ -299,15 +299,15 @@ func (w *tableScanWorker) scanRecords(task OpTaskTableScan) idxRecResult {
 				terror.Call(rs.Close)
 				return err
 			}
-			idxResult = idxRecResult{id: task.ID, chunk: srcChk, done: done}
+			idxResult = IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done}
 			failpoint.Inject("mockCopSenderError", func() {
-				idxResult.err = errors.New("mock cop error")
+				idxResult.Err = errors.New("mock cop error")
 			})
 		}
 		terror.Call(rs.Close)
 		return nil
 	})
-	idxResult.err = err
+	idxResult.Err = err
 	return idxResult
 }
 
@@ -326,13 +326,13 @@ func (w *tableScanWorker) recycleChunk(chk *chunk.Chunk) {
 }
 
 type indexIngestOperator struct {
-	*operator.AsyncOperator[idxRecResult, backfillResult]
+	*operator.AsyncOperator[IndexRecordChunk, backfillResult]
 }
 
 func newIndexIngestOperator(
 	ctx context.Context,
 	copCtx *copContext,
-	sessPool *sess.Pool,
+	sessPool *session.Pool,
 	tbl table.PhysicalTable,
 	index table.Index,
 	engine ingest.Engine,
@@ -344,7 +344,7 @@ func newIndexIngestOperator(
 		"indexIngestOperator",
 		util.DDL,
 		concurrency,
-		func() workerpool.Worker[idxRecResult, backfillResult] {
+		func() workerpool.Worker[IndexRecordChunk, backfillResult] {
 			writerID := int(writerIDAlloc.Add(1))
 			writer, err := engine.CreateWriter(writerID, index.Meta().Unique)
 			if err != nil {
@@ -363,7 +363,7 @@ func newIndexIngestOperator(
 			}
 		})
 	return &indexIngestOperator{
-		AsyncOperator: operator.NewAsyncOperator[idxRecResult, backfillResult](ctx, pool),
+		AsyncOperator: operator.NewAsyncOperator[IndexRecordChunk, backfillResult](ctx, pool),
 	}
 }
 
@@ -374,17 +374,17 @@ type indexIngestWorker struct {
 	index table.Index
 
 	copCtx   *copContext
-	sessPool *sess.Pool
-	se       *sess.Session
+	sessPool *session.Pool
+	se       *session.Session
 
 	writer       ingest.Writer
 	srcChunkPool chan *chunk.Chunk
 }
 
-func (w *indexIngestWorker) HandleTask(rs idxRecResult) backfillResult {
+func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk) backfillResult {
 	result := backfillResult{
-		taskID: rs.id,
-		err:    rs.err,
+		taskID: rs.ID,
+		err:    rs.Err,
 	}
 	if w.se == nil {
 		sessCtx, err := w.sessPool.Get()
@@ -392,14 +392,14 @@ func (w *indexIngestWorker) HandleTask(rs idxRecResult) backfillResult {
 			result.err = err
 			return result
 		}
-		w.se = sess.NewSession(sessCtx)
+		w.se = session.NewSession(sessCtx)
 	}
 	defer func() {
-		w.srcChunkPool <- rs.chunk
+		w.srcChunkPool <- rs.Chunk
 	}()
 	if result.err != nil {
 		logutil.Logger(w.ctx).Error("encounter error when handle index chunk",
-			zap.Int("id", rs.id), zap.Error(rs.err))
+			zap.Int("id", rs.ID), zap.Error(rs.Err))
 		return result
 	}
 	count, nextKey, err := w.WriteLocal(&rs)
@@ -408,7 +408,7 @@ func (w *indexIngestWorker) HandleTask(rs idxRecResult) backfillResult {
 		return result
 	}
 	if count == 0 {
-		logutil.Logger(w.ctx).Info("finish a cop-request task", zap.Int("id", rs.id))
+		logutil.Logger(w.ctx).Info("finish a cop-request task", zap.Int("id", rs.ID))
 		return result
 	}
 	result.addedCount = count
@@ -424,10 +424,10 @@ func (w *indexIngestWorker) Close() {
 }
 
 // WriteLocal will write index records to lightning engine.
-func (w *indexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey kv.Key, err error) {
+func (w *indexIngestWorker) WriteLocal(rs *IndexRecordChunk) (count int, nextKey kv.Key, err error) {
 	oprStartTime := time.Now()
 	vars := w.se.GetSessionVars()
-	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, w.copCtx, vars, rs.chunk)
+	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, w.copCtx, vars, rs.Chunk)
 	if err != nil || cnt == 0 {
 		return 0, nil, err
 	}

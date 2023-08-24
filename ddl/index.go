@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
-	sess "github.com/pingcap/tidb/ddl/internal/session"
+	"github.com/pingcap/tidb/ddl/session"
 	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -805,7 +805,7 @@ func cleanupSortPath(ctx context.Context, currentJobID int64) error {
 
 // IngestJobsNotExisted checks the ddl about `add index` with ingest method not existed.
 func IngestJobsNotExisted(ctx sessionctx.Context) bool {
-	se := sess.NewSession(ctx)
+	se := session.NewSession(ctx)
 	template := "select job_meta from mysql.tidb_ddl_job where reorg and (type = %d or type = %d) and processing;"
 	sql := fmt.Sprintf(template, model.ActionAddIndex, model.ActionAddPrimaryKey)
 	rows, err := se.Execute(context.Background(), sql, "check-pitr")
@@ -1005,7 +1005,7 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		return
 	}
 	defer w.sessPool.Put(sctx)
-	rh := newReorgHandler(sess.NewSession(sctx))
+	rh := newReorgHandler(session.NewSession(sctx))
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return false, ver, errors.Trace(err)
@@ -1653,11 +1653,11 @@ func newAddIndexIngestWorker(ctx context.Context, t table.PhysicalTable, d *ddlC
 }
 
 // WriteLocal will write index records to lightning engine.
-func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey kv.Key, err error) {
+func (w *addIndexIngestWorker) WriteLocal(rs *IndexRecordChunk) (count int, nextKey kv.Key, err error) {
 	oprStartTime := time.Now()
 	copCtx := w.copReqSenderPool.copCtx
 	vars := w.sessCtx.GetSessionVars()
-	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, copCtx, vars, rs.chunk)
+	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, copCtx, vars, rs.Chunk)
 	if err != nil || cnt == 0 {
 		return 0, nil, err
 	}
@@ -1982,7 +1982,7 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 // updateReorgInfo will find the next partition according to current reorgInfo.
 // If no more partitions, or table t is not a partitioned table, returns true to
 // indicate that the reorganize work is finished.
-func updateReorgInfo(sessPool *sess.Pool, t table.PartitionedTable, reorg *reorgInfo) (bool, error) {
+func updateReorgInfo(sessPool *session.Pool, t table.PartitionedTable, reorg *reorgInfo) (bool, error) {
 	pid, startKey, endKey, err := getNextPartitionInfo(reorg, t, reorg.PhysicalTableID)
 	if err != nil {
 		return false, errors.Trace(err)

@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/ingest"
-	sess "github.com/pingcap/tidb/ddl/internal/session"
+	"github.com/pingcap/tidb/ddl/session"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -64,14 +64,14 @@ func copReadChunkPoolSize() int {
 
 // chunkSender is used to receive the result of coprocessor request.
 type chunkSender interface {
-	AddTask(idxRecResult)
+	AddTask(IndexRecordChunk)
 }
 
 type copReqSenderPool struct {
 	tasksCh       chan *reorgBackfillTask
 	chunkSender   chunkSender
 	checkpointMgr *ingest.CheckpointManager
-	sessPool      *sess.Pool
+	sessPool      *session.Pool
 
 	ctx    context.Context
 	copCtx *copContext
@@ -95,15 +95,15 @@ func (c *copReqSender) run() {
 	p := c.senderPool
 	defer p.wg.Done()
 	defer util.Recover(metrics.LabelDDL, "copReqSender.run", func() {
-		p.chunkSender.AddTask(idxRecResult{err: dbterror.ErrReorgPanic})
+		p.chunkSender.AddTask(IndexRecordChunk{Err: dbterror.ErrReorgPanic})
 	}, false)
 	sessCtx, err := p.sessPool.Get()
 	if err != nil {
 		logutil.Logger(p.ctx).Error("copReqSender get session from pool failed", zap.Error(err))
-		p.chunkSender.AddTask(idxRecResult{err: err})
+		p.chunkSender.AddTask(IndexRecordChunk{Err: err})
 		return
 	}
-	se := sess.NewSession(sessCtx)
+	se := session.NewSession(sessCtx)
 	defer p.sessPool.Put(sessCtx)
 	for {
 		if util.HasCancelled(c.ctx) {
@@ -121,13 +121,13 @@ func (c *copReqSender) run() {
 		}
 		err := scanRecords(p, task, se)
 		if err != nil {
-			p.chunkSender.AddTask(idxRecResult{id: task.id, err: err})
+			p.chunkSender.AddTask(IndexRecordChunk{ID: task.id, Err: err})
 			return
 		}
 	}
 }
 
-func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
+func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *session.Session) error {
 	logutil.Logger(p.ctx).Info("start a cop-request task",
 		zap.Int("id", task.id), zap.String("task", task.String()))
 
@@ -156,9 +156,9 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 			if p.checkpointMgr != nil {
 				p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
 			}
-			idxRs := idxRecResult{id: task.id, chunk: srcChk, done: done}
+			idxRs := IndexRecordChunk{ID: task.id, Chunk: srcChk, Done: done}
 			failpoint.Inject("mockCopSenderError", func() {
-				idxRs.err = errors.New("mock cop error")
+				idxRs.Err = errors.New("mock cop error")
 			})
 			p.chunkSender.AddTask(idxRs)
 		}
@@ -167,7 +167,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 	})
 }
 
-func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
+func wrapInBeginRollback(se *session.Session, f func(startTS uint64) error) error {
 	err := se.Begin()
 	if err != nil {
 		return errors.Trace(err)
@@ -182,7 +182,7 @@ func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 }
 
 func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage,
-	taskCh chan *reorgBackfillTask, sessPool *sess.Pool,
+	taskCh chan *reorgBackfillTask, sessPool *session.Pool,
 	checkpointMgr *ingest.CheckpointManager) *copReqSenderPool {
 	poolSize := copReadChunkPoolSize()
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
@@ -273,7 +273,14 @@ type copContext struct {
 	virtualColFieldTps  []*types.FieldType
 }
 
-func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx sessionctx.Context) (*copContext, error) {
+// FieldTypes is only used for test.
+// TODO(tangenta): refactor the operators to avoid using this method.
+func (c *copContext) FieldTypes() []*types.FieldType {
+	return c.fieldTps
+}
+
+// NewCopContext creates a copContext.
+func NewCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx sessionctx.Context) (*copContext, error) {
 	var err error
 	usedColumnIDs := make(map[int64]struct{}, len(idxInfo.Columns))
 	usedColumnIDs, err = fillUsedColumns(usedColumnIDs, idxInfo, tblInfo)

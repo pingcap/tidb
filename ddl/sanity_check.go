@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	sess "github.com/pingcap/tidb/ddl/internal/session"
+	sess "github.com/pingcap/tidb/ddl/session"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"

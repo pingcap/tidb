@@ -53,6 +53,7 @@ func NewAsyncOperatorWithTransform[T, R any](
 // NewAsyncOperator create an AsyncOperator.
 func NewAsyncOperator[T, R any](ctx context.Context, pool *workerpool.WorkerPool[T, R]) *AsyncOperator[T, R] {
 	return &AsyncOperator[T, R]{
+		ctx:  ctx,
 		pool: pool,
 	}
 }

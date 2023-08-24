@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/ingest"
-	sess "github.com/pingcap/tidb/ddl/internal/session"
+	sess "github.com/pingcap/tidb/ddl/session"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -268,7 +268,7 @@ type ingestBackfillScheduler struct {
 
 	copReqSenderPool *copReqSenderPool
 
-	writerPool    *workerpool.WorkerPool[idxRecResult, workerpool.None]
+	writerPool    *workerpool.WorkerPool[IndexRecordChunk, workerpool.None]
 	writerMaxID   int
 	poolErr       chan error
 	backendCtx    ingest.BackendCtx
@@ -308,7 +308,7 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	}
 	b.copReqSenderPool = copReqSenderPool
 	readerCnt, writerCnt := b.expectedWorkerSize()
-	writerPool := workerpool.NewWorkerPool[idxRecResult]("ingest_writer",
+	writerPool := workerpool.NewWorkerPool[IndexRecordChunk]("ingest_writer",
 		poolutil.DDL, writerCnt, b.createWorker)
 	writerPool.Start(b.ctx)
 	b.writerPool = writerPool
@@ -379,7 +379,7 @@ func (b *ingestBackfillScheduler) adjustWorkerSize() error {
 	return nil
 }
 
-func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult, workerpool.None] {
+func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[IndexRecordChunk, workerpool.None] {
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
 	sessCtx, err := newSessCtx(reorgInfo)
@@ -428,7 +428,7 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 		logutil.Logger(b.ctx).Warn("cannot init cop request sender", zap.Error(err))
 		return nil, err
 	}
-	copCtx, err := newCopContext(b.tbl.Meta(), indexInfo, sessCtx)
+	copCtx, err := NewCopContext(b.tbl.Meta(), indexInfo, sessCtx)
 	if err != nil {
 		logutil.Logger(b.ctx).Warn("cannot init cop request sender", zap.Error(err))
 		return nil, err
@@ -448,18 +448,18 @@ func expectedIngestWorkerCnt() (readerCnt, writerCnt int) {
 	return readerCnt, writerCnt
 }
 
-func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) (_ workerpool.None) {
+func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk) (_ workerpool.None) {
 	defer util.Recover(metrics.LabelDDL, "ingestWorker.HandleTask", func() {
-		w.resultCh <- &backfillResult{taskID: rs.id, err: dbterror.ErrReorgPanic}
+		w.resultCh <- &backfillResult{taskID: rs.ID, err: dbterror.ErrReorgPanic}
 	}, false)
-	defer w.copReqSenderPool.recycleChunk(rs.chunk)
+	defer w.copReqSenderPool.recycleChunk(rs.Chunk)
 	result := &backfillResult{
-		taskID: rs.id,
-		err:    rs.err,
+		taskID: rs.ID,
+		err:    rs.Err,
 	}
 	if result.err != nil {
 		logutil.Logger(w.ctx).Error("encounter error when handle index chunk",
-			zap.Int("id", rs.id), zap.Error(rs.err))
+			zap.Int("id", rs.ID), zap.Error(rs.Err))
 		w.resultCh <- result
 		return
 	}
@@ -478,14 +478,14 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) (_ workerpool.None) {
 		return
 	}
 	if count == 0 {
-		logutil.Logger(w.ctx).Info("finish a cop-request task", zap.Int("id", rs.id))
+		logutil.Logger(w.ctx).Info("finish a cop-request task", zap.Int("id", rs.ID))
 		return
 	}
 	if w.checkpointMgr != nil {
 		cnt, nextKey := w.checkpointMgr.Status()
 		result.totalCount = cnt
 		result.nextKey = nextKey
-		result.err = w.checkpointMgr.UpdateCurrent(rs.id, count)
+		result.err = w.checkpointMgr.UpdateCurrent(rs.ID, count)
 	} else {
 		result.addedCount = count
 		result.scanCount = count
