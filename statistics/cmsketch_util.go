@@ -39,6 +39,16 @@ func (d *datumMapCache) Get(key hack.MutableString) (val types.Datum, ok bool) {
 
 func (d *datumMapCache) Put(val TopNMeta, encodedVal hack.MutableString,
 	tp byte, isIndex bool, loc *time.Location) (dat types.Datum, err error) {
+	dat, err = topNMetaToDatum(val, tp, isIndex, loc)
+	if err != nil {
+		return dat, err
+	}
+	d.datumMap[encodedVal] = dat
+	return dat, nil
+}
+
+func topNMetaToDatum(val TopNMeta,
+	tp byte, isIndex bool, loc *time.Location) (dat types.Datum, err error) {
 	if isIndex {
 		dat.SetBytes(val.Encoded)
 	} else {
@@ -55,6 +65,5 @@ func (d *datumMapCache) Put(val TopNMeta, encodedVal hack.MutableString,
 			return dat, err
 		}
 	}
-	d.datumMap[encodedVal] = dat
-	return dat, nil
+	return dat, err
 }
