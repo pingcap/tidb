@@ -34,15 +34,8 @@ import (
 )
 
 const (
-	pseudoEqualRate   = 1000
-	pseudoLessRate    = 3
-	pseudoBetweenRate = 40
-	pseudoColSize     = 8.0
+	pseudoColSize = 8.0
 
-	outOfRangeBetweenRate = 100
-)
-
-const (
 	// PseudoVersion means the pseudo statistics version is 0.
 	PseudoVersion uint64 = 0
 
@@ -466,11 +459,6 @@ func (t *Table) IsOutdated() bool {
 		return true
 	}
 	return false
-}
-
-// PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
-func (t *Table) PseudoAvgCountPerValue() float64 {
-	return float64(t.RealtimeCount) / pseudoEqualRate
 }
 
 // ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.
