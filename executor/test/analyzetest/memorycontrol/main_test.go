@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"go.uber.org/goleak"
 )
 
@@ -25,6 +26,7 @@ func TestMain(m *testing.M) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = true
 	})
+	variable.StatsCacheMemQuota.Store(5000)
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),

@@ -12,6 +12,7 @@ go_test(
     deps = [
         "//config",
         "//executor",
+        "//sessionctx/variable",
         "//statistics/handle",
         "//testkit",
         "//util",
