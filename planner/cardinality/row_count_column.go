@@ -26,6 +26,12 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
+func init() {
+	statistics.GetRowCountByColumnRanges = GetRowCountByColumnRanges
+	statistics.GetRowCountByIntColumnRanges = GetRowCountByIntColumnRanges
+	statistics.GetRowCountByIndexRanges = GetRowCountByIndexRanges
+}
+
 // ColumnEqualRowCount estimates the row count where the column equals to value.
 func ColumnEqualRowCount(sctx sessionctx.Context, t *statistics.Table, value types.Datum, colID int64) (float64, error) {
 	c, ok := t.Columns[colID]
@@ -39,12 +45,6 @@ func ColumnEqualRowCount(sctx sessionctx.Context, t *statistics.Table, value typ
 	result, err := equalRowCount(sctx, c, value, encodedVal, t.ModifyCount)
 	result *= c.GetIncreaseFactor(t.RealtimeCount)
 	return result, errors.Trace(err)
-}
-
-func init() {
-	statistics.GetRowCountByColumnRanges = GetRowCountByColumnRanges
-	statistics.GetRowCountByIntColumnRanges = GetRowCountByIntColumnRanges
-	statistics.GetRowCountByIndexRanges = GetRowCountByIndexRanges
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
