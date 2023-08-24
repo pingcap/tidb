@@ -39,6 +39,7 @@ func (*planErrFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
 func (p *planErrFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State == proto.TaskStatePending {
 		if p.callTime == 0 {
+			p.callTime++
 			return nil, errors.New("retryable err")
 		}
 		gTask.Step = proto.StepOne
@@ -57,7 +58,11 @@ func (p *planErrFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.Ta
 	return nil, nil
 }
 
-func (*planErrFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+func (p *planErrFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+	if p.callTime == 1 {
+		p.callTime++
+		return nil, errors.New("not retryable err")
+	}
 	return []byte("planErrTask"), nil
 }
 
@@ -80,7 +85,7 @@ func (p *planNotRetryableErrFlowHandle) ProcessNormalFlow(_ context.Context, _ d
 }
 
 func (*planNotRetryableErrFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	return []byte("planErrTask"), nil
+	return nil, errors.New("not retryable err")
 }
 
 func (*planNotRetryableErrFlowHandle) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
@@ -92,6 +97,17 @@ func (*planNotRetryableErrFlowHandle) IsRetryableErr(error) bool {
 }
 
 func TestPlanErr(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+	m := sync.Map{}
+
+	RegisterTaskMeta(&m, &planErrFlowHandle{0})
+	distContext := testkit.NewDistExecutionContext(t, 2)
+	DispatchTaskAndCheckSuccess("key1", t, &m)
+	distContext.Close()
+}
+
+func TestRevertPlanErr(t *testing.T) {
 	defer dispatcher.ClearTaskFlowHandle()
 	defer scheduler.ClearSchedulers()
 	m := sync.Map{}

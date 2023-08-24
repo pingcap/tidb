@@ -243,12 +243,12 @@ func (d *dispatcher) processErrFlow(receiveErr []error) error {
 	handle := GetTaskFlowHandle(d.task.Type)
 	if handle == nil {
 		logutil.Logger(d.logCtx).Warn("gen task flow handle failed, this type handle doesn't register")
+		// state transform: pending --> running --> canceling --> failed.
 		return d.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
 	}
 	meta, err := handle.ProcessErrFlow(d.ctx, d, d.task, receiveErr)
 	if err != nil {
-		logutil.Logger(d.logCtx).Warn("handle error failed", zap.Error(err))
-		return err
+		return d.handlePlanErr(handle, err)
 	}
 
 	// 2. dispatch revert dist-plan to EligibleInstances.
@@ -275,16 +275,13 @@ func (d *dispatcher) processNormalFlow() error {
 	if handle == nil {
 		logutil.Logger(d.logCtx).Warn("gen task flow handle failed, this type handle doesn't register", zap.String("type", d.task.Type))
 		d.task.Error = errors.New("unsupported task type")
+
+		// state transform: pending -> failed.
 		return d.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
 	}
 	metas, err := handle.ProcessNormalFlow(d.ctx, d, d.task)
 	if err != nil {
-		logutil.Logger(d.logCtx).Warn("generate dist-plan failed", zap.Error(err))
-		if handle.IsRetryableErr(err) {
-			return err
-		}
-		d.task.Error = err
-		return d.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
+		return d.handlePlanErr(handle, err)
 	}
 	// 2. dispatch dist-plan to EligibleInstances.
 	return d.dispatchSubTask(d.task, handle, metas)
@@ -341,6 +338,16 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, handle TaskFlowHandle, me
 	}
 
 	return d.updateTask(proto.TaskStateRunning, subTasks, retrySQLTimes)
+}
+
+func (d *dispatcher) handlePlanErr(handle TaskFlowHandle, err error) error {
+	logutil.Logger(d.logCtx).Warn("generate plan failed", zap.Error(err), zap.String("state", d.task.State))
+	if handle.IsRetryableErr(err) {
+		return err
+	}
+	d.task.Error = err
+	// state transform: pending -> failed.
+	return d.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.
