@@ -22,6 +22,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"golang.org/x/sync/errgroup"
+
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/hack"
@@ -122,22 +125,35 @@ func GetAllFileNames(
 // CleanUpFiles delete all data and stat files under one subDir.
 func CleanUpFiles(ctx context.Context,
 	store storage.ExternalStorage,
-	subDir string) error {
+	subDir string,
+	concurrency uint) error {
 	dataNames, statNames, err := GetAllFileNames(ctx, store, subDir)
 	if err != nil {
 		return err
 	}
-	for _, data := range dataNames {
-		err := store.DeleteFile(ctx, data)
-		if err != nil {
-			return err
-		}
+
+	eg, _ := errgroup.WithContext(context.Background())
+	workerPool := utils.NewWorkerPool(concurrency, "delete global sort files")
+	for i := range dataNames {
+		data := dataNames[i]
+		workerPool.ApplyOnErrorGroup(eg, func() error {
+			logutil.BgLogger().Info("data", zap.Any("data", data))
+			err := store.DeleteFile(ctx, data)
+			if err != nil {
+				return err
+			}
+			return nil
+		})
 	}
-	for _, stat := range statNames {
-		err := store.DeleteFile(ctx, stat)
-		if err != nil {
-			return err
-		}
+	for i := range statNames {
+		stat := statNames[i]
+		workerPool.ApplyOnErrorGroup(eg, func() error {
+			err := store.DeleteFile(ctx, stat)
+			if err != nil {
+				return err
+			}
+			return nil
+		})
 	}
-	return nil
+	return eg.Wait()
 }
