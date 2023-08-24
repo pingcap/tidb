@@ -169,7 +169,7 @@ func TestManager(t *testing.T) {
 	})
 	RegisterTaskType("type", WithPoolSize(1))
 	RegisterSubtaskExectorConstructor("type", proto.StepOne, func(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error) {
-		return &MockSubtaskExecutor{}, nil
+		return mock.NewMockSubtaskExecutor(ctrl), nil
 	})
 	id := "test"
 	taskID1 := int64(1)
