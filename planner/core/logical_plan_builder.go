@@ -1450,7 +1450,6 @@ func eliminateFalseOrs(ctx sessionctx.Context, cnfExpressions []expression.Expre
 		default:
 			// For non-scalar function expressions, add them to the final CNF expressions.
 			finalCNFExprs = append(finalCNFExprs, expr)
-
 		}
 	}
 
