@@ -208,6 +208,7 @@ func TestCorruptContent(t *testing.T) {
 		}
 		if i == 0 {
 			_, err = writer.Write(ctx, []byte("corrupt"))
+			require.NoError(t, err)
 		}
 		err = writer.Close(ctx)
 		require.NoError(t, err)

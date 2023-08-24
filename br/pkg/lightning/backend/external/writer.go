@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -74,11 +75,12 @@ func DummyOnCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
-	memSizeLimit    uint64
-	writeBatchCount uint64
-	propSizeDist    uint64
-	propKeysDist    uint64
-	onClose         OnCloseFunc
+	memSizeLimit      uint64
+	writeBatchCount   uint64
+	propSizeDist      uint64
+	propKeysDist      uint64
+	onClose           OnCloseFunc
+	dupeDetectEnabled bool
 
 	bufferPool *membuf.Pool
 }
@@ -132,18 +134,28 @@ func (b *WriterBuilder) SetBufferPool(bufferPool *membuf.Pool) *WriterBuilder {
 	return b
 }
 
+// EnableDuplicationDetection enables the duplication detection of the writer.
+func (b *WriterBuilder) EnableDuplicationDetection() *WriterBuilder {
+	b.dupeDetectEnabled = true
+	return b
+}
+
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
 	store storage.ExternalStorage,
-	writerID int,
 	prefix string,
+	writerID int,
 ) *Writer {
 	bp := b.bufferPool
 	if bp == nil {
 		bp = membuf.NewPool()
 	}
 	filenamePrefix := filepath.Join(prefix, strconv.Itoa(writerID))
+	keyAdapter := local.KeyAdapter(local.NoopKeyAdapter{})
+	if b.dupeDetectEnabled {
+		keyAdapter = local.DupDetectKeyAdapter{}
+	}
 	return &Writer{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
@@ -157,6 +169,7 @@ func (b *WriterBuilder) Build(
 		writeBatch:     make([]common.KvPair, 0, b.writeBatchCount),
 		currentSeq:     0,
 		filenamePrefix: filenamePrefix,
+		keyAdapter:     keyAdapter,
 		writerID:       writerID,
 		kvStore:        nil,
 		onClose:        b.onClose,
@@ -170,6 +183,7 @@ type Writer struct {
 	writerID       int
 	currentSeq     int
 	filenamePrefix string
+	keyAdapter     local.KeyAdapter
 
 	kvStore *KeyValueStore
 	rc      *rangePropertiesCollector
@@ -195,10 +209,14 @@ type Writer struct {
 // Note that this method is NOT thread-safe.
 func (w *Writer) AppendRows(ctx context.Context, _ []string, rows encode.Rows) error {
 	kvs := kv.Rows2KvPairs(rows)
+	keyAdapter := w.keyAdapter
 	for _, pair := range kvs {
 		w.batchSize += uint64(len(pair.Key) + len(pair.Val))
-		key := w.kvBuffer.AddBytes(pair.Key)
+
+		buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(pair.Key, pair.RowID))
+		key := keyAdapter.Encode(buf[:0], pair.Key, pair.RowID)
 		val := w.kvBuffer.AddBytes(pair.Val)
+
 		w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val})
 		if w.batchSize >= w.memSizeLimit {
 			if err := w.flushKVs(ctx); err != nil {
