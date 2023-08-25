@@ -30,8 +30,8 @@ func init() {
 	statistics.GetRowCountByColumnRanges = GetRowCountByColumnRanges
 	statistics.GetRowCountByIntColumnRanges = GetRowCountByIntColumnRanges
 	statistics.GetRowCountByIndexRanges = GetRowCountByIndexRanges
-	statistics.EqualRowCountOnColumn = EqualRowCountOnColumn
-	statistics.BetweenRowCountOnColumn = BetweenRowCountOnColumn
+	statistics.EqualRowCountOnColumn = equalRowCountOnColumn
+	statistics.BetweenRowCountOnColumn = betweenRowCountOnColumn
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
@@ -65,7 +65,7 @@ func GetRowCountByColumnRanges(sctx sessionctx.Context, coll *statistics.HistCol
 			"Increase Factor", c.GetIncreaseFactor(coll.RealtimeCount),
 		)
 	}
-	result, err = GetColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, false)
+	result, err = getColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, false)
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats", uint64(result))
 	}
@@ -110,15 +110,15 @@ func GetRowCountByIntColumnRanges(sctx sessionctx.Context, coll *statistics.Hist
 			"Increase Factor", c.GetIncreaseFactor(coll.RealtimeCount),
 		)
 	}
-	result, err = GetColumnRowCount(sctx, c, intRanges, coll.RealtimeCount, coll.ModifyCount, true)
+	result, err = getColumnRowCount(sctx, c, intRanges, coll.RealtimeCount, coll.ModifyCount, true)
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats", uint64(result))
 	}
 	return result, errors.Trace(err)
 }
 
-// EqualRowCountOnColumn estimates the row count by a slice of Range and a Datum.
-func EqualRowCountOnColumn(sctx sessionctx.Context, c *statistics.Column, val types.Datum, encodedVal []byte, realtimeRowCount int64) (result float64, err error) {
+// equalRowCountOnColumn estimates the row count by a slice of Range and a Datum.
+func equalRowCountOnColumn(sctx sessionctx.Context, c *statistics.Column, val types.Datum, encodedVal []byte, realtimeRowCount int64) (result float64, err error) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		debugtrace.RecordAnyValuesWithNames(sctx, "Value", val.String(), "Encoded", encodedVal)
@@ -171,8 +171,8 @@ func EqualRowCountOnColumn(sctx sessionctx.Context, c *statistics.Column, val ty
 	return c.Histogram.NotNullCount() / histNDV, nil
 }
 
-// GetColumnRowCount estimates the row count by a slice of Range.
-func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (float64, error) {
+// getColumnRowCount estimates the row count by a slice of Range.
+func getColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -216,7 +216,7 @@ func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*
 					continue
 				}
 				var cnt float64
-				cnt, err = EqualRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount)
+				cnt, err = equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount)
 				if err != nil {
 					return 0, errors.Trace(err)
 				}
@@ -237,7 +237,7 @@ func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*
 			// case 2: it's a small range && using ver1 stats
 			if rangeVals != nil {
 				for _, val := range rangeVals {
-					cnt, err := EqualRowCountOnColumn(sctx, c, val, lowEncoded, realtimeRowCount)
+					cnt, err := equalRowCountOnColumn(sctx, c, val, lowEncoded, realtimeRowCount)
 					if err != nil {
 						return 0, err
 					}
@@ -254,14 +254,14 @@ func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*
 		}
 
 		// case 3: it's an interval
-		cnt := BetweenRowCountOnColumn(sctx, c, lowVal, highVal, lowEncoded, highEncoded)
+		cnt := betweenRowCountOnColumn(sctx, c, lowVal, highVal, lowEncoded, highEncoded)
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boundaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
 		//   where null is the lower bound.
 		// And because we use (2, MaxValue] to represent expressions like a > 2 and use [MinNotNull, 3) to represent
 		//   expressions like b < 3, we need to exclude the special values.
 		if rg.LowExclude && !lowVal.IsNull() && lowVal.Kind() != types.KindMaxValue && lowVal.Kind() != types.KindMinNotNull {
-			lowCnt, err := EqualRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount)
+			lowCnt, err := equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -272,7 +272,7 @@ func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*
 			cnt += float64(c.NullCount)
 		}
 		if !rg.HighExclude && highVal.Kind() != types.KindMaxValue && highVal.Kind() != types.KindMinNotNull {
-			highCnt, err := EqualRowCountOnColumn(sctx, c, highVal, highEncoded, realtimeRowCount)
+			highCnt, err := equalRowCountOnColumn(sctx, c, highVal, highEncoded, realtimeRowCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -298,8 +298,8 @@ func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*
 	return rowCount, nil
 }
 
-// BetweenRowCountOnColumn estimates the row count for interval [l, r).
-func BetweenRowCountOnColumn(sctx sessionctx.Context, c *statistics.Column, l, r types.Datum, lowEncoded, highEncoded []byte) float64 {
+// betweenRowCountOnColumn estimates the row count for interval [l, r).
+func betweenRowCountOnColumn(sctx sessionctx.Context, c *statistics.Column, l, r types.Datum, lowEncoded, highEncoded []byte) float64 {
 	histBetweenCnt := c.Histogram.BetweenRowCount(sctx, l, r)
 	if c.StatsVer <= statistics.Version1 {
 		return histBetweenCnt
