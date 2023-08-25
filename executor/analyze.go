@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/statistics/handle/cache"
@@ -88,79 +89,31 @@ const (
 // It will collect all the sample task and run them concurrently.
 func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
-	var tasks []*analyzeTask
-	tids := make(map[int64]struct{}) // use a set for tid
-	skippedTables := make([]string, 0)
-	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-	for _, task := range e.tasks {
-		var tableID statistics.AnalyzeTableID
-		switch task.taskType {
-		case colTask:
-			tableID = task.colExec.tableID
-		case idxTask:
-			tableID = task.idxExec.tableID
-		case fastTask:
-			tableID = task.fastExec.tableID
-		case pkIncrementalTask:
-			tableID = task.colIncrementalExec.tableID
-		case idxIncrementalTask:
-			tableID = task.idxIncrementalExec.tableID
-		}
-		// skip locked tables
-		if !statsHandle.IsTableLocked(tableID.TableID) {
-			tasks = append(tasks, task)
-		}
-		// generate warning message
-		if _, ok := tids[tableID.TableID]; !ok {
-			if statsHandle.IsTableLocked(tableID.TableID) {
-				tbl, ok := is.TableByID(tableID.TableID)
-				if !ok {
-					return nil
-				}
-				skippedTables = append(skippedTables, tbl.Meta().Name.L)
-			}
-			tids[tableID.TableID] = struct{}{}
-		}
-	}
+	infoSchema := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
+	sessionVars := e.Ctx().GetSessionVars()
 
-	if len(skippedTables) > 0 {
-		tables := skippedTables[0]
-		for i, table := range skippedTables {
-			if i == 0 {
-				continue
-			}
-			tables += ", " + table
-		}
-		var msg string
-		if len(tids) > 1 {
-			if len(tids) > len(skippedTables) {
-				msg = "skip analyze locked tables: " + tables + ", other tables will be analyzed"
-			} else {
-				msg = "skip analyze locked tables: " + tables
-			}
-		} else {
-			msg = "skip analyze locked table: " + tables
-		}
-
-		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
-	}
+	// Filter the locked tables.
+	tasks, needAnalyzeTableCnt, skippedTables := filterAndCollectTasks(e.tasks, statsHandle, infoSchema)
+	warnLockedTableMsg(sessionVars, needAnalyzeTableCnt, skippedTables)
 
 	if len(tasks) == 0 {
 		return nil
 	}
 
+	// Get the min number of goroutines for parallel execution.
 	concurrency, err := getBuildStatsConcurrency(e.Ctx())
 	if err != nil {
 		return err
 	}
-	taskCh := make(chan *analyzeTask, len(tasks))
+	concurrency = min(len(tasks), concurrency)
+
+	// Start workers with channel to collect results.
+	taskCh := make(chan *analyzeTask, concurrency)
 	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
-	if len(tasks) < concurrency {
-		concurrency = len(tasks)
-	}
 	for i := 0; i < concurrency; i++ {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
+
 	for _, task := range tasks {
 		prepareV2AnalyzeJobInfo(task.colExec, false)
 		AddNewAnalyzeJob(e.Ctx(), task.job)
@@ -169,13 +122,17 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		dom := domain.GetDomain(e.Ctx())
 		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 	})
+
 	for _, task := range tasks {
 		taskCh <- task
 	}
 	close(taskCh)
+
+	// Wait all workers done and close the results channel.
 	e.wg.Wait()
 	close(resultsCh)
-	pruneMode := variable.PartitionPruneMode(e.Ctx().GetSessionVars().PartitionPruneMode.Load())
+
+	pruneMode := variable.PartitionPruneMode(sessionVars.PartitionPruneMode.Load())
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
 	needGlobalStats := pruneMode == variable.Dynamic
 	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
@@ -198,14 +155,88 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+
+	// Update analyze options to mysql.analyze_options for auto analyze.
 	err = e.saveV2AnalyzeOpts()
 	if err != nil {
-		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
+		sessionVars.StmtCtx.AppendWarning(err)
 	}
-	if e.Ctx().GetSessionVars().InRestrictedSQL {
-		return statsHandle.Update(e.Ctx().GetInfoSchema().(infoschema.InfoSchema))
+
+	if sessionVars.InRestrictedSQL {
+		return statsHandle.Update(infoSchema)
 	}
-	return statsHandle.Update(e.Ctx().GetInfoSchema().(infoschema.InfoSchema), cache.WithTableStatsByQuery())
+
+	return statsHandle.Update(infoSchema, cache.WithTableStatsByQuery())
+}
+
+// filterAndCollectTasks filters the tasks that are not locked and collects the table IDs.
+func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, infoSchema infoschema.InfoSchema) ([]*analyzeTask, uint, []string) {
+	var (
+		filteredTasks       []*analyzeTask
+		skippedTables       []string
+		needAnalyzeTableCnt uint
+		tids                = make(map[int64]struct{})
+	)
+
+	for _, task := range tasks {
+		tableID := getTableIDFromTask(task)
+		isLocked := statsHandle.IsTableLocked(tableID)
+		if !isLocked {
+			filteredTasks = append(filteredTasks, task)
+		}
+		if _, ok := tids[tableID]; !ok {
+			if isLocked {
+				tbl, ok := infoSchema.TableByID(tableID)
+				if !ok {
+					// Ignore this table because it may have been dropped.
+					logutil.BgLogger().Warn("Unknown table ID in analyze task", zap.Int64("tid", tableID))
+				} else {
+					skippedTables = append(skippedTables, tbl.Meta().Name.L)
+				}
+			} else {
+				needAnalyzeTableCnt++
+			}
+			tids[tableID] = struct{}{}
+		}
+	}
+
+	return filteredTasks, needAnalyzeTableCnt, skippedTables
+}
+
+// warnLockedTableMsg warns the locked table IDs.
+func warnLockedTableMsg(sessionVars *variable.SessionVars, needAnalyzeTableCnt uint, skippedTables []string) {
+	if len(skippedTables) > 0 {
+		tables := strings.Join(skippedTables, ", ")
+		var msg string
+		if len(skippedTables) > 1 {
+			msg = "skip analyze locked tables: %s"
+			if needAnalyzeTableCnt > 0 {
+				msg = "skip analyze locked tables: %s, other tables will be analyzed"
+			}
+		} else {
+			msg = "skip analyze locked table: %s"
+		}
+		sessionVars.StmtCtx.AppendWarning(errors.Errorf(msg, tables))
+	}
+}
+
+func getTableIDFromTask(task *analyzeTask) int64 {
+	var tableID statistics.AnalyzeTableID
+
+	switch task.taskType {
+	case colTask:
+		tableID = task.colExec.tableID
+	case idxTask:
+		tableID = task.idxExec.tableID
+	case fastTask:
+		tableID = task.fastExec.tableID
+	case pkIncrementalTask:
+		tableID = task.colIncrementalExec.tableID
+	case idxIncrementalTask:
+		tableID = task.idxIncrementalExec.tableID
+	}
+
+	return tableID.TableID
 }
 
 func (e *AnalyzeExec) saveV2AnalyzeOpts() error {

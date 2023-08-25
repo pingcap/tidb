@@ -1648,6 +1648,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			Detail:     stmtCtx.GetExecDetails(),
 			Succ:       succ,
 			ConnID:     sessVars.ConnectionID,
+			SessAlias:  sessVars.SessionAlias,
 			TxnTS:      txnTS,
 			User:       userString,
 			DB:         sessVars.CurrentDB,

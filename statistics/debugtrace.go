@@ -173,31 +173,6 @@ func TraceStatsTbl(statsTbl *Table) *StatsTblTraceInfo {
 }
 
 /*
- Below is debug trace for GetRowCountByXXX().
-*/
-
-type getRowCountInput struct {
-	Ranges []string
-	ID     int64
-}
-
-func debugTraceGetRowCountInput(
-	s sessionctx.Context,
-	id int64,
-	ranges ranger.Ranges,
-) {
-	root := debugtrace.GetOrInitDebugTraceRoot(s)
-	newCtx := &getRowCountInput{
-		ID:     id,
-		Ranges: make([]string, len(ranges)),
-	}
-	for i, r := range ranges {
-		newCtx.Ranges[i] = r.String()
-	}
-	root.AppendStepToCurrentContext(newCtx)
-}
-
-/*
  Below is debug trace for the estimation for each single range inside GetRowCountByXXX().
 */
 

@@ -133,7 +133,6 @@ func (r *byteReader) reload() error {
 		case io.ErrUnexpectedEOF:
 			// The last batch.
 			r.buf = r.buf[:nBytes]
-			break
 		default:
 			logutil.Logger(r.ctx).Warn("other error during reload", zap.Error(err))
 			return err

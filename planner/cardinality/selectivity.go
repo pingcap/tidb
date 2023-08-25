@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,177 +12,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package statistics
+package cardinality
 
 import (
-	"bytes"
+	"cmp"
 	"math"
 	"math/bits"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/format"
-	"github.com/pingcap/tidb/parser/mysql"
 	planutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 )
 
-// If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
-const selectionFactor = 0.8
-
-// StatsNode is used for calculating selectivity.
-type StatsNode struct {
-	// Ranges contains all the Ranges we got.
-	Ranges []*ranger.Range
-	Tp     int
-	ID     int64
-	// mask is a bit pattern whose ith bit will indicate whether the ith expression is covered by this index/column.
-	mask int64
-	// Selectivity indicates the Selectivity of this column/index.
-	Selectivity float64
-	// numCols is the number of columns contained in the index or column(which is always 1).
-	numCols int
-	// partCover indicates whether the bit in the mask is for a full cover or partial cover. It is only true
-	// when the condition is a DNF expression on index, and the expression is not totally extracted as access condition.
-	partCover bool
-}
-
-// The type of the StatsNode.
-const (
-	IndexType = iota
-	PkType
-	ColType
-)
-
-func compareType(l, r int) int {
-	if l == r {
-		return 0
-	}
-	if l == ColType {
-		return -1
-	}
-	if l == PkType {
-		return 1
-	}
-	if r == ColType {
-		return 1
-	}
-	return -1
-}
-
-// MockStatsNode is only used for test.
-func MockStatsNode(id int64, m int64, num int) *StatsNode {
-	return &StatsNode{ID: id, mask: m, numCols: num}
-}
-
-const unknownColumnID = math.MinInt64
-
-// getConstantColumnID receives two expressions and if one of them is column and another is constant, it returns the
-// ID of the column.
-func getConstantColumnID(e []expression.Expression) int64 {
-	if len(e) != 2 {
-		return unknownColumnID
-	}
-	col, ok1 := e[0].(*expression.Column)
-	_, ok2 := e[1].(*expression.Constant)
-	if ok1 && ok2 {
-		return col.ID
-	}
-	col, ok1 = e[1].(*expression.Column)
-	_, ok2 = e[0].(*expression.Constant)
-	if ok1 && ok2 {
-		return col.ID
-	}
-	return unknownColumnID
-}
-
-func pseudoSelectivity(coll *HistColl, exprs []expression.Expression) float64 {
-	minFactor := selectionFactor
-	colExists := make(map[string]bool)
-	for _, expr := range exprs {
-		fun, ok := expr.(*expression.ScalarFunction)
-		if !ok {
-			continue
-		}
-		colID := getConstantColumnID(fun.GetArgs())
-		if colID == unknownColumnID {
-			continue
-		}
-		switch fun.FuncName.L {
-		case ast.EQ, ast.NullEQ, ast.In:
-			minFactor = math.Min(minFactor, 1.0/pseudoEqualRate)
-			col, ok := coll.Columns[colID]
-			if !ok {
-				continue
-			}
-			colExists[col.Info.Name.L] = true
-			if mysql.HasUniKeyFlag(col.Info.GetFlag()) {
-				return 1.0 / float64(coll.RealtimeCount)
-			}
-		case ast.GE, ast.GT, ast.LE, ast.LT:
-			minFactor = math.Min(minFactor, 1.0/pseudoLessRate)
-			// FIXME: To resolve the between case.
-		}
-	}
-	if len(colExists) == 0 {
-		return minFactor
-	}
-	// use the unique key info
-	for _, idx := range coll.Indices {
-		if !idx.Info.Unique {
-			continue
-		}
-		unique := true
-		for _, col := range idx.Info.Columns {
-			if !colExists[col.Name.L] {
-				unique = false
-				break
-			}
-		}
-		if unique {
-			return 1.0 / float64(coll.RealtimeCount)
-		}
-	}
-	return minFactor
-}
-
-// isColEqCorCol checks if the expression is a eq function that one side is correlated column and another is column.
-// If so, it will return the column's reference. Otherwise return nil instead.
-func isColEqCorCol(filter expression.Expression) *expression.Column {
-	f, ok := filter.(*expression.ScalarFunction)
-	if !ok || f.FuncName.L != ast.EQ {
-		return nil
-	}
-	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
-		if _, ok := f.GetArgs()[1].(*expression.CorrelatedColumn); ok {
-			return c
-		}
-	}
-	if c, ok := f.GetArgs()[1].(*expression.Column); ok {
-		if _, ok := f.GetArgs()[0].(*expression.CorrelatedColumn); ok {
-			return c
-		}
-	}
-	return nil
-}
-
-// Selectivity is a function calculate the selectivity of the expressions.
+// Selectivity is a function calculate the selectivity of the expressions on the specified HistColl.
 // The definition of selectivity is (row count after filter / row count before filter).
-// And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
+// And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]`
+// should be held when you call this.
 // Currently the time complexity is o(n^2).
-func (coll *HistColl) Selectivity(
+func Selectivity(
 	ctx sessionctx.Context,
+	coll *statistics.HistColl,
 	exprs []expression.Expression,
 	filledPaths []*planutil.AccessPath,
 ) (
@@ -212,7 +71,8 @@ func (coll *HistColl) Selectivity(
 	if len(exprs) > 63 || (len(coll.Columns) == 0 && len(coll.Indices) == 0) {
 		ret = pseudoSelectivity(coll, exprs)
 		if sc.EnableOptimizerCETrace {
-			CETraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression", expression.ComposeCNFCondition(ctx, exprs...), ret*float64(coll.RealtimeCount))
+			ceTraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression",
+				expression.ComposeCNFCondition(ctx, exprs...), ret*float64(coll.RealtimeCount))
 		}
 		return ret, nil, nil
 	}
@@ -264,14 +124,14 @@ func (coll *HistColl) Selectivity(
 			if colStats.IsHandle {
 				nodes[len(nodes)-1].Tp = PkType
 				var cnt float64
-				cnt, err = coll.GetRowCountByIntColumnRanges(ctx, id, ranges)
+				cnt, err = GetRowCountByIntColumnRanges(ctx, coll, id, ranges)
 				if err != nil {
 					return 0, nil, errors.Trace(err)
 				}
 				nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
 				continue
 			}
-			cnt, err := coll.GetRowCountByColumnRanges(ctx, id, ranges)
+			cnt, err := GetRowCountByColumnRanges(ctx, coll, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -290,7 +150,7 @@ func (coll *HistColl) Selectivity(
 	slices.Sort(idxIDs)
 	for _, id := range idxIDs {
 		idxStats := coll.Indices[id]
-		idxCols := FindPrefixOfIndexByCol(extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
+		idxCols := findPrefixOfIndexByCol(extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
 			for i := 0; i < len(idxCols) && i < len(idxStats.Info.Columns); i++ {
@@ -301,11 +161,12 @@ func (coll *HistColl) Selectivity(
 			if len(idxCols) > len(idxStats.Info.Columns) {
 				lengths = append(lengths, types.UnspecifiedLength)
 			}
-			maskCovered, ranges, partCover, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, id2Paths[idxStats.ID], idxCols...)
+			maskCovered, ranges, partCover, err := getMaskAndRanges(ctx, remainedExprs,
+				ranger.IndexRangeType, lengths, id2Paths[idxStats.ID], idxCols...)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			cnt, err := coll.GetRowCountByIndexRanges(ctx, id, ranges)
+			cnt, err := GetRowCountByIndexRanges(ctx, coll, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -345,7 +206,7 @@ func (coll *HistColl) Selectivity(
 				}
 			}
 			expr := expression.ComposeCNFCondition(ctx, curExpr...)
-			CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.RealtimeCount))
+			ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.RealtimeCount))
 		} else if sc.EnableOptimizerDebugTrace {
 			var strs []string
 			for i := range remainedExprs {
@@ -458,7 +319,7 @@ OUTER:
 				cnfItems = append(cnfItems, cond)
 			}
 
-			curSelectivity, _, err := coll.Selectivity(ctx, cnfItems, nil)
+			curSelectivity, _, err := Selectivity(ctx, coll, cnfItems, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 				curSelectivity = selectionFactor
@@ -468,7 +329,7 @@ OUTER:
 		}
 		if sc.EnableOptimizerCETrace {
 			// Tracing for the expression estimation results of this DNF.
-			CETraceExpr(ctx, tableID, "Table Stats-Expression-DNF", scalarCond, selectivity*float64(coll.RealtimeCount))
+			ceTraceExpr(ctx, tableID, "Table Stats-Expression-DNF", scalarCond, selectivity*float64(coll.RealtimeCount))
 		} else if sc.EnableOptimizerDebugTrace {
 			debugtrace.RecordAnyValuesWithNames(ctx, "Expression", remainedExprStrs[i], "Selectivity", selectivity)
 		}
@@ -482,7 +343,7 @@ OUTER:
 			// Tracing for the expression estimation results after applying the DNF estimation result.
 			curExpr = append(curExpr, remainedExprs[i])
 			expr := expression.ComposeCNFCondition(ctx, curExpr...)
-			CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.RealtimeCount))
+			ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.RealtimeCount))
 		}
 	}
 
@@ -544,57 +405,79 @@ OUTER:
 	if sc.EnableOptimizerCETrace {
 		// Tracing for the expression estimation results after applying the default selectivity.
 		totalExpr := expression.ComposeCNFCondition(ctx, remainedExprs...)
-		CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.RealtimeCount))
+		ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.RealtimeCount))
 	}
 	return ret, nodes, nil
 }
 
-func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, rangeType ranger.RangeType, lengths []int, cachedPath *planutil.AccessPath, cols ...*expression.Column) (mask int64, ranges []*ranger.Range, partCover bool, err error) {
-	isDNF := false
-	var accessConds, remainedConds []expression.Expression
-	switch rangeType {
-	case ranger.ColumnRangeType:
-		accessConds = ranger.ExtractAccessConditionsForColumn(ctx, exprs, cols[0])
-		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx, cols[0].RetType, types.UnspecifiedLength, ctx.GetSessionVars().RangeMaxSize)
-	case ranger.IndexRangeType:
-		if cachedPath != nil {
-			ranges, accessConds, remainedConds, isDNF = cachedPath.Ranges, cachedPath.AccessConds, cachedPath.TableFilters, cachedPath.IsDNFCond
-			break
-		}
-		var res *ranger.DetachRangeResult
-		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
-		if err != nil {
-			return 0, nil, false, err
-		}
-		ranges, accessConds, remainedConds, isDNF = res.Ranges, res.AccessConds, res.RemainedConds, res.IsDNFCond
-	default:
-		panic("should never be here")
+// StatsNode is used for calculating selectivity.
+type StatsNode struct {
+	// Ranges contains all the Ranges we got.
+	Ranges []*ranger.Range
+	Tp     int
+	ID     int64
+	// mask is a bit pattern whose ith bit will indicate whether the ith expression is covered by this index/column.
+	mask int64
+	// Selectivity indicates the Selectivity of this column/index.
+	Selectivity float64
+	// numCols is the number of columns contained in the index or column(which is always 1).
+	numCols int
+	// partCover indicates whether the bit in the mask is for a full cover or partial cover. It is only true
+	// when the condition is a DNF expression on index, and the expression is not totally extracted as access condition.
+	partCover bool
+}
+
+// The type of the StatsNode.
+const (
+	IndexType = iota
+	PkType
+	ColType
+)
+
+func compareType(l, r int) int {
+	if l == r {
+		return 0
 	}
-	if err != nil {
-		return 0, nil, false, err
+	if l == ColType {
+		return -1
 	}
-	if isDNF && len(accessConds) > 0 {
-		mask |= 1
-		return mask, ranges, len(remainedConds) > 0, nil
+	if l == PkType {
+		return 1
 	}
-	for i := range exprs {
-		for j := range accessConds {
-			if exprs[i].Equal(ctx, accessConds[j]) {
-				mask |= 1 << uint64(i)
-				break
-			}
-		}
+	if r == ColType {
+		return 1
 	}
-	return mask, ranges, false, nil
+	return -1
+}
+
+const unknownColumnID = math.MinInt64
+
+// getConstantColumnID receives two expressions and if one of them is column and another is constant, it returns the
+// ID of the column.
+func getConstantColumnID(e []expression.Expression) int64 {
+	if len(e) != 2 {
+		return unknownColumnID
+	}
+	col, ok1 := e[0].(*expression.Column)
+	_, ok2 := e[1].(*expression.Constant)
+	if ok1 && ok2 {
+		return col.ID
+	}
+	col, ok1 = e[1].(*expression.Column)
+	_, ok2 = e[0].(*expression.Constant)
+	if ok1 && ok2 {
+		return col.ID
+	}
+	return unknownColumnID
 }
 
 // GetUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
 func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
-	slices.SortFunc(nodes, func(i, j *StatsNode) bool {
+	slices.SortFunc(nodes, func(i, j *StatsNode) int {
 		if r := compareType(i.Tp, j.Tp); r != 0 {
-			return r < 0
+			return r
 		}
-		return i.ID < j.ID
+		return cmp.Compare(i.ID, j.ID)
 	})
 	marked := make([]bool, len(nodes))
 	mask := int64(math.MaxInt64)
@@ -645,9 +528,30 @@ func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 	return
 }
 
-// FindPrefixOfIndexByCol will find columns in index by checking the unique id or the virtual expression.
+// isColEqCorCol checks if the expression is a eq function that one side is correlated column and another is column.
+// If so, it will return the column's reference. Otherwise return nil instead.
+func isColEqCorCol(filter expression.Expression) *expression.Column {
+	f, ok := filter.(*expression.ScalarFunction)
+	if !ok || f.FuncName.L != ast.EQ {
+		return nil
+	}
+	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+		if _, ok := f.GetArgs()[1].(*expression.CorrelatedColumn); ok {
+			return c
+		}
+	}
+	if c, ok := f.GetArgs()[1].(*expression.Column); ok {
+		if _, ok := f.GetArgs()[0].(*expression.CorrelatedColumn); ok {
+			return c
+		}
+	}
+	return nil
+}
+
+// findPrefixOfIndexByCol will find columns in index by checking the unique id or the virtual expression.
 // So it will return at once no matching column is found.
-func FindPrefixOfIndexByCol(cols []*expression.Column, idxColIDs []int64, cachedPath *planutil.AccessPath) []*expression.Column {
+func findPrefixOfIndexByCol(cols []*expression.Column, idxColIDs []int64,
+	cachedPath *planutil.AccessPath) []*expression.Column {
 	if cachedPath != nil {
 		idxCols := cachedPath.IdxCols
 		retCols := make([]*expression.Column, 0, len(idxCols))
@@ -667,82 +571,45 @@ func FindPrefixOfIndexByCol(cols []*expression.Column, idxColIDs []int64, cached
 	return expression.FindPrefixOfIndex(cols, idxColIDs)
 }
 
-// CETraceExpr appends an expression and related information into CE trace
-func CETraceExpr(sctx sessionctx.Context, tableID int64, tp string, expr expression.Expression, rowCount float64) {
-	exprStr, err := ExprToString(expr)
+func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, rangeType ranger.RangeType,
+	lengths []int, cachedPath *planutil.AccessPath, cols ...*expression.Column) (
+	mask int64, ranges []*ranger.Range, partCover bool, err error) {
+	isDNF := false
+	var accessConds, remainedConds []expression.Expression
+	switch rangeType {
+	case ranger.ColumnRangeType:
+		accessConds = ranger.ExtractAccessConditionsForColumn(ctx, exprs, cols[0])
+		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx, cols[0].RetType,
+			types.UnspecifiedLength, ctx.GetSessionVars().RangeMaxSize)
+	case ranger.IndexRangeType:
+		if cachedPath != nil {
+			ranges, accessConds, remainedConds, isDNF = cachedPath.Ranges,
+				cachedPath.AccessConds, cachedPath.TableFilters, cachedPath.IsDNFCond
+			break
+		}
+		var res *ranger.DetachRangeResult
+		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
+		if err != nil {
+			return 0, nil, false, err
+		}
+		ranges, accessConds, remainedConds, isDNF = res.Ranges, res.AccessConds, res.RemainedConds, res.IsDNFCond
+	default:
+		panic("should never be here")
+	}
 	if err != nil {
-		logutil.BgLogger().Debug("Failed to trace CE of an expression", zap.String("category", "OptimizerTrace"),
-			zap.Any("expression", expr))
-		return
+		return 0, nil, false, err
 	}
-	rec := tracing.CETraceRecord{
-		TableID:  tableID,
-		Type:     tp,
-		Expr:     exprStr,
-		RowCount: uint64(rowCount),
+	if isDNF && len(accessConds) > 0 {
+		mask |= 1
+		return mask, ranges, len(remainedConds) > 0, nil
 	}
-	sc := sctx.GetSessionVars().StmtCtx
-	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &rec)
-}
-
-// ExprToString prints an Expression into a string which can appear in a SQL.
-//
-// It might be too tricky because it makes use of TiDB allowing using internal function name in SQL.
-// For example, you can write `eq`(a, 1), which is the same as a = 1.
-// We should have implemented this by first implementing a method to turn an expression to an AST
-//
-//	then call astNode.Restore(), like the Constant case here. But for convenience, we use this trick for now.
-//
-// It may be more appropriate to put this in expression package. But currently we only use it for CE trace,
-//
-//	and it may not be general enough to handle all possible expressions. So we put it here for now.
-func ExprToString(e expression.Expression) (string, error) {
-	switch expr := e.(type) {
-	case *expression.ScalarFunction:
-		var buffer bytes.Buffer
-		buffer.WriteString("`" + expr.FuncName.L + "`(")
-		switch expr.FuncName.L {
-		case ast.Cast:
-			for _, arg := range expr.GetArgs() {
-				argStr, err := ExprToString(arg)
-				if err != nil {
-					return "", err
-				}
-				buffer.WriteString(argStr)
-				buffer.WriteString(", ")
-				buffer.WriteString(expr.RetType.String())
-			}
-		default:
-			for i, arg := range expr.GetArgs() {
-				argStr, err := ExprToString(arg)
-				if err != nil {
-					return "", err
-				}
-				buffer.WriteString(argStr)
-				if i+1 != len(expr.GetArgs()) {
-					buffer.WriteString(", ")
-				}
+	for i := range exprs {
+		for j := range accessConds {
+			if exprs[i].Equal(ctx, accessConds[j]) {
+				mask |= 1 << uint64(i)
+				break
 			}
 		}
-		buffer.WriteString(")")
-		return buffer.String(), nil
-	case *expression.Column:
-		return expr.String(), nil
-	case *expression.CorrelatedColumn:
-		return "", errors.New("tracing for correlated columns not supported now")
-	case *expression.Constant:
-		value, err := expr.Eval(chunk.Row{})
-		if err != nil {
-			return "", err
-		}
-		valueExpr := driver.ValueExpr{Datum: value}
-		var buffer bytes.Buffer
-		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buffer)
-		err = valueExpr.Restore(restoreCtx)
-		if err != nil {
-			return "", err
-		}
-		return buffer.String(), nil
 	}
-	return "", errors.New("unexpected type of Expression")
+	return mask, ranges, false, nil
 }
