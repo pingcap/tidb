@@ -195,7 +195,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableRunawayWatches:
 			err = e.setDataFromRunawayWatches(sctx)
 		case infoschema.TableCheckConstraints:
-			err = e.setDataFromCheckConstraints(ctx, sctx, dbs)
+			err = e.setDataFromCheckConstraints(sctx, dbs)
 		}
 		if err != nil {
 			return nil, err
@@ -629,7 +629,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromCheckConstraints(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
+func (e *memtableRetriever) setDataFromCheckConstraints(sctx sessionctx.Context, schemas []*model.DBInfo) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
 	for _, schema := range schemas {
