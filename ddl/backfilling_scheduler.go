@@ -17,12 +17,12 @@ package ddl
 import (
 	"context"
 	"fmt"
-	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/ingest"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -495,7 +495,6 @@ func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool
 		ResultCounterForTest.Add(1)
 	}
 	w.resultCh <- result
-	return
 }
 
 func (*addIndexIngestWorker) Close() {}

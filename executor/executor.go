@@ -2689,7 +2689,6 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			}
 		}
 	}
-	return
 }
 
 // Close implements the Worker interface.

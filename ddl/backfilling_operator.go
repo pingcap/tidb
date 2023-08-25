@@ -99,17 +99,20 @@ func NewAddIndexIngestPipeline(
 	), nil
 }
 
+// TableScanTask contains the start key and the end key of a region.
 type TableScanTask struct {
 	ID    int
 	Start kv.Key
 	End   kv.Key
 }
 
+// String implement fmt.Stringer interface.
 func (t *TableScanTask) String() string {
 	return fmt.Sprintf("TableScanTask: id=%d, startKey=%s, endKey=%s",
 		t.ID, hex.EncodeToString(t.Start), hex.EncodeToString(t.End))
 }
 
+// IndexRecordChunk contains one of the chunk read from corresponding TableScanTask.
 type IndexRecordChunk struct {
 	ID    int
 	Chunk *chunk.Chunk
@@ -117,6 +120,7 @@ type IndexRecordChunk struct {
 	Done  bool
 }
 
+// TableScanTaskSource produces TableScanTask by splitting table records into ranges.
 type TableScanTaskSource struct {
 	ctx context.Context
 
@@ -129,6 +133,7 @@ type TableScanTaskSource struct {
 	endKey        kv.Key
 }
 
+// NewTableScanTaskSource creates a new TableScanTaskSource.
 func NewTableScanTaskSource(
 	ctx context.Context,
 	store kv.Storage,
@@ -147,10 +152,12 @@ func NewTableScanTaskSource(
 	}
 }
 
+// SetSink implements WithSink interface.
 func (src *TableScanTaskSource) SetSink(sink operator.DataChannel[TableScanTask]) {
 	src.sink = sink
 }
 
+// Open implements Operator interface.
 func (src *TableScanTaskSource) Open() error {
 	src.errGroup.Go(func() error {
 		taskIDAlloc := newTaskIDAllocator()
@@ -219,18 +226,22 @@ func getBatchTableScanTask(
 	return batchTasks
 }
 
+// Close implements Operator interface.
 func (src *TableScanTaskSource) Close() error {
 	return src.errGroup.Wait()
 }
 
-func (src *TableScanTaskSource) String() string {
+// String implements fmt.Stringer interface.
+func (*TableScanTaskSource) String() string {
 	return "TableScanTaskSource"
 }
 
+// TableScanOperator scans table records in given key ranges from kv store.
 type TableScanOperator struct {
 	*operator.AsyncOperator[TableScanTask, IndexRecordChunk]
 }
 
+// NewTableScanOperator creates a new TableScanOperator.
 func NewTableScanOperator(
 	ctx context.Context,
 	sessPool opSessPool,
@@ -333,6 +344,7 @@ func (w *tableScanWorker) recycleChunk(chk *chunk.Chunk) {
 	w.srcChkPool <- chk
 }
 
+// IndexWriteResult contains the result of writing index records to ingest engine.
 type IndexWriteResult struct {
 	ID      int
 	Added   int
@@ -342,10 +354,12 @@ type IndexWriteResult struct {
 	Err     error
 }
 
+// IndexIngestOperator writes index records to ingest engine.
 type IndexIngestOperator struct {
 	*operator.AsyncOperator[IndexRecordChunk, IndexWriteResult]
 }
 
+// NewIndexIngestOperator creates a new IndexIngestOperator.
 func NewIndexIngestOperator(
 	ctx context.Context,
 	copCtx *copContext,
@@ -441,7 +455,7 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, sender func(IndexWri
 	sender(result)
 }
 
-func (w *indexIngestWorker) Close() {
+func (*indexIngestWorker) Close() {
 }
 
 // WriteLocal will write index records to lightning engine.
@@ -500,6 +514,6 @@ func (s *indexWriteResultSink) Close() error {
 	return s.errGroup.Wait()
 }
 
-func (s *indexWriteResultSink) String() string {
+func (*indexWriteResultSink) String() string {
 	return "indexWriteResultSink"
 }

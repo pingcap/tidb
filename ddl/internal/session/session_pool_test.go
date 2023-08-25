@@ -16,10 +16,10 @@ package session_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/ddl/internal/session"
 	"testing"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )

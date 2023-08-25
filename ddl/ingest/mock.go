@@ -208,14 +208,13 @@ func (m *MockWriter) WriteRow(key, idxVal []byte, _ kv.Handle) error {
 	defer m.mu.Unlock()
 	if m.onWrite != nil {
 		m.onWrite(key, idxVal)
-	} else {
-		txn, err := m.sessCtx.Txn(true)
-		if err != nil {
-			return err
-		}
-		return txn.Set(key, idxVal)
+		return nil
 	}
-	return nil
+	txn, err := m.sessCtx.Txn(true)
+	if err != nil {
+		return err
+	}
+	return txn.Set(key, idxVal)
 }
 
 // LockForWrite implements Writer.LockForWrite interface.
