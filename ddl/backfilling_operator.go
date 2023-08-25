@@ -88,7 +88,7 @@ func NewAddIndexIngestPipeline(
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool, tbl, index, engine, srcChkPool, writerCnt)
-	sinkOp := newindexWriteResultSink(ctx)
+	sinkOp := newIndexWriteResultSink(ctx)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
@@ -127,10 +127,10 @@ type TableScanTaskSource struct {
 	errGroup errgroup.Group
 	sink     operator.DataChannel[TableScanTask]
 
-	physicalTable table.PhysicalTable
-	store         kv.Storage
-	startKey      kv.Key
-	endKey        kv.Key
+	tbl      table.PhysicalTable
+	store    kv.Storage
+	startKey kv.Key
+	endKey   kv.Key
 }
 
 // NewTableScanTaskSource creates a new TableScanTaskSource.
@@ -142,13 +142,12 @@ func NewTableScanTaskSource(
 	endKey kv.Key,
 ) *TableScanTaskSource {
 	return &TableScanTaskSource{
-		ctx:           ctx,
-		errGroup:      errgroup.Group{},
-		sink:          nil,
-		physicalTable: physicalTable,
-		store:         store,
-		startKey:      startKey,
-		endKey:        endKey,
+		ctx:      ctx,
+		errGroup: errgroup.Group{},
+		tbl:      physicalTable,
+		store:    store,
+		startKey: startKey,
+		endKey:   endKey,
 	}
 }
 
@@ -170,7 +169,7 @@ func (src *TableScanTaskSource) generateTasks() error {
 	endKey := src.endKey
 	for {
 		kvRanges, err := splitTableRanges(
-			src.physicalTable,
+			src.tbl,
 			src.store,
 			startKey,
 			endKey,
@@ -183,7 +182,7 @@ func (src *TableScanTaskSource) generateTasks() error {
 			break
 		}
 
-		batchTasks := getBatchTableScanTask(src.physicalTable, kvRanges, taskIDAlloc)
+		batchTasks := getBatchTableScanTask(src.tbl, kvRanges, taskIDAlloc)
 		for _, task := range batchTasks {
 			select {
 			case <-src.ctx.Done():
@@ -480,7 +479,7 @@ type indexWriteResultSink struct {
 	source   operator.DataChannel[IndexWriteResult]
 }
 
-func newindexWriteResultSink(
+func newIndexWriteResultSink(
 	ctx context.Context,
 ) *indexWriteResultSink {
 	return &indexWriteResultSink{
