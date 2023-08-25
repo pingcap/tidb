@@ -30,9 +30,8 @@ func init() {
 	statistics.GetRowCountByColumnRanges = GetRowCountByColumnRanges
 	statistics.GetRowCountByIntColumnRanges = GetRowCountByIntColumnRanges
 	statistics.GetRowCountByIndexRanges = GetRowCountByIndexRanges
-	statistics.OutOfRangeEQSelectivity = outOfRangeEQSelectivity
-	statistics.GetEqualCondSelectivity = getEqualCondSelectivity
 	statistics.EqualRowCountOnColumn = EqualRowCountOnColumn
+	statistics.BetweenRowCountOnColumn = BetweenRowCountOnColumn
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.

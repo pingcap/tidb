@@ -67,12 +67,6 @@ var (
 	// GetRowCountByColumnRanges is a function type to get row count by column ranges.
 	GetRowCountByColumnRanges func(sctx sessionctx.Context, coll *HistColl, colID int64, colRanges []*ranger.Range) (result float64, err error)
 
-	// OutOfRangeEQSelectivity is a function type to get the selectivity of equal condition which is out of range.
-	OutOfRangeEQSelectivity func(sctx sessionctx.Context, ndv, realtimeRowCount, columnRowCount int64) (result float64)
-
-	// GetEqualCondSelectivity is a function type to get the selectivity of equal condition.
-	GetEqualCondSelectivity func(sctx sessionctx.Context, coll *HistColl, idx *Index, bytes []byte, usedColsLen int, idxPointRange *ranger.Range) (result float64, err error)
-
 	// EqualRowCountOnColumn is a function type to get the row count by equal condition on column.
 	EqualRowCountOnColumn func(sctx sessionctx.Context, c *Column, val types.Datum, encodedVal []byte, realtimeRowCount int64) (result float64, err error)
 
