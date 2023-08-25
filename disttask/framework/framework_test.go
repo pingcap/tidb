@@ -335,15 +335,15 @@ func TestFrameworkSubtaskFinishedCancel(t *testing.T) {
 	defer dispatcher.ClearTaskFlowHandle()
 	defer scheduler.ClearSchedulers()
 
-	var v atomic.Int64
-	RegisterTaskMeta(&v)
+	var m sync.Map
+	RegisterTaskMeta(&m)
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	err := failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockSubtaskFinishedCancel", "1*return(true)")
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockSubtaskFinishedCancel"))
 	}()
-	DispatchTaskAndCheckFail("key1", t, &v)
+	DispatchTaskAndCheckFail("key1", t, &m)
 	distContext.Close()
 }
 
@@ -351,14 +351,14 @@ func TestFrameworkRunSubtaskCancel(t *testing.T) {
 	defer dispatcher.ClearTaskFlowHandle()
 	defer scheduler.ClearSchedulers()
 
-	var v atomic.Int64
-	RegisterTaskMeta(&v)
+	var m sync.Map
+	RegisterTaskMeta(&m)
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	err := failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockRunSubtaskCancel", "1*return(true)")
 	require.NoError(t, err)
-	DispatchTaskAndCheckFail("key1", t, &v)
+	DispatchTaskAndCheckFail("key1", t, &m)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockRunSubtaskCancel"))
-	DispatchTaskAndCheckSuccess("key2", t, &v)
+	DispatchTaskAndCheckSuccess("key2", t, &m)
 	distContext.Close()
 }
 
