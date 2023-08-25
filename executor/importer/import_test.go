@@ -162,17 +162,17 @@ func TestASTArgsFromStmt(t *testing.T) {
 }
 
 func TestGetFileRealSize(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressRatio", "return(250)")
+	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage", "return(250)")
 	require.NoError(t, err)
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressRatio")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage")
 	}()
 	fileMeta := mydump.SourceFileMeta{Compression: mydump.CompressionNone, FileSize: 100}
 	c := &LoadDataController{logger: log.L()}
 	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
 	fileMeta.Compression = mydump.CompressionGZ
 	require.Equal(t, int64(250), c.getFileRealSize(context.Background(), fileMeta, nil))
-	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressRatio", `return("test err")`)
+	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
 	require.NoError(t, err)
 	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
 }

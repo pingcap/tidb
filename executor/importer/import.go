@@ -925,7 +925,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			FileSize:    size,
 			Compression: compressTp,
 			Type:        sourceType,
-			RealSize:    size,
 		}
 		fileMeta.RealSize = e.getFileRealSize(ctx, fileMeta, s)
 		dataFiles = append(dataFiles, &fileMeta)
@@ -955,7 +954,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					FileSize:    size,
 					Compression: compressTp,
 					Type:        sourceType,
-					RealSize:    size,
 				}
 				fileMeta.RealSize = e.getFileRealSize(ctx, fileMeta, s)
 				dataFiles = append(dataFiles, &fileMeta)

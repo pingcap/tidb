@@ -732,7 +732,7 @@ func calculateFileBytes(ctx context.Context,
 
 // SampleFileCompressRatio samples the compress ratio of the compressed file.
 func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (float64, error) {
-	failpoint.Inject("SampleFileCompressRatio", func(val failpoint.Value) {
+	failpoint.Inject("SampleFileCompressPercentage", func(val failpoint.Value) {
 		switch v := val.(type) {
 		case string:
 			failpoint.Return(1.0, errors.New(v))
