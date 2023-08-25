@@ -829,7 +829,7 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
 }
 
-// outOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
+// OutOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
 // Here we assume the density of data is decreasing from the lower/upper bound of the histogram toward outside.
 // The maximum row count it can get is the modifyCount. It reaches the maximum when out-of-range width reaches histogram range width.
 // As it shows below. To calculate the out-of-range row count, we need to calculate the percentage of the shaded area.
@@ -848,7 +848,7 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
          │   │
     lDatum  rDatum
 */
-func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum *types.Datum, modifyCount int64) (result float64) {
+func (hg *Histogram) OutOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum *types.Datum, modifyCount int64) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
 		debugtrace.EnterContextCommon(sctx)
