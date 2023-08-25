@@ -180,13 +180,13 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 			return 0.0, nil
 		}
 		if c.Histogram.NDV > 0 && c.outOfRange(val) {
-			return outOfRangeEQSelectivity(sctx, c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
+			return OutOfRangeEQSelectivity(sctx, c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 		}
 		if c.CMSketch != nil {
 			count, err := queryValue(sctx, c.CMSketch, c.TopN, val)
 			return float64(count), errors.Trace(err)
 		}
-		histRowCount, _ := c.Histogram.equalRowCount(sctx, val, false)
+		histRowCount, _ := c.Histogram.EqualRowCount(sctx, val, false)
 		return histRowCount, nil
 	}
 
@@ -203,7 +203,7 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 		}
 	}
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
-	histCnt, matched := c.Histogram.equalRowCount(sctx, val, true)
+	histCnt, matched := c.Histogram.EqualRowCount(sctx, val, true)
 	if matched {
 		return histCnt, nil
 	}
@@ -330,7 +330,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 
 		// handling the out-of-range part
 		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
-			cnt += c.Histogram.outOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount)
+			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount)
 		}
 
 		if debugTrace {

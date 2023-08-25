@@ -17,7 +17,6 @@ package statistics
 import (
 	"cmp"
 	"fmt"
-	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -35,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
 )
@@ -45,8 +43,6 @@ const (
 	pseudoLessRate    = 3
 	pseudoBetweenRate = 40
 	pseudoColSize     = 8.0
-
-	outOfRangeBetweenRate = 100
 )
 
 const (
@@ -62,7 +58,7 @@ const (
 
 var (
 	// Below functions are used to solve cycle import problem.
-	// TODO: resolve the cycle import problem in a more graceful way.
+	// Note: all functions below will be removed after finishing moving all estimation functions into the cardinality package.
 
 	// GetRowCountByIndexRanges is a function type to get row count by index ranges.
 	GetRowCountByIndexRanges func(sctx sessionctx.Context, coll *HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, err error)
@@ -72,6 +68,12 @@ var (
 
 	// GetRowCountByColumnRanges is a function type to get row count by column ranges.
 	GetRowCountByColumnRanges func(sctx sessionctx.Context, coll *HistColl, colID int64, colRanges []*ranger.Range) (result float64, err error)
+
+	// OutOfRangeEQSelectivity is a function type to get the selectivity of equal condition which is out of range.
+	OutOfRangeEQSelectivity func(sctx sessionctx.Context, ndv, realtimeRowCount, columnRowCount int64) (result float64)
+
+	// GetEqualCondSelectivity is a function type to get the selectivity of equal condition.
+	GetEqualCondSelectivity func(sctx sessionctx.Context, coll *HistColl, idx *Index, bytes []byte, usedColsLen int, idxPointRange *ranger.Range) (result float64, err error)
 )
 
 // Table represents statistics for a table.
@@ -495,7 +497,7 @@ func (t *Table) ColumnGreaterRowCount(sctx sessionctx.Context, value types.Datum
 	if !ok || c.IsInvalid(sctx, t.Pseudo) {
 		return float64(t.RealtimeCount) / pseudoLessRate
 	}
-	return c.greaterRowCount(value) * c.GetIncreaseFactor(t.RealtimeCount)
+	return c.GreaterRowCount(value) * c.GetIncreaseFactor(t.RealtimeCount)
 }
 
 // ColumnLessRowCount estimates the row count where the column less than value. Note that null values are not counted.
@@ -504,7 +506,7 @@ func (t *Table) ColumnLessRowCount(sctx sessionctx.Context, value types.Datum, c
 	if !ok || c.IsInvalid(sctx, t.Pseudo) {
 		return float64(t.RealtimeCount) / pseudoLessRate
 	}
-	return c.lessRowCount(sctx, value) * c.GetIncreaseFactor(t.RealtimeCount)
+	return c.LessRowCount(sctx, value) * c.GetIncreaseFactor(t.RealtimeCount)
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
@@ -542,176 +544,6 @@ func (t *Table) ColumnEqualRowCount(sctx sessionctx.Context, value types.Datum, 
 	result, err := c.equalRowCount(sctx, value, encodedVal, t.ModifyCount)
 	result *= c.GetIncreaseFactor(t.RealtimeCount)
 	return result, errors.Trace(err)
-}
-
-func (coll *HistColl) findAvailableStatsForCol(sctx sessionctx.Context, uniqueID int64) (isIndex bool, idx int64) {
-	// try to find available stats in column stats
-	if colStats, ok := coll.Columns[uniqueID]; ok && colStats != nil && !colStats.IsInvalid(sctx, coll.Pseudo) && colStats.IsFullLoad() {
-		return false, uniqueID
-	}
-	// try to find available stats in single column index stats (except for prefix index)
-	for idxStatsIdx, cols := range coll.Idx2ColumnIDs {
-		if len(cols) == 1 && cols[0] == uniqueID {
-			idxStats, ok := coll.Indices[idxStatsIdx]
-			if ok &&
-				idxStats.Info.Columns[0].Length == types.UnspecifiedLength &&
-				!idxStats.IsInvalid(sctx, coll.Pseudo) &&
-				idxStats.IsFullLoad() {
-				return true, idxStatsIdx
-			}
-		}
-	}
-	return false, -1
-}
-
-// GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN, Histogram buckets boundaries and NULL.
-// Currently, this method can only handle expressions involving a single column.
-func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context, filters []expression.Expression) (ok bool, selectivity float64, err error) {
-	// 1. Make sure the expressions
-	//   (1) are safe to be evaluated here,
-	//   (2) involve only one column,
-	//   (3) and this column is not a "new collation" string column so that we're able to restore values from the stats.
-	for _, filter := range filters {
-		if expression.IsMutableEffectsExpr(filter) {
-			return false, 0, nil
-		}
-	}
-	if expression.ContainCorrelatedColumn(filters) {
-		return false, 0, nil
-	}
-	cols := expression.ExtractColumnsFromExpressions(nil, filters, nil)
-	if len(cols) != 1 {
-		return false, 0, nil
-	}
-	col := cols[0]
-	tp := col.RetType
-	if types.IsString(tp.GetType()) && collate.NewCollationEnabled() && !collate.IsBinCollation(tp.GetCollate()) {
-		return false, 0, nil
-	}
-
-	// 2. Get the available stats, make sure it's a ver2 stats and get the needed data structure from it.
-	isIndex, i := coll.findAvailableStatsForCol(sctx, col.UniqueID)
-	if i < 0 {
-		return false, 0, nil
-	}
-	var statsVer, nullCnt int64
-	var histTotalCnt, totalCnt float64
-	var topnTotalCnt uint64
-	var hist *Histogram
-	var topn *TopN
-	if isIndex {
-		stats := coll.Indices[i]
-		statsVer = stats.StatsVer
-		hist = &stats.Histogram
-		nullCnt = hist.NullCount
-		topn = stats.TopN
-	} else {
-		stats := coll.Columns[i]
-		statsVer = stats.StatsVer
-		hist = &stats.Histogram
-		nullCnt = hist.NullCount
-		topn = stats.TopN
-	}
-	// Only in stats ver2, we can assume that: TopN + Histogram + NULL == All data
-	if statsVer != Version2 {
-		return false, 0, nil
-	}
-	topnTotalCnt = topn.TotalCount()
-	histTotalCnt = hist.NotNullCount()
-	totalCnt = float64(topnTotalCnt) + histTotalCnt + float64(nullCnt)
-
-	var topNSel, histSel, nullSel float64
-
-	// Prepare for evaluation.
-
-	// For execution, we use Column.Index instead of Column.UniqueID to locate a column.
-	// We have only one column here, so we set it to 0.
-	originalIndex := col.Index
-	col.Index = 0
-	defer func() {
-		// Restore the original Index to avoid unexpected situation.
-		col.Index = originalIndex
-	}()
-	topNLen := 0
-	histBucketsLen := hist.Len()
-	if topn != nil {
-		topNLen = len(topn.TopN)
-	}
-	c := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, mathutil.Max(1, topNLen))
-	selected := make([]bool, 0, mathutil.Max(histBucketsLen, topNLen))
-
-	// 3. Calculate the TopN part selectivity.
-	// This stage is considered as the core functionality of this method, errors in this stage would make this entire method fail.
-	var topNSelectedCnt uint64
-	if topn != nil {
-		for _, item := range topn.TopN {
-			_, val, err := codec.DecodeOne(item.Encoded)
-			if err != nil {
-				return false, 0, err
-			}
-			c.AppendDatum(0, &val)
-		}
-		selected, err = expression.VectorizedFilter(sctx, filters, chunk.NewIterator4Chunk(c), selected)
-		if err != nil {
-			return false, 0, err
-		}
-		for i, isTrue := range selected {
-			if isTrue {
-				topNSelectedCnt += topn.TopN[i].Count
-			}
-		}
-	}
-	topNSel = float64(topNSelectedCnt) / totalCnt
-
-	// 4. Calculate the Histogram part selectivity.
-	// The buckets upper bounds and the Bucket.Repeat are used like the TopN above.
-	// The buckets lower bounds are used as random samples and are regarded equally.
-	if hist != nil && histTotalCnt > 0 {
-		selected = selected[:0]
-		selected, err = expression.VectorizedFilter(sctx, filters, chunk.NewIterator4Chunk(hist.Bounds), selected)
-		if err != nil {
-			return false, 0, err
-		}
-		var bucketRepeatTotalCnt, bucketRepeatSelectedCnt, lowerBoundMatchCnt int64
-		for i := range hist.Buckets {
-			bucketRepeatTotalCnt += hist.Buckets[i].Repeat
-			if len(selected) < 2*i {
-				// This should not happen, but we add this check for safety.
-				break
-			}
-			if selected[2*i] {
-				lowerBoundMatchCnt++
-			}
-			if selected[2*i+1] {
-				bucketRepeatSelectedCnt += hist.Buckets[i].Repeat
-			}
-		}
-		var lowerBoundsRatio, upperBoundsRatio, lowerBoundsSel, upperBoundsSel float64
-		upperBoundsRatio = mathutil.Min(float64(bucketRepeatTotalCnt)/histTotalCnt, 1)
-		lowerBoundsRatio = 1 - upperBoundsRatio
-		if bucketRepeatTotalCnt > 0 {
-			upperBoundsSel = float64(bucketRepeatSelectedCnt) / float64(bucketRepeatTotalCnt)
-		}
-		lowerBoundsSel = float64(lowerBoundMatchCnt) / float64(histBucketsLen)
-		histSel = lowerBoundsSel*lowerBoundsRatio + upperBoundsSel*upperBoundsRatio
-		histSel *= histTotalCnt / totalCnt
-	}
-
-	// 5. Calculate the NULL part selectivity.
-	// Errors in this staged would be returned, but would not make this entire method fail.
-	c.Reset()
-	c.AppendNull(0)
-	selected = selected[:0]
-	selected, err = expression.VectorizedFilter(sctx, filters, chunk.NewIterator4Chunk(c), selected)
-	if err != nil || len(selected) != 1 || !selected[0] {
-		nullSel = 0
-	} else {
-		nullSel = float64(nullCnt) / totalCnt
-	}
-
-	// 6. Get the final result.
-	res := topNSel + histSel + nullSel
-	return true, res, err
 }
 
 // PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
@@ -826,156 +658,6 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 	return false
 }
 
-// outOfRangeEQSelectivity estimates selectivities for out-of-range values.
-// It assumes all modifications are insertions and all new-inserted rows are uniformly distributed
-// and has the same distribution with analyzed rows, which means each unique value should have the
-// same number of rows(Tot/NDV) of it.
-// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func outOfRangeEQSelectivity(sctx sessionctx.Context, ndv, realtimeRowCount, columnRowCount int64) (result float64) {
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
-	increaseRowCount := realtimeRowCount - columnRowCount
-	if increaseRowCount <= 0 {
-		return 0 // it must be 0 since the histogram contains the whole data
-	}
-	if ndv < outOfRangeBetweenRate {
-		ndv = outOfRangeBetweenRate // avoid inaccurate selectivity caused by small NDV
-	}
-	selectivity := 1 / float64(ndv)
-	if selectivity*float64(columnRowCount) > float64(increaseRowCount) {
-		selectivity = float64(increaseRowCount) / float64(columnRowCount)
-	}
-	return selectivity
-}
-
-// crossValidationSelectivity gets the selectivity of multi-column equal conditions by cross validation.
-func (coll *HistColl) crossValidationSelectivity(
-	sctx sessionctx.Context,
-	idx *Index,
-	usedColsLen int,
-	idxPointRange *ranger.Range,
-) (
-	minRowCount float64,
-	crossValidationSelectivity float64,
-	err error,
-) {
-	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			var idxName string
-			if idx != nil && idx.Info != nil {
-				idxName = idx.Info.Name.O
-			}
-			debugtrace.RecordAnyValuesWithNames(
-				sctx,
-				"Index Name", idxName,
-				"minRowCount", minRowCount,
-				"crossValidationSelectivity", crossValidationSelectivity,
-				"error", err,
-			)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
-	minRowCount = math.MaxFloat64
-	cols := coll.Idx2ColumnIDs[idx.ID]
-	crossValidationSelectivity = 1.0
-	totalRowCount := idx.TotalRowCount()
-	for i, colID := range cols {
-		if i >= usedColsLen {
-			break
-		}
-		if col, ok := coll.Columns[colID]; ok {
-			if col.IsInvalid(sctx, coll.Pseudo) {
-				continue
-			}
-			// Since the column range is point range(LowVal is equal to HighVal), we need to set both LowExclude and HighExclude to false.
-			// Otherwise we would get 0.0 estRow from GetColumnRowCount.
-			rang := ranger.Range{
-				LowVal:      []types.Datum{idxPointRange.LowVal[i]},
-				LowExclude:  false,
-				HighVal:     []types.Datum{idxPointRange.HighVal[i]},
-				HighExclude: false,
-				Collators:   []collate.Collator{idxPointRange.Collators[i]},
-			}
-
-			rowCount, err := col.GetColumnRowCount(sctx, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
-			if err != nil {
-				return 0, 0, err
-			}
-			crossValidationSelectivity = crossValidationSelectivity * (rowCount / totalRowCount)
-
-			if rowCount < minRowCount {
-				minRowCount = rowCount
-			}
-		}
-	}
-	return minRowCount, crossValidationSelectivity, nil
-}
-
-// getEqualCondSelectivity gets the selectivity of the equal conditions.
-func (coll *HistColl) getEqualCondSelectivity(sctx sessionctx.Context, idx *Index, bytes []byte, usedColsLen int, idxPointRange *ranger.Range) (result float64, err error) {
-	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			var idxName string
-			if idx != nil && idx.Info != nil {
-				idxName = idx.Info.Name.O
-			}
-			debugtrace.RecordAnyValuesWithNames(
-				sctx,
-				"Index Name", idxName,
-				"Encoded", bytes,
-				"UsedColLen", usedColsLen,
-				"Range", idxPointRange.String(),
-				"Result", result,
-				"error", err,
-			)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
-	coverAll := len(idx.Info.Columns) == usedColsLen
-	// In this case, the row count is at most 1.
-	if idx.Info.Unique && coverAll {
-		return 1.0 / idx.TotalRowCount(), nil
-	}
-	val := types.NewBytesDatum(bytes)
-	if idx.outOfRange(val) {
-		// When the value is out of range, we could not found this value in the CM Sketch,
-		// so we use heuristic methods to estimate the selectivity.
-		if idx.NDV > 0 && coverAll {
-			return outOfRangeEQSelectivity(sctx, idx.NDV, coll.RealtimeCount, int64(idx.TotalRowCount())), nil
-		}
-		// The equal condition only uses prefix columns of the index.
-		colIDs := coll.Idx2ColumnIDs[idx.ID]
-		var ndv int64
-		for i, colID := range colIDs {
-			if i >= usedColsLen {
-				break
-			}
-			if col, ok := coll.Columns[colID]; ok {
-				ndv = mathutil.Max(ndv, col.Histogram.NDV)
-			}
-		}
-		return outOfRangeEQSelectivity(sctx, ndv, coll.RealtimeCount, int64(idx.TotalRowCount())), nil
-	}
-
-	minRowCount, crossValidationSelectivity, err := coll.crossValidationSelectivity(sctx, idx, usedColsLen, idxPointRange)
-	if err != nil {
-		return 0, err
-	}
-
-	idxCount := float64(idx.QueryBytes(sctx, bytes))
-	if minRowCount < idxCount {
-		return crossValidationSelectivity, nil
-	}
-	return idxCount / idx.TotalRowCount(), nil
-}
-
 // GetIndexRowCount estimates the row count by the given range.
 func (coll *HistColl) GetIndexRowCount(sctx sessionctx.Context, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
@@ -1020,7 +702,7 @@ func (coll *HistColl) GetIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			selectivity, err = coll.getEqualCondSelectivity(sctx, idx, bytes, rangePosition, ran)
+			selectivity, err = GetEqualCondSelectivity(sctx, coll, idx, bytes, rangePosition, ran)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -1036,7 +718,7 @@ func (coll *HistColl) GetIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 				if err != nil {
 					return 0, err
 				}
-				res, err := coll.getEqualCondSelectivity(sctx, idx, bytes, rangePosition, ran)
+				res, err := GetEqualCondSelectivity(sctx, coll, idx, bytes, rangePosition, ran)
 				if err != nil {
 					return 0, errors.Trace(err)
 				}
