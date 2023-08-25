@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -41,11 +42,15 @@ var testMode = false
 // NewLFU creates a new LFU cache.
 func NewLFU(totalMemCost int64) (*LFU, error) {
 	if totalMemCost == 0 {
-		memTotal, err := memory.MemTotal()
-		if err != nil {
-			return nil, err
+		if intest.InTest {
+			totalMemCost = 5000000
+		} else {
+			memTotal, err := memory.MemTotal()
+			if err != nil {
+				return nil, err
+			}
+			totalMemCost = int64(memTotal / 2)
 		}
-		totalMemCost = int64(memTotal / 2)
 	}
 	metrics.CapacityGauge.Set(float64(totalMemCost))
 	result := &LFU{}
