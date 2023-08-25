@@ -15,13 +15,11 @@
 package statistics
 
 import (
-	"encoding/json"
 	"slices"
 
 	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/ranger"
 	"golang.org/x/exp/maps"
 )
 
@@ -170,90 +168,6 @@ func TraceStatsTbl(statsTbl *Table) *StatsTblTraceInfo {
 		traceIdxStats(idxStats, id, idxStatsTrace)
 	}
 	return traceInfo
-}
-
-/*
- Below is debug trace for the estimation for each single range inside GetRowCountByXXX().
-*/
-
-type startEstimateRangeInfo struct {
-	Range            string
-	LowValueEncoded  []byte
-	HighValueEncoded []byte
-	CurrentRowCount  float64
-}
-
-// DebugTraceStartEstimateRange is used to trace the start of estimate range.
-func DebugTraceStartEstimateRange(
-	s sessionctx.Context,
-	r *ranger.Range,
-	lowBytes, highBytes []byte,
-	currentCount float64,
-) {
-	root := debugtrace.GetOrInitDebugTraceRoot(s)
-	traceInfo := &startEstimateRangeInfo{
-		CurrentRowCount:  currentCount,
-		Range:            r.String(),
-		LowValueEncoded:  lowBytes,
-		HighValueEncoded: highBytes,
-	}
-	root.AppendStepWithNameToCurrentContext(traceInfo, "Start estimate range")
-}
-
-// DebugTraceAddRowCountType is the type of AddRowCount.
-type DebugTraceAddRowCountType int8
-
-const (
-	// DebugTraceUnknownTypeAddRowCount is the type of AddRowCount is unknown.
-	DebugTraceUnknownTypeAddRowCount DebugTraceAddRowCountType = iota
-
-	// DebugTraceImpossible is the type of AddRowCount is impossible.
-	DebugTraceImpossible
-
-	// DebugTraceUniquePoint is the type of AddRowCount is unique point.
-	DebugTraceUniquePoint
-
-	// DebugTracePoint is the type of AddRowCount is point.
-	DebugTracePoint
-
-	// DebugTraceRange is the type of AddRowCount is range.
-	DebugTraceRange
-
-	// DebugTraceVer1SmallRange is the type of AddRowCount is small range in ver1 stats.
-	DebugTraceVer1SmallRange
-)
-
-var addRowCountTypeToString = map[DebugTraceAddRowCountType]string{
-	DebugTraceUnknownTypeAddRowCount: "Unknown",
-	DebugTraceImpossible:             "Impossible",
-	DebugTraceUniquePoint:            "Unique point",
-	DebugTracePoint:                  "Point",
-	DebugTraceRange:                  "Range",
-	DebugTraceVer1SmallRange:         "Small range in ver1 stats",
-}
-
-// MarshalJSON marshals this structure to JSON.
-func (d DebugTraceAddRowCountType) MarshalJSON() ([]byte, error) {
-	return json.Marshal(addRowCountTypeToString[d])
-}
-
-type endEstimateRangeInfo struct {
-	RowCount float64
-	Type     DebugTraceAddRowCountType
-}
-
-// DebugTraceEndEstimateRange is used to trace the end of estimate range.
-func DebugTraceEndEstimateRange(
-	s sessionctx.Context,
-	count float64,
-	addType DebugTraceAddRowCountType,
-) {
-	root := debugtrace.GetOrInitDebugTraceRoot(s)
-	traceInfo := &endEstimateRangeInfo{
-		RowCount: count,
-		Type:     addType,
-	}
-	root.AppendStepWithNameToCurrentContext(traceInfo, "End estimate range")
 }
 
 /*
