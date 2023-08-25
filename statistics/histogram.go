@@ -821,7 +821,8 @@ func (hg *Histogram) AvgCountPerNotNullValue(totalCount int64) float64 {
 	return totalNotNull / curNDV
 }
 
-func (hg *Histogram) outOfRange(val types.Datum) bool {
+// OutOfRange checks if the datum is out of range.
+func (hg *Histogram) OutOfRange(val types.Datum) bool {
 	if hg.Len() == 0 {
 		return false
 	}

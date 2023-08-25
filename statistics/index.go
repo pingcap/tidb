@@ -164,7 +164,7 @@ func (idx *Index) MemoryUsage() CacheItemMemoryUsage {
 
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
 
-func (idx *Index) equalRowCount(sctx sessionctx.Context, b []byte, realtimeRowCount int64) (result float64) {
+func (idx *Index) equalRowCountOnIndex(sctx sessionctx.Context, b []byte, realtimeRowCount int64) (result float64) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		debugtrace.RecordAnyValuesWithNames(sctx, "Encoded Value", b)
@@ -234,9 +234,9 @@ func (idx *Index) QueryBytes(sctx sessionctx.Context, d []byte) (result uint64) 
 	return uint64(v)
 }
 
-// GetRowCount returns the row count of the given ranges.
+// GetIndexRowCountForStatsV2 returns the row count of the given ranges.
 // It uses the modifyCount to adjust the influence of modifications on the table.
-func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
+func (idx *Index) GetIndexRowCountForStatsV2(sctx sessionctx.Context, coll *HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
 	idx.checkStats()
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
@@ -277,7 +277,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 					}
 					continue
 				}
-				count = idx.equalRowCount(sctx, lb, realtimeRowCount)
+				count = idx.equalRowCountOnIndex(sctx, lb, realtimeRowCount)
 				// If the current table row count has changed, we should scale the row count accordingly.
 				count *= idx.GetIncreaseFactor(realtimeRowCount)
 				if debugTrace {
@@ -342,7 +342,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 			}
 		}
 		if !expBackoffSuccess {
-			count += idx.BetweenRowCount(sctx, l, r)
+			count += idx.BetweenRowCountOnIndex(sctx, l, r)
 		}
 
 		// If the current table row count has changed, we should scale the row count accordingly.
@@ -463,7 +463,7 @@ func (idx *Index) checkStats() {
 
 // OutOfRangeOnIndex checks if the datum is out of the range.
 func (idx *Index) OutOfRangeOnIndex(val types.Datum) bool {
-	if !idx.Histogram.outOfRange(val) {
+	if !idx.Histogram.OutOfRange(val) {
 		return false
 	}
 	if idx.Histogram.Len() > 0 && matchPrefix(idx.Histogram.Bounds.GetRow(0), 0, &val) {
@@ -481,9 +481,9 @@ func (idx *Index) GetIncreaseFactor(realtimeRowCount int64) float64 {
 	return float64(realtimeRowCount) / columnCount
 }
 
-// BetweenRowCount estimates the row count for interval [l, r).
+// BetweenRowCountOnIndex estimates the row count for interval [l, r).
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (idx *Index) BetweenRowCount(sctx sessionctx.Context, l, r types.Datum) float64 {
+func (idx *Index) BetweenRowCountOnIndex(sctx sessionctx.Context, l, r types.Datum) float64 {
 	histBetweenCnt := idx.Histogram.BetweenRowCount(sctx, l, r)
 	if idx.StatsVer == Version1 {
 		return histBetweenCnt

@@ -524,7 +524,7 @@ func (t *Table) ColumnBetweenRowCount(sctx sessionctx.Context, a, b types.Datum,
 	if err != nil {
 		return 0, err
 	}
-	count := c.BetweenRowCount(sctx, a, b, aEncoded, bEncoded)
+	count := c.BetweenRowCountOnColumn(sctx, a, b, aEncoded, bEncoded)
 	if a.IsNull() {
 		count += float64(c.NullCount)
 	}
@@ -541,7 +541,7 @@ func (t *Table) ColumnEqualRowCount(sctx sessionctx.Context, value types.Datum, 
 	if err != nil {
 		return 0, err
 	}
-	result, err := c.equalRowCount(sctx, value, encodedVal, t.ModifyCount)
+	result, err := c.equalRowCountOnColumn(sctx, value, encodedVal, t.ModifyCount)
 	result *= c.GetIncreaseFactor(t.RealtimeCount)
 	return result, errors.Trace(err)
 }
@@ -658,8 +658,8 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 	return false
 }
 
-// GetIndexRowCount estimates the row count by the given range.
-func (coll *HistColl) GetIndexRowCount(sctx sessionctx.Context, idxID int64, indexRanges []*ranger.Range) (float64, error) {
+// GetIndexRowCountForStatsV1 estimates the row count by the given range.
+func (coll *HistColl) GetIndexRowCountForStatsV1(sctx sessionctx.Context, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -685,7 +685,7 @@ func (coll *HistColl) GetIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 		// on single-column index, use previous way as well, because CMSketch does not contain null
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
-			count, err := idx.GetRowCount(sctx, nil, []*ranger.Range{ran}, coll.RealtimeCount, coll.ModifyCount)
+			count, err := idx.GetIndexRowCountForStatsV2(sctx, nil, []*ranger.Range{ran}, coll.RealtimeCount, coll.ModifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}

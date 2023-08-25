@@ -63,7 +63,8 @@ func (c *Column) TotalRowCount() float64 {
 	return c.Histogram.TotalRowCount()
 }
 
-func (c *Column) notNullCount() float64 {
+// NotNullCount returns the count of this column which is not null.
+func (c *Column) NotNullCount() float64 {
 	if c.StatsVer >= Version2 {
 		return c.Histogram.NotNullCount() + float64(c.TopN.TotalCount())
 	}
@@ -162,7 +163,7 @@ func (c *Column) IsInvalid(
 	return totalCount == 0 || (!essentialLoaded && ndv > 0)
 }
 
-func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (result float64, err error) {
+func (c *Column) equalRowCountOnColumn(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (result float64, err error) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		debugtrace.RecordAnyValuesWithNames(sctx, "Value", val.String(), "Encoded", encodedVal)
@@ -179,7 +180,7 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 		if c.Histogram.Bounds.NumRows() == 0 {
 			return 0.0, nil
 		}
-		if c.Histogram.NDV > 0 && c.outOfRange(val) {
+		if c.Histogram.NDV > 0 && c.OutOfRange(val) {
 			return OutOfRangeEQSelectivity(sctx, c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 		}
 		if c.CMSketch != nil {
@@ -260,7 +261,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 					continue
 				}
 				var cnt float64
-				cnt, err = c.equalRowCount(sctx, lowVal, lowEncoded, realtimeRowCount)
+				cnt, err = c.equalRowCountOnColumn(sctx, lowVal, lowEncoded, realtimeRowCount)
 				if err != nil {
 					return 0, errors.Trace(err)
 				}
@@ -281,7 +282,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 			// case 2: it's a small range && using ver1 stats
 			if rangeVals != nil {
 				for _, val := range rangeVals {
-					cnt, err := c.equalRowCount(sctx, val, lowEncoded, realtimeRowCount)
+					cnt, err := c.equalRowCountOnColumn(sctx, val, lowEncoded, realtimeRowCount)
 					if err != nil {
 						return 0, err
 					}
@@ -298,25 +299,25 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 		}
 
 		// case 3: it's an interval
-		cnt := c.BetweenRowCount(sctx, lowVal, highVal, lowEncoded, highEncoded)
+		cnt := c.BetweenRowCountOnColumn(sctx, lowVal, highVal, lowEncoded, highEncoded)
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boundaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
 		//   where null is the lower bound.
 		// And because we use (2, MaxValue] to represent expressions like a > 2 and use [MinNotNull, 3) to represent
 		//   expressions like b < 3, we need to exclude the special values.
 		if rg.LowExclude && !lowVal.IsNull() && lowVal.Kind() != types.KindMaxValue && lowVal.Kind() != types.KindMinNotNull {
-			lowCnt, err := c.equalRowCount(sctx, lowVal, lowEncoded, realtimeRowCount)
+			lowCnt, err := c.equalRowCountOnColumn(sctx, lowVal, lowEncoded, realtimeRowCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
 			cnt -= lowCnt
-			cnt = mathutil.Clamp(cnt, 0, c.notNullCount())
+			cnt = mathutil.Clamp(cnt, 0, c.NotNullCount())
 		}
 		if !rg.LowExclude && lowVal.IsNull() {
 			cnt += float64(c.NullCount)
 		}
 		if !rg.HighExclude && highVal.Kind() != types.KindMaxValue && highVal.Kind() != types.KindMinNotNull {
-			highCnt, err := c.equalRowCount(sctx, highVal, highEncoded, realtimeRowCount)
+			highCnt, err := c.equalRowCountOnColumn(sctx, highVal, highEncoded, realtimeRowCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -329,7 +330,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 		cnt *= c.GetIncreaseFactor(realtimeRowCount)
 
 		// handling the out-of-range part
-		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
+		if (c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal) {
 			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount)
 		}
 
@@ -458,8 +459,8 @@ func (c *Column) AvgColSizeListInDisk(count int64) float64 {
 	return math.Round((avgSize-math.Log2(avgSize))*100) / 100
 }
 
-// BetweenRowCount estimates the row count for interval [l, r).
-func (c *Column) BetweenRowCount(sctx sessionctx.Context, l, r types.Datum, lowEncoded, highEncoded []byte) float64 {
+// BetweenRowCountOnColumn estimates the row count for interval [l, r).
+func (c *Column) BetweenRowCountOnColumn(sctx sessionctx.Context, l, r types.Datum, lowEncoded, highEncoded []byte) float64 {
 	histBetweenCnt := c.Histogram.BetweenRowCount(sctx, l, r)
 	if c.StatsVer <= Version1 {
 		return histBetweenCnt

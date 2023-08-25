@@ -64,9 +64,9 @@ func GetRowCountByIndexRanges(sctx sessionctx.Context, coll *statistics.HistColl
 		)
 	}
 	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
-		result, err = coll.GetIndexRowCount(sctx, idxID, indexRanges)
+		result, err = coll.GetIndexRowCountForStatsV1(sctx, idxID, indexRanges)
 	} else {
-		result, err = idx.GetRowCount(sctx, coll, indexRanges, coll.RealtimeCount, coll.ModifyCount)
+		result, err = idx.GetIndexRowCountForStatsV2(sctx, coll, indexRanges, coll.RealtimeCount, coll.ModifyCount)
 	}
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats", uint64(result))
