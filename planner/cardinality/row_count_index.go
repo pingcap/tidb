@@ -129,7 +129,7 @@ func GetIndexRowCountForStatsV1(sctx sessionctx.Context, coll *statistics.HistCo
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			selectivity, err = statistics.GetEqualCondSelectivity(sctx, coll, idx, bytes, rangePosition, ran)
+			selectivity, err = getEqualCondSelectivity(sctx, coll, idx, bytes, rangePosition, ran)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -145,7 +145,7 @@ func GetIndexRowCountForStatsV1(sctx sessionctx.Context, coll *statistics.HistCo
 				if err != nil {
 					return 0, err
 				}
-				res, err := statistics.GetEqualCondSelectivity(sctx, coll, idx, bytes, rangePosition, ran)
+				res, err := getEqualCondSelectivity(sctx, coll, idx, bytes, rangePosition, ran)
 				if err != nil {
 					return 0, errors.Trace(err)
 				}
