@@ -379,7 +379,7 @@ const batch = 4000
 func (s *Service) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
 	serviceKeyspaceID := uint32(s.store.GetCodec().GetKeyspaceID())
 	if req.KeyspaceID != serviceKeyspaceID {
-		logutil.BgLogger().Info("[autoid service] current service is not request keyspace leader.", zap.Uint32("req-keyspace-id", req.KeyspaceID), zap.Uint32("service-keyspace-id", serviceKeyspaceID))
+		logutil.BgLogger().Info("Current service is not request keyspace leader.", zap.Uint32("req-keyspace-id", req.KeyspaceID), zap.Uint32("service-keyspace-id", serviceKeyspaceID))
 		return nil, errors.Trace(errors.New("not leader"))
 	}
 	var res *autoid.AutoIDResponse

@@ -134,6 +134,7 @@ retry:
 		Increment:  increment,
 		Offset:     offset,
 		IsUnsigned: sp.isUnsigned,
+		KeyspaceID: sp.keyspaceID,
 	})
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
 	if err != nil {
