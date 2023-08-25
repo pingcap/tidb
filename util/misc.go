@@ -37,6 +37,8 @@ import (
 	"sync"
 	"time"
 
+	"gitee.com/Trisia/gotlcp/tlcp"
+	"github.com/emmansun/gmsm/smx509"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
@@ -696,4 +698,70 @@ func CreateCertificates(certpath string, keypath string, rsaKeySize int, pubKeyA
 func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
 	// use RSA and unspecified signature algorithm
 	return CreateCertificates(certpath, keypath, rsaKeySize, x509.RSA, x509.UnknownSignatureAlgorithm)
+}
+
+// LoadTLCPCertificates loads TLCP CA/KEY/CERT for special paths.
+func LoadTLCPCertificates(ca, sigKey, sigCert, encKey, encCert string) (tlcpConfig *tlcp.Config, err error) {
+	if len(sigKey) == 0 || len(sigCert) == 0 || len(encKey) == 0 || len(encCert) == 0 {
+		logutil.BgLogger().Warn("load TLCP Certificate failed, the cert or key is missed")
+		return
+	}
+	sigKeyCert, err := tlcp.LoadX509KeyPair(sigCert, sigKey)
+	if err != nil {
+		logutil.BgLogger().Warn("load tlcp signature cert-key pair failed", zap.Error(err))
+		err = errors.Trace(err)
+	}
+	encKeyCert, err := tlcp.LoadX509KeyPair(encCert, encKey)
+	if err != nil {
+		logutil.BgLogger().Warn("load tlcp encryption cert-key pair failed", zap.Error(err))
+		err = errors.Trace(err)
+	}
+
+	// todo: Maybe we should use independent variables to control TLS and TLCP.
+	requireTLCP := tlsutil.RequireSecureTransport.Load()
+	clientAuthPolicy := tlcp.NoClientCert
+	if requireTLCP {
+		clientAuthPolicy = tlcp.RequireAndVerifyClientCert
+	}
+
+	pool := smx509.NewCertPool()
+	if len(ca) > 0 {
+		var caCert []byte
+		var rootCert *smx509.Certificate
+		caCert, err = os.ReadFile(ca)
+		if err != nil {
+			logutil.BgLogger().Warn("read file failed", zap.Error(err))
+			err = errors.Trace(err)
+			return
+		}
+		rootCert, err = smx509.ParseCertificatePEM(caCert)
+		if err != nil {
+			logutil.BgLogger().Warn("load ca cert failed", zap.Error(err))
+			err = errors.Trace(err)
+			return
+		}
+		pool.AddCert(rootCert)
+		if requireTLCP {
+			clientAuthPolicy = tlcp.RequireAndVerifyClientCert
+		} else {
+			clientAuthPolicy = tlcp.VerifyClientCertIfGiven
+		}
+	}
+
+	// If use ECDHE cipher suites, client needs encryption cert and key file too.
+	var cipherSuites []uint16
+	var cipherNames []string
+	for _, sc := range tlcp.CipherSuites() {
+		cipherNames = append(cipherNames, sc.Name)
+		cipherSuites = append(cipherSuites, sc.ID)
+	}
+	logutil.BgLogger().Info("Enabled ciphersuites", zap.Strings("cipherNames", cipherNames))
+
+	tlcpConfig = &tlcp.Config{
+		Certificates: []tlcp.Certificate{sigKeyCert, encKeyCert},
+		ClientAuth:   clientAuthPolicy,
+		ClientCAs:    pool,
+		CipherSuites: cipherSuites,
+	}
+	return
 }
