@@ -565,6 +565,7 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 	require.NoError(t, err)
 	defer domLatestV.Close()
 	domLatestV.DDL().SetHook(hook)
+	finishUpgrade(store)
 	seLatestV := session.CreateSessionAndSetID(t, store)
 	// Add a new DDL (an "add index" job uses a different table than the previous DDL job) to the DDL table.
 	session.MustExec(t, seLatestV, "alter table test.upgrade_tbl1 add index idx2(a)")
@@ -573,7 +574,6 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
 
 	wg.Wait()
-	finishUpgrade(store)
 	require.Equal(t, 3, times)
 	// Make sure the second add index operation is successful.
 	sql := fmt.Sprintf("select job_meta from mysql.tidb_ddl_history where job_id=%d or job_id=%d order by job_id", jobID, jobID+1)
