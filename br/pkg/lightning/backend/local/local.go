@@ -387,13 +387,15 @@ func checkTiFlashVersion(ctx context.Context, db *sql.DB, checkCtx *backend.Chec
 
 // CommonEngine describes the common interface of local and external engine that
 // local backend uses.
+// TODO(lance6716): maybe move the common interface to lightning/common to break
+// the cyclic import.
 type CommonEngine interface {
 	// LoadIngestData returns an IngestData that contains the data in [start, end).
 	LoadIngestData(ctx context.Context, start, end []byte) (IngestData, error)
 	// TODO(lance6716): add more methods
 }
 
-// NewExternalEngine will be initialised by lightning/backend/external.
+// NewExternalEngine will be initialized by lightning/backend/external.
 var NewExternalEngine func(
 	storage storage.ExternalStorage,
 	dataFiles []string,
@@ -404,6 +406,13 @@ var NewExternalEngine func(
 	dupDetectOpt DupDetectOpt,
 	ts uint64,
 ) CommonEngine
+
+// MockExternalEngine will be initialized by lightning/backend/external.
+var MockExternalEngine func(
+	storage storage.ExternalStorage,
+	keys [][]byte,
+	values [][]byte,
+) (dataFiles []string, statsFiles []string, err error)
 
 // BackendConfig is the config for local backend.
 type BackendConfig struct {

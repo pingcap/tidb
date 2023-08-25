@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/keyspace"
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -2141,4 +2142,19 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 	e := &Engine{}
 	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
+}
+
+func TestExternalEngineLoadIngestData(t *testing.T) {
+	//ctx := context.Background()
+	memstore := storage.NewMemStorage()
+	keys := [][]byte{
+		[]byte("key1"), []byte("key2"),
+	}
+	values := [][]byte{
+		[]byte("value1"), []byte("value2"),
+	}
+	dataFiles, statFiles, err := MockExternalEngine(memstore, keys, values)
+	require.NoError(t, err)
+	_ = dataFiles
+	_ = statFiles
 }
