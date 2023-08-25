@@ -106,4 +106,6 @@ var (
 	ErrResourceGroupSupportDisabled = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupSupportDisabled)
 	// ErrCheckConstraintDupName returns for duplicate constraint names.
 	ErrCheckConstraintDupName = dbterror.ClassSchema.NewStd(mysql.ErrCheckConstraintDupName)
+	// ErrCtxProviderNotSet for internal syntax.
+	ErrCtxProviderNotSet = dbterror.ClassSchema.NewStd(mysql.ErrCtxProviderNotSet)
 )

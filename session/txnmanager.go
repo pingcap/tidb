@@ -93,14 +93,14 @@ func (m *txnManager) GetTxnInfoSchema() infoschema.InfoSchema {
 
 func (m *txnManager) GetStmtReadTS() (uint64, error) {
 	if m.ctxProvider == nil {
-		return 0, errors.New("context provider not set")
+		return 0, infoschema.ErrCtxProviderNotSet
 	}
 	return m.ctxProvider.GetStmtReadTS()
 }
 
 func (m *txnManager) GetStmtForUpdateTS() (uint64, error) {
 	if m.ctxProvider == nil {
-		return 0, errors.New("context provider not set")
+		return 0, infoschema.ErrCtxProviderNotSet
 	}
 
 	ts, err := m.ctxProvider.GetStmtForUpdateTS()
@@ -135,7 +135,7 @@ func (m *txnManager) GetReadReplicaScope() string {
 // GetSnapshotWithStmtReadTS gets snapshot with read ts
 func (m *txnManager) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
 	if m.ctxProvider == nil {
-		return nil, errors.New("context provider not set")
+		return nil, infoschema.ErrCtxProviderNotSet
 	}
 	return m.ctxProvider.GetSnapshotWithStmtReadTS()
 }
@@ -143,7 +143,7 @@ func (m *txnManager) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
 // GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
 func (m *txnManager) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
 	if m.ctxProvider == nil {
-		return nil, errors.New("context provider not set")
+		return nil, infoschema.ErrCtxProviderNotSet
 	}
 	return m.ctxProvider.GetSnapshotWithStmtForUpdateTS()
 }
@@ -202,7 +202,7 @@ func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
 	m.stmtNode = node
 
 	if m.ctxProvider == nil {
-		return errors.New("context provider not set")
+		return infoschema.ErrCtxProviderNotSet
 	}
 
 	var sql string
@@ -225,7 +225,7 @@ func (m *txnManager) OnStmtEnd() {
 // a pessimistic select-for-update statements.
 func (m *txnManager) OnPessimisticStmtStart(ctx context.Context) error {
 	if m.ctxProvider == nil {
-		return errors.New("context provider not set")
+		return infoschema.ErrCtxProviderNotSet
 	}
 	return m.ctxProvider.OnPessimisticStmtStart(ctx)
 }
@@ -234,7 +234,7 @@ func (m *txnManager) OnPessimisticStmtStart(ctx context.Context) error {
 // select-for-update statement.
 func (m *txnManager) OnPessimisticStmtEnd(ctx context.Context, isSuccessful bool) error {
 	if m.ctxProvider == nil {
-		return errors.New("context provider not set")
+		return infoschema.ErrCtxProviderNotSet
 	}
 	return m.ctxProvider.OnPessimisticStmtEnd(ctx, isSuccessful)
 }
@@ -258,7 +258,7 @@ func (m *txnManager) ActivateTxn() (kv.Transaction, error) {
 // OnStmtRetry is the hook that should be called when a statement retry
 func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 	if m.ctxProvider == nil {
-		return errors.New("context provider not set")
+		return infoschema.ErrCtxProviderNotSet
 	}
 	return m.ctxProvider.OnStmtRetry(ctx)
 }
@@ -266,7 +266,7 @@ func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 // OnStmtCommit is the hook that should be called when a statement is executed successfully.
 func (m *txnManager) OnStmtCommit(ctx context.Context) error {
 	if m.ctxProvider == nil {
-		return errors.New("context provider not set")
+		return infoschema.ErrCtxProviderNotSet
 	}
 	m.recordEvent("stmt commit")
 	return m.ctxProvider.OnStmtCommit(ctx)
@@ -292,7 +292,7 @@ func (m *txnManager) resetEvents() {
 // OnStmtRollback is the hook that should be called when a statement fails to execute.
 func (m *txnManager) OnStmtRollback(ctx context.Context, isForPessimisticRetry bool) error {
 	if m.ctxProvider == nil {
-		return errors.New("context provider not set")
+		return infoschema.ErrCtxProviderNotSet
 	}
 	m.recordEvent("stmt rollback")
 	return m.ctxProvider.OnStmtRollback(ctx, isForPessimisticRetry)
