@@ -16,6 +16,10 @@ package cardinality
 
 import (
 	"bytes"
+	"math"
+	"slices"
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
@@ -28,9 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
-	"math"
-	"slices"
-	"strings"
 )
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
