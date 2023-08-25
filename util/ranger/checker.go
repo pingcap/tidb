@@ -82,7 +82,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 				}
 				// cast function shouldn't tolerate precision loss. (like int <-> float)
 				// current only consider varchar and integer
-				if !downCastCompatible(cast.RetType, cast.GetArgs()[0].GetType()) {
+				if !noPrecisionLossCastCompatible(cast.RetType, cast.GetArgs()[0].GetType()) {
 					return false, true
 				}
 				isFullLength := c.isFullLengthColumn()
@@ -113,7 +113,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 
 				// cast function shouldn't tolerate precision loss. (like int <-> float)
 				// otherwise, the downcast access filter is incorrect! current only consider varchar and integer.
-				if !downCastCompatible(cast.RetType, cast.GetArgs()[0].GetType()) {
+				if !noPrecisionLossCastCompatible(cast.RetType, cast.GetArgs()[0].GetType()) {
 					return false, true
 				}
 				isFullLength := c.isFullLengthColumn()

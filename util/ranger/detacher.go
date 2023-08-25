@@ -99,7 +99,7 @@ func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.
 }
 
 // todo: consider more no precision-loss downcast cases.
-func downCastCompatible(cast, argCol *types.FieldType) bool {
+func noPrecisionLossCastCompatible(cast, argCol *types.FieldType) bool {
 	// now only consider varchar type and integer.
 	if !(types.IsTypeVarchar(cast.GetType()) && types.IsTypeVarchar(argCol.GetType()) ||
 		mysql.IsIntegerType(cast.GetType()) && mysql.IsIntegerType(argCol.GetType())) {
@@ -195,7 +195,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 							return expr, false, -1
 						}
 						// current only consider varchar and integer
-						if !downCastCompatible(cast.RetType, c.RetType) {
+						if !noPrecisionLossCastCompatible(cast.RetType, c.RetType) {
 							return expr, false, -1
 						}
 						return expression.NewFunctionInternal(sctx, f.FuncName.L, f.RetType, col, f.GetArgs()[1]), true, i
@@ -274,7 +274,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 							return expr, false, -1
 						}
 						// current only consider varchar and integer
-						if !downCastCompatible(cast.RetType, c.RetType) {
+						if !noPrecisionLossCastCompatible(cast.RetType, c.RetType) {
 							return expr, false, -1
 						}
 						return expression.NewFunctionInternal(sctx, f.FuncName.L, f.RetType, col, f.GetArgs()[0]), true, i
