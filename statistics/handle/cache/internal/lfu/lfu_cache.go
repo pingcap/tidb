@@ -23,8 +23,10 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 	"github.com/pingcap/tidb/util/intest"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
 )
 
 // LFU is a LFU based on the ristretto.Cache
@@ -35,14 +37,20 @@ type LFU struct {
 	closeOnce    sync.Once
 }
 
+var testMode = false
+
 // NewLFU creates a new LFU cache.
 func NewLFU(totalMemCost int64) (*LFU, error) {
 	if totalMemCost == 0 {
-		memTotal, err := memory.MemTotal()
-		if err != nil {
-			return nil, err
+		if intest.InTest {
+			totalMemCost = 5000000
+		} else {
+			memTotal, err := memory.MemTotal()
+			if err != nil {
+				return nil, err
+			}
+			totalMemCost = int64(memTotal / 2)
 		}
-		totalMemCost = int64(memTotal / 2)
 	}
 	metrics.CapacityGauge.Set(float64(totalMemCost))
 	result := &LFU{}
@@ -55,8 +63,8 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 		OnEvict:            result.onEvict,
 		OnExit:             result.onExit,
 		OnReject:           result.onReject,
-		IgnoreInternalCost: intest.InTest,
-		Metrics:            intest.InTest,
+		IgnoreInternalCost: testMode,
+		Metrics:            testMode,
 	})
 	if err != nil {
 		return nil, err
@@ -115,11 +123,21 @@ func DropEvicted(item statistics.TableCacheItem) {
 }
 
 func (s *LFU) onReject(item *ristretto.Item) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("panic in onReject", zap.Any("error", r), zap.Stack("stack"))
+		}
+	}()
 	metrics.RejectCounter.Add(1.0)
 	s.dropMemory(item)
 }
 
 func (s *LFU) onEvict(item *ristretto.Item) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("panic in onEvict", zap.Any("error", r), zap.Stack("stack"))
+		}
+	}()
 	s.dropMemory(item)
 	metrics.EvictCounter.Inc()
 }
@@ -150,6 +168,11 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 }
 
 func (s *LFU) onExit(val any) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("panic in onExit", zap.Any("error", r), zap.Stack("stack"))
+		}
+	}()
 	if val == nil {
 		// Sometimes the same key may be passed to the "onEvict/onExit" function twice,
 		// and in the second invocation, the value is empty, so it should not be processed.
