@@ -398,7 +398,7 @@ func (hg *Histogram) EqualRowCount(sctx sessionctx.Context, value types.Datum, h
 		return 0, false
 	}
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugTraceBuckets(sctx, hg, []int{bucketIdx})
+		DebugTraceBuckets(sctx, hg, []int{bucketIdx})
 	}
 	if match {
 		return float64(hg.Buckets[bucketIdx].Repeat), true
@@ -485,7 +485,7 @@ func (hg *Histogram) LessRowCountWithBktIdx(sctx sessionctx.Context, value types
 		return hg.NotNullCount(), hg.Len() - 1
 	}
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugTraceBuckets(sctx, hg, []int{bucketIdx - 1, bucketIdx})
+		DebugTraceBuckets(sctx, hg, []int{bucketIdx - 1, bucketIdx})
 	}
 	preCount := float64(0)
 	if bucketIdx > 0 {
@@ -821,7 +821,8 @@ func (hg *Histogram) AvgCountPerNotNullValue(totalCount int64) float64 {
 	return totalNotNull / curNDV
 }
 
-func (hg *Histogram) outOfRange(val types.Datum) bool {
+// OutOfRange checks if the datum is out of range.
+func (hg *Histogram) OutOfRange(val types.Datum) bool {
 	if hg.Len() == 0 {
 		return false
 	}

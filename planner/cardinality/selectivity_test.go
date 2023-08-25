@@ -131,7 +131,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	statsTbl := h.GetTableStats(table.Meta())
 	sctx := mock.NewContext()
 	col := statsTbl.Columns[table.Meta().Columns[0].ID]
-	count, err := col.GetColumnRowCount(sctx, getRange(900, 900), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	count, err := cardinality.GetColumnRowCount(sctx, col, getRange(900, 900), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
 	require.NoError(t, err)
 	// Because the ANALYZE collect data by random sampling, so the result is not an accurate value.
 	// so we use a range here.
@@ -152,7 +152,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	increasedTblRowCount := int64(float64(statsTbl.RealtimeCount) * 1.5)
 	modifyCount := int64(float64(statsTbl.RealtimeCount) * 0.5)
 	for i, ran := range input {
-		count, err = col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
+		count, err = cardinality.GetColumnRowCount(sctx, col, getRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
@@ -706,7 +706,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 
 	// Test issue 22134
 	// Information about column n will not be in stats immediately after this SQL executed.
-	// If we don't have a check against this, DNF condition could lead to infinite recursion in cardinality.Selectivity().
+	// If we don't have a check against this, DNF condition could lead to infinite recursion in  cardinality.Selectivity().
 	testKit.MustExec("alter table t add column n timestamp;")
 	testKit.MustExec("select * from t where n = '2000-01-01' or n = '2000-01-02';")
 
@@ -790,7 +790,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, ran := range input {
-		count, err := col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+		count, err := cardinality.GetColumnRowCount(sctx, col, getRange(ran.Start, ran.End), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
