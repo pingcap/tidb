@@ -17,6 +17,8 @@ package executor
 import (
 	"context"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -33,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/tracing"
-	"golang.org/x/exp/slices"
 )
 
 type memReader interface {
@@ -143,7 +144,7 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	}
 
 	if m.keepOrder && m.table.GetPartitionInfo() != nil {
-		slices.SortFunc(m.addedRows, func(a, b []types.Datum) bool {
+		slices.SortFunc(m.addedRows, func(a, b []types.Datum) int {
 			ret, err1 := m.compare(m.ctx.GetSessionVars().StmtCtx, a, b)
 			if err1 != nil {
 				err = err1
@@ -421,7 +422,7 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	}
 
 	if m.keepOrder && m.table.GetPartitionInfo() != nil {
-		slices.SortFunc(m.addedRows, func(a, b []types.Datum) bool {
+		slices.SortFunc(m.addedRows, func(a, b []types.Datum) int {
 			ret, err1 := m.compare(m.ctx.GetSessionVars().StmtCtx, a, b)
 			if err1 != nil {
 				err = err1
@@ -935,7 +936,7 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 	// Didn't set keepOrder = true for memTblReader,
 	// In indexMerge, non-partitioned tables are also need reordered.
 	if m.keepOrder {
-		slices.SortFunc(rows, func(a, b []types.Datum) bool {
+		slices.SortFunc(rows, func(a, b []types.Datum) int {
 			ret, err1 := m.compare(m.ctx.GetSessionVars().StmtCtx, a, b)
 			if err1 != nil {
 				err = err1
