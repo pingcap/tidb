@@ -180,7 +180,7 @@ func (idx *Index) equalRowCount(sctx sessionctx.Context, b []byte, realtimeRowCo
 	}
 	val := types.NewBytesDatum(b)
 	if idx.StatsVer < Version2 {
-		if idx.Histogram.NDV > 0 && idx.OutOfRange(val) {
+		if idx.Histogram.NDV > 0 && idx.OutOfRangeOnIndex(val) {
 			return OutOfRangeEQSelectivity(sctx, idx.Histogram.NDV, realtimeRowCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
 		}
 		if idx.CMSketch != nil {
@@ -349,7 +349,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 		count *= idx.GetIncreaseFactor(realtimeRowCount)
 
 		// handling the out-of-range part
-		if (idx.OutOfRange(l) && !(isSingleCol && lowIsNull)) || idx.OutOfRange(r) {
+		if (idx.OutOfRangeOnIndex(l) && !(isSingleCol && lowIsNull)) || idx.OutOfRangeOnIndex(r) {
 			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount)
 		}
 
@@ -461,8 +461,8 @@ func (idx *Index) checkStats() {
 	HistogramNeededItems.insert(model.TableItemID{TableID: idx.PhysicalID, ID: idx.Info.ID, IsIndex: true})
 }
 
-// OutOfRange checks if the datum is out of the range.
-func (idx *Index) OutOfRange(val types.Datum) bool {
+// OutOfRangeOnIndex checks if the datum is out of the range.
+func (idx *Index) OutOfRangeOnIndex(val types.Datum) bool {
 	if !idx.Histogram.outOfRange(val) {
 		return false
 	}

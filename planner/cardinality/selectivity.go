@@ -819,7 +819,7 @@ func getEqualCondSelectivity(sctx sessionctx.Context, coll *statistics.HistColl,
 		return 1.0 / idx.TotalRowCount(), nil
 	}
 	val := types.NewBytesDatum(bytes)
-	if idx.OutOfRange(val) {
+	if idx.OutOfRangeOnIndex(val) {
 		// When the value is out of range, we could not found this value in the CM Sketch,
 		// so we use heuristic methods to estimate the selectivity.
 		if idx.NDV > 0 && coverAll {
