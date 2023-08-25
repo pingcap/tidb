@@ -16,6 +16,7 @@ package cardinality
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 
 	"github.com/pingcap/tidb/expression"
@@ -233,4 +234,73 @@ func CETraceRange(sctx sessionctx.Context, tableID int64, colNames []string, ran
 		RowCount: rowCount,
 	}
 	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &ceRecord)
+}
+
+/*
+ Below is debug trace for the estimation for each single range inside GetRowCountByXXX().
+*/
+
+type startEstimateRangeInfo struct {
+	Range            string
+	LowValueEncoded  []byte
+	HighValueEncoded []byte
+	CurrentRowCount  float64
+}
+
+func debugTraceStartEstimateRange(
+	s sessionctx.Context,
+	r *ranger.Range,
+	lowBytes, highBytes []byte,
+	currentCount float64,
+) {
+	root := debugtrace.GetOrInitDebugTraceRoot(s)
+	traceInfo := &startEstimateRangeInfo{
+		CurrentRowCount:  currentCount,
+		Range:            r.String(),
+		LowValueEncoded:  lowBytes,
+		HighValueEncoded: highBytes,
+	}
+	root.AppendStepWithNameToCurrentContext(traceInfo, "Start estimate range")
+}
+
+type debugTraceAddRowCountType int8
+
+const (
+	debugTraceUnknownTypeAddRowCount debugTraceAddRowCountType = iota
+	debugTraceImpossible
+	debugTraceUniquePoint
+	debugTracePoint
+	debugTraceRange
+	debugTraceVer1SmallRange
+)
+
+var addRowCountTypeToString = map[debugTraceAddRowCountType]string{
+	debugTraceUnknownTypeAddRowCount: "Unknown",
+	debugTraceImpossible:             "Impossible",
+	debugTraceUniquePoint:            "Unique point",
+	debugTracePoint:                  "Point",
+	debugTraceRange:                  "Range",
+	debugTraceVer1SmallRange:         "Small range in ver1 stats",
+}
+
+func (d debugTraceAddRowCountType) MarshalJSON() ([]byte, error) {
+	return json.Marshal(addRowCountTypeToString[d])
+}
+
+type endEstimateRangeInfo struct {
+	RowCount float64
+	Type     debugTraceAddRowCountType
+}
+
+func debugTraceEndEstimateRange(
+	s sessionctx.Context,
+	count float64,
+	addType debugTraceAddRowCountType,
+) {
+	root := debugtrace.GetOrInitDebugTraceRoot(s)
+	traceInfo := &endEstimateRangeInfo{
+		RowCount: count,
+		Type:     addType,
+	}
+	root.AppendStepWithNameToCurrentContext(traceInfo, "End estimate range")
 }
