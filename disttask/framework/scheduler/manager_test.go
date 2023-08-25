@@ -29,6 +29,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func getPoolRunFn() (*sync.WaitGroup, func(f func()) error) {
+	wg := &sync.WaitGroup{}
+	return wg, func(f func()) error {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f()
+		}()
+		return nil
+	}
+}
+
 func TestManageTask(t *testing.T) {
 	b := NewManagerBuilder()
 	m, err := b.BuildManager(context.Background(), "test", nil)
@@ -114,17 +126,10 @@ func TestOnRunnableTasks(t *testing.T) {
 	m.onRunnableTasks(context.Background(), []*proto.Task{task})
 
 	// step 0 succeed
-	var wg sync.WaitGroup
+	wg, runFn := getPoolRunFn()
 	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID, proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil)
-	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(func(f func()) error {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			f()
-		}()
-		return nil
-	})
+	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
 	mockInternalScheduler.EXPECT().Start()
 	mockTaskTable.EXPECT().GetGlobalTaskByID(taskID).Return(task, nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID, proto.StepOne,
@@ -154,7 +159,6 @@ func TestOnRunnableTasks(t *testing.T) {
 }
 
 func TestManager(t *testing.T) {
-	// TODO(gmhdbjd): use real subtask table instead of mock
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockTaskTable := mock.NewMockTaskTable(ctrl)
@@ -185,17 +189,7 @@ func TestManager(t *testing.T) {
 	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID1, proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).
 		Return(true, nil)
-	var wg sync.WaitGroup
-	var taskCount int
-	runFn := func(f func()) error {
-		taskCount++
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			f()
-		}()
-		return nil
-	}
+	wg, runFn := getPoolRunFn()
 	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
 	mockInternalScheduler.EXPECT().Start()
 	mockTaskTable.EXPECT().GetGlobalTaskByID(taskID1).Return(task1, nil).AnyTimes()
