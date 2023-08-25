@@ -60,13 +60,13 @@ def go_deps():
         name = "co_honnef_go_tools",
         build_file_proto_mode = "disable_global",
         importpath = "honnef.co/go/tools",
-        sha256 = "bdd216490737b6cd0fe2655f574415606136f56033cc9f95c9d077c0227aa71c",
-        strip_prefix = "honnef.co/go/tools@v0.4.3",
+        sha256 = "3f7c266a830f3a0727ac0b85cd7cd74a765c05d337d73af20906219f1a4ec4c3",
+        strip_prefix = "honnef.co/go/tools@v0.4.5",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/honnef.co/go/tools/co_honnef_go_tools-v0.4.3.zip",
-            "http://ats.apps.svc/gomod/honnef.co/go/tools/co_honnef_go_tools-v0.4.3.zip",
-            "https://cache.hawkingrei.com/gomod/honnef.co/go/tools/co_honnef_go_tools-v0.4.3.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/honnef.co/go/tools/co_honnef_go_tools-v0.4.3.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/honnef.co/go/tools/co_honnef_go_tools-v0.4.5.zip",
+            "http://ats.apps.svc/gomod/honnef.co/go/tools/co_honnef_go_tools-v0.4.5.zip",
+            "https://cache.hawkingrei.com/gomod/honnef.co/go/tools/co_honnef_go_tools-v0.4.5.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/honnef.co/go/tools/co_honnef_go_tools-v0.4.5.zip",
         ],
     )
     go_repository(
