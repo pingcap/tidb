@@ -98,7 +98,7 @@ func GetIndexRowCountForStatsV1(sctx sessionctx.Context, coll *statistics.HistCo
 	totalCount := float64(0)
 	for _, ran := range indexRanges {
 		if debugTrace {
-			DebugTraceStartEstimateRange(sctx, ran, nil, nil, totalCount)
+			debugTraceStartEstimateRange(sctx, ran, nil, nil, totalCount)
 		}
 		rangePosition := statistics.GetOrdinalOfRangeCond(sc, ran)
 		var rangeVals []types.Datum
@@ -118,7 +118,7 @@ func GetIndexRowCountForStatsV1(sctx sessionctx.Context, coll *statistics.HistCo
 				return 0, errors.Trace(err)
 			}
 			if debugTrace {
-				DebugTraceEndEstimateRange(sctx, count, DebugTraceRange)
+				debugTraceEndEstimateRange(sctx, count, debugTraceRange)
 			}
 			totalCount += count
 			continue
@@ -185,7 +185,7 @@ func GetIndexRowCountForStatsV1(sctx sessionctx.Context, coll *statistics.HistCo
 		}
 		count := selectivity * idx.TotalRowCount()
 		if debugTrace {
-			DebugTraceEndEstimateRange(sctx, count, DebugTraceRange)
+			debugTraceEndEstimateRange(sctx, count, debugTraceRange)
 		}
 		totalCount += count
 	}
@@ -230,14 +230,14 @@ func GetIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 			return 0, err
 		}
 		if debugTrace {
-			DebugTraceStartEstimateRange(sctx, indexRange, lb, rb, totalCount)
+			debugTraceStartEstimateRange(sctx, indexRange, lb, rb, totalCount)
 		}
 		fullLen := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == len(idx.Info.Columns)
 		if bytes.Equal(lb, rb) {
 			// case 1: it's a point
 			if indexRange.LowExclude || indexRange.HighExclude {
 				if debugTrace {
-					DebugTraceEndEstimateRange(sctx, 0, DebugTraceImpossible)
+					debugTraceEndEstimateRange(sctx, 0, debugTraceImpossible)
 				}
 				continue
 			}
@@ -246,7 +246,7 @@ func GetIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 				if idx.Info.Unique {
 					totalCount++
 					if debugTrace {
-						DebugTraceEndEstimateRange(sctx, 1, DebugTraceUniquePoint)
+						debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
 					}
 					continue
 				}
@@ -254,7 +254,7 @@ func GetIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 				// If the current table row count has changed, we should scale the row count accordingly.
 				count *= idx.GetIncreaseFactor(realtimeRowCount)
 				if debugTrace {
-					DebugTraceEndEstimateRange(sctx, count, DebugTracePoint)
+					debugTraceEndEstimateRange(sctx, count, debugTracePoint)
 				}
 				totalCount += count
 				continue
@@ -327,7 +327,7 @@ func GetIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 		}
 
 		if debugTrace {
-			DebugTraceEndEstimateRange(sctx, count, DebugTraceRange)
+			debugTraceEndEstimateRange(sctx, count, debugTraceRange)
 		}
 		totalCount += count
 	}

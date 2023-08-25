@@ -202,7 +202,7 @@ func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*
 			return 0, err
 		}
 		if debugTrace {
-			DebugTraceStartEstimateRange(sctx, rg, lowEncoded, highEncoded, rowCount)
+			debugTraceStartEstimateRange(sctx, rg, lowEncoded, highEncoded, rowCount)
 		}
 		if cmp == 0 {
 			// case 1: it's a point
@@ -211,7 +211,7 @@ func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*
 				if pkIsHandle {
 					rowCount++
 					if debugTrace {
-						DebugTraceEndEstimateRange(sctx, 1, DebugTraceUniquePoint)
+						debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
 					}
 					continue
 				}
@@ -224,7 +224,7 @@ func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*
 				cnt *= c.GetIncreaseFactor(realtimeRowCount)
 				rowCount += cnt
 				if debugTrace {
-					DebugTraceEndEstimateRange(sctx, cnt, DebugTracePoint)
+					debugTraceEndEstimateRange(sctx, cnt, debugTracePoint)
 				}
 			}
 			continue
@@ -244,7 +244,7 @@ func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*
 					// If the current table row count has changed, we should scale the row count accordingly.
 					cnt *= c.GetIncreaseFactor(realtimeRowCount)
 					if debugTrace {
-						DebugTraceEndEstimateRange(sctx, cnt, DebugTraceVer1SmallRange)
+						debugTraceEndEstimateRange(sctx, cnt, debugTraceVer1SmallRange)
 					}
 					rowCount += cnt
 				}
@@ -290,7 +290,7 @@ func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*
 		}
 
 		if debugTrace {
-			DebugTraceEndEstimateRange(sctx, cnt, DebugTraceRange)
+			debugTraceEndEstimateRange(sctx, cnt, debugTraceRange)
 		}
 		rowCount += cnt
 	}
