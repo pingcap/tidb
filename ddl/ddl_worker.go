@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/ddl/session"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -99,8 +99,8 @@ type worker struct {
 	ctx             context.Context
 	wg              sync.WaitGroup
 
-	sessPool        *session.Pool    // sessPool is used to new sessions to execute SQL in ddl package.
-	sess            *session.Session // sess is used and only used in running DDL job.
+	sessPool        *sess.Pool    // sessPool is used to new sessions to execute SQL in ddl package.
+	sess            *sess.Session // sess is used and only used in running DDL job.
 	delRangeManager delRangeManager
 	logCtx          context.Context
 	lockSeqNum      bool
@@ -129,7 +129,7 @@ func NewJobContext() *JobContext {
 	}
 }
 
-func newWorker(ctx context.Context, tp workerType, sessPool *session.Pool, delRangeMgr delRangeManager, dCtx *ddlCtx) *worker {
+func newWorker(ctx context.Context, tp workerType, sessPool *sess.Pool, delRangeMgr delRangeManager, dCtx *ddlCtx) *worker {
 	worker := &worker{
 		id:              ddlWorkerID.Add(1),
 		tp:              tp,
@@ -351,7 +351,7 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		return errors.Trace(err)
 	}
 	defer d.sessPool.Put(se)
-	job, err := getJobsBySQL(session.NewSession(se), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
+	job, err := getJobsBySQL(sess.NewSession(se), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -380,7 +380,7 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 			setJobStateToQueueing(job)
 
 			if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) {
-				if err = pauseRunningJob(session.NewSession(se), job, model.AdminCommandBySystem); err != nil {
+				if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
 					logutil.BgLogger().Warn("pause user DDL by system failed", zap.String("category", "ddl-upgrading"), zap.Stringer("job", job), zap.Error(err))
 					task.cacheErr = err
 					continue
@@ -393,7 +393,7 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		}
 
 		se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-		err = insertDDLJobs2Table(session.NewSession(se), true, jobTasks...)
+		err = insertDDLJobs2Table(sess.NewSession(se), true, jobTasks...)
 	}
 	return errors.Trace(err)
 }
@@ -471,14 +471,14 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 }
 
 // cleanMDLInfo cleans metadata lock info.
-func cleanMDLInfo(pool *session.Pool, jobID int64, ec *clientv3.Client) {
+func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client) {
 	if !variable.EnableMDL.Load() {
 		return
 	}
 	sql := fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", jobID)
 	sctx, _ := pool.Get()
 	defer pool.Put(sctx)
-	se := session.NewSession(sctx)
+	se := sess.NewSession(sctx)
 	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(context.Background(), sql, "delete-mdl-info")
 	if err != nil {
@@ -495,11 +495,11 @@ func cleanMDLInfo(pool *session.Pool, jobID int64, ec *clientv3.Client) {
 }
 
 // checkMDLInfo checks if metadata lock info exists. It means the schema is locked by some TiDBs if exists.
-func checkMDLInfo(jobID int64, pool *session.Pool) (bool, int64, error) {
+func checkMDLInfo(jobID int64, pool *sess.Pool) (bool, int64, error) {
 	sql := fmt.Sprintf("select version from mysql.tidb_mdl_info where job_id = %d", jobID)
 	sctx, _ := pool.Get()
 	defer pool.Put(sctx)
-	se := session.NewSession(sctx)
+	se := sess.NewSession(sctx)
 	rows, err := se.Execute(context.Background(), sql, "check-mdl-info")
 	if err != nil {
 		return false, 0, err

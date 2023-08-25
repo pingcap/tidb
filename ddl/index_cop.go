@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/ingest"
-	"github.com/pingcap/tidb/ddl/session"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -71,7 +71,7 @@ type copReqSenderPool struct {
 	tasksCh       chan *reorgBackfillTask
 	chunkSender   chunkSender
 	checkpointMgr *ingest.CheckpointManager
-	sessPool      *session.Pool
+	sessPool      *sess.Pool
 
 	ctx    context.Context
 	copCtx *copContext
@@ -103,7 +103,7 @@ func (c *copReqSender) run() {
 		p.chunkSender.AddTask(IndexRecordChunk{Err: err})
 		return
 	}
-	se := session.NewSession(sessCtx)
+	se := sess.NewSession(sessCtx)
 	defer p.sessPool.Put(sessCtx)
 	for {
 		if util.HasCancelled(c.ctx) {
@@ -127,7 +127,7 @@ func (c *copReqSender) run() {
 	}
 }
 
-func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *session.Session) error {
+func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
 	logutil.Logger(p.ctx).Info("start a cop-request task",
 		zap.Int("id", task.id), zap.String("task", task.String()))
 
@@ -167,7 +167,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *session.Sessi
 	})
 }
 
-func wrapInBeginRollback(se *session.Session, f func(startTS uint64) error) error {
+func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 	err := se.Begin()
 	if err != nil {
 		return errors.Trace(err)
@@ -182,7 +182,7 @@ func wrapInBeginRollback(se *session.Session, f func(startTS uint64) error) erro
 }
 
 func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage,
-	taskCh chan *reorgBackfillTask, sessPool *session.Pool,
+	taskCh chan *reorgBackfillTask, sessPool *sess.Pool,
 	checkpointMgr *ingest.CheckpointManager) *copReqSenderPool {
 	poolSize := copReadChunkPoolSize()
 	srcChkPool := make(chan *chunk.Chunk, poolSize)

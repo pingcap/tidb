@@ -18,7 +18,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/pingcap/tidb/ddl/session"
+	"github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"

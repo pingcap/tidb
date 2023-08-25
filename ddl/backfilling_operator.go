@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/ingest"
-	"github.com/pingcap/tidb/ddl/session"
+	"github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/disttask/operator"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"

@@ -21,7 +21,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ddl/ingest"
-	"github.com/pingcap/tidb/ddl/session"
+	"github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )

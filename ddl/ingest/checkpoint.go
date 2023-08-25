@@ -26,7 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl/session"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -38,7 +38,7 @@ import (
 type CheckpointManager struct {
 	ctx       context.Context
 	flushCtrl FlushController
-	sessPool  *session.Pool
+	sessPool  *sess.Pool
 	jobID     int64
 	indexID   int64
 
@@ -89,7 +89,7 @@ type FlushController interface {
 
 // NewCheckpointManager creates a new checkpoint manager.
 func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
-	sessPool *session.Pool, jobID, indexID int64) (*CheckpointManager, error) {
+	sessPool *sess.Pool, jobID, indexID int64) (*CheckpointManager, error) {
 	instanceAddr := InitInstanceAddr()
 	cm := &CheckpointManager{
 		ctx:           ctx,
@@ -280,8 +280,8 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 		return errors.Trace(err)
 	}
 	defer s.sessPool.Put(sessCtx)
-	ddlSess := session.NewSession(sessCtx)
-	return ddlSess.RunInTxn(func(se *session.Session) error {
+	ddlSess := sess.NewSession(sessCtx)
+	return ddlSess.RunInTxn(func(se *sess.Session) error {
 		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d and ele_type = %s;"
 		sql := fmt.Sprintf(template, s.jobID, s.indexID, util.WrapKey2String(meta.IndexElementKey))
 		ctx := kv.WithInternalSourceType(s.ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
@@ -346,8 +346,8 @@ func (s *CheckpointManager) updateCheckpoint() error {
 		return errors.Trace(err)
 	}
 	defer s.sessPool.Put(sessCtx)
-	ddlSess := session.NewSession(sessCtx)
-	err = ddlSess.RunInTxn(func(se *session.Session) error {
+	ddlSess := sess.NewSession(sessCtx)
+	err = ddlSess.RunInTxn(func(se *sess.Session) error {
 		template := "update mysql.tidb_ddl_reorg set reorg_meta = %s where job_id = %d and ele_id = %d and ele_type = %s;"
 		cp := &ReorgCheckpoint{
 			LocalSyncKey:   currentLocalKey,

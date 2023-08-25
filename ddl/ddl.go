@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
-	"github.com/pingcap/tidb/ddl/session"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
@@ -273,7 +273,7 @@ type ddl struct {
 	limitJobCh chan *limitJobTask
 
 	*ddlCtx
-	sessPool          *session.Pool
+	sessPool          *sess.Pool
 	delRangeMgr       delRangeManager
 	enableTiFlashPoll *atomicutil.Bool
 	// used in the concurrency ddl.
@@ -740,7 +740,7 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 				return nil, err
 			}
 			sessForJob.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			wk.sess = session.NewSession(sessForJob)
+			wk.sess = sess.NewSession(sessForJob)
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
 			return wk, nil
 		}
@@ -762,7 +762,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("start DDL", zap.String("category", "ddl"), zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
 
 	d.wg.Run(d.limitDDLJobs)
-	d.sessPool = session.NewSessionPool(ctxPool, d.store)
+	d.sessPool = sess.NewSessionPool(ctxPool, d.store)
 	d.ownerManager.SetBeOwnerHook(func() {
 		var err error
 		d.ddlSeqNumMu.Lock()
@@ -1269,7 +1269,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 		return err
 	}
 	defer d.sessPool.Put(sessCtx)
-	se := session.NewSession(sessCtx)
+	se := sess.NewSession(sessCtx)
 	rows, err := se.Execute(ctx, "select 1 from mysql.tidb_ddl_job", "check job")
 	if err != nil {
 		return err
@@ -1385,7 +1385,7 @@ type Info struct {
 
 // GetDDLInfoWithNewTxn returns DDL information using a new txn.
 func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
-	se := session.NewSession(s)
+	se := sess.NewSession(s)
 	err := se.Begin()
 	if err != nil {
 		return nil, err
@@ -1399,7 +1399,7 @@ func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
 func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	var err error
 	info := &Info{}
-	se := session.NewSession(s)
+	se := sess.NewSession(s)
 	txn, err := se.Txn()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1439,7 +1439,7 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	return info, nil
 }
 
-func get2JobsFromTable(sess *session.Session) (*model.Job, *model.Job, error) {
+func get2JobsFromTable(sess *sess.Session) (*model.Job, *model.Job, error) {
 	var generalJob, reorgJob *model.Job
 	jobs, err := getJobsBySQL(sess, JobTable, "not reorg order by job_id limit 1")
 	if err != nil {
@@ -1460,7 +1460,7 @@ func get2JobsFromTable(sess *session.Session) (*model.Job, *model.Job, error) {
 }
 
 // cancelRunningJob cancel a DDL job that is in the concurrent state.
-func cancelRunningJob(_ *session.Session, job *model.Job,
+func cancelRunningJob(_ *sess.Session, job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
 	// These states can't be cancelled.
 	if job.IsDone() || job.IsSynced() {
@@ -1481,7 +1481,7 @@ func cancelRunningJob(_ *session.Session, job *model.Job,
 }
 
 // pauseRunningJob check and pause the running Job
-func pauseRunningJob(_ *session.Session, job *model.Job,
+func pauseRunningJob(_ *sess.Session, job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
 	if job.IsPausing() || job.IsPaused() {
 		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
@@ -1500,7 +1500,7 @@ func pauseRunningJob(_ *session.Session, job *model.Job,
 }
 
 // resumePausedJob check and resume the Paused Job
-func resumePausedJob(_ *session.Session, job *model.Job,
+func resumePausedJob(_ *sess.Session, job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
 	if !job.IsResumable() {
 		errMsg := fmt.Sprintf("job has not been paused, job state:%s, schema state:%s",
@@ -1520,7 +1520,7 @@ func resumePausedJob(_ *session.Session, job *model.Job,
 }
 
 // processJobs command on the Job according to the process
-func processJobs(process func(*session.Session, *model.Job, model.AdminCommandOperator) (err error),
+func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
 	sessCtx sessionctx.Context,
 	ids []int64,
 	byWho model.AdminCommandOperator) (jobErrs []error, err error) {
@@ -1534,7 +1534,7 @@ func processJobs(process func(*session.Session, *model.Job, model.AdminCommandOp
 		return nil, nil
 	}
 
-	ns := session.NewSession(sessCtx)
+	ns := sess.NewSession(sessCtx)
 	// We should process (and try) all the jobs in one Transaction.
 	for tryN := uint(0); tryN < 3; tryN++ {
 		jobErrs = make([]error, len(ids))
@@ -1631,12 +1631,12 @@ func ResumeJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err e
 }
 
 // pprocessAllJobs processes all the jobs in the job table, 100 jobs at a time in case of high memory usage.
-func processAllJobs(process func(*session.Session, *model.Job, model.AdminCommandOperator) (err error),
+func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
 	se sessionctx.Context, byWho model.AdminCommandOperator) (map[int64]error, error) {
 	var err error
 	var jobErrs = make(map[int64]error)
 
-	ns := session.NewSession(se)
+	ns := sess.NewSession(se)
 	err = ns.Begin()
 	if err != nil {
 		return nil, err
@@ -1702,7 +1702,7 @@ func ResumeAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
 
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
 func GetAllDDLJobs(se sessionctx.Context) ([]*model.Job, error) {
-	return getJobsBySQL(session.NewSession(se), JobTable, "1 order by job_id")
+	return getJobsBySQL(sess.NewSession(se), JobTable, "1 order by job_id")
 }
 
 // DefNumHistoryJobs is default value of the default number of history job
@@ -1824,7 +1824,7 @@ func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 }
 
 // AddHistoryDDLJob record the history job.
-func AddHistoryDDLJob(sess *session.Session, t *meta.Meta, job *model.Job, updateRawArgs bool) error {
+func AddHistoryDDLJob(sess *sess.Session, t *meta.Meta, job *model.Job, updateRawArgs bool) error {
 	err := addHistoryDDLJob2Table(sess, job, updateRawArgs)
 	if err != nil {
 		logutil.BgLogger().Info("failed to add DDL job to history table", zap.String("category", "ddl"), zap.Error(err))
@@ -1834,7 +1834,7 @@ func AddHistoryDDLJob(sess *session.Session, t *meta.Meta, job *model.Job, updat
 }
 
 // addHistoryDDLJob2Table adds DDL job to history table.
-func addHistoryDDLJob2Table(sess *session.Session, job *model.Job, updateRawArgs bool) error {
+func addHistoryDDLJob2Table(sess *sess.Session, job *model.Job, updateRawArgs bool) error {
 	b, err := job.Encode(updateRawArgs)
 	if err != nil {
 		return err
