@@ -41,7 +41,6 @@ type Column struct {
 	FMSketch       *FMSketch
 	Info           *model.ColumnInfo
 	Histogram
-	ErrorRate
 
 	// StatsLoadedStatus indicates the status of column statistics
 	StatsLoadedStatus
@@ -69,9 +68,9 @@ func (c *Column) TotalRowCount() float64 {
 
 func (c *Column) notNullCount() float64 {
 	if c.StatsVer >= Version2 {
-		return c.Histogram.notNullCount() + float64(c.TopN.TotalCount())
+		return c.Histogram.NotNullCount() + float64(c.TopN.TotalCount())
 	}
-	return c.Histogram.notNullCount()
+	return c.Histogram.NotNullCount()
 }
 
 // GetIncreaseFactor get the increase factor to adjust the final estimated count when the table is modified.
@@ -117,9 +116,13 @@ func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
 var HistogramNeededItems = neededStatsMap{items: map[model.TableItemID]struct{}{}}
 
-// IsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
-// as need histogram.
-func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) {
+// IsInvalid checks if this column is invalid.
+// If this column has histogram but not loaded yet,
+// then we mark it as need histogram.
+func (c *Column) IsInvalid(
+	sctx sessionctx.Context,
+	collPseudo bool,
+) (res bool) {
 	var totalCount float64
 	var ndv int64
 	var inValidForCollPseudo, essentialLoaded bool
@@ -151,7 +154,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) 
 			}
 		}
 	}
-	if collPseudo && c.NotAccurate() {
+	if collPseudo {
 		inValidForCollPseudo = true
 		return true
 	}
@@ -182,13 +185,13 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 			return 0.0, nil
 		}
 		if c.Histogram.NDV > 0 && c.outOfRange(val) {
-			return outOfRangeEQSelectivity(sctx, c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
+			return OutOfRangeEQSelectivity(sctx, c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 		}
 		if c.CMSketch != nil {
 			count, err := queryValue(sctx, c.CMSketch, c.TopN, val)
 			return float64(count), errors.Trace(err)
 		}
-		histRowCount, _ := c.Histogram.equalRowCount(sctx, val, false)
+		histRowCount, _ := c.Histogram.EqualRowCount(sctx, val, false)
 		return histRowCount, nil
 	}
 
@@ -205,7 +208,7 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 		}
 	}
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
-	histCnt, matched := c.Histogram.equalRowCount(sctx, val, true)
+	histCnt, matched := c.Histogram.EqualRowCount(sctx, val, true)
 	if matched {
 		return histCnt, nil
 	}
@@ -214,7 +217,7 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 	if histNDV <= 0 {
 		return 0, nil
 	}
-	return c.Histogram.notNullCount() / histNDV, nil
+	return c.Histogram.NotNullCount() / histNDV, nil
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
@@ -332,7 +335,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 
 		// handling the out-of-range part
 		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
-			cnt += c.Histogram.outOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount, int64(c.TopN.Num()))
+			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount, int64(c.TopN.Num()))
 		}
 
 		if debugTrace {
@@ -357,7 +360,7 @@ func (c *Column) DropUnnecessaryData() {
 	c.TopN = nil
 	c.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
 	c.Histogram.Buckets = make([]Bucket, 0)
-	c.Histogram.scalars = make([]scalar, 0)
+	c.Histogram.Scalars = make([]scalar, 0)
 	c.evictedStatus = AllEvicted
 }
 

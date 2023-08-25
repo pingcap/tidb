@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -44,7 +43,6 @@ type Index struct {
 	FMSketch       *FMSketch
 	Info           *model.IndexInfo
 	Histogram
-	ErrorRate
 	StatsLoadedStatus
 	StatsVer int64 // StatsVer is the version of the current stats, used to maintain compatibility
 	Flag     int64
@@ -77,7 +75,7 @@ func (idx *Index) DropUnnecessaryData() {
 	idx.TopN = nil
 	idx.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
 	idx.Histogram.Buckets = make([]Bucket, 0)
-	idx.Histogram.scalars = make([]scalar, 0)
+	idx.Histogram.Scalars = make([]scalar, 0)
 	idx.evictedStatus = AllEvicted
 }
 
@@ -116,7 +114,6 @@ func (idx *Index) TotalRowCount() float64 {
 // IsInvalid checks if this index is invalid.
 func (idx *Index) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) {
 	idx.checkStats()
-	var notAccurate bool
 	var totalCount float64
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -124,15 +121,13 @@ func (idx *Index) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool)
 			debugtrace.RecordAnyValuesWithNames(sctx,
 				"IsInvalid", res,
 				"CollPseudo", collPseudo,
-				"NotAccurate", notAccurate,
 				"TotalCount", totalCount,
 			)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
-	notAccurate = idx.ErrorRate.NotAccurate()
 	totalCount = idx.TotalRowCount()
-	return (collPseudo && notAccurate) || totalCount == 0
+	return (collPseudo) || totalCount == 0
 }
 
 // EvictAllStats evicts all stats
@@ -186,13 +181,13 @@ func (idx *Index) equalRowCount(sctx sessionctx.Context, b []byte, realtimeRowCo
 	}
 	val := types.NewBytesDatum(b)
 	if idx.StatsVer < Version2 {
-		if idx.Histogram.NDV > 0 && idx.outOfRange(val) {
-			return outOfRangeEQSelectivity(sctx, idx.Histogram.NDV, realtimeRowCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
+		if idx.Histogram.NDV > 0 && idx.OutOfRangeOnIndex(val) {
+			return OutOfRangeEQSelectivity(sctx, idx.Histogram.NDV, realtimeRowCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
 		}
 		if idx.CMSketch != nil {
 			return float64(idx.QueryBytes(sctx, b))
 		}
-		histRowCount, _ := idx.Histogram.equalRowCount(sctx, val, false)
+		histRowCount, _ := idx.Histogram.EqualRowCount(sctx, val, false)
 		return histRowCount
 	}
 	// stats version == 2
@@ -204,7 +199,7 @@ func (idx *Index) equalRowCount(sctx sessionctx.Context, b []byte, realtimeRowCo
 		}
 	}
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
-	histCnt, matched := idx.Histogram.equalRowCount(sctx, val, true)
+	histCnt, matched := idx.Histogram.EqualRowCount(sctx, val, true)
 	if matched {
 		return histCnt
 	}
@@ -213,7 +208,7 @@ func (idx *Index) equalRowCount(sctx sessionctx.Context, b []byte, realtimeRowCo
 	if histNDV <= 0 {
 		return 0
 	}
-	return idx.Histogram.notNullCount() / histNDV
+	return idx.Histogram.NotNullCount() / histNDV
 }
 
 // QueryBytes is used to query the count of specified bytes.
@@ -236,7 +231,7 @@ func (idx *Index) QueryBytes(sctx sessionctx.Context, d []byte) (result uint64) 
 	if idx.CMSketch != nil {
 		return idx.CMSketch.queryHashValue(sctx, h1, h2)
 	}
-	v, _ := idx.Histogram.equalRowCount(sctx, types.NewBytesDatum(d), idx.StatsVer >= Version2)
+	v, _ := idx.Histogram.EqualRowCount(sctx, types.NewBytesDatum(d), idx.StatsVer >= Version2)
 	return uint64(v)
 }
 
@@ -323,8 +318,8 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 				upperLimit := expBackoffCnt
 				// Use the multi-column stats to calculate the max possible row count of [l, r)
 				if idx.Histogram.Len() > 0 {
-					_, lowerBkt, _, _ := idx.Histogram.locateBucket(sctx, l)
-					_, upperBkt, _, _ := idx.Histogram.locateBucket(sctx, r)
+					_, lowerBkt, _, _ := idx.Histogram.LocateBucket(sctx, l)
+					_, upperBkt, _, _ := idx.Histogram.LocateBucket(sctx, r)
 					if debugTrace {
 						debugTraceBuckets(sctx, &idx.Histogram, []int{lowerBkt - 1, upperBkt})
 					}
@@ -355,8 +350,8 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 		count *= idx.GetIncreaseFactor(realtimeRowCount)
 
 		// handling the out-of-range part
-		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
-			count += idx.Histogram.outOfRangeRowCount(sctx, &l, &r, modifyCount, int64(idx.TopN.Num()))
+		if (idx.OutOfRangeOnIndex(l) && !(isSingleCol && lowIsNull)) || idx.OutOfRangeOnIndex(r) {
+			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, int64(idx.TopN.Num()))
 		}
 
 		if debugTrace {
@@ -411,7 +406,7 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 		)
 		if col, ok := coll.Columns[colID]; ok && !col.IsInvalid(sctx, coll.Pseudo) {
 			foundStats = true
-			count, err = coll.GetRowCountByColumnRanges(sctx, colID, tmpRan)
+			count, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
 		}
 		if idxIDs, ok := coll.ColID2IdxIDs[colID]; ok && !foundStats && len(indexRange.LowVal) > 1 {
 			// Note the `len(indexRange.LowVal) > 1` condition here, it means we only recursively call
@@ -422,7 +417,7 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 					continue
 				}
 				foundStats = true
-				count, err = coll.GetRowCountByIndexRanges(sctx, idxID, tmpRan)
+				count, err = GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan)
 				if err == nil {
 					break
 				}
@@ -468,55 +463,8 @@ func (idx *Index) checkStats() {
 	HistogramNeededItems.insert(model.TableItemID{TableID: idx.PhysicalID, ID: idx.Info.ID, IsIndex: true})
 }
 
-func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode *StatsNode) (*Index, error) {
-	var (
-		ranLowEncode, ranHighEncode []byte
-		err                         error
-	)
-	newIndexHist := &Index{Info: idx.Info, StatsVer: idx.StatsVer, CMSketch: idx.CMSketch, PhysicalID: idx.PhysicalID}
-	newIndexHist.Histogram = *NewHistogram(idx.Histogram.ID, int64(float64(idx.Histogram.NDV)*statsNode.Selectivity), 0, 0, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
-
-	lowBucketIdx, highBucketIdx := 0, 0
-	var totCnt int64
-
-	// Bucket bound of index is encoded one, so we need to decode it if we want to calculate the fraction accurately.
-	// TODO: enhance its calculation.
-	// Now just remove the bucket that no range fell in.
-	for _, ran := range statsNode.Ranges {
-		lowBucketIdx = highBucketIdx
-		ranLowEncode, ranHighEncode, err = ran.Encode(sc, ranLowEncode, ranHighEncode)
-		if err != nil {
-			return nil, err
-		}
-		for ; highBucketIdx < idx.Histogram.Len(); highBucketIdx++ {
-			// Encoded value can only go to its next quickly. So ranHighEncode is actually range.HighVal's PrefixNext value.
-			// So the Bound should also go to its PrefixNext.
-			bucketLowerEncoded := idx.Histogram.Bounds.GetRow(highBucketIdx * 2).GetBytes(0)
-			if bytes.Compare(ranHighEncode, kv.Key(bucketLowerEncoded).PrefixNext()) < 0 {
-				break
-			}
-		}
-		for ; lowBucketIdx < highBucketIdx; lowBucketIdx++ {
-			bucketUpperEncoded := idx.Histogram.Bounds.GetRow(lowBucketIdx*2 + 1).GetBytes(0)
-			if bytes.Compare(ranLowEncode, bucketUpperEncoded) <= 0 {
-				break
-			}
-		}
-		if lowBucketIdx >= idx.Histogram.Len() {
-			break
-		}
-		for i := lowBucketIdx; i < highBucketIdx; i++ {
-			newIndexHist.Histogram.Bounds.AppendRow(idx.Histogram.Bounds.GetRow(i * 2))
-			newIndexHist.Histogram.Bounds.AppendRow(idx.Histogram.Bounds.GetRow(i*2 + 1))
-			totCnt += idx.Histogram.bucketCount(i)
-			newIndexHist.Histogram.Buckets = append(newIndexHist.Histogram.Buckets, Bucket{Repeat: idx.Histogram.Buckets[i].Repeat, Count: totCnt})
-			newIndexHist.Histogram.scalars = append(newIndexHist.Histogram.scalars, idx.Histogram.scalars[i])
-		}
-	}
-	return newIndexHist, nil
-}
-
-func (idx *Index) outOfRange(val types.Datum) bool {
+// OutOfRangeOnIndex checks if the datum is out of the range.
+func (idx *Index) OutOfRangeOnIndex(val types.Datum) bool {
 	if !idx.Histogram.outOfRange(val) {
 		return false
 	}

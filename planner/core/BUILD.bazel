@@ -106,6 +106,7 @@ go_library(
         "//parser/opcode",
         "//parser/terror",
         "//parser/types",
+        "//planner/cardinality",
         "//planner/core/internal",
         "//planner/core/internal/base",
         "//planner/core/metrics",

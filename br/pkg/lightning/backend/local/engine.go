@@ -947,7 +947,7 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 	return newDupDetectIter(e.getDB(), e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
 }
 
-var _ ingestData = (*Engine)(nil)
+var _ IngestData = (*Engine)(nil)
 
 // GetFirstAndLastKey reads the first and last key in range [lowerBound, upperBound)
 // in the engine. Empty upperBound means unbounded.
@@ -982,17 +982,17 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 	return firstKey, lastKey, nil
 }
 
-// NewIter implements ingestData interface.
+// NewIter implements IngestData interface.
 func (e *Engine) NewIter(ctx context.Context, lowerBound, upperBound []byte) ForwardIter {
 	return e.newKVIter(ctx, &pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound})
 }
 
-// GetTS implements ingestData interface.
+// GetTS implements IngestData interface.
 func (e *Engine) GetTS() uint64 {
 	return e.TS
 }
 
-// Finish implements ingestData interface.
+// Finish implements IngestData interface.
 func (e *Engine) Finish(totalBytes, totalCount int64) {
 	e.importedKVSize.Add(totalBytes)
 	e.importedKVCount.Add(totalCount)
@@ -1055,9 +1055,9 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) (err error) {
 		totalKeySize += keySize
 	}
 	w.batchCount += len(kvs)
-	// noopKeyAdapter doesn't really change the key,
+	// NoopKeyAdapter doesn't really change the key,
 	// skipping the encoding to avoid unnecessary alloc and copy.
-	if _, ok := keyAdapter.(noopKeyAdapter); !ok {
+	if _, ok := keyAdapter.(NoopKeyAdapter); !ok {
 		if cap(w.sortedKeyBuf) < totalKeySize {
 			w.sortedKeyBuf = make([]byte, totalKeySize)
 		}

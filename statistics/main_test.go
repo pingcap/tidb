@@ -44,8 +44,6 @@ func TestMain(m *testing.M) {
 	})
 
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
-	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
-	testDataMap.LoadTestSuiteData("testdata", "trace_suite")
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
@@ -63,14 +61,6 @@ func TestMain(m *testing.M) {
 
 func GetIntegrationSuiteData() testdata.TestData {
 	return testDataMap["integration_suite"]
-}
-
-func GetStatsSuiteData() testdata.TestData {
-	return testDataMap["stats_suite"]
-}
-
-func GetTraceSuiteData() testdata.TestData {
-	return testDataMap["trace_suite"]
 }
 
 // TestStatistics batches tests sharing a test suite to reduce the setups

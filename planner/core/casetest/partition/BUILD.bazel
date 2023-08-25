@@ -12,6 +12,7 @@ go_test(
     flaky = True,
     shard_count = 15,
     deps = [
+        "//config",
         "//planner/core/internal",
         "//sessionctx/variable",
         "//testkit",

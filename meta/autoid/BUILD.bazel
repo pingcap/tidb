@@ -13,6 +13,7 @@ go_library(
     deps = [
         "//config",
         "//errno",
+        "//keyspace",
         "//kv",
         "//meta",
         "//metrics",
@@ -20,6 +21,7 @@ go_library(
         "//parser/mysql",
         "//types",
         "//util/dbterror",
+        "//util/etcd",
         "//util/execdetails",
         "//util/logutil",
         "//util/mathutil",
