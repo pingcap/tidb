@@ -26,14 +26,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
 )
@@ -69,11 +66,11 @@ var (
 	// GetRowCountByColumnRanges is a function type to get row count by column ranges.
 	GetRowCountByColumnRanges func(sctx sessionctx.Context, coll *HistColl, colID int64, colRanges []*ranger.Range) (result float64, err error)
 
-	// OutOfRangeEQSelectivity is a function type to get the selectivity of equal condition which is out of range.
-	OutOfRangeEQSelectivity func(sctx sessionctx.Context, ndv, realtimeRowCount, columnRowCount int64) (result float64)
+	// EqualRowCountOnColumn is a function type to get the row count by equal condition on column.
+	EqualRowCountOnColumn func(sctx sessionctx.Context, c *Column, val types.Datum, encodedVal []byte, realtimeRowCount int64) (result float64, err error)
 
-	// GetEqualCondSelectivity is a function type to get the selectivity of equal condition.
-	GetEqualCondSelectivity func(sctx sessionctx.Context, coll *HistColl, idx *Index, bytes []byte, usedColsLen int, idxPointRange *ranger.Range) (result float64, err error)
+	// BetweenRowCountOnColumn is a function type to get the row count by between condition on column.
+	BetweenRowCountOnColumn func(sctx sessionctx.Context, c *Column, l, r types.Datum, lowEncoded, highEncoded []byte) float64
 )
 
 // Table represents statistics for a table.
@@ -524,7 +521,7 @@ func (t *Table) ColumnBetweenRowCount(sctx sessionctx.Context, a, b types.Datum,
 	if err != nil {
 		return 0, err
 	}
-	count := c.BetweenRowCount(sctx, a, b, aEncoded, bEncoded)
+	count := BetweenRowCountOnColumn(sctx, c, a, b, aEncoded, bEncoded)
 	if a.IsNull() {
 		count += float64(c.NullCount)
 	}
@@ -541,7 +538,7 @@ func (t *Table) ColumnEqualRowCount(sctx sessionctx.Context, value types.Datum, 
 	if err != nil {
 		return 0, err
 	}
-	result, err := c.equalRowCount(sctx, value, encodedVal, t.ModifyCount)
+	result, err := EqualRowCountOnColumn(sctx, c, value, encodedVal, t.ModifyCount)
 	result *= c.GetIncreaseFactor(t.RealtimeCount)
 	return result, errors.Trace(err)
 }
@@ -549,22 +546,6 @@ func (t *Table) ColumnEqualRowCount(sctx sessionctx.Context, value types.Datum, 
 // PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
 func (t *Table) PseudoAvgCountPerValue() float64 {
 	return float64(t.RealtimeCount) / pseudoEqualRate
-}
-
-// GetOrdinalOfRangeCond gets the ordinal of the position range condition,
-// if not exist, it returns the end position.
-func GetOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int {
-	for i := range ran.LowVal {
-		a, b := ran.LowVal[i], ran.HighVal[i]
-		cmp, err := a.Compare(sc, &b, ran.Collators[0])
-		if err != nil {
-			return 0
-		}
-		if cmp != 0 {
-			return i
-		}
-	}
-	return len(ran.LowVal)
 }
 
 // ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.
@@ -644,127 +625,6 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 		Idx2ColumnIDs:  idx2Columns,
 	}
 	return newColl
-}
-
-// isSingleColIdxNullRange checks if a range is [NULL, NULL] on a single-column index.
-func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
-	if len(idx.Info.Columns) > 1 {
-		return false
-	}
-	l, h := ran.LowVal[0], ran.HighVal[0]
-	if l.IsNull() && h.IsNull() {
-		return true
-	}
-	return false
-}
-
-// GetIndexRowCount estimates the row count by the given range.
-func (coll *HistColl) GetIndexRowCount(sctx sessionctx.Context, idxID int64, indexRanges []*ranger.Range) (float64, error) {
-	sc := sctx.GetSessionVars().StmtCtx
-	debugTrace := sc.EnableOptimizerDebugTrace
-	if debugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer debugtrace.LeaveContextCommon(sctx)
-	}
-	idx := coll.Indices[idxID]
-	totalCount := float64(0)
-	for _, ran := range indexRanges {
-		if debugTrace {
-			debugTraceStartEstimateRange(sctx, ran, nil, nil, totalCount)
-		}
-		rangePosition := GetOrdinalOfRangeCond(sc, ran)
-		var rangeVals []types.Datum
-		// Try to enum the last range values.
-		if rangePosition != len(ran.LowVal) {
-			rangeVals = enumRangeValues(ran.LowVal[rangePosition], ran.HighVal[rangePosition], ran.LowExclude, ran.HighExclude)
-			if rangeVals != nil {
-				rangePosition++
-			}
-		}
-		// If first one is range, just use the previous way to estimate; if it is [NULL, NULL] range
-		// on single-column index, use previous way as well, because CMSketch does not contain null
-		// values in this case.
-		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
-			count, err := idx.GetRowCount(sctx, nil, []*ranger.Range{ran}, coll.RealtimeCount, coll.ModifyCount)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			if debugTrace {
-				debugTraceEndEstimateRange(sctx, count, debugTraceRange)
-			}
-			totalCount += count
-			continue
-		}
-		var selectivity float64
-		// use CM Sketch to estimate the equal conditions
-		if rangeVals == nil {
-			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			selectivity, err = GetEqualCondSelectivity(sctx, coll, idx, bytes, rangePosition, ran)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-		} else {
-			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition-1]...)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			prefixLen := len(bytes)
-			for _, val := range rangeVals {
-				bytes = bytes[:prefixLen]
-				bytes, err = codec.EncodeKey(sc, bytes, val)
-				if err != nil {
-					return 0, err
-				}
-				res, err := GetEqualCondSelectivity(sctx, coll, idx, bytes, rangePosition, ran)
-				if err != nil {
-					return 0, errors.Trace(err)
-				}
-				selectivity += res
-			}
-		}
-		// use histogram to estimate the range condition
-		if rangePosition != len(ran.LowVal) {
-			rang := ranger.Range{
-				LowVal:      []types.Datum{ran.LowVal[rangePosition]},
-				LowExclude:  ran.LowExclude,
-				HighVal:     []types.Datum{ran.HighVal[rangePosition]},
-				HighExclude: ran.HighExclude,
-				Collators:   []collate.Collator{ran.Collators[rangePosition]},
-			}
-			var count float64
-			var err error
-			colIDs := coll.Idx2ColumnIDs[idxID]
-			var colID int64
-			if rangePosition >= len(colIDs) {
-				colID = -1
-			} else {
-				colID = colIDs[rangePosition]
-			}
-			// prefer index stats over column stats
-			if idxIDs, ok := coll.ColID2IdxIDs[colID]; ok && len(idxIDs) > 0 {
-				idxID := idxIDs[0]
-				count, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang})
-			} else {
-				count, err = GetRowCountByColumnRanges(sctx, coll, colID, []*ranger.Range{&rang})
-			}
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			selectivity = selectivity * count / idx.TotalRowCount()
-		}
-		count := selectivity * idx.TotalRowCount()
-		if debugTrace {
-			debugTraceEndEstimateRange(sctx, count, debugTraceRange)
-		}
-		totalCount += count
-	}
-	if totalCount > idx.TotalRowCount() {
-		totalCount = idx.TotalRowCount()
-	}
-	return totalCount, nil
 }
 
 // PseudoTable creates a pseudo table statistics.

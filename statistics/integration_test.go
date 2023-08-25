@@ -293,12 +293,12 @@ func TestExpBackoffEstimation(t *testing.T) {
 	}
 
 	// The last case is that no column is loaded and we get no stats at all.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/cleanEstResults", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/cardinality/cleanEstResults", `return(true)`))
 	testdata.OnRecord(func() {
 		output[inputLen-1] = testdata.ConvertRowsToStrings(tk.MustQuery(input[inputLen-1]).Rows())
 	})
 	tk.MustQuery(input[inputLen-1]).Check(testkit.Rows(output[inputLen-1]...))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/cleanEstResults"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/cardinality/cleanEstResults"))
 }
 
 func TestGlobalStats(t *testing.T) {

@@ -819,7 +819,7 @@ func getEqualCondSelectivity(sctx sessionctx.Context, coll *statistics.HistColl,
 		return 1.0 / idx.TotalRowCount(), nil
 	}
 	val := types.NewBytesDatum(bytes)
-	if idx.OutOfRangeOnIndex(val) {
+	if outOfRangeOnIndex(idx, val) {
 		// When the value is out of range, we could not found this value in the CM Sketch,
 		// so we use heuristic methods to estimate the selectivity.
 		if idx.NDV > 0 && coverAll {
@@ -929,7 +929,7 @@ func crossValidationSelectivity(
 				Collators:   []collate.Collator{idxPointRange.Collators[i]},
 			}
 
-			rowCount, err := col.GetColumnRowCount(sctx, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
+			rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
 			if err != nil {
 				return 0, 0, err
 			}
