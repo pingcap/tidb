@@ -1133,11 +1133,10 @@ type JobImportParam struct {
 
 // JobImportResult is the result of the job import.
 type JobImportResult struct {
-	Msg          string
-	LastInsertID uint64
-	Affected     uint64
-	Warnings     []stmtctx.SQLWarn
-	ColSizeMap   map[int64]int64
+	Msg        string
+	Affected   uint64
+	Warnings   []stmtctx.SQLWarn
+	ColSizeMap map[int64]int64
 }
 
 // JobImporter is the interface for importing a job.
