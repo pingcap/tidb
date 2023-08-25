@@ -22,11 +22,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/golang/mock/gomock"
 	. "github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	mockstorage "github.com/pingcap/tidb/br/pkg/mock/storage"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func TestExportStatementNoTrailingNewLine(t *testing.T) {

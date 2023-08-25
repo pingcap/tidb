@@ -32,10 +32,10 @@ go_test(
         "//br/pkg/mock",
         "//parser/mysql",
         "@com_github_go_sql_driver_mysql//:mysql",
-        "@com_github_golang_mock//gomock",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_mock//gomock",
     ],
 )
