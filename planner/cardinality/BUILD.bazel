@@ -27,6 +27,8 @@ go_library(
         "//types",
         "//types/parser_driver",
         "//util/chunk",
+        "//util/codec",
+        "//util/collate",
         "//util/logutil",
         "//util/ranger",
         "//util/tracing",
