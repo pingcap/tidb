@@ -13,6 +13,7 @@ go_library(
         "//statistics",
         "//statistics/handle/cache/internal",
         "//statistics/handle/cache/internal/metrics",
+        "//util/intest",
         "//util/logutil",
         "//util/mathutil",
         "//util/memory",
