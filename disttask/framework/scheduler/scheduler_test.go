@@ -20,12 +20,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/mock/gomock"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/mock"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func getRunWithConcurrencyFn() (*sync.WaitGroup, func(funcs chan func(), _ uint32) error) {

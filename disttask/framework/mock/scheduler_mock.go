@@ -8,8 +8,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
 	proto "github.com/pingcap/tidb/disttask/framework/proto"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockTaskTable is a mock of TaskTable interface.
