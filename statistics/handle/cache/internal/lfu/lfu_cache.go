@@ -123,17 +123,21 @@ func DropEvicted(item statistics.TableCacheItem) {
 }
 
 func (s *LFU) onReject(item *ristretto.Item) {
-	if r := recover(); r != nil {
-		logutil.BgLogger().Warn("panic in onReject", zap.Any("error", r), zap.Stack("stack"))
-	}
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("panic in onReject", zap.Any("error", r), zap.Stack("stack"))
+		}
+	}()
 	metrics.RejectCounter.Add(1.0)
 	s.dropMemory(item)
 }
 
 func (s *LFU) onEvict(item *ristretto.Item) {
-	if r := recover(); r != nil {
-		logutil.BgLogger().Warn("panic in onEvict", zap.Any("error", r), zap.Stack("stack"))
-	}
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("panic in onEvict", zap.Any("error", r), zap.Stack("stack"))
+		}
+	}()
 	s.dropMemory(item)
 	metrics.EvictCounter.Inc()
 }
@@ -164,9 +168,11 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 }
 
 func (s *LFU) onExit(val any) {
-	if r := recover(); r != nil {
-		logutil.BgLogger().Warn("panic in onExit", zap.Any("error", r), zap.Stack("stack"))
-	}
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("panic in onExit", zap.Any("error", r), zap.Stack("stack"))
+		}
+	}()
 	if val == nil {
 		// Sometimes the same key may be passed to the "onEvict/onExit" function twice,
 		// and in the second invocation, the value is empty, so it should not be processed.
