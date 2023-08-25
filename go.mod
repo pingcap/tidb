@@ -4,7 +4,6 @@ go 1.21
 
 require (
 	cloud.google.com/go/storage v1.30.1
-	gitee.com/Trisia/gotlcp v1.3.10
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.6.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.1.0
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.0.0
