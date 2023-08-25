@@ -17,13 +17,13 @@ package telemetry
 import (
 	"context"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/iancoleman/strcase"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/exp/slices"
 )
 
 var (

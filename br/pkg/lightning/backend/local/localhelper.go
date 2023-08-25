@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 )
@@ -113,9 +113,7 @@ func (g *TableRegionSizeGetterImpl) GetTableRegionSize(ctx context.Context, tabl
 func (local *Backend) SplitAndScatterRegionInBatches(
 	ctx context.Context,
 	ranges []Range,
-	tableInfo *checkpoints.TidbTableInfo,
 	needSplit bool,
-	regionSplitSize int64,
 	batchCnt int,
 ) error {
 	for i := 0; i < len(ranges); i += batchCnt {
@@ -123,7 +121,7 @@ func (local *Backend) SplitAndScatterRegionInBatches(
 		if len(batch) > batchCnt {
 			batch = batch[:batchCnt]
 		}
-		if err := local.SplitAndScatterRegionByRanges(ctx, batch, tableInfo, needSplit, regionSplitSize); err != nil {
+		if err := local.SplitAndScatterRegionByRanges(ctx, batch, needSplit); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -137,9 +135,7 @@ func (local *Backend) SplitAndScatterRegionInBatches(
 func (local *Backend) SplitAndScatterRegionByRanges(
 	ctx context.Context,
 	ranges []Range,
-	tableInfo *checkpoints.TidbTableInfo,
 	needSplit bool,
-	regionSplitSize int64,
 ) (err error) {
 	if len(ranges) == 0 {
 		return nil
@@ -160,7 +156,6 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 	scatterRegions := make([]*split.RegionInfo, 0)
 	var retryKeys [][]byte
 	waitTime := splitRegionBaseBackOffTime
-	skippedKeys := 0
 	for i := 0; i < splitRetryTimes; i++ {
 		log.FromContext(ctx).Info("split and scatter region",
 			logutil.Key("minKey", minKey),
@@ -222,16 +217,6 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 			return nil
 		}
 
-		var tableRegionStats map[uint64]int64
-		if tableInfo != nil {
-			tableRegionStats, err = local.regionSizeGetter.GetTableRegionSize(ctx, tableInfo.ID)
-			if err != nil {
-				log.FromContext(ctx).Warn("fetch table region size statistics failed",
-					zap.String("table", tableInfo.Name), zap.Error(err))
-				tableRegionStats, err = make(map[uint64]int64), nil
-			}
-		}
-
 		regionMap := make(map[uint64]*split.RegionInfo)
 		for _, region := range regions {
 			regionMap[region.Region.GetId()] = region
@@ -271,9 +256,7 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 					var err1 error
 					region := sp.region
 					keys := sp.keys
-					slices.SortFunc(keys, func(i, j []byte) bool {
-						return bytes.Compare(i, j) < 0
-					})
+					slices.SortFunc(keys, bytes.Compare)
 					splitRegion := region
 					startIdx := 0
 					endIdx := 0
@@ -317,8 +300,8 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 							log.FromContext(ctx).Info("batch split region", zap.Uint64("region_id", splitRegion.Region.Id),
 								zap.Int("keys", endIdx-startIdx), zap.Binary("firstKey", keys[startIdx]),
 								zap.Binary("end", keys[endIdx-1]))
-							slices.SortFunc(newRegions, func(i, j *split.RegionInfo) bool {
-								return bytes.Compare(i.Region.StartKey, j.Region.StartKey) < 0
+							slices.SortFunc(newRegions, func(i, j *split.RegionInfo) int {
+								return bytes.Compare(i.Region.StartKey, j.Region.StartKey)
 							})
 							syncLock.Lock()
 							scatterRegions = append(scatterRegions, newRegions...)
@@ -342,15 +325,6 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 		}
 	sendLoop:
 		for regionID, keys := range splitKeyMap {
-			// if region not in tableRegionStats, that means this region is newly split, so
-			// we can skip split it again.
-			regionSize, ok := tableRegionStats[regionID]
-			if !ok {
-				log.FromContext(ctx).Warn("region stats not found", zap.Uint64("region", regionID))
-			}
-			if len(keys) == 1 && regionSize < regionSplitSize {
-				skippedKeys++
-			}
 			select {
 			case ch <- &splitInfo{region: regionMap[regionID], keys: keys}:
 			case <-ctx.Done():
@@ -372,9 +346,7 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 		if len(retryKeys) == 0 {
 			break
 		}
-		slices.SortFunc(retryKeys, func(i, j []byte) bool {
-			return bytes.Compare(i, j) < 0
-		})
+		slices.SortFunc(retryKeys, bytes.Compare)
 		minKey = codec.EncodeBytes([]byte{}, retryKeys[0])
 		maxKey = codec.EncodeBytes([]byte{}, nextKey(retryKeys[len(retryKeys)-1]))
 	}
@@ -386,11 +358,9 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 	scatterCount, err := local.waitForScatterRegions(ctx, scatterRegions)
 	if scatterCount == len(scatterRegions) {
 		log.FromContext(ctx).Info("waiting for scattering regions done",
-			zap.Int("skipped_keys", skippedKeys),
 			zap.Int("regions", len(scatterRegions)), zap.Duration("take", time.Since(startTime)))
 	} else {
 		log.FromContext(ctx).Info("waiting for scattering regions timeout",
-			zap.Int("skipped_keys", skippedKeys),
 			zap.Int("scatterCount", scatterCount),
 			zap.Int("regions", len(scatterRegions)),
 			zap.Duration("take", time.Since(startTime)),

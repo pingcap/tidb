@@ -423,11 +423,12 @@ type BackendConfig struct {
 	// the scope when pause PD schedulers.
 	PausePDSchedulerScope     config.PausePDSchedulerScope
 	ResourceGroupName         string
+	TaskType                  string
 	RaftKV2SwitchModeDuration time.Duration
 }
 
 // NewBackendConfig creates a new BackendConfig.
-func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resourceGroupName string, raftKV2SwitchModeDuration time.Duration) BackendConfig {
+func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resourceGroupName, taskType string, raftKV2SwitchModeDuration time.Duration) BackendConfig {
 	return BackendConfig{
 		PDAddr:                    cfg.TiDB.PdAddr,
 		LocalStoreDir:             cfg.TikvImporter.SortedKVDir,
@@ -449,6 +450,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		KeyspaceName:              keyspaceName,
 		PausePDSchedulerScope:     cfg.TikvImporter.PausePDSchedulerScope,
 		ResourceGroupName:         resourceGroupName,
+		TaskType:                  taskType,
 		RaftKV2SwitchModeDuration: raftKV2SwitchModeDuration,
 	}
 }
@@ -565,9 +567,9 @@ func NewBackend(
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
-	keyAdapter := KeyAdapter(noopKeyAdapter{})
+	keyAdapter := KeyAdapter(NoopKeyAdapter{})
 	if config.DupeDetectEnabled {
-		keyAdapter = dupDetectKeyAdapter{}
+		keyAdapter = DupDetectKeyAdapter{}
 	}
 	var writeLimiter StoreWriteLimiter
 	if config.StoreWriteBWLimit > 0 {
@@ -1094,7 +1096,7 @@ func (local *Backend) prepareAndSendJob(
 			failpoint.Break()
 		})
 
-		err = local.SplitAndScatterRegionInBatches(ctx, initialSplitRanges, engine.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
+		err = local.SplitAndScatterRegionInBatches(ctx, initialSplitRanges, needSplit, maxBatchSplitRanges)
 		if err == nil || common.IsContextCanceledError(err) {
 			break
 		}
@@ -1191,7 +1193,7 @@ var fakeRegionJobs map[[2]string]struct {
 // It will retry internally when scan region meet error.
 func (local *Backend) generateJobForRange(
 	ctx context.Context,
-	engine ingestData,
+	engine IngestData,
 	keyRange Range,
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {
@@ -1680,6 +1682,8 @@ func (local *Backend) GetDupeController(dupeConcurrency int, errorMgr *errormana
 		duplicateDB:         local.duplicateDB,
 		keyAdapter:          local.keyAdapter,
 		importClientFactory: local.importClientFactory,
+		resourceGroupName:   local.ResourceGroupName,
+		taskType:            local.TaskType,
 	}
 }
 

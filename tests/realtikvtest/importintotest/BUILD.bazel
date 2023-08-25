@@ -46,7 +46,6 @@ go_test(
         "//util/sem",
         "@com_github_docker_go_units//:go-units",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
-        "@com_github_golang_mock//gomock",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -58,6 +57,7 @@ go_test(
         "@com_github_tikv_pd_client//:client",
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_mock//gomock",
         "@org_uber_go_zap//:zap",
     ],
 )

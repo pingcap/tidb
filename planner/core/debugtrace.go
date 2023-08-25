@@ -202,7 +202,9 @@ func debugTraceGetStatsTbl(
 	root.AppendStepToCurrentContext(traceInfo)
 }
 
+// Only for test.
 func stabilizeGetStatsTblInfo(info *getStatsTblInfo) {
+	info.TblInfoID = 100
 	info.InputPhysicalID = 100
 	tbl := info.StatsTblInfo
 	if tbl == nil {

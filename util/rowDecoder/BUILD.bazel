@@ -16,7 +16,6 @@ go_library(
         "//types",
         "//util/chunk",
         "//util/rowcodec",
-        "@org_golang_x_exp//slices",
     ],
 )
 

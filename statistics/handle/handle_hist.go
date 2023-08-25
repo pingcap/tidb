@@ -372,7 +372,6 @@ func (*Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, read
 			TopN:       topN,
 			FMSketch:   fms,
 			Info:       index.Info,
-			ErrorRate:  index.ErrorRate,
 			StatsVer:   statsVer,
 			Flag:       index.Flag,
 			PhysicalID: index.PhysicalID,

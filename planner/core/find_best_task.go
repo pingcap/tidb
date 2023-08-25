@@ -17,6 +17,7 @@ package core
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -41,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -1136,12 +1137,19 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				}
 			}
 		}
-		var partColName *model.CIStr
+		var hashPartColName *model.CIStr
 		if tblInfo := ds.table.Meta(); canConvertPointGet && tblInfo.GetPartitionInfo() != nil {
+			// partition table with dynamic prune not support batchPointGet
+			if canConvertPointGet && len(path.Ranges) > 1 && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+				canConvertPointGet = false
+			}
 			if canConvertPointGet && len(path.Ranges) > 1 {
-				// not support some complex situation, like `by HASH( col DIV 80 )` etc.
-				partColName = getPartitionColumnName(getPartitionExpr(ds.SCtx(), tblInfo), tblInfo)
-				if partColName == nil {
+				// We can only build batch point get for hash partitions on a simple column now. This is
+				// decided by the current implementation of `BatchPointGetExec::initialize()`, specifically,
+				// the `getPhysID()` function. Once we optimize that part, we can come back and enable
+				// BatchPointGet plan for more cases.
+				hashPartColName = getHashOrKeyPartitionColumnName(ds.SCtx(), tblInfo)
+				if hashPartColName == nil {
 					canConvertPointGet = false
 				}
 			}
@@ -1170,7 +1178,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				if len(path.Ranges) == 1 {
 					pointGetTask = ds.convertToPointGet(prop, candidate)
 				} else {
-					pointGetTask = ds.convertToBatchPointGet(prop, candidate, partColName)
+					pointGetTask = ds.convertToBatchPointGet(prop, candidate, hashPartColName)
 				}
 
 				// Batch/PointGet plans may be over-optimized, like `a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1).
@@ -1392,7 +1400,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 	}
 	ts.filterCondition = newFilterConds
 	if len(ts.filterCondition) > 0 {
-		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.SCtx(), ts.filterCondition, nil)
+		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, ts.filterCondition, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = SelectionFactor
@@ -1470,13 +1478,6 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 	if err != nil {
 		return nil, nil, false, err
 	}
-	if ts.Table.PKIsHandle {
-		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
-				ts.Hist = &ds.statisticTable.Columns[pkColInfo.ID].Histogram
-			}
-		}
-	}
 	ts.SetStats(ds.tableStats.ScaleByExpectCnt(totalRowCount))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 	if usedStats != nil && usedStats[ts.physicalTableID] != nil {
@@ -1492,7 +1493,7 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 		pushedFilters = pushedFilters1
 		remainingFilters = append(remainingFilters, remainingFilters1...)
 		if len(pushedFilters) != 0 {
-			selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.SCtx(), pushedFilters, nil)
+			selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, pushedFilters, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = SelectionFactor
@@ -1902,7 +1903,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		copTask.finishIndexPlan()
 		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.SCtx(), finalStats, is.SelectBlockOffset())
 		if len(copTask.rootTaskConds) != 0 {
-			selectivity, _, err := copTask.tblColHists.Selectivity(is.SCtx(), tableConds, nil)
+			selectivity, _, err := cardinality.Selectivity(is.SCtx(), copTask.tblColHists, tableConds, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = SelectionFactor
@@ -2017,13 +2018,13 @@ func getColumnRangeCounts(sctx sessionctx.Context, colID int64, ranges []*ranger
 			if idxHist == nil || idxHist.IsInvalid(sctx, false) {
 				return nil, false
 			}
-			count, err = histColl.GetRowCountByIndexRanges(sctx, idxID, []*ranger.Range{ran})
+			count, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran})
 		} else {
 			colHist, ok := histColl.Columns[colID]
 			if !ok || colHist.IsInvalid(sctx, false) {
 				return nil, false
 			}
-			count, err = histColl.GetRowCountByColumnRanges(sctx, colID, []*ranger.Range{ran})
+			count, err = cardinality.GetRowCountByColumnRanges(sctx, histColl, colID, []*ranger.Range{ran})
 		}
 		if err != nil {
 			return nil, false
@@ -2112,9 +2113,9 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expre
 	}
 	var rangeCount float64
 	if idxExists {
-		rangeCount, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(ds.SCtx(), idxID, convertedRanges)
+		rangeCount, err = cardinality.GetRowCountByIndexRanges(ds.SCtx(), ds.tableStats.HistColl, idxID, convertedRanges)
 	} else {
-		rangeCount, err = ds.tableStats.HistColl.GetRowCountByColumnRanges(ds.SCtx(), colID, convertedRanges)
+		rangeCount, err = cardinality.GetRowCountByColumnRanges(ds.SCtx(), ds.tableStats.HistColl, colID, convertedRanges)
 	}
 	if err != nil {
 		return 0, false, corr
@@ -2201,13 +2202,6 @@ func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *pro
 	}.Init(s.SCtx(), s.SelectBlockOffset())
 	ts.SetStats(stats)
 	ts.SetSchema(schema.Clone())
-	if ts.Table.PKIsHandle {
-		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
-				ts.Hist = &ds.statisticTable.Columns[pkColInfo.ID].Histogram
-			}
-		}
-	}
 	return ts
 }
 
@@ -2526,7 +2520,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	return rTsk
 }
 
-func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath, partColName *model.CIStr) (task task) {
+func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath, hashPartColName *model.CIStr) (task task) {
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
@@ -2543,31 +2537,11 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		TblInfo:          ds.TableInfo(),
 		KeepOrder:        !prop.IsSortItemEmpty(),
 		Columns:          ds.Columns,
+		SinglePart:       ds.isPartition,
+		PartTblID:        ds.physicalTableID,
 		PartitionExpr:    getPartitionExpr(ds.SCtx(), ds.TableInfo()),
 	}
-	if ds.isPartition {
-		// static prune
-		batchPointGetPlan.PartTblID = make([]int64, 1)
-		batchPointGetPlan.PartTblID[0] = ds.physicalTableID
-	} else if ds.tableInfo.GetPartitionInfo() != nil {
-		// dynamic prune
-		idxs, err := PartitionPruning(ds.SCtx(), ds.table.GetPartitionedTable(), ds.allConds, ds.partitionNames, ds.TblCols, ds.names)
-		if err != nil || len(idxs) == 0 {
-			return invalidTask
-		}
-		if idxs[0] != FullRange {
-			batchPointGetPlan.PartTblID = make([]int64, len(idxs))
-			for i, idx := range idxs {
-				batchPointGetPlan.PartTblID[i] = ds.tableInfo.GetPartitionInfo().Definitions[idx].ID
-			}
-			slices.Sort(batchPointGetPlan.PartTblID)
-		}
-	}
 	if batchPointGetPlan.KeepOrder {
-		// TODO: support keepOrder for partition table with dynamic pruning
-		if ds.TableInfo().GetPartitionInfo() != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
-			return invalidTask
-		}
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
 	}
 	rTsk := &rootTask{}
@@ -2589,7 +2563,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		batchPointGetPlan.IndexInfo = candidate.path.Index
 		batchPointGetPlan.IdxCols = candidate.path.IdxCols
 		batchPointGetPlan.IdxColLens = candidate.path.IdxColLens
-		batchPointGetPlan.PartitionColPos = getColumnPosInIndex(candidate.path.Index, partColName)
+		batchPointGetPlan.PartitionColPos = getColumnPosInIndex(candidate.path.Index, hashPartColName)
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
 		}
@@ -2645,7 +2619,7 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *pro
 	if len(ts.filterCondition) > 0 {
 		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.SCtx(), stats, ts.SelectBlockOffset())
 		if len(copTask.rootTaskConds) != 0 {
-			selectivity, _, err := copTask.tblColHists.Selectivity(ts.SCtx(), ts.filterCondition, nil)
+			selectivity, _, err := cardinality.Selectivity(ts.SCtx(), copTask.tblColHists, ts.filterCondition, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = SelectionFactor
@@ -2685,13 +2659,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		filterCondition: slices.Clone(path.TableFilters),
 	}.Init(ds.SCtx(), ds.SelectBlockOffset())
 	ts.SetSchema(ds.schema.Clone())
-	if ts.Table.PKIsHandle {
-		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
-				ts.Hist = &ds.statisticTable.Columns[pkColInfo.ID].Histogram
-			}
-		}
-	}
 	rowCount := path.CountAfterAccess
 	if prop.ExpectedCnt < ds.StatsInfo().RowCount {
 		selectivity := ds.StatsInfo().RowCount / path.CountAfterAccess
@@ -2751,10 +2718,6 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		constColsByCond:  path.ConstCols,
 		prop:             prop,
 	}.Init(ds.SCtx(), ds.SelectBlockOffset())
-	statsTbl := ds.statisticTable
-	if statsTbl.Indices[idx.ID] != nil {
-		is.Hist = &statsTbl.Indices[idx.ID].Histogram
-	}
 	rowCount := path.CountAfterAccess
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), !isSingleScan)
 

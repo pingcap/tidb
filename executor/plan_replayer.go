@@ -64,6 +64,7 @@ type PlanReplayerDumpInfo struct {
 	ExecStmts         []ast.StmtNode
 	Analyze           bool
 	HistoricalStatsTS uint64
+	StartTS           uint64
 	Path              string
 	File              *os.File
 	FileName          string
@@ -86,6 +87,15 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+	// Note:
+	// For the dumping for SQL file case (len(e.DumpInfo.Path) > 0), the DumpInfo.dump() is called in
+	// handleFileTransInConn(), which is after TxnManager.OnTxnEnd(), where we can't access the TxnManager anymore.
+	// So we must fetch the startTS now.
+	startTS, err := sessiontxn.GetTxnManager(e.Ctx()).GetStmtReadTS()
+	if err != nil {
+		return err
+	}
+	e.DumpInfo.StartTS = startTS
 	if len(e.DumpInfo.Path) > 0 {
 		err = e.prepare()
 		if err != nil {
@@ -165,12 +175,8 @@ func (e *PlanReplayerExec) createFile() error {
 func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	fileName := e.FileName
 	zf := e.File
-	startTS, err := sessiontxn.GetTxnManager(e.ctx).GetStmtReadTS()
-	if err != nil {
-		return err
-	}
 	task := &domain.PlanReplayerDumpTask{
-		StartTS:           startTS,
+		StartTS:           e.StartTS,
 		FileName:          fileName,
 		Zf:                zf,
 		SessionVars:       e.ctx.GetSessionVars(),

@@ -1,4 +1,4 @@
-// Copyright 2023-2023 PingCAP Xingchen (Beijing) Technology Co., Ltd.
+// Copyright 2023-2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -114,24 +114,50 @@ func (impl *ldapAuthImpl) initializeCAPool() error {
 	return nil
 }
 
+func (impl *ldapAuthImpl) tryConnectLDAPThroughStartTLS(address string) (*ldap.Conn, error) {
+	ldapConnection, err := ldap.Dial("tcp", address)
+	if err != nil {
+		return nil, err
+	}
+
+	err = ldapConnection.StartTLS(&tls.Config{
+		RootCAs:    impl.caPool,
+		ServerName: impl.ldapServerHost,
+	})
+	if err != nil {
+		ldapConnection.Close()
+
+		return nil, err
+	}
+	return ldapConnection, nil
+}
+
+func (impl *ldapAuthImpl) tryConnectLDAPThroughTLS(address string) (*ldap.Conn, error) {
+	ldapConnection, err := ldap.DialTLS("tcp", address, &tls.Config{
+		RootCAs:    impl.caPool,
+		ServerName: impl.ldapServerHost,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return ldapConnection, nil
+}
+
 func (impl *ldapAuthImpl) connectionFactory() (pools.Resource, error) {
 	address := net.JoinHostPort(impl.ldapServerHost, strconv.FormatUint(uint64(impl.ldapServerPort), 10))
 
 	// It's fine to load these two TLS configurations one-by-one (but not guarded by a single lock), because there isn't
 	// a way to set two variables atomically.
 	if impl.enableTLS {
-		ldapConnection, err := ldap.Dial("tcp", address)
+		ldapConnection, err := impl.tryConnectLDAPThroughStartTLS(address)
 		if err != nil {
-			return nil, errors.Wrap(err, "create ldap connection")
+			ldapConnection, err = impl.tryConnectLDAPThroughTLS(address)
+			if err != nil {
+				return nil, errors.Wrap(err, "create ldap connection")
+			}
 		}
 
-		err = ldapConnection.StartTLS(&tls.Config{
-			RootCAs:    impl.caPool,
-			ServerName: impl.ldapServerHost,
-		})
-		if err != nil {
-			return nil, errors.Wrap(err, "start tls on ldap connection")
-		}
 		return ldapConnection, nil
 	}
 	ldapConnection, err := ldap.Dial("tcp", address)

@@ -102,7 +102,7 @@ type regionJob struct {
 	// writeResult is available only in wrote and ingested stage
 	writeResult *tikvWriteResult
 
-	ingestData      ingestData
+	ingestData      IngestData
 	regionSplitSize int64
 	regionSplitKeys int64
 	metrics         *metric.Metrics
@@ -122,10 +122,9 @@ type tikvWriteResult struct {
 	remainingStartKey []byte
 }
 
-// ingestData describes a common interface that is needed by TiKV write +
+// IngestData describes a common interface that is needed by TiKV write +
 // ingest RPC.
-// TODO(lance6716): make it public to remote backend can use it.
-type ingestData interface {
+type IngestData interface {
 	// GetFirstAndLastKey returns the first and last key of the data reader in the
 	// range [lowerBound, upperBound). Empty or nil bounds means unbounded.
 	// lowerBound must be less than upperBound.
@@ -268,7 +267,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			ResourceControlContext: &kvrpcpb.ResourceControlContext{
 				ResourceGroupName: local.ResourceGroupName,
 			},
-			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
 		},
 	}
 	for _, peer := range region.GetPeers() {
@@ -408,6 +407,11 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		}
 	}
 
+	failpoint.Inject("NoLeader", func() {
+		log.FromContext(ctx).Warn("enter failpoint NoLeader")
+		leaderPeerMetas = nil
+	})
+
 	// if there is not leader currently, we don't forward the stage to wrote and let caller
 	// handle the retry.
 	if len(leaderPeerMetas) == 0 {
@@ -415,8 +419,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			logutil.Region(region), logutil.Leader(j.region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
 			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize))
-		return errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
-			region.Id, leaderID)
+		return common.ErrNoLeader.GenWithStackByArgs(region.Id, leaderID)
 	}
 
 	takeTime := time.Since(begin)
@@ -600,7 +603,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			ResourceControlContext: &kvrpcpb.ResourceControlContext{
 				ResourceGroupName: local.ResourceGroupName,
 			},
-			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
 		}
 
 		if supportMultiIngest {

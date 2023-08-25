@@ -104,7 +104,7 @@ for p in $(seq 2); do
       exit 1
   fi
 
-  target_log="get new_collations_enabled_on_first_bootstrap config from system table"
+  target_log="get new_collation_enabled config from mysql.tidb table"
   if ! grep -i "$target_log" $BACKUP_LOG; then
       echo "${target_log} not found in log"
       exit 1

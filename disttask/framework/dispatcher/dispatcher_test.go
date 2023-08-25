@@ -61,7 +61,7 @@ func MockDispatcherManager(t *testing.T, pool *pools.ResourcePool) (*dispatcher.
 	ctx := context.Background()
 	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
 	storage.SetTaskManager(mgr)
-	dsp, err := dispatcher.NewManager(util.WithInternalSourceType(ctx, "dispatcher"), mgr)
+	dsp, err := dispatcher.NewManager(util.WithInternalSourceType(ctx, "dispatcher"), mgr, "host:port")
 	require.NoError(t, err)
 	dispatcher.RegisterTaskFlowHandle(proto.TaskTypeExample, &testFlowHandle{})
 	return dsp, mgr
@@ -354,4 +354,26 @@ func (NumberExampleHandle) GetEligibleInstances(ctx context.Context, _ *proto.Ta
 
 func (NumberExampleHandle) IsRetryableErr(error) bool {
 	return true
+}
+
+func TestVerifyTaskStateTransform(t *testing.T) {
+	testCases := []struct {
+		oldState string
+		newState string
+		expect   bool
+	}{
+		{proto.TaskStateRunning, proto.TaskStateRunning, true},
+		{proto.TaskStatePending, proto.TaskStateRunning, true},
+		{proto.TaskStatePending, proto.TaskStateReverting, false},
+		{proto.TaskStateRunning, proto.TaskStateReverting, true},
+		{proto.TaskStateReverting, proto.TaskStateReverted, true},
+		{proto.TaskStateReverting, proto.TaskStateSucceed, false},
+		{proto.TaskStateRunning, proto.TaskStatePausing, true},
+		{proto.TaskStateRunning, proto.TaskStateResuming, false},
+		{proto.TaskStateCancelling, proto.TaskStateRunning, false},
+		{proto.TaskStateCanceled, proto.TaskStateRunning, false},
+	}
+	for _, tc := range testCases {
+		require.Equal(t, tc.expect, dispatcher.VerifyTaskStateTransform(tc.oldState, tc.newState))
+	}
 }

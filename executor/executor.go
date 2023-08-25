@@ -15,10 +15,12 @@
 package executor
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
 	"runtime/pprof"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -82,7 +84,6 @@ import (
 	tikvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 var (
@@ -1117,6 +1118,7 @@ func (e *ShowSlowExec) Next(_ context.Context, req *chunk.Chunk) error {
 			req.AppendInt64(11, 0)
 		}
 		req.AppendString(12, slow.Digest)
+		req.AppendString(13, slow.SessAlias)
 		e.cursor++
 	}
 	return nil
@@ -2350,7 +2352,7 @@ func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]grou
 }
 
 // HandleTask implements the Worker interface.
-func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
+func (w *checkIndexWorker) HandleTask(task checkIndexTask) (_ workerpool.None) {
 	defer w.e.wg.Done()
 	idxInfo := w.indexInfos[task.indexOffset]
 	bucketSize := int(CheckTableFastBucketSize.Load())
@@ -2457,8 +2459,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 			logutil.BgLogger().Warn("compare checksum by group reaches time limit", zap.Int("times", times))
 			break
 		}
-		whereKey := fmt.Sprintf("((%s - %d) %% %d)", md5Handle.String(), offset, mod)
-		groupByKey := fmt.Sprintf("((%s - %d) div %d %% %d)", md5Handle.String(), offset, mod, bucketSize)
+		whereKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle.String(), offset, mod)
+		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) div %d %% %d)", md5Handle.String(), offset, mod, bucketSize)
 		if !checkOnce {
 			whereKey = "0"
 		}
@@ -2475,8 +2477,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 			trySaveErr(err)
 			return
 		}
-		slices.SortFunc(tableChecksum, func(i, j groupByChecksum) bool {
-			return i.bucket < j.bucket
+		slices.SortFunc(tableChecksum, func(i, j groupByChecksum) int {
+			return cmp.Compare(i.bucket, j.bucket)
 		})
 
 		// compute index side checksum.
@@ -2485,8 +2487,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 			trySaveErr(err)
 			return
 		}
-		slices.SortFunc(indexChecksum, func(i, j groupByChecksum) bool {
-			return i.bucket < j.bucket
+		slices.SortFunc(indexChecksum, func(i, j groupByChecksum) int {
+			return cmp.Compare(i.bucket, j.bucket)
 		})
 
 		currentOffset := 0
@@ -2548,7 +2550,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	}
 
 	if meetError {
-		groupByKey := fmt.Sprintf("((%s - %d) %% %d)", md5Handle.String(), offset, mod)
+		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle.String(), offset, mod)
 		indexSQL := fmt.Sprintf("select %s, %s, %s from %s use index(`%s`) where %s = 0 order by %s", handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), TableName(w.e.dbName, w.e.table.Meta().Name.String()), idxInfo.Name, groupByKey, handleColumnField)
 		tableSQL := fmt.Sprintf("select /*+ read_from_storage(tikv[%s]) */ %s, %s, %s from %s use index() where %s = 0 order by %s", TableName(w.e.dbName, w.e.table.Meta().Name.String()), handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), TableName(w.e.dbName, w.e.table.Meta().Name.String()), groupByKey, handleColumnField)
 
@@ -2688,12 +2690,13 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 			}
 		}
 	}
+	return
 }
 
 // Close implements the Worker interface.
 func (*checkIndexWorker) Close() {}
 
-func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask] {
+func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask, workerpool.None] {
 	return &checkIndexWorker{sctx: e.Ctx(), dbName: e.dbName, table: e.table, indexInfos: e.indexInfos, e: e}
 }
 
@@ -2710,11 +2713,9 @@ func (e *FastCheckTableExec) Next(context.Context, *chunk.Chunk) error {
 		e.Ctx().GetSessionVars().OptimizerUseInvisibleIndexes = false
 	}()
 
-	workerPool, err := workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
-		poolutil.CheckTable, 3, e.createWorker, workerpool.OptionSkipRegister[checkIndexTask]{})
-	if err != nil {
-		return errors.Trace(err)
-	}
+	workerPool := workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
+		poolutil.CheckTable, 3, e.createWorker)
+	workerPool.Start()
 
 	e.wg.Add(len(e.indexInfos))
 	for i := range e.indexInfos {

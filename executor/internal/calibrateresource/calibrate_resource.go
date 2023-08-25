@@ -105,14 +105,12 @@ const (
 	// lowUsageThreshold is the threshold used to determine whether the CPU is too low.
 	// When the CPU utilization of tikv or tidb is lower than lowUsageThreshold, but neither is higher than valuableUsageThreshold, the sampling point is unavailable
 	lowUsageThreshold = 0.1
-	// calibration is performed only when the available time point exceeds the percentOfPass
-	percentOfPass = 0.9
 	// For quotas computed at each point in time, the maximum and minimum portions are discarded, and discardRate is the percentage discarded
 	discardRate = 0.1
 
 	// duration Indicates the supported calibration duration
 	maxDuration = time.Hour * 24
-	minDuration = time.Minute * 10
+	minDuration = time.Minute
 )
 
 // Executor is used as executor of calibrate resource.
@@ -334,10 +332,7 @@ func (e *Executor) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec 
 		tidbCPUs.next()
 		tikvCPUs.next()
 	}
-	if len(quotas) < 5 {
-		return errLowUsage
-	}
-	if float64(len(quotas))/float64(len(quotas)+lowCount) <= percentOfPass {
+	if len(quotas) < 2 {
 		return errLowUsage
 	}
 	sort.Slice(quotas, func(i, j int) bool {

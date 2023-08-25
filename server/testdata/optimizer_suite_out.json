@@ -71,7 +71,7 @@
                   "Version": 440930000000000000
                 },
                 "TableName": "t",
-                "TblInfoID": 98,
+                "TblInfoID": 100,
                 "Uninitialized": true,
                 "UsePartitionStats": false
               }
@@ -139,7 +139,7 @@
                                 "Version": 440930000000000000
                               },
                               "TableName": "t",
-                              "TblInfoID": 98,
+                              "TblInfoID": 100,
                               "Uninitialized": true,
                               "UsePartitionStats": false
                             }
@@ -148,7 +148,7 @@
                             "github.com/pingcap/tidb/planner/core.(*DataSource).DeriveStats": [
                               {
                                 "github.com/pingcap/tidb/planner/core.(*DataSource).fillIndexPath": {
-                                  "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                                  "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                                     {
                                       "ID": 1,
                                       "Ranges": [
@@ -159,7 +159,6 @@
                                       "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                                         "CollPseudo": true,
                                         "IsInvalid": true,
-                                        "NotAccurate": true,
                                         "TotalCount": 0
                                       }
                                     },
@@ -172,7 +171,7 @@
                               },
                               {
                                 "github.com/pingcap/tidb/planner/core.(*DataSource).deriveStatsByFilter": {
-                                  "github.com/pingcap/tidb/statistics.(*HistColl).Selectivity": [
+                                  "github.com/pingcap/tidb/planner/cardinality.Selectivity": [
                                     {
                                       "Input Expressions": [
                                         "lt(test.t.col1, 127)",
@@ -180,7 +179,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+                                      "github.com/pingcap/tidb/planner/cardinality.GetRowCountByColumnRanges": [
                                         {
                                           "ID": 1,
                                           "Ranges": [
@@ -203,7 +202,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                                      "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                                         {
                                           "ID": 1,
                                           "Ranges": [
@@ -214,7 +213,6 @@
                                           "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                                             "CollPseudo": true,
                                             "IsInvalid": true,
-                                            "NotAccurate": true,
                                             "TotalCount": 0
                                           }
                                         },
@@ -379,7 +377,7 @@
                             "Version": 440930000000000000
                           },
                           "TableName": "t",
-                          "TblInfoID": 98,
+                          "TblInfoID": 100,
                           "Uninitialized": true,
                           "UsePartitionStats": false
                         }
@@ -388,14 +386,14 @@
                         "github.com/pingcap/tidb/planner/core.(*DataSource).DeriveStats": [
                           {
                             "github.com/pingcap/tidb/planner/core.(*DataSource).deriveStatsByFilter": {
-                              "github.com/pingcap/tidb/statistics.(*HistColl).Selectivity": [
+                              "github.com/pingcap/tidb/planner/cardinality.Selectivity": [
                                 {
                                   "Input Expressions": [
                                     "eq(test.t.col1, 100)"
                                   ]
                                 },
                                 {
-                                  "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+                                  "github.com/pingcap/tidb/planner/cardinality.GetRowCountByColumnRanges": [
                                     {
                                       "ID": 1,
                                       "Ranges": [
@@ -418,7 +416,7 @@
                                   ]
                                 },
                                 {
-                                  "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                                  "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                                     {
                                       "ID": 1,
                                       "Ranges": [
@@ -429,7 +427,6 @@
                                       "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                                         "CollPseudo": true,
                                         "IsInvalid": true,
-                                        "NotAccurate": true,
                                         "TotalCount": 0
                                       }
                                     },
@@ -550,7 +547,7 @@
                   "Version": 440930000000000000
                 },
                 "TableName": "t",
-                "TblInfoID": 98,
+                "TblInfoID": 100,
                 "Uninitialized": true,
                 "UsePartitionStats": false
               }
@@ -618,7 +615,7 @@
                                 "Version": 440930000000000000
                               },
                               "TableName": "t",
-                              "TblInfoID": 98,
+                              "TblInfoID": 100,
                               "Uninitialized": true,
                               "UsePartitionStats": false
                             }
@@ -627,7 +624,7 @@
                             "github.com/pingcap/tidb/planner/core.(*DataSource).DeriveStats": [
                               {
                                 "github.com/pingcap/tidb/planner/core.(*DataSource).fillIndexPath": {
-                                  "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                                  "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                                     {
                                       "ID": 1,
                                       "Ranges": [
@@ -640,7 +637,6 @@
                                       "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                                         "CollPseudo": true,
                                         "IsInvalid": true,
-                                        "NotAccurate": true,
                                         "TotalCount": 0
                                       }
                                     },
@@ -653,14 +649,14 @@
                               },
                               {
                                 "github.com/pingcap/tidb/planner/core.(*DataSource).deriveStatsByFilter": {
-                                  "github.com/pingcap/tidb/statistics.(*HistColl).Selectivity": [
+                                  "github.com/pingcap/tidb/planner/cardinality.Selectivity": [
                                     {
                                       "Input Expressions": [
                                         "in(test.t.col1, 1, 2, 3)"
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+                                      "github.com/pingcap/tidb/planner/cardinality.GetRowCountByColumnRanges": [
                                         {
                                           "ID": 1,
                                           "Ranges": [
@@ -685,7 +681,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                                      "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
                                         {
                                           "ID": 1,
                                           "Ranges": [
@@ -698,7 +694,6 @@
                                           "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
                                             "CollPseudo": true,
                                             "IsInvalid": true,
-                                            "NotAccurate": true,
                                             "TotalCount": 0
                                           }
                                         },

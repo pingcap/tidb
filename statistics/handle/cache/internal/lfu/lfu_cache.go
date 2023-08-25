@@ -15,6 +15,7 @@
 package lfu
 
 import (
+	"sync"
 	"sync/atomic"
 
 	"github.com/dgraph-io/ristretto"
@@ -22,8 +23,10 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 	"github.com/pingcap/tidb/util/intest"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
 )
 
 // LFU is a LFU based on the ristretto.Cache
@@ -31,23 +34,27 @@ type LFU struct {
 	cache        *ristretto.Cache
 	resultKeySet *keySetShard
 	cost         atomic.Int64
+	closeOnce    sync.Once
 }
+
+var testMode = false
 
 // NewLFU creates a new LFU cache.
 func NewLFU(totalMemCost int64) (*LFU, error) {
 	if totalMemCost == 0 {
-		memTotal, err := memory.MemTotal()
-		if err != nil {
-			return nil, err
+		if intest.InTest {
+			totalMemCost = 5000000
+		} else {
+			memTotal, err := memory.MemTotal()
+			if err != nil {
+				return nil, err
+			}
+			totalMemCost = int64(memTotal / 2)
 		}
-		totalMemCost = int64(memTotal / 2)
 	}
 	metrics.CapacityGauge.Set(float64(totalMemCost))
 	result := &LFU{}
 	bufferItems := int64(64)
-	if intest.InTest {
-		bufferItems = 1
-	}
 
 	cache, err := ristretto.NewCache(&ristretto.Config{
 		NumCounters:        mathutil.Max(totalMemCost/128*2, 10), // assume the cost per table stats is 128
@@ -55,9 +62,13 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 		BufferItems:        bufferItems,
 		OnEvict:            result.onEvict,
 		OnExit:             result.onExit,
-		IgnoreInternalCost: intest.InTest,
-		Metrics:            intest.InTest,
+		OnReject:           result.onReject,
+		IgnoreInternalCost: testMode,
+		Metrics:            testMode,
 	})
+	if err != nil {
+		return nil, err
+	}
 	result.cache = cache
 	result.resultKeySet = newKeySetShard()
 	return result, err
@@ -67,20 +78,17 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
 	result, ok := s.cache.Get(tid)
 	if !ok {
-		return nil, ok
+		return s.resultKeySet.Get(tid)
 	}
 	return result.(*statistics.Table), ok
 }
 
 // Put implements statsCacheInner
 func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
-	ok := s.cache.Set(tblID, tbl, tbl.MemoryUsage().TotalTrackingMemUsage())
-	if ok { // NOTE: `s.cache` and `s.resultKeySet` may be inconsistent since the update operation is not atomic, but it's acceptable for our scenario
-		s.resultKeySet.Add(tblID)
-		s.cost.Add(tbl.MemoryUsage().TotalTrackingMemUsage())
-		metrics.CostGauge.Set(float64(s.cost.Load()))
-	}
-	return ok
+	cost := tbl.MemoryUsage().TotalTrackingMemUsage()
+	s.resultKeySet.AddKeyValue(tblID, tbl)
+	s.addCost(cost)
+	return s.cache.Set(tblID, tbl, cost)
 }
 
 // Del implements statsCacheInner
@@ -98,33 +106,85 @@ func (s *LFU) Cost() int64 {
 func (s *LFU) Values() []*statistics.Table {
 	result := make([]*statistics.Table, 0, 512)
 	for _, k := range s.resultKeySet.Keys() {
-		if value, ok := s.cache.Get(k); ok {
-			result = append(result, value.(*statistics.Table))
+		if value, ok := s.resultKeySet.Get(k); ok {
+			result = append(result, value)
 		}
 	}
 	return result
 }
 
+// DropEvicted drop stats for table column/index
+func DropEvicted(item statistics.TableCacheItem) {
+	if !item.IsStatsInitialized() ||
+		item.GetEvictedStatus() == statistics.AllEvicted {
+		return
+	}
+	item.DropUnnecessaryData()
+}
+
+func (s *LFU) onReject(item *ristretto.Item) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("panic in onReject", zap.Any("error", r), zap.Stack("stack"))
+		}
+	}()
+	metrics.RejectCounter.Add(1.0)
+	s.dropMemory(item)
+}
+
 func (s *LFU) onEvict(item *ristretto.Item) {
-	// We do not need to calculate the cost during onEvict, because the onexit function
-	// is also called when the evict event occurs.
-	s.resultKeySet.Remove(int64(item.Key))
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("panic in onEvict", zap.Any("error", r), zap.Stack("stack"))
+		}
+	}()
+	s.dropMemory(item)
 	metrics.EvictCounter.Inc()
 }
 
-func (s *LFU) onExit(val interface{}) {
-	s.cost.Add(-1 * val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
-	metrics.CostGauge.Set(float64(s.cost.Load()))
+func (s *LFU) dropMemory(item *ristretto.Item) {
+	if item.Value == nil {
+		// Sometimes the same key may be passed to the "onEvict/onExit"
+		// function twice, and in the second invocation, the value is empty,
+		// so it should not be processed.
+		return
+	}
+	// We do not need to calculate the cost during onEvict,
+	// because the onexit function is also called when the evict event occurs.
+	// TODO(hawkingrei): not copy the useless part.
+	table := item.Value.(*statistics.Table).Copy()
+	before := table.MemoryUsage().TotalTrackingMemUsage()
+	for _, column := range table.Columns {
+		DropEvicted(column)
+	}
+	for _, indix := range table.Indices {
+		DropEvicted(indix)
+	}
+	s.resultKeySet.AddKeyValue(int64(item.Key), table)
+	after := table.MemoryUsage().TotalTrackingMemUsage()
+	// why add before again? because the cost will be subtracted in onExit.
+	// in fact, it is  -(before - after) + after = after + after - before
+	s.addCost(2*after - before)
+}
+
+func (s *LFU) onExit(val any) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("panic in onExit", zap.Any("error", r), zap.Stack("stack"))
+		}
+	}()
+	if val == nil {
+		// Sometimes the same key may be passed to the "onEvict/onExit" function twice,
+		// and in the second invocation, the value is empty, so it should not be processed.
+		return
+	}
+	s.addCost(
+		-1 * val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
 }
 
 // Len implements statsCacheInner
 func (s *LFU) Len() int {
 	return s.resultKeySet.Len()
-}
-
-// Front implements statsCacheInner
-func (*LFU) Front() int64 {
-	return 0
 }
 
 // Copy implements statsCacheInner
@@ -150,6 +210,20 @@ func (s *LFU) metrics() *ristretto.Metrics {
 
 // Close implements statsCacheInner
 func (s *LFU) Close() {
-	s.cache.Close()
-	s.cache.Wait()
+	s.closeOnce.Do(func() {
+		s.Clear()
+		s.cache.Close()
+		s.cache.Wait()
+	})
+}
+
+// Clear implements statsCacheInner
+func (s *LFU) Clear() {
+	s.cache.Clear()
+	s.resultKeySet.Clear()
+}
+
+func (s *LFU) addCost(v int64) {
+	newv := s.cost.Add(v)
+	metrics.CostGauge.Set(float64(newv))
 }

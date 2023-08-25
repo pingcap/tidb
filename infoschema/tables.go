@@ -15,11 +15,13 @@
 package infoschema
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -853,6 +854,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogUserStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogHostStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogConnIDStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: variable.SlowLogSessAliasStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogExecRetryCount, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: variable.SlowLogExecRetryTime, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogQueryTimeStr, tp: mysql.TypeDouble, size: 22},
@@ -2388,7 +2390,7 @@ func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, sctx sessi
 		}
 		results = append(results, result)
 	}
-	slices.SortFunc(results, func(i, j result) bool { return i.idx < j.idx })
+	slices.SortFunc(results, func(i, j result) int { return cmp.Compare(i.idx, j.idx) })
 	for _, result := range results {
 		finalRows = append(finalRows, result.rows...)
 	}

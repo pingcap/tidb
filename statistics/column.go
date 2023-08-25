@@ -41,7 +41,6 @@ type Column struct {
 	FMSketch       *FMSketch
 	Info           *model.ColumnInfo
 	Histogram
-	ErrorRate
 
 	// StatsLoadedStatus indicates the status of column statistics
 	StatsLoadedStatus
@@ -66,9 +65,9 @@ func (c *Column) TotalRowCount() float64 {
 
 func (c *Column) notNullCount() float64 {
 	if c.StatsVer >= Version2 {
-		return c.Histogram.notNullCount() + float64(c.TopN.TotalCount())
+		return c.Histogram.NotNullCount() + float64(c.TopN.TotalCount())
 	}
-	return c.Histogram.notNullCount()
+	return c.Histogram.NotNullCount()
 }
 
 // GetIncreaseFactor get the increase factor to adjust the final estimated count when the table is modified.
@@ -114,9 +113,13 @@ func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
 var HistogramNeededItems = neededStatsMap{items: map[model.TableItemID]struct{}{}}
 
-// IsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
-// as need histogram.
-func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) {
+// IsInvalid checks if this column is invalid.
+// If this column has histogram but not loaded yet,
+// then we mark it as need histogram.
+func (c *Column) IsInvalid(
+	sctx sessionctx.Context,
+	collPseudo bool,
+) (res bool) {
 	var totalCount float64
 	var ndv int64
 	var inValidForCollPseudo, essentialLoaded bool
@@ -133,7 +136,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) 
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
-	if collPseudo && c.NotAccurate() {
+	if collPseudo {
 		inValidForCollPseudo = true
 		return true
 	}
@@ -177,13 +180,13 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 			return 0.0, nil
 		}
 		if c.Histogram.NDV > 0 && c.outOfRange(val) {
-			return outOfRangeEQSelectivity(sctx, c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
+			return OutOfRangeEQSelectivity(sctx, c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 		}
 		if c.CMSketch != nil {
 			count, err := queryValue(sctx, c.CMSketch, c.TopN, val)
 			return float64(count), errors.Trace(err)
 		}
-		histRowCount, _ := c.Histogram.equalRowCount(sctx, val, false)
+		histRowCount, _ := c.Histogram.EqualRowCount(sctx, val, false)
 		return histRowCount, nil
 	}
 
@@ -200,7 +203,7 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 		}
 	}
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
-	histCnt, matched := c.Histogram.equalRowCount(sctx, val, true)
+	histCnt, matched := c.Histogram.EqualRowCount(sctx, val, true)
 	if matched {
 		return histCnt, nil
 	}
@@ -209,7 +212,7 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 	if histNDV <= 0 {
 		return 0, nil
 	}
-	return c.Histogram.notNullCount() / histNDV, nil
+	return c.Histogram.NotNullCount() / histNDV, nil
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
@@ -327,7 +330,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 
 		// handling the out-of-range part
 		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
-			cnt += c.Histogram.outOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount)
+			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount)
 		}
 
 		if debugTrace {
@@ -344,44 +347,40 @@ func (c *Column) ItemID() int64 {
 	return c.Info.ID
 }
 
-// DropEvicted implements TableCacheItem
-// DropEvicted drops evicted structures
-func (c *Column) DropEvicted() {
-	if !c.statsInitialized || c.evictedStatus == allEvicted {
-		return
-	}
-	c.dropUnnecessaryData()
-}
-
-func (c *Column) dropUnnecessaryData() {
+// DropUnnecessaryData drops the unnecessary data for the column.
+func (c *Column) DropUnnecessaryData() {
 	if c.StatsVer < Version2 {
 		c.CMSketch = nil
 	}
 	c.TopN = nil
 	c.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
 	c.Histogram.Buckets = make([]Bucket, 0)
-	c.Histogram.scalars = make([]scalar, 0)
-	c.evictedStatus = allEvicted
+	c.Histogram.Scalars = make([]scalar, 0)
+	c.evictedStatus = AllEvicted
 }
 
 // IsAllEvicted indicates whether all stats evicted
 func (c *Column) IsAllEvicted() bool {
-	return c.statsInitialized && c.evictedStatus >= allEvicted
+	return c.statsInitialized && c.evictedStatus >= AllEvicted
 }
 
-func (c *Column) getEvictedStatus() int {
+// GetEvictedStatus indicates the evicted status
+func (c *Column) GetEvictedStatus() int {
 	return c.evictedStatus
 }
 
-func (c *Column) isStatsInitialized() bool {
+// IsStatsInitialized indicates whether stats is initialized
+func (c *Column) IsStatsInitialized() bool {
 	return c.statsInitialized
 }
 
-func (c *Column) statsVer() int64 {
+// GetStatsVer indicates the stats version
+func (c *Column) GetStatsVer() int64 {
 	return c.StatsVer
 }
 
-func (c *Column) isCMSExist() bool {
+// IsCMSExist indicates whether CMSketch exists
+func (c *Column) IsCMSExist() bool {
 	return c.CMSketch != nil
 }
 
@@ -474,9 +473,9 @@ func (s StatsLoadedStatus) StatusToString() string {
 		return "unInitialized"
 	}
 	switch s.evictedStatus {
-	case allLoaded:
+	case AllLoaded:
 		return "allLoaded"
-	case allEvicted:
+	case AllEvicted:
 		return "allEvicted"
 	}
 	return "unknown"
@@ -485,7 +484,7 @@ func (s StatsLoadedStatus) StatusToString() string {
 // IsAnalyzed indicates whether the column is analyzed.
 // The set of IsAnalyzed columns is a subset of the set of StatsAvailable columns.
 func (c *Column) IsAnalyzed() bool {
-	return c.StatsVer != Version0
+	return c.GetStatsVer() != Version0
 }
 
 // StatsAvailable indicates whether the column stats are collected.

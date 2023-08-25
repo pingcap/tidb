@@ -25,8 +25,8 @@ run_lightning
 run_sql 'insert into EE1472.pk values ();'
 run_sql 'select count(a), max(a) from EE1472.pk;'
 check_contains 'count(a): 3'
-check_contains 'max(a): 5'
+check_contains 'max(a): 6'
 
 run_sql 'insert into EE1472.notpk (a) values (3333);'
 run_sql 'select b from EE1472.notpk where a = 3333;'
-check_contains 'b: 10'
+check_contains 'b: 11'
