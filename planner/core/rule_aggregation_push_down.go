@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/planner/util"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -559,6 +560,8 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 				}
 				oldAggFuncsArgs := make([][]expression.Expression, 0, len(agg.AggFuncs))
 				newAggFuncsArgs := make([][]expression.Expression, 0, len(agg.AggFuncs))
+				oldAggOrderItems := make([][]*util.ByItems, 0, len(agg.AggFuncs))
+				newAggOrderItems := make([][]*util.ByItems, 0, len(agg.AggFuncs))
 				if noSideEffects {
 					for _, aggFunc := range agg.AggFuncs {
 						oldAggFuncsArgs = append(oldAggFuncsArgs, aggFunc.Args)
@@ -566,16 +569,36 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 						for _, arg := range aggFunc.Args {
 							newArgs = append(newArgs, expression.ColumnSubstitute(arg, proj.schema, proj.Exprs))
 						}
+						oldAggOrderItems = append(oldAggOrderItems, aggFunc.OrderByItems)
+						newOrderByItems := make([]expression.Expression, 0, len(aggFunc.OrderByItems))
+						for _, oby := range aggFunc.OrderByItems {
+							newOrderByItems = append(newOrderByItems, expression.ColumnSubstitute(oby.Expr, proj.schema, proj.Exprs))
+						}
 						if ExprsHasSideEffects(newArgs) {
 							noSideEffects = false
 							break
 						}
+						if ExprsHasSideEffects(newOrderByItems) {
+							noSideEffects = false
+							break
+						}
 						newAggFuncsArgs = append(newAggFuncsArgs, newArgs)
+						oneAggOrderByItems := make([]*util.ByItems, 0, len(aggFunc.OrderByItems))
+						for i, obyExpr := range newOrderByItems {
+							oneAggOrderByItems = append(oneAggOrderByItems, &util.ByItems{Expr: obyExpr, Desc: aggFunc.OrderByItems[i].Desc})
+						}
+						newAggOrderItems = append(newAggOrderItems, oneAggOrderByItems)
 					}
 				}
 				for i, funcsArgs := range oldAggFuncsArgs {
 					for j := range funcsArgs {
 						if oldAggFuncsArgs[i][j].GetType().EvalType() != newAggFuncsArgs[i][j].GetType().EvalType() {
+							noSideEffects = false
+							break
+						}
+					}
+					for j := range newAggOrderItems {
+						if oldAggOrderItems[i][j].Expr.GetType().EvalType() != newAggOrderItems[i][j].Expr.GetType().EvalType() {
 							noSideEffects = false
 							break
 						}
@@ -588,6 +611,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 					agg.GroupByItems = newGbyItems
 					for i, aggFunc := range agg.AggFuncs {
 						aggFunc.Args = newAggFuncsArgs[i]
+						aggFunc.OrderByItems = newAggOrderItems[i]
 					}
 					projChild := proj.children[0]
 					agg.SetChildren(projChild)
