@@ -159,41 +159,43 @@ func (src *TableScanTaskSource) SetSink(sink operator.DataChannel[TableScanTask]
 
 // Open implements Operator interface.
 func (src *TableScanTaskSource) Open() error {
-	src.errGroup.Go(func() error {
-		taskIDAlloc := newTaskIDAllocator()
-		defer src.sink.Finish()
-		startKey := src.startKey
-		endKey := src.endKey
-		for {
-			kvRanges, err := splitTableRanges(
-				src.physicalTable,
-				src.store,
-				startKey,
-				endKey,
-				backfillTaskChanSize,
-			)
-			if err != nil {
-				return err
-			}
-			if len(kvRanges) == 0 {
-				break
-			}
+	src.errGroup.Go(src.generateTasks)
+	return nil
+}
 
-			batchTasks := getBatchTableScanTask(src.physicalTable, kvRanges, taskIDAlloc)
-			for _, task := range batchTasks {
-				select {
-				case <-src.ctx.Done():
-					return nil
-				case src.sink.Channel() <- task:
-				}
-			}
-			startKey = kvRanges[len(kvRanges)-1].EndKey
-			if startKey.Cmp(endKey) >= 0 {
-				break
+func (src *TableScanTaskSource) generateTasks() error {
+	taskIDAlloc := newTaskIDAllocator()
+	defer src.sink.Finish()
+	startKey := src.startKey
+	endKey := src.endKey
+	for {
+		kvRanges, err := splitTableRanges(
+			src.physicalTable,
+			src.store,
+			startKey,
+			endKey,
+			backfillTaskChanSize,
+		)
+		if err != nil {
+			return err
+		}
+		if len(kvRanges) == 0 {
+			break
+		}
+
+		batchTasks := getBatchTableScanTask(src.physicalTable, kvRanges, taskIDAlloc)
+		for _, task := range batchTasks {
+			select {
+			case <-src.ctx.Done():
+				return nil
+			case src.sink.Channel() <- task:
 			}
 		}
-		return nil
-	})
+		startKey = kvRanges[len(kvRanges)-1].EndKey
+		if startKey.Cmp(endKey) >= 0 {
+			break
+		}
+	}
 	return nil
 }
 
@@ -492,22 +494,24 @@ func (s *indexWriteResultSink) SetSource(source operator.DataChannel[IndexWriteR
 }
 
 func (s *indexWriteResultSink) Open() error {
-	s.errGroup.Go(func() error {
-		for {
-			select {
-			case <-s.ctx.Done():
+	s.errGroup.Go(s.collectResult)
+	return nil
+}
+
+func (s *indexWriteResultSink) collectResult() error {
+	for {
+		select {
+		case <-s.ctx.Done():
+			return nil
+		case result, ok := <-s.source.Channel():
+			if !ok {
 				return nil
-			case result, ok := <-s.source.Channel():
-				if !ok {
-					return nil
-				}
-				if result.Err != nil {
-					return result.Err
-				}
+			}
+			if result.Err != nil {
+				return result.Err
 			}
 		}
-	})
-	return nil
+	}
 }
 
 func (s *indexWriteResultSink) Close() error {
