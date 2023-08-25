@@ -52,6 +52,7 @@ type Engine struct {
 	importedKVCount *atomic.Int64
 }
 
+// NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
 	storage storage.ExternalStorage,
 	dataFiles []string,
@@ -168,6 +169,7 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 	return iter, nil
 }
 
+// Close releases the resources of the engine.
 func (e *Engine) Close() error {
 	if e.iter == nil {
 		return nil
