@@ -27,7 +27,7 @@ import (
 
 // Worker is worker interface.
 type Worker[T, R any] interface {
-	HandleTask(task T) R
+	HandleTask(task T, send func(R))
 	Close()
 }
 
@@ -115,13 +115,14 @@ func (p *WorkerPool[T, R]) handleTaskWithRecover(w Worker[T, R], task T) {
 	}()
 	defer tidbutil.Recover(metrics.LabelWorkerPool, "handleTaskWithRecover", nil, false)
 
-	r := w.HandleTask(task)
-	if p.resChan != nil {
+	sendResult := func(r R) {
 		select {
 		case p.resChan <- r:
 		case <-p.ctx.Done():
 		}
 	}
+
+	w.HandleTask(task, sendResult)
 }
 
 func (p *WorkerPool[T, R]) runAWorker() {

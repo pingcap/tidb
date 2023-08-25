@@ -2351,7 +2351,7 @@ func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]grou
 }
 
 // HandleTask implements the Worker interface.
-func (w *checkIndexWorker) HandleTask(task checkIndexTask) (_ workerpool.None) {
+func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) {
 	defer w.e.wg.Done()
 	idxInfo := w.indexInfos[task.indexOffset]
 	bucketSize := int(CheckTableFastBucketSize.Load())

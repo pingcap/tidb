@@ -448,7 +448,7 @@ func expectedIngestWorkerCnt() (readerCnt, writerCnt int) {
 	return readerCnt, writerCnt
 }
 
-func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk) (_ workerpool.None) {
+func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool.None)) {
 	defer util.Recover(metrics.LabelDDL, "ingestWorker.HandleTask", func() {
 		w.resultCh <- &backfillResult{taskID: rs.ID, err: dbterror.ErrReorgPanic}
 	}, false)

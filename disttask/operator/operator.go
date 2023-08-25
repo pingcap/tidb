@@ -103,8 +103,9 @@ func newAsyncWorkerCtor[T, R any](transform func(T) R) func() workerpool.Worker[
 	}
 }
 
-func (s *asyncWorker[T, R]) HandleTask(task T) R {
-	return s.transform(task)
+func (s *asyncWorker[T, R]) HandleTask(task T, rsFn func(R)) {
+	result := s.transform(task)
+	rsFn(result)
 }
 
 func (*asyncWorker[T, R]) Close() {}

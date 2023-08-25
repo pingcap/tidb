@@ -21,10 +21,12 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/ddl/session"
 	"github.com/pingcap/tidb/disttask/operator"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/util/chunk"
@@ -66,11 +68,12 @@ func TestBackfillOperators(t *testing.T) {
 	copCtx, err := ddl.NewCopContext(tblInfo, idxInfo, tk.Session())
 	require.NoError(t, err)
 
-	// Test table scan source operator.
+	// Test TableScanTaskSource operator.
 	var opTasks []ddl.TableScanTask
 	{
 		ctx := context.Background()
-		src := ddl.NewTableScanTaskSource(ctx, store, tbl.(table.PhysicalTable), startKey, endKey)
+		pTbl := tbl.(table.PhysicalTable)
+		src := ddl.NewTableScanTaskSource(ctx, store, pTbl, startKey, endKey)
 		sink := newTestSink[ddl.TableScanTask]()
 
 		operator.Compose[ddl.TableScanTask](src, sink)
@@ -89,6 +92,8 @@ func TestBackfillOperators(t *testing.T) {
 		opTasks = tasks
 	}
 
+	// Test TableScanOperator.
+	var chunkResults []ddl.IndexRecordChunk
 	{
 		// Make sure the buffer is large enough since the chunks do not recycled.
 		srcChkPool := make(chan *chunk.Chunk, regionCnt*2)
@@ -110,19 +115,115 @@ func TestBackfillOperators(t *testing.T) {
 		err = pipeline.Close()
 		require.NoError(t, err)
 
-		chunks := sink.collect()
-		require.Len(t, chunks, 10)
+		results := sink.collect()
 		cnt := 0
-		for i := 0; i < 10; i++ {
-			chk := chunks[i].Chunk
-			cnt += chk.NumRows()
+		for _, rs := range results {
+			require.NoError(t, rs.Err)
+			chkRowCnt := rs.Chunk.NumRows()
+			cnt += chkRowCnt
+			if chkRowCnt > 0 {
+				chunkResults = append(chunkResults, rs)
+			}
 		}
 		require.Equal(t, 10, cnt)
 	}
+
+	// Test IndexIngestOperator.
+	{
+		ctx := context.Background()
+		var keys, values [][]byte
+		onWrite := func(key, val []byte) {
+			keys = append(keys, key)
+			values = append(values, val)
+		}
+
+		srcChkPool := make(chan *chunk.Chunk, regionCnt*2)
+		pTbl := tbl.(table.PhysicalTable)
+		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		mockEngine := ingest.NewMockEngineInfo(nil)
+		mockEngine.SetHook(onWrite)
+
+		src := newTestSource(chunkResults...)
+		ingestOp := ddl.NewIndexIngestOperator(ctx, copCtx, sessPool, pTbl, index, mockEngine, srcChkPool, 3)
+		sink := newTestSink[ddl.IndexWriteResult]()
+
+		operator.Compose[ddl.IndexRecordChunk](src, ingestOp)
+		operator.Compose[ddl.IndexWriteResult](ingestOp, sink)
+
+		pipeline := operator.NewAsyncPipeline(src, ingestOp, sink)
+		err = pipeline.Execute()
+		require.NoError(t, err)
+		err = pipeline.Close()
+		require.NoError(t, err)
+
+		results := sink.collect()
+		for _, rs := range results {
+			require.NoError(t, rs.Err)
+		}
+		require.Len(t, keys, 10)
+		require.Len(t, values, 10)
+		require.Len(t, sink.collect(), 10)
+	}
 }
 
-func TestBackfillOperatorCancel(t *testing.T) {
+func TestBackfillOperatorPipeline(t *testing.T) {
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists op;")
+	tk.MustExec("create database op;")
+	tk.MustExec("use op;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 
+	rs := pools.NewResourcePool(func() (pools.Resource, error) {
+		newTk := testkit.NewTestKit(t, store)
+		return newTk.Session(), nil
+	}, 8, 8, 0)
+	sessPool := session.NewSessionPool(rs, store)
+
+	tk.MustExec("create table t(a int primary key, b int, index idx(b));")
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t values (?, ?)", i*10000, i)
+	}
+	regionCnt := 10
+	tk.MustQuery(fmt.Sprintf("split table t between (0) and (100000) regions %d;", regionCnt)).
+		Check(testkit.Rows(fmt.Sprintf("%d 1", regionCnt)))
+	// Refresh the region cache.
+	tk.MustQuery("select count(*) from t;").Check(testkit.Rows("10"))
+
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("op"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	startKey := tbl.RecordPrefix()
+	endKey := tbl.RecordPrefix().PrefixNext()
+
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.FindIndexByName("idx")
+
+	ctx := context.Background()
+	var keys, values [][]byte
+	onWrite := func(key, val []byte) {
+		keys = append(keys, key)
+		values = append(values, val)
+	}
+	mockEngine := ingest.NewMockEngineInfo(nil)
+	mockEngine.SetHook(onWrite)
+
+	pipeline, err := ddl.NewAddIndexIngestPipeline(
+		ctx, store,
+		sessPool,
+		mockEngine,
+		tk.Session(),
+		tbl.(table.PhysicalTable),
+		idxInfo,
+		startKey,
+		endKey,
+	)
+	require.NoError(t, err)
+	err = pipeline.Execute()
+	require.NoError(t, err)
+	err = pipeline.Close()
+	require.NoError(t, err)
+	require.Len(t, keys, 10)
+	require.Len(t, values, 10)
 }
 
 type testSink[T any] struct {

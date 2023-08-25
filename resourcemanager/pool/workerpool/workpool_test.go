@@ -34,11 +34,10 @@ type MyWorker[T int64, R struct{}] struct {
 	id int
 }
 
-func (w *MyWorker[T, R]) HandleTask(task int64) struct{} {
+func (w *MyWorker[T, R]) HandleTask(task int64, _ func(struct{})) {
 	globalCnt.Add(task)
 	cntWg.Done()
 	logutil.BgLogger().Info("Worker handling task")
-	return struct{}{}
 }
 
 func (w *MyWorker[T, R]) Close() {
@@ -108,9 +107,7 @@ func TestWorkerPool(t *testing.T) {
 type dummyWorker[T, R any] struct {
 }
 
-func (d dummyWorker[T, R]) HandleTask(task T) R {
-	var zero R
-	return zero
+func (d dummyWorker[T, R]) HandleTask(task T, _ func(R)) {
 }
 
 func (d dummyWorker[T, R]) Close() {}
