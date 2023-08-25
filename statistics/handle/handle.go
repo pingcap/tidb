@@ -2287,6 +2287,7 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 	}
 	sc := v
 	sc.SetCapacity(c)
+	logutil.BgLogger().Info("update stats cache capacity successfully", zap.Int64("capacity", c))
 }
 
 // Close stops the background
