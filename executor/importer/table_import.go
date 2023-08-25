@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -341,6 +342,12 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 		IOWorkers:      nil,
 		Store:          e.dataStore,
 		TableMeta:      tableMeta,
+
+		StrictFormat:           e.SplitFile,
+		DataCharacterSet:       *e.Charset,
+		DataInvalidCharReplace: string(utf8.RuneError),
+		ReadBlockSize:          LoadDataReadBlockSize,
+		CSV:                    *e.GenerateCSVConfig(),
 	}
 	tableRegions, err2 := mydump.MakeTableRegions(ctx, dataDivideCfg)
 
