@@ -23,7 +23,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -42,30 +42,26 @@ type Engine struct {
 
 	iter *MergeKVIter
 
-	keyAdapter         local.KeyAdapter
+	keyAdapter         common.KeyAdapter
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
-	dupDetectOpt       local.DupDetectOpt
+	dupDetectOpt       common.DupDetectOpt
 	ts                 uint64
 
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
 }
 
-func init() {
-	local.NewExternalEngine = NewExternalEngine
-}
-
 func NewExternalEngine(
 	storage storage.ExternalStorage,
 	dataFiles []string,
 	statsFiles []string,
-	keyAdapter local.KeyAdapter,
+	keyAdapter common.KeyAdapter,
 	duplicateDetection bool,
 	duplicateDB *pebble.DB,
-	dupDetectOpt local.DupDetectOpt,
+	dupDetectOpt common.DupDetectOpt,
 	ts uint64,
-) local.CommonEngine {
+) common.Engine {
 	return &Engine{
 		storage:            storage,
 		dataFiles:          dataFiles,
@@ -86,7 +82,7 @@ func NewExternalEngine(
 // are allocated from Engine.bufPool and must be released by
 // MemoryIngestData.Finish(). For external.Engine, GetIngestData must be called
 // with strictly increasing start / end key.
-func (e *Engine) LoadIngestData(ctx context.Context, start, end []byte) (local.IngestData, error) {
+func (e *Engine) LoadIngestData(ctx context.Context, start, end []byte) (common.IngestData, error) {
 	if bytes.Equal(start, end) {
 		return nil, errors.Errorf("start key and end key must not be the same: %s",
 			hex.EncodeToString(start))
@@ -181,10 +177,10 @@ func (e *Engine) Close() error {
 
 // MemoryIngestData is the in-memory implementation of IngestData.
 type MemoryIngestData struct {
-	keyAdapter         local.KeyAdapter
+	keyAdapter         common.KeyAdapter
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
-	dupDetectOpt       local.DupDetectOpt
+	dupDetectOpt       common.DupDetectOpt
 
 	keys   [][]byte
 	values [][]byte
@@ -195,12 +191,12 @@ type MemoryIngestData struct {
 	importedKVCount *atomic.Int64
 }
 
-var _ local.IngestData = (*MemoryIngestData)(nil)
+var _ common.IngestData = (*MemoryIngestData)(nil)
 
 func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (int, int) {
 	firstKeyIdx := 0
 	if len(lowerBound) > 0 {
-		lowerBound = m.keyAdapter.Encode(nil, lowerBound, local.MinRowID)
+		lowerBound = m.keyAdapter.Encode(nil, lowerBound, common.MinRowID)
 		firstKeyIdx = sort.Search(len(m.keys), func(i int) bool {
 			return bytes.Compare(lowerBound, m.keys[i]) <= 0
 		})
@@ -211,7 +207,7 @@ func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (
 
 	lastKeyIdx := len(m.keys) - 1
 	if len(upperBound) > 0 {
-		upperBound = m.keyAdapter.Encode(nil, upperBound, local.MinRowID)
+		upperBound = m.keyAdapter.Encode(nil, upperBound, common.MinRowID)
 		i := sort.Search(len(m.keys), func(i int) bool {
 			reverseIdx := len(m.keys) - 1 - i
 			return bytes.Compare(upperBound, m.keys[reverseIdx]) > 0
@@ -293,7 +289,7 @@ func (m *memoryDataIter) Error() error {
 
 type memoryDataDupDetectIter struct {
 	iter           *memoryDataIter
-	dupDetector    *local.DupDetector
+	dupDetector    *common.DupDetector
 	err            error
 	curKey, curVal []byte
 }
@@ -350,7 +346,7 @@ func (m *memoryDataDupDetectIter) Error() error {
 }
 
 // NewIter implements IngestData.NewIter.
-func (m *MemoryIngestData) NewIter(ctx context.Context, lowerBound, upperBound []byte) local.ForwardIter {
+func (m *MemoryIngestData) NewIter(ctx context.Context, lowerBound, upperBound []byte) common.ForwardIter {
 	firstKeyIdx, lastKeyIdx := m.firstAndLastKeyIndex(lowerBound, upperBound)
 	iter := &memoryDataIter{
 		keys:        m.keys,
@@ -362,7 +358,7 @@ func (m *MemoryIngestData) NewIter(ctx context.Context, lowerBound, upperBound [
 		return iter
 	}
 	logger := log.FromContext(ctx)
-	detector := local.NewDupDetector(m.keyAdapter, m.duplicateDB.NewBatch(), logger, m.dupDetectOpt)
+	detector := common.NewDupDetector(m.keyAdapter, m.duplicateDB.NewBatch(), logger, m.dupDetectOpt)
 	return &memoryDataDupDetectIter{
 		iter:        iter,
 		dupDetector: detector,

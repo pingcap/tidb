@@ -191,7 +191,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		LocalWriterMemCacheSize: int64(config.DefaultLocalWriterMemCacheSize),
 		ShouldCheckTiKV:         true,
 		DupeDetectEnabled:       false,
-		DuplicateDetectOpt:      local.DupDetectOpt{ReportErrOnDup: false},
+		DuplicateDetectOpt:      common.DupDetectOpt{ReportErrOnDup: false},
 		StoreWriteBWLimit:       int(e.MaxWriteSpeed),
 		MaxOpenFiles:            int(util.GenRLimit("table_import")),
 		KeyspaceName:            tidb.GetGlobalKeyspaceName(),

@@ -1,10 +1,10 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//      http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package local
+package common
 
 import (
 	"bytes"
@@ -22,7 +22,6 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -69,7 +68,7 @@ func TestDupDetectKeyAdapter(t *testing.T) {
 
 	keyAdapter := DupDetectKeyAdapter{}
 	for _, input := range inputs {
-		encodedRowID := common.EncodeIntRowID(input.rowID)
+		encodedRowID := EncodeIntRowID(input.rowID)
 		result := keyAdapter.Encode(nil, input.key, encodedRowID)
 		require.Equal(t, keyAdapter.EncodedLen(input.key, encodedRowID), len(result))
 
@@ -91,7 +90,7 @@ func TestDupDetectKeyOrder(t *testing.T) {
 	keyAdapter := DupDetectKeyAdapter{}
 	encodedKeys := make([][]byte, 0, len(keys))
 	for _, key := range keys {
-		encodedKeys = append(encodedKeys, keyAdapter.Encode(nil, key, common.EncodeIntRowID(1)))
+		encodedKeys = append(encodedKeys, keyAdapter.Encode(nil, key, EncodeIntRowID(1)))
 	}
 	sorted := sort.SliceIsSorted(encodedKeys, func(i, j int) bool {
 		return bytes.Compare(encodedKeys[i], encodedKeys[j]) < 0
@@ -102,8 +101,8 @@ func TestDupDetectKeyOrder(t *testing.T) {
 func TestDupDetectEncodeDupKey(t *testing.T) {
 	keyAdapter := DupDetectKeyAdapter{}
 	key := randBytes(32)
-	result1 := keyAdapter.Encode(nil, key, common.EncodeIntRowID(10))
-	result2 := keyAdapter.Encode(nil, key, common.EncodeIntRowID(20))
+	result1 := keyAdapter.Encode(nil, key, EncodeIntRowID(10))
+	result2 := keyAdapter.Encode(nil, key, EncodeIntRowID(20))
 	require.NotEqual(t, result1, result2)
 }
 
@@ -116,7 +115,7 @@ func TestEncodeKeyToPreAllocatedBuf(t *testing.T) {
 	for _, keyAdapter := range keyAdapters {
 		key := randBytes(32)
 		buf := make([]byte, 256)
-		buf2 := keyAdapter.Encode(buf[:4], key, common.EncodeIntRowID(1))
+		buf2 := keyAdapter.Encode(buf[:4], key, EncodeIntRowID(1))
 		require.True(t, startWithSameMemory(buf, buf2))
 		// Verify the encoded result first.
 		key2, err := keyAdapter.Decode(nil, buf2[4:])

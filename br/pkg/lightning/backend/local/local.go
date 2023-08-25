@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
@@ -385,35 +384,6 @@ func checkTiFlashVersion(ctx context.Context, db *sql.DB, checkCtx *backend.Chec
 	return nil
 }
 
-// CommonEngine describes the common interface of local and external engine that
-// local backend uses.
-// TODO(lance6716): maybe move the common interface to lightning/common to break
-// the cyclic import.
-type CommonEngine interface {
-	// LoadIngestData returns an IngestData that contains the data in [start, end).
-	LoadIngestData(ctx context.Context, start, end []byte) (IngestData, error)
-	// TODO(lance6716): add more methods
-}
-
-// NewExternalEngine will be initialized by lightning/backend/external.
-var NewExternalEngine func(
-	storage storage.ExternalStorage,
-	dataFiles []string,
-	statsFiles []string,
-	keyAdapter KeyAdapter,
-	duplicateDetection bool,
-	duplicateDB *pebble.DB,
-	dupDetectOpt DupDetectOpt,
-	ts uint64,
-) CommonEngine
-
-// MockExternalEngine will be initialized by lightning/backend/external.
-var MockExternalEngine func(
-	storage storage.ExternalStorage,
-	keys [][]byte,
-	values [][]byte,
-) (dataFiles []string, statsFiles []string, err error)
-
 // BackendConfig is the config for local backend.
 type BackendConfig struct {
 	// comma separated list of PD endpoints.
@@ -438,7 +408,7 @@ type BackendConfig struct {
 	// whether check TiKV capacity before write & ingest.
 	ShouldCheckTiKV    bool
 	DupeDetectEnabled  bool
-	DuplicateDetectOpt DupDetectOpt
+	DuplicateDetectOpt common.DupDetectOpt
 	// max write speed in bytes per second to each store(burst is allowed), 0 means no limit
 	StoreWriteBWLimit int
 	// When TiKV is in normal mode, ingesting too many SSTs will cause TiKV write stall.
@@ -473,7 +443,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		LocalWriterMemCacheSize:   int64(cfg.TikvImporter.LocalWriterMemCacheSize),
 		ShouldCheckTiKV:           cfg.App.CheckRequirements,
 		DupeDetectEnabled:         cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
-		DuplicateDetectOpt:        DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
+		DuplicateDetectOpt:        common.DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
 		StoreWriteBWLimit:         int(cfg.TikvImporter.StoreWriteBWLimit),
 		ShouldCheckWriteStall:     cfg.Cron.SwitchMode.Duration == 0,
 		MaxOpenFiles:              maxOpenFiles,
@@ -504,7 +474,7 @@ type Backend struct {
 
 	supportMultiIngest  bool
 	duplicateDB         *pebble.DB
-	keyAdapter          KeyAdapter
+	keyAdapter          common.KeyAdapter
 	importClientFactory ImportClientFactory
 
 	bufferPool   *membuf.Pool
@@ -597,9 +567,9 @@ func NewBackend(
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
-	keyAdapter := KeyAdapter(NoopKeyAdapter{})
+	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
 	if config.DupeDetectEnabled {
-		keyAdapter = DupDetectKeyAdapter{}
+		keyAdapter = common.DupDetectKeyAdapter{}
 	}
 	var writeLimiter StoreWriteLimiter
 	if config.StoreWriteBWLimit > 0 {
@@ -1153,7 +1123,7 @@ func (local *Backend) prepareAndSendJob(
 // generateAndSendJob scans the region in ranges and send region jobs to jobToWorkerCh.
 func (local *Backend) generateAndSendJob(
 	ctx context.Context,
-	engine CommonEngine,
+	engine common.Engine,
 	jobRanges []Range,
 	regionSplitSize, regionSplitKeys int64,
 	jobToWorkerCh chan<- *regionJob,
@@ -1236,7 +1206,7 @@ var fakeRegionJobs map[[2]string]struct {
 // It will retry internally when scan region meet error.
 func (local *Backend) generateJobForRange(
 	ctx context.Context,
-	data IngestData,
+	data common.IngestData,
 	keyRange Range,
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {

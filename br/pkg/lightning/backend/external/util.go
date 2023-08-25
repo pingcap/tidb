@@ -23,7 +23,6 @@ import (
 	"strings"
 
 	kv2 "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/kv"
@@ -31,10 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
-
-func init() {
-	local.MockExternalEngine = MockExternalEngine
-}
 
 // prettyFileNames removes the directory prefix except the last level from the
 // file names.

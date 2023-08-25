@@ -19,7 +19,6 @@ go_library(
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/backend/kv",
-        "//br/pkg/lightning/backend/local",
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/log",
         "//br/pkg/membuf",
@@ -54,7 +53,6 @@ go_test(
     shard_count = 21,
     deps = [
         "//br/pkg/lightning/backend/kv",
-        "//br/pkg/lightning/backend/local",
         "//br/pkg/lightning/common",
         "//br/pkg/storage",
         "//kv",

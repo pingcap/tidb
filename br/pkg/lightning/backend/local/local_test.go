@@ -40,6 +40,7 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -183,7 +184,7 @@ func TestRangeProperties(t *testing.T) {
 	userProperties := make(map[string]string, 1)
 	_ = collector.Finish(userProperties)
 
-	props, err := decodeRangeProperties(hack.Slice(userProperties[propRangeIndex]), NoopKeyAdapter{})
+	props, err := decodeRangeProperties(hack.Slice(userProperties[propRangeIndex]), common.NoopKeyAdapter{})
 	require.NoError(t, err)
 
 	// Smallest key in props.
@@ -336,7 +337,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 		ctx:          engineCtx,
 		cancel:       cancel,
 		sstMetasChan: make(chan metaOrFlush, 64),
-		keyAdapter:   NoopKeyAdapter{},
+		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
 	f.db.Store(db)
@@ -1195,7 +1196,7 @@ func (m *mockIngestIter) Close() error { return nil }
 
 func (m *mockIngestIter) Error() error { return nil }
 
-func (m mockIngestData) NewIter(ctx context.Context, lowerBound, upperBound []byte) ForwardIter {
+func (m mockIngestData) NewIter(ctx context.Context, lowerBound, upperBound []byte) common.ForwardIter {
 	i, j := m.getFirstAndLastKeyIdx(lowerBound, upperBound)
 	return &mockIngestIter{data: m, startIdx: i, endIdx: j, curIdx: i}
 }
@@ -1565,7 +1566,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 		ctx:          engineCtx,
 		cancel:       cancel2,
 		sstMetasChan: make(chan metaOrFlush, 64),
-		keyAdapter:   NoopKeyAdapter{},
+		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
 	f.db.Store(db)
@@ -1638,7 +1639,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 }
 
 // mockGetSizeProperties mocks that 50MB * 20 SST file.
-func mockGetSizeProperties(log.Logger, *pebble.DB, KeyAdapter) (*sizeProperties, error) {
+func mockGetSizeProperties(log.Logger, *pebble.DB, common.KeyAdapter) (*sizeProperties, error) {
 	props := newSizeProperties()
 	// keys starts with 0 is meta keys, so we start with 1.
 	for i := byte(1); i <= 10; i++ {
@@ -1704,7 +1705,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		ctx:          engineCtx,
 		cancel:       cancel,
 		sstMetasChan: make(chan metaOrFlush, 64),
-		keyAdapter:   NoopKeyAdapter{},
+		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
 	f.db.Store(db)
@@ -2145,16 +2146,79 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 }
 
 func TestExternalEngineLoadIngestData(t *testing.T) {
-	//ctx := context.Background()
+	ctx := context.Background()
 	memstore := storage.NewMemStorage()
-	keys := [][]byte{
-		[]byte("key1"), []byte("key2"),
+	keys := make([][]byte, 100)
+	values := make([][]byte, 100)
+	for i := range keys {
+		keys[i] = []byte(fmt.Sprintf("key%06d", i))
+		values[i] = []byte(fmt.Sprintf("value%06d", i))
 	}
-	values := [][]byte{
-		[]byte("value1"), []byte("value2"),
-	}
-	dataFiles, statFiles, err := MockExternalEngine(memstore, keys, values)
+	endKey := []byte(fmt.Sprintf("key%06d", 100))
+	dataFiles, statFiles, err := external.MockExternalEngine(memstore, keys, values)
 	require.NoError(t, err)
-	_ = dataFiles
-	_ = statFiles
+	externalEngine := external.NewExternalEngine(
+		memstore,
+		dataFiles,
+		statFiles,
+		common.NoopKeyAdapter{},
+		false,
+		nil,
+		common.DupDetectOpt{},
+		123,
+	)
+	local := &Backend{
+		BackendConfig: BackendConfig{
+			WorkerConcurrency: 2,
+		},
+		splitCli: initTestSplitClient([][]byte{
+			keys[0], keys[50], endKey,
+		}, nil),
+	}
+	ranges := []Range{
+		{start: keys[0], end: keys[30]},
+		{start: keys[30], end: keys[60]},
+		{start: keys[60], end: keys[90]},
+		{start: keys[90], end: endKey},
+	}
+	jobToWorkerCh := make(chan *regionJob, 10)
+	jobWg := new(sync.WaitGroup)
+	err = local.generateAndSendJob(
+		ctx,
+		externalEngine,
+		ranges,
+		1<<30,
+		1<<20,
+		jobToWorkerCh,
+		jobWg,
+	)
+	require.NoError(t, err)
+	require.Len(t, jobToWorkerCh, 5)
+	jobs := make([]*regionJob, 0, 5)
+	for i := 0; i < 5; i++ {
+		jobs = append(jobs, <-jobToWorkerCh)
+	}
+	sort.Slice(jobs, func(i, j int) bool {
+		return bytes.Compare(jobs[i].keyRange.start, jobs[j].keyRange.start) < 0
+	})
+	expectedKeyRanges := []Range{
+		{start: keys[0], end: keys[30]},
+		{start: keys[30], end: keys[50]},
+		{start: keys[50], end: keys[60]},
+		{start: keys[60], end: keys[90]},
+		{start: keys[90], end: endKey},
+	}
+	kvIdx := 0
+	for i, job := range jobs {
+		require.Equal(t, expectedKeyRanges[i], job.keyRange)
+		iter := job.ingestData.NewIter(ctx, job.keyRange.start, job.keyRange.end)
+		for iter.First(); iter.Valid(); iter.Next() {
+			require.Equal(t, keys[kvIdx], iter.Key())
+			require.Equal(t, values[kvIdx], iter.Value())
+			kvIdx++
+		}
+		require.NoError(t, iter.Error())
+		require.NoError(t, iter.Close())
+	}
+	require.Equal(t, 100, kvIdx)
 }
