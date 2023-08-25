@@ -17,6 +17,7 @@ package handler
 import (
 	"net/http"
 
+	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -43,7 +44,8 @@ func (h ClusterUpgradeHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 
 	var err error
 	var hasDone bool
-	op := req.FormValue("op")
+	params := mux.Vars(req)
+	op := params[Operation]
 	switch op {
 	case "start":
 		hasDone, err = h.startUpgrade()
@@ -61,12 +63,13 @@ func (h ClusterUpgradeHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	if hasDone {
 		switch op {
 		case "start":
-			WriteData(w, "Be upgrading.")
+			WriteData(w, "It's a duplicated op and the cluster is already in upgrading state.")
 		case "finish":
-			WriteData(w, "Be normal.")
+			WriteData(w, "It's a duplicated op and the cluster is already in normal state.")
 		}
+	} else {
+		WriteData(w, "success!")
 	}
-	WriteData(w, "success!")
 	logutil.Logger(req.Context()).Info("upgrade op success",
 		zap.String("category", "upgrading"), zap.String("op", req.FormValue("op")), zap.Bool("hasDone", hasDone))
 }
