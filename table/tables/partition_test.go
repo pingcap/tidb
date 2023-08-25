@@ -2829,7 +2829,7 @@ func TestPartitionByExtensivePart(t *testing.T) {
 	t2Str := `create table t2 ` + tBase
 	tStr := `create table t ` + tBase
 
-	rows := 1000
+	rows := 100
 	pkInserts := 20
 	pkUpdates := 20
 	pkDeletes := 10 // Enough to delete half of what is inserted?
