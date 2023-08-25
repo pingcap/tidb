@@ -260,7 +260,8 @@ func (c *CMSketch) SubValue(h1, h2 uint64, count uint64) {
 	}
 }
 
-func queryValue(sctx sessionctx.Context, c *CMSketch, t *TopN, val types.Datum) (uint64, error) {
+// QueryValue is used to query the count of specified value.
+func QueryValue(sctx sessionctx.Context, c *CMSketch, t *TopN, val types.Datum) (uint64, error) {
 	var sc *stmtctx.StatementContext
 	if sctx != nil {
 		sc = sctx.GetSessionVars().StmtCtx
