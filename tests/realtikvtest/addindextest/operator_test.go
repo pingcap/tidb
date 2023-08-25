@@ -22,9 +22,10 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
-	"github.com/pingcap/tidb/ddl/session"
 	"github.com/pingcap/tidb/disttask/operator"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
@@ -41,12 +42,6 @@ func TestBackfillOperators(t *testing.T) {
 	tk.MustExec("create database op;")
 	tk.MustExec("use op;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-
-	rs := pools.NewResourcePool(func() (pools.Resource, error) {
-		newTk := testkit.NewTestKit(t, store)
-		return newTk.Session(), nil
-	}, 8, 8, 0)
-	sessPool := session.NewSessionPool(rs, store)
 
 	tk.MustExec("create table t(a int primary key, b int, index idx(b));")
 	for i := 0; i < 10; i++ {
@@ -67,6 +62,8 @@ func TestBackfillOperators(t *testing.T) {
 	idxInfo := tblInfo.FindIndexByName("idx")
 	copCtx, err := ddl.NewCopContext(tblInfo, idxInfo, tk.Session())
 	require.NoError(t, err)
+
+	sessPool := newSessPoolForTest(t, store)
 
 	// Test TableScanTaskSource operator.
 	var opTasks []ddl.TableScanTask
@@ -174,12 +171,6 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	tk.MustExec("use op;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 
-	rs := pools.NewResourcePool(func() (pools.Resource, error) {
-		newTk := testkit.NewTestKit(t, store)
-		return newTk.Session(), nil
-	}, 8, 8, 0)
-	sessPool := session.NewSessionPool(rs, store)
-
 	tk.MustExec("create table t(a int primary key, b int, index idx(b));")
 	for i := 0; i < 10; i++ {
 		tk.MustExec("insert into t values (?, ?)", i*10000, i)
@@ -197,6 +188,8 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("idx")
+
+	sessPool := newSessPoolForTest(t, store)
 
 	ctx := context.Background()
 	var keys, values [][]byte
@@ -224,6 +217,31 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, keys, 10)
 	require.Len(t, values, 10)
+}
+
+type sessPoolForTest struct {
+	pool *pools.ResourcePool
+}
+
+func newSessPoolForTest(t *testing.T, store kv.Storage) *sessPoolForTest {
+	return &sessPoolForTest{
+		pool: pools.NewResourcePool(func() (pools.Resource, error) {
+			newTk := testkit.NewTestKit(t, store)
+			return newTk.Session(), nil
+		}, 8, 8, 0),
+	}
+}
+
+func (p *sessPoolForTest) Get() (sessionctx.Context, error) {
+	resource, err := p.pool.Get()
+	if err != nil {
+		return nil, err
+	}
+	return resource.(sessionctx.Context), nil
+}
+
+func (p *sessPoolForTest) Put(sctx sessionctx.Context) {
+	p.pool.Put(sctx.(pools.Resource))
 }
 
 type testSink[T any] struct {

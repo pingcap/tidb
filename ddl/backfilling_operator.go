@@ -57,11 +57,16 @@ var (
 	_ operator.Operator                     = (*indexWriteResultSink)(nil)
 )
 
+type opSessPool interface {
+	Get() (sessionctx.Context, error)
+	Put(sessionctx.Context)
+}
+
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
 func NewAddIndexIngestPipeline(
 	ctx context.Context,
 	store kv.Storage,
-	sessPool *session.Pool,
+	sessPool opSessPool,
 	engine ingest.Engine,
 	sessCtx sessionctx.Context,
 	tbl table.PhysicalTable,
@@ -228,7 +233,7 @@ type TableScanOperator struct {
 
 func NewTableScanOperator(
 	ctx context.Context,
-	sessPool *session.Pool,
+	sessPool opSessPool,
 	copCtx *copContext,
 	srcChkPool chan *chunk.Chunk,
 	concurrency int,
@@ -254,7 +259,7 @@ func NewTableScanOperator(
 type tableScanWorker struct {
 	ctx        context.Context
 	copCtx     *copContext
-	sessPool   *session.Pool
+	sessPool   opSessPool
 	se         *session.Session
 	srcChkPool chan *chunk.Chunk
 }
@@ -344,7 +349,7 @@ type IndexIngestOperator struct {
 func NewIndexIngestOperator(
 	ctx context.Context,
 	copCtx *copContext,
-	sessPool *session.Pool,
+	sessPool opSessPool,
 	tbl table.PhysicalTable,
 	index table.Index,
 	engine ingest.Engine,
@@ -386,7 +391,7 @@ type indexIngestWorker struct {
 	index table.Index
 
 	copCtx   *copContext
-	sessPool *session.Pool
+	sessPool opSessPool
 	se       *session.Session
 
 	writer       ingest.Writer
