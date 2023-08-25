@@ -100,7 +100,6 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 		}
 	}
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].cnt > sorted[j].cnt })
-
 	failpoint.Inject("StabilizeV1AnalyzeTopN", func(val failpoint.Value) {
 		if val.(bool) {
 			// The earlier TopN entry will modify the CMSketch, therefore influence later TopN entry's row count.

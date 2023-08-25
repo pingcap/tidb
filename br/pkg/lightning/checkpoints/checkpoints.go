@@ -15,6 +15,7 @@
 package checkpoints
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"io"
 	"math"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -39,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // CheckpointStatus is the status of a checkpoint.
@@ -246,15 +247,11 @@ func (key *ChunkCheckpointKey) String() string {
 	return fmt.Sprintf("%s:%d", key.Path, key.Offset)
 }
 
-func (key *ChunkCheckpointKey) less(other *ChunkCheckpointKey) bool {
-	switch {
-	case key.Path < other.Path:
-		return true
-	case key.Path > other.Path:
-		return false
-	default:
-		return key.Offset < other.Offset
+func (key *ChunkCheckpointKey) less(other *ChunkCheckpointKey) int {
+	if c := cmp.Compare(key.Path, other.Path); c != 0 {
+		return c
 	}
+	return cmp.Compare(key.Offset, other.Offset)
 }
 
 // ChunkCheckpoint is the checkpoint for a chunk.
@@ -440,8 +437,9 @@ func (cp *TableCheckpoint) Apply(cpd *TableCheckpointDiff) {
 		for key, diff := range engineDiff.chunks {
 			checkpointKey := key
 			index := sort.Search(len(engine.Chunks), func(i int) bool {
-				return !engine.Chunks[i].Key.less(&checkpointKey)
+				return engine.Chunks[i].Key.less(&checkpointKey) > 0
 			})
+
 			if index >= len(engine.Chunks) {
 				continue
 			}
@@ -1351,7 +1349,7 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 			})
 		}
 
-		slices.SortFunc(engine.Chunks, func(i, j *ChunkCheckpoint) bool {
+		slices.SortFunc(engine.Chunks, func(i, j *ChunkCheckpoint) int {
 			return i.Key.less(&j.Key)
 		})
 
