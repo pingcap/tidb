@@ -138,7 +138,6 @@ require (
 )
 
 require (
-	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
 	k8s.io/utils v0.0.0-20230209194617-a36077c30491 // indirect
 )
