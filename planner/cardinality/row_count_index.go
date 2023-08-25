@@ -16,7 +16,6 @@ package cardinality
 
 import (
 	"bytes"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"math"
 	"slices"
 	"strings"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
