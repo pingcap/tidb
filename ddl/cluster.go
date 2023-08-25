@@ -16,9 +16,11 @@ package ddl
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -47,7 +49,6 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 var pdScheduleKey = []string{
@@ -327,8 +328,8 @@ func GetTableDataKeyRanges(nonFlashbackTableIDs []int64) []kv.KeyRange {
 
 	nonFlashbackTableIDs = append(nonFlashbackTableIDs, -1)
 
-	slices.SortFunc(nonFlashbackTableIDs, func(a, b int64) bool {
-		return a < b
+	slices.SortFunc(nonFlashbackTableIDs, func(a, b int64) int {
+		return cmp.Compare(a, b)
 	})
 
 	for i := 1; i < len(nonFlashbackTableIDs); i++ {

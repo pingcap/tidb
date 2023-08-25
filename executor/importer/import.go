@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -57,7 +58,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
