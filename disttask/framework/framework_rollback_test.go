@@ -130,7 +130,7 @@ func TestFrameworkRollback(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskAfterRefreshTask"))
 	}()
 
-	DispatchTaskAndCheckFail("key2", t, &m)
+	DispatchTaskAndCheckState("key2", t, &m, proto.TaskStateReverted)
 	require.Equal(t, int32(2), rollbackCnt.Load())
 	rollbackCnt.Store(0)
 	distContext.Close()
