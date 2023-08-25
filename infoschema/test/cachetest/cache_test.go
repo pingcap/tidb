@@ -176,5 +176,4 @@ func TestGetByTimestamp(t *testing.T) {
 	require.Equal(t, is2, ic.GetBySnapshotTS(2))
 	require.Equal(t, is3, ic.GetBySnapshotTS(3))
 	require.Equal(t, 3, ic.Len())
-
 }
