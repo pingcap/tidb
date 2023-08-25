@@ -50,7 +50,7 @@ func TestMemStoreBasic(t *testing.T) {
 	require.NotNil(t, err)
 
 	// create a writer to write
-	w, err := store.Create(ctx, "/hello.txt")
+	w, err := store.Create(ctx, "/hello.txt", nil)
 	require.Nil(t, err)
 	_, err = w.Write(ctx, []byte("hello world 3"))
 	require.Nil(t, err)

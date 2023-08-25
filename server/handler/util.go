@@ -17,6 +17,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/terror"
@@ -42,6 +43,25 @@ const (
 	DumpPartitionStats = "dumpPartitionStats"
 	Begin              = "begin"
 	End                = "end"
+)
+
+// For extract task handler
+const (
+	Type   = "type"
+	IsDump = "isDump"
+
+	// For extract plan task handler
+	IsSkipStats   = "isSkipStats"
+	IsHistoryView = "isHistoryView"
+)
+
+// For query string
+const (
+	TableIDQuery = "table_id"
+	Limit        = "limit"
+	JobID        = "start_job_id"
+	Operation    = "op"
+	Seconds      = "seconds"
 )
 
 const (
@@ -70,4 +90,19 @@ func WriteData(w http.ResponseWriter, data interface{}) {
 	w.WriteHeader(http.StatusOK)
 	_, err = w.Write(js)
 	terror.Log(errors.Trace(err))
+}
+
+// ExtractTableAndPartitionName extracts table name and partition name from this "table(partition)":
+func ExtractTableAndPartitionName(str string) (table, partition string) {
+	// extract table name and partition name from this "table(partition)":
+	// A sane person would not let the the table name or partition name contain '('.
+	start := strings.IndexByte(str, '(')
+	if start == -1 {
+		return str, ""
+	}
+	end := strings.IndexByte(str, ')')
+	if end == -1 {
+		return str, ""
+	}
+	return str[:start], str[start+1 : end]
 }

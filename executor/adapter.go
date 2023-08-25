@@ -1648,6 +1648,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			Detail:     stmtCtx.GetExecDetails(),
 			Succ:       succ,
 			ConnID:     sessVars.ConnectionID,
+			SessAlias:  sessVars.SessionAlias,
 			TxnTS:      txnTS,
 			User:       userString,
 			DB:         sessVars.CurrentDB,
@@ -1780,7 +1781,8 @@ func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPla
 			// some hints like 'memory_quota' cannot be extracted from the PhysicalPlan directly,
 			// so we have to iterate all hints from the customer and keep some other necessary hints.
 			switch tableHint.HintName.L {
-			case "memory_quota", "use_toja", "no_index_merge", "max_execution_time",
+			case plannercore.HintMemoryQuota, plannercore.HintUseToja, plannercore.HintNoIndexMerge,
+				plannercore.HintMaxExecutionTime, plannercore.HintTidbKvReadTimeout,
 				plannercore.HintIgnoreIndex, plannercore.HintReadFromStorage, plannercore.HintMerge,
 				plannercore.HintSemiJoinRewrite, plannercore.HintNoDecorrelate:
 				hints = append(hints, tableHint)

@@ -1268,7 +1268,7 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 }
 
 func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	orig := variable.EnableRowLevelChecksum.Load()
 	defer variable.EnableRowLevelChecksum.Store(orig)

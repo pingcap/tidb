@@ -10,6 +10,7 @@ go_test(
     data = glob(["testdata/**"]),
     flaky = True,
     deps = [
+        "//config",
         "//infoschema",
         "//kv",
         "//parser",

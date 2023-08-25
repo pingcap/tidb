@@ -25,6 +25,7 @@
 package expression
 
 import (
+	"slices"
 	"strings"
 	"sync"
 	"unsafe"
@@ -42,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/exp/slices"
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
@@ -70,7 +70,7 @@ func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
 // metadata returns the metadata of a function.
 // metadata means some functions contain extra inner fields which will not
 // contain in `tipb.Expr.children` but must be pushed down to coprocessor
-func (b *baseBuiltinFunc) metadata() proto.Message {
+func (*baseBuiltinFunc) metadata() proto.Message {
 	// We will not use a field to store them because of only
 	// a few functions contain implicit parameters
 	return nil
@@ -244,67 +244,67 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 	return b.args
 }
 
-func (b *baseBuiltinFunc) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalInt(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalInt() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalReal(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalReal() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalString(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalString() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalDecimal(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalDecimal() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalTime(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalTime() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalDuration(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalDuration() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalJSON(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalJSON() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) evalInt(row chunk.Row) (int64, bool, error) {
+func (*baseBuiltinFunc) evalInt(chunk.Row) (int64, bool, error) {
 	return 0, false, errors.Errorf("baseBuiltinFunc.evalInt() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) evalReal(row chunk.Row) (float64, bool, error) {
+func (*baseBuiltinFunc) evalReal(chunk.Row) (float64, bool, error) {
 	return 0, false, errors.Errorf("baseBuiltinFunc.evalReal() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) evalString(row chunk.Row) (string, bool, error) {
+func (*baseBuiltinFunc) evalString(chunk.Row) (string, bool, error) {
 	return "", false, errors.Errorf("baseBuiltinFunc.evalString() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
+func (*baseBuiltinFunc) evalDecimal(chunk.Row) (*types.MyDecimal, bool, error) {
 	return nil, false, errors.Errorf("baseBuiltinFunc.evalDecimal() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) evalTime(row chunk.Row) (types.Time, bool, error) {
+func (*baseBuiltinFunc) evalTime(chunk.Row) (types.Time, bool, error) {
 	return types.ZeroTime, false, errors.Errorf("baseBuiltinFunc.evalTime() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) evalDuration(row chunk.Row) (types.Duration, bool, error) {
+func (*baseBuiltinFunc) evalDuration(chunk.Row) (types.Duration, bool, error) {
 	return types.Duration{}, false, errors.Errorf("baseBuiltinFunc.evalDuration() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) evalJSON(row chunk.Row) (types.BinaryJSON, bool, error) {
+func (*baseBuiltinFunc) evalJSON(chunk.Row) (types.BinaryJSON, bool, error) {
 	return types.BinaryJSON{}, false, errors.Errorf("baseBuiltinFunc.evalJSON() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) vectorized() bool {
+func (*baseBuiltinFunc) vectorized() bool {
 	return false
 }
 
-func (b *baseBuiltinFunc) supportReverseEval() bool {
+func (*baseBuiltinFunc) supportReverseEval() bool {
 	return false
 }
 
@@ -321,7 +321,7 @@ func (b *baseBuiltinFunc) isChildrenReversed() bool {
 	return b.childrenReversed
 }
 
-func (b *baseBuiltinFunc) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (types.Datum, error) {
+func (*baseBuiltinFunc) reverseEval(*stmtctx.StatementContext, types.Datum, types.RoundingType) (types.Datum, error) {
 	return types.Datum{}, errors.Errorf("baseBuiltinFunc.reverseEvalInt() should never be called, please contact the TiDB team for help")
 }
 
@@ -339,8 +339,7 @@ func (b *baseBuiltinFunc) isChildrenVectorized() bool {
 }
 
 func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
-	switch b.tp.EvalType() {
-	case types.ETString:
+	if b.tp.EvalType() == types.ETString {
 		if b.tp.GetFlen() >= mysql.MaxBlobWidth {
 			b.tp.SetType(mysql.TypeLongBlob)
 		} else if b.tp.GetFlen() >= 65536 {
@@ -386,7 +385,7 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.ctor = from.ctor
 }
 
-func (b *baseBuiltinFunc) Clone() builtinFunc {
+func (*baseBuiltinFunc) Clone() builtinFunc {
 	panic("you should not call this method.")
 }
 

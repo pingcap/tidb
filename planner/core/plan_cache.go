@@ -245,6 +245,9 @@ func getCachedPointPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmt
 	}
 	sessVars.FoundInPlanCache = true
 	stmtCtx.PointExec = true
+	if pointGetPlan, ok := plan.(*PointGetPlan); ok && pointGetPlan != nil && pointGetPlan.stmtHints != nil {
+		sessVars.StmtCtx.StmtHints = *pointGetPlan.stmtHints
+	}
 	return plan, names, true, nil
 }
 
@@ -285,6 +288,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 		core_metrics.GetPlanCacheHitCounter(isNonPrepared).Inc()
 	}
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
+	stmtCtx.StmtHints = *cachedVal.stmtHints
 	return cachedVal.Plan, cachedVal.OutPutNames, true, nil
 }
 
@@ -327,7 +331,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, matchOpts)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, matchOpts, &stmtCtx.StmtHints)
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
@@ -347,7 +351,7 @@ func RebuildPlan4CachedPlan(p Plan) (ok bool) {
 	sc.InPreparedPlanBuilding = true
 	defer func() { sc.InPreparedPlanBuilding = false }()
 	if err := rebuildRange(p); err != nil {
-		// TODO: log or warn this error.
+		sc.AppendWarning(errors.Errorf("skip plan-cache: plan rebuild failed, %s", err.Error()))
 		return false // fail to rebuild ranges
 	}
 	if !sc.UseCache {
@@ -757,11 +761,14 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 		names   types.NameSlice
 	)
 
-	if _, _ok := p.(*PointGetPlan); _ok {
+	if plan, _ok := p.(*PointGetPlan); _ok {
 		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
 		names = p.OutputNames()
 		if err != nil {
 			return err
+		}
+		if ok {
+			plan.stmtHints = sctx.GetSessionVars().StmtCtx.StmtHints.Clone()
 		}
 	}
 

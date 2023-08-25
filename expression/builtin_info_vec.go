@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/printer"
-	"golang.org/x/exp/slices"
 )
 
 func (b *builtinDatabaseSig) vectorized() bool {

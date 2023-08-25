@@ -22,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cockroachdb/pebble"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -103,7 +102,7 @@ type regionJob struct {
 	// writeResult is available only in wrote and ingested stage
 	writeResult *tikvWriteResult
 
-	engine          *Engine
+	ingestData      IngestData
 	regionSplitSize int64
 	regionSplitKeys int64
 	metrics         *metric.Metrics
@@ -121,6 +120,39 @@ type tikvWriteResult struct {
 	count             int64
 	totalBytes        int64
 	remainingStartKey []byte
+}
+
+// IngestData describes a common interface that is needed by TiKV write +
+// ingest RPC.
+type IngestData interface {
+	// GetFirstAndLastKey returns the first and last key of the data reader in the
+	// range [lowerBound, upperBound). Empty or nil bounds means unbounded.
+	// lowerBound must be less than upperBound.
+	// when there is no data in the range, it should return nil, nil, nil
+	GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error)
+	NewIter(ctx context.Context, lowerBound, upperBound []byte) ForwardIter
+	// GetTS will be used as the start/commit TS of the data.
+	GetTS() uint64
+	// Finish will be called when the data is ingested successfully.
+	Finish(totalBytes, totalCount int64)
+}
+
+// ForwardIter describes a iterator that can only move forward.
+type ForwardIter interface {
+	// First moves this iter to the first key.
+	First() bool
+	// Valid check this iter reach the end.
+	Valid() bool
+	// Next moves this iter forward.
+	Next() bool
+	// Key represents current position pair's key.
+	Key() []byte
+	// Value represents current position pair's Value.
+	Value() []byte
+	// Close close this iter.
+	Close() error
+	// Error return current error on this iter.
+	Error() error
 }
 
 type injectedBehaviour struct {
@@ -149,8 +181,7 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 			return
 		}
 
-		j.engine.importedKVSize.Add(j.writeResult.totalBytes)
-		j.engine.importedKVCount.Add(j.writeResult.count)
+		j.ingestData.Finish(j.writeResult.totalBytes, j.writeResult.count)
 		if j.metrics != nil {
 			j.metrics.BytesCounter.WithLabelValues(metric.StateImported).
 				Add(float64(j.writeResult.totalBytes))
@@ -191,7 +222,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	begin := time.Now()
 	region := j.region.Region
 
-	firstKey, lastKey, err := j.engine.getFirstAndLastKey(j.keyRange.start, j.keyRange.end)
+	firstKey, lastKey, err := j.ingestData.GetFirstAndLastKey(j.keyRange.start, j.keyRange.end)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -236,7 +267,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			ResourceControlContext: &kvrpcpb.ResourceControlContext{
 				ResourceGroupName: local.ResourceGroupName,
 			},
-			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
 		},
 	}
 	for _, peer := range region.GetPeers() {
@@ -259,7 +290,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	}
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
-			CommitTs: j.engine.TS,
+			CommitTs: j.ingestData.GetTS(),
 		},
 	}
 
@@ -300,8 +331,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		return nil
 	}
 
-	opt := &pebble.IterOptions{LowerBound: j.keyRange.start, UpperBound: j.keyRange.end}
-	iter := j.engine.newKVIter(ctx, opt)
+	iter := j.ingestData.NewIter(ctx, j.keyRange.start, j.keyRange.end)
 	//nolint: errcheck
 	defer iter.Close()
 
@@ -377,6 +407,11 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		}
 	}
 
+	failpoint.Inject("NoLeader", func() {
+		log.FromContext(ctx).Warn("enter failpoint NoLeader")
+		leaderPeerMetas = nil
+	})
+
 	// if there is not leader currently, we don't forward the stage to wrote and let caller
 	// handle the retry.
 	if len(leaderPeerMetas) == 0 {
@@ -384,8 +419,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			logutil.Region(region), logutil.Leader(j.region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
 			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize))
-		return errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
-			region.Id, leaderID)
+		return common.ErrNoLeader.GenWithStackByArgs(region.Id, leaderID)
 	}
 
 	takeTime := time.Since(begin)
@@ -569,7 +603,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			ResourceControlContext: &kvrpcpb.ResourceControlContext{
 				ResourceGroupName: local.ResourceGroupName,
 			},
-			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
 		}
 
 		if supportMultiIngest {

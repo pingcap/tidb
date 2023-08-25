@@ -69,10 +69,11 @@ type Manager struct {
 	subtaskExecutorPools map[string]Pool
 	mu                   struct {
 		sync.RWMutex
-		// taskID -> cancelFunc
-		// cancelFunc is used to fast cancel the scheduler.Run
+		// taskID -> cancelFunc.
+		// cancelFunc is used to fast cancel the scheduler.Run.
 		handlingTasks map[int64]context.CancelFunc
 	}
+	// id, it's the same as server id now, i.e. host:port.
 	id           string
 	wg           sync.WaitGroup
 	ctx          context.Context
@@ -188,7 +189,7 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 			logutil.Logger(m.logCtx).Error("unknown task type", zap.String("type", task.Type))
 			continue
 		}
-		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStatePending, proto.TaskStateRevertPending)
+		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRevertPending)
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("check subtask exist failed", zap.Error(err))
 			m.onError(err)
@@ -197,14 +198,14 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 		if !exist {
 			continue
 		}
-		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Any("id", task.ID))
+		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Any("task_id", task.ID))
 		m.addHandlingTask(task.ID)
 		t := task
 		err = m.schedulerPool.Run(func() {
 			m.onRunnableTask(ctx, t.ID, t.Type)
-			m.removeHandlingTask(t.ID)
+			m.removeHandlingTask(task.ID)
 		})
-		// pool closed
+		// pool closed.
 		if err != nil {
 			m.removeHandlingTask(task.ID)
 			m.onError(err)
@@ -218,7 +219,7 @@ func (m *Manager) onCanceledTasks(_ context.Context, tasks []*proto.Task) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, task := range tasks {
-		logutil.Logger(m.logCtx).Info("onCanceledTasks", zap.Any("id", task.ID))
+		logutil.Logger(m.logCtx).Info("onCanceledTasks", zap.Any("task_id", task.ID))
 		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
 			cancel()
 		}
@@ -230,7 +231,7 @@ func (m *Manager) cancelAllRunningTasks() {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for id, cancel := range m.mu.handlingTasks {
-		logutil.Logger(m.logCtx).Info("cancelAllRunningTasks", zap.Any("id", id))
+		logutil.Logger(m.logCtx).Info("cancelAllRunningTasks", zap.Any("task_id", id))
 		if cancel != nil {
 			cancel()
 		}
@@ -254,12 +255,12 @@ func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) []*proto.Task 
 
 // onRunnableTask handles a runnable task.
 func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType string) {
-	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Any("id", taskID), zap.Any("type", taskType))
+	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Any("task_id", taskID), zap.Any("type", taskType))
 	if _, ok := m.subtaskExecutorPools[taskType]; !ok {
 		m.onError(errors.Errorf("task type %s not found", taskType))
 		return
 	}
-	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks
+	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks.
 	scheduler := m.newScheduler(ctx, m.id, taskID, m.taskTable, m.subtaskExecutorPools[taskType])
 	scheduler.Start()
 	defer scheduler.Stop()
@@ -275,11 +276,10 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType str
 			return
 		}
 		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {
-			logutil.Logger(m.logCtx).Info("onRunnableTask exit", zap.Any("id", taskID), zap.Any("state", task.State))
+			logutil.Logger(m.logCtx).Info("onRunnableTask exit", zap.Any("task_id", taskID), zap.Int64("step", task.Step), zap.Any("state", task.State))
 			return
 		}
-		// TODO: intergrate with heartbeat mechanism
-		if exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStatePending, proto.TaskStateRevertPending); err != nil {
+		if exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRevertPending); err != nil {
 			m.onError(err)
 			return
 		} else if !exist {

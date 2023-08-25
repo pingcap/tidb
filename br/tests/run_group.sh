@@ -9,7 +9,9 @@ set -eo pipefail
 # Step 1
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 group=$1
-
+export COV_DIR="/tmp/group_cover"
+rm -rf COV_DIR
+mkdir $COV_DIR
 
 # Define groups
 # Note: If new group is added, the group name must also be added to CI
@@ -19,7 +21,7 @@ group=$1
 declare -A groups
 groups=(
 	["G00"]="br_300_small_tables br_backup_empty br_backup_version br_cache_table br_case_sensitive br_charset_gbk br_check_new_collocation_enable"
-	["G01"]="br_crypter2 br_db br_db_online br_db_online_newkv br_db_skip br_debug_meta br_ebs br_foreign_key br_full"
+	["G01"]="br_autoid br_crypter2 br_db br_db_online br_db_online_newkv br_db_skip br_debug_meta br_ebs br_foreign_key br_full"
 	["G02"]="br_full_cluster_restore br_full_ddl br_full_index br_gcs br_history"
     ["G03"]='br_incompatible_tidb_config br_incremental br_incremental_ddl br_incremental_index'
 	["G04"]='br_incremental_only_ddl br_incremental_same_table br_insert_after_restore br_key_locked br_log_test br_move_backup br_mv_index br_other br_partition_add_index'
@@ -65,8 +67,6 @@ elif [[ " ${!groups[*]} " =~ " ${group} " ]]; then
             echo "Run cases: ${case_name}"
             rm -rf /tmp/backup_restore_test
             mkdir -p /tmp/backup_restore_test
-            rm -rf cover
-            mkdir cover
             TEST_NAME=${case_name} ${CUR}/run.sh
         done
 	fi

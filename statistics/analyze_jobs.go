@@ -21,23 +21,25 @@ import (
 
 // AnalyzeJob is used to represent the status of one analyze job.
 type AnalyzeJob struct {
+	StartTime     time.Time
+	EndTime       time.Time
 	ID            *uint64
 	DBName        string
 	TableName     string
 	PartitionName string
 	JobInfo       string
-	StartTime     time.Time
-	EndTime       time.Time
-	Progress      AnalyzeProgress
+
+	SampleRateReason string // why this sample-rate is chosen
+	Progress         AnalyzeProgress
 }
 
 // AnalyzeProgress represents the process of one analyze job.
 type AnalyzeProgress struct {
-	sync.Mutex
-	// deltaCount is the newly processed rows after the last time mysql.analyze_jobs.processed_rows is updated.
-	deltaCount int64
 	// lastDumpTime is the last time mysql.analyze_jobs.processed_rows is updated.
 	lastDumpTime time.Time
+	// deltaCount is the newly processed rows after the last time mysql.analyze_jobs.processed_rows is updated.
+	deltaCount int64
+	sync.Mutex
 }
 
 // Update adds rowCount to the delta count. If the updated delta count reaches threshold, it returns the delta count for

@@ -39,6 +39,12 @@ func (t *MockTaskTable) GetGlobalTasksInStates(states ...interface{}) ([]*proto.
 	}
 }
 
+// StartSubtask implements TaskTable.StartSubtask.
+func (t *MockTaskTable) StartSubtask(id int64) error {
+	args := t.Called(id)
+	return args.Error(0)
+}
+
 // GetGlobalTaskByID implements TaskTable.GetTaskByID.
 func (t *MockTaskTable) GetGlobalTaskByID(id int64) (*proto.Task, error) {
 	args := t.Called(id)
@@ -52,8 +58,8 @@ func (t *MockTaskTable) GetGlobalTaskByID(id int64) (*proto.Task, error) {
 }
 
 // GetSubtaskInStates implements SubtaskTable.GetSubtaskInStates.
-func (t *MockTaskTable) GetSubtaskInStates(instanceID string, taskID int64, states ...interface{}) (*proto.Subtask, error) {
-	args := t.Called(instanceID, taskID, states)
+func (t *MockTaskTable) GetSubtaskInStates(instanceID string, taskID int64, step int64, states ...interface{}) (*proto.Subtask, error) {
+	args := t.Called(instanceID, taskID, step, states)
 	if args.Error(1) != nil {
 		return nil, args.Error(1)
 	} else if args.Get(0) == nil {
@@ -76,8 +82,8 @@ func (t *MockTaskTable) FinishSubtask(id int64, meta []byte) error {
 }
 
 // HasSubtasksInStates implements SubtaskTable.HasSubtasksInStates.
-func (t *MockTaskTable) HasSubtasksInStates(instanceID string, taskID int64, states ...interface{}) (bool, error) {
-	args := t.Called(instanceID, taskID, states)
+func (t *MockTaskTable) HasSubtasksInStates(instanceID string, taskID int64, step int64, states ...interface{}) (bool, error) {
+	args := t.Called(instanceID, taskID, step, states)
 	return args.Bool(0), args.Error(1)
 }
 

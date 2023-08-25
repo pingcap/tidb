@@ -9,11 +9,11 @@ import (
 	reflect "reflect"
 	time "time"
 
-	gomock "github.com/golang/mock/gomock"
 	uuid "github.com/google/uuid"
 	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
 	encode "github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	model "github.com/pingcap/tidb/parser/model"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockBackend is a mock of Backend interface.

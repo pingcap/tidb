@@ -15,9 +15,12 @@
 package indexmergereadtest
 
 import (
+	"cmp"
+	"context"
 	"fmt"
 	"math/rand"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,12 +28,13 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 )
 
 func TestSingleTableRead(t *testing.T) {
@@ -694,7 +698,7 @@ func TestIntersectionWithDifferentConcurrency(t *testing.T) {
 		tk.MustExec(tblSchema)
 
 		const queryCnt int = 10
-		const rowCnt int = 1000
+		const rowCnt int = 500
 		curRowCnt := 0
 		insertStr := "insert into t1 values"
 		for i := 0; i < rowCnt; i++ {
@@ -806,7 +810,7 @@ func setupPartitionTableHelper(tk *testkit.TestKit) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3));")
 	insertStr := "insert into t1 values(0, 0, 0)"
-	for i := 1; i < 1000; i++ {
+	for i := 1; i < 500; i++ {
 		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
 	}
 	tk.MustExec(insertStr)
@@ -1008,11 +1012,11 @@ func getResult(values []*valueStruct, a int, b int, limit int, desc bool) []*val
 			ret = append(ret, value)
 		}
 	}
-	slices.SortFunc(ret, func(a, b *valueStruct) bool {
+	slices.SortFunc(ret, func(a, b *valueStruct) int {
 		if desc {
-			return a.c > b.c
+			return cmp.Compare(b.c, a.c)
 		}
-		return a.c < b.c
+		return cmp.Compare(a.c, b.c)
 	})
 	if len(ret) > limit {
 		return ret[:limit]
@@ -1165,6 +1169,29 @@ func TestProcessInfoRaceWithIndexScan(t *testing.T) {
 	wg.Wait()
 }
 
+func TestIndexMergeReaderIssue45279(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists reproduce;")
+	tk.MustExec("CREATE TABLE reproduce (c1 int primary key, c2 int, c3 int, key ci2(c2), key ci3(c3));")
+	tk.MustExec("insert into reproduce values (1, 1, 1), (2, 2, 2), (3, 3, 3);")
+	tk.MustQuery("explain select * from reproduce where c1 in (0, 1, 2, 3) or c2 in (0, 1, 2);").Check(testkit.Rows(
+		"IndexMerge_11 33.99 root  type: union",
+		"├─TableRangeScan_8(Build) 4.00 cop[tikv] table:reproduce range:[0,0], [1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+		"├─IndexRangeScan_9(Build) 30.00 cop[tikv] table:reproduce, index:ci2(c2) range:[0,0], [1,1], [2,2], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_10(Probe) 33.99 cop[tikv] table:reproduce keep order:false, stats:pseudo"))
+
+	// This function should return successfully
+	var ctx context.Context
+	ctx, executor.IndexMergeCancelFuncForTest = context.WithCancel(context.Background())
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testCancelContext", "return()"))
+	rs, _ := tk.ExecWithContext(ctx, "select * from reproduce where c1 in (0, 1, 2, 3) or c2 in (0, 1, 2);")
+	session.ResultSetToStringSlice(ctx, tk.Session(), rs)
+	failpoint.Disable("github.com/pingcap/tidb/br/pkg/checksum/testCancelContext")
+}
+
 func TestIndexMergeLimitNotPushedOnPartialSideButKeepOrder(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1235,4 +1262,17 @@ func TestIndexMergeKeepOrderDirtyRead(t *testing.T) {
 	tk.HasPlan(querySQL, "IndexMerge")
 	tk.MustQuery(querySQL).Check(testkit.Rows("1 2 4", "1 1 1"))
 	tk.MustExec("rollback")
+}
+
+func TestIssues46005(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_index_lookup_size = 1024")
+	tk.MustExec("create table t(a int, b int, c int, index idx1(a, c), index idx2(b, c))")
+	for i := 0; i < 1500; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t(a,b,c) values (1, 1, %d)", i))
+	}
+
+	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 1025")
 }

@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/rowcodec"
-	"golang.org/x/exp/slices"
 )
 
 // BatchPointGetExec executes a bunch of point select queries.
@@ -229,7 +229,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if len(e.planPhysIDs) > 0 {
 				physID = e.planPhysIDs[i]
 			} else {
-				physID, err = core.GetPhysID(e.tblInfo, e.partExpr, idxVals[e.partPos])
+				physID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, idxVals[e.partPos])
 				if err != nil {
 					continue
 				}
@@ -254,11 +254,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			toFetchIndexKeys = append(toFetchIndexKeys, idxKey)
 		}
 		if e.keepOrder {
-			slices.SortFunc(toFetchIndexKeys, func(i, j kv.Key) bool {
+			slices.SortFunc(toFetchIndexKeys, func(i, j kv.Key) int {
 				if e.desc {
-					return i.Cmp(j) > 0
+					return j.Cmp(i)
 				}
-				return i.Cmp(j) < 0
+				return i.Cmp(j)
 			})
 		}
 
@@ -322,11 +322,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			failpoint.InjectContext(ctx, "batchPointGetRepeatableReadTest-step2", nil)
 		})
 	} else if e.keepOrder {
-		less := func(i, j kv.Handle) bool {
+		less := func(i, j kv.Handle) int {
 			if e.desc {
-				return i.Compare(j) > 0
+				return j.Compare(i)
 			}
-			return i.Compare(j) < 0
+			return i.Compare(j)
 		}
 		if e.tblInfo.PKIsHandle && mysql.HasUnsignedFlag(e.tblInfo.GetPkColInfo().GetFlag()) {
 			uintComparator := func(i, h kv.Handle) int {
@@ -343,11 +343,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				}
 				return 0
 			}
-			less = func(i, j kv.Handle) bool {
+			less = func(i, j kv.Handle) int {
 				if e.desc {
-					return uintComparator(i, j) > 0
+					return uintComparator(j, i)
 				}
-				return uintComparator(i, j) < 0
+				return uintComparator(i, j)
 			}
 		}
 		slices.SortFunc(e.handles, less)
@@ -364,7 +364,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		} else {
 			if handle.IsInt() {
 				d := types.NewIntDatum(handle.IntValue())
-				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, d)
+				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, d)
 				if err != nil {
 					continue
 				}
@@ -373,7 +373,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				if err1 != nil {
 					return err1
 				}
-				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, d)
+				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, d)
 				if err != nil {
 					continue
 				}

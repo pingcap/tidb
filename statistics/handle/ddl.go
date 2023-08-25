@@ -69,8 +69,23 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 			if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
 				return err
 			}
+			// Do not update global stats, since the data have not changed!
 		}
-		// Do not update global stats, since the data have not changed!
+	case model.ActionAlterTablePartitioning:
+		// Add partitioning
+		for _, def := range t.PartInfo.Definitions {
+			// TODO: Should we trigger analyze instead of adding 0s?
+			if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
+				return err
+			}
+		}
+		fallthrough
+	case model.ActionRemovePartitioning:
+		// Change id for global stats, since the data has not changed!
+		// Note that t.TableInfo is the current (new) table info
+		// and t.PartInfo.NewTableID is actually the old table ID!
+		// (see onReorganizePartition)
+		return h.changeGlobalStatsID(t.PartInfo.NewTableID, t.TableInfo.ID)
 	case model.ActionFlashbackCluster:
 		return h.updateStatsVersion()
 	}
@@ -217,6 +232,27 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 			if err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func (h *Handle) changeGlobalStatsID(from, to int64) (err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	for _, table := range []string{"stats_meta", "stats_top_n", "stats_fm_sketch", "stats_buckets", "stats_histograms", "column_stats_usage"} {
+		_, err = exec.ExecuteInternal(ctx, "update mysql."+table+" set table_id = %? where table_id = %?", to, from)
+		if err != nil {
+			return err
 		}
 	}
 	return nil

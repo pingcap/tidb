@@ -173,6 +173,17 @@
           "      └─TableFullScan_25 10000.00 928000.00 batchCop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
+      },
+      {
+        "SQL": "explain select  /*+ READ_FROM_STORAGE(TIFLASH[s]) */ a from s where a = 10 and b is null; -- index path huristic rule will prune tiflash path",
+        "Plan": [
+          "TableReader_12 0.10 root  MppVersion: 2, data:ExchangeSender_11",
+          "└─ExchangeSender_11 0.10 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_5 0.10 mpp[tiflash]  test.s.a",
+          "    └─Selection_10 0.10 mpp[tiflash]  isnull(test.s.b)",
+          "      └─TableFullScan_9 10.00 mpp[tiflash] table:s pushed down filter:eq(test.s.a, 10), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
       }
     ]
   },
@@ -2100,6 +2111,124 @@
           "                  └─Expand 10000.00 mpp[tiflash]  level-projection:[test.sales.profit, <nil>->Column#6, <nil>->Column#7, 0->gid],[test.sales.profit, Column#6, <nil>->Column#7, 1->gid],[test.sales.profit, Column#6, Column#7, 3->gid]; schema: [test.sales.profit,Column#6,Column#7,gid]",
           "                    └─Projection 10000.00 mpp[tiflash]  test.sales.profit, plus(test.sales.year, 2)->Column#6, plus(test.sales.year, test.sales.profit)->Column#7",
           "                      └─TableFullScan 10000.00 mpp[tiflash] table:sales keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' SELECT year+2 as y, SUM(profit) AS profit, grouping(year+2) FROM sales GROUP BY year+2, year+profit WITH ROLLUP having y > 2002 order by year+2, profit; -- 11. grouping function validation",
+        "Plan": [
+          "Sort 6400.00 root  Column#6, Column#9",
+          "└─TableReader 6400.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection 6400.00 mpp[tiflash]  Column#6, Column#9, grouping(gid)->Column#10",
+          "      └─Projection 6400.00 mpp[tiflash]  Column#9, Column#6, gid",
+          "        └─HashAgg 6400.00 mpp[tiflash]  group by:Column#29, Column#30, Column#31, funcs:sum(Column#26)->Column#9, funcs:firstrow(Column#27)->Column#6, funcs:firstrow(Column#28)->gid",
+          "          └─Projection 8000.00 mpp[tiflash]  cast(test.sales.profit, decimal(10,0) BINARY)->Column#26, Column#6->Column#27, gid->Column#28, Column#6->Column#29, Column#7->Column#30, gid->Column#31",
+          "            └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#6, collate: binary], [name: Column#7, collate: binary], [name: gid, collate: binary]",
+          "                └─Selection 8000.00 mpp[tiflash]  gt(Column#6, 2002)",
+          "                  └─Expand 10000.00 mpp[tiflash]  level-projection:[test.sales.profit, <nil>->Column#6, <nil>->Column#7, 0->gid],[test.sales.profit, Column#6, <nil>->Column#7, 1->gid],[test.sales.profit, Column#6, Column#7, 3->gid]; schema: [test.sales.profit,Column#6,Column#7,gid]",
+          "                    └─Projection 10000.00 mpp[tiflash]  test.sales.profit, plus(test.sales.year, 2)->Column#6, plus(test.sales.year, test.sales.profit)->Column#7",
+          "                      └─TableFullScan 10000.00 mpp[tiflash] table:sales keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' SELECT year, country, product, SUM(profit) AS profit FROM sales GROUP BY year, country, product with rollup order by grouping(year); -- 12. grouping function in order by clause",
+        "Plan": [
+          "Projection 8000.00 root  Column#6, Column#7->Column#12, Column#8->Column#13, Column#10",
+          "└─Projection 8000.00 root  Column#10, Column#6, Column#7, Column#8, gid",
+          "  └─Sort 8000.00 root  Column#34",
+          "    └─Projection 8000.00 root  Column#10, Column#6, Column#7, Column#8, gid, grouping(gid)->Column#34",
+          "      └─TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─Projection 8000.00 mpp[tiflash]  Column#10, Column#6, Column#7, Column#8, gid",
+          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#30, Column#31, Column#32, Column#33, funcs:sum(Column#25)->Column#10, funcs:firstrow(Column#26)->Column#6, funcs:firstrow(Column#27)->Column#7, funcs:firstrow(Column#28)->Column#8, funcs:firstrow(Column#29)->gid",
+          "              └─Projection 10000.00 mpp[tiflash]  cast(test.sales.profit, decimal(10,0) BINARY)->Column#25, Column#6->Column#26, Column#7->Column#27, Column#8->Column#28, gid->Column#29, Column#6->Column#30, Column#7->Column#31, Column#8->Column#32, gid->Column#33",
+          "                └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#6, collate: binary], [name: Column#7, collate: utf8mb4_bin], [name: Column#8, collate: utf8mb4_bin], [name: gid, collate: binary]",
+          "                    └─Expand 10000.00 mpp[tiflash]  level-projection:[test.sales.profit, <nil>->Column#6, <nil>->Column#7, <nil>->Column#8, 0->gid],[test.sales.profit, Column#6, <nil>->Column#7, <nil>->Column#8, 1->gid],[test.sales.profit, Column#6, Column#7, <nil>->Column#8, 3->gid],[test.sales.profit, Column#6, Column#7, Column#8, 7->gid]; schema: [test.sales.profit,Column#6,Column#7,Column#8,gid]",
+          "                      └─Projection 10000.00 mpp[tiflash]  test.sales.profit, test.sales.year->Column#6, test.sales.country->Column#7, test.sales.product->Column#8",
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:sales keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(country); -- 13. 12 under gpos case",
+        "Plan": [
+          "Projection 8000.00 root  Column#6, Column#7->Column#12, Column#10",
+          "└─Projection 8000.00 root  Column#10, Column#6, Column#7, gid",
+          "  └─Sort 8000.00 root  Column#31",
+          "    └─Projection 8000.00 root  Column#10, Column#6, Column#7, gid, grouping(gid)->Column#31",
+          "      └─TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─Projection 8000.00 mpp[tiflash]  Column#10, Column#6, Column#7, gid",
+          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#26, Column#27, Column#28, Column#29, Column#30, funcs:sum(Column#22)->Column#10, funcs:firstrow(Column#23)->Column#6, funcs:firstrow(Column#24)->Column#7, funcs:firstrow(Column#25)->gid",
+          "              └─Projection 10000.00 mpp[tiflash]  cast(test.sales.profit, decimal(10,0) BINARY)->Column#22, Column#6->Column#23, Column#7->Column#24, gid->Column#25, Column#6->Column#26, Column#6->Column#27, Column#7->Column#28, gid->Column#29, gpos->Column#30",
+          "                └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#6, collate: utf8mb4_bin], [name: Column#6, collate: utf8mb4_bin], [name: Column#7, collate: utf8mb4_bin], [name: gid, collate: binary], [name: gpos, collate: binary]",
+          "                    └─Expand 10000.00 mpp[tiflash]  level-projection:[test.sales.profit, <nil>->Column#6, <nil>->Column#7, 0->gid, 0->gpos],[test.sales.profit, Column#6, <nil>->Column#7, 1->gid, 1->gpos],[test.sales.profit, Column#6, <nil>->Column#7, 1->gid, 2->gpos],[test.sales.profit, Column#6, Column#7, 3->gid, 3->gpos]; schema: [test.sales.profit,Column#6,Column#7,gid,gpos]",
+          "                      └─Projection 10000.00 mpp[tiflash]  test.sales.profit, test.sales.country->Column#6, test.sales.product->Column#7",
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:sales keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' SELECT year, country, product, SUM(profit) AS profit FROM sales GROUP BY year, country, product with rollup having grouping(year) > 0 order by grouping(year); -- 14. grouping function in having clause",
+        "Plan": [
+          "Projection 6400.00 root  Column#6, Column#7->Column#12, Column#8->Column#13, Column#10",
+          "└─Projection 6400.00 root  Column#10, Column#6, Column#7, Column#8, gid",
+          "  └─Sort 6400.00 root  Column#34",
+          "    └─Projection 6400.00 root  Column#10, Column#6, Column#7, Column#8, gid, grouping(gid)->Column#34",
+          "      └─TableReader 6400.00 root  MppVersion: 2, data:ExchangeSender",
+          "        └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─Projection 6400.00 mpp[tiflash]  Column#10, Column#6, Column#7, Column#8, gid",
+          "            └─HashAgg 6400.00 mpp[tiflash]  group by:Column#30, Column#31, Column#32, Column#33, funcs:sum(Column#25)->Column#10, funcs:firstrow(Column#26)->Column#6, funcs:firstrow(Column#27)->Column#7, funcs:firstrow(Column#28)->Column#8, funcs:firstrow(Column#29)->gid",
+          "              └─Projection 8000.00 mpp[tiflash]  cast(test.sales.profit, decimal(10,0) BINARY)->Column#25, Column#6->Column#26, Column#7->Column#27, Column#8->Column#28, gid->Column#29, Column#6->Column#30, Column#7->Column#31, Column#8->Column#32, gid->Column#33",
+          "                └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#6, collate: binary], [name: Column#7, collate: utf8mb4_bin], [name: Column#8, collate: utf8mb4_bin], [name: gid, collate: binary]",
+          "                    └─Selection 8000.00 mpp[tiflash]  gt(grouping(gid), 0)",
+          "                      └─Expand 10000.00 mpp[tiflash]  level-projection:[test.sales.profit, <nil>->Column#6, <nil>->Column#7, <nil>->Column#8, 0->gid],[test.sales.profit, Column#6, <nil>->Column#7, <nil>->Column#8, 1->gid],[test.sales.profit, Column#6, Column#7, <nil>->Column#8, 3->gid],[test.sales.profit, Column#6, Column#7, Column#8, 7->gid]; schema: [test.sales.profit,Column#6,Column#7,Column#8,gid]",
+          "                        └─Projection 10000.00 mpp[tiflash]  test.sales.profit, test.sales.year->Column#6, test.sales.country->Column#7, test.sales.product->Column#8",
+          "                          └─TableFullScan 10000.00 mpp[tiflash] table:sales keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup having grouping(country) > 0 order by grouping(country); -- 15. 14 under gpos case",
+        "Plan": [
+          "Projection 6400.00 root  Column#6, Column#7->Column#12, Column#10",
+          "└─Projection 6400.00 root  Column#10, Column#6, Column#7, gid",
+          "  └─Sort 6400.00 root  Column#31",
+          "    └─Projection 6400.00 root  Column#10, Column#6, Column#7, gid, grouping(gid)->Column#31",
+          "      └─TableReader 6400.00 root  MppVersion: 2, data:ExchangeSender",
+          "        └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─Projection 6400.00 mpp[tiflash]  Column#10, Column#6, Column#7, gid",
+          "            └─HashAgg 6400.00 mpp[tiflash]  group by:Column#26, Column#27, Column#28, Column#29, Column#30, funcs:sum(Column#22)->Column#10, funcs:firstrow(Column#23)->Column#6, funcs:firstrow(Column#24)->Column#7, funcs:firstrow(Column#25)->gid",
+          "              └─Projection 8000.00 mpp[tiflash]  cast(test.sales.profit, decimal(10,0) BINARY)->Column#22, Column#6->Column#23, Column#7->Column#24, gid->Column#25, Column#6->Column#26, Column#6->Column#27, Column#7->Column#28, gid->Column#29, gpos->Column#30",
+          "                └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#6, collate: utf8mb4_bin], [name: Column#6, collate: utf8mb4_bin], [name: Column#7, collate: utf8mb4_bin], [name: gid, collate: binary], [name: gpos, collate: binary]",
+          "                    └─Selection 8000.00 mpp[tiflash]  gt(grouping(gid), 0)",
+          "                      └─Expand 10000.00 mpp[tiflash]  level-projection:[test.sales.profit, <nil>->Column#6, <nil>->Column#7, 0->gid, 0->gpos],[test.sales.profit, Column#6, <nil>->Column#7, 1->gid, 1->gpos],[test.sales.profit, Column#6, <nil>->Column#7, 1->gid, 2->gpos],[test.sales.profit, Column#6, Column#7, 3->gid, 3->gpos]; schema: [test.sales.profit,Column#6,Column#7,gid,gpos]",
+          "                        └─Projection 10000.00 mpp[tiflash]  test.sales.profit, test.sales.country->Column#6, test.sales.product->Column#7",
+          "                          └─TableFullScan 10000.00 mpp[tiflash] table:sales keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' SELECT year, country, product, grouping(year, country, product) from sales group by year, country, product with rollup having grouping(year, country, product) <> 0; -- 16. grouping function recreating fix",
+        "Plan": [
+          "TableReader 6400.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 6400.00 mpp[tiflash]  Column#6->Column#11, Column#7->Column#12, Column#8->Column#13, grouping(gid)->Column#14",
+          "    └─Projection 6400.00 mpp[tiflash]  Column#6, Column#7, Column#8, gid",
+          "      └─HashAgg 6400.00 mpp[tiflash]  group by:Column#6, Column#7, Column#8, gid, funcs:firstrow(Column#6)->Column#6, funcs:firstrow(Column#7)->Column#7, funcs:firstrow(Column#8)->Column#8, funcs:firstrow(gid)->gid",
+          "        └─ExchangeReceiver 6400.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#6, collate: binary], [name: Column#7, collate: utf8mb4_bin], [name: Column#8, collate: utf8mb4_bin], [name: gid, collate: binary]",
+          "            └─HashAgg 6400.00 mpp[tiflash]  group by:Column#6, Column#7, Column#8, gid, ",
+          "              └─Selection 8000.00 mpp[tiflash]  ne(grouping(gid), 0)",
+          "                └─Expand 10000.00 mpp[tiflash]  level-projection:[<nil>->Column#6, <nil>->Column#7, <nil>->Column#8, 0->gid],[Column#6, <nil>->Column#7, <nil>->Column#8, 1->gid],[Column#6, Column#7, <nil>->Column#8, 3->gid],[Column#6, Column#7, Column#8, 7->gid]; schema: [Column#6,Column#7,Column#8,gid]",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:sales keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
