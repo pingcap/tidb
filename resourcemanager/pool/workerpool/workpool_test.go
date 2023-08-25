@@ -55,9 +55,10 @@ func TestWorkerPool(t *testing.T) {
 	globalCnt.Store(0)
 
 	g := new(errgroup.Group)
+	resultCh := pool.GetResultChan()
 	g.Go(func() error {
 		// Consume the results.
-		for range pool.GetResultChan() {
+		for range resultCh {
 			// Do nothing.
 		}
 		return nil
