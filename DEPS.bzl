@@ -96,6 +96,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_gitee_trisia_gotlcp",
+        build_file_proto_mode = "disable_global",
+        importpath = "gitee.com/Trisia/gotlcp",
+        sha256 = "f878e5e4c7bc2c85d18dce3d6d9dea2f2266e95e9a662cb0338c890807e3c868",
+        strip_prefix = "gitee.com/Trisia/gotlcp@v1.3.10",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/gitee.com/Trisia/gotlcp/com_gitee_trisia_gotlcp-v1.3.10.zip",
+            "http://ats.apps.svc/gomod/gitee.com/Trisia/gotlcp/com_gitee_trisia_gotlcp-v1.3.10.zip",
+            "https://cache.hawkingrei.com/gomod/gitee.com/Trisia/gotlcp/com_gitee_trisia_gotlcp-v1.3.10.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/gitee.com/Trisia/gotlcp/com_gitee_trisia_gotlcp-v1.3.10.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_4meepo_tagalign",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/4meepo/tagalign",
@@ -1744,6 +1757,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/emirpasic/gods/com_github_emirpasic_gods-v1.18.1.zip",
             "https://cache.hawkingrei.com/gomod/github.com/emirpasic/gods/com_github_emirpasic_gods-v1.18.1.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/emirpasic/gods/com_github_emirpasic_gods-v1.18.1.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_emmansun_gmsm",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/emmansun/gmsm",
+        sha256 = "5da76717b27d39bf9c413371fcf37990fb6ed5f3ea276c3127c765d453ed689d",
+        strip_prefix = "github.com/emmansun/gmsm@v0.19.3",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/emmansun/gmsm/com_github_emmansun_gmsm-v0.19.3.zip",
+            "http://ats.apps.svc/gomod/github.com/emmansun/gmsm/com_github_emmansun_gmsm-v0.19.3.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/emmansun/gmsm/com_github_emmansun_gmsm-v0.19.3.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/emmansun/gmsm/com_github_emmansun_gmsm-v0.19.3.zip",
         ],
     )
     go_repository(
