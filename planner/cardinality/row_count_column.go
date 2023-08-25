@@ -65,7 +65,7 @@ func GetRowCountByColumnRanges(sctx sessionctx.Context, coll *statistics.HistCol
 			"Increase Factor", c.GetIncreaseFactor(coll.RealtimeCount),
 		)
 	}
-	result, err = getColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, false)
+	result, err = GetColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, false)
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats", uint64(result))
 	}
@@ -110,7 +110,7 @@ func GetRowCountByIntColumnRanges(sctx sessionctx.Context, coll *statistics.Hist
 			"Increase Factor", c.GetIncreaseFactor(coll.RealtimeCount),
 		)
 	}
-	result, err = getColumnRowCount(sctx, c, intRanges, coll.RealtimeCount, coll.ModifyCount, true)
+	result, err = GetColumnRowCount(sctx, c, intRanges, coll.RealtimeCount, coll.ModifyCount, true)
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats", uint64(result))
 	}
@@ -171,8 +171,8 @@ func equalRowCountOnColumn(sctx sessionctx.Context, c *statistics.Column, val ty
 	return c.Histogram.NotNullCount() / histNDV, nil
 }
 
-// getColumnRowCount estimates the row count by a slice of Range.
-func getColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (float64, error) {
+// GetColumnRowCount estimates the row count by a slice of Range.
+func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {

@@ -189,7 +189,7 @@ func Selectivity(
 			})
 		}
 	}
-	usedSets := getUsableSetsByGreedy(nodes)
+	usedSets := GetUsableSetsByGreedy(nodes)
 	// Initialize the mask with the full set.
 	mask := (int64(1) << uint(len(remainedExprs))) - 1
 	// curExpr records covered expressions by now. It's for cardinality estimation tracing.
@@ -478,8 +478,8 @@ func getConstantColumnID(e []expression.Expression) int64 {
 	return unknownColumnID
 }
 
-// getUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
-func getUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
+// GetUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
+func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 	slices.SortFunc(nodes, func(i, j *StatsNode) int {
 		if r := compareType(i.Tp, j.Tp); r != 0 {
 			return r
@@ -920,7 +920,7 @@ func crossValidationSelectivity(
 				continue
 			}
 			// Since the column range is point range(LowVal is equal to HighVal), we need to set both LowExclude and HighExclude to false.
-			// Otherwise we would get 0.0 estRow from getColumnRowCount.
+			// Otherwise we would get 0.0 estRow from GetColumnRowCount.
 			rang := ranger.Range{
 				LowVal:      []types.Datum{idxPointRange.LowVal[i]},
 				LowExclude:  false,
@@ -929,7 +929,7 @@ func crossValidationSelectivity(
 				Collators:   []collate.Collator{idxPointRange.Collators[i]},
 			}
 
-			rowCount, err := getColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
+			rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
 			if err != nil {
 				return 0, 0, err
 			}
