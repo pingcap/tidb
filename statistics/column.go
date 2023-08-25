@@ -186,7 +186,7 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 			count, err := queryValue(sctx, c.CMSketch, c.TopN, val)
 			return float64(count), errors.Trace(err)
 		}
-		histRowCount, _ := c.Histogram.equalRowCount(sctx, val, false)
+		histRowCount, _ := c.Histogram.EqualRowCount(sctx, val, false)
 		return histRowCount, nil
 	}
 
@@ -203,7 +203,7 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 		}
 	}
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
-	histCnt, matched := c.Histogram.equalRowCount(sctx, val, true)
+	histCnt, matched := c.Histogram.EqualRowCount(sctx, val, true)
 	if matched {
 		return histCnt, nil
 	}

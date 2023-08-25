@@ -497,7 +497,7 @@ func (t *Table) ColumnGreaterRowCount(sctx sessionctx.Context, value types.Datum
 	if !ok || c.IsInvalid(sctx, t.Pseudo) {
 		return float64(t.RealtimeCount) / pseudoLessRate
 	}
-	return c.greaterRowCount(value) * c.GetIncreaseFactor(t.RealtimeCount)
+	return c.GreaterRowCount(value) * c.GetIncreaseFactor(t.RealtimeCount)
 }
 
 // ColumnLessRowCount estimates the row count where the column less than value. Note that null values are not counted.
@@ -506,7 +506,7 @@ func (t *Table) ColumnLessRowCount(sctx sessionctx.Context, value types.Datum, c
 	if !ok || c.IsInvalid(sctx, t.Pseudo) {
 		return float64(t.RealtimeCount) / pseudoLessRate
 	}
-	return c.lessRowCount(sctx, value) * c.GetIncreaseFactor(t.RealtimeCount)
+	return c.LessRowCount(sctx, value) * c.GetIncreaseFactor(t.RealtimeCount)
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.

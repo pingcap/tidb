@@ -186,7 +186,7 @@ func (idx *Index) equalRowCount(sctx sessionctx.Context, b []byte, realtimeRowCo
 		if idx.CMSketch != nil {
 			return float64(idx.QueryBytes(sctx, b))
 		}
-		histRowCount, _ := idx.Histogram.equalRowCount(sctx, val, false)
+		histRowCount, _ := idx.Histogram.EqualRowCount(sctx, val, false)
 		return histRowCount
 	}
 	// stats version == 2
@@ -198,7 +198,7 @@ func (idx *Index) equalRowCount(sctx sessionctx.Context, b []byte, realtimeRowCo
 		}
 	}
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
-	histCnt, matched := idx.Histogram.equalRowCount(sctx, val, true)
+	histCnt, matched := idx.Histogram.EqualRowCount(sctx, val, true)
 	if matched {
 		return histCnt
 	}
@@ -230,7 +230,7 @@ func (idx *Index) QueryBytes(sctx sessionctx.Context, d []byte) (result uint64) 
 	if idx.CMSketch != nil {
 		return idx.CMSketch.queryHashValue(sctx, h1, h2)
 	}
-	v, _ := idx.Histogram.equalRowCount(sctx, types.NewBytesDatum(d), idx.StatsVer >= Version2)
+	v, _ := idx.Histogram.EqualRowCount(sctx, types.NewBytesDatum(d), idx.StatsVer >= Version2)
 	return uint64(v)
 }
 
@@ -317,8 +317,8 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 				upperLimit := expBackoffCnt
 				// Use the multi-column stats to calculate the max possible row count of [l, r)
 				if idx.Histogram.Len() > 0 {
-					_, lowerBkt, _, _ := idx.Histogram.locateBucket(sctx, l)
-					_, upperBkt, _, _ := idx.Histogram.locateBucket(sctx, r)
+					_, lowerBkt, _, _ := idx.Histogram.LocateBucket(sctx, l)
+					_, upperBkt, _, _ := idx.Histogram.LocateBucket(sctx, r)
 					if debugTrace {
 						debugTraceBuckets(sctx, &idx.Histogram, []int{lowerBkt - 1, upperBkt})
 					}
