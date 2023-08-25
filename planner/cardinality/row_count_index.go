@@ -16,6 +16,7 @@ package cardinality
 
 import (
 	"bytes"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"math"
 	"slices"
 	"strings"
@@ -99,7 +100,7 @@ func getIndexRowCountForStatsV1(sctx sessionctx.Context, coll *statistics.HistCo
 		if debugTrace {
 			debugTraceStartEstimateRange(sctx, ran, nil, nil, totalCount)
 		}
-		rangePosition := statistics.GetOrdinalOfRangeCond(sc, ran)
+		rangePosition := getOrdinalOfRangeCond(sc, ran)
 		var rangeVals []types.Datum
 		// Try to enum the last range values.
 		if rangePosition != len(ran.LowVal) {
@@ -276,7 +277,7 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 		expBackoffSuccess := false
 		// Due to the limitation of calcFraction and convertDatumToScalar, the histogram actually won't estimate anything.
 		// If the first column's range is point.
-		if rangePosition := statistics.GetOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer >= statistics.Version2 && coll != nil {
+		if rangePosition := getOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer >= statistics.Version2 && coll != nil {
 			var expBackoffSel float64
 			expBackoffSel, expBackoffSuccess, err = expBackoffEstimation(sctx, idx, coll, indexRange)
 			if err != nil {
@@ -500,4 +501,20 @@ func betweenRowCountOnIndex(sctx sessionctx.Context, idx *statistics.Index, l, r
 		return histBetweenCnt
 	}
 	return float64(idx.TopN.BetweenCount(sctx, l.GetBytes(), r.GetBytes())) + histBetweenCnt
+}
+
+// getOrdinalOfRangeCond gets the ordinal of the position range condition,
+// if not exist, it returns the end position.
+func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int {
+	for i := range ran.LowVal {
+		a, b := ran.LowVal[i], ran.HighVal[i]
+		cmp, err := a.Compare(sc, &b, ran.Collators[0])
+		if err != nil {
+			return 0
+		}
+		if cmp != 0 {
+			return i
+		}
+	}
+	return len(ran.LowVal)
 }

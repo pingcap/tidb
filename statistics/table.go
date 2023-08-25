@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -547,22 +546,6 @@ func (t *Table) ColumnEqualRowCount(sctx sessionctx.Context, value types.Datum, 
 // PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
 func (t *Table) PseudoAvgCountPerValue() float64 {
 	return float64(t.RealtimeCount) / pseudoEqualRate
-}
-
-// GetOrdinalOfRangeCond gets the ordinal of the position range condition,
-// if not exist, it returns the end position.
-func GetOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int {
-	for i := range ran.LowVal {
-		a, b := ran.LowVal[i], ran.HighVal[i]
-		cmp, err := a.Compare(sc, &b, ran.Collators[0])
-		if err != nil {
-			return 0
-		}
-		if cmp != 0 {
-			return i
-		}
-	}
-	return len(ran.LowVal)
 }
 
 // ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.
