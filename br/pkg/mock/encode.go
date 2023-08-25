@@ -8,10 +8,10 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
 	encode "github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	verification "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	types "github.com/pingcap/tidb/types"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockEncoder is a mock of Encoder interface.
