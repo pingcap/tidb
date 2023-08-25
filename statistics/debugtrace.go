@@ -232,6 +232,7 @@ var addRowCountTypeToString = map[DebugTraceAddRowCountType]string{
 	DebugTraceVer1SmallRange:         "Small range in ver1 stats",
 }
 
+// MarshalJSON marshals this structure to JSON.
 func (d DebugTraceAddRowCountType) MarshalJSON() ([]byte, error) {
 	return json.Marshal(addRowCountTypeToString[d])
 }
