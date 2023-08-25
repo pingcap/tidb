@@ -52,7 +52,7 @@ func GetRowCountByColumnRanges(sctx sessionctx.Context, coll *statistics.HistCol
 		name = c.Info.Name.O
 	}
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
-		result, err = GetPseudoRowCountByColumnRanges(sc, float64(coll.RealtimeCount), colRanges, 0)
+		result, err = getPseudoRowCountByColumnRanges(sc, float64(coll.RealtimeCount), colRanges, 0)
 		if err == nil && sc.EnableOptimizerCETrace && ok {
 			CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats-Pseudo", uint64(result))
 		}
