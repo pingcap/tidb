@@ -76,9 +76,9 @@ func GetRowCountByIndexRanges(sctx sessionctx.Context, coll *statistics.HistColl
 		)
 	}
 	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
-		result, err = GetIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
+		result, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
 	} else {
-		result, err = GetIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, coll.RealtimeCount, coll.ModifyCount)
+		result, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, coll.RealtimeCount, coll.ModifyCount)
 	}
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats", uint64(result))
@@ -86,8 +86,7 @@ func GetRowCountByIndexRanges(sctx sessionctx.Context, coll *statistics.HistColl
 	return result, errors.Trace(err)
 }
 
-// GetIndexRowCountForStatsV1 estimates the row count by the given range.
-func GetIndexRowCountForStatsV1(sctx sessionctx.Context, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range) (float64, error) {
+func getIndexRowCountForStatsV1(sctx sessionctx.Context, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -113,7 +112,7 @@ func GetIndexRowCountForStatsV1(sctx sessionctx.Context, coll *statistics.HistCo
 		// on single-column index, use previous way as well, because CMSketch does not contain null
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
-			count, err := GetIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, coll.RealtimeCount, coll.ModifyCount)
+			count, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, coll.RealtimeCount, coll.ModifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -207,9 +206,8 @@ func isSingleColIdxNullRange(idx *statistics.Index, ran *ranger.Range) bool {
 	return false
 }
 
-// GetIndexRowCountForStatsV2 returns the row count of the given ranges.
 // It uses the modifyCount to adjust the influence of modifications on the table.
-func GetIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
+func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
 	idx.CheckStats()
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
@@ -315,14 +313,14 @@ func GetIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 			}
 		}
 		if !expBackoffSuccess {
-			count += BetweenRowCountOnIndex(sctx, idx, l, r)
+			count += betweenRowCountOnIndex(sctx, idx, l, r)
 		}
 
 		// If the current table row count has changed, we should scale the row count accordingly.
 		count *= idx.GetIncreaseFactor(realtimeRowCount)
 
 		// handling the out-of-range part
-		if (OutOfRangeOnIndex(idx, l) && !(isSingleCol && lowIsNull)) || OutOfRangeOnIndex(idx, r) {
+		if (outOfRangeOnIndex(idx, l) && !(isSingleCol && lowIsNull)) || outOfRangeOnIndex(idx, r) {
 			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount)
 		}
 
@@ -353,7 +351,7 @@ func equalRowCountOnIndex(sctx sessionctx.Context, idx *statistics.Index, b []by
 	}
 	val := types.NewBytesDatum(b)
 	if idx.StatsVer < statistics.Version2 {
-		if idx.Histogram.NDV > 0 && OutOfRangeOnIndex(idx, val) {
+		if idx.Histogram.NDV > 0 && outOfRangeOnIndex(idx, val) {
 			return outOfRangeEQSelectivity(sctx, idx.Histogram.NDV, realtimeRowCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
 		}
 		if idx.CMSketch != nil {
@@ -474,8 +472,8 @@ func expBackoffEstimation(sctx sessionctx.Context, idx *statistics.Index, coll *
 	return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]) * math.Sqrt(math.Sqrt(singleColumnEstResults[2])) * math.Sqrt(math.Sqrt(math.Sqrt(singleColumnEstResults[3]))), true, nil
 }
 
-// OutOfRangeOnIndex checks if the datum is out of the range.
-func OutOfRangeOnIndex(idx *statistics.Index, val types.Datum) bool {
+// outOfRangeOnIndex checks if the datum is out of the range.
+func outOfRangeOnIndex(idx *statistics.Index, val types.Datum) bool {
 	if !idx.Histogram.OutOfRange(val) {
 		return false
 	}
@@ -494,9 +492,9 @@ func matchPrefix(row chunk.Row, colIdx int, ad *types.Datum) bool {
 	return false
 }
 
-// BetweenRowCountOnIndex estimates the row count for interval [l, r).
+// betweenRowCountOnIndex estimates the row count for interval [l, r).
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func BetweenRowCountOnIndex(sctx sessionctx.Context, idx *statistics.Index, l, r types.Datum) float64 {
+func betweenRowCountOnIndex(sctx sessionctx.Context, idx *statistics.Index, l, r types.Datum) float64 {
 	histBetweenCnt := idx.Histogram.BetweenRowCount(sctx, l, r)
 	if idx.StatsVer == statistics.Version1 {
 		return histBetweenCnt
