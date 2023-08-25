@@ -41,6 +41,7 @@ type singlePointAlloc struct {
 	lastAllocated int64
 	isUnsigned    bool
 	clientDiscover
+	keyspaceID uint32
 }
 
 type clientDiscover struct {
