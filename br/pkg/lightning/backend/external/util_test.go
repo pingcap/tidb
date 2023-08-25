@@ -172,3 +172,40 @@ func TestGetAllFileNames(t *testing.T) {
 		"/subtask/3/0", "/subtask/3/1", "/subtask/3/2",
 	}, dataFiles)
 }
+
+func TestCleanUpFiles(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemStorage()
+	w := NewWriterBuilder().
+		SetMemorySizeLimit(20).
+		SetPropSizeDistance(5).
+		SetPropKeysDistance(3).
+		Build(store, "/subtask", 0)
+	kvPairs := make([]common.KvPair, 0, 30)
+	for i := 0; i < 30; i++ {
+		kvPairs = append(kvPairs, common.KvPair{
+			Key: []byte{byte(i)},
+			Val: []byte{byte(i)},
+		})
+	}
+	err := w.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
+	require.NoError(t, err)
+	_, err = w.Close(ctx)
+	require.NoError(t, err)
+
+	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "/subtask")
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"/subtask/0_stat/0", "/subtask/0_stat/1", "/subtask/0_stat/2",
+	}, statFiles)
+	require.Equal(t, []string{
+		"/subtask/0/0", "/subtask/0/1", "/subtask/0/2",
+	}, dataFiles)
+
+	require.NoError(t, CleanUpFiles(ctx, store, "/subtask", 10))
+
+	dataFiles, statFiles, err = GetAllFileNames(ctx, store, "/subtask")
+	require.NoError(t, err)
+	require.Equal(t, []string(nil), statFiles)
+	require.Equal(t, []string(nil), dataFiles)
+}
