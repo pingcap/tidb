@@ -15,10 +15,14 @@
 package handler
 
 import (
+	"context"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/logutil"
@@ -110,4 +114,66 @@ func (h ClusterUpgradeHandler) finishUpgrade() (hasDone bool, err error) {
 
 	err = session.SyncNormalRunning(se)
 	return false, err
+}
+
+// clusterUpgradeInfo is used to report cluster upgrade info when do http request.
+type clusterUpgradeInfo struct {
+	ServersNum             int                          `json:"servers_num,omitempty"`
+	OwnerID                string                       `json:"owner_id"`
+	UpgradedPercent        int                          `json:"upgraded_percent"`
+	IsAllUpgraded          bool                         `json:"is_all_server_version_consistent,omitempty"`
+	AllServersDiffVersions []infosync.ServerVersionInfo `json:"all_servers_diff_versions,omitempty"`
+}
+
+func (h ClusterUpgradeHandler) showUpgrade(w http.ResponseWriter, req *http.Request) error {
+	do, err := session.GetDomain(h.Store)
+	if err != nil {
+		logutil.BgLogger().Error("failed to get session domain", zap.Error(err))
+		return errors.New("create session error")
+	}
+	ctx := context.Background()
+	allServersInfo, err := infosync.GetAllServerInfo(ctx)
+	if err != nil {
+		logutil.BgLogger().Error("failed to get all server info", zap.Error(err))
+		return errors.New("ddl server information not found")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	ownerID, err := do.DDL().OwnerManager().GetOwnerID(ctx)
+	cancel()
+	if err != nil {
+		logutil.BgLogger().Error("failed to get owner id", zap.Error(err))
+		return errors.New("ddl server information not found")
+	}
+	allVersionsMap := map[infosync.ServerVersionInfo]int{}
+	allVersions := make([]infosync.ServerVersionInfo, 0, len(allServersInfo))
+	for _, v := range allServersInfo {
+		if s, ok := allVersionsMap[v.ServerVersionInfo]; ok {
+			s++
+			continue
+		}
+		allVersionsMap[v.ServerVersionInfo] = 1
+		allVersions = append(allVersions, v.ServerVersionInfo)
+	}
+	maxVer := allVersions[0].Version
+	maxInfo := allVersions[0]
+	for k, _ := range allVersionsMap {
+		if strings.Compare(maxVer, k.Version) < 0 {
+			maxInfo = k
+		}
+	}
+	upgradedNum := len(allServersInfo) - allVersionsMap[maxInfo]
+	upgradedPercent := (upgradedNum / len(allServersInfo)) * 100
+	upgradeInfo := clusterUpgradeInfo{
+		ServersNum:             len(allServersInfo),
+		OwnerID:                ownerID,
+		AllServersDiffVersions: allVersions,
+		UpgradedPercent:        upgradedPercent,
+		IsAllUpgraded:          upgradedPercent == 100,
+	}
+	// if IsAllUpgraded is false, return the all tidb servers version.
+	if !upgradeInfo.IsAllUpgraded {
+		upgradeInfo.AllServersDiffVersions = allVersions
+	}
+	WriteData(w, upgradeInfo)
+	return nil
 }
