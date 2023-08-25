@@ -2155,7 +2155,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                           {
                             "Encoded": "A4AAAAAAAABk",
                             "Value": "KindInt64 100"
@@ -2224,7 +2224,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                           {
                             "Encoded": "A4AAAAAAAAFe",
                             "Value": "KindInt64 350"
@@ -2334,7 +2334,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAABk",
                                         "Value": "KindInt64 100"
@@ -2384,7 +2384,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAFe",
                                         "Value": "KindInt64 350"
@@ -2547,7 +2547,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAFe",
                                         "Value": "KindInt64 350"
@@ -2712,7 +2712,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                           {
                             "Encoded": "A4AAAAAAAABk",
                             "Value": "KindInt64 100"
@@ -2781,7 +2781,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                           {
                             "Encoded": "A4AAAAAAAAFe",
                             "Value": "KindInt64 350"
@@ -3219,7 +3219,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                           {
                             "Encoded": "A4AAAAAAAAGQ",
                             "Value": "KindInt64 401"
@@ -3268,7 +3268,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                           {
                             "Encoded": "A4AAAAAAAAGQ",
                             "Value": "KindInt64 402"
@@ -3529,7 +3529,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAGQ",
                                         "Value": "KindInt64 400"
@@ -3558,7 +3558,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAGQ",
                                         "Value": "KindInt64 401"
@@ -3607,7 +3607,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAGQ",
                                         "Value": "KindInt64 402"
@@ -3656,7 +3656,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAGQ",
                                         "Value": "KindInt64 403"
@@ -3775,7 +3775,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAGQ",
                                         "Value": "KindInt64 400"
@@ -3804,7 +3804,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAGQ",
                                         "Value": "KindInt64 401"
@@ -3853,7 +3853,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAGQ",
                                         "Value": "KindInt64 402"
@@ -3902,7 +3902,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAGQ",
                                         "Value": "KindInt64 403"
@@ -4295,7 +4295,7 @@
                         ]
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.EqualRowCountOnColumn": [
                           {
                             "Encoded": "A4AAAAAAAAGQ",
                             "Value": "KindInt64 400"
