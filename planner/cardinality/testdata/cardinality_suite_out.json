@@ -2145,7 +2145,7 @@
                     "TopN total count": 1095
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2214,7 +2214,7 @@
                     "TopN total count": 1098
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2301,7 +2301,7 @@
                     "TopN total count": 0
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*HistColl).GetIndexRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetIndexRowCountForStatsV1": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2324,7 +2324,7 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                                "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                                   {
                                     "Start estimate range": {
                                       "CurrentRowCount": 0,
@@ -2374,7 +2374,7 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                                "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                                   {
                                     "Start estimate range": {
                                       "CurrentRowCount": 0,
@@ -2514,7 +2514,7 @@
                     "TopN total count": 0
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*HistColl).GetIndexRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetIndexRowCountForStatsV1": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2537,7 +2537,7 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                                "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                                   {
                                     "Start estimate range": {
                                       "CurrentRowCount": 0,
@@ -2702,7 +2702,7 @@
                     "TopN total count": 1000
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2771,7 +2771,7 @@
                     "TopN total count": 1000
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2864,7 +2864,7 @@
                     "TopN total count": 1000
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Index).GetRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetIndexRowCountForStatsV2": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2874,7 +2874,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Index).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnIndex": [
                           {
                             "Encoded Value": "A4AAAAAAAABkA4AAAAAAAAFe"
                           },
@@ -2955,7 +2955,7 @@
                     "TopN total count": 1000
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Index).GetRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetIndexRowCountForStatsV2": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2965,7 +2965,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Index).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnIndex": [
                           {
                             "Encoded Value": "A4AAAAAAAAFe"
                           },
@@ -3074,7 +3074,7 @@
                     "TopN total count": 1095
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -3209,7 +3209,7 @@
                     "TopN total count": 1098
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -3345,7 +3345,7 @@
                     "TopN total count": 0
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*HistColl).GetIndexRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetIndexRowCountForStatsV1": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -3355,7 +3355,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Index).GetRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.GetIndexRowCountForStatsV2": [
                           {
                             "Start estimate range": {
                               "CurrentRowCount": 0,
@@ -3496,7 +3496,7 @@
                     "TopN total count": 0
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*HistColl).GetIndexRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetIndexRowCountForStatsV1": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -3519,7 +3519,7 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                                "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                                   {
                                     "Start estimate range": {
                                       "CurrentRowCount": 0,
@@ -3765,7 +3765,7 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                                "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                                   {
                                     "Start estimate range": {
                                       "CurrentRowCount": 0,
@@ -4065,7 +4065,7 @@
                     "TopN total count": 1000
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -4205,7 +4205,7 @@
                     "TopN total count": 1000
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -4352,7 +4352,7 @@
                     "TopN total count": 1000
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Index).GetRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetIndexRowCountForStatsV2": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -4481,7 +4481,7 @@
                     "TopN total count": 1000
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Index).GetRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetIndexRowCountForStatsV2": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
