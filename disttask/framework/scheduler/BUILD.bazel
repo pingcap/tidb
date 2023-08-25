@@ -4,7 +4,6 @@ go_library(
     name = "scheduler",
     srcs = [
         "interface.go",
-        "interface_mock.go",
         "manager.go",
         "register.go",
         "scheduler.go",
@@ -19,7 +18,6 @@ go_library(
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//mock",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -37,12 +35,13 @@ go_test(
     race = "on",
     shard_count = 9,
     deps = [
+        "//disttask/framework/mock",
         "//disttask/framework/proto",
         "//resourcemanager/pool/spool",
         "//resourcemanager/util",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pkg_errors//:errors",
-        "@com_github_stretchr_testify//mock",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
     ],
 )

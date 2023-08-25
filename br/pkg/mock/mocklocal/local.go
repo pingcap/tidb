@@ -10,7 +10,7 @@ import (
 
 	import_sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"go.uber.org/mock/gomock"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockDiskUsage is a mock of DiskUsage interface.
