@@ -2311,9 +2311,9 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*HistColl).getEqualCondSelectivity": [
+                        "github.com/pingcap/tidb/planner/cardinality.getEqualCondSelectivity": [
                           {
-                            "github.com/pingcap/tidb/statistics.(*HistColl).crossValidationSelectivity": [
+                            "github.com/pingcap/tidb/planner/cardinality.crossValidationSelectivity": [
                               {
                                 "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
                                   "EssentialLoaded": true,
@@ -2524,9 +2524,9 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*HistColl).getEqualCondSelectivity": [
+                        "github.com/pingcap/tidb/planner/cardinality.getEqualCondSelectivity": [
                           {
-                            "github.com/pingcap/tidb/statistics.(*HistColl).crossValidationSelectivity": [
+                            "github.com/pingcap/tidb/planner/cardinality.crossValidationSelectivity": [
                               {
                                 "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
                                   "EssentialLoaded": true,
@@ -2798,7 +2798,7 @@
                             ]
                           },
                           {
-                            "github.com/pingcap/tidb/statistics.(*Histogram).equalRowCount": [
+                            "github.com/pingcap/tidb/statistics.(*Histogram).EqualRowCount": [
                               {
                                 "Locate value in buckets": {
                                   "BucketIdx": 105,
@@ -2890,7 +2890,7 @@
                             ]
                           },
                           {
-                            "github.com/pingcap/tidb/statistics.(*Histogram).equalRowCount": [
+                            "github.com/pingcap/tidb/statistics.(*Histogram).EqualRowCount": [
                               {
                                 "Locate value in buckets": {
                                   "BucketIdx": 136,
@@ -2981,7 +2981,7 @@
                             ]
                           },
                           {
-                            "github.com/pingcap/tidb/statistics.(*Histogram).equalRowCount": [
+                            "github.com/pingcap/tidb/statistics.(*Histogram).EqualRowCount": [
                               {
                                 "Locate value in buckets": {
                                   "BucketIdx": 105,
@@ -3146,7 +3146,7 @@
                         ]
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Histogram).outOfRangeRowCount": [
+                        "github.com/pingcap/tidb/statistics.(*Histogram).OutOfRangeRowCount": [
                           {
                             "lDatum": "KindMinNotNull <nil>",
                             "modifyCount": 0,
@@ -3427,7 +3427,7 @@
                             ]
                           },
                           {
-                            "github.com/pingcap/tidb/statistics.(*Histogram).outOfRangeRowCount": [
+                            "github.com/pingcap/tidb/statistics.(*Histogram).OutOfRangeRowCount": [
                               {
                                 "lDatum": "KindBytes \\x01",
                                 "modifyCount": 0,
@@ -3506,9 +3506,9 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*HistColl).getEqualCondSelectivity": [
+                        "github.com/pingcap/tidb/planner/cardinality.getEqualCondSelectivity": [
                           {
-                            "github.com/pingcap/tidb/statistics.(*HistColl).crossValidationSelectivity": [
+                            "github.com/pingcap/tidb/planner/cardinality.crossValidationSelectivity": [
                               {
                                 "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
                                   "EssentialLoaded": true,
@@ -3752,9 +3752,9 @@
                         ]
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*HistColl).getEqualCondSelectivity": [
+                        "github.com/pingcap/tidb/planner/cardinality.getEqualCondSelectivity": [
                           {
-                            "github.com/pingcap/tidb/statistics.(*HistColl).crossValidationSelectivity": [
+                            "github.com/pingcap/tidb/planner/cardinality.crossValidationSelectivity": [
                               {
                                 "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
                                   "EssentialLoaded": true,
@@ -4142,7 +4142,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Histogram).outOfRangeRowCount": [
+                        "github.com/pingcap/tidb/statistics.(*Histogram).OutOfRangeRowCount": [
                           {
                             "lDatum": "KindMinNotNull <nil>",
                             "modifyCount": 100,
@@ -4429,7 +4429,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Histogram).outOfRangeRowCount": [
+                        "github.com/pingcap/tidb/statistics.(*Histogram).OutOfRangeRowCount": [
                           {
                             "lDatum": "KindBytes \\x01",
                             "modifyCount": 100,
