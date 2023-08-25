@@ -247,7 +247,7 @@ type LightningStatus struct {
 	backend          string
 	FinishedFileSize atomic.Int64
 	TotalFileSize    atomic.Int64
-	TotalImportSize  atomic.Int64
+	TotalImportSize  atomic.Uint64
 }
 
 // ControllerParam contains many parameters for creating a Controller.
@@ -1686,6 +1686,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 			}()
 		}
 		wg.Wait()
+		logTask.Warn("total import size", zap.Uint64("total import size", rc.status.TotalImportSize.Load()))
 		return restoreErr.Get()
 	}
 
