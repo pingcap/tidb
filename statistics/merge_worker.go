@@ -20,8 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -106,7 +104,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 		counter := make(map[hack.MutableString]float64)
 		// datumMap is used to store the mapping from the string type to datum type.
 		// The datum is used to find the value in the histogram.
-		datumMap := make(map[hack.MutableString]types.Datum)
+		datumMap := newDatumMapCache()
 
 		for i, topN := range checkTopNs {
 			if atomic.LoadUint32(worker.killed) == 1 {
@@ -138,31 +136,14 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 						continue
 					}
 					// Get the encodedVal from the hists[j]
-					datum, exists := datumMap[encodedVal]
+					datum, exists := datumMap.Get(encodedVal)
 					if !exists {
-						// If the datumMap does not have the encodedVal datum,
-						// we should generate the datum based on the encoded value.
-						// This part is copied from the function MergePartitionHist2GlobalHist.
-						var d types.Datum
-						if isIndex {
-							d.SetBytes(val.Encoded)
-						} else {
-							var err error
-							if types.IsTypeTime(allHists[0].Tp.GetType()) {
-								// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
-								_, d, err = codec.DecodeAsDateTime(val.Encoded, allHists[0].Tp.GetType(), timeZone)
-							} else if types.IsTypeFloat(allHists[0].Tp.GetType()) {
-								_, d, err = codec.DecodeAsFloat32(val.Encoded, allHists[0].Tp.GetType())
-							} else {
-								_, d, err = codec.DecodeOne(val.Encoded)
-							}
-							if err != nil {
-								resp.Err = err
-								worker.respCh <- resp
-								return
-							}
+						d, err := datumMap.Put(val, encodedVal, allHists[0].Tp.GetType(), isIndex, timeZone)
+						if err != nil {
+							resp.Err = err
+							worker.respCh <- resp
+							return
 						}
-						datumMap[encodedVal] = d
 						datum = d
 					}
 					// Get the row count which the value is equal to the encodedVal from histogram.
@@ -177,7 +158,6 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 				}
 			}
 		}
-
 		numTop := len(counter)
 		if numTop == 0 {
 			worker.respCh <- resp

@@ -17,15 +17,20 @@ package cardinality
 import (
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 const (
-	pseudoEqualRate = 1000
-	pseudoLessRate  = 3
+	pseudoEqualRate   = 1000
+	pseudoLessRate    = 3
+	pseudoBetweenRate = 40
 )
 
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
@@ -79,4 +84,147 @@ func pseudoSelectivity(coll *statistics.HistColl, exprs []expression.Expression)
 		}
 	}
 	return minFactor
+}
+
+func getPseudoRowCountBySignedIntRanges(intRanges []*ranger.Range, tableRowCount float64) float64 {
+	var rowCount float64
+	for _, rg := range intRanges {
+		var cnt float64
+		low := rg.LowVal[0].GetInt64()
+		if rg.LowVal[0].Kind() == types.KindNull || rg.LowVal[0].Kind() == types.KindMinNotNull {
+			low = math.MinInt64
+		}
+		high := rg.HighVal[0].GetInt64()
+		if rg.HighVal[0].Kind() == types.KindMaxValue {
+			high = math.MaxInt64
+		}
+		if low == math.MinInt64 && high == math.MaxInt64 {
+			cnt = tableRowCount
+		} else if low == math.MinInt64 {
+			cnt = tableRowCount / pseudoLessRate
+		} else if high == math.MaxInt64 {
+			cnt = tableRowCount / pseudoLessRate
+		} else {
+			if low == high {
+				cnt = 1 // When primary key is handle, the equal row count is at most one.
+			} else {
+				cnt = tableRowCount / pseudoBetweenRate
+			}
+		}
+		if high-low > 0 && cnt > float64(high-low) {
+			cnt = float64(high - low)
+		}
+		rowCount += cnt
+	}
+	if rowCount > tableRowCount {
+		rowCount = tableRowCount
+	}
+	return rowCount
+}
+
+func getPseudoRowCountByUnsignedIntRanges(intRanges []*ranger.Range, tableRowCount float64) float64 {
+	var rowCount float64
+	for _, rg := range intRanges {
+		var cnt float64
+		low := rg.LowVal[0].GetUint64()
+		if rg.LowVal[0].Kind() == types.KindNull || rg.LowVal[0].Kind() == types.KindMinNotNull {
+			low = 0
+		}
+		high := rg.HighVal[0].GetUint64()
+		if rg.HighVal[0].Kind() == types.KindMaxValue {
+			high = math.MaxUint64
+		}
+		if low == 0 && high == math.MaxUint64 {
+			cnt = tableRowCount
+		} else if low == 0 {
+			cnt = tableRowCount / pseudoLessRate
+		} else if high == math.MaxUint64 {
+			cnt = tableRowCount / pseudoLessRate
+		} else {
+			if low == high {
+				cnt = 1 // When primary key is handle, the equal row count is at most one.
+			} else {
+				cnt = tableRowCount / pseudoBetweenRate
+			}
+		}
+		if high > low && cnt > float64(high-low) {
+			cnt = float64(high - low)
+		}
+		rowCount += cnt
+	}
+	if rowCount > tableRowCount {
+		rowCount = tableRowCount
+	}
+	return rowCount
+}
+
+func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []*ranger.Range,
+	tableRowCount float64, colsLen int) (float64, error) {
+	if tableRowCount == 0 {
+		return 0, nil
+	}
+	var totalCount float64
+	for _, indexRange := range indexRanges {
+		count := tableRowCount
+		i, err := indexRange.PrefixEqualLen(sc)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if i == colsLen && !indexRange.LowExclude && !indexRange.HighExclude {
+			totalCount += 1.0
+			continue
+		}
+		if i >= len(indexRange.LowVal) {
+			i = len(indexRange.LowVal) - 1
+		}
+		rowCount, err := GetPseudoRowCountByColumnRanges(sc, tableRowCount, []*ranger.Range{indexRange}, i)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		count = count / tableRowCount * rowCount
+		// If the condition is a = 1, b = 1, c = 1, d = 1, we think every a=1, b=1, c=1 only filtrate 1/100 data,
+		// so as to avoid collapsing too fast.
+		for j := 0; j < i; j++ {
+			count = count / float64(100)
+		}
+		totalCount += count
+	}
+	if totalCount > tableRowCount {
+		totalCount = tableRowCount / 3.0
+	}
+	return totalCount, nil
+}
+
+// GetPseudoRowCountByColumnRanges calculate the row count by the ranges if there's no statistics information for this column.
+func GetPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount float64, columnRanges []*ranger.Range, colIdx int) (float64, error) {
+	var rowCount float64
+	for _, ran := range columnRanges {
+		if ran.LowVal[colIdx].Kind() == types.KindNull && ran.HighVal[colIdx].Kind() == types.KindMaxValue {
+			rowCount += tableRowCount
+		} else if ran.LowVal[colIdx].Kind() == types.KindMinNotNull {
+			nullCount := tableRowCount / pseudoEqualRate
+			if ran.HighVal[colIdx].Kind() == types.KindMaxValue {
+				rowCount += tableRowCount - nullCount
+			} else {
+				lessCount := tableRowCount / pseudoLessRate
+				rowCount += lessCount - nullCount
+			}
+		} else if ran.HighVal[colIdx].Kind() == types.KindMaxValue {
+			rowCount += tableRowCount / pseudoLessRate
+		} else {
+			compare, err := ran.LowVal[colIdx].Compare(sc, &ran.HighVal[colIdx], ran.Collators[colIdx])
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			if compare == 0 {
+				rowCount += tableRowCount / pseudoEqualRate
+			} else {
+				rowCount += tableRowCount / pseudoBetweenRate
+			}
+		}
+	}
+	if rowCount > tableRowCount {
+		rowCount = tableRowCount
+	}
+	return rowCount, nil
 }
