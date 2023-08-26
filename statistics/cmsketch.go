@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 )
@@ -143,7 +142,7 @@ func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uin
 	helper := newTopNHelper(sample, numTop)
 	// rowCount is not a accurate value when fast analyzing
 	// In some cases, if user triggers fast analyze when rowCount is close to sampleSize, unexpected bahavior might happen.
-	rowCount = mathutil.Max(rowCount, uint64(len(sample)))
+	rowCount = max(rowCount, uint64(len(sample)))
 	estimateNDV, scaleRatio := calculateEstimateNDV(helper, rowCount)
 	defaultVal := calculateDefaultVal(helper, estimateNDV, scaleRatio, rowCount)
 	c, t := buildCMSAndTopN(helper, d, w, scaleRatio, defaultVal)
@@ -182,7 +181,7 @@ func calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRatio, rowCount u
 		return 1
 	}
 	estimateRemainingCount := rowCount - (helper.sampleSize-helper.onlyOnceItems)*scaleRatio
-	return estimateRemainingCount / mathutil.Max(1, estimateNDV-sampleNDV+helper.onlyOnceItems)
+	return estimateRemainingCount / max(1, estimateNDV-sampleNDV+helper.onlyOnceItems)
 }
 
 // MemoryUsage returns the total memory usage of a CMSketch.
@@ -386,7 +385,7 @@ func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch, _ uint32) erro
 	for i := range c.table {
 		c.count = 0
 		for j := range c.table[i] {
-			c.table[i][j] = mathutil.Max(c.table[i][j], rc.table[i][j])
+			c.table[i][j] = max(c.table[i][j], rc.table[i][j])
 			c.count += uint64(c.table[i][j])
 		}
 	}
@@ -521,7 +520,7 @@ func (c *CMSketch) GetWidthAndDepth() (width, depth int32) {
 // CalcDefaultValForAnalyze calculate the default value for Analyze.
 // The value of it is count / NDV in CMSketch. This means count and NDV are not include topN.
 func (c *CMSketch) CalcDefaultValForAnalyze(ndv uint64) {
-	c.defaultValue = c.count / mathutil.Max(1, ndv)
+	c.defaultValue = c.count / max(1, ndv)
 }
 
 // TopN stores most-common values, which is used to estimate point queries.
