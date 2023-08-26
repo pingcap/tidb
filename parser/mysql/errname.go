@@ -937,6 +937,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrRoleNotGranted:                                        Message("%s is not granted to %s", nil),
 	ErrMaxExecTimeExceeded:                                   Message("Query execution was interrupted, maximum statement execution time exceeded", nil),
 	ErrLockAcquireFailAndNoWaitSet:                           Message("Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.", nil),
+	ErrInvalidDefaultCollationForUtf8mb4:                     Message("Invalid default collation %s: utf8mb4_0900_ai_ci or utf8mb4_general_ci expected", nil),
 	ErrDataTruncatedFunctionalIndex:                          Message("Data truncated for functional index '%s' at row %d", nil),
 	ErrDataOutOfRangeFunctionalIndex:                         Message("Value is out of range for functional index '%s' at row %d", nil),
 	ErrFunctionalIndexOnJsonOrGeometryFunction:               Message("Cannot create a functional index on a function that returns a JSON or GEOMETRY value", nil),

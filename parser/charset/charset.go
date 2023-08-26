@@ -30,6 +30,8 @@ var (
 	ErrUnknownCollation = terror.ClassDDL.NewStd(mysql.ErrUnknownCollation)
 	// ErrCollationCharsetMismatch is collation charset mismatch.
 	ErrCollationCharsetMismatch = terror.ClassDDL.NewStd(mysql.ErrCollationCharsetMismatch)
+	// ErrInvalidDefaultCollationForUtf8mb4 is invalid default collation for utf8mb4.
+	ErrInvalidDefaultCollationForUtf8mb4 = terror.ClassVariable.NewStd(mysql.ErrInvalidDefaultCollationForUtf8mb4)
 )
 
 // Charset is a charset.

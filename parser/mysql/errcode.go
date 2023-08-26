@@ -929,6 +929,7 @@ const (
 	ErrWindowNoGroupOrderUnused                              = 3597
 	ErrWindowExplainJson                                     = 3598 //nolint: revive
 	ErrWindowFunctionIgnoresFrame                            = 3599
+	ErrInvalidDefaultCollationForUtf8mb4                     = 3721
 	ErrDataTruncatedFunctionalIndex                          = 3751
 	ErrDataOutOfRangeFunctionalIndex                         = 3752
 	ErrFunctionalIndexOnJsonOrGeometryFunction               = 3753 //nolint: revive

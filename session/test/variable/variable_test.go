@@ -350,6 +350,21 @@ func TestGlobalVarCollationServer(t *testing.T) {
 	tk.MustQuery("show variables like 'collation_server'").Check(testkit.Rows("collation_server utf8mb4_general_ci"))
 }
 
+func TestDefaultCollationForUtf8mb4(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustContainErrMsg("set global default_collation_for_utf8mb4='abc'", "Unknown collation")
+	tk.MustContainErrMsg("set default_collation_for_utf8mb4='abc'", "Unknown collation")
+	tk.MustContainErrMsg("set global default_collation_for_utf8mb4='utf8_bin'", "Invalid default collation")
+	tk.MustContainErrMsg("set default_collation_for_utf8mb4='utf8_bin'", "Invalid default collation")
+
+	tk.MustExec("set global default_collation_for_utf8mb4='utf8mb4_0900_ai_ci'")
+	tk.MustQuery("show global variables like 'default_collation_for_utf8mb4'").Check(testkit.Rows("default_collation_for_utf8mb4 utf8mb4_0900_ai_ci"))
+	tk.MustExec("set default_collation_for_utf8mb4='utf8mb4_0900_bin'")
+	tk.MustQuery("show variables like 'default_collation_for_utf8mb4'").Check(testkit.Rows("default_collation_for_utf8mb4 utf8mb4_0900_bin"))
+}
+
 func TestMemoryUsageAlarmVariable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

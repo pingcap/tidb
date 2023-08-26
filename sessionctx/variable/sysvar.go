@@ -1383,6 +1383,14 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: DefaultCollationForUtf8mb4, Value: mysql.UTF8MB4DefaultCollation, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkDefaultCollationForUtf8mb4(vars, normalizedValue, originalValue, scope)
+	}, SetSession: func(s *SessionVars, val string) error {
+		if coll, err := collate.GetCollationByName(val); err == nil {
+			s.systems[DefaultCollationForUtf8mb4] = coll.Name
+		}
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLLogBin, Value: On, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TimeZone, Value: "SYSTEM", IsHintUpdatable: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if strings.EqualFold(normalizedValue, "SYSTEM") {
@@ -3069,6 +3077,8 @@ const (
 	InitConnect = "init_connect"
 	// CollationServer is the name of 'collation_server' variable.
 	CollationServer = "collation_server"
+	// DefaultCollationForUtf8mb4 is the name of 'default_collation_for_utf8mb4' variable.
+	DefaultCollationForUtf8mb4 = "default_collation_for_utf8mb4"
 	// NetWriteTimeout is the name of 'net_write_timeout' variable.
 	NetWriteTimeout = "net_write_timeout"
 	// ThreadPoolSize is the name of 'thread_pool_size' variable.

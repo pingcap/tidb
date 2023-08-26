@@ -124,6 +124,18 @@ func checkCollation(vars *SessionVars, normalizedValue string, originalValue str
 	return coll.Name, nil
 }
 
+func checkDefaultCollationForUtf8mb4(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	coll, err := collate.GetCollationByName(normalizedValue)
+	if err != nil {
+		return normalizedValue, errors.Trace(err)
+	}
+	if coll.CharsetName != mysql.UTF8MB4Charset {
+		return normalizedValue, charset.ErrInvalidDefaultCollationForUtf8mb4.GenWithStackByArgs(normalizedValue)
+	}
+	// TODO: compatible with mysql only allow utf8mb4_0900_ai_ci or utf8mb4_general_ci.
+	return coll.Name, nil
+}
+
 func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 	if normalizedValue == "" {
 		return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(argName, "NULL"))
