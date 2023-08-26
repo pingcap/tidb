@@ -35,6 +35,10 @@ const (
 	etcdDialTimeout = 5 * time.Second
 )
 
+// GetEtcdClient returns an etcd client.
+// exported for testing.
+var GetEtcdClient = getEtcdClient
+
 // CheckRequirements checks the requirements for IMPORT INTO.
 // we check the following things here:
 //  1. target table should be empty
@@ -42,9 +46,7 @@ const (
 //
 // todo: check if there's running lightning tasks?
 // we check them one by one, and return the first error we meet.
-// todo: check all items and return all errors at once.
 func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec.SQLExecutor) error {
-	// todo: maybe we can reuse checker in lightning
 	if err := e.checkTotalFileSize(); err != nil {
 		return err
 	}
@@ -112,9 +114,7 @@ func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context) error {
 	return nil
 }
 
-// GetEtcdClient returns an etcd client.
-// exported for testing.
-func GetEtcdClient() (*etcd.Client, error) {
+func getEtcdClient() (*etcd.Client, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	tls, err := util.NewTLSConfig(
 		util.WithCAPath(tidbCfg.Security.ClusterSSLCA),
