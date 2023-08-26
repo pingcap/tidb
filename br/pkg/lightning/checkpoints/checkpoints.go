@@ -247,11 +247,22 @@ func (key *ChunkCheckpointKey) String() string {
 	return fmt.Sprintf("%s:%d", key.Path, key.Offset)
 }
 
-func (key *ChunkCheckpointKey) less(other *ChunkCheckpointKey) int {
+func (key *ChunkCheckpointKey) compare(other *ChunkCheckpointKey) int {
 	if c := cmp.Compare(key.Path, other.Path); c != 0 {
 		return c
 	}
 	return cmp.Compare(key.Offset, other.Offset)
+}
+
+func (key *ChunkCheckpointKey) less(other *ChunkCheckpointKey) bool {
+	switch {
+	case key.Path < other.Path:
+		return true
+	case key.Path > other.Path:
+		return false
+	default:
+		return key.Offset < other.Offset
+	}
 }
 
 // ChunkCheckpoint is the checkpoint for a chunk.
@@ -437,9 +448,8 @@ func (cp *TableCheckpoint) Apply(cpd *TableCheckpointDiff) {
 		for key, diff := range engineDiff.chunks {
 			checkpointKey := key
 			index := sort.Search(len(engine.Chunks), func(i int) bool {
-				return engine.Chunks[i].Key.less(&checkpointKey) > 0
+				return !engine.Chunks[i].Key.less(&checkpointKey)
 			})
-
 			if index >= len(engine.Chunks) {
 				continue
 			}
@@ -1350,7 +1360,7 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 		}
 
 		slices.SortFunc(engine.Chunks, func(i, j *ChunkCheckpoint) int {
-			return i.Key.less(&j.Key)
+			return i.Key.compare(&j.Key)
 		})
 
 		cp.Engines[engineID] = engine
