@@ -77,7 +77,7 @@ func (r *localColumnPool) put(col *chunk.Column) {
 
 const emptyLocalColumnPoolSize = int64(unsafe.Sizeof(localColumnPool{}))
 
-func (r *localColumnPool) MemoryUsage() (sum int64) {
+func (*localColumnPool) MemoryUsage() (sum int64) {
 	return emptyLocalColumnPoolSize
 }
 

@@ -160,7 +160,7 @@ func (b *BuiltinGroupingImplSig) groupingImplBitAnd(groupingID uint64) int64 {
 			res <<= 1
 			if groupingID&k <= 0 {
 				// col is not needed, being filled with null and grouped. = 1
-				res += 1
+				res++
 			}
 			// col is needed in this grouping set, meaning not being grouped. = 0
 		}
@@ -177,7 +177,7 @@ func (b *BuiltinGroupingImplSig) groupingImplNumericCmp(groupingID uint64) int64
 			res <<= 1
 			if groupingID <= k {
 				// col is not needed, being filled with null and grouped. = 1
-				res += 1
+				res++
 			}
 			// col is needed, meaning not being grouped. = 0
 		}
@@ -195,7 +195,7 @@ func (b *BuiltinGroupingImplSig) groupingImplNumericSet(groupingID uint64) int64
 		if !ok {
 			// in Num-Set mode, this map maintains the needed-col's grouping set (GIDs)
 			// when ok is NOT true, col is not needed, being filled with null and grouped. = 1
-			res += 1
+			res++
 		}
 		// it means col is needed, meaning not being filled with null and grouped. = 0
 	}

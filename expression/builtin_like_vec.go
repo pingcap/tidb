@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-func (b *builtinLikeSig) vectorized() bool {
+func (*builtinLikeSig) vectorized() bool {
 	return true
 }
 

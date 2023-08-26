@@ -44,11 +44,11 @@ func LowerAlphaASCIIExcludeEscapeChar(loweredCol *chunk.Column, rowNum int, excl
 	return actualEscapeChar
 }
 
-func (b *builtinIlikeSig) vectorized() bool {
+func (*builtinIlikeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinIlikeSig) canMemorize(param *funcParam) bool {
+func (*builtinIlikeSig) canMemorize(param *funcParam) bool {
 	return param.getCol() == nil
 }
 

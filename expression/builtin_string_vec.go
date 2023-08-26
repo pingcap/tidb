@@ -2970,6 +2970,7 @@ func formatDecimal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64,
 
 		locale := "en_US"
 		if localeBuf == nil {
+			//nolint: revive
 			// FORMAT(x, d)
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)
@@ -3010,6 +3011,7 @@ func formatReal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64, re
 
 		locale := "en_US"
 		if localeBuf == nil {
+			//nolint: revive
 			// FORMAT(x, d)
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)

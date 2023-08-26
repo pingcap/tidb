@@ -26,7 +26,7 @@ import (
 )
 
 //revive:disable:defer
-func (b *builtinArithmeticMultiplyRealSig) vectorized() bool {
+func (*builtinArithmeticMultiplyRealSig) vectorized() bool {
 	return true
 }
 
@@ -59,7 +59,7 @@ func (b *builtinArithmeticMultiplyRealSig) vecEvalReal(input *chunk.Chunk, resul
 	return nil
 }
 
-func (b *builtinArithmeticDivideDecimalSig) vectorized() bool {
+func (*builtinArithmeticDivideDecimalSig) vectorized() bool {
 	return true
 }
 

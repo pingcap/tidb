@@ -307,15 +307,15 @@ func (b *builtinSetDecimalVarSig) vecEvalDecimal(input *chunk.Chunk, result *chu
 	return nil
 }
 
-func (b *builtinValuesDecimalSig) vectorized() bool {
+func (*builtinValuesDecimalSig) vectorized() bool {
 	return false
 }
 
-func (b *builtinValuesDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinValuesDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
-func (b *builtinGetStringVarSig) vectorized() bool {
+func (*builtinGetStringVarSig) vectorized() bool {
 	return true
 }
 
@@ -350,7 +350,7 @@ func (b *builtinGetStringVarSig) vecEvalString(input *chunk.Chunk, result *chunk
 	return nil
 }
 
-func (b *builtinGetIntVarSig) vectorized() bool {
+func (*builtinGetIntVarSig) vectorized() bool {
 	return true
 }
 

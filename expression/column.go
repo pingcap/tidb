@@ -164,7 +164,7 @@ func (col *CorrelatedColumn) Equal(ctx sessionctx.Context, expr Expression) bool
 }
 
 // IsCorrelated implements Expression interface.
-func (col *CorrelatedColumn) IsCorrelated() bool {
+func (*CorrelatedColumn) IsCorrelated() bool {
 	return true
 }
 
@@ -574,7 +574,7 @@ func (col *Column) RemapColumn(m map[int64]*Column) (Expression, error) {
 }
 
 // Vectorized returns if this expression supports vectorized evaluation.
-func (col *Column) Vectorized() bool {
+func (*Column) Vectorized() bool {
 	return true
 }
 

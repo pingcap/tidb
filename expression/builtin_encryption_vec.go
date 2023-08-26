@@ -37,7 +37,7 @@ import (
 )
 
 //revive:disable:defer
-func (b *builtinAesDecryptSig) vectorized() bool {
+func (*builtinAesDecryptSig) vectorized() bool {
 	return true
 }
 

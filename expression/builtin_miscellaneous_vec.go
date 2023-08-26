@@ -62,7 +62,7 @@ func (b *builtinInetNtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	return nil
 }
 
-func (b *builtinInetNtoaSig) vectorized() bool {
+func (*builtinInetNtoaSig) vectorized() bool {
 	return true
 }
 
