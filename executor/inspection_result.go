@@ -172,7 +172,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 		// make result stable
 		slices.SortFunc(results, func(i, j inspectionResult) int {
 			if c := cmp.Compare(i.degree, j.degree); c != 0 {
-				return c
+				return -c
 			}
 			// lhs and rhs
 			if c := cmp.Compare(i.item, j.item); c != 0 {
