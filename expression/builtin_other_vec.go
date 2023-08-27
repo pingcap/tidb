@@ -23,59 +23,59 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-func (b *builtinValuesIntSig) vectorized() bool {
+func (*builtinValuesIntSig) vectorized() bool {
 	return false
 }
 
-func (b *builtinValuesIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinValuesIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
-func (b *builtinValuesDurationSig) vectorized() bool {
+func (*builtinValuesDurationSig) vectorized() bool {
 	return false
 }
 
-func (b *builtinValuesDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinValuesDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
-func (b *builtinRowSig) vectorized() bool {
+func (*builtinRowSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRowSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinRowSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	panic("builtinRowSig.vecEvalString() should never be called.")
 }
 
-func (b *builtinValuesRealSig) vectorized() bool {
+func (*builtinValuesRealSig) vectorized() bool {
 	return false
 }
 
-func (b *builtinValuesRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinValuesRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
-func (b *builtinValuesStringSig) vectorized() bool {
+func (*builtinValuesStringSig) vectorized() bool {
 	return false
 }
 
-func (b *builtinValuesStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinValuesStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
-func (b *builtinValuesTimeSig) vectorized() bool {
+func (*builtinValuesTimeSig) vectorized() bool {
 	return false
 }
 
-func (b *builtinValuesTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinValuesTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
-func (b *builtinValuesJSONSig) vectorized() bool {
+func (*builtinValuesJSONSig) vectorized() bool {
 	return false
 }
 
-func (b *builtinValuesJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinValuesJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -90,7 +90,7 @@ func bitCount(value int64) int64 {
 	value = value & 0x7f
 	return value
 }
-func (b *builtinBitCountSig) vectorized() bool {
+func (*builtinBitCountSig) vectorized() bool {
 	return true
 }
 func (b *builtinBitCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
@@ -121,7 +121,7 @@ func (b *builtinBitCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	return nil
 }
 
-func (b *builtinGetParamStringSig) vectorized() bool {
+func (*builtinGetParamStringSig) vectorized() bool {
 	return true
 }
 
@@ -155,7 +155,7 @@ func (b *builtinGetParamStringSig) vecEvalString(input *chunk.Chunk, result *chu
 	return nil
 }
 
-func (b *builtinSetStringVarSig) vectorized() bool {
+func (*builtinSetStringVarSig) vectorized() bool {
 	return true
 }
 

@@ -72,7 +72,7 @@ func (*builtinTiDBVersionSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTiDBVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinTiDBVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ReserveString(n)
 	info := printer.GetTiDBInfo()

@@ -87,7 +87,7 @@ func (b *builtinIlikeSig) getEscape(input *chunk.Chunk, result *chunk.Column) (i
 	return escape, false, nil
 }
 
-func (b *builtinIlikeSig) lowerExpr(param *funcParam, rowNum int) {
+func (*builtinIlikeSig) lowerExpr(param *funcParam, rowNum int) {
 	col := param.getCol()
 	if col == nil {
 		str := param.getStringVal(0)
@@ -102,7 +102,7 @@ func (b *builtinIlikeSig) lowerExpr(param *funcParam, rowNum int) {
 	param.setCol(tmpExprCol)
 }
 
-func (b *builtinIlikeSig) lowerPattern(param *funcParam, rowNum int, escape int64) int64 {
+func (*builtinIlikeSig) lowerPattern(param *funcParam, rowNum int, escape int64) int64 {
 	col := param.getCol()
 	if col == nil {
 		str := param.getStringVal(0)

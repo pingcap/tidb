@@ -411,8 +411,8 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 	var sep string
 	var targetLength int
 
-	N := len(args)
-	if N > 0 {
+	n := len(args)
+	if n > 0 {
 		val, isNull, err := args[0].EvalString(b.ctx, row)
 		if err != nil || isNull {
 			// If the separator is NULL, the result is NULL.
@@ -420,7 +420,7 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 		sep = val
 	}
-	for i := 1; i < N; i++ {
+	for i := 1; i < n; i++ {
 		val, isNull, err := args[i].EvalString(b.ctx, row)
 		if err != nil {
 			return val, isNull, err

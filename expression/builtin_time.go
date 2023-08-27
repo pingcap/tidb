@@ -5731,7 +5731,7 @@ func (b *builtinSubTimeDateTimeNullSig) Clone() builtinFunc {
 
 // evalTime evals a builtinSubTimeDateTimeNullSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
-func (b *builtinSubTimeDateTimeNullSig) evalTime(chunk.Row) (types.Time, bool, error) {
+func (*builtinSubTimeDateTimeNullSig) evalTime(chunk.Row) (types.Time, bool, error) {
 	return types.ZeroDatetime, true, nil
 }
 
@@ -5841,7 +5841,7 @@ func (b *builtinSubTimeStringNullSig) Clone() builtinFunc {
 
 // evalString evals a builtinSubTimeStringNullSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
-func (b *builtinSubTimeStringNullSig) evalString(chunk.Row) (string, bool, error) {
+func (*builtinSubTimeStringNullSig) evalString(chunk.Row) (string, bool, error) {
 	return "", true, nil
 }
 
@@ -5922,7 +5922,7 @@ func (b *builtinSubTimeDurationNullSig) Clone() builtinFunc {
 
 // evalDuration evals a builtinSubTimeDurationNullSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
-func (b *builtinSubTimeDurationNullSig) evalDuration(chunk.Row) (types.Duration, bool, error) {
+func (*builtinSubTimeDurationNullSig) evalDuration(chunk.Row) (types.Duration, bool, error) {
 	return types.ZeroDuration, true, nil
 }
 
