@@ -21,7 +21,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -30,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
 )
@@ -65,12 +63,6 @@ var (
 
 	// GetRowCountByColumnRanges is a function type to get row count by column ranges.
 	GetRowCountByColumnRanges func(sctx sessionctx.Context, coll *HistColl, colID int64, colRanges []*ranger.Range) (result float64, err error)
-
-	// EqualRowCountOnColumn is a function type to get the row count by equal condition on column.
-	EqualRowCountOnColumn func(sctx sessionctx.Context, c *Column, val types.Datum, encodedVal []byte, realtimeRowCount int64) (result float64, err error)
-
-	// BetweenRowCountOnColumn is a function type to get the row count by between condition on column.
-	BetweenRowCountOnColumn func(sctx sessionctx.Context, c *Column, l, r types.Datum, lowEncoded, highEncoded []byte) float64
 )
 
 // Table represents statistics for a table.
@@ -486,61 +478,6 @@ func (t *Table) IsOutdated() bool {
 		return true
 	}
 	return false
-}
-
-// ColumnGreaterRowCount estimates the row count where the column greater than value.
-func (t *Table) ColumnGreaterRowCount(sctx sessionctx.Context, value types.Datum, colID int64) float64 {
-	c, ok := t.Columns[colID]
-	if !ok || c.IsInvalid(sctx, t.Pseudo) {
-		return float64(t.RealtimeCount) / pseudoLessRate
-	}
-	return c.GreaterRowCount(value) * c.GetIncreaseFactor(t.RealtimeCount)
-}
-
-// ColumnLessRowCount estimates the row count where the column less than value. Note that null values are not counted.
-func (t *Table) ColumnLessRowCount(sctx sessionctx.Context, value types.Datum, colID int64) float64 {
-	c, ok := t.Columns[colID]
-	if !ok || c.IsInvalid(sctx, t.Pseudo) {
-		return float64(t.RealtimeCount) / pseudoLessRate
-	}
-	return c.LessRowCount(sctx, value) * c.GetIncreaseFactor(t.RealtimeCount)
-}
-
-// ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (t *Table) ColumnBetweenRowCount(sctx sessionctx.Context, a, b types.Datum, colID int64) (float64, error) {
-	sc := sctx.GetSessionVars().StmtCtx
-	c, ok := t.Columns[colID]
-	if !ok || c.IsInvalid(sctx, t.Pseudo) {
-		return float64(t.RealtimeCount) / pseudoBetweenRate, nil
-	}
-	aEncoded, err := codec.EncodeKey(sc, nil, a)
-	if err != nil {
-		return 0, err
-	}
-	bEncoded, err := codec.EncodeKey(sc, nil, b)
-	if err != nil {
-		return 0, err
-	}
-	count := BetweenRowCountOnColumn(sctx, c, a, b, aEncoded, bEncoded)
-	if a.IsNull() {
-		count += float64(c.NullCount)
-	}
-	return count * c.GetIncreaseFactor(t.RealtimeCount), nil
-}
-
-// ColumnEqualRowCount estimates the row count where the column equals to value.
-func (t *Table) ColumnEqualRowCount(sctx sessionctx.Context, value types.Datum, colID int64) (float64, error) {
-	c, ok := t.Columns[colID]
-	if !ok || c.IsInvalid(sctx, t.Pseudo) {
-		return float64(t.RealtimeCount) / pseudoEqualRate, nil
-	}
-	encodedVal, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, value)
-	if err != nil {
-		return 0, err
-	}
-	result, err := EqualRowCountOnColumn(sctx, c, value, encodedVal, t.ModifyCount)
-	result *= c.GetIncreaseFactor(t.RealtimeCount)
-	return result, errors.Trace(err)
 }
 
 // PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
