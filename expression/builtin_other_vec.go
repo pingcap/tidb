@@ -27,7 +27,7 @@ func (*builtinValuesIntSig) vectorized() bool {
 	return false
 }
 
-func (*builtinValuesIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinValuesIntSig) vecEvalInt(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -35,7 +35,7 @@ func (*builtinValuesDurationSig) vectorized() bool {
 	return false
 }
 
-func (*builtinValuesDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinValuesDurationSig) vecEvalDuration(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -43,7 +43,7 @@ func (*builtinRowSig) vectorized() bool {
 	return true
 }
 
-func (*builtinRowSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinRowSig) vecEvalString(*chunk.Chunk, *chunk.Column) error {
 	panic("builtinRowSig.vecEvalString() should never be called.")
 }
 
@@ -51,7 +51,7 @@ func (*builtinValuesRealSig) vectorized() bool {
 	return false
 }
 
-func (*builtinValuesRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinValuesRealSig) vecEvalReal(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -59,7 +59,7 @@ func (*builtinValuesStringSig) vectorized() bool {
 	return false
 }
 
-func (*builtinValuesStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinValuesStringSig) vecEvalString(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -67,7 +67,7 @@ func (*builtinValuesTimeSig) vectorized() bool {
 	return false
 }
 
-func (*builtinValuesTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinValuesTimeSig) vecEvalTime(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -75,7 +75,7 @@ func (*builtinValuesJSONSig) vectorized() bool {
 	return false
 }
 
-func (*builtinValuesJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinValuesJSONSig) vecEvalJSON(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -311,7 +311,7 @@ func (*builtinValuesDecimalSig) vectorized() bool {
 	return false
 }
 
-func (*builtinValuesDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinValuesDecimalSig) vecEvalDecimal(*chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 

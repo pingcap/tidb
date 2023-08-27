@@ -2397,11 +2397,11 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 	bigints := make([]int64, 0, len(b.args)-1)
 
 	for i := 0; i < len(b.args)-1; i++ {
-		val, IsNull, err := b.args[i].EvalInt(b.ctx, row)
+		val, isNull, err := b.args[i].EvalInt(b.ctx, row)
 		if err != nil {
 			return "", true, err
 		}
-		if IsNull {
+		if isNull {
 			continue
 		}
 		bigints = append(bigints, val)
@@ -3804,12 +3804,12 @@ func (b *builtinInstrSig) Clone() builtinFunc {
 // evalInt evals INSTR(str,substr).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
 func (b *builtinInstrUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
-	str, IsNull, err := b.args[0].EvalString(b.ctx, row)
-	if IsNull || err != nil {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
 		return 0, true, err
 	}
-	substr, IsNull, err := b.args[1].EvalString(b.ctx, row)
-	if IsNull || err != nil {
+	substr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
 		return 0, true, err
 	}
 	if collate.IsCICollation(b.collation) {
@@ -3827,13 +3827,13 @@ func (b *builtinInstrUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 // evalInt evals INSTR(str,substr), case sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
 func (b *builtinInstrSig) evalInt(row chunk.Row) (int64, bool, error) {
-	str, IsNull, err := b.args[0].EvalString(b.ctx, row)
-	if IsNull || err != nil {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
 		return 0, true, err
 	}
 
-	substr, IsNull, err := b.args[1].EvalString(b.ctx, row)
-	if IsNull || err != nil {
+	substr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
 		return 0, true, err
 	}
 
