@@ -1034,7 +1034,7 @@ func (b *builtinJSONValidOthersSig) Clone() builtinFunc {
 
 // evalInt evals a builtinJSONValidOthersSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/json-attribute-functions.html#function_json-valid
-func (b *builtinJSONValidOthersSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+func (*builtinJSONValidOthersSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	return 0, false, nil
 }
 

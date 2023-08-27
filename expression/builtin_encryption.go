@@ -422,7 +422,7 @@ type desDecryptFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *desDecryptFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *desDecryptFunctionClass) getFunction(sessionctx.Context, []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "DES_DECRYPT")
 }
 
@@ -430,7 +430,7 @@ type desEncryptFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *desEncryptFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *desEncryptFunctionClass) getFunction(sessionctx.Context, []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "DES_ENCRYPT")
 }
 
@@ -485,7 +485,7 @@ type encryptFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *encryptFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *encryptFunctionClass) getFunction(sessionctx.Context, []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "ENCRYPT")
 }
 
@@ -493,7 +493,7 @@ type oldPasswordFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *oldPasswordFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *oldPasswordFunctionClass) getFunction(sessionctx.Context, []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "OLD_PASSWORD")
 }
 
