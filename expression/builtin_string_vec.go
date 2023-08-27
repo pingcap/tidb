@@ -39,7 +39,7 @@ func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 	return b.args[0].VecEvalString(b.ctx, input, result)
 }
 
-func (b *builtinLowerSig) vectorized() bool {
+func (*builtinLowerSig) vectorized() bool {
 	return true
 }
 
@@ -65,7 +65,7 @@ func (b *builtinLowerUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	return nil
 }
 
-func (b *builtinLowerUTF8Sig) vectorized() bool {
+func (*builtinLowerUTF8Sig) vectorized() bool {
 	return true
 }
 
@@ -124,7 +124,7 @@ func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	return nil
 }
 
-func (b *builtinRepeatSig) vectorized() bool {
+func (*builtinRepeatSig) vectorized() bool {
 	return true
 }
 
@@ -151,7 +151,7 @@ func (b *builtinStringIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	return nil
 }
 
-func (b *builtinStringIsNullSig) vectorized() bool {
+func (*builtinStringIsNullSig) vectorized() bool {
 	return true
 }
 
@@ -177,7 +177,7 @@ func (b *builtinUpperUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	return nil
 }
 
-func (b *builtinUpperUTF8Sig) vectorized() bool {
+func (*builtinUpperUTF8Sig) vectorized() bool {
 	return true
 }
 
@@ -185,7 +185,7 @@ func (b *builtinUpperSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 	return b.args[0].VecEvalString(b.ctx, input, result)
 }
 
-func (b *builtinUpperSig) vectorized() bool {
+func (*builtinUpperSig) vectorized() bool {
 	return true
 }
 
@@ -230,7 +230,7 @@ func (b *builtinLeftUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	return nil
 }
 
-func (b *builtinLeftUTF8Sig) vectorized() bool {
+func (*builtinLeftUTF8Sig) vectorized() bool {
 	return true
 }
 
@@ -276,7 +276,7 @@ func (b *builtinRightUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	return nil
 }
 
-func (b *builtinRightUTF8Sig) vectorized() bool {
+func (*builtinRightUTF8Sig) vectorized() bool {
 	return true
 }
 
@@ -321,7 +321,7 @@ func (b *builtinSpaceSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 	return nil
 }
 
-func (b *builtinSpaceSig) vectorized() bool {
+func (*builtinSpaceSig) vectorized() bool {
 	return true
 }
 
@@ -342,11 +342,11 @@ func (b *builtinReverseUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
-func (b *builtinReverseUTF8Sig) vectorized() bool {
+func (*builtinReverseUTF8Sig) vectorized() bool {
 	return true
 }
 
-func (b *builtinConcatSig) vectorized() bool {
+func (*builtinConcatSig) vectorized() bool {
 	return true
 }
 
@@ -398,7 +398,7 @@ func (b *builtinConcatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	return nil
 }
 
-func (b *builtinLocate3ArgsUTF8Sig) vectorized() bool {
+func (*builtinLocate3ArgsUTF8Sig) vectorized() bool {
 	return true
 }
 
@@ -464,7 +464,7 @@ func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 	return nil
 }
 
-func (b *builtinHexStrArgSig) vectorized() bool {
+func (*builtinHexStrArgSig) vectorized() bool {
 	return true
 }
 
@@ -2777,7 +2777,7 @@ func (b *builtinRightSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 	return nil
 }
 
-func (b *builtinSubstring3ArgsSig) vectorized() bool {
+func (*builtinSubstring3ArgsSig) vectorized() bool {
 	return true
 }
 
@@ -2848,7 +2848,7 @@ func (b *builtinSubstring3ArgsSig) vecEvalString(input *chunk.Chunk, result *chu
 	return nil
 }
 
-func (b *builtinHexIntArgSig) vectorized() bool {
+func (*builtinHexIntArgSig) vectorized() bool {
 	return true
 }
 
@@ -2874,7 +2874,7 @@ func (b *builtinHexIntArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	return nil
 }
 
-func (b *builtinFromBase64Sig) vectorized() bool {
+func (*builtinFromBase64Sig) vectorized() bool {
 	return true
 }
 
@@ -2924,7 +2924,7 @@ func (b *builtinFromBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	return nil
 }
 
-func (b *builtinCharLengthUTF8Sig) vectorized() bool {
+func (*builtinCharLengthUTF8Sig) vectorized() bool {
 	return true
 }
 
@@ -3103,7 +3103,7 @@ func (b *builtinTranslateBinarySig) vecEvalString(input *chunk.Chunk, result *ch
 	return nil
 }
 
-func (b *builtinTranslateBinarySig) vectorized() bool {
+func (*builtinTranslateBinarySig) vectorized() bool {
 	return true
 }
 
@@ -3176,6 +3176,6 @@ func (b *builtinTranslateUTF8Sig) vecEvalString(input *chunk.Chunk, result *chun
 	return nil
 }
 
-func (b *builtinTranslateUTF8Sig) vectorized() bool {
+func (*builtinTranslateUTF8Sig) vectorized() bool {
 	return true
 }
