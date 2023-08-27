@@ -3297,8 +3297,7 @@ func (c *formatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 const formatMaxDecimals int64 = 30
 
 // evalNumDecArgsForFormat evaluates first 2 arguments, i.e, x and d, for function `format`.
-func evalNumDecArgsForFormat(f builtinFunc, row chunk.Row) (string, string, bool, error) {
-	var xStr string
+func evalNumDecArgsForFormat(f builtinFunc, row chunk.Row) (xStr, dStr string, isNull bool, err error) {
 	arg0, arg1 := f.getArgs()[0], f.getArgs()[1]
 	ctx := f.getCtx()
 	if arg0.GetType().EvalType() == types.ETDecimal {
@@ -3324,7 +3323,7 @@ func evalNumDecArgsForFormat(f builtinFunc, row chunk.Row) (string, string, bool
 		d = formatMaxDecimals
 	}
 	xStr = roundFormatArgs(xStr, int(d))
-	dStr := strconv.FormatInt(d, 10)
+	dStr = strconv.FormatInt(d, 10)
 	return xStr, dStr, false, nil
 }
 
