@@ -1946,7 +1946,7 @@ func (b *builtinSecToTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
-func (b *builtinUTCTimeWithoutArgSig) vectorized() bool {
+func (*builtinUTCTimeWithoutArgSig) vectorized() bool {
 	return true
 }
 
@@ -1970,7 +1970,7 @@ func (b *builtinUTCTimeWithoutArgSig) vecEvalDuration(input *chunk.Chunk, result
 	return nil
 }
 
-func (b *builtinDateDiffSig) vectorized() bool {
+func (*builtinDateDiffSig) vectorized() bool {
 	return true
 }
 
