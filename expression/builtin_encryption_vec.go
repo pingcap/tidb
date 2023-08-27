@@ -109,7 +109,7 @@ func (b *builtinAesDecryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	return nil
 }
 
-func (b *builtinAesEncryptIVSig) vectorized() bool {
+func (*builtinAesEncryptIVSig) vectorized() bool {
 	return true
 }
 
@@ -204,7 +204,7 @@ func (b *builtinAesEncryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 	return nil
 }
 
-func (b *builtinDecodeSig) vectorized() bool {
+func (*builtinDecodeSig) vectorized() bool {
 	return true
 }
 
@@ -243,7 +243,7 @@ func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	return nil
 }
 
-func (b *builtinEncodeSig) vectorized() bool {
+func (*builtinEncodeSig) vectorized() bool {
 	return true
 }
 
@@ -282,7 +282,7 @@ func (b *builtinEncodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	return nil
 }
 
-func (b *builtinAesDecryptIVSig) vectorized() bool {
+func (*builtinAesDecryptIVSig) vectorized() bool {
 	return true
 }
 
@@ -377,7 +377,7 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 	return nil
 }
 
-func (b *builtinRandomBytesSig) vectorized() bool {
+func (*builtinRandomBytesSig) vectorized() bool {
 	return true
 }
 
@@ -414,7 +414,7 @@ func (b *builtinRandomBytesSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
-func (b *builtinMD5Sig) vectorized() bool {
+func (*builtinMD5Sig) vectorized() bool {
 	return true
 }
 
