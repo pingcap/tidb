@@ -1064,7 +1064,7 @@ func (b *builtinRandSig) Clone() builtinFunc {
 
 // evalReal evals RAND().
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
-func (b *builtinRandSig) evalReal(row chunk.Row) (float64, bool, error) {
+func (b *builtinRandSig) evalReal(chunk.Row) (float64, bool, error) {
 	res := b.mysqlRng.Gen()
 	return res, false, nil
 }
