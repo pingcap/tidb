@@ -170,7 +170,7 @@ func (b *builtinCurrentRoleSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
-func (b *builtinUserSig) vectorized() bool {
+func (*builtinUserSig) vectorized() bool {
 	return true
 }
 
@@ -190,7 +190,7 @@ func (b *builtinUserSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	return nil
 }
 
-func (b *builtinTiDBIsDDLOwnerSig) vectorized() bool {
+func (*builtinTiDBIsDDLOwnerSig) vectorized() bool {
 	return true
 }
 
@@ -208,7 +208,7 @@ func (b *builtinTiDBIsDDLOwnerSig) vecEvalInt(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
-func (b *builtinFoundRowsSig) vectorized() bool {
+func (*builtinFoundRowsSig) vectorized() bool {
 	return true
 }
 
@@ -297,7 +297,7 @@ func (b *builtinBenchmarkSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	return nil
 }
 
-func (b *builtinLastInsertIDSig) vectorized() bool {
+func (*builtinLastInsertIDSig) vectorized() bool {
 	return true
 }
 
@@ -312,7 +312,7 @@ func (b *builtinLastInsertIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	return nil
 }
 
-func (b *builtinLastInsertIDWithIDSig) vectorized() bool {
+func (*builtinLastInsertIDWithIDSig) vectorized() bool {
 	return true
 }
 
@@ -330,7 +330,7 @@ func (b *builtinLastInsertIDWithIDSig) vecEvalInt(input *chunk.Chunk, result *ch
 	return nil
 }
 
-func (b *builtinVersionSig) vectorized() bool {
+func (*builtinVersionSig) vectorized() bool {
 	return true
 }
 
@@ -343,7 +343,7 @@ func (b *builtinVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	return nil
 }
 
-func (b *builtinTiDBDecodeKeySig) vectorized() bool {
+func (*builtinTiDBDecodeKeySig) vectorized() bool {
 	return true
 }
 
