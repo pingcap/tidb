@@ -82,7 +82,7 @@ func (b *builtinYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	return nil
 }
 
-func (b *builtinYearSig) vectorized() bool {
+func (*builtinYearSig) vectorized() bool {
 	return true
 }
 
@@ -108,11 +108,11 @@ func (b *builtinDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) e
 	return nil
 }
 
-func (b *builtinDateSig) vectorized() bool {
+func (*builtinDateSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinFromUnixTime2ArgSig) vectorized() bool {
+func (*builtinFromUnixTime2ArgSig) vectorized() bool {
 	return true
 }
 
@@ -161,7 +161,7 @@ func (b *builtinFromUnixTime2ArgSig) vecEvalString(input *chunk.Chunk, result *c
 	return nil
 }
 
-func (b *builtinSysDateWithoutFspSig) vectorized() bool {
+func (*builtinSysDateWithoutFspSig) vectorized() bool {
 	return true
 }
 
@@ -182,7 +182,7 @@ func (b *builtinSysDateWithoutFspSig) vecEvalTime(input *chunk.Chunk, result *ch
 	return nil
 }
 
-func (b *builtinExtractDatetimeFromStringSig) vectorized() bool {
+func (*builtinExtractDatetimeFromStringSig) vectorized() bool {
 	// TODO: to fix https://github.com/pingcap/tidb/issues/9716 in vectorized evaluation.
 	return false
 }
