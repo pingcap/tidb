@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 )
 
-func (b *builtinDatabaseSig) vectorized() bool {
+func (*builtinDatabaseSig) vectorized() bool {
 	return true
 }
 
@@ -49,7 +49,7 @@ func (b *builtinDatabaseSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	return nil
 }
 
-func (b *builtinConnectionIDSig) vectorized() bool {
+func (*builtinConnectionIDSig) vectorized() bool {
 	return true
 }
 
@@ -68,7 +68,7 @@ func (b *builtinConnectionIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	return nil
 }
 
-func (b *builtinTiDBVersionSig) vectorized() bool {
+func (*builtinTiDBVersionSig) vectorized() bool {
 	return true
 }
 
@@ -82,7 +82,7 @@ func (b *builtinTiDBVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
-func (b *builtinRowCountSig) vectorized() bool {
+func (*builtinRowCountSig) vectorized() bool {
 	return true
 }
 
@@ -99,7 +99,7 @@ func (b *builtinRowCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	return nil
 }
 
-func (b *builtinCurrentUserSig) vectorized() bool {
+func (*builtinCurrentUserSig) vectorized() bool {
 	return true
 }
 
@@ -119,7 +119,7 @@ func (b *builtinCurrentUserSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
-func (b *builtinCurrentResourceGroupSig) vectorized() bool {
+func (*builtinCurrentResourceGroupSig) vectorized() bool {
 	return true
 }
 
@@ -136,7 +136,7 @@ func (b *builtinCurrentResourceGroupSig) vecEvalString(input *chunk.Chunk, resul
 	return nil
 }
 
-func (b *builtinCurrentRoleSig) vectorized() bool {
+func (*builtinCurrentRoleSig) vectorized() bool {
 	return true
 }
 
