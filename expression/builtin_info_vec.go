@@ -334,7 +334,7 @@ func (*builtinVersionSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
