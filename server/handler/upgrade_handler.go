@@ -55,6 +55,8 @@ func (h ClusterUpgradeHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 		hasDone, err = h.startUpgrade()
 	case "finish":
 		hasDone, err = h.finishUpgrade()
+	case "show":
+		err = h.showUpgrade(w)
 	default:
 		WriteError(w, errors.Errorf("wrong operation:%s", op))
 		return
@@ -62,6 +64,8 @@ func (h ClusterUpgradeHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 
 	if err != nil {
 		WriteError(w, err)
+		logutil.Logger(req.Context()).Info("upgrade op failed",
+			zap.String("category", "upgrading"), zap.String("op", op), zap.Bool("hasDone", hasDone))
 		return
 	}
 	if hasDone {
@@ -75,7 +79,7 @@ func (h ClusterUpgradeHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 		WriteData(w, "success!")
 	}
 	logutil.Logger(req.Context()).Info("upgrade op success",
-		zap.String("category", "upgrading"), zap.String("op", req.FormValue("op")), zap.Bool("hasDone", hasDone))
+		zap.String("category", "upgrading"), zap.String("op", op), zap.Bool("hasDone", hasDone))
 }
 
 func (h ClusterUpgradeHandler) startUpgrade() (hasDone bool, err error) {
@@ -116,63 +120,78 @@ func (h ClusterUpgradeHandler) finishUpgrade() (hasDone bool, err error) {
 	return false, err
 }
 
-// clusterUpgradeInfo is used to report cluster upgrade info when do http request.
-type clusterUpgradeInfo struct {
-	ServersNum             int                          `json:"servers_num,omitempty"`
-	OwnerID                string                       `json:"owner_id"`
-	UpgradedPercent        int                          `json:"upgraded_percent"`
-	IsAllUpgraded          bool                         `json:"is_all_server_version_consistent,omitempty"`
-	AllServersDiffVersions []infosync.ServerVersionInfo `json:"all_servers_diff_versions,omitempty"`
+// SimpleServerInfo is some simple information such as version and address.
+type SimpleServerInfo struct {
+	infosync.ServerVersionInfo
+	ID           string `json:"ddl_id"`
+	IP           string `json:"ip"`
+	Port         uint   `json:"listening_port"`
+	JSONServerID uint64 `json:"server_id"`
 }
 
-func (h ClusterUpgradeHandler) showUpgrade(w http.ResponseWriter, req *http.Request) error {
-	do, err := session.GetDomain(h.Store)
+// ClusterUpgradeInfo is used to report cluster upgrade info when do http request.
+type ClusterUpgradeInfo struct {
+	ServersNum          int                `json:"servers_num,omitempty"`
+	OwnerID             string             `json:"owner_id"`
+	UpgradedPercent     int                `json:"upgraded_percent"`
+	IsAllUpgraded       bool               `json:"is_all_server_version_consistent,omitempty"`
+	AllServersDiffInfos []SimpleServerInfo `json:"all_servers_diff_info,omitempty"`
+}
+
+func (h ClusterUpgradeHandler) showUpgrade(w http.ResponseWriter) error {
+	do, err := session.GetDomain(h.store)
 	if err != nil {
-		logutil.BgLogger().Error("failed to get session domain", zap.Error(err))
-		return errors.New("create session error")
+		return err
 	}
 	ctx := context.Background()
 	allServersInfo, err := infosync.GetAllServerInfo(ctx)
 	if err != nil {
-		logutil.BgLogger().Error("failed to get all server info", zap.Error(err))
-		return errors.New("ddl server information not found")
+		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	ownerID, err := do.DDL().OwnerManager().GetOwnerID(ctx)
 	cancel()
 	if err != nil {
-		logutil.BgLogger().Error("failed to get owner id", zap.Error(err))
-		return errors.New("ddl server information not found")
+		return err
 	}
+
 	allVersionsMap := map[infosync.ServerVersionInfo]int{}
 	allVersions := make([]infosync.ServerVersionInfo, 0, len(allServersInfo))
 	for _, v := range allServersInfo {
-		if s, ok := allVersionsMap[v.ServerVersionInfo]; ok {
-			s++
+		if _, ok := allVersionsMap[v.ServerVersionInfo]; ok {
+			allVersionsMap[v.ServerVersionInfo]++
 			continue
 		}
 		allVersionsMap[v.ServerVersionInfo] = 1
 		allVersions = append(allVersions, v.ServerVersionInfo)
 	}
-	maxVer := allVersions[0].Version
-	maxInfo := allVersions[0]
-	for k, _ := range allVersionsMap {
-		if strings.Compare(maxVer, k.Version) < 0 {
-			maxInfo = k
+	maxVerInfo := allVersions[0]
+	for k := range allVersionsMap {
+		if strings.Compare(maxVerInfo.Version, k.Version) < 0 {
+			maxVerInfo = k
 		}
 	}
-	upgradedNum := len(allServersInfo) - allVersionsMap[maxInfo]
-	upgradedPercent := (upgradedNum / len(allServersInfo)) * 100
-	upgradeInfo := clusterUpgradeInfo{
-		ServersNum:             len(allServersInfo),
-		OwnerID:                ownerID,
-		AllServersDiffVersions: allVersions,
-		UpgradedPercent:        upgradedPercent,
-		IsAllUpgraded:          upgradedPercent == 100,
+	upgradedPercent := (allVersionsMap[maxVerInfo] * 100) / len(allServersInfo)
+	upgradeInfo := ClusterUpgradeInfo{
+		ServersNum:      len(allServersInfo),
+		OwnerID:         ownerID,
+		UpgradedPercent: upgradedPercent,
+		IsAllUpgraded:   upgradedPercent == 100,
 	}
-	// if IsAllUpgraded is false, return the all tidb servers version.
+	// If IsAllUpgraded is false, return the all tidb servers version.
 	if !upgradeInfo.IsAllUpgraded {
-		upgradeInfo.AllServersDiffVersions = allVersions
+		allSimpleServerInfo := make([]SimpleServerInfo, 0, len(allServersInfo))
+		for _, info := range allServersInfo {
+			sInfo := SimpleServerInfo{
+				ServerVersionInfo: info.ServerVersionInfo,
+				ID:                info.ID,
+				IP:                info.IP,
+				Port:              info.Port,
+				JSONServerID:      info.JSONServerID,
+			}
+			allSimpleServerInfo = append(allSimpleServerInfo, sInfo)
+		}
+		upgradeInfo.AllServersDiffInfos = allSimpleServerInfo
 	}
 	WriteData(w, upgradeInfo)
 	return nil
