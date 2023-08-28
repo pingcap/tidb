@@ -52,7 +52,7 @@ func NewRangeSplitter(
 	ctx context.Context,
 	dataFiles, statFiles []string,
 	externalStorage storage.ExternalStorage,
-	maxTotalRangesSize, maxTotalRangesKeys int64,
+	rangesGroupSize, rangesGroupKeys int64,
 	maxRangeSize, maxRangeKeys int64,
 ) (*RangeSplitter, error) {
 	propIter, err := NewMergePropIter(ctx, statFiles, externalStorage)
@@ -61,8 +61,8 @@ func NewRangeSplitter(
 	}
 
 	return &RangeSplitter{
-		rangesGroupSize: maxTotalRangesSize,
-		rangesGroupKeys: maxTotalRangesKeys,
+		rangesGroupSize: rangesGroupSize,
+		rangesGroupKeys: rangesGroupKeys,
 		propIter:        propIter,
 		dataFiles:       dataFiles,
 		statFiles:       statFiles,
