@@ -15,10 +15,10 @@
 package cardinality
 
 import (
-	"github.com/pingcap/tidb/planner/property"
 	"math"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
