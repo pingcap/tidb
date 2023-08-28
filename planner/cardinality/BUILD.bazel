@@ -4,6 +4,8 @@ go_library(
     name = "cardinality",
     srcs = [
         "histogram.go",
+        "join.go",
+        "ndv.go",
         "pseudo.go",
         "row_count_column.go",
         "row_count_index.go",
@@ -19,6 +21,7 @@ go_library(
         "//parser/format",
         "//parser/model",
         "//parser/mysql",
+        "//planner/property",
         "//planner/util",
         "//planner/util/debugtrace",
         "//sessionctx",
