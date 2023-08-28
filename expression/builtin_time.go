@@ -6555,8 +6555,7 @@ func (c *tidbParseTsoLogicalFunctionClass) getFunction(ctx sessionctx.Context, a
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	argTp := args[0].GetType().EvalType()
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
