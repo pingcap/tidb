@@ -61,6 +61,7 @@ type opSessPool interface {
 }
 
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
+// TODO(tangenta): add failpoint tests for these operators to ensure the robustness.
 func NewAddIndexIngestPipeline(
 	ctx context.Context,
 	store kv.Storage,
@@ -336,12 +337,11 @@ func (w *tableScanWorker) recycleChunk(chk *chunk.Chunk) {
 
 // IndexWriteResult contains the result of writing index records to ingest engine.
 type IndexWriteResult struct {
-	ID      int
-	Added   int
-	Scanned int
-	Total   int
-	Next    kv.Key
-	Err     error
+	ID    int
+	Added int
+	Total int
+	Next  kv.Key
+	Err   error
 }
 
 // IndexIngestOperator writes index records to ingest engine.
@@ -432,12 +432,11 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, sender func(IndexWri
 		return
 	}
 	if count == 0 {
-		logutil.Logger(w.ctx).Info("finish a cop-request task", zap.Int("id", rs.ID))
+		logutil.Logger(w.ctx).Info("finish a table scan task", zap.Int("id", rs.ID))
 		sender(result)
 		return
 	}
 	result.Added = count
-	result.Scanned = count
 	result.Next = nextKey
 	if ResultCounterForTest != nil && result.Err == nil {
 		ResultCounterForTest.Add(1)
@@ -487,6 +486,7 @@ func (s *indexWriteResultSink) Open() error {
 }
 
 func (s *indexWriteResultSink) collectResult() error {
+	// TODO(tangenta): use results to update reorg info and metrics.
 	for {
 		select {
 		case <-s.ctx.Done():
