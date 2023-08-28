@@ -28,7 +28,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// AddLockedTables add locked tables id  to store
+// AddLockedTables add locked tables id to store
 func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
