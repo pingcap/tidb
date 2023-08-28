@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "partition_test",
+    timeout = "long",
+    srcs = [
+        "main_test.go",
+        "partition_test.go",
+    ],
+    flaky = True,
+    shard_count = 35,
+    deps = [
+        "//ddl",
+        "//domain",
+        "//errno",
+        "//kv",
+        "//parser/model",
+        "//sessionctx/binloginfo",
+        "//sessiontxn",
+        "//table",
+        "//table/tables",
+        "//testkit",
+        "//testkit/testsetup",
+        "//types",
+        "//util",
+        "//util/dbterror",
+        "//util/logutil",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+    ],
+)

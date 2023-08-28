@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tables_test
+package partition
 
 import (
 	"context"
@@ -45,7 +45,7 @@ func TestPartitionBasic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(mockPumpClient{})
+	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(testkit.MockPumpClient{})
 	tk.MustExec("set @@session.tidb_enable_table_partition = '1'")
 	tk.MustExec(`CREATE TABLE partition_basic (id int(11), unique index(id))
 PARTITION BY RANGE COLUMNS ( id ) (
