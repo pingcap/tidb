@@ -22,7 +22,6 @@ go_test(
         "//testkit",
         "//testkit/external",
         "//util/dbterror/exeerrors",
-        "//util/israce",
         "//util/memory",
         "//util/tiflashcompute",
         "@com_github_pingcap_errors//:errors",

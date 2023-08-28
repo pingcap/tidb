@@ -5,6 +5,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -36,6 +37,7 @@ const (
 	azblobAccountKey       = "azblob.account-key"
 	azblobSASToken         = "azblob.sas-token"
 	azblobEncryptionScope  = "azblob.encryption-scope"
+	azblobEncryptionKey    = "azblob.encryption-key"
 )
 
 const azblobRetryTimes int32 = 5
@@ -58,6 +60,7 @@ type AzblobBackendOptions struct {
 	AccessTier      string `json:"access-tier" toml:"access-tier"`
 	SASToken        string `json:"sas-token" toml:"sas-token"`
 	EncryptionScope string `json:"encryption-scope" toml:"encryption-scope"`
+	EncryptionKey   string `json:"encryption-key" toml:"encryption-key"`
 }
 
 func (options *AzblobBackendOptions) apply(azblob *backuppb.AzureBlobStorage) error {
@@ -67,6 +70,19 @@ func (options *AzblobBackendOptions) apply(azblob *backuppb.AzureBlobStorage) er
 	azblob.SharedKey = options.AccountKey
 	azblob.AccessSig = options.SASToken
 	azblob.EncryptionScope = options.EncryptionScope
+
+	if len(options.EncryptionKey) == 0 {
+		options.EncryptionKey = os.Getenv("AZURE_ENCRYPTION_KEY")
+	}
+
+	if len(options.EncryptionKey) > 0 {
+		keySlice := []byte(options.EncryptionKey)
+		keySha256 := sha256.Sum256(keySlice)
+		azblob.EncryptionKey = &backuppb.AzureCustomerKey{
+			EncryptionKey:       base64.StdEncoding.EncodeToString(keySlice),
+			EncryptionKeySha256: base64.StdEncoding.EncodeToString(keySha256[:]),
+		}
+	}
 	return nil
 }
 
@@ -77,8 +93,7 @@ func defineAzblobFlags(flags *pflag.FlagSet) {
 	flags.String(azblobAccountKey, "", "Specify the account key for azblob")
 	flags.String(azblobSASToken, "", "Specify the SAS (shared access signatures) for azblob")
 	flags.String(azblobEncryptionScope, "", "Specify the server side encryption scope")
-
-	_ = flags.MarkHidden(azblobEncryptionScope)
+	flags.String(azblobEncryptionKey, "", "Specify the server side encryption customer provided key")
 }
 
 func hiddenAzblobFlags(flags *pflag.FlagSet) {
@@ -88,6 +103,7 @@ func hiddenAzblobFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(azblobAccountKey)
 	_ = flags.MarkHidden(azblobSASToken)
 	_ = flags.MarkHidden(azblobEncryptionScope)
+	_ = flags.MarkHidden(azblobEncryptionKey)
 }
 
 func (options *AzblobBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
@@ -121,6 +137,11 @@ func (options *AzblobBackendOptions) parseFromFlags(flags *pflag.FlagSet) error 
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	options.EncryptionKey, err = flags.GetString(azblobEncryptionKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
@@ -136,10 +157,12 @@ type sharedKeyClientBuilder struct {
 	cred        *azblob.SharedKeyCredential
 	accountName string
 	serviceURL  string
+
+	clientOptions *azblob.ClientOptions
 }
 
 func (b *sharedKeyClientBuilder) GetServiceClient() (*azblob.Client, error) {
-	return azblob.NewClientWithSharedKeyCredential(b.serviceURL, b.cred, getDefaultClientOptions())
+	return azblob.NewClientWithSharedKeyCredential(b.serviceURL, b.cred, b.clientOptions)
 }
 
 func (b *sharedKeyClientBuilder) GetAccountName() string {
@@ -151,10 +174,12 @@ type sasClientBuilder struct {
 	accountName string
 	// Example of serviceURL: https://<account>.blob.core.windows.net/?<sas token>
 	serviceURL string
+
+	clientOptions *azblob.ClientOptions
 }
 
 func (b *sasClientBuilder) GetServiceClient() (*azblob.Client, error) {
-	return azblob.NewClientWithNoCredential(b.serviceURL, getDefaultClientOptions())
+	return azblob.NewClientWithNoCredential(b.serviceURL, b.clientOptions)
 }
 
 func (b *sasClientBuilder) GetAccountName() string {
@@ -166,10 +191,12 @@ type tokenClientBuilder struct {
 	cred        *azidentity.ClientSecretCredential
 	accountName string
 	serviceURL  string
+
+	clientOptions *azblob.ClientOptions
 }
 
 func (b *tokenClientBuilder) GetServiceClient() (*azblob.Client, error) {
-	return azblob.NewClient(b.serviceURL, b.cred, getDefaultClientOptions())
+	return azblob.NewClient(b.serviceURL, b.cred, b.clientOptions)
 }
 
 func (b *tokenClientBuilder) GetAccountName() string {
@@ -188,6 +215,11 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 		return nil, errors.New("bucket(container) cannot be empty to access azure blob storage")
 	}
 
+	clientOptions := getDefaultClientOptions()
+	if opts != nil && opts.HTTPClient != nil {
+		clientOptions.Transport = opts.HTTPClient
+	}
+
 	if len(options.AccountName) > 0 && len(options.AccessSig) > 0 {
 		serviceURL := options.Endpoint
 		if len(serviceURL) == 0 {
@@ -200,6 +232,8 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 		return &sasClientBuilder{
 			options.AccountName,
 			serviceURL,
+
+			clientOptions,
 		}, nil
 	}
 
@@ -216,6 +250,8 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 			cred,
 			options.AccountName,
 			serviceURL,
+
+			clientOptions,
 		}, nil
 	}
 
@@ -244,6 +280,8 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 				cred,
 				accountName,
 				serviceURL,
+
+				clientOptions,
 			}, nil
 		}
 		log.Warn("Failed to get azure token credential but environment variables exist, try to use shared key.", zap.String("tenantId", tenantID), zap.String("clientId", clientID), zap.String("clientSecret", "?"))
@@ -271,6 +309,8 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 		cred,
 		accountName,
 		serviceURL,
+
+		clientOptions,
 	}, nil
 }
 
@@ -281,6 +321,9 @@ type AzureBlobStorage struct {
 	containerClient *container.Client
 
 	accessTier blob.AccessTier
+
+	cpkScope *blob.CPKScopeInfo
+	cpkInfo  *blob.CPKInfo
 }
 
 func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage, opts *ExternalStorageOptions) (*AzureBlobStorage, error) {
@@ -303,9 +346,29 @@ func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb
 		return nil, errors.Trace(err)
 	}
 
-	if len(options.EncryptionScope) > 0 && len(options.StorageClass) > 0 {
-		return nil, errors.Errorf("Set Blob Tier cannot be used with customer-provided keys. " +
-			"Please don't supply the access-tier when use encryption-scope.")
+	if (len(options.EncryptionScope) > 0 || options.EncryptionKey != nil) && len(options.StorageClass) > 0 {
+		return nil, errors.Errorf("Set Blob Tier cannot be used with customer-provided key/scope. " +
+			"Please don't supply the access-tier when use encryption-key or encryption-scope.")
+	} else if len(options.EncryptionScope) > 0 && options.EncryptionKey != nil {
+		return nil, errors.Errorf("Undefined input: There are both encryption-scope and customer provided key. " +
+			"Please select only one to encrypt blobs.")
+	}
+
+	var cpkScope *blob.CPKScopeInfo = nil
+	if len(options.EncryptionScope) > 0 {
+		cpkScope = &blob.CPKScopeInfo{
+			EncryptionScope: &options.EncryptionScope,
+		}
+	}
+
+	var cpkInfo *blob.CPKInfo = nil
+	if options.EncryptionKey != nil {
+		defaultAlgorithm := blob.EncryptionAlgorithmTypeAES256
+		cpkInfo = &blob.CPKInfo{
+			EncryptionAlgorithm: &defaultAlgorithm,
+			EncryptionKey:       &options.EncryptionKey.EncryptionKey,
+			EncryptionKeySHA256: &options.EncryptionKey.EncryptionKeySha256,
+		}
 	}
 
 	// parse storage access-tier
@@ -327,6 +390,8 @@ func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb
 		options,
 		containerClient,
 		accessTier,
+		cpkScope,
+		cpkInfo,
 	}, nil
 }
 
@@ -337,13 +402,13 @@ func (s *AzureBlobStorage) withPrefix(name string) string {
 // WriteFile writes a file to Azure Blob Storage.
 func (s *AzureBlobStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
-	options := &blockblob.UploadBufferOptions{}
-	// the encryption scope and the access tier can not be both in the HTTP headers
-	if len(s.options.EncryptionScope) > 0 {
-		options.CPKScopeInfo = &blob.CPKScopeInfo{
-			EncryptionScope: &s.options.EncryptionScope,
-		}
-	} else if len(s.accessTier) > 0 {
+	// the encryption scope/key and the access tier can not be both in the HTTP headers
+	options := &blockblob.UploadBufferOptions{
+		CPKScopeInfo: s.cpkScope,
+		CPKInfo:      s.cpkInfo,
+	}
+
+	if len(s.accessTier) > 0 {
 		options.AccessTier = &s.accessTier
 	}
 	_, err := client.UploadBuffer(ctx, data, options)
@@ -356,7 +421,9 @@ func (s *AzureBlobStorage) WriteFile(ctx context.Context, name string, data []by
 // ReadFile reads a file from Azure Blob Storage.
 func (s *AzureBlobStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
-	resp, err := client.DownloadStream(ctx, nil)
+	resp, err := client.DownloadStream(ctx, &blob.DownloadStreamOptions{
+		CPKInfo: s.cpkInfo,
+	})
 	if err != nil {
 		return nil, errors.Annotatef(err, "Failed to download azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
 	}
@@ -408,6 +475,8 @@ func (s *AzureBlobStorage) Open(ctx context.Context, name string) (ExternalFileR
 		totalSize: *resp.ContentLength,
 
 		ctx: ctx,
+
+		cpkInfo: s.cpkInfo,
 	}, nil
 }
 
@@ -457,7 +526,7 @@ func (s *AzureBlobStorage) URI() string {
 const azblobChunkSize = 64 * 1024 * 1024
 
 // Create implements the StorageWriter interface.
-func (s *AzureBlobStorage) Create(_ context.Context, name string) (ExternalFileWriter, error) {
+func (s *AzureBlobStorage) Create(_ context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	uploader := &azblobUploader{
 		blobClient: client,
@@ -466,7 +535,8 @@ func (s *AzureBlobStorage) Create(_ context.Context, name string) (ExternalFileW
 
 		accessTier: s.accessTier,
 
-		encryptionScope: s.options.EncryptionScope,
+		cpkScope: s.cpkScope,
+		cpkInfo:  s.cpkInfo,
 	}
 
 	uploaderWriter := newBufferedWriter(uploader, azblobChunkSize, NoCompression)
@@ -493,6 +563,8 @@ type azblobObjectReader struct {
 	totalSize int64
 
 	ctx context.Context
+
+	cpkInfo *blob.CPKInfo
 }
 
 // Read implement the io.Reader interface.
@@ -509,6 +581,8 @@ func (r *azblobObjectReader) Read(p []byte) (n int, err error) {
 			Offset: r.pos,
 			Count:  maxCnt,
 		},
+
+		CPKInfo: r.cpkInfo,
 	})
 	if err != nil {
 		return 0, errors.Annotatef(err, "Failed to read data from azure blob, data info: pos='%d', count='%d'", r.pos, maxCnt)
@@ -577,7 +651,8 @@ type azblobUploader struct {
 
 	accessTier blob.AccessTier
 
-	encryptionScope string
+	cpkScope *blob.CPKScopeInfo
+	cpkInfo  *blob.CPKInfo
 }
 
 func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
@@ -587,7 +662,10 @@ func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
 	}
 	blockID := base64.StdEncoding.EncodeToString([]byte(generatedUUID.String()))
 
-	_, err = u.blobClient.StageBlock(ctx, blockID, newNopCloser(bytes.NewReader(data)), nil)
+	_, err = u.blobClient.StageBlock(ctx, blockID, newNopCloser(bytes.NewReader(data)), &blockblob.StageBlockOptions{
+		CPKScopeInfo: u.cpkScope,
+		CPKInfo:      u.cpkInfo,
+	})
 	if err != nil {
 		return 0, errors.Annotate(err, "Failed to upload block to azure blob")
 	}
@@ -597,13 +675,13 @@ func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
 }
 
 func (u *azblobUploader) Close(ctx context.Context) error {
-	options := &blockblob.CommitBlockListOptions{}
 	// the encryption scope and the access tier can not be both in the HTTP headers
-	if len(u.encryptionScope) > 0 {
-		options.CPKScopeInfo = &blob.CPKScopeInfo{
-			EncryptionScope: &u.encryptionScope,
-		}
-	} else if len(u.accessTier) > 0 {
+	options := &blockblob.CommitBlockListOptions{
+		CPKScopeInfo: u.cpkScope,
+		CPKInfo:      u.cpkInfo,
+	}
+
+	if len(u.accessTier) > 0 {
 		options.Tier = &u.accessTier
 	}
 	_, err := u.blobClient.CommitBlockList(ctx, u.blockIDList, options)

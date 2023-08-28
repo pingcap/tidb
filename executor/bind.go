@@ -45,7 +45,7 @@ type SQLBindExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *SQLBindExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	switch e.sqlBindOp {
 	case plannercore.OpSQLBindCreate:

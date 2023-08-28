@@ -43,6 +43,7 @@ type stmtEventRecord struct {
 	redactText      string
 	params          []types.Datum
 	connInfo        *variable.ConnectionInfo
+	sessionAlias    string
 	err             string
 	tables          []stmtctx.TableEntry
 	affectedRows    uint64
@@ -67,6 +68,7 @@ func (h *sessionHandler) OnStmtEvent(tp extension.StmtEventTp, info extension.St
 		redactText:      redactText,
 		params:          info.PreparedParams(),
 		connInfo:        info.ConnectionInfo(),
+		sessionAlias:    info.SessionAlias(),
 		tables:          tables,
 		affectedRows:    info.AffectedRows(),
 		stmtNode:        info.StmtNode(),
@@ -121,6 +123,7 @@ type stmtEventCase struct {
 	prepareNotFound bool
 	multiQueryCases []stmtEventCase
 	dispatchData    []byte
+	sessionAlias    string
 }
 
 func TestExtensionStmtEvents(t *testing.T) {
@@ -336,6 +339,26 @@ func TestExtensionStmtEvents(t *testing.T) {
 			redactText:   "use `noexistdb`",
 			err:          "[schema:1049]Unknown database 'noexistdb'",
 		},
+		{
+			sql:          "set @@tidb_session_alias='alias123'",
+			redactText:   "set @@tidb_session_alias = ?",
+			sessionAlias: "alias123",
+		},
+		{
+			sql:          "select 123",
+			redactText:   "select ?",
+			sessionAlias: "alias123",
+		},
+		{
+			sql:          "set @@tidb_session_alias=''",
+			redactText:   "set @@tidb_session_alias = ?",
+			sessionAlias: "",
+		},
+		{
+			sql:          "select 123",
+			redactText:   "select ?",
+			sessionAlias: "",
+		},
 	}
 
 	for i, c := range cases {
@@ -407,6 +430,7 @@ func TestExtensionStmtEvents(t *testing.T) {
 			require.Equal(t, "localhost", record.user.Hostname)
 			require.Equal(t, "root", record.user.AuthUsername)
 			require.Equal(t, "%", record.user.AuthHostname)
+			require.Equal(t, subCase.sessionAlias, record.sessionAlias)
 
 			require.Equal(t, subCase.originalText, record.originalText)
 			require.Equal(t, subCase.redactText, record.redactText)
@@ -420,8 +444,8 @@ func TestExtensionStmtEvents(t *testing.T) {
 				return l.DB < r.DB || (l.DB == r.DB && l.Table < r.Table)
 			})
 			sort.Slice(record.tables, func(i, j int) bool {
-				l := subCase.tables[i]
-				r := subCase.tables[j]
+				l := record.tables[i]
+				r := record.tables[j]
 				return l.DB < r.DB || (l.DB == r.DB && l.Table < r.Table)
 			})
 			require.Equal(t, subCase.tables, record.tables)

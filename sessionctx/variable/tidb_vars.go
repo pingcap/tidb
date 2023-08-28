@@ -71,6 +71,8 @@ const (
 	// TiDBOptEnable3StageMultiDistinctAgg is used to indicate whether to plan and execute the multi distinct agg in 3 stages
 	TiDBOptEnable3StageMultiDistinctAgg = "tidb_opt_enable_three_stage_multi_distinct_agg"
 
+	TiDBOptExplainNoEvaledSubQuery = "tidb_opt_enable_non_eval_scalar_subquery"
+
 	// TiDBBCJThresholdSize is used to limit the size of small table for mpp broadcast join.
 	// Its unit is bytes, if the size of small table is larger than it, we will not use bcj.
 	TiDBBCJThresholdSize = "tidb_broadcast_join_threshold_size"
@@ -409,7 +411,7 @@ const (
 	TiDBMaxBytesBeforeTiFlashExternalSort = "tidb_max_bytes_before_tiflash_external_sort"
 
 	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
-	// Default value is `false`, means never use pipeline model in tiflash.
+	// Default value is `true`, means never use pipeline model in tiflash.
 	// Value set to `true` means try to execute query with pipeline model in tiflash.
 	TiDBEnableTiFlashPipelineMode = "tidb_enable_tiflash_pipeline_model"
 
@@ -1077,6 +1079,12 @@ const (
 	TiDBRuntimeFilterTypeName = "tidb_runtime_filter_type"
 	// TiDBRuntimeFilterModeName the mode of runtime filter, such as "OFF", "LOCAL"
 	TiDBRuntimeFilterModeName = "tidb_runtime_filter_mode"
+	// TiDBSkipMissingPartitionStats controls how to handle missing partition stats when merging partition stats to global stats.
+	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
+	// When set to false, give up merging partition stats to global stats.
+	TiDBSkipMissingPartitionStats = "tidb_skip_missing_partition_stats"
+	// TiDBSessionAlias indicates the alias of a session which is used for tracing.
+	TiDBSessionAlias = "tidb_session_alias"
 )
 
 // TiDB intentional limits
@@ -1164,7 +1172,7 @@ const (
 	DefTiFlashMaxBytesBeforeExternalJoin           = -1
 	DefTiFlashMaxBytesBeforeExternalGroupBy        = -1
 	DefTiFlashMaxBytesBeforeExternalSort           = -1
-	DefTiDBEnableTiFlashPipelineMode               = false
+	DefTiDBEnableTiFlashPipelineMode               = true
 	DefTiDBMPPStoreFailTTL                         = "60s"
 	DefTiDBTxnMode                                 = ""
 	DefTiDBRowFormatV1                             = 1
@@ -1262,6 +1270,7 @@ const (
 	DefTiDBSkewDistinctAgg                         = false
 	DefTiDB3StageDistinctAgg                       = true
 	DefTiDB3StageMultiDistinctAgg                  = false
+	DefTiDBOptExplainEvaledSubquery                = false
 	DefTiDBReadStaleness                           = 0
 	DefTiDBGCMaxWaitTime                           = 24 * 60 * 60
 	DefMaxAllowedPacket                     uint64 = 67108864
@@ -1379,6 +1388,7 @@ const (
 	DefRuntimeFilterMode                              = "OFF"
 	DefTiDBLockUnchangedKeys                          = true
 	DefTiDBEnableCheckConstraint                      = false
+	DefTiDBSkipMissingPartitionStats                  = true
 )
 
 // Process global variables.
@@ -1471,8 +1481,9 @@ var (
 	TTLRunningTasks                 = atomic.NewInt32(DefTiDBTTLRunningTasks)
 	// always set the default value to false because the resource control in kv-client is not inited
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
-	EnableResourceControl = atomic.NewBool(false)
-	EnableCheckConstraint = atomic.NewBool(DefTiDBEnableCheckConstraint)
+	EnableResourceControl     = atomic.NewBool(false)
+	EnableCheckConstraint     = atomic.NewBool(DefTiDBEnableCheckConstraint)
+	SkipMissingPartitionStats = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 )
 
 var (
@@ -1481,7 +1492,7 @@ var (
 	// GetMemQuotaAnalyze is the func registered by global/subglobal tracker to get memory quota.
 	GetMemQuotaAnalyze func() int64 = nil
 	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
-	SetStatsCacheCapacity atomic.Value
+	SetStatsCacheCapacity atomic.Pointer[func(int64)]
 	// SetPDClientDynamicOption is the func registered by domain
 	SetPDClientDynamicOption atomic.Pointer[func(string, string)]
 	// SwitchMDL is the func registered by DDL to switch MDL.

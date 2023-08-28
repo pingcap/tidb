@@ -623,7 +623,10 @@ func (n *DefaultExpr) Restore(ctx *format.RestoreCtx) error {
 
 // Format the ExprNode into a Writer.
 func (n *DefaultExpr) Format(w io.Writer) {
-	panic("Not implemented")
+	fmt.Fprint(w, "DEFAULT")
+	if n.Name != nil {
+		panic("Not implemented")
+	}
 }
 
 // Accept implements Node Accept interface.

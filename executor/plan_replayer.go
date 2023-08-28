@@ -61,12 +61,14 @@ type PlanReplayerCaptureInfo struct {
 
 // PlanReplayerDumpInfo indicates dump info
 type PlanReplayerDumpInfo struct {
-	ExecStmts []ast.StmtNode
-	Analyze   bool
-	Path      string
-	File      *os.File
-	FileName  string
-	ctx       sessionctx.Context
+	ExecStmts         []ast.StmtNode
+	Analyze           bool
+	HistoricalStatsTS uint64
+	StartTS           uint64
+	Path              string
+	File              *os.File
+	FileName          string
+	ctx               sessionctx.Context
 }
 
 // Next implements the Executor Next interface.
@@ -85,6 +87,15 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+	// Note:
+	// For the dumping for SQL file case (len(e.DumpInfo.Path) > 0), the DumpInfo.dump() is called in
+	// handleFileTransInConn(), which is after TxnManager.OnTxnEnd(), where we can't access the TxnManager anymore.
+	// So we must fetch the startTS now.
+	startTS, err := sessiontxn.GetTxnManager(e.Ctx()).GetStmtReadTS()
+	if err != nil {
+		return err
+	}
+	e.DumpInfo.StartTS = startTS
 	if len(e.DumpInfo.Path) > 0 {
 		err = e.prepare()
 		if err != nil {
@@ -164,18 +175,15 @@ func (e *PlanReplayerExec) createFile() error {
 func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	fileName := e.FileName
 	zf := e.File
-	startTS, err := sessiontxn.GetTxnManager(e.ctx).GetStmtReadTS()
-	if err != nil {
-		return err
-	}
 	task := &domain.PlanReplayerDumpTask{
-		StartTS:     startTS,
-		FileName:    fileName,
-		Zf:          zf,
-		SessionVars: e.ctx.GetSessionVars(),
-		TblStats:    nil,
-		ExecStmts:   e.ExecStmts,
-		Analyze:     e.Analyze,
+		StartTS:           e.StartTS,
+		FileName:          fileName,
+		Zf:                zf,
+		SessionVars:       e.ctx.GetSessionVars(),
+		TblStats:          nil,
+		ExecStmts:         e.ExecStmts,
+		Analyze:           e.Analyze,
+		HistoricalStatsTS: e.HistoricalStatsTS,
 	}
 	err = domain.DumpPlanReplayerInfo(ctx, e.ctx, task)
 	if err != nil {
@@ -227,13 +235,13 @@ type PlanReplayerLoadInfo struct {
 
 type planReplayerDumpKeyType int
 
-func (k planReplayerDumpKeyType) String() string {
+func (planReplayerDumpKeyType) String() string {
 	return "plan_replayer_dump_var"
 }
 
 type planReplayerLoadKeyType int
 
-func (k planReplayerLoadKeyType) String() string {
+func (planReplayerLoadKeyType) String() string {
 	return "plan_replayer_load_var"
 }
 
@@ -244,7 +252,7 @@ const PlanReplayerLoadVarKey planReplayerLoadKeyType = 0
 const PlanReplayerDumpVarKey planReplayerDumpKeyType = 1
 
 // Next implements the Executor Next interface.
-func (e *PlanReplayerLoadExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *PlanReplayerLoadExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.MaxChunkSize())
 	if len(e.info.Path) == 0 {
 		return errors.New("plan replayer: file path is empty")
@@ -265,7 +273,7 @@ func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 			if err != nil {
 				return errors.AddStack(err)
 			}
-			//nolint: errcheck,all_revive
+			//nolint: errcheck,all_revive,revive
 			defer v.Close()
 			buf := new(bytes.Buffer)
 			_, err = buf.ReadFrom(v)
@@ -363,9 +371,9 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 			if err != nil {
 				return errors.AddStack(err)
 			}
-			//nolint: errcheck,all_revive
+			//nolint: errcheck,all_revive,revive
 			defer v.Close()
-			_, err = toml.DecodeReader(v, &varMap)
+			_, err = toml.NewDecoder(v).Decode(&varMap)
 			if err != nil {
 				return errors.AddStack(err)
 			}

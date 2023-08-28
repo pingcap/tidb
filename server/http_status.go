@@ -44,7 +44,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/server/handler"
+	"github.com/pingcap/tidb/server/handler/optimizor"
+	"github.com/pingcap/tidb/server/handler/tikvhandler"
+	"github.com/pingcap/tidb/server/handler/ttlhandler"
 	util2 "github.com/pingcap/tidb/server/internal/util"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
@@ -95,7 +100,7 @@ func (s *Server) listenStatusHTTPServer() error {
 		logutil.BgLogger().Error("invalid TLS config", zap.Error(err))
 		return errors.Trace(err)
 	}
-	tlsConfig = s.setCNChecker(tlsConfig)
+	tlsConfig = s.SetCNChecker(tlsConfig)
 
 	if tlsConfig != nil {
 		// we need to manage TLS here for cmux to distinguish between HTTP and gRPC.
@@ -202,66 +207,71 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/metrics", promhttp.Handler()).Name("Metrics")
 
 	// HTTP path for dump statistics.
-	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).Name("StatsDump")
-	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
+	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).
+		Name("StatsDump")
+	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).
+		Name("StatsHistoryDump")
 
 	router.Handle("/plan_replayer/dump/{filename}", s.newPlanReplayerHandler()).Name("PlanReplayerDump")
 	router.Handle("/extract_task/dump", s.newExtractServeHandler()).Name("ExtractTaskDump")
 
 	router.Handle("/optimize_trace/dump/{filename}", s.newOptimizeTraceHandler()).Name("OptimizeTraceDump")
 
-	tikvHandlerTool := s.newTikvHandlerTool()
-	router.Handle("/settings", settingsHandler{tikvHandlerTool}).Name("Settings")
-	router.Handle("/binlog/recover", binlogRecover{}).Name("BinlogRecover")
+	tikvHandlerTool := s.NewTikvHandlerTool()
+	router.Handle("/settings", tikvhandler.NewSettingsHandler(tikvHandlerTool)).Name("Settings")
+	router.Handle("/binlog/recover", tikvhandler.BinlogRecover{}).Name("BinlogRecover")
 
-	router.Handle("/schema", schemaHandler{tikvHandlerTool}).Name("Schema")
-	router.Handle("/schema/{db}", schemaHandler{tikvHandlerTool})
-	router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandlerTool})
-	router.Handle("/tables/{colID}/{colTp}/{colFlag}/{colLen}", valueHandler{})
+	router.Handle("/schema", tikvhandler.NewSchemaHandler(tikvHandlerTool)).Name("Schema")
+	router.Handle("/schema/{db}", tikvhandler.NewSchemaHandler(tikvHandlerTool))
+	router.Handle("/schema/{db}/{table}", tikvhandler.NewSchemaHandler(tikvHandlerTool))
+	router.Handle("/tables/{colID}/{colTp}/{colFlag}/{colLen}", tikvhandler.ValueHandler{})
 
-	router.Handle("/schema_storage", schemaStorageHandler{tikvHandlerTool}).Name("Schema Storage")
-	router.Handle("/schema_storage/{db}", schemaStorageHandler{tikvHandlerTool})
-	router.Handle("/schema_storage/{db}/{table}", schemaStorageHandler{tikvHandlerTool})
+	router.Handle("/schema_storage", tikvhandler.NewSchemaStorageHandler(tikvHandlerTool)).Name("Schema Storage")
+	router.Handle("/schema_storage/{db}", tikvhandler.NewSchemaStorageHandler(tikvHandlerTool))
+	router.Handle("/schema_storage/{db}/{table}", tikvhandler.NewSchemaStorageHandler(tikvHandlerTool))
 
-	router.Handle("/ddl/history", ddlHistoryJobHandler{tikvHandlerTool}).Name("DDL_History")
-	router.Handle("/ddl/owner/resign", ddlResignOwnerHandler{tikvHandlerTool.Store.(kv.Storage)}).Name("DDL_Owner_Resign")
+	router.Handle("/ddl/history", tikvhandler.NewDDLHistoryJobHandler(tikvHandlerTool)).Name("DDL_History")
+	router.Handle("/ddl/owner/resign", tikvhandler.NewDDLResignOwnerHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DDL_Owner_Resign")
 
 	// HTTP path for get the TiDB config
 	router.Handle("/config", fn.Wrap(func() (*config.Config, error) {
 		return config.GetGlobalConfig(), nil
 	}))
-	router.Handle("/labels", labelHandler{}).Name("Labels")
+	router.Handle("/labels", tikvhandler.LabelHandler{}).Name("Labels")
 
 	// HTTP path for get server info.
-	router.Handle("/info", serverInfoHandler{tikvHandlerTool}).Name("Info")
-	router.Handle("/info/all", allServerInfoHandler{tikvHandlerTool}).Name("InfoALL")
+	router.Handle("/info", tikvhandler.NewServerInfoHandler(tikvHandlerTool)).Name("Info")
+	router.Handle("/info/all", tikvhandler.NewAllServerInfoHandler(tikvHandlerTool)).Name("InfoALL")
 	// HTTP path for get db and table info that is related to the tableID.
-	router.Handle("/db-table/{tableID}", dbTableHandler{tikvHandlerTool})
+	router.Handle("/db-table/{tableID}", tikvhandler.NewDBTableHandler(tikvHandlerTool))
 	// HTTP path for get table tiflash replica info.
-	router.Handle("/tiflash/replica-deprecated", flashReplicaHandler{tikvHandlerTool})
+	router.Handle("/tiflash/replica-deprecated", tikvhandler.NewFlashReplicaHandler(tikvHandlerTool))
+
+	// HTTP path for upgrade operations.
+	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
 
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.
-		router.Handle("/tables/{db}/{table}/regions", tableHandler{tikvHandlerTool, opTableRegions})
-		router.Handle("/tables/{db}/{table}/ranges", tableHandler{tikvHandlerTool, opTableRanges})
-		router.Handle("/tables/{db}/{table}/scatter", tableHandler{tikvHandlerTool, opTableScatter})
-		router.Handle("/tables/{db}/{table}/stop-scatter", tableHandler{tikvHandlerTool, opStopTableScatter})
-		router.Handle("/tables/{db}/{table}/disk-usage", tableHandler{tikvHandlerTool, opTableDiskUsage})
-		router.Handle("/regions/meta", regionHandler{tikvHandlerTool}).Name("RegionsMeta")
-		router.Handle("/regions/hot", regionHandler{tikvHandlerTool}).Name("RegionHot")
-		router.Handle("/regions/{regionID}", regionHandler{tikvHandlerTool})
+		router.Handle("/tables/{db}/{table}/regions", tikvhandler.NewTableHandler(tikvHandlerTool, tikvhandler.OpTableRegions))
+		router.Handle("/tables/{db}/{table}/ranges", tikvhandler.NewTableHandler(tikvHandlerTool, tikvhandler.OpTableRanges))
+		router.Handle("/tables/{db}/{table}/scatter", tikvhandler.NewTableHandler(tikvHandlerTool, tikvhandler.OpTableScatter))
+		router.Handle("/tables/{db}/{table}/stop-scatter", tikvhandler.NewTableHandler(tikvHandlerTool, tikvhandler.OpStopTableScatter))
+		router.Handle("/tables/{db}/{table}/disk-usage", tikvhandler.NewTableHandler(tikvHandlerTool, tikvhandler.OpTableDiskUsage))
+		router.Handle("/regions/meta", tikvhandler.NewRegionHandler(tikvHandlerTool)).Name("RegionsMeta")
+		router.Handle("/regions/hot", tikvhandler.NewRegionHandler(tikvHandlerTool)).Name("RegionHot")
+		router.Handle("/regions/{regionID}", tikvhandler.NewRegionHandler(tikvHandlerTool))
 	}
 
 	// HTTP path for get MVCC info
-	router.Handle("/mvcc/key/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByKey})
-	router.Handle("/mvcc/key/{db}/{table}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByKey})
-	router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByTxn})
-	router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
-	router.Handle("/mvcc/index/{db}/{table}/{index}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
-	router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
+	router.Handle("/mvcc/key/{db}/{table}", tikvhandler.NewMvccTxnHandler(tikvHandlerTool, tikvhandler.OpMvccGetByKey))
+	router.Handle("/mvcc/key/{db}/{table}/{handle}", tikvhandler.NewMvccTxnHandler(tikvHandlerTool, tikvhandler.OpMvccGetByKey))
+	router.Handle("/mvcc/txn/{startTS}/{db}/{table}", tikvhandler.NewMvccTxnHandler(tikvHandlerTool, tikvhandler.OpMvccGetByTxn))
+	router.Handle("/mvcc/hex/{hexKey}", tikvhandler.NewMvccTxnHandler(tikvHandlerTool, tikvhandler.OpMvccGetByHex))
+	router.Handle("/mvcc/index/{db}/{table}/{index}", tikvhandler.NewMvccTxnHandler(tikvHandlerTool, tikvhandler.OpMvccGetByIdx))
+	router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", tikvhandler.NewMvccTxnHandler(tikvHandlerTool, tikvhandler.OpMvccGetByIdx))
 
 	// HTTP path for generate metric profile.
-	router.Handle("/metrics/profile", profileHandler{tikvHandlerTool})
+	router.Handle("/metrics/profile", tikvhandler.NewProfileHandler(tikvHandlerTool))
 	// HTTP path for web UI.
 	if host, port, err := net.SplitHostPort(s.statusAddr); err == nil {
 		if host == "" {
@@ -413,14 +423,14 @@ func (s *Server) startHTTPServer() {
 			new(failpoint.HttpHandler).ServeHTTP(w, r)
 		})
 
-		router.Handle("/test/{mod}/{op}", &testHandler{tikvHandlerTool, 0})
+		router.Handle("/test/{mod}/{op}", tikvhandler.NewTestHandler(tikvHandlerTool, 0))
 	})
 
 	// ddlHook is enabled only for tests so we can substitute the callback in the DDL.
-	router.Handle("/test/ddl/hook", &ddlHookHandler{tikvHandlerTool.Store.(kv.Storage)})
+	router.Handle("/test/ddl/hook", tikvhandler.NewDDLHookHandler(tikvHandlerTool.Store.(kv.Storage)))
 
 	// ttlJobTriggerHandler is enabled only for tests, so we can accelerate the schedule of TTL job
-	router.Handle("/test/ttl/trigger/{db}/{table}", &ttlJobTriggerHandler{tikvHandlerTool.Store.(kv.Storage)})
+	router.Handle("/test/ttl/trigger/{db}/{table}", ttlhandler.NewTTLJobTriggerHandler(tikvHandlerTool.Store.(kv.Storage)))
 
 	var (
 		httpRouterPage bytes.Buffer
@@ -516,7 +526,8 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	}
 }
 
-func (s *Server) setCNChecker(tlsConfig *tls.Config) *tls.Config {
+// SetCNChecker set the CN checker for server.
+func (s *Server) SetCNChecker(tlsConfig *tls.Config) *tls.Config {
 	if tlsConfig != nil && len(s.cfg.Security.ClusterVerifyCN) != 0 {
 		checkCN := make(map[string]struct{})
 		for _, cn := range s.cfg.Security.ClusterVerifyCN {
@@ -538,23 +549,23 @@ func (s *Server) setCNChecker(tlsConfig *tls.Config) *tls.Config {
 	return tlsConfig
 }
 
-// status of TiDB.
-type status struct {
+// Status of TiDB.
+type Status struct {
 	Connections int    `json:"connections"`
 	Version     string `json:"version"`
 	GitHash     string `json:"git_hash"`
 }
 
-func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
+func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	// If the server is in the process of shutting down, return a non-200 status.
-	// It is important not to return status{} as acquiring the s.ConnectionCount()
+	// It is important not to return Status{} as acquiring the s.ConnectionCount()
 	// acquires a lock that may already be held by the shutdown process.
 	if !s.health.Load() {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	st := status{
+	st := Status{
 		Connections: s.ConnectionCount(),
 		Version:     mysql.ServerVersion,
 		GitHash:     versioninfo.TiDBGitHash,
@@ -567,4 +578,30 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	}
 	_, err = w.Write(js)
 	terror.Log(errors.Trace(err))
+}
+
+func (s *Server) newStatsHandler() *optimizor.StatsHandler {
+	store, ok := s.driver.(*TiDBDriver)
+	if !ok {
+		panic("Illegal driver")
+	}
+
+	do, err := session.GetDomain(store.store)
+	if err != nil {
+		panic("Failed to get domain")
+	}
+	return optimizor.NewStatsHandler(do)
+}
+
+func (s *Server) newStatsHistoryHandler() *optimizor.StatsHistoryHandler {
+	store, ok := s.driver.(*TiDBDriver)
+	if !ok {
+		panic("Illegal driver")
+	}
+
+	do, err := session.GetDomain(store.store)
+	if err != nil {
+		panic("Failed to get domain")
+	}
+	return optimizor.NewStatsHistoryHandler(do)
 }

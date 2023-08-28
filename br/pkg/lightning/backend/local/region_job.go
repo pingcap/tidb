@@ -22,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cockroachdb/pebble"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -36,9 +35,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 type jobStageTp string
@@ -100,7 +102,7 @@ type regionJob struct {
 	// writeResult is available only in wrote and ingested stage
 	writeResult *tikvWriteResult
 
-	engine          *Engine
+	ingestData      IngestData
 	regionSplitSize int64
 	regionSplitKeys int64
 	metrics         *metric.Metrics
@@ -118,6 +120,39 @@ type tikvWriteResult struct {
 	count             int64
 	totalBytes        int64
 	remainingStartKey []byte
+}
+
+// IngestData describes a common interface that is needed by TiKV write +
+// ingest RPC.
+type IngestData interface {
+	// GetFirstAndLastKey returns the first and last key of the data reader in the
+	// range [lowerBound, upperBound). Empty or nil bounds means unbounded.
+	// lowerBound must be less than upperBound.
+	// when there is no data in the range, it should return nil, nil, nil
+	GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error)
+	NewIter(ctx context.Context, lowerBound, upperBound []byte) ForwardIter
+	// GetTS will be used as the start/commit TS of the data.
+	GetTS() uint64
+	// Finish will be called when the data is ingested successfully.
+	Finish(totalBytes, totalCount int64)
+}
+
+// ForwardIter describes a iterator that can only move forward.
+type ForwardIter interface {
+	// First moves this iter to the first key.
+	First() bool
+	// Valid check this iter reach the end.
+	Valid() bool
+	// Next moves this iter forward.
+	Next() bool
+	// Key represents current position pair's key.
+	Key() []byte
+	// Value represents current position pair's Value.
+	Value() []byte
+	// Close close this iter.
+	Close() error
+	// Error return current error on this iter.
+	Error() error
 }
 
 type injectedBehaviour struct {
@@ -146,8 +181,7 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 			return
 		}
 
-		j.engine.importedKVSize.Add(j.writeResult.totalBytes)
-		j.engine.importedKVCount.Add(j.writeResult.count)
+		j.ingestData.Finish(j.writeResult.totalBytes, j.writeResult.count)
 		if j.metrics != nil {
 			j.metrics.BytesCounter.WithLabelValues(metric.StateImported).
 				Add(float64(j.writeResult.totalBytes))
@@ -188,7 +222,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	begin := time.Now()
 	region := j.region.Region
 
-	firstKey, lastKey, err := j.engine.getFirstAndLastKey(j.keyRange.start, j.keyRange.end)
+	firstKey, lastKey, err := j.ingestData.GetFirstAndLastKey(j.keyRange.start, j.keyRange.end)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -225,7 +259,17 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	leaderID := j.region.Leader.GetId()
 	clients := make([]sst.ImportSST_WriteClient, 0, len(region.GetPeers()))
 	allPeers := make([]*metapb.Peer, 0, len(region.GetPeers()))
-	requests := make([]*sst.WriteRequest, 0, len(region.GetPeers()))
+	req := &sst.WriteRequest{
+		Chunk: &sst.WriteRequest_Meta{
+			Meta: meta,
+		},
+		Context: &kvrpcpb.Context{
+			ResourceControlContext: &kvrpcpb.ResourceControlContext{
+				ResourceGroupName: local.ResourceGroupName,
+			},
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
+		},
+	}
 	for _, peer := range region.GetPeers() {
 		cli, err := clientFactory.Create(ctx, peer.StoreId)
 		if err != nil {
@@ -238,22 +282,16 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		}
 
 		// Bind uuid for this write request
-		req := &sst.WriteRequest{
-			Chunk: &sst.WriteRequest_Meta{
-				Meta: meta,
-			},
-		}
 		if err = wstream.Send(req); err != nil {
 			return annotateErr(err, peer)
 		}
-		req.Chunk = &sst.WriteRequest_Batch{
-			Batch: &sst.WriteBatch{
-				CommitTs: j.engine.TS,
-			},
-		}
 		clients = append(clients, wstream)
-		requests = append(requests, req)
 		allPeers = append(allPeers, peer)
+	}
+	req.Chunk = &sst.WriteRequest_Batch{
+		Batch: &sst.WriteBatch{
+			CommitTs: j.ingestData.GetTS(),
+		},
 	}
 
 	bytesBuf := bufferPool.NewBuffer()
@@ -271,12 +309,19 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	}
 
 	flushKVs := func() error {
+		req.Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
+		preparedMsg := &grpc.PreparedMsg{}
+		// by reading the source code, Encode need to find codec and compression from the stream
+		// because all stream has the same codec and compression, we can use any one of them
+		if err := preparedMsg.Encode(clients[0], req); err != nil {
+			return err
+		}
+
 		for i := range clients {
 			if err := writeLimiter.WaitN(ctx, allPeers[i].StoreId, int(size)); err != nil {
 				return errors.Trace(err)
 			}
-			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
-			if err := clients[i].Send(requests[i]); err != nil {
+			if err := clients[i].SendMsg(preparedMsg); err != nil {
 				return annotateErr(err, allPeers[i])
 			}
 		}
@@ -286,8 +331,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		return nil
 	}
 
-	opt := &pebble.IterOptions{LowerBound: j.keyRange.start, UpperBound: j.keyRange.end}
-	iter := j.engine.newKVIter(ctx, opt)
+	iter := j.ingestData.NewIter(ctx, j.keyRange.start, j.keyRange.end)
 	//nolint: errcheck
 	defer iter.Close()
 
@@ -363,6 +407,11 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		}
 	}
 
+	failpoint.Inject("NoLeader", func() {
+		log.FromContext(ctx).Warn("enter failpoint NoLeader")
+		leaderPeerMetas = nil
+	})
+
 	// if there is not leader currently, we don't forward the stage to wrote and let caller
 	// handle the retry.
 	if len(leaderPeerMetas) == 0 {
@@ -370,8 +419,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			logutil.Region(region), logutil.Leader(j.region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
 			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize))
-		return errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
-			region.Id, leaderID)
+		return common.ErrNoLeader.GenWithStackByArgs(region.Id, leaderID)
 	}
 
 	takeTime := time.Since(begin)
@@ -552,6 +600,10 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			RegionId:    j.region.Region.GetId(),
 			RegionEpoch: j.region.Region.GetRegionEpoch(),
 			Peer:        leader,
+			ResourceControlContext: &kvrpcpb.ResourceControlContext{
+				ResourceGroupName: local.ResourceGroupName,
+			},
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
 		}
 
 		if supportMultiIngest {

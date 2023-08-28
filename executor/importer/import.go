@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -33,6 +34,7 @@ import (
 	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/expression"
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -56,7 +58,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -91,6 +92,8 @@ const (
 	recordErrorsOption          = "record_errors"
 	detachedOption              = "detached"
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
+	// used for test
+	maxEngineSizeOption = "__max_engine_size"
 )
 
 var (
@@ -111,6 +114,7 @@ var (
 		recordErrorsOption:          true,
 		detachedOption:              false,
 		disableTiKVImportModeOption: false,
+		maxEngineSizeOption:         true,
 	}
 
 	csvOnlyOptions = map[string]struct{}{
@@ -183,6 +187,7 @@ type Plan struct {
 	MaxRecordedErrors     int64
 	Detached              bool
 	DisableTiKVImportMode bool
+	MaxEngineSize         config.ByteSize
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
@@ -194,6 +199,8 @@ type Plan struct {
 	// the user who executes the statement, in the form of user@host
 	// only initialized for IMPORT INTO
 	User string `json:"-"`
+
+	IsRaftKV2 bool
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -365,6 +372,16 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 	return p, nil
 }
 
+// InitTiKVConfigs initializes some TiKV related configs.
+func (p *Plan) InitTiKVConfigs(ctx context.Context, sctx sessionctx.Context) error {
+	isRaftKV2, err := util.IsRaftKv2(ctx, sctx)
+	if err != nil {
+		return err
+	}
+	p.IsRaftKV2 = isRaftKV2
+	return nil
+}
+
 // ASTArgsFromPlan creates ASTArgs from plan.
 func ASTArgsFromPlan(plan *plannercore.LoadData) *ASTArgs {
 	return &ASTArgs{
@@ -473,6 +490,7 @@ func (p *Plan) initDefaultOptions() {
 	p.MaxRecordedErrors = 100
 	p.Detached = false
 	p.DisableTiKVImportMode = false
+	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
 
 	v := "utf8mb4"
 	p.Charset = &v
@@ -629,6 +647,15 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 	}
 	if _, ok := specifiedOptions[disableTiKVImportModeOption]; ok {
 		p.DisableTiKVImportMode = true
+	}
+	if opt, ok := specifiedOptions[maxEngineSizeOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if err = p.MaxEngineSize.UnmarshalText([]byte(v)); err != nil || p.MaxEngineSize < 0 {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
 	}
 
 	p.adjustOptions()
@@ -1106,11 +1133,10 @@ type JobImportParam struct {
 
 // JobImportResult is the result of the job import.
 type JobImportResult struct {
-	Msg          string
-	LastInsertID uint64
-	Affected     uint64
-	Warnings     []stmtctx.SQLWarn
-	ColSizeMap   map[int64]int64
+	Msg        string
+	Affected   uint64
+	Warnings   []stmtctx.SQLWarn
+	ColSizeMap map[int64]int64
 }
 
 // JobImporter is the interface for importing a job.

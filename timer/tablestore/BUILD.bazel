@@ -34,9 +34,17 @@ go_test(
     embed = [":tablestore"],
     flaky = True,
     race = "on",
-    shard_count = 6,
+    shard_count = 8,
     deps = [
+        "//kv",
+        "//sessionctx",
+        "//sessionctx/variable",
         "//timer/api",
+        "//util/sqlexec",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_stretchr_testify//mock",
         "@com_github_stretchr_testify//require",
     ],
 )

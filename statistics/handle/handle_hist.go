@@ -372,7 +372,6 @@ func (*Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, read
 			TopN:       topN,
 			FMSketch:   fms,
 			Info:       index.Info,
-			ErrorRate:  index.ErrorRate,
 			StatsVer:   statsVer,
 			Flag:       index.Flag,
 			PhysicalID: index.PhysicalID,
@@ -500,7 +499,7 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 		tbl = tbl.Copy()
 		tbl.Indices[item.ID] = idxHist
 	}
-	return h.updateStatsCache(oldCache.CopyAndUpdate([]*statistics.Table{tbl}, nil, cache.WithTableStatsByQuery()))
+	return h.updateStatsCache(oldCache, []*statistics.Table{tbl}, nil, cache.WithTableStatsByQuery())
 }
 
 func (h *Handle) setWorking(item model.TableItemID, resultCh chan stmtctx.StatsLoadResult) bool {

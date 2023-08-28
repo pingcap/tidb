@@ -18,11 +18,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
-	"golang.org/x/exp/slices"
 	"gopkg.in/yaml.v2"
 )
 

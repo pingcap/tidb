@@ -8,8 +8,9 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
+	import_sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockDiskUsage is a mock of DiskUsage interface.
@@ -73,25 +74,35 @@ func (m *MockTiKVModeSwitcher) EXPECT() *MockTiKVModeSwitcherMockRecorder {
 }
 
 // ToImportMode mocks base method.
-func (m *MockTiKVModeSwitcher) ToImportMode(arg0 context.Context) {
+func (m *MockTiKVModeSwitcher) ToImportMode(arg0 context.Context, arg1 ...*import_sstpb.Range) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "ToImportMode", arg0)
+	varargs := []interface{}{arg0}
+	for _, a := range arg1 {
+		varargs = append(varargs, a)
+	}
+	m.ctrl.Call(m, "ToImportMode", varargs...)
 }
 
 // ToImportMode indicates an expected call of ToImportMode.
-func (mr *MockTiKVModeSwitcherMockRecorder) ToImportMode(arg0 interface{}) *gomock.Call {
+func (mr *MockTiKVModeSwitcherMockRecorder) ToImportMode(arg0 interface{}, arg1 ...interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ToImportMode", reflect.TypeOf((*MockTiKVModeSwitcher)(nil).ToImportMode), arg0)
+	varargs := append([]interface{}{arg0}, arg1...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ToImportMode", reflect.TypeOf((*MockTiKVModeSwitcher)(nil).ToImportMode), varargs...)
 }
 
 // ToNormalMode mocks base method.
-func (m *MockTiKVModeSwitcher) ToNormalMode(arg0 context.Context) {
+func (m *MockTiKVModeSwitcher) ToNormalMode(arg0 context.Context, arg1 ...*import_sstpb.Range) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "ToNormalMode", arg0)
+	varargs := []interface{}{arg0}
+	for _, a := range arg1 {
+		varargs = append(varargs, a)
+	}
+	m.ctrl.Call(m, "ToNormalMode", varargs...)
 }
 
 // ToNormalMode indicates an expected call of ToNormalMode.
-func (mr *MockTiKVModeSwitcherMockRecorder) ToNormalMode(arg0 interface{}) *gomock.Call {
+func (mr *MockTiKVModeSwitcherMockRecorder) ToNormalMode(arg0 interface{}, arg1 ...interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ToNormalMode", reflect.TypeOf((*MockTiKVModeSwitcher)(nil).ToNormalMode), arg0)
+	varargs := append([]interface{}{arg0}, arg1...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ToNormalMode", reflect.TypeOf((*MockTiKVModeSwitcher)(nil).ToNormalMode), varargs...)
 }

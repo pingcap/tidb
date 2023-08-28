@@ -708,22 +708,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
-	// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
-	// to avoid import cycle problem which we won't do it in this pr, then refactor this
-	//
-	// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
-	if cmdName == FullRestoreCmd && cfg.WithSysTable {
-		client.InitFullClusterRestore(cfg.ExplicitFilter)
-	}
-	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
-		if err = client.CheckTargetClusterFresh(ctx); err != nil {
-			return errors.Trace(err)
-		}
-		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	if client.IsIncremental() {
 		// don't support checkpoint for the ddl restore
 		log.Info("the incremental snapshot restore doesn't support checkpoint mode, so unuse checkpoint.")
@@ -767,6 +751,28 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			log.Info("wait for flush checkpoint...")
 			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !schedulersRemovable)
 		}()
+	}
+
+	if isFullRestore(cmdName) {
+		// we need check cluster is fresh every time. except restore from a checkpoint.
+		if client.IsFull() && len(checkpointSetWithTableID) == 0 {
+			if err = client.CheckTargetClusterFresh(ctx); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
+		// to avoid import cycle problem which we won't do it in this pr, then refactor this
+		//
+		// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
+		if cfg.WithSysTable {
+			client.InitFullClusterRestore(cfg.ExplicitFilter)
+		}
+	}
+
+	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
+		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	sp := utils.BRServiceSafePoint{
@@ -1111,6 +1117,10 @@ func enableTiDBConfig() func() {
 		// when upstream and downstream both set this value greater than default(3072)
 		conf.MaxIndexLength = config.DefMaxOfMaxIndexLength
 		log.Warn("set max-index-length to max(3072*4) to skip check index length in DDL")
+		conf.IndexLimit = config.DefMaxOfIndexLimit
+		log.Warn("set index-limit to max(64*8) to skip check index count in DDL")
+		conf.TableColumnCountLimit = config.DefMaxOfTableColumnCountLimit
+		log.Warn("set table-column-count to max(4096) to skip check column count in DDL")
 	})
 	return restoreConfig
 }

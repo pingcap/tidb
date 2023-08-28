@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
@@ -31,36 +30,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
-
-func TestPushLimitDownIndexLookUpReader(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
-	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
-	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tbl")
-	tk.MustExec("create table tbl(a int, b int, c int, key idx_b_c(b,c))")
-	tk.MustExec("insert into tbl values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
-	tk.MustExec("analyze table tbl")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	integrationSuiteData := GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
-	}
-}
 
 func TestAggColumnPrune(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -136,50 +105,6 @@ func TestSimplifyOuterJoinWithCast(t *testing.T) {
 	}
 }
 
-func TestSelPushDownTiFlash(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key, b varchar(20))")
-	// since allow-mpp is adjusted to false, there will be no physical plan if TiFlash cop is banned.
-	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
-
-	// Create virtual tiflash replica info.
-	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
-
-	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
-	tk.MustExec("set @@session.tidb_allow_mpp = 0")
-	tk.MustExec("set tidb_cost_model_version=2")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	integrationSuiteData := GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
 func TestVerboseExplain(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -226,151 +151,6 @@ func TestVerboseExplain(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
-func TestPushDownToTiFlashWithKeepOrder(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key, b varchar(20))")
-	// since allow-mpp is adjusted to false, there will be no physical plan if TiFlash cop is banned.
-	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
-
-	// Create virtual tiflash replica info.
-	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
-
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
-	tk.MustExec("set @@session.tidb_allow_mpp = 0")
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	integrationSuiteData := GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
-func TestPushDownToTiFlashWithKeepOrderInFastMode(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key, b varchar(20))")
-	tk.MustExec("set @@session.tiflash_fastscan=ON")
-	// since allow-mpp is adjusted to false, there will be no physical plan if TiFlash cop is banned.
-	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
-
-	// Create virtual tiflash replica info.
-	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
-
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
-	tk.MustExec("set @@session.tidb_allow_mpp = 0")
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	integrationSuiteData := GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
-func TestJoinNotSupportedByTiFlash(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists table_1")
-	tk.MustExec("create table table_1(id int not null, bit_col bit(2) not null, datetime_col datetime not null)")
-	tk.MustExec("insert into table_1 values(1,b'1','2020-01-01 00:00:00'),(2,b'0','2020-01-01 00:00:00')")
-	tk.MustExec("analyze table table_1")
-
-	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('dayofmonth', 'tiflash', '');")
-	tk.MustExec("admin reload expr_pushdown_blacklist;")
-
-	// Create virtual tiflash replica info.
-	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "table_1" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
-
-	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
-	tk.MustExec("set @@session.tidb_allow_mpp = 1")
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	integrationSuiteData := GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
-	}
-
-	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 1")
-	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 1")
 	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -863,50 +643,6 @@ func TestIssue23887(t *testing.T) {
 	tk.MustQuery("select count(1) from (select count(1) from (select * from t1 where c3 = 100) k) k2;").Check(testkit.Rows("1"))
 }
 
-func TestPushDownProjectionForTiFlash(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
-	tk.MustExec("analyze table t")
-	tk.MustExec("set session tidb_allow_mpp=OFF")
-	// since allow-mpp is adjusted to false, there will be no physical plan if TiFlash cop is banned.
-	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
-
-	// Create virtual tiflash replica info.
-	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	integrationSuiteData := GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
 func TestReorderSimplifiedOuterJoins(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -982,74 +718,6 @@ func TestMergeContinuousSelections(t *testing.T) {
 	}
 
 	tk.MustExec(" set @@tidb_allow_mpp=1;")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	integrationSuiteData := GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
-func TestPushDownProjectionForTiKV(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b real, i int, id int, value decimal(6,3), name char(128), d decimal(6,3), s char(128), t datetime, c bigint as ((a+1)) virtual, e real as ((b+a)))")
-	tk.MustExec("analyze table t")
-	tk.MustExec("set session tidb_opt_projection_push_down=1")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	integrationSuiteData := GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
-func TestPushDownProjectionForTiFlashCoprocessor(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b real, i int, id int, value decimal(6,3), name char(128), d decimal(6,3), s char(128), t datetime, c bigint as ((a+1)) virtual, e real as ((b+a)))")
-	tk.MustExec("analyze table t")
-	tk.MustExec("set session tidb_opt_projection_push_down=1")
-
-	// Create virtual tiflash replica info.
-	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
 
 	var input []string
 	var output []struct {
@@ -1530,67 +1198,6 @@ func TestGroupBySetVar(t *testing.T) {
 			output[i].Plan = testdata.ConvertRowsToStrings(res.Rows())
 		})
 		res.Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
-func TestPushDownGroupConcatToTiFlash(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ts")
-	tk.MustExec("create table ts (col_0 char(64), col_1 varchar(64) not null, col_2 varchar(1), id int primary key);")
-
-	// Create virtual tiflash replica info.
-	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "ts" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
-
-	tk.MustExec("set @@tidb_isolation_read_engines='tiflash,tidb'; set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
-
-	var input []string
-	var output []struct {
-		SQL     string
-		Plan    []string
-		Warning []string
-	}
-	integrationSuiteData := GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
-
-		comment := fmt.Sprintf("case:%v sql:%s", i, tt)
-		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-		testdata.OnRecord(func() {
-			if len(warnings) > 0 {
-				output[i].Warning = make([]string, len(warnings))
-				for j, warning := range warnings {
-					output[i].Warning[j] = warning.Err.Error()
-				}
-			}
-		})
-		if len(output[i].Warning) == 0 {
-			require.Len(t, warnings, 0, comment)
-		} else {
-			require.Len(t, warnings, len(output[i].Warning), comment)
-			for j, warning := range warnings {
-				require.Equal(t, stmtctx.WarnLevelWarning, warning.Level, comment)
-				require.EqualError(t, warning.Err, output[i].Warning[j], comment)
-			}
-		}
 	}
 }
 

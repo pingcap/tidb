@@ -75,7 +75,6 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	if b.ctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
 		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.Ctx(), p.GetAvgRowSize()))
 	}
-	e.snapshot.SetOption(kv.ResourceGroupName, b.ctx.GetSessionVars().ResourceGroupName)
 	if e.RuntimeStats() != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
@@ -394,7 +393,7 @@ func (e *PointGetExecutor) lockKeyIfExists(ctx context.Context, key []byte) ([]b
 
 func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 	key []byte,
-	LockOnlyIfExists bool) ([]byte, error) {
+	lockOnlyIfExists bool) ([]byte, error) {
 	if len(key) == 0 {
 		return nil, nil
 	}
@@ -405,7 +404,7 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 		if err != nil {
 			return nil, err
 		}
-		lockCtx.LockOnlyIfExists = LockOnlyIfExists
+		lockCtx.LockOnlyIfExists = lockOnlyIfExists
 		lockCtx.InitReturnValues(1)
 		err = doLockKeys(ctx, e.Ctx(), lockCtx, key)
 		if err != nil {
@@ -417,7 +416,7 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 		if len(e.handleVal) > 0 {
 			seVars.TxnCtx.SetPessimisticLockCache(e.idxKey, e.handleVal)
 		}
-		if LockOnlyIfExists {
+		if lockOnlyIfExists {
 			return e.getValueFromLockCtx(ctx, lockCtx, key)
 		}
 	}
@@ -721,6 +720,6 @@ func (e *runtimeStatsWithSnapshot) Merge(other execdetails.RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *runtimeStatsWithSnapshot) Tp() int {
+func (*runtimeStatsWithSnapshot) Tp() int {
 	return execdetails.TpRuntimeStatsWithSnapshot
 }

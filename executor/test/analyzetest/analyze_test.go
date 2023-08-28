@@ -17,7 +17,6 @@ package analyzetest
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -44,10 +43,8 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -551,7 +548,6 @@ func TestDefaultValForAnalyze(t *testing.T) {
 }
 
 func TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn(t *testing.T) {
-	t.Skip("unstable, skip it and fix it before 20210624")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -669,14 +665,14 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	result := tk.MustQuery("show stats_meta where table_name = 't'")
 	require.Equal(t, "220000", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 0.500000 for table test.t"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 0.500000 for table test.t, reason to use this rate is \"use min(1, 110000/220000) as the sample-rate=0.5\""))
 	tk.MustExec("insert into t values(1),(1),(1)")
 	require.NoError(t, statsHandle.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, statsHandle.Update(is))
 	result = tk.MustQuery("show stats_meta where table_name = 't'")
 	require.Equal(t, "3", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\""))
 }
 
 func TestFastAnalyze4GlobalStats(t *testing.T) {
@@ -747,19 +743,9 @@ func testAnalyzeIncremental(tk *testkit.TestKit, t *testing.T, dom *domain.Domai
 	// Result should not change.
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
 
-	// Test analyze incremental with feedback.
-	// paging is not compatible with feedback.
 	tk.MustExec("set @@tidb_enable_paging = off")
 
 	tk.MustExec("insert into t values (3,3)")
-	oriProbability := statistics.FeedbackProbability.Load()
-	oriMinLogCount := handle.MinLogScanCount.Load()
-	defer func() {
-		statistics.FeedbackProbability.Store(oriProbability)
-		handle.MinLogScanCount.Store(oriMinLogCount)
-	}()
-	statistics.FeedbackProbability.Store(1)
-	handle.MinLogScanCount.Store(0)
 	is := dom.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
@@ -768,17 +754,15 @@ func testAnalyzeIncremental(tk *testkit.TestKit, t *testing.T, dom *domain.Domai
 	tk.MustQuery("select * from t where a > 1")
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.NoError(t, h.DumpStatsFeedbackToKV())
-	require.NoError(t, h.HandleUpdateStats(is))
 	require.NoError(t, h.Update(is))
 	require.NoError(t, h.LoadNeededHistograms())
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 3 0 2 2147483647 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
 	tblStats := h.GetTableStats(tblInfo)
 	val, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(3))
 	require.NoError(t, err)
-	require.Equal(t, uint64(1), tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(nil, val))
-	require.False(t, statistics.IsAnalyzed(tblStats.Indices[tblInfo.Indices[0].ID].Flag))
-	require.False(t, statistics.IsAnalyzed(tblStats.Columns[tblInfo.Columns[0].ID].Flag))
+	require.Equal(t, uint64(0), tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(nil, val))
+	require.True(t, statistics.IsAnalyzed(tblStats.Indices[tblInfo.Indices[0].ID].Flag))
+	require.True(t, statistics.IsAnalyzed(tblStats.Columns[tblInfo.Columns[0].ID].Flag))
 
 	tk.MustExec("analyze incremental table t index")
 	require.NoError(t, h.LoadNeededHistograms())
@@ -925,7 +909,7 @@ func TestSmallTableAnalyzeV2(t *testing.T) {
 	tk.MustExec("create table small_table_inject_pd(a int)")
 	tk.MustExec("insert into small_table_inject_pd values(1), (2), (3), (4), (5)")
 	tk.MustExec("analyze table small_table_inject_pd")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\""))
 	tk.MustExec(`
 create table small_table_inject_pd_with_partition(
 	a int
@@ -937,9 +921,9 @@ create table small_table_inject_pd_with_partition(
 	tk.MustExec("insert into small_table_inject_pd_with_partition values(1), (6), (11)")
 	tk.MustExec("analyze table small_table_inject_pd_with_partition")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p0",
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p1",
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p2",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p0, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p1, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p2, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 	))
 	rows := [][]interface{}{
 		{"global", "a"},
@@ -1421,7 +1405,7 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 			case model.ColumnList:
 				tk.MustExec("analyze table t columns a with 2 topn, 2 buckets")
 				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t",
+					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 					"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
 				))
 			case model.PredicateColumns:
@@ -1489,7 +1473,7 @@ func TestAnalyzeColumnsWithIndex(t *testing.T) {
 			case model.ColumnList:
 				tk.MustExec("analyze table t columns c with 2 topn, 2 buckets")
 				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t",
+					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 					"Warning 1105 Columns b,d are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
 				))
 			case model.PredicateColumns:
@@ -1566,7 +1550,7 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 			case model.ColumnList:
 				tk.MustExec("analyze table t columns c with 2 topn, 2 buckets")
 				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t",
+					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 					"Warning 1105 Columns b,d are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
 				))
 			case model.PredicateColumns:
@@ -1647,8 +1631,8 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 			case model.ColumnList:
 				tk.MustExec("analyze table t columns a with 2 topn, 2 buckets")
 				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0",
-					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1",
+					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
+					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 					"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
 				))
 			case model.PredicateColumns:
@@ -1799,8 +1783,8 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 			case model.ColumnList:
 				tk.MustExec("analyze table t columns a with 2 topn, 2 buckets")
 				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0",
-					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1",
+					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
+					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 					"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
 				))
 			case model.PredicateColumns:
@@ -1904,7 +1888,7 @@ func TestAnalyzeColumnsWithExtendedStats(t *testing.T) {
 			case model.ColumnList:
 				tk.MustExec("analyze table t columns b with 2 topn, 2 buckets")
 				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t",
+					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 					"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
 				))
 			case model.PredicateColumns:
@@ -1974,7 +1958,7 @@ func TestAnalyzeColumnsWithVirtualColumnIndex(t *testing.T) {
 			case model.ColumnList:
 				tk.MustExec("analyze table t columns b with 2 topn, 2 buckets")
 				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t",
+					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 					"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
 				))
 			case model.PredicateColumns:
@@ -2096,6 +2080,26 @@ func TestAnalyzeColumnsAfterAnalyzeAll(t *testing.T) {
 	}
 }
 
+func TestAnalyzeSampleRateReason(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show warnings`).Sort().Check(testkit.Rows(
+		`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "use min(1, 110000/10000) as the sample-rate=1"`))
+
+	tk.MustExec(`insert into t values (1, 1), (2, 2), (3, 3)`)
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show warnings`).Sort().Check(testkit.Rows(
+		`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "TiDB assumes that the table is empty, use sample-rate=1"`))
+}
+
 func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
@@ -2107,9 +2111,9 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 	// analyze version 1 doesn't support `ANALYZE COLUMNS c1, ..., cn`/`ANALYZE PREDICATE COLUMNS` currently
 	tk.MustExec("set @@tidb_analyze_version = 1")
 	err := tk.ExecToErr("analyze table t columns a")
-	require.Equal(t, "Only the analyze version 2 supports analyzing the specified columns", err.Error())
+	require.Equal(t, "Only the version 2 of analyze supports analyzing the specified columns", err.Error())
 	err = tk.ExecToErr("analyze table t predicate columns")
-	require.Equal(t, "Only the analyze version 2 supports analyzing predicate columns", err.Error())
+	require.Equal(t, "Only the version 2 of analyze supports analyzing predicate columns", err.Error())
 
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	// invalid column
@@ -2120,7 +2124,7 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 	// If no predicate column is collected, analyze predicate columns gives a warning and falls back to analyze all columns.
 	tk.MustExec("analyze table t predicate columns")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t",
+		`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "use min(1, 110000/10000) as the sample-rate=1"`,
 		"Warning 1105 No predicate column has been collected yet for table test.t so all columns are analyzed",
 	))
 	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Rows()
@@ -2145,7 +2149,7 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 				tk.MustExec("analyze table t predicate columns")
 			}
 			tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-				"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t",
+				`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "TiDB assumes that the table is empty, use sample-rate=1"`,
 				"Warning 1105 Table test.t has version 1 statistics so all the columns must be analyzed to overwrite the current statistics",
 			))
 		}(val)
@@ -2731,7 +2735,7 @@ PARTITION BY RANGE ( a ) (
 	// analyze partition with options under dynamic mode
 	tk.MustExec("analyze table t partition p0 columns a,b,c with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
 		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
@@ -2745,7 +2749,7 @@ PARTITION BY RANGE ( a ) (
 
 	tk.MustExec("analyze table t partition p0")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/9) as the sample-rate=1\"",
 		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 	))
@@ -2766,6 +2770,7 @@ func TestAnalyzePartitionStaticToDynamic(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
+	tk.MustExec("set @@session.tidb_skip_missing_partition_stats = 0")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (10),
@@ -2800,7 +2805,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("analyze table t partition p1 columns a,b,d with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 8244 Build global-level stats failed due to missing partition-level column stats: table `t` partition `p0` column `d`, please run analyze table to refresh columns of all partitions",
 	))
 
@@ -2809,7 +2814,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("set global tidb_persist_analyze_options = true")
 	tk.MustExec("analyze table t partition p1 columns a,b,d with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1, reason to use this rate is \"use min(1, 110000/5) as the sample-rate=1\"",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
 		"Warning 8244 Build global-level stats failed due to missing partition-level column stats: table `t` partition `p0` column `d`, please run analyze table to refresh columns of all partitions",
 	))
@@ -2818,7 +2823,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("insert into mysql.analyze_options values (?,?,?,?,?,?,?)", pi.Definitions[1].ID, 0, 0, 1, 1, "DEFAULT", "")
 	tk.MustExec("analyze table t partition p1 columns a,b,d with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1, reason to use this rate is \"use min(1, 110000/5) as the sample-rate=1\"",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
 		"Warning 8244 Build global-level stats failed due to missing partition-level column stats: table `t` partition `p0` column `d`, please run analyze table to refresh columns of all partitions",
 	))
@@ -3056,160 +3061,6 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseModifyCount"))
 }
 
-func TestGlobalMemoryControlForAnalyze(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk0 := testkit.NewTestKit(t, store)
-	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
-	tk0.MustExec("set global tidb_server_memory_limit = 512MB")
-	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
-
-	sm := &testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
-	}
-	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
-	go dom.ServerMemoryLimitHandle().Run()
-
-	tk0.MustExec("use test")
-	tk0.MustExec("create table t(a int)")
-	tk0.MustExec("insert into t select 1")
-	for i := 1; i <= 8; i++ {
-		tk0.MustExec("insert into t select * from t") // 256 Lines
-	}
-	sql := "analyze table t with 1.0 samplerate;" // Need about 100MB
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/ReadMemStats", `return(536870912)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
-	_, err := tk0.Exec(sql)
-	require.True(t, strings.Contains(err.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance))
-	runtime.GC()
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
-	tk0.MustExec(sql)
-}
-
-func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk0 := testkit.NewTestKit(t, store)
-	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
-	tk0.MustExec("set global tidb_mem_quota_query = 209715200 ") // 200MB
-	tk0.MustExec("set global tidb_server_memory_limit = 5GB")
-	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
-
-	sm := &testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
-	}
-	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
-	go dom.ServerMemoryLimitHandle().Run()
-
-	tk0.MustExec("use test")
-	tk0.MustExec("create table t(a int)")
-	tk0.MustExec("insert into t select 1")
-	for i := 1; i <= 8; i++ {
-		tk0.MustExec("insert into t select * from t") // 256 Lines
-	}
-	sqlPrepare := "prepare stmt from 'analyze table t with 1.0 samplerate';"
-	sqlExecute := "execute stmt;"                                                                                 // Need about 100MB
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/ReadMemStats", `return(536870912)`)) // 512MB
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
-	// won't be killed by tidb_mem_quota_query
-	tk0.MustExec(sqlPrepare)
-	tk0.MustExec(sqlExecute)
-	runtime.GC()
-	// killed by tidb_server_memory_limit
-	tk0.MustExec("set global tidb_server_memory_limit = 512MB")
-	_, err0 := tk0.Exec(sqlPrepare)
-	require.NoError(t, err0)
-	_, err1 := tk0.Exec(sqlExecute)
-	// Killed and the WarnMsg is WarnMsgSuffixForInstance instead of WarnMsgSuffixForSingleQuery
-	require.True(t, strings.Contains(err1.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance))
-	runtime.GC()
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
-	tk0.MustExec(sqlPrepare)
-	tk0.MustExec(sqlExecute)
-}
-
-func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	originalVal1 := tk.MustQuery("select @@global.tidb_mem_oom_action").Rows()[0][0].(string)
-	tk.MustExec("set global tidb_mem_oom_action = 'cancel'")
-	//originalVal2 := tk.MustQuery("select @@global.tidb_server_memory_limit").Rows()[0][0].(string)
-	tk.MustExec("set global tidb_server_memory_limit = 512MB")
-	originalVal3 := tk.MustQuery("select @@global.tidb_server_memory_limit_sess_min_size").Rows()[0][0].(string)
-	tk.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
-	defer func() {
-		tk.MustExec(fmt.Sprintf("set global tidb_mem_oom_action = %v", originalVal1))
-		//tk.MustExec(fmt.Sprintf("set global tidb_server_memory_limit = %v", originalVal2))
-		tk.MustExec(fmt.Sprintf("set global tidb_server_memory_limit_sess_min_size = %v", originalVal3))
-	}()
-
-	// clean child trackers
-	oldChildTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
-	for _, tracker := range oldChildTrackers {
-		tracker.Detach()
-	}
-	defer func() {
-		for _, tracker := range oldChildTrackers {
-			tracker.AttachTo(executor.GlobalAnalyzeMemoryTracker)
-		}
-	}()
-	childTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
-	require.Len(t, childTrackers, 0)
-
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("insert into t select 1")
-	for i := 1; i <= 8; i++ {
-		tk.MustExec("insert into t select * from t") // 256 Lines
-	}
-	_, err0 := tk.Exec("analyze table t with 1.0 samplerate;")
-	require.NoError(t, err0)
-	rs0 := tk.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed")
-	require.Len(t, rs0.Rows(), 0)
-
-	h := dom.StatsHandle()
-	originalVal4 := handle.AutoAnalyzeMinCnt
-	originalVal5 := tk.MustQuery("select @@global.tidb_auto_analyze_ratio").Rows()[0][0].(string)
-	handle.AutoAnalyzeMinCnt = 0
-	tk.MustExec("set global tidb_auto_analyze_ratio = 0.001")
-	defer func() {
-		handle.AutoAnalyzeMinCnt = originalVal4
-		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal5))
-	}()
-
-	sm := &testkit.MockSessionManager{
-		Dom: dom,
-		PS:  []*util.ProcessInfo{tk.Session().ShowProcess()},
-	}
-	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
-	go dom.ServerMemoryLimitHandle().Run()
-
-	tk.MustExec("insert into t values(4),(5),(6)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	err := h.Update(dom.InfoSchema())
-	require.NoError(t, err)
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/ReadMemStats", `return(536870912)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
-	}()
-	tk.MustQuery("select 1")
-	childTrackers = executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
-	require.Len(t, childTrackers, 0)
-
-	h.HandleAutoAnalyze(dom.InfoSchema())
-	rs := tk.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed")
-	failReason := rs.Rows()[0][0].(string)
-	require.True(t, strings.Contains(failReason, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance))
-
-	childTrackers = executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
-	require.Len(t, childTrackers, 0)
-}
-
 func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3223,7 +3074,7 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 
 	tk.MustExec("analyze table t columns a")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(""+
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 Columns b are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
 		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx_c"))
 	tk.MustQuery("select job_info from mysql.analyze_jobs where table_schema = 'test' and table_name = 't'").Check(testkit.Rows(

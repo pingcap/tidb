@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/backend",
-        "@com_github_golang_mock//gomock",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@org_uber_go_mock//gomock",
     ],
 )

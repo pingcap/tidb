@@ -18,17 +18,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	timerapi "github.com/pingcap/tidb/timer/api"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
+	"golang.org/x/exp/maps"
 )
 
 const (
@@ -51,6 +53,9 @@ type TTLTimersSyncer struct {
 	key2Timers     map[string]*timerapi.TimerRecord
 	lastPullTimers time.Time
 	delayDelete    time.Duration
+	lastSyncTime   time.Time
+	lastSyncVer    int64
+	nowFunc        func() time.Time
 }
 
 // NewTTLTimerSyncer creates a new TTLTimersSyncer
@@ -59,6 +64,7 @@ func NewTTLTimerSyncer(pool sessionPool, cli timerapi.TimerClient) *TTLTimersSyn
 		pool:        pool,
 		cli:         cli,
 		key2Timers:  make(map[string]*timerapi.TimerRecord),
+		nowFunc:     time.Now,
 		delayDelete: timerDelayDeleteInterval,
 	}
 }
@@ -120,13 +126,42 @@ func (g *TTLTimersSyncer) ManualTriggerTTLTimer(ctx context.Context, tbl *cache.
 			return "", false, errors.New("manual request failed to trigger, request cancelled")
 		}
 
-		return timer.ManualEventID, true, nil
+		jobID := timer.ManualEventID
+		rows, err := se.ExecuteSQL(ctx, "select 1 from mysql.tidb_ttl_job_history where job_id=%?", jobID)
+		if err != nil {
+			return "", false, err
+		}
+
+		if len(rows) == 0 {
+			return "", false, nil
+		}
+
+		return jobID, true, nil
 	}, nil
+}
+
+// Reset resets the syncer's state
+func (g *TTLTimersSyncer) Reset() {
+	var zeroTime time.Time
+	g.lastPullTimers = zeroTime
+	g.lastSyncTime = zeroTime
+	g.lastSyncVer = 0
+	if len(g.key2Timers) > 0 {
+		maps.Clear(g.key2Timers)
+	}
+}
+
+// GetLastSyncInfo returns last sync time and information schema version
+func (g *TTLTimersSyncer) GetLastSyncInfo() (time.Time, int64) {
+	return g.lastSyncTime, g.lastSyncVer
 }
 
 // SyncTimers syncs timers with TTL tables
 func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSchema) {
+	g.lastSyncTime = g.nowFunc()
+	g.lastSyncVer = is.SchemaMetaVersion()
 	if time.Since(g.lastPullTimers) > fullRefreshTimersCacheInterval {
+		metrics.TTLFullRefreshTimersCounter.Inc()
 		newKey2Timers := make(map[string]*timerapi.TimerRecord, len(g.key2Timers))
 		timers, err := g.cli.GetTimers(ctx, timerapi.WithKeyPrefix(timerKeyPrefix))
 		if err != nil {
@@ -138,7 +173,7 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 			newKey2Timers[timer.Key] = timer
 		}
 		g.key2Timers = newKey2Timers
-		g.lastPullTimers = time.Now()
+		g.lastPullTimers = g.nowFunc()
 	}
 
 	se, err := getSession(g.pool)
@@ -167,12 +202,14 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 		}
 
 		if time.Since(timer.CreateTime) > g.delayDelete {
+			metrics.TTLSyncTimerCounter.Inc()
 			if _, err = g.cli.DeleteTimer(ctx, timer.ID); err != nil {
 				logutil.BgLogger().Error("failed to delete timer", zap.Error(err), zap.String("timerID", timer.ID))
 			} else {
 				delete(g.key2Timers, key)
 			}
 		} else if timer.Enable {
+			metrics.TTLSyncTimerCounter.Inc()
 			if err = g.cli.UpdateTimer(ctx, timer.ID, timerapi.WithSetEnable(false)); err != nil {
 				logutil.BgLogger().Error("failed to disable timer", zap.Error(err), zap.String("timerID", timer.ID))
 			}
@@ -233,6 +270,7 @@ func (g *TTLTimersSyncer) syncOneTimer(ctx context.Context, se session.Session, 
 		}
 	}
 
+	metrics.TTLSyncTimerCounter.Inc()
 	timer, err := g.cli.GetTimerByKey(ctx, key)
 	if err != nil && !errors.ErrorEqual(err, timerapi.ErrTimerNotExist) {
 		return nil, err

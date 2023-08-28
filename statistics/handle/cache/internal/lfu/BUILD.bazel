@@ -12,9 +12,14 @@ go_library(
     deps = [
         "//statistics",
         "//statistics/handle/cache/internal",
+        "//statistics/handle/cache/internal/metrics",
         "//util/intest",
+        "//util/logutil",
+        "//util/mathutil",
+        "//util/memory",
         "@com_github_dgraph_io_ristretto//:ristretto",
         "@org_golang_x_exp//maps",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -25,8 +30,9 @@ go_test(
     embed = [":lfu"],
     flaky = True,
     race = "on",
-    shard_count = 6,
+    shard_count = 8,
     deps = [
+        "//statistics",
         "//statistics/handle/cache/internal/testutil",
         "@com_github_stretchr_testify//require",
     ],

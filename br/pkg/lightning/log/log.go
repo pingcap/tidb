@@ -16,6 +16,8 @@ package log
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -45,6 +47,8 @@ type Config struct {
 	FileMaxDays int `toml:"max-days" json:"max-days"`
 	// Maximum number of old log files to retain.
 	FileMaxBackups int `toml:"max-backups" json:"max-backups"`
+	// EnableDiagnoseLogs, when enabled, we will output logs from all packages and enable GRPC debug log.
+	EnableDiagnoseLogs bool `toml:"enable-diagnose-logs" json:"enable-diagnose-logs"`
 }
 
 // Adjust adjusts some fields in the config to a proper value.
@@ -77,10 +81,24 @@ var (
 
 // InitLogger initializes Lightning's and also the TiDB library's loggers.
 func InitLogger(cfg *Config, _ string) error {
+	loggerOptions := []zap.Option{}
+	if cfg.EnableDiagnoseLogs {
+		// the value doesn't matter, logutil.InitLogger only checks whether it's empty.
+		if err := os.Setenv(logutil.GRPCDebugEnvName, "true"); err != nil {
+			fmt.Println("Failed to set environment variable to enable GRPC debug log", err)
+		}
+	} else {
+		// Only output logs of br package and main package.
+		loggerOptions = append(loggerOptions, zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+			return NewFilterCore(core, "github.com/pingcap/tidb/br/", "main.main")
+		}))
+	}
 	tidbLogCfg := logutil.LogConfig{}
 	// Disable annoying TiDB Log.
 	// TODO: some error logs outputs randomly, we need to fix them in TiDB.
+	// this LEVEL only affects SlowQueryLogger, later ReplaceGlobals will overwrite it.
 	tidbLogCfg.Level = "fatal"
+	// this also init GRPCLogger, controlled by GRPC_DEBUG env.
 	err := logutil.InitLogger(&tidbLogCfg)
 	if err != nil {
 		return errors.Trace(err)
@@ -90,10 +108,6 @@ func InitLogger(cfg *Config, _ string) error {
 		Level:         cfg.Level,
 		DisableCaller: false, // FilterCore requires zap.AddCaller.
 	}
-	filterTiDBLog := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
-		// Filter logs from TiDB and PD.
-		return NewFilterCore(core, "github.com/pingcap/tidb/br/", "main.main")
-	})
 	// "-" is a special config for log to stdout.
 	if len(cfg.File) > 0 && cfg.File != "-" {
 		logCfg.File = pclog.FileLogConfig{
@@ -103,7 +117,7 @@ func InitLogger(cfg *Config, _ string) error {
 			MaxBackups: cfg.FileMaxBackups,
 		}
 	}
-	logger, props, err := pclog.InitLogger(logCfg, filterTiDBLog)
+	logger, props, err := pclog.InitLogger(logCfg, loggerOptions...)
 	if err != nil {
 		return err
 	}

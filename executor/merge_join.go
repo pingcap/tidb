@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor/internal/exec"
+	"github.com/pingcap/tidb/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -63,7 +64,7 @@ type mergeJoinTable struct {
 	executed          bool
 	childChunk        *chunk.Chunk
 	childChunkIter    *chunk.Iterator4Chunk
-	groupChecker      *vecGroupChecker
+	groupChecker      *vecgroupchecker.VecGroupChecker
 	groupRowsSelected []int
 	groupRowsIter     chunk.Iterator
 
@@ -85,7 +86,7 @@ func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 	for _, col := range t.joinKeys {
 		items = append(items, col)
 	}
-	t.groupChecker = newVecGroupChecker(exec.Ctx(), items)
+	t.groupChecker = vecgroupchecker.NewVecGroupChecker(exec.Ctx(), items)
 	t.groupRowsIter = chunk.NewIterator4Chunk(t.childChunk)
 
 	if t.isInner {
@@ -146,7 +147,7 @@ func (t *mergeJoinTable) finish() error {
 
 func (t *mergeJoinTable) selectNextGroup() {
 	t.groupRowsSelected = t.groupRowsSelected[:0]
-	begin, end := t.groupChecker.getNextGroup()
+	begin, end := t.groupChecker.GetNextGroup()
 	if t.isInner && t.hasNullInJoinKey(t.childChunk.GetRow(begin)) {
 		return
 	}
@@ -175,7 +176,7 @@ func (t *mergeJoinTable) fetchNextInnerGroup(ctx context.Context, exec *MergeJoi
 	}
 
 fetchNext:
-	if t.executed && t.groupChecker.isExhausted() {
+	if t.executed && t.groupChecker.IsExhausted() {
 		// Ensure iter at the end, since sel of childChunk has been cleared.
 		t.groupRowsIter.ReachEnd()
 		return nil
@@ -183,13 +184,13 @@ fetchNext:
 
 	isEmpty := true
 	// For inner table, rows have null in join keys should be skip by selectNextGroup.
-	for isEmpty && !t.groupChecker.isExhausted() {
+	for isEmpty && !t.groupChecker.IsExhausted() {
 		t.selectNextGroup()
 		isEmpty = len(t.groupRowsSelected) == 0
 	}
 
 	// For inner table, all the rows have the same join keys should be put into one group.
-	for !t.executed && t.groupChecker.isExhausted() {
+	for !t.executed && t.groupChecker.IsExhausted() {
 		if !isEmpty {
 			// Group is not empty, hand over the management of childChunk to t.rowContainer.
 			if err := t.rowContainer.Add(t.childChunk); err != nil {
@@ -210,7 +211,7 @@ fetchNext:
 			break
 		}
 
-		isFirstGroupSameAsPrev, err := t.groupChecker.splitIntoGroups(t.childChunk)
+		isFirstGroupSameAsPrev, err := t.groupChecker.SplitIntoGroups(t.childChunk)
 		if err != nil {
 			return err
 		}
@@ -240,11 +241,11 @@ fetchNext:
 }
 
 func (t *mergeJoinTable) fetchNextOuterGroup(ctx context.Context, exec *MergeJoinExec, requiredRows int) error {
-	if t.executed && t.groupChecker.isExhausted() {
+	if t.executed && t.groupChecker.IsExhausted() {
 		return nil
 	}
 
-	if !t.executed && t.groupChecker.isExhausted() {
+	if !t.executed && t.groupChecker.IsExhausted() {
 		// It's hard to calculate selectivity if there is any filter or it's inner join,
 		// so we just push the requiredRows down when it's outer join and has no filter.
 		if exec.isOuterJoin && len(t.filters) == 0 {
@@ -261,7 +262,7 @@ func (t *mergeJoinTable) fetchNextOuterGroup(ctx context.Context, exec *MergeJoi
 			return err
 		}
 
-		_, err = t.groupChecker.splitIntoGroups(t.childChunk)
+		_, err = t.groupChecker.SplitIntoGroups(t.childChunk)
 		if err != nil {
 			return err
 		}

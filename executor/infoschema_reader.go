@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -82,7 +83,6 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 type memtableRetriever struct {
@@ -119,7 +119,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableTables:
 			err = e.setDataFromTables(ctx, sctx, dbs)
 		case infoschema.TableReferConst:
-			err = e.setDataFromReferConst(ctx, sctx, dbs)
+			err = e.setDataFromReferConst(sctx, dbs)
 		case infoschema.TableSequences:
 			e.setDataFromSequences(sctx, dbs)
 		case infoschema.TablePartitions:
@@ -141,7 +141,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableKeyColumn:
 			e.setDataFromKeyColumnUsage(sctx, dbs)
 		case infoschema.TableMetricTables:
-			e.setDataForMetricTables(sctx)
+			e.setDataForMetricTables()
 		case infoschema.TableProfiling:
 			e.setDataForPseudoProfiling(sctx)
 		case infoschema.TableCollationCharacterSetApplicability:
@@ -183,15 +183,17 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableUserAttributes:
 			err = e.setDataForUserAttributes(ctx, sctx)
 		case infoschema.TableMemoryUsage:
-			err = e.setDataForMemoryUsage(sctx)
+			err = e.setDataForMemoryUsage()
 		case infoschema.ClusterTableMemoryUsage:
 			err = e.setDataForClusterMemoryUsage(sctx)
 		case infoschema.TableMemoryUsageOpsHistory:
-			err = e.setDataForMemoryUsageOpsHistory(sctx)
+			err = e.setDataForMemoryUsageOpsHistory()
 		case infoschema.ClusterTableMemoryUsageOpsHistory:
 			err = e.setDataForClusterMemoryUsageOpsHistory(sctx)
 		case infoschema.TableResourceGroups:
 			err = e.setDataFromResourceGroups()
+		case infoschema.TableRunawayWatches:
+			err = e.setDataFromRunawayWatches(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -443,7 +445,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 	e.rows = append(e.rows, rows...)
 }
 
-func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
+func (e *memtableRetriever) setDataFromReferConst(sctx sessionctx.Context, schemas []*model.DBInfo) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	var rows [][]types.Datum
 	for _, schema := range schemas {
@@ -937,20 +939,15 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 					} else if table.Partition.Type == model.PartitionTypeList {
 						if len(pi.InValues) > 0 {
 							buf := bytes.NewBuffer(nil)
-							if len(pi.InValues[0]) == 1 {
-								for i, vs := range pi.InValues {
-									if i > 0 {
-										buf.WriteString(",")
-									}
-									buf.WriteString(vs[0])
+							for i, vs := range pi.InValues {
+								if i > 0 {
+									buf.WriteString(",")
 								}
-							} else if len(pi.InValues[0]) > 1 {
-								for i, vs := range pi.InValues {
-									if i > 0 {
-										buf.WriteString(",")
-									}
+								if len(vs) != 1 {
 									buf.WriteString("(")
-									buf.WriteString(strings.Join(vs, ","))
+								}
+								buf.WriteString(strings.Join(vs, ","))
+								if len(vs) != 1 {
 									buf.WriteString(")")
 								}
 							}
@@ -1246,7 +1243,7 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *DDLJobsReaderExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.MaxChunkSize())
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	count := 0
@@ -1446,7 +1443,7 @@ func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionctx.Context) {
 	e.rows = pm.UserPrivilegesTable(ctx.GetSessionVars().ActiveRoles, ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
 }
 
-func (e *memtableRetriever) setDataForMetricTables(ctx sessionctx.Context) {
+func (e *memtableRetriever) setDataForMetricTables() {
 	tables := make([]string, 0, len(infoschema.MetricTableMap))
 	for name := range infoschema.MetricTableMap {
 		tables = append(tables, name)
@@ -1638,7 +1635,7 @@ func (e *memtableRetriever) getRegionsInfoForTable(h *helper.Helper, is infosche
 	return allRegionsInfo, nil
 }
 
-func (e *memtableRetriever) getRegionsInfoForSingleTable(helper *helper.Helper, tableID int64) (*helper.RegionsInfo, error) {
+func (*memtableRetriever) getRegionsInfoForSingleTable(helper *helper.Helper, tableID int64) (*helper.RegionsInfo, error) {
 	sk, ek := tablecodec.GetTableHandleKeyRange(tableID)
 	sRegion, err := helper.GetRegionByKey(codec.EncodeBytes(nil, sk))
 	if err != nil {
@@ -1675,18 +1672,26 @@ func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo,
 		} else {
 			row[6].SetInt64(0)
 		}
+		if table.IsPartition {
+			row[9].SetInt64(1)
+			row[10].SetInt64(table.Partition.ID)
+			row[11].SetString(table.Partition.Name.O, mysql.DefaultCollationName)
+		} else {
+			row[9].SetInt64(0)
+		}
 	} else {
 		row[6].SetInt64(0)
+		row[9].SetInt64(0)
 	}
-	row[9].SetInt64(region.Epoch.ConfVer)
-	row[10].SetInt64(region.Epoch.Version)
-	row[11].SetUint64(region.WrittenBytes)
-	row[12].SetUint64(region.ReadBytes)
-	row[13].SetInt64(region.ApproximateSize)
-	row[14].SetInt64(region.ApproximateKeys)
+	row[12].SetInt64(region.Epoch.ConfVer)
+	row[13].SetInt64(region.Epoch.Version)
+	row[14].SetUint64(region.WrittenBytes)
+	row[15].SetUint64(region.ReadBytes)
+	row[16].SetInt64(region.ApproximateSize)
+	row[17].SetInt64(region.ApproximateKeys)
 	if region.ReplicationStatus != nil {
-		row[15].SetString(region.ReplicationStatus.State, mysql.DefaultCollationName)
-		row[16].SetInt64(region.ReplicationStatus.StateID)
+		row[18].SetString(region.ReplicationStatus.State, mysql.DefaultCollationName)
+		row[19].SetInt64(region.ReplicationStatus.StateID)
 	}
 	e.rows = append(e.rows, row)
 }
@@ -1824,7 +1829,7 @@ type tableStorageStatsRetriever struct {
 	stats         helper.PDRegionStats
 }
 
-func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *tableStorageStatsRetriever) retrieve(_ context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved {
 		return nil, nil
 	}
@@ -1839,7 +1844,7 @@ func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionc
 		return nil, nil
 	}
 
-	rows, err := e.setDataForTableStorageStats(sctx)
+	rows, err := e.setDataForTableStorageStats()
 	if err != nil {
 		return nil, err
 	}
@@ -1927,7 +1932,7 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 	return nil
 }
 
-func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *tableStorageStatsRetriever) setDataForTableStorageStats() ([][]types.Datum, error) {
 	rows := make([][]types.Datum, 0, 1024)
 	count := 0
 	for e.curTable < len(e.initialTables) && count < 1024 {
@@ -2022,14 +2027,14 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 			if !ok {
 				return nil, errors.New("invalid start time")
 			}
-			RemainingDuration, progress, estimatedRowCnt, RemainDurationErr :=
+			remainingDuration, progress, estimatedRowCnt, remainDurationErr :=
 				getRemainDurationForAnalyzeStatusHelper(ctx, sctx, &startTime,
 					dbName, tableName, partitionName, processedRows)
-			if RemainDurationErr != nil {
-				logutil.BgLogger().Warn("get remaining duration failed", zap.Error(RemainDurationErr))
+			if remainDurationErr != nil {
+				logutil.BgLogger().Warn("get remaining duration failed", zap.Error(remainDurationErr))
 			}
-			if RemainingDuration != nil {
-				remainDurationStr = execdetails.FormatDuration(*RemainingDuration)
+			if remainingDuration != nil {
+				remainDurationStr = execdetails.FormatDuration(*remainingDuration)
 			}
 			progressDouble = progress
 			estimatedRowCntStr = int64(estimatedRowCnt)
@@ -2059,7 +2064,7 @@ func getRemainDurationForAnalyzeStatusHelper(
 	ctx context.Context,
 	sctx sessionctx.Context, startTime *types.Time,
 	dbName, tableName, partitionName string, processedRows int64) (*time.Duration, float64, float64, error) {
-	var RemainingDuration = time.Duration(0)
+	var remainingDuration = time.Duration(0)
 	var percentage = 0.0
 	var totalCnt = float64(0)
 	if startTime != nil {
@@ -2070,8 +2075,8 @@ func getRemainDurationForAnalyzeStatusHelper(
 		duration := time.Now().UTC().Sub(start)
 		if intest.InTest {
 			if val := ctx.Value(AnalyzeProgressTest); val != nil {
-				RemainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
-				return &RemainingDuration, percentage, totalCnt, nil
+				remainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
+				return &remainingDuration, percentage, totalCnt, nil
 			}
 		}
 		var tid int64
@@ -2099,9 +2104,9 @@ func getRemainDurationForAnalyzeStatusHelper(
 		if tid > 0 && totalCnt == 0 {
 			totalCnt, _ = pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(sctx, tid, dbName, tableName, partitionName)
 		}
-		RemainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
+		remainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
 	}
-	return &RemainingDuration, percentage, totalCnt, nil
+	return &remainingDuration, percentage, totalCnt, nil
 }
 
 func calRemainInfoForAnalyzeStatus(ctx context.Context, totalCnt int64, processedRows int64, duration time.Duration) (time.Duration, float64) {
@@ -2361,7 +2366,7 @@ func (e *memtableRetriever) setDataForClusterTrxSummary(ctx sessionctx.Context) 
 	return nil
 }
 
-func (e *memtableRetriever) setDataForMemoryUsage(ctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataForMemoryUsage() error {
 	r := memory.ReadMemStats()
 	currentOps, sessionKillLastDatum := types.NewDatum(nil), types.NewDatum(nil)
 	if memory.TriggerMemoryLimitGC.Load() || servermemorylimit.IsKilling.Load() {
@@ -2391,7 +2396,7 @@ func (e *memtableRetriever) setDataForMemoryUsage(ctx sessionctx.Context) error 
 }
 
 func (e *memtableRetriever) setDataForClusterMemoryUsage(ctx sessionctx.Context) error {
-	err := e.setDataForMemoryUsage(ctx)
+	err := e.setDataForMemoryUsage()
 	if err != nil {
 		return err
 	}
@@ -2403,13 +2408,13 @@ func (e *memtableRetriever) setDataForClusterMemoryUsage(ctx sessionctx.Context)
 	return nil
 }
 
-func (e *memtableRetriever) setDataForMemoryUsageOpsHistory(ctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataForMemoryUsageOpsHistory() error {
 	e.rows = servermemorylimit.GlobalMemoryOpsHistoryManager.GetRows()
 	return nil
 }
 
 func (e *memtableRetriever) setDataForClusterMemoryUsageOpsHistory(ctx sessionctx.Context) error {
-	err := e.setDataForMemoryUsageOpsHistory(ctx)
+	err := e.setDataForMemoryUsageOpsHistory()
 	if err != nil {
 		return err
 	}
@@ -2465,8 +2470,7 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	// The current TiDB node's address is needed by the CLUSTER_TIDB_TRX table.
 	var err error
 	var instanceAddr string
-	switch e.table.Name.O {
-	case infoschema.ClusterTableTiDBTrx:
+	if e.table.Name.O == infoschema.ClusterTableTiDBTrx {
 		instanceAddr, err = infoschema.GetInstanceAddr(sctx)
 		if err != nil {
 			return nil, err
@@ -2636,7 +2640,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 					row = append(row, types.NewDatum(strings.ToUpper(hex.EncodeToString(lockWait.Key))))
 				case infoschema.DataLockWaitsColumnKeyInfo:
 					infoSchema := sctx.GetInfoSchema().(infoschema.InfoSchema)
-					var decodedKeyStr interface{} = nil
+					var decodedKeyStr interface{}
 					decodedKey, err := keydecoder.DecodeKey(lockWait.Key, infoSchema)
 					if err == nil {
 						decodedKeyBytes, err := json.Marshal(decodedKey)
@@ -2683,7 +2687,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 					row = append(row, types.NewDatum(strings.ToUpper(hex.EncodeToString(resolving.Key))))
 				case infoschema.DataLockWaitsColumnKeyInfo:
 					infoSchema := domain.GetDomain(sctx).InfoSchema()
-					var decodedKeyStr interface{} = nil
+					var decodedKeyStr interface{}
 					decodedKey, err := keydecoder.DecodeKey(resolving.Key, infoSchema)
 					if err == nil {
 						decodedKeyBytes, err := json.Marshal(decodedKey)
@@ -2740,7 +2744,7 @@ type deadlocksTableRetriever struct {
 // nextIndexPair advances a index pair (where `idx` is the index of the DeadlockRecord, and `waitChainIdx` is the index
 // of the wait chain item in the `idx`-th DeadlockRecord. This function helps iterate over each wait chain item
 // in all DeadlockRecords.
-func (r *deadlocksTableRetriever) nextIndexPair(idx, waitChainIdx int) (int, int) {
+func (r *deadlocksTableRetriever) nextIndexPair(idx, waitChainIdx int) (a, b int) {
 	waitChainIdx++
 	if waitChainIdx >= len(r.deadlocks[idx].WaitChain) {
 		waitChainIdx = 0
@@ -2775,8 +2779,7 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 	// The current TiDB node's address is needed by the CLUSTER_DEADLOCKS table.
 	var err error
 	var instanceAddr string
-	switch r.table.Name.O {
-	case infoschema.ClusterTableDeadlocks:
+	if r.table.Name.O == infoschema.ClusterTableDeadlocks {
 		instanceAddr, err = infoschema.GetInstanceAddr(sctx)
 		if err != nil {
 			return nil, err
@@ -2897,17 +2900,14 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	if !e.initialized {
 		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 		dbs := is.AllSchemas()
-		slices.SortFunc(dbs, func(i, j *model.DBInfo) bool {
-			return i.Name.L < j.Name.L
-		})
+		slices.SortFunc(dbs, model.LessDBInfo)
 		e.dbs = dbs
 		e.initialized = true
 		e.rows = make([][]types.Datum, 0, 1024)
 	}
 
 	var err error
-	switch e.table.Name.O {
-	case infoschema.TableColumns:
+	if e.table.Name.O == infoschema.TableColumns {
 		err = e.setDataForColumns(ctx, sctx, e.extractor)
 	}
 	if err != nil {
@@ -2992,7 +2992,7 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 			return errors.Errorf("node status addr: %s format illegal", info.StatusAddr)
 		}
 		e.instanceIds = append(e.instanceIds, info.Address)
-		e.instanceCount += 1
+		e.instanceCount++
 	}
 	e.initialized = true
 	return nil
@@ -3104,7 +3104,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 	}
 	e.rowIdx += len(outputRows)
 	if len(outputRows) < maxCount {
-		e.instanceIdx += 1
+		e.instanceIdx++
 		e.rowIdx = 0
 	}
 	return outputRows, nil
@@ -3241,6 +3241,35 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 	return nil
 }
 
+func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) error {
+	do := domain.GetDomain(sctx)
+	err := do.TryToUpdateRunawayWatch()
+	if err != nil {
+		logutil.BgLogger().Warn("read runaway watch list", zap.Error(err))
+	}
+	watches := do.GetRunawayWatchList()
+	rows := make([][]types.Datum, 0, len(watches))
+	for _, watch := range watches {
+		action := watch.Action
+		row := types.MakeDatums(
+			watch.ID,
+			watch.ResourceGroupName,
+			watch.StartTime.Local().Format(time.DateTime),
+			watch.EndTime.Local().Format(time.DateTime),
+			rmpb.RunawayWatchType_name[int32(watch.Watch)],
+			watch.WatchText,
+			watch.Source,
+			rmpb.RunawayAction_name[int32(action)],
+		)
+		if watch.EndTime.Equal(resourcegroup.NullTime) {
+			row[3].SetString("UNLIMITED", mysql.DefaultCollationName)
+		}
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
+}
+
 // used in resource_groups
 const (
 	burstableStr      = "YES"
@@ -3271,10 +3300,14 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			}
 			dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
 			fmt.Fprintf(limitBuilder, "EXEC_ELAPSED='%s'", dur.String())
-			fmt.Fprintf(limitBuilder, ", ACTION=%s", model.RunawayActionType(setting.Action+1).String())
+			fmt.Fprintf(limitBuilder, ", ACTION=%s", model.RunawayActionType(setting.Action).String())
 			if setting.Watch != nil {
-				dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond
-				fmt.Fprintf(limitBuilder, ", WATCH=%s DURATION='%s'", model.RunawayWatchType(setting.Watch.Type).String(), dur.String())
+				if setting.Watch.LastingDurationMs > 0 {
+					dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond
+					fmt.Fprintf(limitBuilder, ", WATCH=%s DURATION='%s'", model.RunawayWatchType(setting.Watch.Type).String(), dur.String())
+				} else {
+					fmt.Fprintf(limitBuilder, ", WATCH=%s DURATION=UNLIMITED", model.RunawayWatchType(setting.Watch.Type).String())
+				}
 			}
 		}
 		queryLimit := limitBuilder.String()

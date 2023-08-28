@@ -37,7 +37,7 @@ type IndexAdviseExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *IndexAdviseExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *IndexAdviseExec) Next(context.Context, *chunk.Chunk) error {
 	if !e.IsLocal {
 		return errors.New("Index Advise: don't support load file without local field")
 	}
@@ -57,12 +57,12 @@ func (e *IndexAdviseExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 // Close implements the Executor Close interface.
-func (e *IndexAdviseExec) Close() error {
+func (*IndexAdviseExec) Close() error {
 	return nil
 }
 
 // Open implements the Executor Open interface.
-func (e *IndexAdviseExec) Open(ctx context.Context) error {
+func (*IndexAdviseExec) Open(context.Context) error {
 	return nil
 }
 
@@ -121,7 +121,7 @@ func (e *IndexAdviseInfo) prepareInfo(data []byte) error {
 }
 
 // GetIndexAdvice gets the index advice by workload file.
-func (e *IndexAdviseInfo) GetIndexAdvice(ctx context.Context, data []byte) error {
+func (e *IndexAdviseInfo) GetIndexAdvice(data []byte) error {
 	if err := e.prepareInfo(data); err != nil {
 		return err
 	}
@@ -138,7 +138,7 @@ type IndexAdvice struct {
 type IndexAdviseVarKeyType int
 
 // String defines a Stringer function for debugging and pretty printing.
-func (k IndexAdviseVarKeyType) String() string {
+func (IndexAdviseVarKeyType) String() string {
 	return "index_advise_var"
 }
 

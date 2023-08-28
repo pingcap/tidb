@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor/internal/exec"
+	"github.com/pingcap/tidb/executor/internal/querywatch"
 	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -127,7 +128,7 @@ func clearSysSession(ctx context.Context, sctx sessionctx.Context) {
 }
 
 // Next implements the Executor Next interface.
-func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	if e.done {
 		return nil
 	}
@@ -152,7 +153,7 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.BeginStmt:
 		err = e.executeBegin(ctx, x)
 	case *ast.CommitStmt:
-		e.executeCommit(x)
+		e.executeCommit()
 	case *ast.SavepointStmt:
 		err = e.executeSavepoint(x)
 	case *ast.ReleaseSavepointStmt:
@@ -185,11 +186,13 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.SetDefaultRoleStmt:
 		err = e.executeSetDefaultRole(ctx, x)
 	case *ast.ShutdownStmt:
-		err = e.executeShutdown(x)
+		err = e.executeShutdown()
 	case *ast.AdminStmt:
 		err = e.executeAdmin(x)
 	case *ast.SetResourceGroupStmt:
 		err = e.executeSetResourceGroupName(x)
+	case *ast.DropQueryWatchStmt:
+		err = e.executeDropQueryWatch(x)
 	}
 	e.done = true
 	return err
@@ -469,7 +472,7 @@ func (e *SimpleExec) setRoleRegular(s *ast.SetRoleStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) setRoleAll(s *ast.SetRoleStmt) error {
+func (e *SimpleExec) setRoleAll() error {
 	// Deal with SQL like `SET ROLE ALL;`
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	user, host := e.Ctx().GetSessionVars().User.AuthUsername, e.Ctx().GetSessionVars().User.AuthHostname
@@ -521,7 +524,7 @@ func (e *SimpleExec) setRoleAllExcept(s *ast.SetRoleStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) setRoleDefault(s *ast.SetRoleStmt) error {
+func (e *SimpleExec) setRoleDefault() error {
 	// Deal with SQL like `SET ROLE DEFAULT;`
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	user, host := e.Ctx().GetSessionVars().User.AuthUsername, e.Ctx().GetSessionVars().User.AuthHostname
@@ -534,7 +537,7 @@ func (e *SimpleExec) setRoleDefault(s *ast.SetRoleStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) setRoleNone(s *ast.SetRoleStmt) error {
+func (e *SimpleExec) setRoleNone() error {
 	// Deal with SQL like `SET ROLE NONE;`
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	roles := make([]*auth.RoleIdentity, 0)
@@ -551,13 +554,13 @@ func (e *SimpleExec) executeSetRole(s *ast.SetRoleStmt) error {
 	case ast.SetRoleRegular:
 		return e.setRoleRegular(s)
 	case ast.SetRoleAll:
-		return e.setRoleAll(s)
+		return e.setRoleAll()
 	case ast.SetRoleAllExcept:
 		return e.setRoleAllExcept(s)
 	case ast.SetRoleNone:
-		return e.setRoleNone(s)
+		return e.setRoleNone()
 	case ast.SetRoleDefault:
-		return e.setRoleDefault(s)
+		return e.setRoleDefault()
 	}
 	return nil
 }
@@ -763,7 +766,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
 }
 
-func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
+func (e *SimpleExec) executeCommit() {
 	e.Ctx().GetSessionVars().SetInTxn(false)
 }
 
@@ -1052,7 +1055,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	if err != nil {
 		return err
 	}
-	PasswordLocking := createUserFailedLoginJSON(plOptions)
+	passwordLocking := createUserFailedLoginJSON(plOptions)
 	if s.IsCreateRole {
 		plOptions.lockAccount = "Y"
 		plOptions.passwordExpired = "Y"
@@ -1085,15 +1088,14 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 	// If FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME are both specified to 0, a string of 0 length is generated.
 	// When inserting the attempts into json, an error occurs. This requires special handling.
-	if PasswordLocking != "" {
-		userAttributes = append(userAttributes, PasswordLocking)
+	if passwordLocking != "" {
+		userAttributes = append(userAttributes, passwordLocking)
 	}
 	userAttributesStr := fmt.Sprintf("{%s}", strings.Join(userAttributes, ","))
 
 	tokenIssuer := ""
 	for _, authTokenOption := range s.AuthTokenOrTLSOptions {
-		switch authTokenOption.Type {
-		case ast.TokenIssuer:
+		if authTokenOption.Type == ast.TokenIssuer {
 			tokenIssuer = authTokenOption.Value
 		}
 	}
@@ -1751,15 +1753,15 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		type AuthTokenOptionHandler int
 		const (
-			// NoNeedAuthTokenOptions means the final auth plugin is NOT tidb_auth_plugin
-			NoNeedAuthTokenOptions AuthTokenOptionHandler = iota
+			// noNeedAuthTokenOptions means the final auth plugin is NOT tidb_auth_plugin
+			noNeedAuthTokenOptions AuthTokenOptionHandler = iota
 			// OptionalAuthTokenOptions means the final auth_plugin is tidb_auth_plugin,
 			// and whether to declare AuthTokenOptions or not is ok.
 			OptionalAuthTokenOptions
 			// RequireAuthTokenOptions means the final auth_plugin is tidb_auth_plugin and need AuthTokenOptions here
 			RequireAuthTokenOptions
 		)
-		authTokenOptionHandler := NoNeedAuthTokenOptions
+		authTokenOptionHandler := noNeedAuthTokenOptions
 		currentAuthPlugin, err := privilege.GetPrivilegeManager(e.Ctx()).GetAuthPlugin(spec.User.Username, spec.User.Hostname)
 		if err != nil {
 			return err
@@ -1780,7 +1782,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 			switch spec.AuthOpt.AuthPlugin {
 			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, mysql.AuthLDAPSimple, mysql.AuthLDAPSASL, "":
-				authTokenOptionHandler = NoNeedAuthTokenOptions
+				authTokenOptionHandler = noNeedAuthTokenOptions
 			case mysql.AuthTiDBAuthToken:
 				if authTokenOptionHandler != OptionalAuthTokenOptions {
 					authTokenOptionHandler = RequireAuthTokenOptions
@@ -1907,7 +1909,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 
 		switch authTokenOptionHandler {
-		case NoNeedAuthTokenOptions:
+		case noNeedAuthTokenOptions:
 			if len(authTokenOptions) > 0 {
 				err := errors.New("TOKEN_ISSUER is not needed for the auth plugin")
 				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
@@ -2181,6 +2183,10 @@ func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, use
 		usernameColumn, users.OldUser.Username, hostColumn, strings.ToLower(users.OldUser.Hostname))
 	_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	return err
+}
+
+func (e *SimpleExec) executeDropQueryWatch(s *ast.DropQueryWatchStmt) error {
+	return querywatch.ExecDropQueryWatch(e.Ctx(), s.IntValue)
 }
 
 func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) error {
@@ -2602,6 +2608,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 		SetFromInfoSchema(sctx.GetInfoSchema()).
 		SetStoreType(kv.TiDB).
 		SetTiDBServerID(gcid.ServerID).
+		SetStartTS(math.MaxUint64). // To make check visibility success.
 		Build()
 	if err != nil {
 		return err
@@ -2610,6 +2617,14 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return err
+	}
+
+	// Must consume & close the response, otherwise coprocessor task will leak.
+	defer func() {
+		_ = resp.Close()
+	}()
+	if _, err := resp.Next(ctx); err != nil {
+		return errors.Trace(err)
 	}
 
 	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", gcid.ServerID),
@@ -2711,7 +2726,7 @@ func (e *SimpleExec) autoNewTxn() bool {
 	return false
 }
 
-func (e *SimpleExec) executeShutdown(s *ast.ShutdownStmt) error {
+func (e *SimpleExec) executeShutdown() error {
 	sessVars := e.Ctx().GetSessionVars()
 	logutil.BgLogger().Info("execute shutdown statement", zap.Uint64("conn", sessVars.ConnectionID))
 	p, err := os.FindProcess(os.Getpid())

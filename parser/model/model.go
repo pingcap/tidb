@@ -15,6 +15,7 @@ package model
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -458,14 +459,29 @@ type TableInfo struct {
 	// 1 for the clustered index created > 5.0.0 RC.
 	CommonHandleVersion uint16 `json:"common_handle_version"`
 
-	Comment         string `json:"comment"`
-	AutoIncID       int64  `json:"auto_inc_id"`
-	AutoIdCache     int64  `json:"auto_id_cache"` //nolint:revive
-	AutoRandID      int64  `json:"auto_rand_id"`
-	MaxColumnID     int64  `json:"max_col_id"`
-	MaxIndexID      int64  `json:"max_idx_id"`
-	MaxForeignKeyID int64  `json:"max_fk_id"`
-	MaxConstraintID int64  `json:"max_cst_id"`
+	Comment   string `json:"comment"`
+	AutoIncID int64  `json:"auto_inc_id"`
+
+	// Only used by BR when:
+	// 1. SepAutoInc() is true
+	// 2. The table is nonclustered and has auto_increment column.
+	// In that case, both auto_increment_id and tidb_rowid need to be backup & recover.
+	// See also https://github.com/pingcap/tidb/issues/46093
+	//
+	// It should have been named TiDBRowID, but for historial reasons, we do not use separate meta key for _tidb_rowid and auto_increment_id,
+	// and field `AutoIncID` is used to serve both _tidb_rowid and auto_increment_id.
+	// If we introduce a TiDBRowID here, it could make furthur misunderstanding:
+	//	in most cases, AutoIncID is _tidb_rowid and TiDBRowID is null
+	//      but in some cases, AutoIncID is auto_increment_id and TiDBRowID is _tidb_rowid
+	// So let's just use another name AutoIncIDExtra to avoid misconception.
+	AutoIncIDExtra int64 `json:"auto_inc_id_extra,omitempty"`
+
+	AutoIdCache     int64 `json:"auto_id_cache"` //nolint:revive
+	AutoRandID      int64 `json:"auto_rand_id"`
+	MaxColumnID     int64 `json:"max_col_id"`
+	MaxIndexID      int64 `json:"max_idx_id"`
+	MaxForeignKeyID int64 `json:"max_fk_id"`
+	MaxConstraintID int64 `json:"max_cst_id"`
 	// UpdateTS is used to record the timestamp of updating the table's schema information.
 	// These changing schema operations don't include 'truncate table' and 'rename table'.
 	UpdateTS uint64 `json:"update_timestamp"`
@@ -1116,6 +1132,10 @@ type PartitionType int
 
 // Partition types.
 const (
+	// Actually non-partitioned, but during DDL keeping the table as
+	// a single partition
+	PartitionTypeNone PartitionType = 0
+
 	PartitionTypeRange      PartitionType = 1
 	PartitionTypeHash       PartitionType = 2
 	PartitionTypeList       PartitionType = 3
@@ -1135,6 +1155,8 @@ func (p PartitionType) String() string {
 		return "KEY"
 	case PartitionTypeSystemTime:
 		return "SYSTEM_TIME"
+	case PartitionTypeNone:
+		return "NONE"
 	default:
 		return ""
 	}
@@ -1142,9 +1164,10 @@ func (p PartitionType) String() string {
 
 // ExchangePartitionInfo provides exchange partition info.
 type ExchangePartitionInfo struct {
-	ExchangePartitionFlag  bool  `json:"exchange_partition_flag"`
 	ExchangePartitionID    int64 `json:"exchange_partition_id"`
 	ExchangePartitionDefID int64 `json:"exchange_partition_def_id"`
+	// Deprecated, not used
+	XXXExchangePartitionFlag bool `json:"exchange_partition_flag"`
 }
 
 // PartitionInfo provides table partition info.
@@ -1170,6 +1193,16 @@ type PartitionInfo struct {
 	Num    uint64           `json:"num"`
 	// Only used during ReorganizePartition so far
 	DDLState SchemaState `json:"ddl_state"`
+	// Set during ALTER TABLE ... if the table id needs to change
+	// like if there is a global index or going between non-partitioned
+	// and partitioned table, to make the data dropping / range delete
+	// optimized.
+	NewTableID int64 `json:"new_table_id"`
+	// Set during ALTER TABLE ... PARTITION BY ...
+	// First as the new partition scheme, then in StateDeleteReorg as the old
+	DDLType    PartitionType `json:"ddl_type"`
+	DDLExpr    string        `json:"ddl_expr"`
+	DDLColumns []CIStr       `json:"ddl_columns"`
 }
 
 // Clone clones itself.
@@ -1666,8 +1699,8 @@ func (db *DBInfo) Copy() *DBInfo {
 }
 
 // LessDBInfo is used for sorting DBInfo by DBInfo.Name.
-func LessDBInfo(a *DBInfo, b *DBInfo) bool {
-	return a.Name.L < b.Name.L
+func LessDBInfo(a *DBInfo, b *DBInfo) int {
+	return cmp.Compare(a.Name.L, b.Name.L)
 }
 
 // CIStr is case insensitive string.
@@ -1876,7 +1909,6 @@ type RunawayActionType int32
 
 //revive:disable:exported
 const (
-	// Note: RunawayActionNone is only defined in tidb, so take care of converting.
 	RunawayActionNone RunawayActionType = iota
 	RunawayActionDryRun
 	RunawayActionCooldown
@@ -1888,8 +1920,10 @@ type RunawayWatchType int32
 
 //revive:disable:exported
 const (
-	WatchExact RunawayWatchType = iota
+	WatchNone RunawayWatchType = iota
+	WatchExact
 	WatchSimilar
+	WatchPlan
 )
 
 func (t RunawayWatchType) String() string {
@@ -1898,8 +1932,10 @@ func (t RunawayWatchType) String() string {
 		return "EXACT"
 	case WatchSimilar:
 		return "SIMILAR"
+	case WatchPlan:
+		return "PLAN"
 	default:
-		return "EXACT"
+		return "NONE"
 	}
 }
 
@@ -1937,7 +1973,7 @@ type ResourceGroupRunawaySettings struct {
 	ExecElapsedTimeMs uint64            `json:"exec_elapsed_time_ms"`
 	Action            RunawayActionType `json:"action"`
 	WatchType         RunawayWatchType  `json:"watch_type"`
-	WatchDurationMs   uint64            `json:"watch_duration_ms"`
+	WatchDurationMs   int64             `json:"watch_duration_ms"`
 }
 
 type ResourceGroupBackgroundSettings struct {
@@ -2014,9 +2050,13 @@ func (p *ResourceGroupSettings) String() string {
 	if p.Runaway != nil {
 		writeSettingDurationToBuilder(sb, "QUERY_LIMIT=(EXEC_ELAPSED", time.Duration(p.Runaway.ExecElapsedTimeMs)*time.Millisecond, separatorFn)
 		writeSettingItemToBuilder(sb, "ACTION="+p.Runaway.Action.String())
-		if p.Runaway.WatchDurationMs > 0 {
+		if p.Runaway.WatchType != WatchNone {
 			writeSettingItemToBuilder(sb, "WATCH="+p.Runaway.WatchType.String())
-			writeSettingDurationToBuilder(sb, "DURATION", time.Duration(p.Runaway.WatchDurationMs)*time.Millisecond)
+			if p.Runaway.WatchDurationMs > 0 {
+				writeSettingDurationToBuilder(sb, "DURATION", time.Duration(p.Runaway.WatchDurationMs)*time.Millisecond)
+			} else {
+				writeSettingItemToBuilder(sb, "DURATION=UNLIMITED")
+			}
 		}
 		sb.WriteString(")")
 	}
@@ -2143,4 +2183,12 @@ func (s WindowRepeatType) String() string {
 	default:
 		return ""
 	}
+}
+
+// TraceInfo is the information for trace.
+type TraceInfo struct {
+	// ConnectionID is the id of the connection
+	ConnectionID uint64 `json:"connection_id"`
+	// SessionAlias is the alias of session
+	SessionAlias string `json:"session_alias"`
 }

@@ -444,7 +444,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			index, ok = er.windowMap[v]
 		}
 		if !ok {
-			er.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(strings.ToLower(v.F))
+			er.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(strings.ToLower(v.Name))
 			return inNode, true
 		}
 		er.ctxStackAppend(er.schema.Columns[index], er.names[index])
@@ -875,6 +875,33 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 			er.err = err
 			return v, true
 		}
+		if er.b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !er.b.ctx.GetSessionVars().StmtCtx.InExplainAnalyzeStmt && er.b.ctx.GetSessionVars().ExplainNonEvaledSubQuery {
+			newColID := er.b.ctx.GetSessionVars().AllocPlanColumnID()
+			subqueryCtx := ScalarSubqueryEvalCtx{
+				scalarSubQuery: physicalPlan,
+				ctx:            ctx,
+				is:             er.b.is,
+				outputColIDs:   []int64{newColID},
+			}.Init(er.b.ctx, np.SelectBlockOffset())
+			scalarSubQ := &ScalarSubQueryExpr{
+				scalarSubqueryColID: newColID,
+				evalCtx:             subqueryCtx,
+			}
+			scalarSubQ.RetType = np.Schema().Columns[0].GetType()
+			scalarSubQ.SetCoercibility(np.Schema().Columns[0].Coercibility())
+			er.b.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
+			if v.Not {
+				notWrapped, err := expression.NewFunction(er.b.ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), scalarSubQ)
+				if err != nil {
+					er.err = err
+					return v, true
+				}
+				er.ctxStackAppend(notWrapped, types.EmptyName)
+				return v, true
+			}
+			er.ctxStackAppend(scalarSubQ, types.EmptyName)
+			return v, true
+		}
 		row, err := EvalSubqueryFirstRow(ctx, physicalPlan, er.b.is, er.b.ctx)
 		if err != nil {
 			er.err = err
@@ -1084,6 +1111,40 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 	er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = nthPlanBackup
 	if err != nil {
 		er.err = err
+		return v, true
+	}
+	if er.b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !er.b.ctx.GetSessionVars().StmtCtx.InExplainAnalyzeStmt && er.b.ctx.GetSessionVars().ExplainNonEvaledSubQuery {
+		subqueryCtx := ScalarSubqueryEvalCtx{
+			scalarSubQuery: physicalPlan,
+			ctx:            ctx,
+			is:             er.b.is,
+		}.Init(er.b.ctx, np.SelectBlockOffset())
+		newColIDs := make([]int64, 0, np.Schema().Len())
+		newScalarSubQueryExprs := make([]expression.Expression, 0, np.Schema().Len())
+		for _, col := range np.Schema().Columns {
+			newColID := er.b.ctx.GetSessionVars().AllocPlanColumnID()
+			scalarSubQ := &ScalarSubQueryExpr{
+				scalarSubqueryColID: newColID,
+				evalCtx:             subqueryCtx,
+			}
+			scalarSubQ.RetType = col.RetType
+			scalarSubQ.SetCoercibility(col.Coercibility())
+			newColIDs = append(newColIDs, newColID)
+			newScalarSubQueryExprs = append(newScalarSubQueryExprs, scalarSubQ)
+		}
+		subqueryCtx.outputColIDs = newColIDs
+
+		er.b.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
+		if len(newScalarSubQueryExprs) == 1 {
+			er.ctxStackAppend(newScalarSubQueryExprs[0], types.EmptyName)
+		} else {
+			rowFunc, err := er.newFunction(ast.RowFunc, newScalarSubQueryExprs[0].GetType(), newScalarSubQueryExprs...)
+			if err != nil {
+				er.err = err
+				return v, true
+			}
+			er.ctxStack = append(er.ctxStack, rowFunc)
+		}
 		return v, true
 	}
 	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, er.b.is, er.b.ctx)
@@ -1329,9 +1390,11 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	return originInNode, true
 }
 
-// newFunction chooses which expression.NewFunctionImpl() will be used.
-func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldType, args ...expression.Expression) (ret expression.Expression, err error) {
-	if er.disableFoldCounter > 0 {
+// newFunctionWithInit chooses which expression.NewFunctionImpl() will be used.
+func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *types.FieldType, init expression.ScalarFunctionCallBack, args ...expression.Expression) (ret expression.Expression, err error) {
+	if init != nil {
+		ret, err = expression.NewFunctionWithInit(er.sctx, funcName, retType, init, args...)
+	} else if er.disableFoldCounter > 0 {
 		ret, err = expression.NewFunctionBase(er.sctx, funcName, retType, args...)
 	} else if er.tryFoldCounter > 0 {
 		ret, err = expression.NewFunctionTryFold(er.sctx, funcName, retType, args...)
@@ -1345,6 +1408,11 @@ func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldT
 		er.b.ctx.BuiltinFunctionUsageInc(scalarFunc.Function.PbCode().String())
 	}
 	return
+}
+
+// newFunction is being redirected to newFunctionWithInit.
+func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldType, args ...expression.Expression) (ret expression.Expression, err error) {
+	return er.newFunctionWithInit(funcName, retType, nil, args...)
 }
 
 func (*expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
@@ -2022,7 +2090,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 		// the first arg of grouping function should be rewritten as gid column defined/passed by Expand
 		// from the bottom up.
 		if er.rollExpand == nil {
-			er.err = errors.New("no rollup expand found")
+			er.err = ErrInvalidGroupFuncUse
 			er.ctxStackAppend(nil, types.EmptyName)
 		} else {
 			// whether there is some duplicate grouping sets, gpos is only be used in shuffle keys and group keys
@@ -2034,29 +2102,24 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 			//  {col-a, col-b, gid, gpos}
 			//  {a, b, 0, 1}, {a, null, 1, 2}, {a, null, 1, 3}, {null, null, 2, 4}
 			// grouping function still only need to care about gid is enough, gpos what group and shuffle keys cared.
-			newArg := er.rollExpand.GID.Clone()
-			function, er.err = er.newFunction(v.FnName.L, &v.Type, newArg)
-			if er.err == nil {
-				if scalarFunc, ok := function.(*expression.ScalarFunction); ok {
-					if scalarFunc.FuncName.L == ast.Grouping {
-						if len(args) > 64 {
-							er.err = ErrInvalidNumberOfArgs.GenWithStackByArgs("GROUPING", 64)
-							er.ctxStackAppend(nil, types.EmptyName)
-						} else {
-							// resolve grouping args in group by items or not.
-							resolvedCols, err := er.rollExpand.resolveGroupingFuncArgsInGroupBy(args)
-							if err != nil {
-								er.err = err
-								er.ctxStackAppend(nil, types.EmptyName)
-							} else {
-								// rewrite the meta.
-								er.err = scalarFunc.Function.(*expression.BuiltinGroupingImplSig).
-									SetMetadata(er.rollExpand.GroupingMode, er.rollExpand.GenerateGroupingMarks(resolvedCols))
-							}
-						}
-					}
-				}
+			if len(args) > 64 {
+				er.err = ErrInvalidNumberOfArgs.GenWithStackByArgs("GROUPING", 64)
+				er.ctxStackAppend(nil, types.EmptyName)
+				return
 			}
+			// resolve grouping args in group by items or not.
+			resolvedCols, err := er.rollExpand.resolveGroupingFuncArgsInGroupBy(args)
+			if err != nil {
+				er.err = err
+				er.ctxStackAppend(nil, types.EmptyName)
+				return
+			}
+			newArg := er.rollExpand.GID.Clone()
+			init := func(groupingFunc *expression.ScalarFunction) (expression.Expression, error) {
+				err = groupingFunc.Function.(*expression.BuiltinGroupingImplSig).SetMetadata(er.rollExpand.GroupingMode, er.rollExpand.GenerateGroupingMarks(resolvedCols))
+				return groupingFunc, err
+			}
+			function, er.err = er.newFunctionWithInit(v.FnName.L, &v.Type, init, newArg)
 			er.ctxStackAppend(function, types.EmptyName)
 		}
 	} else {

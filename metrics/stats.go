@@ -20,22 +20,18 @@ import (
 
 // Stats metrics.
 var (
-	AutoAnalyzeHistogram       prometheus.Histogram
-	AutoAnalyzeCounter         *prometheus.CounterVec
-	StatsInaccuracyRate        prometheus.Histogram
-	PseudoEstimation           *prometheus.CounterVec
-	DumpFeedbackCounter        *prometheus.CounterVec
-	UpdateStatsCounter         *prometheus.CounterVec
-	StoreQueryFeedbackCounter  *prometheus.CounterVec
-	SignificantFeedbackCounter prometheus.Counter
-	FastAnalyzeHistogram       *prometheus.HistogramVec
-	SyncLoadCounter            prometheus.Counter
-	SyncLoadTimeoutCounter     prometheus.Counter
-	SyncLoadHistogram          prometheus.Histogram
-	ReadStatsHistogram         prometheus.Histogram
-	StatsCacheLRUCounter       *prometheus.CounterVec
-	StatsCacheLRUGauge         *prometheus.GaugeVec
-	StatsHealthyGauge          *prometheus.GaugeVec
+	AutoAnalyzeHistogram   prometheus.Histogram
+	AutoAnalyzeCounter     *prometheus.CounterVec
+	StatsInaccuracyRate    prometheus.Histogram
+	PseudoEstimation       *prometheus.CounterVec
+	FastAnalyzeHistogram   *prometheus.HistogramVec
+	SyncLoadCounter        prometheus.Counter
+	SyncLoadTimeoutCounter prometheus.Counter
+	SyncLoadHistogram      prometheus.Histogram
+	ReadStatsHistogram     prometheus.Histogram
+	StatsCacheCounter      *prometheus.CounterVec
+	StatsCacheGauge        *prometheus.GaugeVec
+	StatsHealthyGauge      *prometheus.GaugeVec
 
 	HistoricalStatsCounter        *prometheus.CounterVec
 	PlanReplayerTaskCounter       *prometheus.CounterVec
@@ -77,38 +73,6 @@ func InitStatsMetrics() {
 			Name:      "pseudo_estimation_total",
 			Help:      "Counter of pseudo estimation caused by outdated stats.",
 		}, []string{LblType})
-
-	DumpFeedbackCounter = NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "statistics",
-			Name:      "dump_feedback_total",
-			Help:      "Counter of dumping feedback.",
-		}, []string{LblType})
-
-	UpdateStatsCounter = NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "statistics",
-			Name:      "update_stats_total",
-			Help:      "Counter of updating stats using feedback.",
-		}, []string{LblType})
-
-	StoreQueryFeedbackCounter = NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "statistics",
-			Name:      "store_query_feedback_total",
-			Help:      "Counter of storing query feedback.",
-		}, []string{LblType})
-
-	SignificantFeedbackCounter = NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "statistics",
-			Name:      "high_error_rate_feedback_total",
-			Help:      "Counter of query feedback whose actual count is much different than calculated by current statistics",
-		})
 
 	FastAnalyzeHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -153,19 +117,19 @@ func InitStatsMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 22), // 1ms ~ 1h
 		})
 
-	StatsCacheLRUCounter = NewCounterVec(
+	StatsCacheCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
-			Name:      "stats_cache_lru_op",
-			Help:      "Counter of lru for statsCache operation",
+			Name:      "stats_cache_op",
+			Help:      "Counter for statsCache operation",
 		}, []string{LblType})
 
-	StatsCacheLRUGauge = NewGaugeVec(prometheus.GaugeOpts{
+	StatsCacheGauge = NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "statistics",
-		Name:      "stats_cache_lru_val",
-		Help:      "gauge of stats cache lru value",
+		Name:      "stats_cache_val",
+		Help:      "gauge of stats cache value",
 	}, []string{LblType})
 
 	StatsHealthyGauge = NewGaugeVec(prometheus.GaugeOpts{

@@ -39,7 +39,7 @@ func (e *CTETableReaderExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor interface.
-func (e *CTETableReaderExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+func (e *CTETableReaderExec) Next(_ context.Context, req *chunk.Chunk) (err error) {
 	req.Reset()
 
 	// We should read `iterInTbl` from the beginning when the next iteration starts.

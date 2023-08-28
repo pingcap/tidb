@@ -10,8 +10,9 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 10,
+    shard_count = 15,
     deps = [
+        "//config",
         "//planner/core/internal",
         "//sessionctx/variable",
         "//testkit",

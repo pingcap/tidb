@@ -54,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/statistics"
 	error2 "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table/tables"
@@ -1555,25 +1554,8 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reader.Close()) }()
 	for _, file := range reader.File {
-		require.True(t, checkFileName(file.Name))
+		require.True(t, checkFileName(file.Name), file.Name)
 	}
-}
-
-func TestUnsignedFeedback(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	oriProbability := statistics.FeedbackProbability.Load()
-	statistics.FeedbackProbability.Store(1.0)
-	defer func() { statistics.FeedbackProbability.Store(oriProbability) }()
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a bigint unsigned, b int, primary key(a))")
-	tk.MustExec("insert into t values (1,1),(2,2)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select count(distinct b) from t").Check(testkit.Rows("2"))
-	result := tk.MustQuery("explain analyze select count(distinct b) from t")
-	require.Equal(t, "table:t", result.Rows()[2][4])
-	require.Equal(t, "keep order:false", result.Rows()[2][6])
 }
 
 func TestAlterTableComment(t *testing.T) {

@@ -34,9 +34,9 @@ func runTestData(t *testing.T, tk *testkit.TestKit, name string) {
 	require.Equal(t, len(input), len(output))
 	for i := range input {
 		testdata.OnRecord(func() {
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain " + input[i]).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain FORMAT='brief' " + input[i]).Rows())
 		})
-		tk.MustQuery("explain " + input[i]).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain FORMAT='brief' " + input[i]).Check(testkit.Rows(output[i].Plan...))
 	}
 }
 

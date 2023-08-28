@@ -398,7 +398,8 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
 	case model.ActionModifyColumn:
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
-	case model.ActionReorganizePartition:
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
 	}
 }
@@ -560,7 +561,7 @@ func (dc *ddlCtx) buildDescTableScan(ctx *JobContext, startTS uint64, tbl table.
 	} else {
 		ranges = ranger.FullIntRange(false)
 	}
-	builder = b.SetHandleRanges(sctx.GetSessionVars().StmtCtx, tbl.GetPhysicalID(), tbl.Meta().IsCommonHandle, ranges, nil)
+	builder = b.SetHandleRanges(sctx.GetSessionVars().StmtCtx, tbl.GetPhysicalID(), tbl.Meta().IsCommonHandle, ranges)
 	builder.SetDAGRequest(dagPB).
 		SetStartTS(startTS).
 		SetKeepOrder(true).
@@ -577,7 +578,7 @@ func (dc *ddlCtx) buildDescTableScan(ctx *JobContext, startTS uint64, tbl table.
 		return nil, errors.Trace(err)
 	}
 
-	result, err := distsql.Select(ctx.ddlJobCtx, sctx, kvReq, getColumnsTypes(handleCols), statistics.NewQueryFeedback(0, nil, 0, false))
+	result, err := distsql.Select(ctx.ddlJobCtx, sctx, kvReq, getColumnsTypes(handleCols))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -666,16 +667,20 @@ func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshot
 		return startHandleKey, nil, errors.Trace(err)
 	}
 	if maxHandle != nil {
-		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle)
+		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle).Next()
 	}
-	if isEmptyTable || endHandleKey.Cmp(startHandleKey) < 0 {
+	if isEmptyTable || endHandleKey.Cmp(startHandleKey) <= 0 {
 		logutil.BgLogger().Info("get noop table range", zap.String("category", "ddl"),
 			zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
 			zap.Int64("table/partition ID", tbl.GetPhysicalID()),
 			zap.String("start key", hex.EncodeToString(startHandleKey)),
 			zap.String("end key", hex.EncodeToString(endHandleKey)),
 			zap.Bool("is empty table", isEmptyTable))
-		endHandleKey = startHandleKey
+		if startHandleKey == nil {
+			endHandleKey = nil
+		} else {
+			endHandleKey = startHandleKey.Next()
+		}
 	}
 	return
 }

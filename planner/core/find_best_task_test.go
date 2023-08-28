@@ -36,7 +36,7 @@ func (ds mockDataSource) Init(ctx sessionctx.Context) *mockDataSource {
 func (ds *mockDataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
 	// It can satisfy any of the property!
 	// Just use a TableDual for convenience.
-	p := PhysicalTableDual{}.Init(ds.ctx, &property.StatsInfo{RowCount: 1}, 0)
+	p := PhysicalTableDual{}.Init(ds.SCtx(), &property.StatsInfo{RowCount: 1}, 0)
 	task := &rootTask{
 		p: p,
 	}
@@ -71,16 +71,16 @@ func (p mockLogicalPlan4Test) Init(ctx sessionctx.Context) *mockLogicalPlan4Test
 }
 
 func (p *mockLogicalPlan4Test) getPhysicalPlan1(prop *property.PhysicalProperty) PhysicalPlan {
-	physicalPlan1 := mockPhysicalPlan4Test{planType: 1}.Init(p.ctx)
-	physicalPlan1.stats = &property.StatsInfo{RowCount: 1}
+	physicalPlan1 := mockPhysicalPlan4Test{planType: 1}.Init(p.SCtx())
+	physicalPlan1.SetStats(&property.StatsInfo{RowCount: 1})
 	physicalPlan1.childrenReqProps = make([]*property.PhysicalProperty, 1)
 	physicalPlan1.childrenReqProps[0] = prop.CloneEssentialFields()
 	return physicalPlan1
 }
 
 func (p *mockLogicalPlan4Test) getPhysicalPlan2(prop *property.PhysicalProperty) PhysicalPlan {
-	physicalPlan2 := mockPhysicalPlan4Test{planType: 2}.Init(p.ctx)
-	physicalPlan2.stats = &property.StatsInfo{RowCount: 1}
+	physicalPlan2 := mockPhysicalPlan4Test{planType: 2}.Init(p.SCtx())
+	physicalPlan2.SetStats(&property.StatsInfo{RowCount: 1})
 	physicalPlan2.childrenReqProps = make([]*property.PhysicalProperty, 1)
 	physicalPlan2.childrenReqProps[0] = property.NewPhysicalProperty(prop.TaskTp, nil, false, prop.ExpectedCnt, false)
 	return physicalPlan2
@@ -103,7 +103,7 @@ func (p *mockLogicalPlan4Test) exhaustPhysicalPlans(prop *property.PhysicalPrope
 	if p.hasHintForPlan2 {
 		// The hint cannot work.
 		if prop.IsSortItemEmpty() {
-			p.ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("the hint is inapplicable for plan2"))
+			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("the hint is inapplicable for plan2"))
 		}
 		return plan1, false, nil
 	}

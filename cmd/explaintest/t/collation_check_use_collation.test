@@ -1,10 +1,6 @@
 set tidb_cost_model_version=1;
 # These tests check that the used collation is correct.
 
-# prepare database
-create database collation_check_use_collation;
-use collation_check_use_collation;
-
 # Check subquery.
 CREATE TABLE `t` (
   `a` char(10) DEFAULT NULL

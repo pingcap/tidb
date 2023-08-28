@@ -28,13 +28,12 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/golang/mock/gomock"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -49,8 +48,10 @@ import (
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
+	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
 
@@ -309,35 +310,35 @@ func (s *mockGCSSuite) TestGeneratedColumnsAndTSVFile() {
 		Content: []byte("1\t2\n2\t3"),
 	})
 
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 	s.tk.MustExec("delete from t_gen1")
 
 	// Specify the column, this should also work.
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a) 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 	s.tk.MustExec("delete from t_gen1")
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a,@1) 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a,@1)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 
 	// Swap the column and test again.
 	s.tk.MustExec(`create table t_gen2 (a int generated ALWAYS AS (b+1), b int);`)
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("3 2", "4 3"))
 	s.tk.MustExec(`delete from t_gen2`)
 
 	// Specify the column b
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(b) 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(b)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("2 1", "3 2"))
 	s.tk.MustExec(`delete from t_gen2`)
 
 	// Specify the column a
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(a) 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(a)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("<nil> <nil>", "<nil> <nil>"))
 }
@@ -749,18 +750,11 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 6,test6,66`),
 	})
 
-	// populate into 2 engines
-	backup := config.DefaultBatchSize
-	config.DefaultBatchSize = 1
-	s.T().Cleanup(func() {
-		config.DefaultBatchSize = backup
-	})
-
 	s.prepareAndUseDB("load_data")
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), c int);")
 	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
-		with thread=1`, gcsEndpoint)
+		with thread=1, __max_engine_size='1'`, gcsEndpoint)
 	err := s.tk.QueryToErr(loadDataSQL)
 	require.ErrorContains(s.T(), err, "ErrChecksumMismatch")
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
@@ -769,7 +763,7 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 
 	s.tk.MustExec("truncate table t;")
 	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
-		with thread=1, checksum_table='off'`, gcsEndpoint)
+		with thread=1, checksum_table='off', __max_engine_size='1'`, gcsEndpoint)
 	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
@@ -777,7 +771,7 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 
 	s.tk.MustExec("truncate table t;")
 	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
-		with thread=1, checksum_table='optional'`, gcsEndpoint)
+		with thread=1, checksum_table='optional', __max_engine_size='1'`, gcsEndpoint)
 	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
@@ -851,20 +845,20 @@ func (s *mockGCSSuite) TestImportMode() {
 	var intoImportTime, intoNormalTime time.Time
 	controller := gomock.NewController(s.T())
 	switcher := mocklocal.NewMockTiKVModeSwitcher(controller)
-	toImportModeFn := func(ctx context.Context) error {
+	toImportModeFn := func(ctx context.Context, ranges ...*import_sstpb.Range) error {
 		log.L().Info("ToImportMode")
 		intoImportTime = time.Now()
 		return nil
 	}
-	toNormalModeFn := func(ctx context.Context) error {
+	toNormalModeFn := func(ctx context.Context, ranges ...*import_sstpb.Range) error {
 		log.L().Info("ToNormalMode")
 		intoNormalTime = time.Now()
 		return nil
 	}
-	switcher.EXPECT().ToImportMode(gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
-	switcher.EXPECT().ToNormalMode(gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
+	switcher.EXPECT().ToImportMode(gomock.Any(), gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
+	switcher.EXPECT().ToNormalMode(gomock.Any(), gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
 	backup := importer.NewTiKVModeSwitcher
-	importer.NewTiKVModeSwitcher = func(tls *common.TLS, pdAddr string, logger *zap.Logger) local.TiKVModeSwitcher {
+	importer.NewTiKVModeSwitcher = func(tls *common.TLS, pdCli pd.Client, logger *zap.Logger) local.TiKVModeSwitcher {
 		return switcher
 	}
 	s.T().Cleanup(func() {
@@ -893,8 +887,8 @@ func (s *mockGCSSuite) TestImportMode() {
 
 	// after import step, we should enter normal mode, i.e. we only call ToImportMode once
 	intoNormalTime, intoImportTime = time.Time{}, time.Time{}
-	switcher.EXPECT().ToImportMode(gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
-	switcher.EXPECT().ToNormalMode(gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
+	switcher.EXPECT().ToImportMode(gomock.Any(), gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
+	switcher.EXPECT().ToNormalMode(gomock.Any(), gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/clearLastSwitchTime", "return(true)")
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/waitBeforePostProcess", "return(true)")
 	s.tk.MustExec("truncate table load_data.import_mode;")
@@ -913,10 +907,19 @@ func (s *mockGCSSuite) TestImportMode() {
 	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
 	s.tk.MustExec("truncate table load_data.import_mode;")
 
+	// test with multirocksdb
+	s.enableFailpoint("github.com/pingcap/tidb/ddl/util/IsRaftKv2", "return(true)")
+	s.tk.MustExec("truncate table load_data.import_mode;")
+	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s'`, gcsEndpoint)
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
+	s.tk.MustExec("truncate table load_data.import_mode;")
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/ddl/util/IsRaftKv2"))
+
 	// to normal mode should be called on error
 	intoNormalTime, intoImportTime = time.Time{}, time.Time{}
-	switcher.EXPECT().ToImportMode(gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
-	switcher.EXPECT().ToNormalMode(gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
+	switcher.EXPECT().ToImportMode(gomock.Any(), gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
+	switcher.EXPECT().ToNormalMode(gomock.Any(), gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/waitBeforeSortChunk", "return(true)")
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/errorWhenSortChunk", "return(true)")
 	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/setLastImportJobID", `return(true)`)
@@ -1058,17 +1061,12 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 	))
 
 	// encode error, rollback
-	backup := config.DefaultBatchSize
-	config.DefaultBatchSize = 1
-	s.T().Cleanup(func() {
-		config.DefaultBatchSize = backup
-	})
 	s.tk.MustExec("truncate table load_data.add_index")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-3.tsv"},
 		Content:     []byte("8,8|8,888\n"),
 	})
-	err := s.tk.QueryToErr(sql)
+	err := s.tk.QueryToErr(sql + " WITH __max_engine_size='1'")
 	require.ErrorContains(s.T(), err, "Truncated incorrect DOUBLE value")
 	s.tk.MustQuery("SHOW CREATE TABLE load_data.add_index;").Check(testkit.Rows(
 		"add_index CREATE TABLE `add_index` (\n" +
@@ -1083,7 +1081,6 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 	s.tk.MustQuery("SELECT COUNT(1) FROM load_data.add_index;").Sort().Check(testkit.Rows(
 		"0",
 	))
-	config.DefaultBatchSize = backup
 
 	// checksum error
 	s.server.CreateObject(fakestorage.Object{

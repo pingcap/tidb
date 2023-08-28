@@ -1058,6 +1058,7 @@ AAAAAAAAAAAA5gm5Mg==
 
 		{"select `t`.`1a`.1 from t;", true, "SELECT `t`.`1a`.`1` FROM `t`"},
 		{"select * from 1db.1table;", true, "SELECT * FROM `1db`.`1table`"},
+		{"select * from t where t. status = 1;", true, "SELECT * FROM `t` WHERE `t`.`status`=1"},
 
 		// for show placement
 		{"SHOW PLACEMENT", true, "SHOW PLACEMENT"},
@@ -1114,6 +1115,27 @@ AAAAAAAAAAAA5gm5Mg==
 		{"calibrate resource workload oltp_read_only", true, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_ONLY"},
 		{"calibrate resource workload oltp_write_only", true, "CALIBRATE RESOURCE WORKLOAD OLTP_WRITE_ONLY"},
 		{"calibrate resource workload = oltp_read_write START_TIME '2023-04-01 13:00:00'", false, ""},
+
+		// for query watch
+		{"query watch add SQL DIGEST b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377 ", true, "QUERY WATCH ADD SQL DIGEST `b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377`"},
+		{"query watch add SQL DIGEST b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377 ", true, "QUERY WATCH ADD SQL DIGEST `b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377`"},
+		{"query watch add SQL DIGEST 'b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377' ", true, "QUERY WATCH ADD SQL DIGEST _UTF8MB4'b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377'"},
+		{"query watch add PLAN DIGEST `5e3ddd388f6012e328233dbcdda5d48f404e0536c6c54d9618233210f3d5762a` ", true, "QUERY WATCH ADD PLAN DIGEST `5e3ddd388f6012e328233dbcdda5d48f404e0536c6c54d9618233210f3d5762a`"},
+		{"query watch add PLAN DIGEST @digest1 ", true, "QUERY WATCH ADD PLAN DIGEST @`digest1`"},
+		{"query watch add SQL TEXT SIMILAR to 'select 1'", true, "QUERY WATCH ADD SQL TEXT SIMILAR TO _UTF8MB4'select 1'"},
+		{"query watch add SQL TEXT EXACT to 'select 1'", true, "QUERY WATCH ADD SQL TEXT EXACT TO _UTF8MB4'select 1'"},
+		{"query watch add SQL TEXT PLAN to 'select 1'", true, "QUERY WATCH ADD SQL TEXT PLAN TO _UTF8MB4'select 1'"},
+		{"query watch add resource group `default` SQL TEXT SIMILAR to 'select 1'", true, "QUERY WATCH ADD RESOURCE GROUP `default` SQL TEXT SIMILAR TO _UTF8MB4'select 1'"},
+		{"query watch add resource group @rg SQL TEXT SIMILAR to @sql1", true, "QUERY WATCH ADD RESOURCE GROUP @`rg` SQL TEXT SIMILAR TO @`sql1`"},
+		{"query watch add resource group rg1 SQL TEXT SIMILAR to 'select 1'", true, "QUERY WATCH ADD RESOURCE GROUP `rg1` SQL TEXT SIMILAR TO _UTF8MB4'select 1'"},
+		{"query watch add SQL TEXT SIMILAR to 'select 1' resource group rg1", true, "QUERY WATCH ADD SQL TEXT SIMILAR TO _UTF8MB4'select 1' RESOURCE GROUP `rg1`"},
+		{"query watch add ACTION = KILL SQL TEXT SIMILAR to 'select 1'", true, "QUERY WATCH ADD ACTION = KILL SQL TEXT SIMILAR TO _UTF8MB4'select 1'"},
+		{"query watch add ACTION COOLDOWN resource group rg1 SQL TEXT SIMILAR to 'select 1'", true, "QUERY WATCH ADD ACTION = COOLDOWN RESOURCE GROUP `rg1` SQL TEXT SIMILAR TO _UTF8MB4'select 1'"},
+		{"query watch add resource group `default` resource group `rg1` SQL TEXT SIMILAR to 'select 1'", false, ""},
+		{"query watch add SQL SIMILAR to 'select 1'", false, ""},
+		{"query watch add SQL TEXT SIMILAR 'select 1'", false, ""},
+		{"query watch remove 1", true, "QUERY WATCH REMOVE 1"},
+		{"query watch remove", false, ""},
 	}
 	RunTest(t, table, false)
 }
@@ -2688,6 +2710,9 @@ func TestDDL(t *testing.T) {
 		{`alter table m add partition (partition p1 values less than (200) learner_constraints="ww");`, false, ""},
 		{`alter table m add partition (partition p1 values less than (200) placement policy="ww");`, true, "ALTER TABLE `m` ADD PARTITION (PARTITION `p1` VALUES LESS THAN (200) PLACEMENT POLICY = `ww`)"},
 		{`alter table m add partition (partition p1 values less than (200) /*T![placement] placement policy="ww" */);`, true, "ALTER TABLE `m` ADD PARTITION (PARTITION `p1` VALUES LESS THAN (200) PLACEMENT POLICY = `ww`)"},
+		{`alter table m add column a int, add partition (partition p1 values less than (200))`, true, "ALTER TABLE `m` ADD COLUMN `a` INT, ADD PARTITION (PARTITION `p1` VALUES LESS THAN (200))"},
+		// TODO: Do not allow this order!
+		{`alter table m add partition (partition p1 values less than (200)), add column a int`, true, "ALTER TABLE `m` ADD PARTITION (PARTITION `p1` VALUES LESS THAN (200)), ADD COLUMN `a` INT"},
 		// for check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)) not enforced, check (c2 in (0, 1)))", true, "CREATE TABLE `t` (`c1` TINYINT(1),`c2` TINYINT(1),CHECK(`c1` IN (0,1)) NOT ENFORCED,CHECK(`c2` IN (0,1)) ENFORCED)"},
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true, "CREATE TABLE `Customer` (`SD` INT CHECK(`SD`>0) ENFORCED,`First_Name` VARCHAR(30))"},
@@ -3145,11 +3170,15 @@ func TestDDL(t *testing.T) {
 		{"alter table t analyze partition a index b with 4 buckets", true, "ANALYZE TABLE `t` PARTITION `a` INDEX `b` WITH 4 BUCKETS"},
 
 		{"alter table t partition by hash(a)", true, "ALTER TABLE `t` PARTITION BY HASH (`a`) PARTITIONS 1"},
+		{"alter table t add column a int partition by hash(a)", true, "ALTER TABLE `t` ADD COLUMN `a` INT PARTITION BY HASH (`a`) PARTITIONS 1"},
 		{"alter table t partition by range(a)", false, ""},
 		{"alter table t partition by range(a) (partition x values less than (75))", true, "ALTER TABLE `t` PARTITION BY RANGE (`a`) (PARTITION `x` VALUES LESS THAN (75))"},
+		{"alter table t add column a int, partition by range(a) (partition x values less than (75))", false, ""},
 		{"alter table t comment 'cmt' partition by hash(a)", true, "ALTER TABLE `t` COMMENT = 'cmt' PARTITION BY HASH (`a`) PARTITIONS 1"},
 		{"alter table t enable keys, comment = 'cmt' partition by hash(a)", true, "ALTER TABLE `t` ENABLE KEYS, COMMENT = 'cmt' PARTITION BY HASH (`a`) PARTITIONS 1"},
 		{"alter table t enable keys, comment = 'cmt', partition by hash(a)", false, ""},
+		{"alter table t partition by hash(a) enable keys", false, ""},
+		{"alter table t partition by hash(a), enable keys", false, ""},
 
 		// Test keyword `FIELDS`
 		{"alter table t partition by range FIELDS(a) (partition x values less than maxvalue)", true, "ALTER TABLE `t` PARTITION BY RANGE COLUMNS (`a`) (PARTITION `x` VALUES LESS THAN (MAXVALUE))"},
@@ -3364,6 +3393,12 @@ func TestDDL(t *testing.T) {
 		{"alter table t remove partitioning", true, "ALTER TABLE `t` REMOVE PARTITIONING"},
 		{"alter table db.ident remove partitioning", true, "ALTER TABLE `db`.`ident` REMOVE PARTITIONING"},
 		{"alter table t lock = default remove partitioning", true, "ALTER TABLE `t` LOCK = DEFAULT REMOVE PARTITIONING"},
+		{"alter table t add column a int remove partitioning", true, "ALTER TABLE `t` ADD COLUMN `a` INT REMOVE PARTITIONING"},
+		{"alter table t add column a int, add index (c) remove partitioning", true, "ALTER TABLE `t` ADD COLUMN `a` INT, ADD INDEX(`c`) REMOVE PARTITIONING"},
+		{"alter table t add column a int, remove partitioning", false, ""},
+		{"alter table t add column a int, add index (c), remove partitioning", false, ""},
+		{"alter table t remove partitioning add column a int", false, ""},
+		{"alter table t remove partitioning, add column a int", false, ""},
 
 		// for references without IndexColNameList
 		{"alter table t add column a double (4,2) zerofill references b match full on update set null first", true, "ALTER TABLE `t` ADD COLUMN `a` DOUBLE(4,2) UNSIGNED ZEROFILL REFERENCES `b` MATCH FULL ON UPDATE SET NULL FIRST"},
@@ -3465,9 +3500,12 @@ func TestDDL(t *testing.T) {
 		{`ALTER TABLE d_n.t_n WITHOUT VALIDATION , ADD PARTITION ( PARTITION ident VALUES LESS THAN ( MAXVALUE ) STORAGE ENGINE text_string MAX_ROWS 12 )`, true, "ALTER TABLE `d_n`.`t_n` WITHOUT VALIDATION, ADD PARTITION (PARTITION `ident` VALUES LESS THAN (MAXVALUE) ENGINE = text_string MAX_ROWS = 12)"},
 		{`ALTER TABLE d_n.t_n WITH VALIDATION , ADD PARTITION NO_WRITE_TO_BINLOG (PARTITION ident VALUES LESS THAN MAXVALUE STORAGE ENGINE = text_string, PARTITION ident VALUES LESS THAN ( MAXVALUE ) (SUBPARTITION text_string MIN_ROWS 11))`, true, "ALTER TABLE `d_n`.`t_n` WITH VALIDATION, ADD PARTITION NO_WRITE_TO_BINLOG (PARTITION `ident` VALUES LESS THAN (MAXVALUE) ENGINE = text_string, PARTITION `ident` VALUES LESS THAN (MAXVALUE) (SUBPARTITION `text_string` MIN_ROWS = 11))"},
 		// for test VALUE IN
-		{`ALTER TABLE d_n.t_n WITHOUT VALIDATION , ADD PARTITION ( PARTITION ident VALUES IN ( MAXVALUE ) STORAGE ENGINE text_string MAX_ROWS 12 )`, true, "ALTER TABLE `d_n`.`t_n` WITHOUT VALIDATION, ADD PARTITION (PARTITION `ident` VALUES IN (MAXVALUE) ENGINE = text_string MAX_ROWS = 12)"},
-		{`ALTER TABLE d_n.t_n WITH VALIDATION , ADD PARTITION NO_WRITE_TO_BINLOG ( PARTITION ident VALUES IN ( MAXVALUE ) STORAGE ENGINE text_string MAX_ROWS 12 )`, true, "ALTER TABLE `d_n`.`t_n` WITH VALIDATION, ADD PARTITION NO_WRITE_TO_BINLOG (PARTITION `ident` VALUES IN (MAXVALUE) ENGINE = text_string MAX_ROWS = 12)"},
-		{`ALTER TABLE d_n.t_n WITH VALIDATION , ADD PARTITION NO_WRITE_TO_BINLOG (PARTITION ident VALUES LESS THAN MAXVALUE STORAGE ENGINE = text_string, PARTITION ident VALUES IN ( MAXVALUE ) (SUBPARTITION text_string MIN_ROWS 11))`, true, "ALTER TABLE `d_n`.`t_n` WITH VALIDATION, ADD PARTITION NO_WRITE_TO_BINLOG (PARTITION `ident` VALUES LESS THAN (MAXVALUE) ENGINE = text_string, PARTITION `ident` VALUES IN (MAXVALUE) (SUBPARTITION `text_string` MIN_ROWS = 11))"},
+		{`ALTER TABLE d_n.t_n WITHOUT VALIDATION , ADD PARTITION ( PARTITION ident VALUES IN ( DEFAULT ) STORAGE ENGINE text_string MAX_ROWS 12 )`, true, "ALTER TABLE `d_n`.`t_n` WITHOUT VALIDATION, ADD PARTITION (PARTITION `ident` DEFAULT ENGINE = text_string MAX_ROWS = 12)"},
+		{`ALTER TABLE d_n.t_n WITH VALIDATION , ADD PARTITION NO_WRITE_TO_BINLOG ( PARTITION ident VALUES IN ( DEFAULT ) STORAGE ENGINE text_string MAX_ROWS 12 )`, true, "ALTER TABLE `d_n`.`t_n` WITH VALIDATION, ADD PARTITION NO_WRITE_TO_BINLOG (PARTITION `ident` DEFAULT ENGINE = text_string MAX_ROWS = 12)"},
+		{`ALTER TABLE d_n.t_n ADD PARTITION ( PARTITION ident VALUES IN ( DEFAULT ), partition ptext values in ('default') )`, true, "ALTER TABLE `d_n`.`t_n` ADD PARTITION (PARTITION `ident` DEFAULT, PARTITION `ptext` VALUES IN (_UTF8MB4'default'))"},
+		{`ALTER TABLE d_n.t_n WITH VALIDATION , ADD PARTITION NO_WRITE_TO_BINLOG (PARTITION ident VALUES LESS THAN MAXVALUE STORAGE ENGINE = text_string, PARTITION ident VALUES IN ( DEFAULT ) (SUBPARTITION text_string MIN_ROWS 11))`, true, "ALTER TABLE `d_n`.`t_n` WITH VALIDATION, ADD PARTITION NO_WRITE_TO_BINLOG (PARTITION `ident` VALUES LESS THAN (MAXVALUE) ENGINE = text_string, PARTITION `ident` DEFAULT (SUBPARTITION `text_string` MIN_ROWS = 11))"},
+		{`ALTER TABLE d_n.t_n ADD PARTITION (PARTITION ident VALUES IN ( DEFAULT ))`, true, "ALTER TABLE `d_n`.`t_n` ADD PARTITION (PARTITION `ident` DEFAULT)"},
+		{`ALTER TABLE d_n.t_n ADD PARTITION (PARTITION ident VALUES IN (1, default ))`, true, "ALTER TABLE `d_n`.`t_n` ADD PARTITION (PARTITION `ident` VALUES IN (1, DEFAULT))"},
 		// for issue 501
 		{"ALTER TABLE t IMPORT TABLESPACE;", true, "ALTER TABLE `t` IMPORT TABLESPACE"},
 		{"ALTER TABLE t DISCARD TABLESPACE;", true, "ALTER TABLE `t` DISCARD TABLESPACE"},
@@ -3731,9 +3769,14 @@ func TestDDL(t *testing.T) {
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(ACTION KILL EXEC_ELAPSED='10m')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (ACTION = KILL EXEC_ELAPSED = '10m')"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10s' WATCH=SIMILAR DURATION '10m' ACTION COOLDOWN)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' WATCH = SIMILAR DURATION = '10m' ACTION = COOLDOWN)"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED \"10s\" ACTION COOLDOWN WATCH EXACT DURATION='10m')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = EXACT DURATION = '10m')"},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED '9s' ACTION COOLDOWN WATCH EXACT)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '9s' ACTION = COOLDOWN WATCH = EXACT DURATION = UNLIMITED)"},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED '8s' ACTION COOLDOWN WATCH EXACT DURATION = UNLIMITED)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '8s' ACTION = COOLDOWN WATCH = EXACT DURATION = UNLIMITED)"},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED '7s' ACTION COOLDOWN WATCH EXACT DURATION UNLIMITED)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '7s' ACTION = COOLDOWN WATCH = EXACT DURATION = UNLIMITED)"},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED '7s' ACTION COOLDOWN WATCH EXACT DURATION 'UNLIMITED')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '7s' ACTION = COOLDOWN WATCH = EXACT DURATION = UNLIMITED)"},
 		{"create resource group x ru_per_sec=1000 background = (task_types='')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BACKGROUND = (TASK_TYPES = '')"},
 		{"create resource group x ru_per_sec=1000 background (task_types='br,lightning')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BACKGROUND = (TASK_TYPES = 'br,lightning')"},
 		{`create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH EXACT DURATION='10m')  background (task_types 'br,lightning')`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = EXACT DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning')"},
+		{`create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH PLAN DURATION='10m')  background (task_types 'br,lightning')`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = PLAN DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning')"},
 		// This case is expected in parser test but not in actual ddl job.
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s')"},
 		{"create resource group x ru_per_sec=1000 QUERY=(EXEC_ELAPSED '10s')", false, ""},
@@ -3741,7 +3784,6 @@ func TestDDL(t *testing.T) {
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s'", false, ""},
 		{"create resource group x ru_per_sec=1000 LIMIT=(EXEC_ELAPSED '10s')", false, ""},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION DRYRUN ACTION KILL)", false, ""},
-		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION COOLDOWN WATCH EXACT)", false, ""},
 
 		{"alter resource group x cpu ='8c'", false, ""},
 		{"alter resource group x region ='us, 3'", false, ""},
@@ -3771,7 +3813,6 @@ func TestDDL(t *testing.T) {
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s')"},
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT EXEC_ELAPSED '10s'", false, ""},
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION DRYRUN ACTION KILL)", false, ""},
-		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION COOLDOWN WATCH EXACT)", false, ""},
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION DRYRUN WATCH SIMILAR DURATION '10m' ACTION COOLDOWN)", false, ""},
 		{"alter resource group x background=()", true, "ALTER RESOURCE GROUP `x` BACKGROUND = NULL"},
 		{"alter resource group x background NULL", true, "ALTER RESOURCE GROUP `x` BACKGROUND = NULL"},
@@ -3863,6 +3904,10 @@ func TestHintError(t *testing.T) {
 	require.Regexp(t, `near '/\*\+' at line 1$`, warns[0].Error())
 
 	_, warns, err = p.Parse("create global binding for select /*+ max_execution_time(1) */ 1 using select /*+ max_execution_time(1) */ 1;\n", "", "")
+	require.NoError(t, err)
+	require.Len(t, warns, 0)
+
+	_, warns, err = p.Parse("create global binding for select /*+ tidb_kv_read_timeout(1) */ 1 using select /*+ tidb_kv_read_timeout(1) */ 1;\n", "", "")
 	require.NoError(t, err)
 	require.Len(t, warns, 0)
 }
@@ -4276,6 +4321,23 @@ func TestOptimizerHints(t *testing.T) {
 		require.Equal(t, uint64(1000), hints[0].HintData.(uint64))
 	}
 
+	// Test TIDB_KV_READ_TIMEOUT
+	queries = []string{
+		"SELECT /*+ TIDB_KV_READ_TIMEOUT(200) */ * FROM t1 INNER JOIN t2 where t1.c1 = t2.c1",
+		"SELECT /*+ TIDB_KV_READ_TIMEOUT(200) */ 1",
+		"SELECT /*+ TIDB_KV_READ_TIMEOUT(200) */ SLEEP(20)",
+		"SELECT /*+ TIDB_KV_READ_TIMEOUT(200) */ 1 FROM DUAL",
+	}
+	for i, query := range queries {
+		stmt, _, err = p.Parse(query, "", "")
+		require.NoError(t, err)
+		selectStmt = stmt[0].(*ast.SelectStmt)
+		hints = selectStmt.TableHints
+		require.Len(t, hints, 1)
+		require.Equal(t, "tidb_kv_read_timeout", hints[0].HintName.L, "case", i)
+		require.Equal(t, uint64(200), hints[0].HintData.(uint64))
+	}
+
 	// Test NTH_PLAN
 	queries = []string{
 		"SELECT /*+ NTH_PLAN(10) */ * FROM t1 INNER JOIN t2 where t1.c1 = t2.c1",
@@ -4555,6 +4617,111 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t4", hints[2].Tables[0].TableName.L)
 	require.Equal(t, "t5", hints[2].Tables[1].TableName.L)
 	require.Equal(t, "t6", hints[2].Tables[2].TableName.L)
+
+	// Test NO_HASH_JOIN
+	stmt, _, err = p.Parse("select /*+ NO_HASH_JOIN(t1, t2), NO_HASH_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "no_hash_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+	require.Equal(t, hints[0].Tables[1].TableName.L, "t2")
+
+	require.Equal(t, "no_hash_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test NO_MERGE_JOIN
+	stmt, _, err = p.Parse("select /*+ NO_MERGE_JOIN(t1), NO_MERGE_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "no_merge_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "no_merge_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test INDEX_JOIN
+	stmt, _, err = p.Parse("select /*+ INDEX_JOIN(t1), INDEX_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "index_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "index_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test NO_INDEX_JOIN
+	stmt, _, err = p.Parse("select /*+ NO_INDEX_JOIN(t1), NO_INDEX_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "no_index_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "no_index_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test INDEX_HASH_JOIN
+	stmt, _, err = p.Parse("select /*+ INDEX_HASH_JOIN(t1), INDEX_HASH_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "index_hash_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "index_hash_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test NO_INDEX_HASH_JOIN
+	stmt, _, err = p.Parse("select /*+ NO_INDEX_HASH_JOIN(t1), NO_INDEX_HASH_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "no_index_hash_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "no_index_hash_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test INDEX_MERGE_JOIN
+	stmt, _, err = p.Parse("select /*+ INDEX_MERGE_JOIN(t1), INDEX_MERGE_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "index_merge_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "index_merge_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test NO_INDEX_MERGE_JOIN
+	stmt, _, err = p.Parse("select /*+ NO_INDEX_MERGE_JOIN(t1), NO_INDEX_MERGE_JOIN(t3) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "no_index_merge_join", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "no_index_merge_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
 }
 
 func TestType(t *testing.T) {
@@ -4846,6 +5013,7 @@ func TestSubquery(t *testing.T) {
 		{"select exists((select 1));", true, "SELECT EXISTS (SELECT 1)"},
 		{"select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b", true, "SELECT * FROM ((SELECT 1 AS `a`,3 AS `b`) UNION (SELECT 2,1) ORDER BY (SELECT 2)) AS `t` ORDER BY `a`,`b`"},
 		{"select (select * from t1 where a != t.a union all (select * from t2 where a != t.a) order by a limit 1) from t1 t", true, "SELECT (SELECT * FROM `t1` WHERE `a`!=`t`.`a` UNION ALL (SELECT * FROM `t2` WHERE `a`!=`t`.`a`) ORDER BY `a` LIMIT 1) FROM `t1` AS `t`"},
+		{"(WITH v0 AS (SELECT TRUE) (SELECT 'abc' EXCEPT (SELECT TRUE)))", true, "WITH `v0` AS (SELECT TRUE) (SELECT _UTF8MB4'abc' EXCEPT (SELECT TRUE))"},
 	}
 	RunTest(t, table, false)
 
@@ -5938,6 +6106,9 @@ ENGINE=INNODB PARTITION BY LINEAR HASH (a) PARTITIONS 1;`, true, "CREATE TABLE `
 		// VALUES LESS THAN clause is valid only for RANGE partitions
 		{"create table t1 (a int) partition by hash (a) (partition x values less than (10))", false, ""},
 		{"create table t1 (a int) partition by key (a) (partition x values less than (10))", false, ""},
+		{"create table t1 (a int) partition by range (a) (partition x values less than (maxvalue))", true, "CREATE TABLE `t1` (`a` INT) PARTITION BY RANGE (`a`) (PARTITION `x` VALUES LESS THAN (MAXVALUE))"},
+		{"create table t1 (a int) partition by range (a) (partition x values less than (default))", false, ""},
+		{"create table t (a varchar(100), b int) partition by list columns (a) (partition p1 values in ('a','b','DEFAULT'), partition pDef values in (default))", true, "CREATE TABLE `t` (`a` VARCHAR(100),`b` INT) PARTITION BY LIST COLUMNS (`a`) (PARTITION `p1` VALUES IN (_UTF8MB4'a', _UTF8MB4'b', _UTF8MB4'DEFAULT'),PARTITION `pDef` DEFAULT)"},
 		{"create table t1 (a int) partition by range (a) (partition x values less than (10))", true, "CREATE TABLE `t1` (`a` INT) PARTITION BY RANGE (`a`) (PARTITION `x` VALUES LESS THAN (10))"},
 		{"create table t1 (a int) partition by list (a) (partition x values less than (10))", false, ""},
 		{"create table t1 (a int) partition by system_time (partition x values less than (10))", false, ""},
@@ -5946,6 +6117,9 @@ ENGINE=INNODB PARTITION BY LINEAR HASH (a) PARTITIONS 1;`, true, "CREATE TABLE `
 		{"create table t1 (a int) partition by key (a) (partition x values in (10))", false, ""},
 		{"create table t1 (a int) partition by range (a) (partition x values in (10))", false, ""},
 		{"create table t1 (a int) partition by list (a) (partition x values in (10))", true, "CREATE TABLE `t1` (`a` INT) PARTITION BY LIST (`a`) (PARTITION `x` VALUES IN (10))"},
+		{"create table t1 (a int) partition by list (a) (partition x values in (default))", true, "CREATE TABLE `t1` (`a` INT) PARTITION BY LIST (`a`) (PARTITION `x` DEFAULT)"},
+		{"create table t1 (a int) partition by list (a) (partition x values in (maxvalue))", false, ""},
+		{"create table t1 (a int) partition by list (a) (partition x values in (default, 10))", true, "CREATE TABLE `t1` (`a` INT) PARTITION BY LIST (`a`) (PARTITION `x` VALUES IN (DEFAULT, 10))"},
 		{"create table t1 (a int) partition by system_time (partition x values in (10))", false, ""},
 		// HISTORY/CURRENT clauses are valid only for SYSTEM_TIME partitions
 		{"create table t1 (a int) partition by hash (a) (partition x history, partition y current)", false, ""},
@@ -6775,6 +6949,7 @@ func TestCTE(t *testing.T) {
 		{"with cte(a) as (select 1) delete t from t, cte where t.a=cte.a;", true, "WITH `cte` (`a`) AS (SELECT 1) DELETE `t` FROM (`t`) JOIN `cte` WHERE `t`.`a`=`cte`.`a`"},
 		{"WITH cte1 AS (SELECT 1) SELECT * FROM (WITH cte2 AS (SELECT 2) SELECT * FROM cte2 JOIN cte1) AS dt;", true, "WITH `cte1` AS (SELECT 1) SELECT * FROM (WITH `cte2` AS (SELECT 2) SELECT * FROM `cte2` JOIN `cte1`) AS `dt`"},
 		{"WITH cte AS (SELECT 1) SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT 1) SELECT /*+ MAX_EXECUTION_TIME(1000)*/ * FROM `cte`"},
+		{"WITH cte AS (SELECT 1) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT 1) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000)*/ * FROM `cte`"},
 		{"with cte as (table t) table cte;", true, "WITH `cte` AS (TABLE `t`) TABLE `cte`"},
 		{"with cte as (select 1) select 1 union with cte as (select 1) select * from cte;", false, ""},
 		{"with cte as (select 1) (select 1);", true, "WITH `cte` AS (SELECT 1) (SELECT 1)"},
@@ -6799,6 +6974,7 @@ func TestCTEMerge(t *testing.T) {
 		{"with cte(a) as (select 1) delete t from t, cte where t.a=cte.a;", true, "WITH `cte` (`a`) AS (SELECT 1) DELETE `t` FROM (`t`) JOIN `cte` WHERE `t`.`a`=`cte`.`a`"},
 		{"WITH cte1 AS (SELECT 1) SELECT * FROM (WITH cte2 AS (SELECT 2) SELECT * FROM cte2 JOIN cte1) AS dt;", true, "WITH `cte1` AS (SELECT 1) SELECT * FROM (WITH `cte2` AS (SELECT 2) SELECT * FROM `cte2` JOIN `cte1`) AS `dt`"},
 		{"WITH cte AS (SELECT 1) SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT 1) SELECT /*+ MAX_EXECUTION_TIME(1000)*/ * FROM `cte`"},
+		{"WITH cte AS (SELECT 1) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT 1) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000)*/ * FROM `cte`"},
 		{"with cte as (table t) table cte;", true, "WITH `cte` AS (TABLE `t`) TABLE `cte`"},
 		{"with cte as (select 1) select 1 union with cte as (select 1) select * from cte;", false, ""},
 		{"with cte as (select 1) (select 1);", true, "WITH `cte` AS (SELECT 1) (SELECT 1)"},
@@ -6952,6 +7128,7 @@ func TestCTEBindings(t *testing.T) {
 		{"with cte(a) as (select * from t) delete t from t, cte where t.a=cte.a;", true, "WITH `cte` (`a`) AS (SELECT * FROM `test`.`t`) DELETE `test`.`t` FROM (`test`.`t`) JOIN `cte` WHERE `t`.`a` = `cte`.`a`"},
 		{"WITH cte1 AS (SELECT * from t) SELECT * FROM (WITH cte2 AS (SELECT * from cte1) SELECT * FROM cte2 JOIN cte1) AS dt;", true, "WITH `cte1` AS (SELECT * FROM `test`.`t`) SELECT * FROM (WITH `cte2` AS (SELECT * FROM `cte1`) SELECT * FROM `cte2` JOIN `cte1`) AS `dt`"},
 		{"WITH cte AS (SELECT * from t) SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT * FROM `test`.`t`) SELECT /*+ MAX_EXECUTION_TIME(1000)*/ * FROM `cte`"},
+		{"WITH cte AS (SELECT * from t) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT * FROM `test`.`t`) SELECT /*+ TIDB_KV_READ_TIMEOUT(1000)*/ * FROM `cte`"},
 		{"with cte as (table t) table cte;", true, "WITH `cte` AS (TABLE `test`.`t`) TABLE `cte`"},
 		{"with cte as (select * from t) select 1 union with cte as (select * from t) select * from cte;", false, ""},
 		{"with cte as (select * from t) (select * from t);", true, "WITH `cte` AS (SELECT * FROM `test`.`t`) (SELECT * FROM `test`.`t`)"},
@@ -7249,6 +7426,18 @@ func TestTTLTableOption(t *testing.T) {
 	}
 
 	RunTest(t, table, false)
+}
+
+func TestIssue45898(t *testing.T) {
+	p := parser.New()
+	p.ParseSQL("a.")
+	stmts, _, err := p.ParseSQL("select count(1) from t")
+	require.NoError(t, err)
+	var sb strings.Builder
+	restoreCtx := NewRestoreCtx(DefaultRestoreFlags, &sb)
+	sb.Reset()
+	stmts[0].Restore(restoreCtx)
+	require.Equal(t, "SELECT COUNT(1) FROM `t`", sb.String())
 }
 
 func TestMultiStmt(t *testing.T) {

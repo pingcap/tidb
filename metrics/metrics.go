@@ -17,6 +17,7 @@ package metrics
 import (
 	"sync"
 
+	timermetrics "github.com/pingcap/tidb/timer/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -91,6 +92,7 @@ func InitMetrics() {
 	InitTelemetryMetrics()
 	InitTopSQLMetrics()
 	InitTTLMetrics()
+	timermetrics.InitTimerMetrics()
 
 	PanicCounter = NewCounterVec(
 		prometheus.CounterOpts{
@@ -141,14 +143,12 @@ func RegisterMetrics() {
 	prometheus.MustRegister(DistSQLQueryHistogram)
 	prometheus.MustRegister(DistSQLScanKeysHistogram)
 	prometheus.MustRegister(DistSQLScanKeysPartialHistogram)
-	prometheus.MustRegister(DumpFeedbackCounter)
 	prometheus.MustRegister(ExecuteErrorCounter)
 	prometheus.MustRegister(ExecutorCounter)
 	prometheus.MustRegister(GetTokenDurationHistogram)
 	prometheus.MustRegister(NumOfMultiQueryHistogram)
 	prometheus.MustRegister(HandShakeErrorCounter)
 	prometheus.MustRegister(HandleJobHistogram)
-	prometheus.MustRegister(SignificantFeedbackCounter)
 	prometheus.MustRegister(FastAnalyzeHistogram)
 	prometheus.MustRegister(SyncLoadCounter)
 	prometheus.MustRegister(SyncLoadTimeoutCounter)
@@ -188,7 +188,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(OngoingTxnDurationHistogram)
 	prometheus.MustRegister(MppCoordinatorStats)
 	prometheus.MustRegister(MppCoordinatorLatency)
-	prometheus.MustRegister(StoreQueryFeedbackCounter)
 	prometheus.MustRegister(TimeJumpBackCounter)
 	prometheus.MustRegister(TransactionDuration)
 	prometheus.MustRegister(StatementDeadlockDetectDuration)
@@ -196,7 +195,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatementLockKeysCount)
 	prometheus.MustRegister(ValidateReadTSFromPDCount)
 	prometheus.MustRegister(UpdateSelfVersionHistogram)
-	prometheus.MustRegister(UpdateStatsCounter)
 	prometheus.MustRegister(WatchOwnerCounter)
 	prometheus.MustRegister(GCActionRegionResultCounter)
 	prometheus.MustRegister(GCConfigGauge)
@@ -232,8 +230,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PessimisticDMLDurationByAttempt)
 	prometheus.MustRegister(ResourceGroupQueryTotalCounter)
 	prometheus.MustRegister(MemoryUsage)
-	prometheus.MustRegister(StatsCacheLRUCounter)
-	prometheus.MustRegister(StatsCacheLRUGauge)
+	prometheus.MustRegister(StatsCacheCounter)
+	prometheus.MustRegister(StatsCacheGauge)
 	prometheus.MustRegister(StatsHealthyGauge)
 	prometheus.MustRegister(TxnStatusEnteringCounter)
 	prometheus.MustRegister(TxnDurationHistogram)
@@ -255,6 +253,9 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TTLPhaseTime)
 	prometheus.MustRegister(TTLInsertRowsCount)
 	prometheus.MustRegister(TTLWatermarkDelay)
+	prometheus.MustRegister(TTLEventCounter)
+
+	prometheus.MustRegister(timermetrics.TimerEventCounter)
 
 	prometheus.MustRegister(EMACPUUsageGauge)
 	prometheus.MustRegister(PoolConcurrencyCounter)

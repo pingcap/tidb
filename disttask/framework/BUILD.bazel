@@ -4,12 +4,13 @@ go_test(
     name = "framework_test",
     timeout = "short",
     srcs = [
+        "framework_err_handling_test.go",
         "framework_rollback_test.go",
         "framework_test.go",
     ],
     flaky = True,
     race = "on",
-    shard_count = 9,
+    shard_count = 14,
     deps = [
         "//disttask/framework/dispatcher",
         "//disttask/framework/proto",

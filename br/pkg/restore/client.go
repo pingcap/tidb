@@ -4,12 +4,14 @@ package restore
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -61,10 +63,10 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
+	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -821,8 +823,8 @@ func (rc *Client) CreateTables(
 		newTables = append(newTables, et.Table)
 	}
 	// Let's ensure that it won't break the original order.
-	slices.SortFunc(newTables, func(i, j *model.TableInfo) bool {
-		return tbMapping[i.Name.String()] < tbMapping[j.Name.String()]
+	slices.SortFunc(newTables, func(i, j *model.TableInfo) int {
+		return cmp.Compare(tbMapping[i.Name.String()], tbMapping[j.Name.String()])
 	})
 
 	select {
@@ -1192,8 +1194,8 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 // ExecDDLs executes the queries of the ddl jobs.
 func (rc *Client) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error {
 	// Sort the ddl jobs by schema version in ascending order.
-	slices.SortFunc(ddlJobs, func(i, j *model.Job) bool {
-		return i.BinlogInfo.SchemaVersion < j.BinlogInfo.SchemaVersion
+	slices.SortFunc(ddlJobs, func(i, j *model.Job) int {
+		return cmp.Compare(i.BinlogInfo.SchemaVersion, j.BinlogInfo.SchemaVersion)
 	})
 
 	for _, job := range ddlJobs {
@@ -1710,6 +1712,7 @@ func (rc *Client) execChecksum(
 			SetConcurrency(concurrency).
 			SetOldKeyspace(tbl.RewriteRule.OldKeyspace).
 			SetNewKeyspace(tbl.RewriteRule.NewKeyspace).
+			SetExplicitRequestSourceType(kvutil.ExplicitTypeBR).
 			Build()
 		if err != nil {
 			return errors.Trace(err)
@@ -1822,11 +1825,28 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 				zap.Stringer("table", tbl.OldTable.Info.Name),
 				zap.Stringer("db", tbl.OldTable.DB.Name))
 			for {
-				progress, err := infosync.CalculateTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, tiFlashStores)
-				if err != nil {
-					log.Warn("failed to get tiflash replica progress, wait for next retry", zap.Error(err))
-					time.Sleep(time.Second)
-					continue
+				var progress float64
+				if pi := tbl.Table.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+					for _, p := range pi.Definitions {
+						progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+						if err != nil {
+							log.Warn("failed to get progress for tiflash partition replica, retry it",
+								zap.Int64("tableID", tbl.Table.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
+							time.Sleep(time.Second)
+							continue
+						}
+						progress += progressOfPartition
+					}
+					progress = progress / float64(len(pi.Definitions))
+				} else {
+					var err error
+					progress, err = infosync.MustGetTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+					if err != nil {
+						log.Warn("failed to get progress for tiflash replica, retry it",
+							zap.Int64("tableID", tbl.Table.ID), zap.Error(err))
+						time.Sleep(time.Second)
+						continue
+					}
 				}
 				// check until progress is 1
 				if progress == 1 {
@@ -1939,6 +1959,7 @@ func (rc *Client) FailpointDoChecksumForLogRestore(
 				SetConcurrency(4).
 				SetOldKeyspace(rewriteRule.OldKeyspace).
 				SetNewKeyspace(rewriteRule.NewKeyspace).
+				SetExplicitRequestSourceType(kvutil.ExplicitTypeBR).
 				Build()
 			if err != nil {
 				return errors.Trace(err)
@@ -2256,11 +2277,13 @@ func (rc *Client) PreCheckTableClusterIndex(
 	return nil
 }
 
-func (rc *Client) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64) error {
+func (rc *Client) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint) error {
 	init := LogFileManagerInit{
 		StartTS:   startTS,
 		RestoreTS: restoreTS,
 		Storage:   rc.storage,
+
+		MetadataDownloadBatchSize: metadataDownloadBatchSize,
 	}
 	var err error
 	rc.logFileManager, err = CreateLogFileManager(ctx, init)
@@ -2800,26 +2823,14 @@ func (rc *Client) InitSchemasReplaceForDDL(
 }
 
 func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
-	slices.SortFunc(files, func(i, j *backuppb.DataFileInfo) bool {
-		if i.GetMinTs() < j.GetMinTs() {
-			return true
-		} else if i.GetMinTs() > j.GetMinTs() {
-			return false
+	slices.SortFunc(files, func(i, j *backuppb.DataFileInfo) int {
+		if c := cmp.Compare(i.GetMinTs(), j.GetMinTs()); c != 0 {
+			return c
 		}
-
-		if i.GetMaxTs() < j.GetMaxTs() {
-			return true
-		} else if i.GetMaxTs() > j.GetMaxTs() {
-			return false
+		if c := cmp.Compare(i.GetMaxTs(), j.GetMaxTs()); c != 0 {
+			return c
 		}
-
-		if i.GetResolvedTs() < j.GetResolvedTs() {
-			return true
-		} else if i.GetResolvedTs() > j.GetResolvedTs() {
-			return false
-		}
-
-		return true
+		return cmp.Compare(i.GetResolvedTs(), j.GetResolvedTs())
 	})
 	return files
 }
@@ -3066,8 +3077,8 @@ func (rc *Client) RestoreBatchMetaKVFiles(
 	}
 
 	// sort these entries.
-	slices.SortFunc(curKvEntries, func(i, j *KvEntryWithTS) bool {
-		return i.ts < j.ts
+	slices.SortFunc(curKvEntries, func(i, j *KvEntryWithTS) int {
+		return cmp.Compare(i.ts, j.ts)
 	})
 
 	// restore these entries with rawPut() method.
@@ -3684,12 +3695,12 @@ func CheckNewCollationEnable(
 	if backupNewCollationEnable == "" {
 		if CheckRequirements {
 			return errors.Annotatef(berrors.ErrUnknown,
-				"the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
-					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
-					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
-					"use --check-requirements=false to skip this check")
+				"the value '%s' not found in backupmeta. "+
+					"you can use \"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';\" to manually check the config. "+
+					"if you ensure the value '%s' in backup cluster is as same as restore cluster, use --check-requirements=false to skip this check",
+				utils.TidbNewCollationEnabled, utils.TidbNewCollationEnabled, utils.TidbNewCollationEnabled)
 		}
-		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
+		log.Warn(fmt.Sprintf("the config '%s' is not in backupmeta", utils.TidbNewCollationEnabled))
 		return nil
 	}
 
@@ -3705,8 +3716,8 @@ func CheckNewCollationEnable(
 
 	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
 		return errors.Annotatef(berrors.ErrUnknown,
-			"the config 'new_collations_enabled_on_first_bootstrap' not match, upstream:%v, downstream: %v",
-			backupNewCollationEnable, newCollationEnable)
+			"the config '%s' not match, upstream:%v, downstream: %v",
+			utils.TidbNewCollationEnabled, backupNewCollationEnable, newCollationEnable)
 	}
 
 	// collate.newCollationEnabled is set to 1 when the collate package is initialized,
@@ -3715,7 +3726,7 @@ func CheckNewCollationEnable(
 	enabled := newCollationEnable == "True"
 	// modify collate.newCollationEnabled according to the config of the cluster
 	collate.SetNewCollationEnabledForTest(enabled)
-	log.Info("set new_collation_enabled", zap.Bool("new_collation_enabled", enabled))
+	log.Info(fmt.Sprintf("set %s", utils.TidbNewCollationEnabled), zap.Bool("new_collation_enabled", enabled))
 	return nil
 }
 

@@ -137,7 +137,7 @@ func (rc *Controller) checkCSVHeader(ctx context.Context) error {
 }
 
 func (rc *Controller) checkTableEmpty(ctx context.Context) error {
-	if rc.cfg.TikvImporter.Backend == config.BackendTiDB || rc.cfg.TikvImporter.IncrementalImport {
+	if rc.cfg.TikvImporter.Backend == config.BackendTiDB || rc.cfg.TikvImporter.ParallelImport {
 		return nil
 	}
 	return rc.doPreCheckOnItem(ctx, precheck.CheckTargetTableEmpty)

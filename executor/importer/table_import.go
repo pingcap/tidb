@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/syncutil"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -55,6 +57,17 @@ var (
 	// CheckDiskQuotaInterval is the default time interval to check disk quota.
 	// TODO: make it dynamically adjusting according to the speed of import and the disk size.
 	CheckDiskQuotaInterval = 10 * time.Second
+
+	// defaultMaxEngineSize is the default max engine size in bytes.
+	// we make it 5 times larger than lightning default engine size to reduce range overlap, especially for index,
+	// since we have an index engine per distributed subtask.
+	// for 1TiB data, we can divide it into 2 engines that runs on 2 TiDB. it can have a good balance between
+	// range overlap and sort speed in one of our test of:
+	// 	- 10 columns, PK + 6 secondary index 2 of which is mv index
+	//	- 1.05 KiB per row, 527 MiB per file, 1024000000 rows, 1 TiB total
+	//
+	// it might not be the optimal value for other cases.
+	defaultMaxEngineSize = int64(5 * config.DefaultBatchSize)
 )
 
 // prepareSortDir creates a new directory for import, remove previous sort directory if exists.
@@ -96,8 +109,8 @@ func prepareSortDir(e *LoadDataController, taskID int64, tidbCfg *tidb.Config) (
 	return sortDir, nil
 }
 
-// GetTiKVModeSwitcher creates a new TiKV mode switcher.
-func GetTiKVModeSwitcher(logger *zap.Logger) (local.TiKVModeSwitcher, error) {
+// GetTiKVModeSwitcherWithPDClient creates a new TiKV mode switcher with its pd Client.
+func GetTiKVModeSwitcherWithPDClient(ctx context.Context, logger *zap.Logger) (pd.Client, local.TiKVModeSwitcher, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
 	tls, err := common.NewTLS(
@@ -108,9 +121,15 @@ func GetTiKVModeSwitcher(logger *zap.Logger) (local.TiKVModeSwitcher, error) {
 		nil, nil, nil,
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return NewTiKVModeSwitcher(tls, tidbCfg.Path, logger), nil
+	tlsOpt := tls.ToPDSecurityOption()
+	pdCli, err := pd.NewClientWithContext(ctx, []string{tidbCfg.Path}, tlsOpt)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	return pdCli, NewTiKVModeSwitcher(tls, pdCli, logger), nil
 }
 
 func getCachedKVStoreFrom(pdAddr string, tls *common.TLS) (tidbkv.Storage, error) {
@@ -178,6 +197,9 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		KeyspaceName:            tidb.GetGlobalKeyspaceName(),
 		PausePDSchedulerScope:   config.PausePDSchedulerScopeTable,
 	}
+	if e.IsRaftKV2 {
+		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
+	}
 
 	// todo: use a real region size getter
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{}
@@ -226,11 +248,8 @@ type TableImporter struct {
 	logger          *zap.Logger
 	regionSplitSize int64
 	regionSplitKeys int64
-	// the smallest auto-generated ID in current import.
-	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
-	lastInsertID  uint64
-	diskQuota     int64
-	diskQuotaLock *syncutil.RWMutex
+	diskQuota       int64
+	diskQuotaLock   *syncutil.RWMutex
 }
 
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
@@ -269,6 +288,31 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEnc
 	return newTableKVEncoder(cfg, ti)
 }
 
+func (e *LoadDataController) getAdjustedMaxEngineSize() int64 {
+	// we want to split data files into subtask of size close to MaxEngineSize to reduce range overlap,
+	// and evenly distribute them to subtasks.
+	// so we adjust MaxEngineSize to make sure each subtask has a similar amount of data to import.
+	// we calculate subtask count first by round(TotalFileSize / maxEngineSize), then adjust maxEngineSize
+	//
+	// AllocateEngineIDs is using ceil() to calculate subtask count, engine size might be too small in some case,
+	// such as 501G data, maxEngineSize will be about 250G, so we don't relay on it.
+	// see https://github.com/pingcap/tidb/blob/b4183e1dc9bb01fb81d3aa79ca4b5b74387c6c2a/br/pkg/lightning/mydump/region.go#L109
+	//
+	// for default e.MaxEngineSize = 500GiB, we have:
+	// data size range(G)   cnt    adjusted-engine-size range(G)
+	// [0, 750)               1    [0, 750)
+	// [750, 1250)            2    [375, 625)
+	// [1250, 1750)           3    [416, 583)
+	// [1750, 2250)           4    [437, 562)
+	maxEngineSize := int64(e.MaxEngineSize)
+	if e.TotalFileSize <= maxEngineSize {
+		return e.TotalFileSize
+	}
+	subtaskCount := math.Round(float64(e.TotalFileSize) / float64(maxEngineSize))
+	adjusted := math.Ceil(float64(e.TotalFileSize) / subtaskCount)
+	return int64(adjusted)
+}
+
 // PopulateChunks populates chunks from table regions.
 // in dist framework, this should be done in the tidb node which is responsible for splitting job into subtasks
 // then table-importer handles data belongs to the subtask.
@@ -283,15 +327,17 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 		Name:      e.Table.Meta().Name.O,
 		DataFiles: e.toMyDumpFiles(),
 	}
+	adjustedMaxEngineSize := e.getAdjustedMaxEngineSize()
+	e.logger.Info("adjust max engine size", zap.Int64("before", int64(e.MaxEngineSize)),
+		zap.Int64("after", adjustedMaxEngineSize))
 	dataDivideCfg := &mydump.DataDivideConfig{
-		ColumnCnt:         len(e.Table.Meta().Columns),
-		EngineDataSize:    int64(config.DefaultBatchSize),
-		MaxChunkSize:      int64(config.MaxRegionSize),
-		Concurrency:       int(e.ThreadCnt),
-		EngineConcurrency: config.DefaultTableConcurrency,
-		IOWorkers:         nil,
-		Store:             e.dataStore,
-		TableMeta:         tableMeta,
+		ColumnCnt:      len(e.Table.Meta().Columns),
+		EngineDataSize: adjustedMaxEngineSize,
+		MaxChunkSize:   int64(config.MaxRegionSize),
+		Concurrency:    int(e.ThreadCnt),
+		IOWorkers:      nil,
+		Store:          e.dataStore,
+		TableMeta:      tableMeta,
 	}
 	tableRegions, err2 := mydump.MakeTableRegions(ctx, dataDivideCfg)
 
@@ -452,16 +498,6 @@ func (ti *TableImporter) fullTableName() string {
 func (ti *TableImporter) Close() error {
 	ti.backend.Close()
 	return nil
-}
-
-func (ti *TableImporter) setLastInsertID(id uint64) {
-	// todo: if we run concurrently, we should use atomic operation here.
-	if id == 0 {
-		return
-	}
-	if ti.lastInsertID == 0 || id < ti.lastInsertID {
-		ti.lastInsertID = id
-	}
 }
 
 // CheckDiskQuota checks disk quota.

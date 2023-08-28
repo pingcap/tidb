@@ -46,7 +46,7 @@ type SetConfigExec struct {
 }
 
 // Open implements the Executor Open interface.
-func (s *SetConfigExec) Open(ctx context.Context) error {
+func (s *SetConfigExec) Open(context.Context) error {
 	if s.p.Type != "" {
 		s.p.Type = strings.ToLower(s.p.Type)
 		if s.p.Type != "tikv" && s.p.Type != "tidb" && s.p.Type != "pd" && s.p.Type != "tiflash" {
@@ -84,7 +84,7 @@ var TestSetConfigServerInfoKey stringutil.StringerStr = "TestSetConfigServerInfo
 var TestSetConfigHTTPHandlerKey stringutil.StringerStr = "TestSetConfigHTTPHandlerKey"
 
 // Next implements the Executor Next interface.
-func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (s *SetConfigExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	getServerFunc := infoschema.GetClusterServerInfo
 	if v := s.Ctx().Value(TestSetConfigServerInfoKey); v != nil {

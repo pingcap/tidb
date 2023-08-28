@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/tracing"
@@ -46,7 +45,6 @@ func GenSelectResultFromResponse(sctx sessionctx.Context, fieldTypes []*types.Fi
 		rowLen:     len(fieldTypes),
 		fieldTypes: fieldTypes,
 		ctx:        sctx,
-		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
 		copPlanIDs: planIDs,
 		rootPlanID: rootID,
 		storeType:  kv.TiFlash,
@@ -55,7 +53,7 @@ func GenSelectResultFromResponse(sctx sessionctx.Context, fieldTypes []*types.Fi
 
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
-func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType, fb *statistics.QueryFeedback) (SelectResult, error) {
+func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "distsql.Select")
 	defer r.End()
 
@@ -109,7 +107,6 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		rowLen:             len(fieldTypes),
 		fieldTypes:         fieldTypes,
 		ctx:                sctx,
-		feedback:           fb,
 		sqlType:            label,
 		memTracker:         kvReq.MemTracker,
 		storeType:          kvReq.StoreType,
@@ -144,8 +141,8 @@ func SetTiFlashConfVarsInContext(ctx context.Context, sctx sessionctx.Context) c
 // The difference from Select is that SelectWithRuntimeStats will set copPlanIDs into selectResult,
 // which can help selectResult to collect runtime stats.
 func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int, rootPlanID int) (SelectResult, error) {
-	sr, err := Select(ctx, sctx, kvReq, fieldTypes, fb)
+	fieldTypes []*types.FieldType, copPlanIDs []int, rootPlanID int) (SelectResult, error) {
+	sr, err := Select(ctx, sctx, kvReq, fieldTypes)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +170,6 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars inte
 	result := &selectResult{
 		label:     "analyze",
 		resp:      resp,
-		feedback:  statistics.NewQueryFeedback(0, nil, 0, false),
 		sqlType:   label,
 		storeType: kvReq.StoreType,
 	}
@@ -183,7 +179,7 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars inte
 // Checksum sends a checksum request.
 func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{}) (SelectResult, error) {
 	// FIXME: As BR have dependency of `Checksum` and TiDB also introduced BR as dependency, Currently we can't edit
-	// Checksum function signature. The two-way dependence should be removed in future.
+	// Checksum function signature. The two-way dependence should be removed in the future.
 	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
@@ -191,7 +187,6 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars int
 	result := &selectResult{
 		label:     "checksum",
 		resp:      resp,
-		feedback:  statistics.NewQueryFeedback(0, nil, 0, false),
 		sqlType:   metrics.LblGeneral,
 		storeType: kvReq.StoreType,
 	}

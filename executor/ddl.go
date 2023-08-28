@@ -473,12 +473,12 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 // GetDropOrTruncateTableInfoFromJobs gets the dropped/truncated table information from DDL jobs,
 // it will use the `start_ts` of DDL job as snapshot to get the dropped/truncated table information.
 func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, dom *domain.Domain, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
-	getTable := func(StartTS uint64, SchemaID int64, TableID int64) (*model.TableInfo, error) {
-		snapMeta, err := dom.GetSnapshotMeta(StartTS)
+	getTable := func(startTS uint64, schemaID int64, tableID int64) (*model.TableInfo, error) {
+		snapMeta, err := dom.GetSnapshotMeta(startTS)
 		if err != nil {
 			return nil, err
 		}
-		tbl, err := snapMeta.GetTable(SchemaID, TableID)
+		tbl, err := snapMeta.GetTable(schemaID, tableID)
 		return tbl, err
 	}
 	return ddl.GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, fn)

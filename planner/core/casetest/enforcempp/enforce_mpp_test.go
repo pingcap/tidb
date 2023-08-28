@@ -39,6 +39,7 @@ func TestEnforceMPP(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("create index idx on t(a)")
+	tk.MustExec("CREATE TABLE `s` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  `d` int(11) DEFAULT NULL,\n  UNIQUE KEY `a` (`a`),\n  KEY `ii` (`a`,`b`)\n)")
 
 	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
 	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
@@ -52,6 +53,12 @@ func TestEnforceMPP(t *testing.T) {
 	require.True(t, exists)
 	for _, tblInfo := range db.Tables {
 		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+		if tblInfo.Name.L == "s" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
 				Available: true,
@@ -660,8 +667,10 @@ func TestRollupMPP(t *testing.T) {
 	tk.MustExec("drop table if exists s")
 	tk.MustExec("create table t(a int, b int, c int)")
 	tk.MustExec("create table s(a int, b int, c int)")
+	tk.MustExec("CREATE TABLE `sales` (`year` int(11) DEFAULT NULL, `country` varchar(20) DEFAULT NULL,  `product` varchar(32) DEFAULT NULL,  `profit` int(11) DEFAULT NULL)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tk.MustExec("alter table s set tiflash replica 1")
+	tk.MustExec("alter table sales set tiflash replica 1")
 
 	tb := external.GetTableByName(t, tk, "test", "t")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
@@ -670,6 +679,14 @@ func TestRollupMPP(t *testing.T) {
 	tb = external.GetTableByName(t, tk, "test", "s")
 	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
+
+	tb = external.GetTableByName(t, tk, "test", "sales")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	// error test
+	err = tk.ExecToErr("explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(year);")
+	require.Equal(t, err.Error(), "[planner:3602]Argument #0 of GROUPING function is not in GROUP BY")
 
 	var input []string
 	var output []struct {

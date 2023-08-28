@@ -818,7 +818,7 @@ Loop:
 }
 
 func TestUnsafeDestroyRangeForRaftkv2(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/isRaftKv2", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/util/IsRaftKv2", "return(true)"))
 
 	s := createGCWorkerSuite(t)
 	// Put some delete range tasks.

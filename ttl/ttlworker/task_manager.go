@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -306,6 +307,7 @@ loop:
 		err = idleWorker.Schedule(task.ttlScanTask)
 		if err != nil {
 			logger.Warn("fail to schedule task", zap.Error(err))
+			task.cancel()
 			continue
 		}
 
@@ -457,6 +459,8 @@ func (m *taskManager) checkFinishedTask(se session.Session, now time.Time) {
 			stillRunningTasks = append(stillRunningTasks, task)
 			continue
 		}
+		// we should cancel task to release inner context and avoid memory leak
+		task.cancel()
 		err := m.reportTaskFinished(se, now, task)
 		if err != nil {
 			logutil.Logger(m.ctx).Error("fail to report finished task", zap.Error(err))
@@ -549,34 +553,42 @@ func (m *taskManager) meetTTLRunningTask(count int, taskStatus cache.TaskStatus)
 		// always return true for already running task because it is already included in count
 		return true
 	}
+	return getMaxRunningTasksLimit(m.store) > count
+}
 
+func getMaxRunningTasksLimit(store kv.Storage) int {
 	ttlRunningTask := variable.TTLRunningTasks.Load()
-	// `-1` is the auto value, means we should calculate the limit according to the count of TiKV
 	if ttlRunningTask != -1 {
-		return int(ttlRunningTask) > count
+		return int(ttlRunningTask)
 	}
 
-	store, ok := m.store.(tikv.Storage)
+	tikvStore, ok := store.(tikv.Storage)
 	if !ok {
-		return variable.MaxConfigurableConcurrency > count
+		return variable.MaxConfigurableConcurrency
 	}
 
-	regionCache := store.GetRegionCache()
+	regionCache := tikvStore.GetRegionCache()
 	if regionCache == nil {
-		return true
+		return variable.MaxConfigurableConcurrency
 	}
-	limit := len(regionCache.GetAllStores())
+
+	limit := len(regionCache.GetStoresByType(tikvrpc.TiKV))
 	if limit > variable.MaxConfigurableConcurrency {
 		limit = variable.MaxConfigurableConcurrency
 	}
 
-	return limit > count
+	return limit
 }
 
 type runningScanTask struct {
 	*ttlScanTask
 	cancel func()
 	result *ttlScanTaskExecResult
+}
+
+// Context returns context for the task and is only used by test now
+func (t *runningScanTask) Context() context.Context {
+	return t.ctx
 }
 
 func (t *runningScanTask) finished() bool {

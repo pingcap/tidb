@@ -117,7 +117,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 //  2. bool: true when found the duplicated key. This only means that duplicated key was found,
 //     and the row was removed.
 //  3. error: the error.
-func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (bool, bool, error) {
+func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (rowUnchanged, foundDupKey bool, err error) {
 	for _, uk := range r.uniqueKeys {
 		_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
 		if err != nil {
@@ -151,7 +151,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 
 	defer trace.StartRegion(ctx, "ReplaceExec").End()
 	// Get keys need to be checked.
-	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.Ctx(), e.Table, newRows)
+	toBeCheckedRows, err := getKeysNeedCheck(e.Ctx(), e.Table, newRows)
 	if err != nil {
 		return err
 	}

@@ -15,9 +15,11 @@
 package executor
 
 import (
+	"cmp"
 	"context"
 	gjson "encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -32,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/exp/slices"
 )
 
 type showPlacementLabelsResultBuilder struct {
@@ -95,7 +96,7 @@ func (b *showPlacementLabelsResultBuilder) BuildRows() ([][]interface{}, error) 
 	return rows, nil
 }
 
-func (b *showPlacementLabelsResultBuilder) sortMapKeys(m map[string]interface{}) []string {
+func (*showPlacementLabelsResultBuilder) sortMapKeys(m map[string]interface{}) []string {
 	sorted := make([]string, 0, len(m))
 	for key := range m {
 		sorted = append(sorted, key)
@@ -251,7 +252,7 @@ func (e *ShowExec) fetchShowPlacement(ctx context.Context) error {
 
 func (e *ShowExec) fetchAllPlacementPolicies() error {
 	policies := e.is.AllPlacementPolicies()
-	slices.SortFunc(policies, func(i, j *model.PolicyInfo) bool { return i.Name.O < j.Name.O })
+	slices.SortFunc(policies, func(i, j *model.PolicyInfo) int { return cmp.Compare(i.Name.O, j.Name.O) })
 	for _, policy := range policies {
 		name := policy.Name
 		settings := policy.PlacementSettings
@@ -266,10 +267,10 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 
 	dbs := e.is.AllSchemas()
-	slices.SortFunc(dbs, func(i, j *model.DBInfo) bool { return i.Name.O < j.Name.O })
+	slices.SortFunc(dbs, func(i, j *model.DBInfo) int { return cmp.Compare(i.Name.O, j.Name.O) })
 
 	for _, dbInfo := range dbs {
-		if e.Ctx().GetSessionVars().User != nil && checker != nil && !checker.DBIsVisible(activeRoles, dbInfo.Name.O) {
+		if checker != nil && e.Ctx().GetSessionVars().User != nil && !checker.DBIsVisible(activeRoles, dbInfo.Name.O) {
 			continue
 		}
 
@@ -300,7 +301,7 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 
 	dbs := e.is.AllSchemas()
-	slices.SortFunc(dbs, func(i, j *model.DBInfo) bool { return i.Name.O < j.Name.O })
+	slices.SortFunc(dbs, func(i, j *model.DBInfo) int { return cmp.Compare(i.Name.O, j.Name.O) })
 
 	for _, dbInfo := range dbs {
 		tableRowSets := make([]tableRowSet, 0)
@@ -359,7 +360,7 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 			}
 		}
 
-		slices.SortFunc(tableRowSets, func(i, j tableRowSet) bool { return i.name < j.name })
+		slices.SortFunc(tableRowSets, func(i, j tableRowSet) int { return cmp.Compare(i.name, j.name) })
 		for _, rowSet := range tableRowSets {
 			for _, row := range rowSet.rows {
 				e.appendRow(row)

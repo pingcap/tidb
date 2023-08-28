@@ -21,7 +21,7 @@ import (
 
 // task state machine
 //  1. succeed:			pending -> running -> succeed
-//  2. failed:			pending -> running -> reverting -> reverted/revert_failed
+//  2. failed:			pending -> running -> reverting -> reverted/revert_failed, pending -> failed
 //  3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
 //  3. pause/resume:	pending -> running -> pausing -> paused -> running
 //
@@ -41,6 +41,7 @@ const (
 	TaskStateCanceled      = "canceled"
 	TaskStatePausing       = "pausing"
 	TaskStatePaused        = "paused"
+	TaskStateResuming      = "resuming"
 	TaskStateRevertPending = "revert_pending"
 	TaskStateReverted      = "reverted"
 )
@@ -85,9 +86,14 @@ type Subtask struct {
 	// SchedulerID is the ID of scheduler, right now it's the same as instance_id, exec_id.
 	// its value is IP:PORT, see GenerateExecID
 	SchedulerID string
-	StartTime   uint64
-	EndTime     time.Time
-	Meta        []byte
+	// StartTime is the time when the subtask is started.
+	// it's 0 if it hasn't started yet.
+	StartTime time.Time
+	// UpdateTime is the time when the subtask is updated.
+	// it can be used as subtask end time if the subtask is finished.
+	// it's 0 if it hasn't started yet.
+	UpdateTime time.Time
+	Meta       []byte
 }
 
 // NewSubtask create a new subtask.

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
 
@@ -93,6 +94,40 @@ func TestIssue43645(t *testing.T) {
 	rs.Sort().Check(testkit.Rows("a aa aaa", "b bb bbb", "c cc ccc"))
 }
 
+func TestIssue29221(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_index_merge=on;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b));")
+	tk.MustExec("set @@session.sql_select_limit=3;")
+	var input []string
+	var output []struct {
+		SQL           string
+		ExplainResult []string
+	}
+	issueTestData := GetIssueTestData()
+	issueTestData.LoadTestCases(t, &input, &output)
+
+	for i, in := range input {
+		if len(in) < 7 || in[:7] != "explain" {
+			tk.MustExec(in)
+			testdata.OnRecord(func() {
+				output[i].SQL = in
+				output[i].ExplainResult = nil
+			})
+			continue
+		}
+		result := tk.MustQuery(in)
+		testdata.OnRecord(func() {
+			output[i].SQL = in
+			output[i].ExplainResult = testdata.ConvertRowsToStrings(result.Rows())
+		})
+		result.Check(testkit.Rows(output[i].ExplainResult...))
+	}
+}
+
 func TestIssue44051(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -144,4 +179,22 @@ func TestIssue45036(t *testing.T) {
 		"  └─SelectLock_7 8000.00 root  for update 0",
 		"    └─TableReader_9 10000.00 root partition:all data:TableRangeScan_8",
 		"      └─TableRangeScan_8 10000.00 cop[tikv] table:s range:[1,100000], keep order:false, stats:pseudo"))
+}
+
+func TestIssue45758(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE tb1 (cid INT, code INT, class VARCHAR(10))")
+	tk.MustExec("CREATE TABLE tb2 (cid INT, code INT, class VARCHAR(10))")
+	// result ok
+	tk.MustExec("UPDATE tb1, (SELECT code AS cid, code, MAX(class) AS class FROM tb2 GROUP BY code) tb3 SET tb1.cid = tb3.cid, tb1.code = tb3.code, tb1.class = tb3.class")
+}
+
+func TestIssue46083(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TEMPORARY TABLE v0(v1 int)")
+	tk.MustExec("INSERT INTO v0 WITH ta2 AS (TABLE v0) TABLE ta2 FOR UPDATE OF ta2;")
 }

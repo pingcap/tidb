@@ -20,6 +20,7 @@ package types
 
 import (
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 
@@ -175,18 +176,11 @@ func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound u
 		return uint64(int64(val)), overflow(val, tp)
 	}
 
-	ubf := float64(upperBound)
-	// Because math.MaxUint64 can not be represented precisely in iee754(64bit),
-	// so `float64(math.MaxUint64)` will make a num bigger than math.MaxUint64,
-	// which can not be represented by 64bit integer.
-	// So `uint64(float64(math.MaxUint64))` is undefined behavior.
-	if val == ubf {
-		return math.MaxUint64, nil
+	ret, acc := new(big.Float).SetFloat64(val).Uint64()
+	if acc == big.Below || ret > upperBound {
+		return upperBound, overflow(val, tp)
 	}
-	if val > ubf {
-		return math.MaxUint64, overflow(val, tp)
-	}
-	return uint64(val), nil
+	return ret, nil
 }
 
 // convertScientificNotation converts a decimal string with scientific notation to a normal decimal string.

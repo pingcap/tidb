@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -45,14 +46,11 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -63,7 +61,6 @@ import (
 	tikvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // GCWorker periodically triggers GC process on tikv server.
@@ -831,44 +828,6 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 	return nil
 }
 
-const (
-	getRaftKvVersionSQL = "show config where type = 'tikv' && name = 'storage.engine'"
-	raftKv2             = "raft-kv2"
-)
-
-// IsRaftKv2 checks whether the raft-kv2 is enabled
-func isRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
-	// Mock store does not support `show config` now, so we  use failpoint here
-	// to control whether we are in raft-kv2
-	failpoint.Inject("isRaftKv2", func(v failpoint.Value) (bool, error) {
-		v2, _ := v.(bool)
-		return v2, nil
-	})
-
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, getRaftKvVersionSQL)
-	if rs != nil {
-		defer terror.Call(rs.Close)
-	}
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	req := rs.NewChunk(nil)
-	it := chunk.NewIterator4Chunk(req)
-	err = rs.Next(context.TODO(), req)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	row := it.Begin()
-
-	if row.IsEmpty() {
-		return false, nil
-	}
-
-	// All nodes should have the same type of engine
-	raftVersion := row.GetString(3)
-	return raftVersion == raftKv2, nil
-}
-
 // deleteRanges processes all delete range records whose ts < safePoint in table `gc_delete_range`
 // `concurrency` specifies the concurrency to send NotifyDeleteRange.
 func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurrency int) error {
@@ -881,7 +840,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		return errors.Trace(err)
 	}
 
-	v2, err := isRaftKv2(ctx, se)
+	v2, err := util.IsRaftKv2(ctx, se)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1646,8 +1605,8 @@ func (w *GCWorker) checkLockObservers(ctx context.Context, safePoint uint64, sto
 			for i, lockInfo := range respInner.Locks {
 				locks[i] = txnlock.NewLock(lockInfo)
 			}
-			slices.SortFunc(locks, func(i, j *txnlock.Lock) bool {
-				return bytes.Compare(i.Key, j.Key) < 0
+			slices.SortFunc(locks, func(i, j *txnlock.Lock) int {
+				return bytes.Compare(i.Key, j.Key)
 			})
 			err = w.resolveLocksAcrossRegions(ctx, locks)
 
@@ -2182,11 +2141,9 @@ func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr u
 			return
 		}
 		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
-	case model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
-		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
-			return
-		}
-	case model.ActionReorganizePartition:
+	case model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition,
+		model.ActionReorganizePartition, model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
 		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
 			return
 		}

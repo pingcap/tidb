@@ -257,19 +257,19 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 			return errors.Trace(err)
 		}
 	}
-	csDb, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.CharsetDatabase)
+	csDB, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.CharsetDatabase)
 	if err != nil {
 		return err
 	}
-	coDb, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.CollationDatabase)
+	coDB, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.CollationDatabase)
 	if err != nil {
 		return err
 	}
-	err = sessionVars.SetSystemVar(variable.CharacterSetConnection, csDb)
+	err = sessionVars.SetSystemVar(variable.CharacterSetConnection, csDB)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, coDb))
+	return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, coDB))
 }
 
 func (e *SetExecutor) getVarValue(ctx context.Context, v *expression.VarAssignment, sysVar *variable.SysVar) (value string, err error) {

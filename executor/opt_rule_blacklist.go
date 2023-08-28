@@ -32,7 +32,7 @@ type ReloadOptRuleBlacklistExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ReloadOptRuleBlacklistExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+func (e *ReloadOptRuleBlacklistExec) Next(context.Context, *chunk.Chunk) error {
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	return LoadOptRuleBlacklist(internalCtx, e.Ctx())
 }

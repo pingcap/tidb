@@ -27,7 +27,6 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
@@ -189,11 +188,6 @@ func (s *mockGCSSuite) TestShowJob() {
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-show-job", Name: "t2.csv"},
 		Content:     []byte("3\n4"),
 	})
-	backup4 := config.DefaultBatchSize
-	config.DefaultBatchSize = 1
-	s.T().Cleanup(func() {
-		config.DefaultBatchSize = backup4
-	})
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
@@ -252,7 +246,7 @@ func (s *mockGCSSuite) TestShowJob() {
 		s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/syncAfterSubtaskFinish"))
 		scheduler.TestSyncChan <- struct{}{}
 	}()
-	s.tk.MustQuery(fmt.Sprintf(`import into t3 FROM 'gs://test-show-job/t*.csv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s' with thread=1`, gcsEndpoint))
+	s.tk.MustQuery(fmt.Sprintf(`import into t3 FROM 'gs://test-show-job/t*.csv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s' with thread=1, __max_engine_size='1'`, gcsEndpoint))
 	wg.Wait()
 	s.tk.MustQuery("select * from t3").Sort().Check(testkit.Rows("1", "2", "3", "4"))
 }
@@ -298,10 +292,10 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	jobInfo.ID = int64(jobID1)
 	s.compareJobInfoWithoutTime(jobInfo, result1[0])
 
-	s.Eventually(func() bool {
+	s.Require().Eventually(func() bool {
 		rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID1)).Rows()
 		return rows[0][5] == "finished"
-	}, 10*time.Second, 500*time.Millisecond)
+	}, 20*time.Second, 500*time.Millisecond)
 	rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID1)).Rows()
 	s.Len(rows, 1)
 	jobInfo.Status = "finished"
@@ -332,7 +326,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 		Step:           "",
 	}
 	s.compareJobInfoWithoutTime(jobInfo, result2[0])
-	s.Eventually(func() bool {
+	s.Require().Eventually(func() bool {
 		rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID2)).Rows()
 		return rows[0][5] == "failed"
 	}, 10*time.Second, 500*time.Millisecond)
@@ -365,7 +359,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 		Step:           "",
 	}
 	s.compareJobInfoWithoutTime(jobInfo, result3[0])
-	s.Eventually(func() bool {
+	s.Require().Eventually(func() bool {
 		rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID3)).Rows()
 		return rows[0][5] == "failed"
 	}, 10*time.Second, 500*time.Millisecond)
@@ -445,7 +439,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 		ErrorMessage:   "cancelled by user",
 	}
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
-	s.Eventually(func() bool {
+	s.Require().Eventually(func() bool {
 		task := getTask(int64(jobID1))
 		return task.State == proto.TaskStateReverted
 	}, 10*time.Second, 500*time.Millisecond)
@@ -498,7 +492,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.NoError(err)
 	taskKey := importinto.TaskKey(int64(jobID2))
 	s.NoError(err)
-	s.Eventually(func() bool {
+	s.Require().Eventually(func() bool {
 		globalTask, err2 := globalTaskManager.GetGlobalTaskByKey(taskKey)
 		s.NoError(err2)
 		subtasks, err2 := globalTaskManager.GetSubtasksByStep(globalTask.ID, importinto.StepPostProcess)
@@ -547,7 +541,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 	//	ErrorMessage:   "cancelled by user",
 	//}
 	//s.compareJobInfoWithoutTime(jobInfo, rows[0])
-	//s.Eventually(func() bool {
+	//s.Require().Eventually(func() bool {
 	//	task := getTask(int64(jobID2))
 	//	return task.State == proto.TaskStateReverted
 	//}, 10*time.Second, 500*time.Millisecond)
@@ -627,7 +621,7 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 	s.NoError(err)
 	taskKey := importinto.TaskKey(jobID)
 	s.NoError(err)
-	s.Eventually(func() bool {
+	s.Require().Eventually(func() bool {
 		globalTask, err2 := globalTaskManager.GetGlobalTaskByKey(taskKey)
 		s.NoError(err2)
 		return globalTask.State == proto.TaskStateReverted

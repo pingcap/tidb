@@ -52,6 +52,7 @@ import (
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/sqlexec"
+	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -1069,7 +1070,12 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 			}
 			workType := typeReorgPartitionWorker
-			if reorgInfo.Job.Type != model.ActionReorganizePartition {
+			switch reorgInfo.Job.Type {
+			case model.ActionReorganizePartition,
+				model.ActionRemovePartitioning,
+				model.ActionAlterTablePartitioning:
+				// Expected
+			default:
 				// workType = typeUpdateColumnWorker
 				// TODO: Support Modify Column on partitioned table
 				// https://github.com/pingcap/tidb/issues/38297
@@ -1279,11 +1285,7 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in updateColumnWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
 
-			if taskRange.endInclude {
-				taskDone = recordKey.Cmp(taskRange.endKey) > 0
-			} else {
-				taskDone = recordKey.Cmp(taskRange.endKey) >= 0
-			}
+			taskDone = recordKey.Cmp(taskRange.endKey) >= 0
 
 			if taskDone || len(w.rowRecords) >= w.batchCnt {
 				return false, nil
@@ -1443,7 +1445,7 @@ func (w *updateColumnWorker) cleanRowMap() {
 // BackfillData will backfill the table record in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed.
 func (w *updateColumnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
-	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
+	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0

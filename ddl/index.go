@@ -16,12 +16,14 @@ package ddl
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -59,8 +61,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -1151,7 +1153,7 @@ func RemoveDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.Index
 		}
 	}
 	// Sort the offset in descending order.
-	slices.SortFunc(hiddenColOffs, func(a, b int) bool { return a > b })
+	slices.SortFunc(hiddenColOffs, func(a, b int) int { return cmp.Compare(b, a) })
 	// Move all the dependent hidden columns to the end.
 	endOffset := len(tblInfo.Columns) - 1
 	for _, offset := range hiddenColOffs {
@@ -1416,9 +1418,6 @@ func (w *baseIndexWorker) getNextKey(taskRange reorgBackfillTask, taskDone bool)
 		recordKey := tablecodec.EncodeRecordKey(taskRange.physicalTable.RecordPrefix(), lastHandle)
 		return recordKey.Next()
 	}
-	if taskRange.endInclude {
-		return taskRange.endKey.Next()
-	}
 	return taskRange.endKey
 }
 
@@ -1448,11 +1447,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in baseIndexWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
 
-			if taskRange.endInclude {
-				taskDone = recordKey.Cmp(taskRange.endKey) > 0
-			} else {
-				taskDone = recordKey.Cmp(taskRange.endKey) >= 0
-			}
+			taskDone = recordKey.Cmp(taskRange.endKey) >= 0
 
 			if taskDone || len(w.idxRecords) >= w.batchCnt {
 				return false, nil
@@ -1739,7 +1734,7 @@ func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx
 
 	oprStartTime := time.Now()
 	jobID := handleRange.getJobID()
-	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
+	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
 		taskCtx.finishTS = txn.StartTS()
 		taskCtx.addedCount = 0
@@ -2088,7 +2083,7 @@ func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 	})
 
 	oprStartTime := time.Now()
-	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
+	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0

@@ -16,6 +16,10 @@ package cache
 
 import (
 	"sync/atomic"
+
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 )
 
 // StatsCachePointer is used to cache the stats of a table.
@@ -24,11 +28,14 @@ type StatsCachePointer struct {
 }
 
 // NewStatsCachePointer creates a new StatsCache.
-func NewStatsCachePointer() *StatsCachePointer {
-	newCache := NewStatsCache()
+func NewStatsCachePointer() (*StatsCachePointer, error) {
+	newCache, err := NewStatsCache()
+	if err != nil {
+		return nil, err
+	}
 	result := StatsCachePointer{}
 	result.Store(newCache)
-	return &result
+	return &result, nil
 }
 
 // Load loads the cached stats from the cache.
@@ -38,5 +45,18 @@ func (s *StatsCachePointer) Load() *StatsCache {
 
 // Replace replaces the cache with the new cache.
 func (s *StatsCachePointer) Replace(newCache *StatsCache) {
-	s.Store(newCache)
+	old := s.Swap(newCache)
+	if old != nil {
+		old.Close()
+	}
+	metrics.CostGauge.Set(float64(newCache.Cost()))
+}
+
+// UpdateStatsCache updates the cache with the new cache.
+func (s *StatsCachePointer) UpdateStatsCache(newCache *StatsCache, tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) {
+	if enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota; enableQuota {
+		s.Load().Update(tables, deletedIDs, opts...)
+	} else {
+		s.Replace(newCache.CopyAndUpdate(tables, deletedIDs, opts...))
+	}
 }

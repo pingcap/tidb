@@ -15,10 +15,11 @@
 package handle
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,28 +42,30 @@ import (
 	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
+	"github.com/tiancaiamao/gp"
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const (
 	// TiDBGlobalStats represents the global-stats for a partitioned table.
 	TiDBGlobalStats = "global"
 
-	// maxPartitionMergeBatchSize indicates the max batch size for a worker to merge partition stats
-	maxPartitionMergeBatchSize = 256
+	// MaxPartitionMergeBatchSize indicates the max batch size for a worker to merge partition stats
+	MaxPartitionMergeBatchSize = 256
 )
 
 // Handle can update stats info periodically.
 type Handle struct {
+	// this gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
+	gpool *gp.Pool
+
 	pool sessionPool
 
 	// initStatsCtx is the ctx only used for initStats
@@ -90,12 +93,6 @@ type Handle struct {
 	// written only after acquiring the lock.
 	statsCache *cache.StatsCachePointer
 
-	// feedback is used to store query feedback info.
-	feedback struct {
-		data *statistics.QueryFeedbackMap
-		sync.Mutex
-	}
-
 	// globalMap contains all the delta map from collectors when we dump them to KV.
 	globalMap struct {
 		data tableDeltaMap
@@ -116,8 +113,6 @@ type Handle struct {
 
 	mu struct {
 		ctx sessionctx.Context
-		// rateMap contains the error rate delta from feedback.
-		rateMap errorRateDeltaMap
 		syncutil.RWMutex
 	}
 
@@ -447,13 +442,16 @@ func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, 
 func (h *Handle) Clear() {
 	// TODO: Here h.mu seems to protect all the fields of Handle. Is is reasonable?
 	h.mu.Lock()
-	h.statsCache.Replace(cache.NewStatsCache())
+	cache, err := cache.NewStatsCache()
+	if err != nil {
+		logutil.BgLogger().Warn("create stats cache failed", zap.Error(err))
+		h.mu.Unlock()
+		return
+	}
+	h.statsCache.Replace(cache)
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
-	h.feedback.Lock()
-	h.feedback.data = statistics.NewQueryFeedbackMap()
-	h.feedback.Unlock()
 	h.mu.ctx.GetSessionVars().InitChunkSize = 1
 	h.mu.ctx.GetSessionVars().MaxChunkSize = 1
 	h.mu.ctx.GetSessionVars().EnableChunkRPC = false
@@ -465,7 +463,6 @@ func (h *Handle) Clear() {
 	h.colMap.Lock()
 	h.colMap.data = make(colStatsUsageMap)
 	h.colMap.Unlock()
-	h.mu.rateMap = make(errorRateDeltaMap)
 	h.mu.Unlock()
 }
 
@@ -478,8 +475,9 @@ type sessionPool interface {
 func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
 	handle := &Handle{
+		gpool:                   gp.New(math.MaxInt16, time.Minute),
 		ddlEventCh:              make(chan *ddlUtil.Event, 1000),
-		listHead:                &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
+		listHead:                NewSessionStatsCollector(),
 		idxUsageListHead:        &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
 		pool:                    pool,
 		sysProcTracker:          tracker,
@@ -489,16 +487,18 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
 	handle.mu.ctx = ctx
-	handle.mu.rateMap = make(errorRateDeltaMap)
-	handle.statsCache = cache.NewStatsCachePointer()
+	statsCache, err := cache.NewStatsCachePointer()
+	if err != nil {
+		return nil, err
+	}
+	handle.statsCache = statsCache
 	handle.globalMap.data = make(tableDeltaMap)
-	handle.feedback.data = statistics.NewQueryFeedbackMap()
 	handle.colMap.data = make(colStatsUsageMap)
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.WorkingColMap = map[model.TableItemID][]chan stmtctx.StatsLoadResult{}
-	err := handle.RefreshVars()
+	err = handle.RefreshVars()
 	if err != nil {
 		return nil, err
 	}
@@ -513,16 +513,6 @@ func (h *Handle) Lease() time.Duration {
 // SetLease sets the stats lease.
 func (h *Handle) SetLease(lease time.Duration) {
 	h.lease.Store(lease)
-}
-
-// GetQueryFeedback gets the query feedback. It is only used in test.
-func (h *Handle) GetQueryFeedback() *statistics.QueryFeedbackMap {
-	h.feedback.Lock()
-	defer func() {
-		h.feedback.data = statistics.NewQueryFeedbackMap()
-		h.feedback.Unlock()
-	}()
-	return h.feedback.data
 }
 
 // DurationToTS converts duration to timestamp.
@@ -617,7 +607,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
-	h.updateStatsCache(oldCache.CopyAndUpdate(tables, deletedTableIDs, opts...))
+	h.updateStatsCache(oldCache, tables, deletedTableIDs, opts...)
 	return nil
 }
 
@@ -643,13 +633,14 @@ func (h *Handle) UpdateSessionVar() error {
 // In the column statistics, the variable `num` is equal to the number of columns in the partition table.
 // In the index statistics, the variable `num` is always equal to one.
 type GlobalStats struct {
-	Hg          []*statistics.Histogram
-	Cms         []*statistics.CMSketch
-	TopN        []*statistics.TopN
-	Fms         []*statistics.FMSketch
-	Num         int
-	Count       int64
-	ModifyCount int64
+	Hg                    []*statistics.Histogram
+	Cms                   []*statistics.CMSketch
+	TopN                  []*statistics.TopN
+	Fms                   []*statistics.FMSketch
+	MissingPartitionStats []string
+	Num                   int
+	Count                 int64
+	ModifyCount           int64
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
@@ -664,7 +655,24 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		return
 	}
 	globalTableInfo := globalTable.Meta()
-	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, tablePartitionStats)
+	globalStats, err = h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, tablePartitionStats)
+	if err != nil {
+		return
+	}
+	if len(globalStats.MissingPartitionStats) > 0 {
+		var item string
+		if isIndex == 0 {
+			item = "columns"
+		} else {
+			item = "index"
+			if len(histIDs) > 0 {
+				item += " " + globalTableInfo.FindIndexNameByID(histIDs[0])
+			}
+		}
+		logutil.BgLogger().Warn("missing partition stats when merging global stats", zap.String("table", globalTableInfo.Name.L),
+			zap.String("item", item), zap.Strings("missing", globalStats.MissingPartitionStats))
+	}
+	return
 }
 
 func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
@@ -688,10 +696,6 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 	isIndex int, histIDs []int64,
 	allPartitionStats map[int64]*statistics.Table) (globalStats *GlobalStats, err error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
-	partitionIDs := make([]int64, 0, partitionNum)
-	for i := 0; i < partitionNum; i++ {
-		partitionIDs = append(partitionIDs, globalTableInfo.Partition.Definitions[i].ID)
-	}
 
 	// initialized the globalStats
 	globalStats = new(GlobalStats)
@@ -726,6 +730,17 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		allFms[i] = make([]*statistics.FMSketch, 0, partitionNum)
 	}
 
+	skipMissingPartitionStats := sc.GetSessionVars().SkipMissingPartitionStats
+	if sc.GetSessionVars().InRestrictedSQL {
+		// For AutoAnalyze and HandleDDLEvent(ActionDropTablePartition), we need to use @@global.tidb_skip_missing_partition_stats
+		val, err1 := sc.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
+		if err1 != nil {
+			logutil.BgLogger().Error("loading tidb_skip_missing_partition_stats failed", zap.Error(err1))
+			err = err1
+			return
+		}
+		skipMissingPartitionStats = variable.TiDBOptOn(val)
+	}
 	for _, def := range globalTableInfo.Partition.Definitions {
 		partitionID := def.ID
 		partitionTable, ok := h.getTableByPhysicalID(is, partitionID)
@@ -740,8 +755,14 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		}
 		// If pre-load partition stats isn't provided, then we load partition stats directly and set it into allPartitionStats
 		if allPartitionStats == nil || partitionStats == nil || !ok {
-			partitionStats, err = h.loadTablePartitionStats(tableInfo, &def)
-			if err != nil {
+			var err1 error
+			partitionStats, err1 = h.loadTablePartitionStats(tableInfo, &def)
+			if err1 != nil {
+				if skipMissingPartitionStats && types.ErrPartitionStatsMissing.Equal(err) {
+					globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, fmt.Sprintf("partition `%s`", def.Name.L))
+					continue
+				}
+				err = err1
 				return
 			}
 			if allPartitionStats == nil {
@@ -751,45 +772,61 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		}
 		for i := 0; i < globalStats.Num; i++ {
 			hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
+			skipPartition := false
 			if !analyzed {
-				var errMsg string
+				var missingPart string
 				if isIndex == 0 {
-					errMsg = fmt.Sprintf("table `%s` partition `%s` column `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
+					missingPart = fmt.Sprintf("partition `%s` column `%s`", def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
 				} else {
-					errMsg = fmt.Sprintf("table `%s` partition `%s` index `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
+					missingPart = fmt.Sprintf("partition `%s` index `%s`", def.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
 				}
-				err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
-				return
+				if !skipMissingPartitionStats {
+					err = types.ErrPartitionStatsMissing.GenWithStackByArgs(fmt.Sprintf("table `%s` %s", tableInfo.Name.L, missingPart))
+					return
+				}
+				globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, missingPart)
+				skipPartition = true
 			}
 			// partition stats is not empty but column stats(hist, topn) is missing
 			if partitionStats.RealtimeCount > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
-				var errMsg string
+				var missingPart string
 				if isIndex == 0 {
-					errMsg = fmt.Sprintf("table `%s` partition `%s` column `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
+					missingPart = fmt.Sprintf("partition `%s` column `%s`", def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
 				} else {
-					errMsg = fmt.Sprintf("table `%s` partition `%s` index `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
+					missingPart = fmt.Sprintf("partition `%s` index `%s`", def.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
 				}
-				err = types.ErrPartitionColumnStatsMissing.GenWithStackByArgs(errMsg)
-				return
+				if !skipMissingPartitionStats {
+					err = types.ErrPartitionColumnStatsMissing.GenWithStackByArgs(fmt.Sprintf("table `%s` %s", tableInfo.Name.L, missingPart))
+					return
+				}
+				globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, missingPart+" hist and topn")
+				skipPartition = true
 			}
 			if i == 0 {
 				// In a partition, we will only update globalStats.Count once
 				globalStats.Count += partitionStats.RealtimeCount
 				globalStats.ModifyCount += partitionStats.ModifyCount
 			}
-			allHg[i] = append(allHg[i], hg)
-			allCms[i] = append(allCms[i], cms)
-			allTopN[i] = append(allTopN[i], topN)
-			allFms[i] = append(allFms[i], fms)
+			if !skipPartition {
+				allHg[i] = append(allHg[i], hg)
+				allCms[i] = append(allCms[i], cms)
+				allTopN[i] = append(allTopN[i], topN)
+				allFms[i] = append(allFms[i], fms)
+			}
 		}
 	}
 
 	// After collect all of the statistics from the partition-level stats,
 	// we should merge them together.
 	for i := 0; i < globalStats.Num; i++ {
+		if len(allHg[i]) == 0 {
+			// If all partitions have no stats, we skip merging global stats because it may not handle the case `len(allHg[i]) == 0`
+			// correctly. It can avoid unexpected behaviors such as nil pointer panic.
+			continue
+		}
 		// Merge CMSketch
 		globalStats.Cms[i] = allCms[i][0].Copy()
-		for j := 1; j < partitionNum; j++ {
+		for j := 1; j < len(allCms[i]); j++ {
 			err = globalStats.Cms[i].MergeCMSketch(allCms[i][j])
 			if err != nil {
 				return
@@ -801,7 +838,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
 		var popedTopN []statistics.TopNMeta
 		wrapper := statistics.NewStatsWrapper(allHg[i], allTopN[i])
-		globalStats.TopN[i], popedTopN, allHg[i], err = h.mergeGlobalStatsTopN(sc, wrapper, sc.GetSessionVars().StmtCtx.TimeZone, sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex == 1)
+		globalStats.TopN[i], popedTopN, allHg[i], err = mergeGlobalStatsTopN(h.gpool, sc, wrapper, sc.GetSessionVars().StmtCtx.TimeZone, sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex == 1)
 		if err != nil {
 			return
 		}
@@ -819,7 +856,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 
 		// Update NDV of global-level stats
 		globalStats.Fms[i] = allFms[i][0].Copy()
-		for j := 1; j < partitionNum; j++ {
+		for j := 1; j < len(allFms[i]); j++ {
 			globalStats.Fms[i].MergeFMSketch(allFms[i][j])
 		}
 
@@ -833,7 +870,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 	return
 }
 
-func (h *Handle) mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics.StatsWrapper,
+func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *statistics.StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
@@ -845,17 +882,17 @@ func (h *Handle) mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics
 	batchSize := len(wrapper.AllTopN) / mergeConcurrency
 	if batchSize < 1 {
 		batchSize = 1
-	} else if batchSize > maxPartitionMergeBatchSize {
-		batchSize = maxPartitionMergeBatchSize
+	} else if batchSize > MaxPartitionMergeBatchSize {
+		batchSize = MaxPartitionMergeBatchSize
 	}
-	return h.mergeGlobalStatsTopNByConcurrency(mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killed)
+	return MergeGlobalStatsTopNByConcurrency(gp, mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killed)
 }
 
-// mergeGlobalStatsTopNByConcurrency merge partition topN by concurrency
+// MergeGlobalStatsTopNByConcurrency merge partition topN by concurrency
 // To merge global stats topn by concurrency, we will separate the partition topn in concurrency part and deal it with different worker.
 // mergeConcurrency is used to control the total concurrency of the running worker, and mergeBatchSize is sued to control
 // the partition size for each worker to solve it
-func (*Handle) mergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wrapper *statistics.StatsWrapper,
+func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatchSize int, wrapper *statistics.StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool, killed *uint32) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	if len(wrapper.AllTopN) < mergeConcurrency {
@@ -871,13 +908,15 @@ func (*Handle) mergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSiz
 		tasks = append(tasks, task)
 		start = end
 	}
-	var wg util.WaitGroupWrapper
+	var wg sync.WaitGroup
 	taskNum := len(tasks)
 	taskCh := make(chan *statistics.TopnStatsMergeTask, taskNum)
 	respCh := make(chan *statistics.TopnStatsMergeResponse, taskNum)
 	for i := 0; i < mergeConcurrency; i++ {
 		worker := statistics.NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killed)
-		wg.Run(func() {
+		wg.Add(1)
+		gp.Go(func() {
+			defer wg.Done()
 			worker.Run(timeZone, isIndex, n, version)
 		})
 	}
@@ -891,19 +930,15 @@ func (*Handle) mergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSiz
 
 	// handle Error
 	hasErr := false
+	errMsg := make([]string, 0)
 	for resp := range respCh {
 		if resp.Err != nil {
 			hasErr = true
+			errMsg = append(errMsg, resp.Err.Error())
 		}
 		resps = append(resps, resp)
 	}
 	if hasErr {
-		errMsg := make([]string, 0)
-		for _, resp := range resps {
-			if resp.Err != nil {
-				errMsg = append(errMsg, resp.Err.Error())
-			}
-		}
 		return nil, nil, nil, errors.New(strings.Join(errMsg, ","))
 	}
 
@@ -915,21 +950,13 @@ func (*Handle) mergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSiz
 			sorted = append(sorted, resp.TopN.TopN...)
 		}
 		leftTopn = append(leftTopn, resp.PopedTopn...)
-		for i, removeTopn := range resp.RemoveVals {
-			// Remove the value from the Hists.
-			if len(removeTopn) > 0 {
-				tmp := removeTopn
-				slices.SortFunc(tmp, func(i, j statistics.TopNMeta) bool {
-					cmpResult := bytes.Compare(i.Encoded, j.Encoded)
-					return cmpResult < 0
-				})
-				wrapper.AllHg[i].RemoveVals(tmp)
-			}
-		}
 	}
 
 	globalTopN, popedTopn := statistics.GetMergedTopNFromSortedSlice(sorted, n)
-	return globalTopN, statistics.SortTopnMeta(append(leftTopn, popedTopn...)), wrapper.AllHg, nil
+
+	result := append(leftTopn, popedTopn...)
+	statistics.SortTopnMeta(result)
+	return globalTopN, result, wrapper.AllHg, nil
 }
 
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
@@ -996,7 +1023,7 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 		tbl = statistics.PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
 		if tblInfo.GetPartitionInfo() == nil || h.statsCacheLen() < 64 {
-			h.updateStatsCache(statsCache.CopyAndUpdate([]*statistics.Table{tbl}, nil))
+			h.updateStatsCache(statsCache, []*statistics.Table{tbl}, nil)
 		}
 		return tbl
 	}
@@ -1007,12 +1034,17 @@ func (h *Handle) statsCacheLen() int {
 	return h.statsCache.Load().Len()
 }
 
-// updateStatsCache overrides the global statsCache with a new one, it may fail
+func (h *Handle) initStatsCache(newCache *cache.StatsCache) {
+	h.statsCache.Replace(newCache)
+}
+
+// updateStatsCache will update statsCache into non COW mode.
+// If it is in the COW mode. it overrides the global statsCache with a new one, it may fail
 // if the global statsCache has been modified by others already.
 // Callers should add retry loop if necessary.
-func (h *Handle) updateStatsCache(newCache *cache.StatsCache) (updated bool) {
-	h.statsCache.Replace(newCache)
-	handle_metrics.CostGauge.Set(float64(newCache.Cost()))
+func (h *Handle) updateStatsCache(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64,
+	opts ...cache.TableStatsOpt) (updated bool) {
+	h.statsCache.UpdateStatsCache(newCache, tables, deletedIDs, opts...)
 	return true
 }
 
@@ -1102,7 +1134,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 	}
 	tbl = tbl.Copy()
 	tbl.Columns[c.ID] = colHist
-	if h.updateStatsCache(oldCache.CopyAndUpdate([]*statistics.Table{tbl}, nil)) {
+	if h.updateStatsCache(oldCache, []*statistics.Table{tbl}, nil) {
 		statistics.HistogramNeededItems.Delete(col)
 	}
 	return nil
@@ -1143,7 +1175,7 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v", idx.TableID, idx.ID))
 	}
 	idxHist := &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fms,
-		Info: index.Info, ErrorRate: index.ErrorRate, StatsVer: rows[0].GetInt64(0),
+		Info: index.Info, StatsVer: rows[0].GetInt64(0),
 		Flag: index.Flag, PhysicalID: idx.TableID,
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
 	index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
@@ -1155,7 +1187,7 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 	}
 	tbl = tbl.Copy()
 	tbl.Indices[idx.ID] = idxHist
-	if h.updateStatsCache(oldCache.CopyAndUpdate([]*statistics.Table{tbl}, nil)) {
+	if h.updateStatsCache(oldCache, []*statistics.Table{tbl}, nil) {
 		statistics.HistogramNeededItems.Delete(idx)
 	}
 	return nil
@@ -1176,9 +1208,6 @@ func (h *Handle) FlushStats() {
 	}
 	if err := h.DumpStatsDeltaToKV(DumpAll); err != nil {
 		logutil.BgLogger().Error("dump stats delta fail", zap.String("category", "stats"), zap.Error(err))
-	}
-	if err := h.DumpStatsFeedbackToKV(); err != nil {
-		logutil.BgLogger().Error("dump stats feedback fail", zap.String("category", "stats"), zap.Error(err))
 	}
 }
 
@@ -1204,16 +1233,6 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 	}
 	if reader.IsHistory() || statsTbl == nil {
 		return statsTbl, nil
-	}
-	for histID, idx := range statsTbl.Indices {
-		if statistics.IsAnalyzed(idx.Flag) {
-			h.mu.rateMap.clear(physicalID, histID, true)
-		}
-	}
-	for histID, col := range statsTbl.Columns {
-		if statistics.IsAnalyzed(col.Flag) {
-			h.mu.rateMap.clear(physicalID, histID, false)
-		}
 	}
 	return statsTbl, nil
 }
@@ -1798,7 +1817,7 @@ func (h *Handle) removeExtendedStatsItem(tableID int64, statsName string) {
 		}
 		newTbl := tbl.Copy()
 		delete(newTbl.ExtendedStats.Stats, statsName)
-		if h.updateStatsCache(oldCache.CopyAndUpdate([]*statistics.Table{newTbl}, nil)) {
+		if h.updateStatsCache(oldCache, []*statistics.Table{newTbl}, nil) {
 			return
 		}
 		if retry == 1 {
@@ -1831,7 +1850,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 			}
 			tables = append(tables, t)
 		}
-		if h.updateStatsCache(oldCache.CopyAndUpdate(tables, nil)) {
+		if h.updateStatsCache(oldCache, tables, nil) {
 			return nil
 		}
 	}
@@ -2268,18 +2287,11 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 	}
 	sc := v
 	sc.SetCapacity(c)
+	logutil.BgLogger().Info("update stats cache capacity successfully", zap.Int64("capacity", c))
 }
 
-// GetStatsCacheFrontTable gets front table in statsCacheInner implementation
-// only used for test
-func (h *Handle) GetStatsCacheFrontTable() int64 {
-	if h == nil {
-		return 0
-	}
-	v := h.statsCache.Load()
-	if v == nil {
-		return 0
-	}
-	sc := v
-	return sc.Front()
+// Close stops the background
+func (h *Handle) Close() {
+	h.statsCache.Load().Close()
+	h.gpool.Close()
 }

@@ -30,12 +30,12 @@ import (
 // SortedBuilder is used to build histograms for PK and index.
 type SortedBuilder struct {
 	sc              *stmtctx.StatementContext
+	hist            *Histogram
 	numBuckets      int64
 	valuesPerBucket int64
 	lastNumber      int64
 	bucketIdx       int64
 	Count           int64
-	hist            *Histogram
 	needBucketNDV   bool
 }
 

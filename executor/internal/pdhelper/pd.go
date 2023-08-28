@@ -36,10 +36,10 @@ var globalPDHelperOnce sync.Once
 
 // PDHelper is used to get some information from PD.
 type PDHelper struct {
-	wg                                       util.WaitGroupWrapper
 	cacheForApproximateTableCountFromStorage *ttlcache.Cache[string, float64]
 
 	getApproximateTableCountFromStorageFunc func(sctx sessionctx.Context, tid int64, dbName, tableName, partitionName string) (float64, bool)
+	wg                                      util.WaitGroupWrapper
 }
 
 func defaultPDHelper() *PDHelper {

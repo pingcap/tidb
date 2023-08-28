@@ -73,7 +73,7 @@ func NewPrepareExec(ctx sessionctx.Context, sqlTxt string) *PrepareExec {
 }
 
 // Next implements the Executor Next interface.
-func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *PrepareExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	vars := e.Ctx().GetSessionVars()
 	if e.ID != 0 {
 		// Must be the case when we retry a prepare.
@@ -164,7 +164,7 @@ type ExecuteExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ExecuteExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (*ExecuteExec) Next(context.Context, *chunk.Chunk) error {
 	return nil
 }
 
@@ -191,7 +191,7 @@ type DeallocateExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *DeallocateExec) Next(context.Context, *chunk.Chunk) error {
 	vars := e.Ctx().GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {

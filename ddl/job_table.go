@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -44,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 var (
@@ -266,7 +266,7 @@ func (d *ddl) startDispatchLoop() {
 		notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
 	}
 	ticker := time.NewTicker(dispatchLoopWaitingDuration)
-	if err := d.doCheckClusterState(false); err != nil {
+	if err := d.checkAndUpdateClusterState(true); err != nil {
 		logutil.BgLogger().Fatal("dispatch loop get cluster state failed, it should not happen, please try restart TiDB", zap.Error(err))
 	}
 	defer ticker.Stop()
@@ -294,7 +294,7 @@ func (d *ddl) startDispatchLoop() {
 		case <-d.ctx.Done():
 			return
 		}
-		if err := d.needCheckClusterState(isOnce); err != nil {
+		if err := d.checkAndUpdateClusterState(isOnce); err != nil {
 			continue
 		}
 		isOnce = false
@@ -303,22 +303,16 @@ func (d *ddl) startDispatchLoop() {
 	}
 }
 
-func (d *ddl) needCheckClusterState(mustCheck bool) error {
+func (d *ddl) checkAndUpdateClusterState(needUpdate bool) error {
 	select {
 	case _, ok := <-d.stateSyncer.WatchChan():
-		return d.doCheckClusterState(!ok)
-	default:
-		if mustCheck {
-			return d.doCheckClusterState(false)
+		if !ok {
+			d.stateSyncer.Rewatch(d.ctx)
 		}
-	}
-	return nil
-}
-
-func (d *ddl) doCheckClusterState(needRewatch bool) error {
-	if needRewatch {
-		d.stateSyncer.Rewatch(d.ctx)
-		return nil
+	default:
+		if !needUpdate {
+			return nil
+		}
 	}
 
 	oldState := d.stateSyncer.IsUpgradingState()

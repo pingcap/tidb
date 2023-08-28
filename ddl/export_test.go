@@ -27,10 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-func SetBatchInsertDeleteRangeSize(i int) {
-	batchInsertDeleteRangeSize = i
-}
-
 var NewCopContext4Test = newCopContext
 
 type resultChanForTest struct {

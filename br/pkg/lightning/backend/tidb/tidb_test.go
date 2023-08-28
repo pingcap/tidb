@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	gmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -370,7 +372,7 @@ func TestFetchRemoteTableModels_4_0(t *testing.T) {
 			AddRow("t", "id", "bigint(20) unsigned", "", "auto_increment"))
 	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
 		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID"}).
-			AddRow("test", "t", "id", int64(1)))
+			AddRow("test", "t", "id", "10942694589135710585"))
 	s.mockDB.ExpectCommit()
 
 	targetInfoGetter := tidb.NewTargetInfoGetter(s.dbHandle)
@@ -667,6 +669,48 @@ func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.Error(t, err)
+	st, err := writer.Close(ctx)
+	require.NoError(t, err)
+	require.Nil(t, st)
+}
+
+func TestWriteRowsRecordOneError(t *testing.T) {
+	dupErr := &gmysql.MySQLError{Number: errno.ErrDupEntry, Message: "Duplicate entry '2' for key 'PRIMARY'"}
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
+	// First, batch insert, fail and rollback.
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1),(2),(3),(4),(5)\\E").
+		WillReturnError(dupErr)
+	// Then, insert row-by-row due to the non-retryable error.
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1)\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
+		WillReturnError(dupErr)
+	s.mockDB.
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.conflict_records.*").
+		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "8.csv", int64(0), dupErr.Error(), 0, "(2)").
+		WillReturnResult(driver.ResultNoRows)
+
+	cfg := config.NewConfig()
+	cfg.Conflict.Strategy = config.ErrorOnDup
+	cfg.Conflict.Threshold = 0
+	cfg.Conflict.MaxRecordRows = 0
+	cfg.App.TaskInfoSchemaName = "tidb_lightning_errors"
+	ignoreBackend := tidb.NewTiDBBackend(context.Background(), s.dbHandle, cfg.Conflict,
+		errormanager.New(s.dbHandle, cfg, log.L()),
+	)
+	encBuilder := tidb.NewEncodingBuilder()
+	dataRows := encodeRowsTiDB(t, encBuilder, s.tbl)
+	ctx := context.Background()
+	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
+	require.NoError(t, err)
+	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	require.NoError(t, err)
+	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
+	require.ErrorContains(t, err, "Duplicate entry '2' for key 'PRIMARY'")
 	st, err := writer.Close(ctx)
 	require.NoError(t, err)
 	require.Nil(t, st)

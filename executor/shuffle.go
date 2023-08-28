@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor/internal/exec"
+	"github.com/pingcap/tidb/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/channel"
@@ -299,6 +300,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 				case <-e.finishCh:
 					return
 				case results[workerIdx] = <-w.receivers[dataSourceIndex].inputHolderCh:
+					//nolint: revive
 					break
 				}
 			}
@@ -346,7 +348,7 @@ func (e *shuffleReceiver) Close() error {
 
 // Next implements the Executor Next interface.
 // It is called by `Tail` executor within "shuffle", to fetch data from `DataSource` by `inputCh`.
-func (e *shuffleReceiver) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *shuffleReceiver) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.executed {
 		return nil
@@ -443,7 +445,7 @@ func buildPartitionHashSplitter(concurrency int, byItems []expression.Expression
 type partitionRangeSplitter struct {
 	byItems      []expression.Expression
 	numWorkers   int
-	groupChecker *vecGroupChecker
+	groupChecker *vecgroupchecker.VecGroupChecker
 	idx          int
 }
 
@@ -451,7 +453,7 @@ func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItem
 	return &partitionRangeSplitter{
 		byItems:      byItems,
 		numWorkers:   concurrency,
-		groupChecker: newVecGroupChecker(ctx, byItems),
+		groupChecker: vecgroupchecker.NewVecGroupChecker(ctx, byItems),
 		idx:          0,
 	}
 }
@@ -459,15 +461,15 @@ func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItem
 // This method is supposed to be used for shuffle with sorted `dataSource`
 // the caller of this method should guarantee that `input` is grouped,
 // which means that rows with the same byItems should be continuous, the order does not matter.
-func (s *partitionRangeSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
-	_, err := s.groupChecker.splitIntoGroups(input)
+func (s *partitionRangeSplitter) split(_ sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
+	_, err := s.groupChecker.SplitIntoGroups(input)
 	if err != nil {
 		return workerIndices, err
 	}
 
 	workerIndices = workerIndices[:0]
-	for !s.groupChecker.isExhausted() {
-		begin, end := s.groupChecker.getNextGroup()
+	for !s.groupChecker.IsExhausted() {
+		begin, end := s.groupChecker.GetNextGroup()
 		for i := begin; i < end; i++ {
 			workerIndices = append(workerIndices, s.idx)
 		}

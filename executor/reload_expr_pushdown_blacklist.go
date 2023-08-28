@@ -34,7 +34,7 @@ type ReloadExprPushdownBlacklistExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ReloadExprPushdownBlacklistExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+func (e *ReloadExprPushdownBlacklistExec) Next(context.Context, *chunk.Chunk) error {
 	return LoadExprPushdownBlacklist(e.Ctx())
 }
 
@@ -53,7 +53,7 @@ func LoadExprPushdownBlacklist(sctx sessionctx.Context) (err error) {
 		if alias, ok := funcName2Alias[name]; ok {
 			name = alias
 		}
-		var value uint32 = 0
+		var value uint32
 		if val, ok := newBlocklist[name]; ok {
 			value = val
 		}

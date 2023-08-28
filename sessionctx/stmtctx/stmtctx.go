@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -45,7 +46,6 @@ import (
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -159,6 +159,7 @@ type StatementContext struct {
 	InSelectStmt                  bool
 	InLoadDataStmt                bool
 	InExplainStmt                 bool
+	InExplainAnalyzeStmt          bool
 	ExplainFormat                 string
 	InCreateOrAlterStmt           bool
 	InSetSessionStatesStmt        bool
@@ -420,8 +421,8 @@ type StatementContext struct {
 type StmtHints struct {
 	// Hint Information
 	MemQuotaQuery           int64
-	ApplyCacheCapacity      int64
 	MaxExecutionTime        uint64
+	TidbKvReadTimeout       uint64
 	ReplicaRead             byte
 	AllowInSubqToJoinAndAgg bool
 	NoIndexMergeHint        bool
@@ -438,6 +439,7 @@ type StmtHints struct {
 	HasMemQuotaHint                bool
 	HasReplicaReadHint             bool
 	HasMaxExecutionTime            bool
+	HasTidbKvReadTimeout           bool
 	HasEnableCascadesPlannerHint   bool
 	HasResourceGroup               bool
 	SetVars                        map[string]string
@@ -449,6 +451,45 @@ type StmtHints struct {
 // TaskMapNeedBackUp indicates that whether we need to back up taskMap during physical optimizing.
 func (sh *StmtHints) TaskMapNeedBackUp() bool {
 	return sh.ForceNthPlan != -1
+}
+
+// Clone the StmtHints struct and returns the pointer of the new one.
+func (sh *StmtHints) Clone() *StmtHints {
+	var (
+		vars       map[string]string
+		tableHints []*ast.TableOptimizerHint
+	)
+	if len(sh.SetVars) > 0 {
+		vars = make(map[string]string, len(sh.SetVars))
+		for k, v := range sh.SetVars {
+			vars[k] = v
+		}
+	}
+	if len(sh.OriginalTableHints) > 0 {
+		tableHints = make([]*ast.TableOptimizerHint, len(sh.OriginalTableHints))
+		copy(tableHints, sh.OriginalTableHints)
+	}
+	return &StmtHints{
+		MemQuotaQuery:                  sh.MemQuotaQuery,
+		MaxExecutionTime:               sh.MaxExecutionTime,
+		TidbKvReadTimeout:              sh.TidbKvReadTimeout,
+		ReplicaRead:                    sh.ReplicaRead,
+		AllowInSubqToJoinAndAgg:        sh.AllowInSubqToJoinAndAgg,
+		NoIndexMergeHint:               sh.NoIndexMergeHint,
+		StraightJoinOrder:              sh.StraightJoinOrder,
+		EnableCascadesPlanner:          sh.EnableCascadesPlanner,
+		ForceNthPlan:                   sh.ForceNthPlan,
+		ResourceGroup:                  sh.ResourceGroup,
+		HasAllowInSubqToJoinAndAggHint: sh.HasAllowInSubqToJoinAndAggHint,
+		HasMemQuotaHint:                sh.HasMemQuotaHint,
+		HasReplicaReadHint:             sh.HasReplicaReadHint,
+		HasMaxExecutionTime:            sh.HasMaxExecutionTime,
+		HasTidbKvReadTimeout:           sh.HasTidbKvReadTimeout,
+		HasEnableCascadesPlannerHint:   sh.HasEnableCascadesPlannerHint,
+		HasResourceGroup:               sh.HasResourceGroup,
+		SetVars:                        vars,
+		OriginalTableHints:             tableHints,
+	}
 }
 
 // StmtCacheKey represents the key type in the StmtCache.

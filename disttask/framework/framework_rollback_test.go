@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,6 +16,7 @@ package framework_test
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -69,7 +70,7 @@ func (testRollbackMiniTask) String() string {
 }
 
 type rollbackScheduler struct {
-	v *atomic.Int64
+	m *sync.Map
 }
 
 func (*rollbackScheduler) InitSubtaskExecEnv(_ context.Context) error { return nil }
@@ -77,12 +78,12 @@ func (*rollbackScheduler) InitSubtaskExecEnv(_ context.Context) error { return n
 func (t *rollbackScheduler) CleanupSubtaskExecEnv(_ context.Context) error { return nil }
 
 func (t *rollbackScheduler) Rollback(_ context.Context) error {
-	t.v.Store(0)
+	t.m = &sync.Map{}
 	rollbackCnt.Add(1)
 	return nil
 }
 
-func (t *rollbackScheduler) SplitSubtask(_ context.Context, subtask []byte) ([]proto.MinimalTask, error) {
+func (t *rollbackScheduler) SplitSubtask(_ context.Context, _ []byte) ([]proto.MinimalTask, error) {
 	return []proto.MinimalTask{
 		testRollbackMiniTask{},
 		testRollbackMiniTask{},
@@ -95,24 +96,24 @@ func (t *rollbackScheduler) OnSubtaskFinished(_ context.Context, meta []byte) ([
 }
 
 type rollbackSubtaskExecutor struct {
-	v *atomic.Int64
+	m *sync.Map
 }
 
 func (e *rollbackSubtaskExecutor) Run(_ context.Context) error {
-	e.v.Add(1)
+	e.m.Store("1", "1")
 	return nil
 }
 
-func RegisterRollbackTaskMeta(v *atomic.Int64) {
+func RegisterRollbackTaskMeta(m *sync.Map) {
 	dispatcher.ClearTaskFlowHandle()
 	dispatcher.RegisterTaskFlowHandle(proto.TaskTypeExample, &rollbackFlowHandle{})
 	scheduler.ClearSchedulers()
 	scheduler.RegisterTaskType(proto.TaskTypeExample)
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
-		return &rollbackScheduler{v: v}, nil
-	}, scheduler.WithConcurrentSubtask())
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+		return &rollbackScheduler{m: m}, nil
+	})
 	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
-		return &rollbackSubtaskExecutor{v: v}, nil
+		return &rollbackSubtaskExecutor{m: m}, nil
 	})
 	rollbackCnt.Store(0)
 }
@@ -120,15 +121,16 @@ func RegisterRollbackTaskMeta(v *atomic.Int64) {
 func TestFrameworkRollback(t *testing.T) {
 	defer dispatcher.ClearTaskFlowHandle()
 	defer scheduler.ClearSchedulers()
-	var v atomic.Int64
-	RegisterRollbackTaskMeta(&v)
+	m := sync.Map{}
+
+	RegisterRollbackTaskMeta(&m)
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe", "1*return(true)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskAfterRefreshTask", "2*return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskAfterRefreshTask"))
 	}()
 
-	DispatchTaskAndCheckFail("key2", t, &v)
+	DispatchTaskAndCheckState("key2", t, &m, proto.TaskStateReverted)
 	require.Equal(t, int32(2), rollbackCnt.Load())
 	rollbackCnt.Store(0)
 	distContext.Close()

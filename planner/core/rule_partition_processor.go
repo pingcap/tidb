@@ -16,9 +16,11 @@ package core
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	gomath "math"
+	"slices"
 	"sort"
 	"strings"
 
@@ -37,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
-	"golang.org/x/exp/slices"
 )
 
 // FullRange represent used all partitions.
@@ -84,7 +85,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan, opt *logicalOptim
 				us := LogicalUnionScan{
 					conditions: p.conditions,
 					handleCols: p.handleCols,
-				}.Init(ua.ctx, ua.blockOffset)
+				}.Init(ua.SCtx(), ua.SelectBlockOffset())
 				us.SetChildren(child)
 				children = append(children, us)
 			}
@@ -467,7 +468,7 @@ func (s *partitionProcessor) processHashOrKeyPartition(ds *DataSource, pi *model
 	if used != nil {
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
 	}
-	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
+	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.SelectBlockOffset())
 	tableDual.schema = ds.Schema()
 	appendNoPartitionChildTraceStep(ds, tableDual, opt)
 	return tableDual, nil
@@ -551,7 +552,7 @@ func (l *listPartitionPruner) locatePartitionByCNFCondition(conds []expression.E
 			continue
 		}
 		if cnfLoc.IsEmpty() {
-			// No partition for intersection, just return 0 partition.
+			// No partition for intersection, just return no partitions.
 			return nil, false, nil
 		}
 		if !helper.Intersect(cnfLoc) {
@@ -591,6 +592,7 @@ func (l *listPartitionPruner) locatePartitionByColumn(cond *expression.ScalarFun
 	for _, cp := range l.listPrune.ColPrunes {
 		if cp.ExprCol.ID == condCols[0].ID {
 			colPrune = cp
+			break
 		}
 	}
 	if colPrune == nil {
@@ -620,14 +622,36 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 			if err != nil {
 				return nil, false, err
 			}
-			locations = []tables.ListPartitionLocation{location}
+			if colPrune.HasDefault() {
+				if location == nil || len(l.listPrune.ColPrunes) > 1 {
+					if location != nil {
+						locations = append(locations, location)
+					}
+					location = tables.ListPartitionLocation{
+						tables.ListPartitionGroup{
+							PartIdx:   l.listPrune.GetDefaultIdx(),
+							GroupIdxs: []int{-1}, // Special group!
+						},
+					}
+				}
+			}
+			locations = append(locations, location)
 		} else {
-			locations, err = colPrune.LocateRanges(sc, r)
+			locations, err = colPrune.LocateRanges(sc, r, l.listPrune.GetDefaultIdx())
 			if types.ErrOverflow.Equal(err) {
 				return nil, true, nil // return full-scan if over-flow
 			}
 			if err != nil {
 				return nil, false, err
+			}
+			if colPrune.HasDefault() /* && len(l.listPrune.ColPrunes) > 1 */ {
+				locations = append(locations,
+					tables.ListPartitionLocation{
+						tables.ListPartitionGroup{
+							PartIdx:   l.listPrune.GetDefaultIdx(),
+							GroupIdxs: []int{-1}, // Special group!
+						},
+					})
 			}
 		}
 		for _, location := range locations {
@@ -759,7 +783,7 @@ func (s *partitionProcessor) prune(ds *DataSource, opt *logicalOptimizeOp) (Logi
 	// like 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
 	// TODO: there may be a better way to push down Not once for all.
 	for i, cond := range ds.allConds {
-		ds.allConds[i] = expression.PushDownNot(ds.ctx, cond)
+		ds.allConds[i] = expression.PushDownNot(ds.SCtx(), cond)
 	}
 	// Try to locate partition directly for hash partition.
 	switch pi.Type {
@@ -978,7 +1002,7 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 }
 
 func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.PartitionInfo, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	used, err := s.pruneRangePartition(ds.ctx, pi, ds.table.(table.PartitionedTable), ds.allConds, ds.TblCols, ds.names)
+	used, err := s.pruneRangePartition(ds.SCtx(), pi, ds.table.(table.PartitionedTable), ds.allConds, ds.TblCols, ds.names)
 	if err != nil {
 		return nil, err
 	}
@@ -993,7 +1017,7 @@ func (s *partitionProcessor) processListPartition(ds *DataSource, pi *model.Part
 	if used != nil {
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
 	}
-	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
+	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.SelectBlockOffset())
 	tableDual.schema = ds.Schema()
 	appendNoPartitionChildTraceStep(ds, tableDual, opt)
 	return tableDual, nil
@@ -1145,6 +1169,14 @@ func maxCmp(ctx sessionctx.Context, hiVal []types.Datum, columnsPruner *rangeCol
 			}
 			if cmp < 0 {
 				return false
+			}
+		}
+		// All hiVal == columnsPruner.lessThan
+		if len(hiVal) < len(columnsPruner.lessThan[i]) {
+			// Not all columns given
+			if columnsPruner.lessThan[i][len(hiVal)] == nil {
+				// MAXVALUE
+				return true
 			}
 		}
 		// if point is included, then false, due to LESS THAN
@@ -1582,12 +1614,12 @@ func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune, unsigned 
 
 func (*partitionProcessor) resolveAccessPaths(ds *DataSource) error {
 	possiblePaths, err := getPossibleAccessPaths(
-		ds.ctx, &tableHintInfo{indexMergeHintList: ds.indexMergeHints, indexHintList: ds.IndexHints},
+		ds.SCtx(), &tableHintInfo{indexMergeHintList: ds.indexMergeHints, indexHintList: ds.IndexHints},
 		ds.astIndexHints, ds.table, ds.DBName, ds.tableInfo.Name, ds.isForUpdateRead, true)
 	if err != nil {
 		return err
 	}
-	possiblePaths, err = filterPathByIsolationRead(ds.ctx, possiblePaths, ds.tableInfo.Name, ds.DBName)
+	possiblePaths, err = filterPathByIsolationRead(ds.SCtx(), possiblePaths, ds.tableInfo.Name, ds.DBName)
 	if err != nil {
 		return err
 	}
@@ -1654,7 +1686,7 @@ func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName m
 		}
 	}
 	if ds.preferStoreType&preferTiFlash != 0 && ds.preferStoreType&preferTiKV != 0 {
-		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(
+		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(
 			errors.New("hint `read_from_storage` has conflict storage type for the partition " + partitionName.L))
 	}
 
@@ -1683,16 +1715,16 @@ func appendWarnForUnknownPartitions(ctx sessionctx.Context, hintName string, unk
 func (*partitionProcessor) checkHintsApplicable(ds *DataSource, partitionSet set.StringSet) {
 	for _, idxHint := range ds.IndexHints {
 		unknownPartitions := checkTableHintsApplicableForPartition(idxHint.partitions, partitionSet)
-		appendWarnForUnknownPartitions(ds.ctx, restore2IndexHint(idxHint.hintTypeString(), idxHint), unknownPartitions)
+		appendWarnForUnknownPartitions(ds.SCtx(), restore2IndexHint(idxHint.hintTypeString(), idxHint), unknownPartitions)
 	}
 	for _, idxMergeHint := range ds.indexMergeHints {
 		unknownPartitions := checkTableHintsApplicableForPartition(idxMergeHint.partitions, partitionSet)
-		appendWarnForUnknownPartitions(ds.ctx, restore2IndexHint(HintIndexMerge, idxMergeHint), unknownPartitions)
+		appendWarnForUnknownPartitions(ds.SCtx(), restore2IndexHint(HintIndexMerge, idxMergeHint), unknownPartitions)
 	}
 	unknownPartitions := checkTableHintsApplicableForPartition(ds.preferPartitions[preferTiKV], partitionSet)
 	unknownPartitions = append(unknownPartitions,
 		checkTableHintsApplicableForPartition(ds.preferPartitions[preferTiFlash], partitionSet)...)
-	appendWarnForUnknownPartitions(ds.ctx, HintReadFromStorage, unknownPartitions)
+	appendWarnForUnknownPartitions(ds.SCtx(), HintReadFromStorage, unknownPartitions)
 }
 
 func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.PartitionInfo, or partitionRangeOR, opt *logicalOptimizeOp) (LogicalPlan, error) {
@@ -1709,7 +1741,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			}
 			// Not a deep copy.
 			newDataSource := *ds
-			newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
+			newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.SelectBlockOffset())
 			newDataSource.schema = ds.schema.Clone()
 			newDataSource.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 			copy(newDataSource.Columns, ds.Columns)
@@ -1719,7 +1751,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			// There are many expression nodes in the plan tree use the original datasource
 			// id as FromID. So we set the id of the newDataSource with the original one to
 			// avoid traversing the whole plan tree to update the references.
-			newDataSource.id = ds.id
+			newDataSource.SetID(ds.ID())
 			err := s.resolveOptimizeHint(&newDataSource, pi.Definitions[i].Name)
 			partitionNameSet.Insert(pi.Definitions[i].Name.L)
 			if err != nil {
@@ -1733,7 +1765,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 
 	if len(children) == 0 {
 		// No result after table pruning.
-		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
+		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.SelectBlockOffset())
 		tableDual.schema = ds.Schema()
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, tableDual, children, opt)
 		return tableDual, nil
@@ -1743,7 +1775,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, children[0], children, opt)
 		return children[0], nil
 	}
-	unionAll := LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.blockOffset)
+	unionAll := LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.SelectBlockOffset())
 	unionAll.SetChildren(children...)
 	unionAll.SetSchema(ds.schema.Clone())
 	appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, unionAll, children, opt)
@@ -1942,12 +1974,12 @@ func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]
 	for _, def := range usedMap {
 		used = append(used, def)
 	}
-	slices.SortFunc(used, func(i, j model.PartitionDefinition) bool {
-		return i.ID < j.ID
+	slices.SortFunc(used, func(i, j model.PartitionDefinition) int {
+		return cmp.Compare(i.ID, j.ID)
 	})
 	if len(children) == 1 {
 		newDS := plan.(*DataSource)
-		newDS.id = origin.SCtx().GetSessionVars().AllocNewPlanID()
+		newDS.SetID(origin.SCtx().GetSessionVars().AllocNewPlanID())
 		action = func() string {
 			return fmt.Sprintf("%v_%v becomes %s_%v", origin.TP(), origin.ID(), newDS.TP(), newDS.ID())
 		}
@@ -1963,7 +1995,7 @@ func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]
 					buffer.WriteString(",")
 				}
 				newDS := child.(*DataSource)
-				newDS.id = origin.SCtx().GetSessionVars().AllocNewPlanID()
+				newDS.SetID(origin.SCtx().GetSessionVars().AllocNewPlanID())
 				fmt.Fprintf(buffer, "%s_%v", child.TP(), newDS.ID())
 			}
 			buffer.WriteString("]")

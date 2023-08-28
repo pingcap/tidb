@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/tracing"
-	"golang.org/x/exp/slices"
 )
 
 type memReader interface {
@@ -143,7 +143,7 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	}
 
 	if m.keepOrder && m.table.GetPartitionInfo() != nil {
-		slices.SortFunc(m.addedRows, func(a, b []types.Datum) bool {
+		slices.SortFunc(m.addedRows, func(a, b []types.Datum) int {
 			ret, err1 := m.compare(m.ctx.GetSessionVars().StmtCtx, a, b)
 			if err1 != nil {
 				err = err1
@@ -421,7 +421,7 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	}
 
 	if m.keepOrder && m.table.GetPartitionInfo() != nil {
-		slices.SortFunc(m.addedRows, func(a, b []types.Datum) bool {
+		slices.SortFunc(m.addedRows, func(a, b []types.Datum) int {
 			ret, err1 := m.compare(m.ctx.GetSessionVars().StmtCtx, a, b)
 			if err1 != nil {
 				err = err1
@@ -762,7 +762,7 @@ func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum,
 	return memTblReader.getMemRows(ctx)
 }
 
-func (m *memIndexLookUpReader) getMemRowsHandle() ([]kv.Handle, error) {
+func (*memIndexLookUpReader) getMemRowsHandle() ([]kv.Handle, error) {
 	return nil, errors.New("getMemRowsHandle has not been implemented for memIndexLookUpReader")
 }
 
@@ -780,6 +780,9 @@ type memIndexMergeReader struct {
 	partitionMode     bool                  // if it is accessing a partition table
 	partitionTables   []table.PhysicalTable // partition tables to access
 	partitionKVRanges [][][]kv.KeyRange     // kv ranges for these partition tables
+
+	keepOrder bool
+	compareExec
 }
 
 func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMergeReader *IndexMergeReaderExecutor) *memIndexMergeReader {
@@ -831,6 +834,9 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 		partitionMode:     indexMergeReader.partitionTableMode,
 		partitionTables:   indexMergeReader.prunedPartitions,
 		partitionKVRanges: indexMergeReader.partitionKeyRanges,
+
+		keepOrder:   us.keepOrder,
+		compareExec: us.compareExec,
 	}
 }
 
@@ -921,7 +927,24 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 		},
 	}
 
-	return memTblReader.getMemRows(ctx)
+	rows, err := memTblReader.getMemRows(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Didn't set keepOrder = true for memTblReader,
+	// In indexMerge, non-partitioned tables are also need reordered.
+	if m.keepOrder {
+		slices.SortFunc(rows, func(a, b []types.Datum) int {
+			ret, err1 := m.compare(m.ctx.GetSessionVars().StmtCtx, a, b)
+			if err1 != nil {
+				err = err1
+			}
+			return ret
+		})
+	}
+
+	return rows, err
 }
 
 // Union all handles of all partial paths.
@@ -980,7 +1003,7 @@ func (m *memIndexMergeReader) intersectionHandles(kvRanges [][]kv.KeyRange) (fin
 				cnt := 1
 				hMap.Set(h, &cnt)
 			} else {
-				*(cntPtr.(*int)) += 1
+				*(cntPtr.(*int))++
 			}
 		}
 	}
@@ -993,7 +1016,7 @@ func (m *memIndexMergeReader) intersectionHandles(kvRanges [][]kv.KeyRange) (fin
 	return finalHandles, nil
 }
 
-func (m *memIndexMergeReader) getMemRowsHandle() ([]kv.Handle, error) {
+func (*memIndexMergeReader) getMemRowsHandle() ([]kv.Handle, error) {
 	return nil, errors.New("getMemRowsHandle has not been implemented for memIndexMergeReader")
 }
 

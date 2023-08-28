@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // ExecDetails contains execution detail information.
@@ -583,15 +583,18 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 		storeType: crs.storeType,
 		BasicRuntimeStats: BasicRuntimeStats{
 			tiflashScanContext: TiFlashScanContext{
-				totalDmfileScannedPacks:            summary.GetTiflashScanContext().GetTotalDmfileScannedPacks(),
-				totalDmfileSkippedPacks:            summary.GetTiflashScanContext().GetTotalDmfileSkippedPacks(),
-				totalDmfileScannedRows:             summary.GetTiflashScanContext().GetTotalDmfileScannedRows(),
-				totalDmfileSkippedRows:             summary.GetTiflashScanContext().GetTotalDmfileSkippedRows(),
-				totalDmfileRoughSetIndexLoadTimeMs: summary.GetTiflashScanContext().GetTotalDmfileRoughSetIndexLoadTimeMs(),
-				totalDmfileReadTimeMs:              summary.GetTiflashScanContext().GetTotalDmfileReadTimeMs(),
-				totalCreateSnapshotTimeMs:          summary.GetTiflashScanContext().GetTotalCreateSnapshotTimeMs(),
-				totalLocalRegionNum:                summary.GetTiflashScanContext().GetTotalLocalRegionNum(),
-				totalRemoteRegionNum:               summary.GetTiflashScanContext().GetTotalRemoteRegionNum()}}, threads: int32(summary.GetConcurrency()),
+				totalDmfileScannedPacks:             summary.GetTiflashScanContext().GetTotalDmfileScannedPacks(),
+				totalDmfileSkippedPacks:             summary.GetTiflashScanContext().GetTotalDmfileSkippedPacks(),
+				totalDmfileScannedRows:              summary.GetTiflashScanContext().GetTotalDmfileScannedRows(),
+				totalDmfileSkippedRows:              summary.GetTiflashScanContext().GetTotalDmfileSkippedRows(),
+				totalDmfileRoughSetIndexCheckTimeMs: summary.GetTiflashScanContext().GetTotalDmfileRoughSetIndexCheckTimeMs(),
+				totalDmfileReadTimeMs:               summary.GetTiflashScanContext().GetTotalDmfileReadTimeMs(),
+				totalCreateSnapshotTimeMs:           summary.GetTiflashScanContext().GetTotalCreateSnapshotTimeMs(),
+				totalLocalRegionNum:                 summary.GetTiflashScanContext().GetTotalLocalRegionNum(),
+				totalRemoteRegionNum:                summary.GetTiflashScanContext().GetTotalRemoteRegionNum(),
+				totalLearnerReadMs:                  summary.GetTiflashScanContext().GetTotalLearnerReadMs(),
+				totalDisaggReadCacheHitSize:         summary.GetTiflashScanContext().GetTotalDisaggReadCacheHitSize(),
+				totalDisaggReadCacheMissSize:        summary.GetTiflashScanContext().GetTotalDisaggReadCacheMissSize()}}, threads: int32(summary.GetConcurrency()),
 		totalTasks: 1,
 	}
 	data.BasicRuntimeStats.loop.Store(int32(*summary.NumIterations))
@@ -716,33 +719,39 @@ type RuntimeStats interface {
 
 // TiFlashScanContext is used to express the table scan information in tiflash
 type TiFlashScanContext struct {
-	totalDmfileScannedPacks            uint64
-	totalDmfileScannedRows             uint64
-	totalDmfileSkippedPacks            uint64
-	totalDmfileSkippedRows             uint64
-	totalDmfileRoughSetIndexLoadTimeMs uint64
-	totalDmfileReadTimeMs              uint64
-	totalCreateSnapshotTimeMs          uint64
-	totalLocalRegionNum                uint64
-	totalRemoteRegionNum               uint64
+	totalDmfileScannedPacks             uint64
+	totalDmfileScannedRows              uint64
+	totalDmfileSkippedPacks             uint64
+	totalDmfileSkippedRows              uint64
+	totalDmfileRoughSetIndexCheckTimeMs uint64
+	totalDmfileReadTimeMs               uint64
+	totalCreateSnapshotTimeMs           uint64
+	totalLocalRegionNum                 uint64
+	totalRemoteRegionNum                uint64
+	totalLearnerReadMs                  uint64
+	totalDisaggReadCacheHitSize         uint64
+	totalDisaggReadCacheMissSize        uint64
 }
 
 // Clone implements the deep copy of * TiFlashshScanContext
 func (context *TiFlashScanContext) Clone() TiFlashScanContext {
 	return TiFlashScanContext{
-		totalDmfileScannedPacks:            context.totalDmfileScannedPacks,
-		totalDmfileScannedRows:             context.totalDmfileScannedRows,
-		totalDmfileSkippedPacks:            context.totalDmfileSkippedPacks,
-		totalDmfileSkippedRows:             context.totalDmfileSkippedRows,
-		totalDmfileRoughSetIndexLoadTimeMs: context.totalDmfileRoughSetIndexLoadTimeMs,
-		totalDmfileReadTimeMs:              context.totalDmfileReadTimeMs,
-		totalCreateSnapshotTimeMs:          context.totalCreateSnapshotTimeMs,
-		totalLocalRegionNum:                context.totalLocalRegionNum,
-		totalRemoteRegionNum:               context.totalRemoteRegionNum,
+		totalDmfileScannedPacks:             context.totalDmfileScannedPacks,
+		totalDmfileScannedRows:              context.totalDmfileScannedRows,
+		totalDmfileSkippedPacks:             context.totalDmfileSkippedPacks,
+		totalDmfileSkippedRows:              context.totalDmfileSkippedRows,
+		totalDmfileRoughSetIndexCheckTimeMs: context.totalDmfileRoughSetIndexCheckTimeMs,
+		totalDmfileReadTimeMs:               context.totalDmfileReadTimeMs,
+		totalCreateSnapshotTimeMs:           context.totalCreateSnapshotTimeMs,
+		totalLocalRegionNum:                 context.totalLocalRegionNum,
+		totalRemoteRegionNum:                context.totalRemoteRegionNum,
+		totalLearnerReadMs:                  context.totalLearnerReadMs,
+		totalDisaggReadCacheHitSize:         context.totalDisaggReadCacheHitSize,
+		totalDisaggReadCacheMissSize:        context.totalDisaggReadCacheMissSize,
 	}
 }
 func (context *TiFlashScanContext) String() string {
-	return fmt.Sprintf("tiflash_scan:{dtfile:{total_scanned_packs:%d, total_skipped_packs:%d, total_scanned_rows:%d, total_skipped_rows:%d, total_rs_index_load_time: %dms, total_read_time: %dms}, total_create_snapshot_time: %dms, total_local_region_num: %d, total_remote_region_num: %d}", context.totalDmfileScannedPacks, context.totalDmfileSkippedPacks, context.totalDmfileScannedRows, context.totalDmfileSkippedRows, context.totalDmfileRoughSetIndexLoadTimeMs, context.totalDmfileReadTimeMs, context.totalCreateSnapshotTimeMs, context.totalLocalRegionNum, context.totalRemoteRegionNum)
+	return fmt.Sprintf("tiflash_scan:{dtfile:{total_scanned_packs:%d, total_skipped_packs:%d, total_scanned_rows:%d, total_skipped_rows:%d, total_rs_index_check_time: %dms, total_read_time: %dms, total_disagg_read_cache_hit_size: %d, total_disagg_read_cache_miss_size: %d}, total_create_snapshot_time: %dms, total_local_region_num: %d, total_remote_region_num: %d, total_learner_read_time: %dms}", context.totalDmfileScannedPacks, context.totalDmfileSkippedPacks, context.totalDmfileScannedRows, context.totalDmfileSkippedRows, context.totalDmfileRoughSetIndexCheckTimeMs, context.totalDmfileReadTimeMs, context.totalDisaggReadCacheHitSize, context.totalDisaggReadCacheMissSize, context.totalCreateSnapshotTimeMs, context.totalLocalRegionNum, context.totalRemoteRegionNum, context.totalLearnerReadMs)
 }
 
 // Merge make sum to merge the information in TiFlashScanContext
@@ -751,11 +760,14 @@ func (context *TiFlashScanContext) Merge(other TiFlashScanContext) {
 	context.totalDmfileScannedRows += other.totalDmfileScannedRows
 	context.totalDmfileSkippedPacks += other.totalDmfileSkippedPacks
 	context.totalDmfileSkippedRows += other.totalDmfileSkippedRows
-	context.totalDmfileRoughSetIndexLoadTimeMs += other.totalDmfileRoughSetIndexLoadTimeMs
+	context.totalDmfileRoughSetIndexCheckTimeMs += other.totalDmfileRoughSetIndexCheckTimeMs
 	context.totalDmfileReadTimeMs += other.totalDmfileReadTimeMs
 	context.totalCreateSnapshotTimeMs += other.totalCreateSnapshotTimeMs
 	context.totalLocalRegionNum += other.totalLocalRegionNum
 	context.totalRemoteRegionNum += other.totalRemoteRegionNum
+	context.totalLearnerReadMs += other.totalLearnerReadMs
+	context.totalDisaggReadCacheHitSize += other.totalDisaggReadCacheHitSize
+	context.totalDisaggReadCacheMissSize += other.totalDisaggReadCacheMissSize
 }
 
 // Empty check whether TiFlashScanContext is Empty, if scan no pack and skip no pack, we regard it as empty

@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -24,13 +25,13 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/core/internal/base"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/size"
-	"golang.org/x/exp/slices"
 )
 
 // AggregateFuncExtractor visits Expr tree.
@@ -197,7 +198,7 @@ func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
 type baseSchemaProducer struct {
 	schema *expression.Schema
 	names  types.NameSlice
-	basePlan
+	base.Plan
 }
 
 // OutputNames returns the outputting names of each column.
@@ -233,7 +234,7 @@ func (s *baseSchemaProducer) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = size.SizeOfPointer + size.SizeOfSlice + int64(cap(s.names))*size.SizeOfPointer + s.basePlan.MemoryUsage()
+	sum = size.SizeOfPointer + size.SizeOfSlice + int64(cap(s.names))*size.SizeOfPointer + s.Plan.MemoryUsage()
 	if s.schema != nil {
 		sum += s.schema.MemoryUsage()
 	}
@@ -295,12 +296,12 @@ func GetStatsInfoFromFlatPlan(flat *FlatPhysicalPlan) map[string]uint64 {
 	for _, op := range flat.Main {
 		switch p := op.Origin.(type) {
 		case *PhysicalIndexScan:
-			if _, ok := res[p.Table.Name.O]; p.stats != nil && !ok {
-				res[p.Table.Name.O] = p.stats.StatsVersion
+			if _, ok := res[p.Table.Name.O]; p.StatsInfo() != nil && !ok {
+				res[p.Table.Name.O] = p.StatsInfo().StatsVersion
 			}
 		case *PhysicalTableScan:
-			if _, ok := res[p.Table.Name.O]; p.stats != nil && !ok {
-				res[p.Table.Name.O] = p.stats.StatsVersion
+			if _, ok := res[p.Table.Name.O]; p.StatsInfo() != nil && !ok {
+				res[p.Table.Name.O] = p.StatsInfo().StatsVersion
 			}
 		}
 	}
@@ -413,7 +414,7 @@ func clonePhysicalPlan(plans []PhysicalPlan) ([]PhysicalPlan, error) {
 }
 
 // GetPhysID returns the physical table ID.
-func GetPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, d types.Datum) (int64, error) {
+func GetPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, colPos int, d types.Datum) (int64, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return tblInfo.ID, nil
@@ -429,10 +430,17 @@ func GetPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, d 
 		partIdx := mathutil.Abs(intVal % int64(pi.Num))
 		return pi.Definitions[partIdx].ID, nil
 	case model.PartitionTypeKey:
-		if len(pi.Columns) > 1 {
+		if partitionExpr.ForKeyPruning == nil ||
+			len(pi.Columns) > 1 {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
-		partIdx, err := partitionExpr.LocateKeyPartitionWithSPC(pi, []types.Datum{d})
+		newKeyPartExpr := tables.ForKeyPruning{
+			KeyPartCols: []*expression.Column{{
+				Index:    colPos,
+				UniqueID: partitionExpr.KeyPartCols[0].UniqueID,
+			}},
+		}
+		partIdx, err := newKeyPartExpr.LocateKeyPartition(pi.Num, []types.Datum{d})
 		if err != nil {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}

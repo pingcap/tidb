@@ -16,12 +16,14 @@ package executor
 
 import (
 	"bytes"
+	"cmp"
 	"container/heap"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -47,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
-	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -78,7 +79,7 @@ type MemTableReaderExec struct {
 	cacheRetrieved bool
 }
 
-func (e *MemTableReaderExec) isInspectionCacheableTable(tblName string) bool {
+func (*MemTableReaderExec) isInspectionCacheableTable(tblName string) bool {
 	switch tblName {
 	case strings.ToLower(infoschema.TableClusterConfig),
 		strings.ToLower(infoschema.TableClusterInfo),
@@ -252,7 +253,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 					}
 					items = append(items, item{key: key, val: str})
 				}
-				slices.SortFunc(items, func(i, j item) bool { return i.key < j.key })
+				slices.SortFunc(items, func(i, j item) int { return cmp.Compare(i.key, j.key) })
 				var rows [][]types.Datum
 				for _, item := range items {
 					rows = append(rows, types.MakeDatums(
@@ -279,7 +280,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 		}
 		results = append(results, result)
 	}
-	slices.SortFunc(results, func(i, j result) bool { return i.idx < j.idx })
+	slices.SortFunc(results, func(i, j result) int { return cmp.Compare(i.idx, j.idx) })
 	for _, result := range results {
 		finalRows = append(finalRows, result.rows...)
 	}
@@ -579,7 +580,7 @@ func (e *clusterLogRetriever) close() error {
 	return nil
 }
 
-func (e *clusterLogRetriever) getRuntimeStats() execdetails.RuntimeStats {
+func (*clusterLogRetriever) getRuntimeStats() execdetails.RuntimeStats {
 	return nil
 }
 
@@ -803,7 +804,7 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 	return finalRows, nil
 }
 
-func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
+func (*hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 	hisHotRegion *HistoryHotRegion,
 	tikvHelper *helper.Helper,
 	tables []helper.TableInfoWithKeyRange,

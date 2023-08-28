@@ -34,11 +34,16 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+type visit struct {
+	a1  unsafe.Pointer
+	a2  unsafe.Pointer
+	typ reflect.Type
+}
 
 func TestShow(t *testing.T) {
 	node := &ast.ShowStmt{}
@@ -225,13 +230,11 @@ func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
 	col, cst := &expression.Column{RetType: types.NewFieldType(mysql.TypeString)}, &expression.Constant{RetType: types.NewFieldType(mysql.TypeLonglong)}
 	schema := expression.NewSchema(col)
 	tblInfo := &model.TableInfo{}
-	hist := &statistics.Histogram{Bounds: chunk.New(nil, 0, 0)}
 
 	// table scan
 	tableScan := &PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
-		Hist:            hist,
 	}
 	tableScan = tableScan.Init(ctx, 0)
 	tableScan.SetSchema(schema)
@@ -257,7 +260,6 @@ func TestPhysicalPlanClone(t *testing.T) {
 	schema := expression.NewSchema(col)
 	tblInfo := &model.TableInfo{}
 	idxInfo := &model.IndexInfo{}
-	hist := &statistics.Histogram{Bounds: chunk.New(nil, 0, 0)}
 	aggDesc1, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	aggDesc2, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncCount, []expression.Expression{cst}, true)
@@ -268,7 +270,6 @@ func TestPhysicalPlanClone(t *testing.T) {
 	tableScan := &PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
-		Hist:            hist,
 	}
 	tableScan = tableScan.Init(ctx, 0)
 	tableScan.SetSchema(schema)
@@ -288,7 +289,6 @@ func TestPhysicalPlanClone(t *testing.T) {
 		AccessCondition:  []expression.Expression{col, cst},
 		Table:            tblInfo,
 		Index:            idxInfo,
-		Hist:             hist,
 		dataSourceSchema: schema,
 	}
 	indexScan = indexScan.Init(ctx, 0)
@@ -536,8 +536,162 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 	return nil
 }
 
-type visit struct {
-	a1  unsafe.Pointer
-	a2  unsafe.Pointer
-	typ reflect.Type
+func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
+	require.Equal(t, len(analyzeOptionDefault), len(analyzeOptionDefaultV2), "analyzeOptionDefault and analyzeOptionDefaultV2 should have the same length")
+
+	tests := []struct {
+		name        string
+		opts        []ast.AnalyzeOpt
+		statsVer    int
+		ExpectedErr string
+	}{
+		{
+			name: "Too big TopN option",
+			opts: []ast.AnalyzeOpt{
+				{
+					Type:  ast.AnalyzeOptNumTopN,
+					Value: ast.NewValueExpr(16384+1, "", ""),
+				},
+			},
+			statsVer:    statistics.Version1,
+			ExpectedErr: "Value of analyze option TOPN should not be larger than 16384",
+		},
+		{
+			name: "Use SampleRate option in stats version 1",
+			opts: []ast.AnalyzeOpt{
+				{
+					Type:  ast.AnalyzeOptSampleRate,
+					Value: ast.NewValueExpr(1, "", ""),
+				},
+			},
+			statsVer:    statistics.Version1,
+			ExpectedErr: "Version 1's statistics doesn't support the SAMPLERATE option, please set tidb_analyze_version to 2",
+		},
+		{
+			name: "Too big SampleRate option",
+			opts: []ast.AnalyzeOpt{
+				{
+					Type:  ast.AnalyzeOptSampleRate,
+					Value: ast.NewValueExpr(2, "", ""),
+				},
+			},
+			statsVer:    statistics.Version2,
+			ExpectedErr: "Value of analyze option SAMPLERATE should not larger than 1.000000, and should be greater than 0",
+		},
+		{
+			name: "Too big NumBuckets option",
+			opts: []ast.AnalyzeOpt{
+				{
+					Type:  ast.AnalyzeOptNumBuckets,
+					Value: ast.NewValueExpr(1024+1, "", ""),
+				},
+			},
+			statsVer:    2,
+			ExpectedErr: "Value of analyze option BUCKETS should be positive and not larger than 1024",
+		},
+		{
+			name: "Set both sample num and sample rate",
+			opts: []ast.AnalyzeOpt{
+				{
+					Type:  ast.AnalyzeOptNumSamples,
+					Value: ast.NewValueExpr(100, "", ""),
+				},
+				{
+					Type:  ast.AnalyzeOptSampleRate,
+					Value: ast.NewValueExpr(0.1, "", ""),
+				},
+			},
+			statsVer:    statistics.Version2,
+			ExpectedErr: "ou can only either set the value of the sample num or set the value of the sample rate. Don't set both of them",
+		},
+		{
+			name: "Too big CMSketchDepth and CMSketchWidth option",
+			opts: []ast.AnalyzeOpt{
+				{
+					Type:  ast.AnalyzeOptCMSketchDepth,
+					Value: ast.NewValueExpr(1024, "", ""),
+				},
+				{
+					Type:  ast.AnalyzeOptCMSketchWidth,
+					Value: ast.NewValueExpr(2048, "", ""),
+				},
+			},
+			statsVer:    statistics.Version1,
+			ExpectedErr: "cm sketch size(depth * width) should not larger than 1258291",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := handleAnalyzeOptions(tt.opts, tt.statsVer)
+			if tt.ExpectedErr != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.ExpectedErr)
+			} else {
+				require.NoError(t, err)
+			}
+
+			if tt.statsVer == statistics.Version2 {
+				_, err := handleAnalyzeOptionsV2(tt.opts)
+				if tt.ExpectedErr != "" {
+					require.Error(t, err)
+					require.Contains(t, err.Error(), tt.ExpectedErr)
+				} else {
+					require.NoError(t, err)
+				}
+			}
+		})
+	}
+}
+
+func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
+	pb, _ := NewPlanBuilder().Init(MockContext(), nil, &hint.BlockHintProcessor{})
+
+	// Create a new TableName instance.
+	tableName := &ast.TableName{
+		Schema: model.NewCIStr("test"),
+		Name:   model.NewCIStr("my_table"),
+	}
+	columns := []*model.ColumnInfo{
+		{
+			ID:        1,
+			Name:      model.NewCIStr("id"),
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		},
+		{
+			ID:        2,
+			Name:      model.NewCIStr("name"),
+			FieldType: *types.NewFieldType(mysql.TypeString),
+		},
+		{
+			ID:        3,
+			Name:      model.NewCIStr("age"),
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		},
+	}
+	tableName.TableInfo = &model.TableInfo{
+		Columns: columns,
+	}
+
+	// Test case 1: DefaultChoice.
+	cols, _, err := pb.getFullAnalyzeColumnsInfo(tableName, model.DefaultChoice, nil, nil, nil, false, false)
+	require.NoError(t, err)
+	require.Equal(t, columns, cols)
+
+	// Test case 2: AllColumns.
+	cols, _, err = pb.getFullAnalyzeColumnsInfo(tableName, model.AllColumns, nil, nil, nil, false, false)
+	require.NoError(t, err)
+	require.Equal(t, columns, cols)
+
+	mustAnalyzedCols := &calcOnceMap{data: make(map[int64]struct{})}
+
+	// TODO(hi-rustin): Find a better way to mock SQL execution.
+	// Test case 3: PredicateColumns.
+
+	// Test case 4: ColumnList.
+	specifiedCols := []*model.ColumnInfo{columns[0], columns[2]}
+	mustAnalyzedCols.data[3] = struct{}{}
+	cols, _, err = pb.getFullAnalyzeColumnsInfo(tableName, model.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)
+	require.NoError(t, err)
+	require.Equal(t, specifiedCols, cols)
 }

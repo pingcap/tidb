@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/stretchr/testify/require"
@@ -204,9 +203,6 @@ func TestJoinRace(t *testing.T) {
 }
 
 func TestMppExecution(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("skip race test because of long running")
-	}
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -276,10 +272,10 @@ func TestMppExecution(t *testing.T) {
 	require.Equal(t, int64(1), taskID)
 	tk.MustExec("commit")
 
-	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(3)`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks", `return(3)`))
 	// all the data is related to one store, so there are three tasks.
 	tk.MustQuery("select avg(t.a) from t join t t1 on t.a = t1.a").Check(testkit.Rows("2.0000"))
-	failpoint.Disable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 decimal(8, 5) not null, c2 decimal(9, 5), c3 decimal(9, 4) , c4 decimal(8, 4) not null)")
