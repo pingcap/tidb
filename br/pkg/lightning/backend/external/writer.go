@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -152,9 +151,9 @@ func (b *WriterBuilder) Build(
 		bp = membuf.NewPool()
 	}
 	filenamePrefix := filepath.Join(prefix, strconv.Itoa(writerID))
-	keyAdapter := local.KeyAdapter(local.NoopKeyAdapter{})
+	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
 	if b.dupeDetectEnabled {
-		keyAdapter = local.DupDetectKeyAdapter{}
+		keyAdapter = common.DupDetectKeyAdapter{}
 	}
 	return &Writer{
 		rc: &rangePropertiesCollector{
@@ -183,7 +182,7 @@ type Writer struct {
 	writerID       int
 	currentSeq     int
 	filenamePrefix string
-	keyAdapter     local.KeyAdapter
+	keyAdapter     common.KeyAdapter
 
 	kvStore *KeyValueStore
 	rc      *rangePropertiesCollector

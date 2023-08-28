@@ -408,7 +408,7 @@ type BackendConfig struct {
 	// whether check TiKV capacity before write & ingest.
 	ShouldCheckTiKV    bool
 	DupeDetectEnabled  bool
-	DuplicateDetectOpt DupDetectOpt
+	DuplicateDetectOpt common.DupDetectOpt
 	// max write speed in bytes per second to each store(burst is allowed), 0 means no limit
 	StoreWriteBWLimit int
 	// When TiKV is in normal mode, ingesting too many SSTs will cause TiKV write stall.
@@ -443,7 +443,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		LocalWriterMemCacheSize:   int64(cfg.TikvImporter.LocalWriterMemCacheSize),
 		ShouldCheckTiKV:           cfg.App.CheckRequirements,
 		DupeDetectEnabled:         cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
-		DuplicateDetectOpt:        DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
+		DuplicateDetectOpt:        common.DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
 		StoreWriteBWLimit:         int(cfg.TikvImporter.StoreWriteBWLimit),
 		ShouldCheckWriteStall:     cfg.Cron.SwitchMode.Duration == 0,
 		MaxOpenFiles:              maxOpenFiles,
@@ -474,7 +474,7 @@ type Backend struct {
 
 	supportMultiIngest  bool
 	duplicateDB         *pebble.DB
-	keyAdapter          KeyAdapter
+	keyAdapter          common.KeyAdapter
 	importClientFactory ImportClientFactory
 
 	bufferPool   *membuf.Pool
@@ -567,9 +567,9 @@ func NewBackend(
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
-	keyAdapter := KeyAdapter(NoopKeyAdapter{})
+	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
 	if config.DupeDetectEnabled {
-		keyAdapter = DupDetectKeyAdapter{}
+		keyAdapter = common.DupDetectKeyAdapter{}
 	}
 	var writeLimiter StoreWriteLimiter
 	if config.StoreWriteBWLimit > 0 {
@@ -1123,18 +1123,20 @@ func (local *Backend) prepareAndSendJob(
 // generateAndSendJob scans the region in ranges and send region jobs to jobToWorkerCh.
 func (local *Backend) generateAndSendJob(
 	ctx context.Context,
-	engine *Engine,
+	engine common.Engine,
 	jobRanges []Range,
 	regionSplitSize, regionSplitKeys int64,
 	jobToWorkerCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
 ) error {
 	logger := log.FromContext(ctx)
+	// TODO(lance6716): external engine should also support it
+	localEngine, ok := engine.(*Engine)
 
 	// when use dynamic region feature, the region may be very big, we need
 	// to split to smaller ranges to increase the concurrency.
-	if regionSplitSize > 2*int64(config.SplitRegionSize) {
-		sizeProps, err := getSizePropertiesFn(logger, engine.getDB(), local.keyAdapter)
+	if regionSplitSize > 2*int64(config.SplitRegionSize) && ok {
+		sizeProps, err := getSizePropertiesFn(logger, localEngine.getDB(), local.keyAdapter)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1147,17 +1149,28 @@ func (local *Backend) generateAndSendJob(
 	}
 	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(local.WorkerConcurrency)
 	for _, jobRange := range jobRanges {
 		r := jobRange
+		data, err := engine.LoadIngestData(ctx, r.start, r.end)
+		if err != nil {
+			cancel()
+			err2 := eg.Wait()
+			if err2 != nil && !common.IsContextCanceledError(err2) {
+				logger.Warn("meet error when canceling", log.ShortError(err2))
+			}
+			return errors.Trace(err)
+		}
 		eg.Go(func() error {
 			if egCtx.Err() != nil {
 				return nil
 			}
 
 			failpoint.Inject("beforeGenerateJob", nil)
-			jobs, err := local.generateJobForRange(egCtx, engine, r, regionSplitSize, regionSplitKeys)
+			jobs, err := local.generateJobForRange(egCtx, data, r, regionSplitSize, regionSplitKeys)
 			if err != nil {
 				if common.IsContextCanceledError(err) {
 					return nil
@@ -1193,7 +1206,7 @@ var fakeRegionJobs map[[2]string]struct {
 // It will retry internally when scan region meet error.
 func (local *Backend) generateJobForRange(
 	ctx context.Context,
-	engine IngestData,
+	data common.IngestData,
 	keyRange Range,
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {
@@ -1212,7 +1225,7 @@ func (local *Backend) generateJobForRange(
 	})
 
 	start, end := keyRange.start, keyRange.end
-	pairStart, pairEnd, err := engine.GetFirstAndLastKey(start, end)
+	pairStart, pairEnd, err := data.GetFirstAndLastKey(start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -1249,7 +1262,7 @@ func (local *Backend) generateJobForRange(
 			keyRange:        intersectRange(region.Region, Range{start: start, end: end}),
 			region:          region,
 			stage:           regionScanned,
-			ingestData:      engine,
+			ingestData:      data,
 			regionSplitSize: regionSplitSize,
 			regionSplitKeys: regionSplitKeys,
 			metrics:         local.metrics,
@@ -1476,16 +1489,22 @@ func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, re
 		}()
 	}
 
-	log.FromContext(ctx).Info("start import engine", zap.Stringer("uuid", engineUUID),
-		zap.Int("region ranges", len(regionRanges)), zap.Int64("count", lfLength), zap.Int64("size", lfTotalSize))
+	log.FromContext(ctx).Info("start import engine",
+		zap.Stringer("uuid", engineUUID),
+		zap.Int("region ranges", len(regionRanges)),
+		zap.Int64("count", lfLength),
+		zap.Int64("size", lfTotalSize))
 
 	failpoint.Inject("ReadyForImportEngine", func() {})
 
 	err = local.doImport(ctx, lf, regionRanges, regionSplitSize, regionSplitKeys)
 	if err == nil {
-		log.FromContext(ctx).Info("import engine success", zap.Stringer("uuid", engineUUID),
-			zap.Int64("size", lfTotalSize), zap.Int64("kvs", lfLength),
-			zap.Int64("importedSize", lf.importedKVSize.Load()), zap.Int64("importedCount", lf.importedKVCount.Load()))
+		log.FromContext(ctx).Info("import engine success",
+			zap.Stringer("uuid", engineUUID),
+			zap.Int64("size", lfTotalSize),
+			zap.Int64("kvs", lfLength),
+			zap.Int64("importedSize", lf.importedKVSize.Load()),
+			zap.Int64("importedCount", lf.importedKVCount.Load()))
 	}
 	return err
 }

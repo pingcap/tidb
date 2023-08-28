@@ -15,20 +15,16 @@
 package local
 
 import (
-	"bytes"
-
 	"github.com/cockroachdb/pebble"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"go.uber.org/multierr"
-	"go.uber.org/zap"
 )
 
 // Iter abstract iterator method for Ingester.
 type Iter interface {
-	ForwardIter
+	common.ForwardIter
 	// Seek seek to specify position.
 	// if key not found, seeks next key position in iter.
 	Seek(key []byte) bool
@@ -54,145 +50,18 @@ func (pebbleIter) OpType() sst.Pair_OP {
 
 var _ Iter = pebbleIter{}
 
-const maxDuplicateBatchSize = 4 << 20
-
-// DupDetector extract the decoded key and value from the iter which may contain
-// duplicate keys and store the keys encoded by KeyAdapter. The duplicate keys
-// and values will be saved in dupDB.
-type DupDetector struct {
-	keyAdapter      KeyAdapter
-	dupDBWriteBatch *pebble.Batch
-	curBatchSize    int
-
-	curKey    []byte
-	curRawKey []byte
-	curVal    []byte
-	nextKey   []byte
-
-	logger log.Logger
-	option DupDetectOpt
-}
-
-// NewDupDetector creates a new DupDetector.
-// dupDBWriteBatch will be closed when DupDetector is closed.
-func NewDupDetector(
-	keyAdaptor KeyAdapter,
-	dupDBWriteBatch *pebble.Batch,
-	logger log.Logger,
-	option DupDetectOpt,
-) *DupDetector {
-	return &DupDetector{
-		keyAdapter:      keyAdaptor,
-		dupDBWriteBatch: dupDBWriteBatch,
-		logger:          logger,
-		option:          option,
-	}
-}
-
-// KVIter is a slim interface that DupDetector needs.
-type KVIter interface {
-	Next() bool
-	Key() []byte
-	Value() []byte
-}
-
-// Init initializes the status of DupDetector by reading the current Key and
-// Value of given iter.
-func (d *DupDetector) Init(iter KVIter) (key []byte, val []byte, err error) {
-	d.curKey, err = d.keyAdapter.Decode(d.curKey[:0], iter.Key())
-	if err != nil {
-		return nil, nil, err
-	}
-	d.curRawKey = append(d.curRawKey[:0], iter.Key()...)
-	d.curVal = append(d.curVal[:0], iter.Value()...)
-	return d.curKey, d.curVal, nil
-}
-
-// Next reads the next key and value from given iter. If it meets duplicate key,
-// it will record the duplicate key and value in dupDB and skip it.
-func (d *DupDetector) Next(iter KVIter) (key []byte, value []byte, ok bool, err error) {
-	recordFirst := false
-	for iter.Next() {
-		encodedKey, val := iter.Key(), iter.Value()
-		d.nextKey, err = d.keyAdapter.Decode(d.nextKey[:0], encodedKey)
-		if err != nil {
-			return nil, nil, false, err
-		}
-		if !bytes.Equal(d.nextKey, d.curKey) {
-			d.curKey, d.nextKey = d.nextKey, d.curKey[:0]
-			d.curRawKey = append(d.curRawKey[:0], encodedKey...)
-			d.curVal = append(d.curVal[:0], val...)
-			return d.curKey, d.curVal, true, nil
-		}
-		if d.option.ReportErrOnDup {
-			dupKey := make([]byte, len(d.curKey))
-			dupVal := make([]byte, len(val))
-			copy(dupKey, d.curKey)
-			copy(dupVal, d.curVal)
-			return nil, nil, false, common.ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupVal)
-		}
-		if !recordFirst {
-			if err = d.record(d.curRawKey, d.curKey, d.curVal); err != nil {
-				return nil, nil, false, err
-			}
-			recordFirst = true
-		}
-		if err = d.record(encodedKey, d.nextKey, val); err != nil {
-			return nil, nil, false, err
-		}
-	}
-	return nil, nil, false, nil
-}
-
-func (d *DupDetector) record(rawKey, key, val []byte) error {
-	d.logger.Debug("local duplicate key detected", zap.String("category", "detect-dupe"),
-		logutil.Key("key", key),
-		logutil.Key("value", val),
-		logutil.Key("rawKey", rawKey))
-	if err := d.dupDBWriteBatch.Set(rawKey, val, nil); err != nil {
-		return err
-	}
-	d.curBatchSize += len(rawKey) + len(val)
-	if d.curBatchSize >= maxDuplicateBatchSize {
-		return d.flush()
-	}
-	return nil
-}
-
-func (d *DupDetector) flush() error {
-	if err := d.dupDBWriteBatch.Commit(pebble.Sync); err != nil {
-		return err
-	}
-	d.dupDBWriteBatch.Reset()
-	d.curBatchSize = 0
-	return nil
-}
-
-// Close closes the DupDetector.
-func (d *DupDetector) Close() error {
-	if err := d.flush(); err != nil {
-		return err
-	}
-	return d.dupDBWriteBatch.Close()
-}
-
 type dupDetectIter struct {
-	keyAdapter  KeyAdapter
+	keyAdapter  common.KeyAdapter
 	iter        *pebble.Iterator
-	dupDetector *DupDetector
+	dupDetector *common.DupDetector
 	err         error
 
 	curKey, curVal []byte
 	logger         log.Logger
 }
 
-// DupDetectOpt is the option for duplicate detection.
-type DupDetectOpt struct {
-	ReportErrOnDup bool
-}
-
 func (d *dupDetectIter) Seek(key []byte) bool {
-	rawKey := d.keyAdapter.Encode(nil, key, ZeroRowID)
+	rawKey := d.keyAdapter.Encode(nil, key, common.ZeroRowID)
 	if d.err != nil || !d.iter.SeekGE(rawKey) {
 		return false
 	}
@@ -269,21 +138,21 @@ var _ Iter = &dupDetectIter{}
 
 func newDupDetectIter(
 	db *pebble.DB,
-	keyAdapter KeyAdapter,
+	keyAdapter common.KeyAdapter,
 	opts *pebble.IterOptions,
 	dupDB *pebble.DB,
 	logger log.Logger,
-	dupOpt DupDetectOpt,
+	dupOpt common.DupDetectOpt,
 ) *dupDetectIter {
 	newOpts := &pebble.IterOptions{TableFilter: opts.TableFilter}
 	if len(opts.LowerBound) > 0 {
-		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, MinRowID)
+		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, common.MinRowID)
 	}
 	if len(opts.UpperBound) > 0 {
-		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, MinRowID)
+		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, common.MinRowID)
 	}
 
-	detector := NewDupDetector(keyAdapter, dupDB.NewBatch(), logger, dupOpt)
+	detector := common.NewDupDetector(keyAdapter, dupDB.NewBatch(), logger, dupOpt)
 	return &dupDetectIter{
 		keyAdapter:  keyAdapter,
 		iter:        db.NewIter(newOpts),
@@ -294,13 +163,13 @@ func newDupDetectIter(
 
 type dupDBIter struct {
 	iter       *pebble.Iterator
-	keyAdapter KeyAdapter
+	keyAdapter common.KeyAdapter
 	curKey     []byte
 	err        error
 }
 
 func (d *dupDBIter) Seek(key []byte) bool {
-	rawKey := d.keyAdapter.Encode(nil, key, ZeroRowID)
+	rawKey := d.keyAdapter.Encode(nil, key, common.ZeroRowID)
 	if d.err != nil || !d.iter.SeekGE(rawKey) {
 		return false
 	}
@@ -361,13 +230,13 @@ func (*dupDBIter) OpType() sst.Pair_OP {
 
 var _ Iter = &dupDBIter{}
 
-func newDupDBIter(dupDB *pebble.DB, keyAdapter KeyAdapter, opts *pebble.IterOptions) *dupDBIter {
+func newDupDBIter(dupDB *pebble.DB, keyAdapter common.KeyAdapter, opts *pebble.IterOptions) *dupDBIter {
 	newOpts := &pebble.IterOptions{TableFilter: opts.TableFilter}
 	if len(opts.LowerBound) > 0 {
-		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, MinRowID)
+		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, common.MinRowID)
 	}
 	if len(opts.UpperBound) > 0 {
-		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, MinRowID)
+		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, common.MinRowID)
 	}
 	return &dupDBIter{
 		iter:       dupDB.NewIter(newOpts),

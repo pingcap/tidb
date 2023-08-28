@@ -22,14 +22,15 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"golang.org/x/sync/errgroup"
-
+	kv2 "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 // prettyFileNames removes the directory prefix except the last level from the
@@ -155,4 +156,33 @@ func CleanUpFiles(ctx context.Context,
 		})
 	}
 	return eg.Wait()
+}
+
+// MockExternalEngine generates an external engine with the given keys and values.
+func MockExternalEngine(
+	storage storage.ExternalStorage,
+	keys [][]byte,
+	values [][]byte,
+) (dataFiles []string, statsFiles []string, err error) {
+	ctx := context.Background()
+	writer := NewWriterBuilder().
+		SetMemorySizeLimit(128).
+		SetPropSizeDistance(32).
+		SetPropKeysDistance(4).
+		Build(storage, "/mock-test", 0)
+	kvs := make([]common.KvPair, len(keys))
+	for i := range keys {
+		kvs[i].Key = keys[i]
+		kvs[i].Val = values[i]
+	}
+	rows := kv2.MakeRowsFromKvPairs(kvs)
+	err = writer.AppendRows(ctx, nil, rows)
+	if err != nil {
+		return nil, nil, err
+	}
+	_, err = writer.Close(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return GetAllFileNames(ctx, storage, "/mock-test")
 }
