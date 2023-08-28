@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/timer/api"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 type runtimeProcStatus int8
@@ -39,8 +40,14 @@ type timerCacheItem struct {
 }
 
 func (c *timerCacheItem) update(timer *api.TimerRecord, nowFunc func() time.Time) bool {
-	if c.timer != nil && timer.Version <= c.timer.Version {
-		return false
+	if c.timer != nil {
+		if timer.Version < c.timer.Version {
+			return false
+		}
+
+		if timer.Version == c.timer.Version && !locationChanged(timer.Location, c.timer.Location) {
+			return false
+		}
 	}
 
 	timer = timer.Clone()
@@ -49,11 +56,9 @@ func (c *timerCacheItem) update(timer *api.TimerRecord, nowFunc func() time.Time
 	c.nextTryTriggerTime = time.Date(2999, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	if timer.Enable {
-		p, err := timer.CreateSchedEventPolicy()
-		if err == nil {
-			if t, ok := p.NextEventTime(c.timer.Watermark); ok {
-				c.nextEventTime = &t
-			}
+		t, ok, err := timer.NextEventTime()
+		if err == nil && ok {
+			c.nextEventTime = &t
 		}
 
 		if timer.IsManualRequesting() {
@@ -221,4 +226,18 @@ func (c *timersCache) resort(item *timerCacheItem) {
 		c.sorted.MoveAfter(ele, cur)
 		return
 	}
+}
+
+func locationChanged(a *time.Location, b *time.Location) bool {
+	if a == b {
+		return false
+	}
+
+	if a == nil || b == nil {
+		return true
+	}
+
+	_, offset1 := timeutil.Zone(a)
+	_, offset2 := timeutil.Zone(b)
+	return offset1 != offset2
 }
