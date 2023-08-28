@@ -81,7 +81,7 @@ func NewExternalEngine(
 // LoadIngestData loads the data from the external storage to memory in [start,
 // end) range, so local backend can ingest it. The used byte slice of ingest data
 // are allocated from Engine.bufPool and must be released by
-// MemoryIngestData.Finish(). For external.Engine, GetIngestData must be called
+// MemoryIngestData.Finish(). For external.Engine, LoadIngestData must be called
 // with strictly increasing start / end key.
 func (e *Engine) LoadIngestData(ctx context.Context, start, end []byte) (common.IngestData, error) {
 	if bytes.Equal(start, end) {
@@ -101,7 +101,7 @@ func (e *Engine) LoadIngestData(ctx context.Context, start, end []byte) (common.
 		}
 		e.iter = iter
 	} else {
-		// there should be a key that just exceeds the end key in last GetIngestData
+		// there should be a key that just exceeds the end key in last LoadIngestData
 		// invocation.
 		k, v := e.iter.Key(), e.iter.Value()
 		keys = append(keys, memBuf.AddBytes(k))
