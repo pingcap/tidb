@@ -1502,6 +1502,7 @@ func NewStatsAllEvictedStatus() StatsLoadedStatus {
 	}
 }
 
+// Copy copies the status
 func (s *StatsLoadedStatus) Copy() StatsLoadedStatus {
 	return StatsLoadedStatus{
 		statsInitialized: s.statsInitialized,
