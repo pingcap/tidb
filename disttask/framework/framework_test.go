@@ -376,5 +376,8 @@ func TestFrameworkSetLabel(t *testing.T) {
 	// 3. 2 "background" role.
 	tk.MustExec("update mysql.dist_framework_meta set role = \"background\" where host = \":4001\"")
 	DispatchTaskAndCheckSuccess("😆", t, &m)
+
+	// 4. set wrong sys var.
+	tk.MustMatchErrMsg("set global tidb_service_scope=wrong", `incorrect value: .*. tidb_service_scope options: "", background`)
 	distContext.Close()
 }

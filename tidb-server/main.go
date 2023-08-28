@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
+	distroleutil "github.com/pingcap/tidb/util/distrole"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
@@ -596,11 +597,14 @@ func overrideConfig(cfg *config.Config) {
 	}
 
 	if actualFlags[nmTiDBServiceScope] {
-		logutil.BgLogger().Info("ywq test here...")
-		cfg.Instance.TiDBServiceScope = *serviceScope
-	} else {
-		logutil.BgLogger().Info("ywq test here2 wrong")
-		cfg.Instance.TiDBServiceScope = ""
+		scope, ok := distroleutil.ToTiDBServiceScope(*serviceScope)
+		if !ok {
+			err := fmt.Errorf("incorrect value: `%s`. %s options: %s",
+				*serviceScope,
+				nmTiDBServiceScope, `"", background`)
+			terror.MustNil(err)
+		}
+		cfg.Instance.TiDBServiceScope = scope
 	}
 }
 
@@ -784,9 +788,7 @@ func setGlobalVars() {
 	chunk.InitChunkAllocSize(cfg.TiDBMaxReuseChunk, cfg.TiDBMaxReuseColumn)
 
 	if len(cfg.Instance.TiDBServiceScope) > 0 {
-		variable.ServiceScope.Store(cfg.Instance.TiDBServiceScope)
-		logutil.BgLogger().Info("ywq test set sys var2...", zap.Any("cfg", cfg.Instance.TiDBServiceScope))
-		// variable.SetSysVar(variable.TiDBServiceScope, cfg.Instance.TiDBServiceScope)
+		variable.ServiceScope.Store(strings.ToLower(cfg.Instance.TiDBServiceScope))
 	}
 }
 

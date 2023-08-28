@@ -18,9 +18,6 @@ import (
 	"context"
 	"strings"
 
-	disttaskutil "github.com/pingcap/tidb/util/disttask"
-	"github.com/pingcap/tidb/util/sqlexec"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/internal/exec"
@@ -37,9 +34,11 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sem"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -166,11 +165,10 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		if name == variable.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
 			serverId := disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())
-			logutil.BgLogger().Info("ywq test update dist meta", zap.String("serverID", serverId), zap.String("role", valStr))
 			_, err = e.Ctx().(sqlexec.SQLExecutor).ExecuteInternal(ctx,
-				"update mysql.dist_framework_meta "+
-					"set role = %?"+
-					"where host = %?", valStr, serverId)
+				`update mysql.dist_framework_meta
+					set role = %?
+					where host = %?`, valStr, serverId)
 		}
 		return err
 	}
