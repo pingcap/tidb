@@ -48,21 +48,21 @@ func (idx *Index) Copy() *Index {
 		Flag:       idx.Flag,
 		StatsVer:   idx.StatsVer,
 	}
-	idx.LastAnalyzePos.Copy(&idx.LastAnalyzePos)
+	idx.LastAnalyzePos.Copy(&nc.LastAnalyzePos)
 	if idx.CMSketch != nil {
-		idx.CMSketch = idx.CMSketch.Copy()
+		nc.CMSketch = idx.CMSketch.Copy()
 	}
 	if idx.TopN != nil {
-		idx.TopN = idx.TopN.Copy()
+		nc.TopN = idx.TopN.Copy()
 	}
 	if idx.FMSketch != nil {
-		idx.FMSketch = idx.FMSketch.Copy()
+		nc.FMSketch = idx.FMSketch.Copy()
 	}
 	if idx.Info != nil {
-		idx.Info = idx.Info.Clone()
+		nc.Info = idx.Info.Clone()
 	}
-	idx.Histogram = *idx.Histogram.Copy()
-	idx.StatsLoadedStatus = idx.StatsLoadedStatus.Copy()
+	nc.Histogram = *idx.Histogram.Copy()
+	nc.StatsLoadedStatus = idx.StatsLoadedStatus.Copy()
 	return nc
 }
 
