@@ -80,7 +80,7 @@ func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 						})
 						handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 							// we will scan all locks and try to resolve them by check txn status.
-							return tikv.ResolveLocksForRange(ctx, "log backup advancer", c.env, math.MaxUint64, r.StartKey, r.EndKey)
+							return tikv.ResolveLocksForRange(ctx, c.env, math.MaxUint64, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, tikv.GCScanLockLimit)
 						}
 						workerPool := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
 						var wg sync.WaitGroup

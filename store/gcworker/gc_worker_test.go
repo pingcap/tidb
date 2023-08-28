@@ -55,18 +55,22 @@ type mockGCWorkerLockResolver struct {
 	batchResolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
 }
 
-func (l *mockGCWorkerLockResolver) ScanLocks(ctx context.Context, key []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+func (l *mockGCWorkerLockResolver) ScanLocksInOneRegion(ctx context.Context, key []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
 	locks, loc := l.scanLocks(key)
 	return locks, loc, nil
 
 }
 
-func (l *mockGCWorkerLockResolver) ResolveLocks(ctx context.Context, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
+func (l *mockGCWorkerLockResolver) ResolveLocksInOneRegion(ctx context.Context, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
 	return l.batchResolveLocks(locks, loc)
 }
 
 func (l *mockGCWorkerLockResolver) GetStore() tikv.Storage {
 	return l.tikvStore
+}
+
+func (l *mockGCWorkerLockResolver) Identifier() string {
+	return "gc worker test"
 }
 
 type mockGCWorkerClient struct {

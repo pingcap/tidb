@@ -32,7 +32,7 @@ type Env interface {
 	// StreamMeta connects to the metadata service (normally PD).
 	StreamMeta
 	// GCLockResolver try to resolve locks when region checkpoint stopped.
-	tikv.GCLockResolver
+	tikv.RegionLockResolver
 }
 
 // PDRegionScanner is a simple wrapper over PD
@@ -147,25 +147,23 @@ type StreamMeta interface {
 	ClearV3GlobalCheckpointForTask(ctx context.Context, taskName string) error
 }
 
-var _ tikv.GCLockResolver = &AdvancerLockResolver{}
+var _ tikv.RegionLockResolver = &AdvancerLockResolver{}
 
 type AdvancerLockResolver struct {
 	store tikv.Storage
-	*tikv.BaseLockResolver
+	*tikv.BaseRegionLockResolver
 }
 
 func newAdvancerLockResolver(store tikv.Storage) *AdvancerLockResolver {
 	return &AdvancerLockResolver{
-		store:            store,
-		BaseLockResolver: tikv.NewBaseLockResolver(store),
+		store:                  store,
+		BaseRegionLockResolver: tikv.NewRegionLockResolver("log backup advancer", store),
 	}
 }
 
-// ResolveLocks tries to resolve expired locks with this method.
+// ResolveLocksInOneRegion tries to resolve expired locks with this method.
 // It will check status of the txn. Resolve the lock if txn is expired, Or do nothing.
-func (l *AdvancerLockResolver) ResolveLocks(ctx context.Context, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
-	// renew backoffer
-	bo := tikv.NewGcResolveLockMaxBackoffer(ctx)
+func (l *AdvancerLockResolver) ResolveLocksInOneRegion(bo *tikv.Backoffer, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
 	_, err := l.GetStore().GetLockResolver().ResolveLocks(bo, 0, locks)
 	if err != nil {
 		return nil, err

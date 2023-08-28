@@ -73,7 +73,7 @@ type GCWorker struct {
 	lastFinish   time.Time
 	cancel       context.CancelFunc
 	done         chan error
-	lockResolver tikv.GCLockResolver
+	lockResolver tikv.RegionLockResolver
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -90,15 +90,17 @@ func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
 	if !ok {
 		return nil, errors.New("GC should run against TiKV storage")
 	}
+	uuid := strconv.FormatUint(ver.Ver, 16)
+	resolverIdentifier := fmt.Sprintf("gc-worker-%s", uuid)
 	worker := &GCWorker{
-		uuid:         strconv.FormatUint(ver.Ver, 16),
+		uuid:         uuid,
 		desc:         fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
 		store:        store,
 		tikvStore:    tikvStore,
 		pdClient:     pdClient,
 		gcIsRunning:  false,
 		lastFinish:   time.Now(),
-		lockResolver: tikv.NewBaseLockResolver(tikvStore),
+		lockResolver: tikv.NewRegionLockResolver(resolverIdentifier, tikvStore),
 		done:         make(chan error),
 	}
 	variable.RegisterStatistics(worker)
@@ -1180,7 +1182,11 @@ func (w *GCWorker) legacyResolveLocks(
 	startTime := time.Now()
 
 	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-		return tikv.ResolveLocksForRange(ctx, w.uuid, w.lockResolver, safePoint, r.StartKey, r.EndKey)
+		scanLimit := uint32(tikv.GCScanLockLimit)
+		failpoint.Inject("lowScanLockLimit", func() {
+			scanLimit = 3
+		})
+		return tikv.ResolveLocksForRange(ctx, w.lockResolver, safePoint, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, scanLimit)
 	}
 
 	runner := rangetask.NewRangeTaskRunner("resolve-locks-runner", w.tikvStore, concurrency, handler)
