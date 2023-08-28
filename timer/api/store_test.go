@@ -21,6 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -210,6 +211,7 @@ func TestOperatorCond(t *testing.T) {
 }
 
 func TestTimerUpdate(t *testing.T) {
+	timeutil.SetSystemTZ("Asia/Shanghai")
 	tpl := TimerRecord{
 		ID: "123",
 		TimerSpec: TimerSpec{
@@ -225,7 +227,7 @@ func TestTimerUpdate(t *testing.T) {
 		Enable:       NewOptionalVal(true),
 		CheckVersion: NewOptionalVal(uint64(0)),
 	}
-	_, err := update.Apply(tm)
+	_, err := update.apply(tm)
 	require.Error(t, err)
 	require.True(t, errors.ErrorEqual(err, ErrVersionNotMatch))
 	require.Equal(t, tpl, *tm)
@@ -235,7 +237,7 @@ func TestTimerUpdate(t *testing.T) {
 		Enable:       NewOptionalVal(true),
 		CheckEventID: NewOptionalVal("aa"),
 	}
-	_, err = update.Apply(tm)
+	_, err = update.apply(tm)
 	require.Error(t, err)
 	require.True(t, errors.ErrorEqual(err, ErrEventIDNotMatch))
 	require.Equal(t, tpl, *tm)
@@ -244,6 +246,7 @@ func TestTimerUpdate(t *testing.T) {
 	now := time.Now()
 	update = &TimerUpdate{
 		Enable:          NewOptionalVal(true),
+		TimeZone:        NewOptionalVal("UTC"),
 		SchedPolicyType: NewOptionalVal(SchedEventInterval),
 		SchedPolicyExpr: NewOptionalVal("5h"),
 		Watermark:       NewOptionalVal(now),
@@ -267,9 +270,11 @@ func TestTimerUpdate(t *testing.T) {
 	}
 
 	require.Equal(t, reflect.ValueOf(update).Elem().NumField()-2, len(update.FieldsSet()))
-	record, err := update.Apply(tm)
+	record, err := update.apply(tm)
 	require.NoError(t, err)
 	require.True(t, record.Enable)
+	require.Equal(t, "UTC", record.TimeZone)
+	require.Equal(t, time.UTC, record.Location)
 	require.Equal(t, SchedEventInterval, record.SchedPolicyType)
 	require.Equal(t, "5h", record.SchedPolicyExpr)
 	require.Equal(t, now, record.Watermark)
@@ -306,7 +311,7 @@ func TestTimerUpdate(t *testing.T) {
 			EventManualRequestID: "req2",
 		}),
 	}
-	record, err = update.Apply(tm)
+	record, err = update.apply(tm)
 	require.NoError(t, err)
 	require.Equal(t, ManualRequest{
 		ManualRequestID:   "req2",
@@ -326,7 +331,7 @@ func TestTimerUpdate(t *testing.T) {
 		ManualRequest: NewOptionalVal(ManualRequest{}),
 		EventExtra:    NewOptionalVal(EventExtra{}),
 	}
-	record, err = update.Apply(tm)
+	record, err = update.apply(tm)
 	require.NoError(t, err)
 	require.Equal(t, ManualRequest{}, record.ManualRequest)
 	require.False(t, record.IsManualRequesting())
@@ -334,7 +339,7 @@ func TestTimerUpdate(t *testing.T) {
 	require.Equal(t, tpl, *tm)
 
 	emptyUpdate := &TimerUpdate{}
-	record, err = emptyUpdate.Apply(tm)
+	record, err = emptyUpdate.apply(tm)
 	require.NoError(t, err)
 	require.Equal(t, tpl, *record)
 }

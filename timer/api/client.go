@@ -76,6 +76,13 @@ func WithSetEnable(enable bool) UpdateTimerOption {
 	}
 }
 
+// WithSetTimeZone sets the timezone of the timer
+func WithSetTimeZone(name string) UpdateTimerOption {
+	return func(update *TimerUpdate) {
+		update.TimeZone.Set(name)
+	}
+}
+
 // WithSetSchedExpr indicates to set the timer's schedule policy.
 func WithSetSchedExpr(tp SchedPolicyType, expr string) UpdateTimerOption {
 	return func(update *TimerUpdate) {

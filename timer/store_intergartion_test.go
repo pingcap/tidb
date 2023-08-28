@@ -23,15 +23,18 @@ import (
 	"github.com/google/uuid"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/timer/api"
 	"github.com/pingcap/tidb/timer/runtime"
 	"github.com/pingcap/tidb/timer/tablestore"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 func TestMemTimerStore(t *testing.T) {
+	timeutil.SetSystemTZ("Asia/Shanghai")
 	store := api.NewMemoryTimerStore()
 	defer store.Close()
 	runTimerStoreTest(t, store)
@@ -42,6 +45,7 @@ func TestMemTimerStore(t *testing.T) {
 }
 
 func TestTableTimerStore(t *testing.T) {
+	timeutil.SetSystemTZ("Asia/Shanghai")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	dbName := "test"
@@ -59,6 +63,15 @@ func TestTableTimerStore(t *testing.T) {
 	defer timerStore.Close()
 	runTimerStoreTest(t, timerStore)
 
+	// test cluster time zone
+	runClusterTimeZoneTest(t, timerStore, func(tz string) {
+		r, err := pool.Get()
+		defer pool.Put(r)
+		require.NoError(t, err)
+		err = r.(sessionctx.Context).GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), "time_zone", tz)
+		require.NoError(t, err)
+	})
+
 	// test notifications
 	integration.BeforeTestExternal(t)
 	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
@@ -70,6 +83,29 @@ func TestTableTimerStore(t *testing.T) {
 	timerStore = tablestore.NewTableTimerStore(1, pool, dbName, tblName, cli)
 	defer timerStore.Close()
 	runTimerStoreWatchTest(t, timerStore)
+}
+
+func runClusterTimeZoneTest(t *testing.T, store *api.TimerStore, setClusterTZ func(string)) {
+	timerID, err := store.Create(context.Background(), &api.TimerRecord{
+		TimerSpec: api.TimerSpec{
+			Namespace:       "n1",
+			Key:             "/path/to/testtz",
+			TimeZone:        "",
+			SchedPolicyType: api.SchedEventCron,
+			SchedPolicyExpr: "* 1 * * *",
+		},
+	})
+	require.NoError(t, err)
+	timer, err := store.GetByID(context.Background(), timerID)
+	require.NoError(t, err)
+	require.Equal(t, "", timer.TimeZone)
+	require.Equal(t, timeutil.SystemLocation(), timer.Location)
+
+	setClusterTZ("UTC")
+	timer, err = store.GetByID(context.Background(), timerID)
+	require.NoError(t, err)
+	require.Equal(t, "", timer.TimeZone)
+	require.Equal(t, time.UTC, timer.Location)
 }
 
 func runTimerStoreTest(t *testing.T, store *api.TimerStore) {
@@ -89,6 +125,7 @@ func runTimerStoreInsertAndGet(ctx context.Context, t *testing.T, store *api.Tim
 		TimerSpec: api.TimerSpec{
 			Namespace:       "n1",
 			Key:             "/path/to/key",
+			TimeZone:        "",
 			SchedPolicyType: api.SchedEventInterval,
 			SchedPolicyExpr: "1h",
 			Data:            []byte("data1"),
@@ -102,6 +139,7 @@ func runTimerStoreInsertAndGet(ctx context.Context, t *testing.T, store *api.Tim
 	require.Equal(t, recordTpl, *record)
 	require.NotEmpty(t, id)
 	recordTpl.ID = id
+	recordTpl.Location = timeutil.SystemLocation()
 	recordTpl.EventStatus = api.SchedEventIdle
 
 	// get by id
@@ -149,6 +187,11 @@ func runTimerStoreInsertAndGet(ctx context.Context, t *testing.T, store *api.Tim
 	_, err = store.Create(ctx, invalid)
 	require.EqualError(t, err, "schedule event configuration is not valid: invalid schedule event expr '1x': unknown unit x")
 
+	invalid.SchedPolicyExpr = "1h"
+	invalid.TimeZone = "tidb"
+	_, err = store.Create(ctx, invalid)
+	require.ErrorContains(t, err, "Unknown or incorrect time zone: 'tidb'")
+
 	return &recordTpl
 }
 
@@ -162,6 +205,7 @@ func runTimerStoreUpdate(ctx context.Context, t *testing.T, store *api.TimerStor
 	watermark := time.Unix(7890123, 0)
 	err = store.Update(ctx, tpl.ID, &api.TimerUpdate{
 		Tags:            api.NewOptionalVal([]string{"l1", "l2"}),
+		TimeZone:        api.NewOptionalVal("UTC"),
 		SchedPolicyExpr: api.NewOptionalVal("2h"),
 		ManualRequest: api.NewOptionalVal(api.ManualRequest{
 			ManualRequestID:   "req1",
@@ -189,6 +233,8 @@ func runTimerStoreUpdate(ctx context.Context, t *testing.T, store *api.TimerStor
 	require.NotSame(t, orgRecord, record)
 	require.Greater(t, record.Version, tpl.Version)
 	tpl.Version = record.Version
+	tpl.TimeZone = "UTC"
+	tpl.Location = time.UTC
 	tpl.SchedPolicyExpr = "2h"
 	tpl.Tags = []string{"l1", "l2"}
 	tpl.EventStatus = api.SchedEventTrigger
@@ -256,6 +302,7 @@ func runTimerStoreUpdate(ctx context.Context, t *testing.T, store *api.TimerStor
 	// set some to empty
 	var zeroTime time.Time
 	err = store.Update(ctx, tpl.ID, &api.TimerUpdate{
+		TimeZone:      api.NewOptionalVal(""),
 		Tags:          api.NewOptionalVal([]string(nil)),
 		ManualRequest: api.NewOptionalVal(api.ManualRequest{}),
 		EventStatus:   api.NewOptionalVal(api.SchedEventIdle),
@@ -269,6 +316,8 @@ func runTimerStoreUpdate(ctx context.Context, t *testing.T, store *api.TimerStor
 	require.NoError(t, err)
 	record, err = store.GetByID(ctx, tpl.ID)
 	require.NoError(t, err)
+	tpl.TimeZone = ""
+	tpl.Location = timeutil.SystemLocation()
 	tpl.Version = record.Version
 	tpl.Tags = nil
 	tpl.ManualRequest = api.ManualRequest{}
@@ -306,6 +355,22 @@ func runTimerStoreUpdate(ctx context.Context, t *testing.T, store *api.TimerStor
 		SchedPolicyExpr: api.NewOptionalVal("2x"),
 	})
 	require.EqualError(t, err, "schedule event configuration is not valid: invalid schedule event expr '2x': unknown unit x")
+	record, err = store.GetByID(ctx, tpl.ID)
+	require.NoError(t, err)
+	require.Equal(t, *tpl, *record)
+
+	err = store.Update(ctx, tpl.ID, &api.TimerUpdate{
+		TimeZone: api.NewOptionalVal("invalid"),
+	})
+	require.ErrorContains(t, err, "Unknown or incorrect time zone: 'invalid'")
+	record, err = store.GetByID(ctx, tpl.ID)
+	require.NoError(t, err)
+	require.Equal(t, *tpl, *record)
+
+	err = store.Update(ctx, tpl.ID, &api.TimerUpdate{
+		TimeZone: api.NewOptionalVal("tidb"),
+	})
+	require.ErrorContains(t, err, "Unknown or incorrect time zone: 'tidb'")
 	record, err = store.GetByID(ctx, tpl.ID)
 	require.NoError(t, err)
 	require.Equal(t, *tpl, *record)
@@ -366,6 +431,7 @@ func runTimerStoreInsertAndList(ctx context.Context, t *testing.T, store *api.Ti
 	got, err := store.GetByID(ctx, id)
 	require.NoError(t, err)
 	recordTpl1.ID = got.ID
+	recordTpl1.Location = timeutil.SystemLocation()
 	recordTpl1.Version = got.Version
 	recordTpl1.CreateTime = got.CreateTime
 
@@ -375,6 +441,7 @@ func runTimerStoreInsertAndList(ctx context.Context, t *testing.T, store *api.Ti
 	require.NoError(t, err)
 	recordTpl2.ID = got.ID
 	recordTpl2.Version = got.Version
+	recordTpl2.Location = timeutil.SystemLocation()
 	recordTpl2.CreateTime = got.CreateTime
 
 	id, err = store.Create(ctx, &recordTpl3)
@@ -383,6 +450,7 @@ func runTimerStoreInsertAndList(ctx context.Context, t *testing.T, store *api.Ti
 	require.NoError(t, err)
 	recordTpl3.ID = got.ID
 	recordTpl3.Version = got.Version
+	recordTpl3.Location = timeutil.SystemLocation()
 	recordTpl3.CreateTime = got.CreateTime
 
 	checkList := func(expected []*api.TimerRecord, list []*api.TimerRecord) {

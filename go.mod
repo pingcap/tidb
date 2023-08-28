@@ -87,6 +87,7 @@ require (
 	github.com/prometheus/client_model v0.4.0
 	github.com/prometheus/common v0.44.0
 	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/sasha-s/go-deadlock v0.2.0
 	github.com/shirou/gopsutil/v3 v3.23.5
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0

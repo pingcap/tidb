@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -220,4 +221,41 @@ func WithinDayTimePeriod(start, end, now time.Time) bool {
 	}
 	// for cases like from 22:00 to 06:00
 	return now.Sub(end) <= 0 || now.Sub(start) >= 0
+}
+
+// ParseTimeZone parses the time zone string, returns the location and whether the time zone is valid.
+func ParseTimeZone(s string) (*time.Location, error) {
+	if strings.EqualFold(s, "SYSTEM") {
+		return SystemLocation(), nil
+	}
+
+	loc, err := time.LoadLocation(s)
+	if err == nil {
+		return loc, nil
+	}
+
+	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
+	// The time zone's value should in [-12:59,+14:00].
+	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
+		d, _, err := types.ParseDuration(nil, s[1:], 0)
+		if err == nil {
+			if s[0] == '-' {
+				if d.Duration > 12*time.Hour+59*time.Minute {
+					return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
+				}
+			} else {
+				if d.Duration > 14*time.Hour {
+					return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
+				}
+			}
+
+			ofst := int(d.Duration / time.Second)
+			if s[0] == '-' {
+				ofst = -ofst
+			}
+			return time.FixedZone("", ofst), nil
+		}
+	}
+
+	return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -173,7 +174,7 @@ func TestTimeZone(t *testing.T) {
 	require.Equal(t, "+00:00", val)
 
 	require.Nil(t, sv.SetSessionFromHook(vars, "UTC")) // sets
-	tz, err := parseTimeZone("UTC")
+	tz, err := timeutil.ParseTimeZone("UTC")
 	require.NoError(t, err)
 	require.Equal(t, tz, vars.TimeZone)
 }

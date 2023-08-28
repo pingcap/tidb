@@ -139,6 +139,15 @@ func TestUpdateTimerOption(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, []string{"l1", "l2"}, tags)
 	require.Equal(t, []string{"Tags", "Enable", "SchedPolicyType", "SchedPolicyExpr", "Watermark", "SummaryData"}, update.FieldsSet())
+
+	// test 'TimeZone' field
+	require.False(t, update.TimeZone.Present())
+	WithSetTimeZone("UTC")(&update)
+	require.True(t, update.TimeZone.Present())
+	tz, ok := update.TimeZone.Get()
+	require.True(t, ok)
+	require.Equal(t, "UTC", tz)
+	require.Equal(t, []string{"Tags", "Enable", "TimeZone", "SchedPolicyType", "SchedPolicyExpr", "Watermark", "SummaryData"}, update.FieldsSet())
 }
 
 func TestDefaultClient(t *testing.T) {
@@ -149,6 +158,7 @@ func TestDefaultClient(t *testing.T) {
 		Key:             "k1",
 		SchedPolicyType: SchedEventInterval,
 		SchedPolicyExpr: "1h",
+		TimeZone:        "Asia/Shanghai",
 		Data:            []byte("data1"),
 		Tags:            []string{"l1", "l2"},
 	}
@@ -159,6 +169,7 @@ func TestDefaultClient(t *testing.T) {
 	spec.Namespace = "default"
 	require.NotEmpty(t, timer.ID)
 	require.Equal(t, spec, timer.TimerSpec)
+	require.Equal(t, "Asia/Shanghai", timer.TimeZone)
 	require.Equal(t, SchedEventIdle, timer.EventStatus)
 	require.Equal(t, "", timer.EventID)
 	require.Empty(t, timer.EventData)
