@@ -410,6 +410,12 @@ const (
 	// TiDBMaxBytesBeforeTiFlashExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
 	TiDBMaxBytesBeforeTiFlashExternalSort = "tidb_max_bytes_before_tiflash_external_sort"
 
+	// TiDBMaxTiFlashQueryMemoryPerNode is the maximum bytes used by a TiFlash Query on each TiFlash node
+	TiDBMaxTiFlashQueryMemoryPerNode = "tidb_max_tiflash_query_memory_per_node"
+
+	// TiDBTiFlashAutoSpillRatio is the threshold that TiFlash will trigger auto spill when the memory usage is above this percentage
+	TiDBTiFlashAutoSpillRatio = "tidb_tiflash_auto_spill_ratio"
+
 	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
 	// Default value is `true`, means never use pipeline model in tiflash.
 	// Value set to `true` means try to execute query with pipeline model in tiflash.
@@ -1172,6 +1178,8 @@ const (
 	DefTiFlashMaxBytesBeforeExternalJoin           = -1
 	DefTiFlashMaxBytesBeforeExternalGroupBy        = -1
 	DefTiFlashMaxBytesBeforeExternalSort           = -1
+	DefTiFlashMaxQueryMemoryPerNode                = 0
+	DefTiFlashAutoSpillRatio                       = 0
 	DefTiDBEnableTiFlashPipelineMode               = true
 	DefTiDBMPPStoreFailTTL                         = "60s"
 	DefTiDBTxnMode                                 = ""

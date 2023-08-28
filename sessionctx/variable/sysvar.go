@@ -173,6 +173,23 @@ var defaultSysVars = []*SysVar{
 		s.TiFlashMaxBytesBeforeExternalSort = TidbOptInt64(val, DefTiFlashMaxBytesBeforeExternalSort)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxTiFlashQueryMemoryPerNode, Type: TypeUnsigned, Value: strconv.Itoa(DefTiFlashMaxQueryMemoryPerNode), MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.TiFlashMaxQueryMemoryPerNode = TidbOptUint64(val, DefTiFlashMaxQueryMemoryPerNode)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTiFlashAutoSpillRatio, Type: TypeFloat, Value: strconv.FormatFloat(DefTiFlashAutoSpillRatio, 'f', -1, 64), MinValue: 0, MaxValue: 1, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, flag ScopeFlag) (string, error) {
+		val, err := strconv.ParseFloat(normalizedValue, 64)
+		if err != nil {
+			return "", err
+		}
+		if val > 0.85 || val < 0 {
+			return "", errors.New("The valid value of tidb_tiflash_auto_spill_ratio is between 0 and 0.85")
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		s.TiFlashAutoSpillRatio = tidbOptFloat64(val, DefTiFlashAutoSpillRatio)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTiFlashPipelineMode, Type: TypeBool, Value: BoolToOnOff(DefTiDBEnableTiFlashPipelineMode), SetSession: func(s *SessionVars, val string) error {
 		s.TiFlashEnablePipelineMode = TiDBOptOn(val)
 		return nil
