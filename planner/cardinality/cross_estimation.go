@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 )
 
+// SelectionFactor is the default factor when computing selectivity.
 const SelectionFactor = 0.8
 
 // CrossEstimateTableRowCount estimates row count of table scan using histogram of another column which is in TableFilters
