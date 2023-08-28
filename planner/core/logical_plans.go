@@ -1703,7 +1703,7 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 			selectivity := path.CountAfterAccess / float64(ds.statisticTable.RealtimeCount)
 			for i := range accesses {
 				col := path.IdxCols[path.EqOrInCondCount+i]
-				ndv := ds.getColumnNDV(col.ID)
+				ndv := cardinality.EstimateColumnNDV(ds.statisticTable, col.ID)
 				ndv *= selectivity
 				if ndv < 1 {
 					ndv = 1.0
@@ -1854,7 +1854,7 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression
 			selectivity := path.CountAfterAccess / float64(ds.statisticTable.RealtimeCount)
 			for i := range accesses {
 				col := path.IdxCols[path.EqOrInCondCount+i]
-				ndv := ds.getColumnNDV(col.ID)
+				ndv := cardinality.EstimateColumnNDV(ds.statisticTable, col.ID)
 				ndv *= selectivity
 				if ndv < 1 {
 					ndv = 1.0
