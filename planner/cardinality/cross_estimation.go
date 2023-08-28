@@ -82,8 +82,8 @@ func AdjustRowCountForIndexScanByLimit(sctx sessionctx.Context, statsInfo *prope
 		rowCount = count
 	} else if abs := math.Abs(corr); abs < 1 {
 		correlationFactor := math.Pow(1-abs, float64(sctx.GetSessionVars().CorrelationExpFactor))
-		selectivity := statsInfo.RowCount / rowCount
-		rowCount = math.Min(expectedCnt/selectivity/correlationFactor, rowCount)
+		selectivity := statsInfo.RowCount / path.CountAfterAccess
+		rowCount = math.Min(expectedCnt/selectivity/correlationFactor, path.CountAfterAccess)
 	}
 	return rowCount
 }
