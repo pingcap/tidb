@@ -92,7 +92,7 @@ func TestSeekPropsOffsets(t *testing.T) {
 	got, err = seekPropsOffsets(ctx, []byte("key3"), []string{file1, file2}, store)
 	require.NoError(t, err)
 	require.Equal(t, []uint64{30, 20}, got)
-	got, err = seekPropsOffsets(ctx, []byte("key0"), []string{file1, file2}, store)
+	_, err = seekPropsOffsets(ctx, []byte("key0"), []string{file1, file2}, store)
 	require.ErrorContains(t, err, "start key 6b657930 is too small for stat files [/test1 /test2]")
 	got, err = seekPropsOffsets(ctx, []byte("key1"), []string{file1, file2}, store)
 	require.NoError(t, err)
@@ -105,6 +105,7 @@ func TestSeekPropsOffsets(t *testing.T) {
 	w3, err := store.Create(ctx, file3, nil)
 	require.NoError(t, err)
 	err = w3.Close(ctx)
+	require.NoError(t, err)
 
 	file4 := "/test4"
 	w4, err := store.Create(ctx, file4, nil)
@@ -125,7 +126,7 @@ func TestGetAllFileNames(t *testing.T) {
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, 0, "/subtask")
+		Build(store, "/subtask", 0)
 	kvPairs := make([]common.KvPair, 0, 30)
 	for i := 0; i < 30; i++ {
 		kvPairs = append(kvPairs, common.KvPair{
@@ -142,7 +143,7 @@ func TestGetAllFileNames(t *testing.T) {
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, 3, "/subtask")
+		Build(store, "/subtask", 3)
 	err = w2.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
 	require.NoError(t, err)
 	_, err = w2.Close(ctx)
@@ -152,7 +153,7 @@ func TestGetAllFileNames(t *testing.T) {
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, 12, "/subtask")
+		Build(store, "/subtask", 12)
 	err = w3.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
 	require.NoError(t, err)
 	_, err = w3.Close(ctx)
@@ -170,4 +171,41 @@ func TestGetAllFileNames(t *testing.T) {
 		"/subtask/12/0", "/subtask/12/1", "/subtask/12/2",
 		"/subtask/3/0", "/subtask/3/1", "/subtask/3/2",
 	}, dataFiles)
+}
+
+func TestCleanUpFiles(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemStorage()
+	w := NewWriterBuilder().
+		SetMemorySizeLimit(20).
+		SetPropSizeDistance(5).
+		SetPropKeysDistance(3).
+		Build(store, "/subtask", 0)
+	kvPairs := make([]common.KvPair, 0, 30)
+	for i := 0; i < 30; i++ {
+		kvPairs = append(kvPairs, common.KvPair{
+			Key: []byte{byte(i)},
+			Val: []byte{byte(i)},
+		})
+	}
+	err := w.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
+	require.NoError(t, err)
+	_, err = w.Close(ctx)
+	require.NoError(t, err)
+
+	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "/subtask")
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"/subtask/0_stat/0", "/subtask/0_stat/1", "/subtask/0_stat/2",
+	}, statFiles)
+	require.Equal(t, []string{
+		"/subtask/0/0", "/subtask/0/1", "/subtask/0/2",
+	}, dataFiles)
+
+	require.NoError(t, CleanUpFiles(ctx, store, "/subtask", 10))
+
+	dataFiles, statFiles, err = GetAllFileNames(ctx, store, "/subtask")
+	require.NoError(t, err)
+	require.Equal(t, []string(nil), statFiles)
+	require.Equal(t, []string(nil), dataFiles)
 }
