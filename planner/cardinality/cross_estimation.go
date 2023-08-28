@@ -35,7 +35,8 @@ const SelectionFactor = 0.8
 // `select * from tbl where a = 1 order by pk limit 1`
 // if order of column `a` is strictly correlated with column `pk`, the row count of table scan should be:
 // `1 + row_count(a < 1 or a is null)`
-func CrossEstimateTableRowCount(sctx sessionctx.Context, statsInfo *property.StatsInfo, tblStats *statistics.Table, path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
+func CrossEstimateTableRowCount(sctx sessionctx.Context, statsInfo *property.StatsInfo, tblStats *statistics.Table,
+	path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
 	if tblStats.Pseudo || len(path.TableFilters) == 0 || !sctx.GetSessionVars().EnableCorrelationAdjustment {
 		return 0, false, 0
 	}
@@ -43,12 +44,26 @@ func CrossEstimateTableRowCount(sctx sessionctx.Context, statsInfo *property.Sta
 	return crossEstimateRowCount(sctx, statsInfo, tblStats, path, path.TableFilters, col, corr, expectedCnt, desc)
 }
 
-// CrossEstimateIndexRowCount estimates row count of index scan using histogram of another column which is in TableFilters/IndexFilters
+func AdjustRowCountForIndexScanByLimit(sctx sessionctx.Context, statsInfo *property.StatsInfo, tblStats *statistics.Table,
+	path *util.AccessPath, expectedCnt float64, desc bool) (rowCount float64) {
+	count, ok, corr := crossEstimateIndexRowCount(sctx, statsInfo, tblStats,
+		path, expectedCnt, desc)
+	if ok {
+		rowCount = count
+	} else if abs := math.Abs(corr); abs < 1 {
+		correlationFactor := math.Pow(1-abs, float64(sctx.GetSessionVars().CorrelationExpFactor))
+		selectivity := statsInfo.RowCount / rowCount
+		rowCount = math.Min(expectedCnt/selectivity/correlationFactor, rowCount)
+	}
+	return rowCount
+}
+
+// crossEstimateIndexRowCount estimates row count of index scan using histogram of another column which is in TableFilters/IndexFilters
 // and has high order correlation with the first index column. For example, if the query is like:
 // `select * from tbl where a = 1 order by b limit 1`
 // if order of column `a` is strictly correlated with column `b`, the row count of IndexScan(b) should be:
 // `1 + row_count(a < 1 or a is null)`
-func CrossEstimateIndexRowCount(sctx sessionctx.Context, statsInfo *property.StatsInfo, tblStats *statistics.Table, path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
+func crossEstimateIndexRowCount(sctx sessionctx.Context, statsInfo *property.StatsInfo, tblStats *statistics.Table, path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
 	filtersLen := len(path.TableFilters) + len(path.IndexFilters)
 	sessVars := sctx.GetSessionVars()
 	if tblStats.Pseudo || filtersLen == 0 || !sessVars.EnableExtendedStats || !sctx.GetSessionVars().EnableCorrelationAdjustment {

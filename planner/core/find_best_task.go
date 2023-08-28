@@ -2517,15 +2517,9 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		len(path.IndexFilters)+len(path.TableFilters) > 0
 
 	if (isMatchProp || prop.IsSortItemEmpty()) && prop.ExpectedCnt < ds.StatsInfo().RowCount && !ignoreExpectedCnt {
-		count, ok, corr := cardinality.CrossEstimateIndexRowCount(ds.SCtx(), ds.StatsInfo(), ds.statisticTable, path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
-		if ok {
-			rowCount = count
-		} else if abs := math.Abs(corr); abs < 1 {
-			correlationFactor := math.Pow(1-abs, float64(ds.SCtx().GetSessionVars().CorrelationExpFactor))
-			selectivity := ds.StatsInfo().RowCount / rowCount
-			rowCount = math.Min(prop.ExpectedCnt/selectivity/correlationFactor, rowCount)
-		}
+		rowCount = cardinality.AdjustRowCountForIndexScanByLimit(ds.SCtx(), ds.StatsInfo(), ds.statisticTable, path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
 	}
+
 	is.SetStats(ds.tableStats.ScaleByExpectCnt(rowCount))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 	if usedStats != nil && usedStats[is.physicalTableID] != nil {
