@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 	"golang.org/x/exp/slices"
@@ -99,6 +98,20 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 		}
 	}
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].cnt > sorted[j].cnt })
+<<<<<<< HEAD
+=======
+	failpoint.Inject("StabilizeV1AnalyzeTopN", func(val failpoint.Value) {
+		if val.(bool) {
+			// The earlier TopN entry will modify the CMSketch, therefore influence later TopN entry's row count.
+			// So we need to make the order here fully deterministic to make the stats from analyze ver1 stable.
+			// See (*SampleCollector).ExtractTopN(), which calls this function, for details
+			sort.SliceStable(sorted, func(i, j int) bool {
+				return sorted[i].cnt > sorted[j].cnt ||
+					(sorted[i].cnt == sorted[j].cnt && string(sorted[i].data) < string(sorted[j].data))
+			})
+		}
+	})
+>>>>>>> c11a9992882 (*: use std/slices to replace exp/slices (#46433))
 
 	var (
 		sumTopN   uint64
@@ -131,7 +144,7 @@ func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uin
 	helper := newTopNHelper(sample, numTop)
 	// rowCount is not a accurate value when fast analyzing
 	// In some cases, if user triggers fast analyze when rowCount is close to sampleSize, unexpected bahavior might happen.
-	rowCount = mathutil.Max(rowCount, uint64(len(sample)))
+	rowCount = max(rowCount, uint64(len(sample)))
 	estimateNDV, scaleRatio := calculateEstimateNDV(helper, rowCount)
 	defaultVal := calculateDefaultVal(helper, estimateNDV, scaleRatio, rowCount)
 	c, t := buildCMSAndTopN(helper, d, w, scaleRatio, defaultVal)
@@ -170,7 +183,7 @@ func calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRatio, rowCount u
 		return 1
 	}
 	estimateRemainingCount := rowCount - (helper.sampleSize-helper.onlyOnceItems)*scaleRatio
-	return estimateRemainingCount / mathutil.Max(1, estimateNDV-sampleNDV+helper.onlyOnceItems)
+	return estimateRemainingCount / max(1, estimateNDV-sampleNDV+helper.onlyOnceItems)
 }
 
 // MemoryUsage returns the total memory usage of a CMSketch.
@@ -352,7 +365,7 @@ func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch, numTopN uint32
 	for i := range c.table {
 		c.count = 0
 		for j := range c.table[i] {
-			c.table[i][j] = mathutil.Max(c.table[i][j], rc.table[i][j])
+			c.table[i][j] = max(c.table[i][j], rc.table[i][j])
 			c.count += uint64(c.table[i][j])
 		}
 	}
@@ -486,8 +499,13 @@ func (c *CMSketch) GetWidthAndDepth() (int32, int32) {
 
 // CalcDefaultValForAnalyze calculate the default value for Analyze.
 // The value of it is count / NDV in CMSketch. This means count and NDV are not include topN.
+<<<<<<< HEAD
 func (c *CMSketch) CalcDefaultValForAnalyze(NDV uint64) {
 	c.defaultValue = c.count / mathutil.Max(1, NDV)
+=======
+func (c *CMSketch) CalcDefaultValForAnalyze(ndv uint64) {
+	c.defaultValue = c.count / max(1, ndv)
+>>>>>>> c11a9992882 (*: use std/slices to replace exp/slices (#46433))
 }
 
 // TopN stores most-common values, which is used to estimate point queries.

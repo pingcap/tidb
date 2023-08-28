@@ -208,10 +208,15 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	} else if snapshotRow == nil {
 		row = addedRow
 	} else {
+<<<<<<< HEAD
 		isSnapshotRow, err = us.shouldPickFirstRow(snapshotRow, addedRow)
+=======
+		isSnapshotRowInt, err := us.compare(us.Ctx().GetSessionVars().StmtCtx, snapshotRow, addedRow)
+>>>>>>> c11a9992882 (*: use std/slices to replace exp/slices (#46433))
 		if err != nil {
 			return nil, err
 		}
+		isSnapshotRow = isSnapshotRowInt < 0
 		if isSnapshotRow {
 			row = snapshotRow
 		} else {
@@ -300,9 +305,24 @@ func (us *UnionScanExec) shouldPickFirstRow(a, b []types.Datum) (bool, error) {
 	return isFirstRow, nil
 }
 
+<<<<<<< HEAD
 func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 	sc := us.ctx.GetSessionVars().StmtCtx
 	for _, colOff := range us.usedIndex {
+=======
+type compareExec struct {
+	collators []collate.Collator
+	// usedIndex is the column offsets of the index which Src executor has used.
+	usedIndex []int
+	desc      bool
+	// handleCols is the handle's position of the below scan plan.
+	handleCols plannercore.HandleCols
+}
+
+func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum) (ret int, err error) {
+	var cmp int
+	for _, colOff := range ce.usedIndex {
+>>>>>>> c11a9992882 (*: use std/slices to replace exp/slices (#46433))
 		aColumn := a[colOff]
 		bColumn := b[colOff]
 		cmp, err := aColumn.Compare(sc, &bColumn, us.collators[colOff])
@@ -312,6 +332,19 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 		if cmp != 0 {
 			return cmp, nil
 		}
+<<<<<<< HEAD
 	}
 	return us.belowHandleCols.Compare(a, b, us.collators)
+=======
+		if ce.desc {
+			return -cmp, nil
+		}
+		return cmp, nil
+	}
+	cmp, err = ce.handleCols.Compare(a, b, ce.collators)
+	if ce.desc {
+		return -cmp, err
+	}
+	return cmp, err
+>>>>>>> c11a9992882 (*: use std/slices to replace exp/slices (#46433))
 }

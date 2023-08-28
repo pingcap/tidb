@@ -237,8 +237,11 @@ go_library(
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//credentials",
         "@org_golang_google_grpc//status",
+<<<<<<< HEAD
         "@org_golang_x_exp//maps",
         "@org_golang_x_exp//slices",
+=======
+>>>>>>> c11a9992882 (*: use std/slices to replace exp/slices (#46433))
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
