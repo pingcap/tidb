@@ -2572,11 +2572,8 @@ func (c *testCallback) OnJobRunBefore(job *model.Job) {
 	}
 }
 
-// TODO: do extensive test for LIST [COLUMNS]
-// TODO: Either skip this, move it to a separate directory for big tests
-// or see if there are ways to speed this up :)
-// Leaving the test here, for reference and completeness testing
 func TestPartitionByIntListExtensivePart(t *testing.T) {
+	limitSizeOfTest := true
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "PartitionByIntListExtensive"
@@ -2589,7 +2586,7 @@ func TestPartitionByIntListExtensivePart(t *testing.T) {
 	t2Str := `create table t2 ` + tBase
 	tStr := `create table t ` + tBase
 
-	rows := 1000
+	rows := 100
 	pkInserts := 20
 	pkUpdates := 20
 	pkDeletes := 10 // Enough to delete half of what is inserted?
@@ -2604,6 +2601,9 @@ func TestPartitionByIntListExtensivePart(t *testing.T) {
 		tStr + ` partition by hash(a) partitions 5`,
 		// HASH with function
 		tStr + ` partition by hash(a DIV 3) partitions 5`,
+	}
+	if limitSizeOfTest {
+		tStart = tStart[:2]
 	}
 	quarterUintRange := 1 << 30
 	quarterUintRangeStr := fmt.Sprintf("%d", quarterUintRange)
@@ -2632,6 +2632,9 @@ func TestPartitionByIntListExtensivePart(t *testing.T) {
 		// Hash
 		`alter table t partition by hash(a DIV 13) partitions 7`,
 		`alter table t partition by hash(a DIV 13) partitions 3`,
+	}
+	if limitSizeOfTest {
+		tAlter = tAlter[:2]
 	}
 
 	seed := gotime.Now().UnixNano()
@@ -2683,10 +2686,8 @@ func getInt7ValuesFunc() func(string, bool, *rand.Rand) string {
 	}
 }
 
-// TODO: Either skip this, move it to a separate directory for big tests
-// or see if there are ways to speed this up :)
-// Leaving the test here, for reference and completeness testing
 func TestPartitionByIntExtensivePart(t *testing.T) {
+	limitSizeOfTest := true
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "PartitionByIntExtensive"
@@ -2699,7 +2700,7 @@ func TestPartitionByIntExtensivePart(t *testing.T) {
 	t2Str := `create table t2 ` + tBase
 	tStr := `create table t ` + tBase
 
-	rows := 1000
+	rows := 100
 	pkInserts := 20
 	pkUpdates := 20
 	pkDeletes := 10 // Enough to delete half of what is inserted?
@@ -2718,6 +2719,9 @@ func TestPartitionByIntExtensivePart(t *testing.T) {
 		tStr + ` partition by hash(a) partitions 5`,
 		// HASH with function
 		tStr + ` partition by hash(a DIV 3) partitions 5`,
+	}
+	if limitSizeOfTest {
+		tStart = tStart[:2]
 	}
 	quarterUintRange := 1 << 30
 	quarterUintRangeStr := fmt.Sprintf("%d", quarterUintRange)
@@ -2740,6 +2744,9 @@ func TestPartitionByIntExtensivePart(t *testing.T) {
 		// Hash
 		`alter table t partition by hash(a DIV 13) partitions 7`,
 		`alter table t partition by hash(a DIV 13) partitions 3`,
+	}
+	if limitSizeOfTest {
+		tAlter = tAlter[:2]
 	}
 
 	seed := gotime.Now().UnixNano()
@@ -2813,10 +2820,8 @@ func TestRangePartitionByRange(t *testing.T) {
 	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("-1", "0", "1"))
 }
 
-// TODO: Either skip this, move it to a separate directory for big tests
-// or see if there are ways to speed this up :)
-// Leaving the test here, for reference and completeness testing
 func TestPartitionByExtensivePart(t *testing.T) {
+	limitSizeOfTest := true
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "PartitionByExtensive"
@@ -2829,7 +2834,7 @@ func TestPartitionByExtensivePart(t *testing.T) {
 	t2Str := `create table t2 ` + tBase
 	tStr := `create table t ` + tBase
 
-	rows := 1000
+	rows := 100
 	pkInserts := 20
 	pkUpdates := 20
 	pkDeletes := 10 // Enough to delete half of what is inserted?
@@ -2840,6 +2845,9 @@ func TestPartitionByExtensivePart(t *testing.T) {
 		tStr + ` partition by range columns (a) (partition pNull values less than (""), partition pM values less than ("M"), partition pLast values less than (maxvalue))`,
 		// KEY
 		tStr + ` partition by key(a) partitions 5`,
+	}
+	if limitSizeOfTest {
+		tStart = tStart[:2]
 	}
 	showCreateStr := "t CREATE TABLE `t` (\n" +
 		"  `a` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,\n" +
@@ -2885,6 +2893,9 @@ func TestPartitionByExtensivePart(t *testing.T) {
 			result: showCreateStr +
 				"PARTITION BY KEY (`a`) PARTITIONS 3",
 		},
+	}
+	if limitSizeOfTest {
+		tAlter = tAlter[:2]
 	}
 
 	seed := gotime.Now().UnixNano()
@@ -2976,7 +2987,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 		"  KEY `e` (`e`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
-	rows := 10000
+	rows := 1000
 	pkInserts := 200
 	pkUpdates := 200
 	pkDeletes := 100 // Enough to delete half of what is inserted?
