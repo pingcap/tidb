@@ -264,6 +264,7 @@
     "exclude_files": {
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*\\.s$": "ignore s code",
       "/cgo/": "ignore cgo code",
       ".*\\.pb\\.go$": "generated code",
       "/rules_go_work-*": "ignore generated code",
