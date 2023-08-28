@@ -38,6 +38,7 @@ type Index struct {
 	PhysicalID int64
 }
 
+// Copy copies the index.
 func (idx *Index) Copy() *Index {
 	if idx == nil {
 		return nil

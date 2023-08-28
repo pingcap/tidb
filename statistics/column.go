@@ -46,6 +46,7 @@ type Column struct {
 	IsHandle bool
 }
 
+// Copy copies the column.
 func (c *Column) Copy() *Column {
 	if c == nil {
 		return nil
