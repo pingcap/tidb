@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -817,7 +818,7 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64, costFlag uint64) float64
 	cpuCost += probeCost
 	// For merge join, only one group of rows with same join key(not null) are cached,
 	// we compute average memory cost using estimated group size.
-	ndv, _ := getColsNDVWithMatchedLen(innerKeys, innerSchema, innerStats)
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(innerKeys, innerSchema, innerStats)
 	memoryCost := (innerCnt / ndv) * sessVars.GetMemoryFactor()
 	return cpuCost + memoryCost
 }
