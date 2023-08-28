@@ -128,8 +128,8 @@ func (s *LFU) onReject(item *ristretto.Item) {
 			logutil.BgLogger().Warn("panic in onReject", zap.Any("error", r), zap.Stack("stack"))
 		}
 	}()
-	metrics.RejectCounter.Add(1.0)
 	s.dropMemory(item)
+	metrics.RejectCounter.Inc()
 }
 
 func (s *LFU) onEvict(item *ristretto.Item) {
@@ -153,7 +153,6 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	// because the onexit function is also called when the evict event occurs.
 	// TODO(hawkingrei): not copy the useless part.
 	table := item.Value.(*statistics.Table).Copy()
-	before := table.MemoryUsage().TotalTrackingMemUsage()
 	for _, column := range table.Columns {
 		DropEvicted(column)
 	}
@@ -163,8 +162,8 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	s.resultKeySet.AddKeyValue(int64(item.Key), table)
 	after := table.MemoryUsage().TotalTrackingMemUsage()
 	// why add before again? because the cost will be subtracted in onExit.
-	// in fact, it is  -(before - after) + after = after + after - before
-	s.addCost(2*after - before)
+	// in fact, it is after - before
+	s.addCost(after)
 }
 
 func (s *LFU) onExit(val any) {
