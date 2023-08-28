@@ -17,7 +17,9 @@ package distroleutil
 import "strings"
 
 const (
-	TiDBServiceScopeDefault    = ""
+	// TiDBServiceScopeDefault indicates no role.
+	TiDBServiceScopeDefault = ""
+	// TiDBServiceScopeDefault indicates node can run background tasks in distributed execution framework.
 	TiDBServiceScopeBackground = "background"
 )
 
