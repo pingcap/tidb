@@ -30,12 +30,39 @@ import (
 // SelectionFactor is the default factor when computing selectivity.
 const SelectionFactor = 0.8
 
-// CrossEstimateTableRowCount estimates row count of table scan using histogram of another column which is in TableFilters
+// AdjustRowCountForTableScanByLimit will adjust the row count for table scan by limit.
+// For a query like `select pk from t using index(primary) where pk > 10 limit 1`, the row count of the table scan
+// should be adjusted by the limit number 1, because only one row is returned.
+func AdjustRowCountForTableScanByLimit(sctx sessionctx.Context, statsInfo *property.StatsInfo,
+	tblStats *statistics.Table, path *util.AccessPath, expectedCnt float64, desc bool) (rowCount float64) {
+	selectivity := statsInfo.RowCount / path.CountAfterAccess
+	uniformEst := math.Min(path.CountAfterAccess, expectedCnt/selectivity)
+
+	corrEst, ok, corr := crossEstimateTableRowCount(sctx, statsInfo, tblStats, path, expectedCnt, desc)
+	if ok {
+		// TODO: actually, before using this count as the estimated row count of table scan, we need additionally
+		// check if count < row_count(first_region | last_region), and use the larger one since we build one copTask
+		// for one region now, so even if it is `limit 1`, we have to scan at least one region in table scan.
+		// Currently, we can use `tikvrpc.CmdDebugGetRegionProperties` interface as `getSampRegionsRowCount()` does
+		// to get the row count in a region, but that result contains MVCC old version rows, so it is not that accurate.
+		// Considering that when this scenario happens, the execution time is close between IndexScan and TableScan,
+		// we do not add this check temporarily.
+
+		// to reduce risks of correlation adjustment, use the maximum between uniformEst and corrEst
+		rowCount = math.Max(uniformEst, corrEst)
+	} else if abs := math.Abs(corr); abs < 1 {
+		correlationFactor := math.Pow(1-abs, float64(sctx.GetSessionVars().CorrelationExpFactor))
+		rowCount = math.Min(path.CountAfterAccess, uniformEst/correlationFactor)
+	}
+	return rowCount
+}
+
+// crossEstimateTableRowCount estimates row count of table scan using histogram of another column which is in TableFilters
 // and has high order correlation with handle column. For example, if the query is like:
 // `select * from tbl where a = 1 order by pk limit 1`
 // if order of column `a` is strictly correlated with column `pk`, the row count of table scan should be:
 // `1 + row_count(a < 1 or a is null)`
-func CrossEstimateTableRowCount(sctx sessionctx.Context, statsInfo *property.StatsInfo, tblStats *statistics.Table,
+func crossEstimateTableRowCount(sctx sessionctx.Context, statsInfo *property.StatsInfo, tblStats *statistics.Table,
 	path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
 	if tblStats.Pseudo || len(path.TableFilters) == 0 || !sctx.GetSessionVars().EnableCorrelationAdjustment {
 		return 0, false, 0
@@ -44,8 +71,11 @@ func CrossEstimateTableRowCount(sctx sessionctx.Context, statsInfo *property.Sta
 	return crossEstimateRowCount(sctx, statsInfo, tblStats, path, path.TableFilters, col, corr, expectedCnt, desc)
 }
 
-func AdjustRowCountForIndexScanByLimit(sctx sessionctx.Context, statsInfo *property.StatsInfo, tblStats *statistics.Table,
-	path *util.AccessPath, expectedCnt float64, desc bool) (rowCount float64) {
+// AdjustRowCountForIndexScanByLimit will adjust the row count for table scan by limit.
+// For a query like `select k from t using index(k) where k > 10 limit 1`, the row count of the index scan
+// should be adjusted by the limit number 1, because only one row is returned.
+func AdjustRowCountForIndexScanByLimit(sctx sessionctx.Context, statsInfo *property.StatsInfo,
+	tblStats *statistics.Table, path *util.AccessPath, expectedCnt float64, desc bool) (rowCount float64) {
 	count, ok, corr := crossEstimateIndexRowCount(sctx, statsInfo, tblStats,
 		path, expectedCnt, desc)
 	if ok {
