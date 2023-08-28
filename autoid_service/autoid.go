@@ -25,12 +25,14 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	autoid1 "github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -269,6 +271,7 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 		},
 		TLS: tlsConfig,
 	})
+	etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(store.GetCodec()))
 	if err != nil {
 		panic(err)
 	}
@@ -374,6 +377,11 @@ const batch = 4000
 
 // AllocAutoID implements gRPC AutoIDAlloc interface.
 func (s *Service) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
+	serviceKeyspaceID := uint32(s.store.GetCodec().GetKeyspaceID())
+	if req.KeyspaceID != serviceKeyspaceID {
+		logutil.BgLogger().Info("Current service is not request keyspace leader.", zap.Uint32("req-keyspace-id", req.KeyspaceID), zap.Uint32("service-keyspace-id", serviceKeyspaceID))
+		return nil, errors.Trace(errors.New("not leader"))
+	}
 	var res *autoid.AutoIDResponse
 	for {
 		var err error

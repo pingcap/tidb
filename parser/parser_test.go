@@ -1058,6 +1058,7 @@ AAAAAAAAAAAA5gm5Mg==
 
 		{"select `t`.`1a`.1 from t;", true, "SELECT `t`.`1a`.`1` FROM `t`"},
 		{"select * from 1db.1table;", true, "SELECT * FROM `1db`.`1table`"},
+		{"select * from t where t. status = 1;", true, "SELECT * FROM `t` WHERE `t`.`status`=1"},
 
 		// for show placement
 		{"SHOW PLACEMENT", true, "SHOW PLACEMENT"},

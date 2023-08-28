@@ -31,7 +31,6 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/docker/go-units"
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -71,6 +70,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/tikv/client-go/v2/testutils"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/mock/gomock"
 )
 
 const (

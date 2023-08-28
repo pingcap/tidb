@@ -134,7 +134,7 @@ type Engine struct {
 	config    backend.LocalEngineConfig
 	tableInfo *checkpoints.TidbTableInfo
 
-	dupDetectOpt DupDetectOpt
+	dupDetectOpt common.DupDetectOpt
 
 	// total size of SST files waiting to be ingested
 	pendingFileSize atomic.Int64
@@ -143,7 +143,7 @@ type Engine struct {
 	importedKVSize  atomic.Int64
 	importedKVCount atomic.Int64
 
-	keyAdapter         KeyAdapter
+	keyAdapter         common.KeyAdapter
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
 
@@ -418,7 +418,7 @@ func (s *sizeProperties) iter(f func(p *rangeProperty) bool) {
 	})
 }
 
-func decodeRangeProperties(data []byte, keyAdapter KeyAdapter) (rangeProperties, error) {
+func decodeRangeProperties(data []byte, keyAdapter common.KeyAdapter) (rangeProperties, error) {
 	r := make(rangeProperties, 0, 16)
 	for len(data) > 0 {
 		if len(data) < 4 {
@@ -449,7 +449,7 @@ func decodeRangeProperties(data []byte, keyAdapter KeyAdapter) (rangeProperties,
 // getSizePropertiesFn is used to let unit test replace the real function.
 var getSizePropertiesFn = getSizeProperties
 
-func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) (*sizeProperties, error) {
+func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter common.KeyAdapter) (*sizeProperties, error) {
 	sstables, err := db.SSTables(pebble.WithProperties())
 	if err != nil {
 		logger.Warn("get sst table properties failed", log.ShortError(err))
@@ -947,7 +947,7 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 	return newDupDetectIter(e.getDB(), e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
 }
 
-var _ ingestData = (*Engine)(nil)
+var _ common.IngestData = (*Engine)(nil)
 
 // GetFirstAndLastKey reads the first and last key in range [lowerBound, upperBound)
 // in the engine. Empty upperBound means unbounded.
@@ -982,20 +982,26 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 	return firstKey, lastKey, nil
 }
 
-// NewIter implements ingestData interface.
-func (e *Engine) NewIter(ctx context.Context, lowerBound, upperBound []byte) ForwardIter {
+// NewIter implements IngestData interface.
+func (e *Engine) NewIter(ctx context.Context, lowerBound, upperBound []byte) common.ForwardIter {
 	return e.newKVIter(ctx, &pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound})
 }
 
-// GetTS implements ingestData interface.
+// GetTS implements IngestData interface.
 func (e *Engine) GetTS() uint64 {
 	return e.TS
 }
 
-// Finish implements ingestData interface.
+// Finish implements IngestData interface.
 func (e *Engine) Finish(totalBytes, totalCount int64) {
 	e.importedKVSize.Add(totalBytes)
 	e.importedKVCount.Add(totalCount)
+}
+
+// LoadIngestData return (local) Engine itself because Engine has implemented
+// IngestData interface.
+func (e *Engine) LoadIngestData(_ context.Context, _, _ []byte) (common.IngestData, error) {
+	return e, nil
 }
 
 type sstMeta struct {
@@ -1055,9 +1061,9 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) (err error) {
 		totalKeySize += keySize
 	}
 	w.batchCount += len(kvs)
-	// noopKeyAdapter doesn't really change the key,
+	// NoopKeyAdapter doesn't really change the key,
 	// skipping the encoding to avoid unnecessary alloc and copy.
-	if _, ok := keyAdapter.(noopKeyAdapter); !ok {
+	if _, ok := keyAdapter.(common.NoopKeyAdapter); !ok {
 		if cap(w.sortedKeyBuf) < totalKeySize {
 			w.sortedKeyBuf = make([]byte, totalKeySize)
 		}

@@ -70,6 +70,7 @@ go_test(
         "//config",
         "//domain",
         "//parser/model",
+        "//planner/cardinality",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//statistics",
