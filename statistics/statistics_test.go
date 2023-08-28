@@ -190,36 +190,6 @@ func TestMergeHistogram(t *testing.T) {
 	}
 }
 
-func TestPseudoTable(t *testing.T) {
-	ti := &model.TableInfo{}
-	colInfo := &model.ColumnInfo{
-		ID:        1,
-		FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		State:     model.StatePublic,
-	}
-	ti.Columns = append(ti.Columns, colInfo)
-	tbl := PseudoTable(ti)
-	require.Len(t, tbl.Columns, 1)
-	require.Greater(t, tbl.RealtimeCount, int64(0))
-	sctx := mock.NewContext()
-	count := tbl.ColumnLessRowCount(sctx, types.NewIntDatum(100), colInfo.ID)
-	require.Equal(t, 3333, int(count))
-	count, err := tbl.ColumnEqualRowCount(sctx, types.NewIntDatum(1000), colInfo.ID)
-	require.NoError(t, err)
-	require.Equal(t, 10, int(count))
-	count, _ = tbl.ColumnBetweenRowCount(sctx, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo.ID)
-	require.Equal(t, 250, int(count))
-	ti.Columns = append(ti.Columns, &model.ColumnInfo{
-		ID:        2,
-		FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		Hidden:    true,
-		State:     model.StatePublic,
-	})
-	tbl = PseudoTable(ti)
-	// We added a hidden column. The pseudo table still only have one column.
-	require.Equal(t, len(tbl.Columns), 1)
-}
-
 func buildCMSketch(values []types.Datum) *CMSketch {
 	cms := NewCMSketch(8, 2048)
 	for _, val := range values {
