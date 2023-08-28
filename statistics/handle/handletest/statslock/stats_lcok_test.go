@@ -111,12 +111,12 @@ func TestStatsLockAndUnlockTableRepeatedly(t *testing.T) {
 	require.Equal(t, tblStats, tblStats1)
 
 	// Lock the table again and check the warning.
+	tableLocked1 := handle.GetTableLockedAndClearForTest()
 	tk.MustExec("lock stats t")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Warning 1105 skip locking locked table: test.t",
 	))
 
-	tableLocked1 := handle.GetTableLockedAndClearForTest()
 	err = handle.LoadLockedTables()
 	require.Nil(t, err)
 	tableLocked2 := handle.GetTableLockedAndClearForTest()
