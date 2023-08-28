@@ -383,7 +383,6 @@ func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error)
 
 func (d *dispatcher) filterByRole(infos []*infosync.ServerInfo) ([]*infosync.ServerInfo, error) {
 	nodes, err := d.taskMgr.GetNodesByRole("background")
-	// map
 	if err != nil {
 		return nil, nil
 	}

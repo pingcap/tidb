@@ -222,7 +222,7 @@ func TestManager(t *testing.T) {
 	}).Times(2)
 	m, err := b.BuildManager(context.Background(), id, mockTaskTable)
 	require.NoError(t, err)
-	m.Start()
+	require.NoError(t, m.Start())
 	time.Sleep(5 * time.Second)
 	m.Stop()
 }

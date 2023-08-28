@@ -16,11 +16,11 @@ package scheduler
 
 import (
 	"context"
-	"github.com/pingcap/tidb/config"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
@@ -118,10 +118,12 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 }
 
 // Start starts the Manager.
-func (m *Manager) Start() {
+func (m *Manager) Start() error {
 	logutil.Logger(m.logCtx).Debug("manager start")
-	// insert meta, todo refine it
-	_ = m.taskTable.StartManager(m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
+	err := m.taskTable.StartManager(m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
+	if err != nil {
+		return err
+	}
 
 	m.wg.Add(1)
 	go func() {
@@ -134,6 +136,7 @@ func (m *Manager) Start() {
 		defer m.wg.Done()
 		m.fetchAndFastCancelTasks(m.ctx)
 	}()
+	return nil
 }
 
 // Stop stops the Manager.
