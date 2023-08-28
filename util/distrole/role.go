@@ -19,7 +19,7 @@ import "strings"
 const (
 	// TiDBServiceScopeDefault indicates no role.
 	TiDBServiceScopeDefault = ""
-	// TiDBServiceScopeDefault indicates node can run background tasks in distributed execution framework.
+	// TiDBServiceScopeBackground indicates node can run background tasks in distributed execution framework.
 	TiDBServiceScopeBackground = "background"
 )
 
