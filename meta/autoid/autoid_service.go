@@ -58,7 +58,7 @@ type clientDiscover struct {
 }
 
 const (
-	autoIDLeaderPath = "/tidb/autoid/leader"
+	autoIDLeaderPath = "tidb/autoid/leader"
 )
 
 func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClient, error) {
