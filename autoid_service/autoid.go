@@ -280,7 +280,7 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 
 func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Service {
 	l := owner.NewOwnerManager(context.Background(), cli, "autoid", selfAddr, autoIDLeaderPath)
-	err := l.CampaignOwner()
+	err := l.CampaignOwner(10)
 	if err != nil {
 		panic(err)
 	}
