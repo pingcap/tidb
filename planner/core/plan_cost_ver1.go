@@ -785,17 +785,11 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64, costFlag uint64) float64
 		innerSchema = p.children[0].Schema()
 		innerStats = p.children[0].StatsInfo()
 	}
-	helper := &fullJoinRowCountHelper{
-		sctx:          p.SCtx(),
-		cartesian:     false,
-		leftProfile:   p.children[0].StatsInfo(),
-		rightProfile:  p.children[1].StatsInfo(),
-		leftJoinKeys:  p.LeftJoinKeys,
-		rightJoinKeys: p.RightJoinKeys,
-		leftSchema:    p.children[0].Schema(),
-		rightSchema:   p.children[1].Schema(),
-	}
-	numPairs := helper.estimate()
+	numPairs := cardinality.EstimateFullJoinRowCount(p.SCtx(), false,
+		p.children[0].StatsInfo(), p.children[1].StatsInfo(),
+		p.LeftJoinKeys, p.RightJoinKeys,
+		p.children[0].Schema(), p.children[1].Schema(),
+		p.LeftNAJoinKeys, p.RightNAJoinKeys)
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin ||
 		p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		if len(p.OtherConditions) > 0 {
@@ -866,19 +860,11 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, _ bool, costFlag uint64, 
 	memoryCost := buildCnt * memoryFactor
 	diskCost := buildCnt * diskFactor * rowSize
 	// Number of matched row pairs regarding the equal join conditions.
-	helper := &fullJoinRowCountHelper{
-		sctx:            p.SCtx(),
-		cartesian:       false,
-		leftProfile:     p.children[0].StatsInfo(),
-		rightProfile:    p.children[1].StatsInfo(),
-		leftJoinKeys:    p.LeftJoinKeys,
-		rightJoinKeys:   p.RightJoinKeys,
-		leftSchema:      p.children[0].Schema(),
-		rightSchema:     p.children[1].Schema(),
-		leftNAJoinKeys:  p.LeftNAJoinKeys,
-		rightNAJoinKeys: p.RightNAJoinKeys,
-	}
-	numPairs := helper.estimate()
+	numPairs := cardinality.EstimateFullJoinRowCount(p.SCtx(), false,
+		p.children[0].StatsInfo(), p.children[1].StatsInfo(),
+		p.LeftJoinKeys, p.RightJoinKeys,
+		p.children[0].Schema(), p.children[1].Schema(),
+		p.LeftNAJoinKeys, p.RightNAJoinKeys)
 	// For semi-join class, if `OtherConditions` is empty, we already know
 	// the join results after querying hash table, otherwise, we have to
 	// evaluate those resulted row pairs after querying hash table; if we

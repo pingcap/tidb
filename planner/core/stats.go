@@ -773,17 +773,12 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	}
 	leftProfile, rightProfile := childStats[0], childStats[1]
 	leftJoinKeys, rightJoinKeys, _, _ := p.GetJoinKeys()
-	helper := &fullJoinRowCountHelper{
-		sctx:          p.SCtx(),
-		cartesian:     0 == len(p.EqualConditions),
-		leftProfile:   leftProfile,
-		rightProfile:  rightProfile,
-		leftJoinKeys:  leftJoinKeys,
-		rightJoinKeys: rightJoinKeys,
-		leftSchema:    childSchema[0],
-		rightSchema:   childSchema[1],
-	}
-	p.equalCondOutCnt = helper.estimate()
+	p.equalCondOutCnt = cardinality.EstimateFullJoinRowCount(p.SCtx(),
+		0 == len(p.EqualConditions),
+		leftProfile, rightProfile,
+		leftJoinKeys, rightJoinKeys,
+		childSchema[0], childSchema[1],
+		nil, nil)
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.SetStats(&property.StatsInfo{
 			RowCount: leftProfile.RowCount * SelectionFactor,
@@ -851,42 +846,6 @@ func (p *LogicalJoin) ExtractColGroups(colGroups [][]*expression.Column) [][]*ex
 		extracted = append(extracted, colGroups[offset])
 	}
 	return extracted
-}
-
-type fullJoinRowCountHelper struct {
-	sctx          sessionctx.Context
-	cartesian     bool
-	leftProfile   *property.StatsInfo
-	rightProfile  *property.StatsInfo
-	leftJoinKeys  []*expression.Column
-	rightJoinKeys []*expression.Column
-	leftSchema    *expression.Schema
-	rightSchema   *expression.Schema
-
-	leftNAJoinKeys  []*expression.Column
-	rightNAJoinKeys []*expression.Column
-}
-
-func (h *fullJoinRowCountHelper) estimate() float64 {
-	if h.cartesian {
-		return h.leftProfile.RowCount * h.rightProfile.RowCount
-	}
-	var leftKeyNDV, rightKeyNDV float64
-	var leftColCnt, rightColCnt int
-	if len(h.leftJoinKeys) > 0 || len(h.rightJoinKeys) > 0 {
-		leftKeyNDV, leftColCnt = cardinality.EstimateColsNDVWithMatchedLen(h.leftJoinKeys, h.leftSchema, h.leftProfile)
-		rightKeyNDV, rightColCnt = cardinality.EstimateColsNDVWithMatchedLen(h.rightJoinKeys, h.rightSchema, h.rightProfile)
-	} else {
-		leftKeyNDV, leftColCnt = cardinality.EstimateColsNDVWithMatchedLen(h.leftNAJoinKeys, h.leftSchema, h.leftProfile)
-		rightKeyNDV, rightColCnt = cardinality.EstimateColsNDVWithMatchedLen(h.rightNAJoinKeys, h.rightSchema, h.rightProfile)
-	}
-	count := h.leftProfile.RowCount * h.rightProfile.RowCount / math.Max(leftKeyNDV, rightKeyNDV)
-	if h.sctx.GetSessionVars().TiDBOptJoinReorderThreshold <= 0 {
-		return count
-	}
-	// If we enable the DP choice, we multiple the 0.9 for each remained join key supposing that 0.9 is the correlation factor between them.
-	// This estimation logic is referred to Presto.
-	return count * math.Pow(0.9, float64(len(h.leftJoinKeys)-mathutil.Max(leftColCnt, rightColCnt)))
 }
 
 func (la *LogicalApply) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
