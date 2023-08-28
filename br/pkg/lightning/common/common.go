@@ -18,7 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
+	// "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 )
@@ -50,9 +50,9 @@ var DefaultImportVariablesTiDB = map[string]string{
 }
 
 // AllocGlobalAutoID allocs N consecutive autoIDs from TiDB.
-func AllocGlobalAutoID(ctx context.Context, n int64, store kv.Storage, dbID int64,
+func AllocGlobalAutoID(ctx context.Context, n int64, r autoid.Requirement, dbID int64,
 	tblInfo *model.TableInfo) (autoIDBase, autoIDMax int64, err error) {
-	allocators, err := GetGlobalAutoIDAlloc(store, dbID, tblInfo)
+	allocators, err := GetGlobalAutoIDAlloc(r, dbID, tblInfo)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -70,9 +70,9 @@ func AllocGlobalAutoID(ctx context.Context, n int64, store kv.Storage, dbID int6
 }
 
 // RebaseGlobalAutoID rebase the autoID base to newBase.
-func RebaseGlobalAutoID(ctx context.Context, newBase int64, store kv.Storage, dbID int64,
+func RebaseGlobalAutoID(ctx context.Context, newBase int64, r autoid.Requirement, dbID int64,
 	tblInfo *model.TableInfo) error {
-	allocators, err := GetGlobalAutoIDAlloc(store, dbID, tblInfo)
+	allocators, err := GetGlobalAutoIDAlloc(r, dbID, tblInfo)
 	if err != nil {
 		return err
 	}
@@ -87,8 +87,8 @@ func RebaseGlobalAutoID(ctx context.Context, newBase int64, store kv.Storage, db
 
 // GetGlobalAutoIDAlloc returns the autoID allocators for a table.
 // export it for testing.
-func GetGlobalAutoIDAlloc(store kv.Storage, dbID int64, tblInfo *model.TableInfo) ([]autoid.Allocator, error) {
-	if store == nil {
+func GetGlobalAutoIDAlloc(r autoid.Requirement, dbID int64, tblInfo *model.TableInfo) ([]autoid.Allocator, error) {
+	if r == nil || r.Store() == nil {
 		return nil, errors.New("internal error: kv store should not be nil")
 	}
 	if dbID == 0 {
@@ -120,15 +120,15 @@ func GetGlobalAutoIDAlloc(store kv.Storage, dbID int64, tblInfo *model.TableInfo
 	case hasRowID || hasAutoIncID:
 		allocators := make([]autoid.Allocator, 0, 2)
 		if tblInfo.SepAutoInc() && hasAutoIncID {
-			allocators = append(allocators, autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(),
+			allocators = append(allocators, autoid.NewAllocator(r, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(),
 				autoid.AutoIncrementType, noCache, tblVer))
 		}
 		// this allocator is NOT used when SepAutoInc=true and auto increment column is clustered.
-		allocators = append(allocators, autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(),
+		allocators = append(allocators, autoid.NewAllocator(r, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(),
 			autoid.RowIDAllocType, noCache, tblVer))
 		return allocators, nil
 	case hasAutoRandID:
-		return []autoid.Allocator{autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(),
+		return []autoid.Allocator{autoid.NewAllocator(r, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(),
 			autoid.AutoRandomType, noCache, tblVer)}, nil
 	default:
 		return nil, errors.Errorf("internal error: table %s has no auto ID", tblInfo.Name)

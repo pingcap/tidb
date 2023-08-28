@@ -29,6 +29,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -316,6 +317,19 @@ func (e *LoadDataController) getAdjustedMaxEngineSize() int64 {
 	return int64(adjusted)
 }
 
+type autoIDRequirement struct {
+	store tidbkv.Storage
+	etcdCli *clientv3.Client
+}
+
+func (r *autoIDRequirement) Store() tidbkv.Storage {
+       return r.store
+}
+
+func (r *autoIDRequirement) GetEtcdClient() *clientv3.Client {
+       return r.etcdCli
+}
+
 // PopulateChunks populates chunks from table regions.
 // in dist framework, this should be done in the tidb node which is responsible for splitting job into subtasks
 // then table-importer handles data belongs to the subtask.
@@ -397,10 +411,12 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 		if err4 != nil {
 			return nil, errors.Trace(err4)
 		}
-		if err3 := common.RebaseGlobalAutoID(ctx, 0, kvStore, e.DBID, e.Table.Meta()); err3 != nil {
+		// TODO
+		r := autoIDRequirement{store: kvStore}
+		if err3 := common.RebaseGlobalAutoID(ctx, 0, &r, e.DBID, e.Table.Meta()); err3 != nil {
 			return nil, errors.Trace(err3)
 		}
-		newMinRowID, _, err3 := common.AllocGlobalAutoID(ctx, maxRowID, kvStore, e.DBID, e.Table.Meta())
+		newMinRowID, _, err3 := common.AllocGlobalAutoID(ctx, maxRowID, &r, e.DBID, e.Table.Meta())
 		if err3 != nil {
 			return nil, errors.Trace(err3)
 		}
