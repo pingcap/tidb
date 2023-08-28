@@ -76,7 +76,7 @@ func TestStatsLockAndUnlockTable(t *testing.T) {
 	require.Equal(t, int64(2), tblStats2.RealtimeCount)
 }
 
-func TestStatsLockAndUnlockTableRepeatedly(t *testing.T) {
+func TestStatsLockTableRepeatedly(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
