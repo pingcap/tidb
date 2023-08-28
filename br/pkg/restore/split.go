@@ -205,9 +205,11 @@ func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID 
 		log.Info("get operator", zap.Uint64("regionID", regionID), zap.Stringer("resp", resp))
 	}
 	// If the current operator of the region is not 'scatter-region', we could assume
-	// that 'scatter-operator' has finished or timeout
-	ok := string(resp.GetDesc()) != "scatter-region" || resp.GetStatus() != pdpb.OperatorStatus_RUNNING
-	return ok, nil
+	// that 'scatter-operator' has finished
+	if string(resp.GetDesc()) != "scatter-region" {
+		return true, nil
+	}
+	return resp.GetStatus() == pdpb.OperatorStatus_SUCCESS, nil
 }
 
 func (rs *RegionSplitter) waitForSplit(ctx context.Context, regionID uint64) {
