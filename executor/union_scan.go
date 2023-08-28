@@ -209,10 +209,11 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	} else if snapshotRow == nil {
 		row = addedRow
 	} else {
-		isSnapshotRow, err = us.compare(us.Ctx().GetSessionVars().StmtCtx, snapshotRow, addedRow)
+		isSnapshotRowInt, err := us.compare(us.Ctx().GetSessionVars().StmtCtx, snapshotRow, addedRow)
 		if err != nil {
 			return nil, err
 		}
+		isSnapshotRow = isSnapshotRowInt < 0
 		if isSnapshotRow {
 			row = snapshotRow
 		} else {
@@ -292,26 +293,26 @@ type compareExec struct {
 	handleCols plannercore.HandleCols
 }
 
-func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum) (ret bool, err error) {
+func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum) (ret int, err error) {
 	var cmp int
 	for _, colOff := range ce.usedIndex {
 		aColumn := a[colOff]
 		bColumn := b[colOff]
 		cmp, err = aColumn.Compare(sctx, &bColumn, ce.collators[colOff])
 		if err != nil {
-			return false, err
+			return 0, err
 		}
 		if cmp == 0 {
 			continue
 		}
-		if cmp > 0 && !ce.desc || cmp < 0 && ce.desc {
-			return false, nil
+		if ce.desc {
+			return -cmp, nil
 		}
-		return true, nil
+		return cmp, nil
 	}
 	cmp, err = ce.handleCols.Compare(a, b, ce.collators)
-	if cmp > 0 && !ce.desc || cmp < 0 && ce.desc {
-		return false, err
+	if ce.desc {
+		return -cmp, err
 	}
-	return true, err
+	return cmp, err
 }

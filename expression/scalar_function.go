@@ -17,7 +17,7 @@ package expression
 import (
 	"bytes"
 	"fmt"
-	"sort"
+	"slices"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -515,8 +515,8 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction, sc *stmtctx.StatementContex
 		// encode original function name.
 		sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(sf.FuncName.L))
 		// reorder parameters hashcode, eg: a+b and b+a should has the same hashcode here.
-		sort.Slice(argsHashCode, func(i, j int) bool {
-			return bytes.Compare(argsHashCode[i], argsHashCode[j]) <= 0
+		slices.SortFunc(argsHashCode, func(i, j []byte) int {
+			return bytes.Compare(i, j)
 		})
 		for _, argCode := range argsHashCode {
 			sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
