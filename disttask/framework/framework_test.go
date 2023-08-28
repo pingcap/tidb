@@ -358,3 +358,20 @@ func TestFrameworkCancelThenSubmitSubTask(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelBeforeUpdate"))
 	distContext.Close()
 }
+
+func TestFrameworkSetLabel(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+	var m sync.Map
+	RegisterTaskMeta(&m)
+	distContext := testkit.NewDistExecutionContext(t, 2)
+
+	tk := testkit.NewTestKit(t, distContext.Store)
+	tk.MustExec("set global tidb_service_scope=background")
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
+	tk.MustQuery("select @@tidb_service_scope").Check(testkit.Rows("background"))
+
+	require.Equal(t, len(tk.MustQuery("select * from  mysql.dist_framework_meta;").Rows()), 1)
+
+	distContext.Close()
+}

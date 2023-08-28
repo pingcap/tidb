@@ -129,6 +129,7 @@ const (
 	nmInitializeSQLFile           = "initialize-sql-file"
 	nmDisconnectOnExpiredPassword = "disconnect-on-expired-password"
 	nmKeyspaceName                = "keyspace-name"
+	nmTiDBServiceScope            = "tidb-service-scope"
 )
 
 var (
@@ -179,6 +180,7 @@ var (
 	initializeSQLFile           = flag.String(nmInitializeSQLFile, "", "SQL file to execute on first bootstrap")
 	disconnectOnExpiredPassword = flagBoolean(nmDisconnectOnExpiredPassword, true, "the server disconnects the client when the password is expired")
 	keyspaceName                = flag.String(nmKeyspaceName, "", "keyspace name.")
+	serviceScope                = flag.String(nmTiDBServiceScope, "", "tidb service scope")
 )
 
 func main() {
@@ -592,6 +594,14 @@ func overrideConfig(cfg *config.Config) {
 	if actualFlags[nmKeyspaceName] {
 		cfg.KeyspaceName = *keyspaceName
 	}
+
+	if actualFlags[nmTiDBServiceScope] {
+		logutil.BgLogger().Info("ywq test here...")
+		cfg.Instance.TiDBServiceScope = *serviceScope
+	} else {
+		logutil.BgLogger().Info("ywq test here2 wrong")
+		cfg.Instance.TiDBServiceScope = ""
+	}
 }
 
 func setVersions() {
@@ -731,7 +741,6 @@ func setGlobalVars() {
 		variable.SetSysVar(variable.Hostname, hostname)
 	}
 	variable.GlobalLogMaxDays.Store(int32(config.GetGlobalConfig().Log.File.MaxDays))
-
 	if cfg.Security.EnableSEM {
 		sem.Enable()
 	}
@@ -773,6 +782,12 @@ func setGlobalVars() {
 	txninfo.Recorder.ResizeSummaries(cfg.TrxSummary.TransactionSummaryCapacity)
 	txninfo.Recorder.SetMinDuration(time.Duration(cfg.TrxSummary.TransactionIDDigestMinDuration) * time.Millisecond)
 	chunk.InitChunkAllocSize(cfg.TiDBMaxReuseChunk, cfg.TiDBMaxReuseColumn)
+
+	if len(cfg.Instance.TiDBServiceScope) > 0 {
+		variable.ServiceScope.Store(cfg.Instance.TiDBServiceScope)
+		logutil.BgLogger().Info("ywq test set sys var2...", zap.Any("cfg", cfg.Instance.TiDBServiceScope))
+		// variable.SetSysVar(variable.TiDBServiceScope, cfg.Instance.TiDBServiceScope)
+	}
 }
 
 func setupLog() {

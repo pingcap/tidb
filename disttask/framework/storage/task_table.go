@@ -453,6 +453,12 @@ func (stm *TaskManager) StartSubtask(id int64) error {
 	return err
 }
 
+func (stm *TaskManager) StartManager(tidbID string, role string) error{
+	logutil.BgLogger().Info("ywq test insert", zap.String("serverId", tidbID), zap.String("scope",role)
+	_, err := stm.executeSQLWithNewSession(stm.ctx, `insert into mysql.dist_framework_meta values(%?, %?)`, tidbID, role)
+	return err
+}
+
 // UpdateSubtaskStateAndError updates the subtask state.
 func (stm *TaskManager) UpdateSubtaskStateAndError(id int64, state string, subTaskErr error) error {
 	_, err := stm.executeSQLWithNewSession(stm.ctx, `update mysql.tidb_background_subtask

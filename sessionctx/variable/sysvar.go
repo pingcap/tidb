@@ -2795,6 +2795,15 @@ var defaultSysVars = []*SysVar{
 		}, GetSession: func(vars *SessionVars) (string, error) {
 			return vars.SessionAlias, nil
 		}},
+	{Scope: ScopeInstance, Name: TiDBServiceScope, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		stack := make([]byte, 1024*8)
+		length := runtime.Stack(stack, true)
+		logutil.BgLogger().Info("ywq test", zap.Any("stack:", string(stack[:length])))
+		ServiceScope.Store(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ServiceScope.Load(), nil
+	}},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

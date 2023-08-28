@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"context"
+	"github.com/pingcap/tidb/config"
 	"sync"
 	"time"
 
@@ -119,6 +120,9 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 // Start starts the Manager.
 func (m *Manager) Start() {
 	logutil.Logger(m.logCtx).Debug("manager start")
+	// insert meta, todo refine it
+	_ := m.taskTable.StartManager(m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
+
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()

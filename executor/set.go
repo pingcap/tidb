@@ -18,6 +18,9 @@ import (
 	"context"
 	"strings"
 
+	disttaskutil "github.com/pingcap/tidb/util/disttask"
+	"github.com/pingcap/tidb/util/sqlexec"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/internal/exec"
@@ -160,6 +163,12 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			return nil
 		})
 		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		if name == variable.TiDBServiceScope {
+			dom := domain.GetDomain(e.Ctx())
+			logutil.BgLogger().Info("ywq test insert dist meta")
+			serverId := disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())
+			_, err = e.Ctx().(sqlexec.SQLExecutor).ExecuteInternal(ctx, "insert into mysql.dist_framework_meta values(%?, %?)", serverId, valStr)
+		}
 		return err
 	}
 	// Set session variable
