@@ -17,6 +17,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -654,7 +655,7 @@ func TestCreateWatchTimerChan(t *testing.T) {
 	mockCore.On("Watch", mock.Anything).Return(retCh).Once()
 	mockCore.On("WatchSupported").Return(true).Once()
 
-	got := runtime.createWatchTimerChan()
+	got := runtime.createWatchTimerChan(context.Background())
 	require.True(t, got != idleWatchChan)
 	select {
 	case resp, ok := <-got:
@@ -667,7 +668,7 @@ func TestCreateWatchTimerChan(t *testing.T) {
 	mockCore.AssertExpectations(t)
 
 	mockCore.On("WatchSupported").Return(false).Once()
-	got = runtime.createWatchTimerChan()
+	got = runtime.createWatchTimerChan(context.Background())
 	require.True(t, got == idleWatchChan)
 	select {
 	case <-got:
@@ -878,4 +879,71 @@ func TestTimerFullProcess(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, onSchedTimer.Load(), timer)
 	onSchedTimer.Store(nil)
+}
+
+func TestTimerRuntimeLoopPanicRecover(t *testing.T) {
+	mockCore, mockStore := newMockStore()
+	rt := NewTimerRuntimeBuilder("g1", mockStore).Build()
+
+	// start and panic two times, then normal
+	started := make(chan struct{})
+	mockCore.On("WatchSupported").Return(false).Times(3)
+	mockCore.On("List", mock.Anything, mock.Anything).Panic("store panic").Twice()
+	mockCore.On("List", mock.Anything, mock.Anything).Return([]*api.TimerRecord(nil), nil).Once().Run(func(args mock.Arguments) {
+		close(started)
+	})
+	rt.retryLoopWait = time.Millisecond
+	rt.Start()
+	waitDone(started, 5*time.Second)
+	mockCore.AssertExpectations(t)
+
+	// normal stop
+	stopped := make(chan struct{})
+	go func() {
+		rt.Stop()
+		close(stopped)
+	}()
+	waitDone(stopped, 5*time.Second)
+	mockCore.AssertExpectations(t)
+
+	// start and panic always
+	rt = NewTimerRuntimeBuilder("g1", mockStore).Build()
+	mockCore.On("WatchSupported").Return(false)
+	mockCore.On("List", mock.Anything, mock.Anything).Panic("store panic")
+	rt.retryLoopWait = time.Millisecond
+	rt.Start()
+	time.Sleep(10 * time.Millisecond)
+
+	// can also stop
+	stopped = make(chan struct{})
+	go func() {
+		rt.Stop()
+		close(stopped)
+	}()
+	waitDone(stopped, 5*time.Second)
+	mockCore.AssertExpectations(t)
+
+	// stop should stop immediately
+	mockCore, mockStore = newMockStore()
+	rt = NewTimerRuntimeBuilder("g1", mockStore).Build()
+	started = make(chan struct{})
+	var once sync.Once
+	mockCore.On("WatchSupported").Return(false).Once()
+	mockCore.On("List", mock.Anything, mock.Anything).Once().Run(func(args mock.Arguments) {
+		once.Do(func() {
+			close(started)
+		})
+		panic("store panic")
+	})
+	rt.retryLoopWait = time.Minute
+	rt.Start()
+	waitDone(started, 5*time.Second)
+	time.Sleep(time.Millisecond)
+	stopped = make(chan struct{})
+	go func() {
+		rt.Stop()
+		close(stopped)
+	}()
+	waitDone(stopped, 5*time.Second)
+	mockCore.AssertExpectations(t)
 }

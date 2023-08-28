@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/timer/api"
 	"github.com/pingcap/tidb/timer/metrics"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -64,6 +65,7 @@ func NewTimerRuntimeBuilder(groupID string, store *api.TimerStore) *TimerRuntime
 			// metrics
 			fullRefreshTimerCounter:    metrics.TimerScopeCounter(fmt.Sprintf("runtime.%s", groupID), "full_refresh_timers"),
 			partialRefreshTimerCounter: metrics.TimerScopeCounter(fmt.Sprintf("runtime.%s", groupID), "partial_refresh_timers"),
+			retryLoopWait:              10 * time.Second,
 		},
 	}
 }
@@ -91,7 +93,7 @@ type TimerGroupRuntime struct {
 	mu     sync.Mutex
 	ctx    context.Context
 	cancel func()
-	wg     sync.WaitGroup
+	wg     util.WaitGroupWrapper
 	logger *zap.Logger
 	cache  *timersCache
 
@@ -108,6 +110,8 @@ type TimerGroupRuntime struct {
 	// metrics
 	fullRefreshTimerCounter    prometheus.Counter
 	partialRefreshTimerCounter prometheus.Counter
+	// retryLoopWait indicates the wait time before restarting the loop after panic.
+	retryLoopWait time.Duration
 }
 
 // Start starts the TimerGroupRuntime
@@ -118,9 +122,10 @@ func (rt *TimerGroupRuntime) Start() {
 		return
 	}
 
-	rt.wg.Add(1)
 	rt.initCtx()
-	go rt.loop()
+	rt.wg.Run(func() {
+		withRecoverUntil(rt.ctx, rt.loop)
+	})
 }
 
 // Running returns whether the runtime is running
@@ -145,12 +150,16 @@ func (rt *TimerGroupRuntime) Stop() {
 	rt.wg.Wait()
 }
 
-func (rt *TimerGroupRuntime) loop() {
-	rt.logger.Info("TimerGroupRuntime loop started")
-	defer func() {
-		rt.logger.Info("TimerGroupRuntime loop exit")
-		rt.wg.Done()
-	}()
+func (rt *TimerGroupRuntime) loop(totalPanic uint64) {
+	if totalPanic > 0 {
+		sleep(rt.ctx, rt.retryLoopWait)
+		rt.logger.Info("TimerGroupRuntime loop resumed from panic",
+			zap.Uint64("totalPanic", totalPanic),
+			zap.Duration("delay", rt.retryLoopWait))
+	} else {
+		rt.logger.Info("TimerGroupRuntime loop started")
+	}
+	defer rt.logger.Info("TimerGroupRuntime loop exit")
 
 	fullRefreshTimersTicker := time.NewTicker(fullRefreshTimersInterval)
 	defer fullRefreshTimersTicker.Stop()
@@ -167,7 +176,10 @@ func (rt *TimerGroupRuntime) loop() {
 	batchHandleResponsesTimer := time.NewTimer(batchProcessWatchRespInterval)
 	defer batchHandleResponsesTimer.Stop()
 
-	watchCh := rt.createWatchTimerChan()
+	watchCtx, cancelWatch := context.WithCancel(rt.ctx)
+	defer cancelWatch()
+
+	watchCh := rt.createWatchTimerChan(watchCtx)
 	batchResponses := make([]api.WatchTimerResponse, 0, 1)
 
 	var lastTryTriggerTime time.Time
@@ -211,7 +223,7 @@ func (rt *TimerGroupRuntime) loop() {
 			}
 		case <-reWatchTimer.C:
 			if watchCh == idleWatchChan {
-				watchCh = rt.createWatchTimerChan()
+				watchCh = rt.createWatchTimerChan(watchCtx)
 			}
 		}
 	}
@@ -385,13 +397,13 @@ func (rt *TimerGroupRuntime) partialRefreshTimers(timerIDs map[string]struct{}) 
 	return rt.cache.partialBatchUpdateTimers(timers)
 }
 
-func (rt *TimerGroupRuntime) createWatchTimerChan() api.WatchTimerChan {
+func (rt *TimerGroupRuntime) createWatchTimerChan(ctx context.Context) api.WatchTimerChan {
 	watchSupported := rt.store.WatchSupported()
 	rt.logger.Info("create watch chan if possible for timer runtime",
 		zap.Bool("storeSupportWatch", watchSupported),
 	)
 	if watchSupported {
-		return rt.store.Watch(rt.ctx)
+		return rt.store.Watch(ctx)
 	}
 	return idleWatchChan
 }
@@ -434,12 +446,15 @@ func (rt *TimerGroupRuntime) ensureWorker(hookClass string) (*hookWorker, bool) 
 		return nil, false
 	}
 
-	var hook api.Hook
+	var hookFn func() api.Hook
 	if factory != nil {
-		hook = factory(hookClass, rt.cli)
+		cli := rt.cli
+		hookFn = func() api.Hook {
+			return factory(hookClass, cli)
+		}
 	}
 
-	worker = newHookWorker(rt.ctx, &rt.wg, rt.groupID, hookClass, hook, rt.nowFunc)
+	worker = newHookWorker(rt.ctx, &rt.wg, rt.groupID, hookClass, hookFn, rt.nowFunc)
 	rt.workers[hookClass] = worker
 	return worker, true
 }
@@ -469,4 +484,30 @@ func resetTimer(t *time.Timer, interval time.Duration) {
 		}
 	}
 	t.Reset(interval)
+}
+
+func withRecoverUntil(ctx context.Context, fn func(uint64)) {
+	var i uint64
+	success := false
+	for ctx.Err() == nil && !success {
+		util.WithRecovery(func() {
+			fn(i)
+		}, func(r interface{}) {
+			if r == nil {
+				success = true
+			}
+		})
+		i++
+	}
+}
+
+func sleep(ctx context.Context, d time.Duration) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(d):
+	}
 }
