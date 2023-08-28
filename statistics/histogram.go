@@ -1502,6 +1502,13 @@ func NewStatsAllEvictedStatus() StatsLoadedStatus {
 	}
 }
 
+func (s *StatsLoadedStatus) Copy() StatsLoadedStatus {
+	return StatsLoadedStatus{
+		statsInitialized: s.statsInitialized,
+		evictedStatus:    s.evictedStatus,
+	}
+}
+
 // IsStatsInitialized indicates whether the column/index's statistics was loaded from storage before.
 // Note that `IsStatsInitialized` only can be set in initializing
 func (s StatsLoadedStatus) IsStatsInitialized() bool {
