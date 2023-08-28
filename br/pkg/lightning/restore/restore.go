@@ -135,7 +135,7 @@ var DeliverPauser = common.NewPauser()
 // nolint:gochecknoinits // TODO: refactor
 func init() {
 	failpoint.Inject("SetMinDeliverBytes", func(v failpoint.Value) {
-		minDeliverBytes = uint64(v.(int))
+		maxDeliverBytes = uint64(v.(int))
 	})
 }
 
@@ -2744,7 +2744,7 @@ func (cr *chunkRestore) encodeLoop(
 			// pebble cannot allow > 4.0G kv in one batch.
 			// we will meet pebble panic when import sql file and each kv has the size larger than 4G / maxKvPairsCnt.
 			// so add this check.
-			if kvSize >= minDeliverBytes || len(kvPacket) >= maxKvPairsCnt || newOffset == cr.chunk.Chunk.EndOffset {
+			if kvSize >= maxDeliverBytes || len(kvPacket) >= maxKvPairsCnt || newOffset == cr.chunk.Chunk.EndOffset {
 				canDeliver = true
 				kvSize = 0
 			}
