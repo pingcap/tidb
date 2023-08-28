@@ -24,7 +24,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var distinctFactor = 0.8
+const distinctFactor = 0.8
 
 // EstimateColumnNDV computes estimated NDV of specified column using the original
 // histogram of `DataSource` which is retrieved from storage(not the derived one).
