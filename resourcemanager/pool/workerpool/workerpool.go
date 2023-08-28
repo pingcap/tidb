@@ -27,6 +27,8 @@ import (
 
 // Worker is worker interface.
 type Worker[T, R any] interface {
+	// HandleTask consumes a task(T) and produces a result(R).
+	// The result is sent to the result channel by calling `send` function.
 	HandleTask(task T, send func(R))
 	Close()
 }
@@ -116,6 +118,9 @@ func (p *WorkerPool[T, R]) handleTaskWithRecover(w Worker[T, R], task T) {
 	defer tidbutil.Recover(metrics.LabelWorkerPool, "handleTaskWithRecover", nil, false)
 
 	sendResult := func(r R) {
+		if p.resChan == nil {
+			return
+		}
 		select {
 		case p.resChan <- r:
 		case <-p.ctx.Done():

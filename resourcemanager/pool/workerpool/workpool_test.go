@@ -108,7 +108,9 @@ func TestWorkerPool(t *testing.T) {
 type dummyWorker[T, R any] struct {
 }
 
-func (d dummyWorker[T, R]) HandleTask(task T, _ func(R)) {
+func (d dummyWorker[T, R]) HandleTask(task T, send func(R)) {
+	var r R
+	send(r)
 }
 
 func (d dummyWorker[T, R]) Close() {}
@@ -155,7 +157,7 @@ func TestWorkerPoolCustomChan(t *testing.T) {
 	resultCh := make(chan int64)
 	pool.SetResultSender(resultCh)
 	count := 0
-	g := new(errgroup.Group)
+	g := errgroup.Group{}
 	g.Go(func() error {
 		for range resultCh {
 			count++
@@ -167,7 +169,9 @@ func TestWorkerPoolCustomChan(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		taskCh <- int64(i)
 	}
-	pool.ReleaseAndWait()
+	close(taskCh)
+	pool.Wait()
+	pool.Release()
 	require.NoError(t, g.Wait())
 	require.Equal(t, 5, count)
 }

@@ -21,8 +21,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/disttask/operator"
@@ -182,7 +180,7 @@ func (src *TableScanTaskSource) generateTasks() error {
 			break
 		}
 
-		batchTasks := getBatchTableScanTask(src.tbl, kvRanges, taskIDAlloc)
+		batchTasks := src.getBatchTableScanTask(kvRanges, taskIDAlloc)
 		for _, task := range batchTasks {
 			select {
 			case <-src.ctx.Done():
@@ -198,13 +196,12 @@ func (src *TableScanTaskSource) generateTasks() error {
 	return nil
 }
 
-func getBatchTableScanTask(
-	t table.PhysicalTable,
+func (src *TableScanTaskSource) getBatchTableScanTask(
 	kvRanges []kv.KeyRange,
 	taskIDAlloc *taskIDAllocator,
 ) []TableScanTask {
 	batchTasks := make([]TableScanTask, 0, len(kvRanges))
-	prefix := t.RecordPrefix()
+	prefix := src.tbl.RecordPrefix()
 	// Build reorg tasks.
 	for _, keyRange := range kvRanges {
 		taskID := taskIDAlloc.alloc()
@@ -294,7 +291,7 @@ func (w *tableScanWorker) Close() {
 }
 
 func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecordChunk)) {
-	logutil.Logger(w.ctx).Info("start a cop-request task",
+	logutil.Logger(w.ctx).Info("start a table scan task",
 		zap.Int("id", task.ID), zap.String("task", task.String()))
 
 	var idxResult IndexRecordChunk
@@ -303,11 +300,6 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		if err != nil {
 			return err
 		}
-		failpoint.Inject("mockCopSenderPanic", func(val failpoint.Value) {
-			if val.(bool) {
-				panic("mock panic")
-			}
-		})
 		var done bool
 		for !done {
 			srcChk := w.getChunk()
@@ -318,9 +310,6 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				return err
 			}
 			idxResult = IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done}
-			failpoint.Inject("mockCopSenderError", func() {
-				idxResult.Err = errors.New("mock cop error")
-			})
 			sender(idxResult)
 		}
 		return rs.Close()
