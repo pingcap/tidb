@@ -57,32 +57,38 @@ func NewKeyValueStore(
 // appended to the rangePropertiesCollector with current status.
 // `key` must be in strictly ascending order for invocations of a KeyValueStore.
 func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
-	kvLen := len(key) + len(value) + 16
-	var b [8]byte
+	var (
+		b     [8]byte
+		kvLen = 0
+	)
 
 	// data layout: keyLen + key + valueLen + value
-	_, err := s.dataWriter.Write(
+	n, err := s.dataWriter.Write(
 		s.ctx,
 		binary.BigEndian.AppendUint64(b[:0], uint64(len(key))),
 	)
 	if err != nil {
 		return err
 	}
-	_, err = s.dataWriter.Write(s.ctx, key)
+	kvLen += n
+	n, err = s.dataWriter.Write(s.ctx, key)
 	if err != nil {
 		return err
 	}
-	_, err = s.dataWriter.Write(
+	kvLen += n
+	n, err = s.dataWriter.Write(
 		s.ctx,
 		binary.BigEndian.AppendUint64(b[:0], uint64(len(value))),
 	)
 	if err != nil {
 		return err
 	}
-	_, err = s.dataWriter.Write(s.ctx, value)
+	kvLen += n
+	n, err = s.dataWriter.Write(s.ctx, value)
 	if err != nil {
 		return err
 	}
+	kvLen += n
 
 	if len(s.rc.currProp.key) == 0 {
 		s.rc.currProp.key = key

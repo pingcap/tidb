@@ -18,6 +18,11 @@ import (
 	"encoding/binary"
 )
 
+// rangeProperty stores properties of a range:
+// - key: the start key of the range.
+// - offset: the start offset of the range in the file.
+// - size: the size of the range.
+// - keys: the number of keys in the range.
 type rangeProperty struct {
 	key    []byte
 	offset uint64

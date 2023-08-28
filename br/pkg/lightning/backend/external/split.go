@@ -27,7 +27,6 @@ import (
 type RangeSplitter struct {
 	rangesGroupSize int64
 	rangesGroupKeys int64
-	maxWays         int
 	rangeSize       int64
 	rangeKeys       int64
 
@@ -35,6 +34,7 @@ type RangeSplitter struct {
 	dataFiles []string
 	statFiles []string
 
+	// filename -> index in dataFiles/statFiles
 	activeDataFiles map[string]int
 	activeStatFiles map[string]int
 
@@ -53,7 +53,6 @@ func NewRangeSplitter(
 	dataFiles, statFiles []string,
 	externalStorage storage.ExternalStorage,
 	maxTotalRangesSize, maxTotalRangesKeys int64,
-	maxWays int,
 	maxRangeSize, maxRangeKeys int64,
 ) (*RangeSplitter, error) {
 	propIter, err := NewMergePropIter(ctx, statFiles, externalStorage)
@@ -64,7 +63,6 @@ func NewRangeSplitter(
 	return &RangeSplitter{
 		rangesGroupSize: maxTotalRangesSize,
 		rangesGroupKeys: maxTotalRangesKeys,
-		maxWays:         maxWays,
 		propIter:        propIter,
 		dataFiles:       dataFiles,
 		statFiles:       statFiles,
@@ -82,10 +80,10 @@ func (r *RangeSplitter) Close() error {
 	return r.propIter.Close()
 }
 
-// SplitOneRangesGroup splits one group of ranges. `endKeyOfGroup` represents
-// the end key of the group, but it will be nil when the group is the last one.
-// `dataFiles` and `statFiles` are the files that should be accessed in this
-// group.
+// SplitOneRangesGroup splits one group of ranges. `endKeyOfGroup` represents the
+// end key of the group, but it will be nil when the group is the last one.
+// `dataFiles` and `statFiles` are all the files that have overlapping key ranges
+// in this group.
 func (r *RangeSplitter) SplitOneRangesGroup() (
 	endKeyOfGroup kv.Key,
 	dataFiles []string,
@@ -95,9 +93,9 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 ) {
 	var curGroupSize, curGroupKeys int64
 	var curRangeSize, curRangeKeys int64
-	var lastFile, lastStats string
-	var lastWays int
-	var exhaustedFiles, exhaustedStats []string
+	var lastDataFile, lastStatFile string
+	var lastHeapSize int
+	var exhaustedDataFiles, exhaustedStatFile []string
 	for r.propIter.Next() {
 		if err = r.propIter.Error(); err != nil {
 			return nil, nil, nil, nil, err
@@ -108,11 +106,11 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 		curGroupKeys += int64(prop.keys)
 		curRangeKeys += int64(prop.keys)
 
-		// TODO(lance6716): check if we have easier way to detect file exhausted
-		ways := r.propIter.iter.h.Len()
-		if ways < lastWays {
-			exhaustedFiles = append(exhaustedFiles, lastFile)
-			exhaustedStats = append(exhaustedStats, lastStats)
+		// a tricky way to detect source file exhausted
+		heapSize := r.propIter.iter.h.Len()
+		if heapSize < lastHeapSize {
+			exhaustedDataFiles = append(exhaustedDataFiles, lastDataFile)
+			exhaustedStatFile = append(exhaustedStatFile, lastStatFile)
 		}
 
 		fileIdx := r.propIter.readerIndex()
@@ -127,31 +125,30 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 			curRangeKeys = 0
 		}
 
-		if curGroupSize >= r.rangesGroupSize ||
-			curGroupKeys >= r.rangesGroupKeys ||
-			len(r.activeDataFiles) >= r.maxWays {
-			retDataFiles, retStatFiles := r.collectFiles()
-			for _, p := range exhaustedFiles {
+		if curGroupSize >= r.rangesGroupSize || curGroupKeys >= r.rangesGroupKeys {
+			retDataFiles, retStatFiles := r.cloneActiveFiles()
+			for _, p := range exhaustedDataFiles {
 				delete(r.activeDataFiles, p)
 			}
-			for _, p := range exhaustedStats {
+			exhaustedDataFiles = exhaustedDataFiles[:0]
+			for _, p := range exhaustedStatFile {
 				delete(r.activeStatFiles, p)
 			}
-			splitKeys := r.collectSplitKeys()
-			return prop.key, retDataFiles, retStatFiles, splitKeys, nil
+			exhaustedStatFile = exhaustedStatFile[:0]
+			// TODO(lance6716): this is the start key of a range?
+			return prop.key, retDataFiles, retStatFiles, r.takeSplitKeys(), nil
 		}
 
-		lastFile = dataFilePath
-		lastStats = statFilePath
-		lastWays = ways
+		lastDataFile = dataFilePath
+		lastStatFile = statFilePath
+		lastHeapSize = heapSize
 	}
 
-	retDataFiles, retStatFiles := r.collectFiles()
-	splitKeys := r.collectSplitKeys()
-	return nil, retDataFiles, retStatFiles, splitKeys, r.propIter.Error()
+	retDataFiles, retStatFiles := r.cloneActiveFiles()
+	return nil, retDataFiles, retStatFiles, r.takeSplitKeys(), r.propIter.Error()
 }
 
-func (r *RangeSplitter) collectFiles() (data []string, stats []string) {
+func (r *RangeSplitter) cloneActiveFiles() (data []string, stat []string) {
 	dataFiles := make([]string, 0, len(r.activeDataFiles))
 	for path := range r.activeDataFiles {
 		dataFiles = append(dataFiles, path)
@@ -159,21 +156,19 @@ func (r *RangeSplitter) collectFiles() (data []string, stats []string) {
 	slices.SortFunc(dataFiles, func(i, j string) int {
 		return r.activeDataFiles[i] - r.activeDataFiles[j]
 	})
-	statsFiles := make([]string, 0, len(r.activeStatFiles))
+	statFiles := make([]string, 0, len(r.activeStatFiles))
 	for path := range r.activeStatFiles {
-		statsFiles = append(statsFiles, path)
+		statFiles = append(statFiles, path)
 	}
-	slices.SortFunc(statsFiles, func(i, j string) int {
+	slices.SortFunc(statFiles, func(i, j string) int {
 		return r.activeStatFiles[i] - r.activeStatFiles[j]
 	})
-	return dataFiles, statsFiles
+	return dataFiles, statFiles
 }
 
-func (r *RangeSplitter) collectSplitKeys() [][]byte {
-	ret := make([][]byte, 0, len(r.rangeSplitKeysBuf))
-	for _, key := range r.rangeSplitKeysBuf {
-		ret = append(ret, key)
-	}
+func (r *RangeSplitter) takeSplitKeys() [][]byte {
+	ret := make([][]byte, len(r.rangeSplitKeysBuf))
+	copy(ret, r.rangeSplitKeysBuf)
 	r.rangeSplitKeysBuf = r.rangeSplitKeysBuf[:0]
 	return ret
 }
