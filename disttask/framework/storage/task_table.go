@@ -453,8 +453,8 @@ func (stm *TaskManager) StartSubtask(id int64) error {
 	return err
 }
 
-func (stm *TaskManager) StartManager(tidbID string, role string) error{
-	logutil.BgLogger().Info("ywq test insert", zap.String("serverId", tidbID), zap.String("scope",role)
+func (stm *TaskManager) StartManager(tidbID string, role string) error {
+	logutil.BgLogger().Info("ywq test insert", zap.String("serverId", tidbID), zap.String("scope", role))
 	_, err := stm.executeSQLWithNewSession(stm.ctx, `insert into mysql.dist_framework_meta values(%?, %?)`, tidbID, role)
 	return err
 }
@@ -619,4 +619,17 @@ func (stm *TaskManager) GetSubtasksByStep(taskID, step int64) ([]*proto.Subtask,
 		subtasks = append(subtasks, row2SubTask(r))
 	}
 	return subtasks, nil
+}
+
+func (stm *TaskManager) GetNodesByRole(role string) (map[string]bool, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx,
+		"select host from mysql.dist_framework_meta where role = %?", role)
+	if err != nil {
+		return nil, err
+	}
+	nodes := make(map[string]bool, len(rs))
+	for _, r := range rs {
+		nodes[r.GetString(0)] = true
+	}
+	return nodes, nil
 }

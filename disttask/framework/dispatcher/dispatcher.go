@@ -328,7 +328,14 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, handle TaskFlowHandle, me
 
 	// 3. select all available TiDB nodes for task.
 	serverNodes, err := handle.GetEligibleInstances(d.ctx, task)
-	logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
+
+	if err != nil {
+		return err
+	}
+	// 4. filter by role.
+	serverNodes, err = d.filterByRole(serverNodes)
+
+	logutil.Logger(d.logCtx).Info("ywq test eligible instances", zap.Int("num", len(serverNodes)))
 
 	if err != nil {
 		return err
@@ -357,7 +364,7 @@ func (d *dispatcher) handlePlanErr(handle TaskFlowHandle, err error) error {
 	return d.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
 }
 
-// GenerateSchedulerNodes generate a eligible TiDB nodes.
+// GenerateSchedulerNodes generate eligible TiDB nodes.
 func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error) {
 	serverInfos, err := infosync.GetAllServerInfo(ctx)
 	if err != nil {
@@ -372,6 +379,30 @@ func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error)
 		serverNodes = append(serverNodes, serverInfo)
 	}
 	return serverNodes, nil
+}
+
+func (d *dispatcher) filterByRole(infos []*infosync.ServerInfo) ([]*infosync.ServerInfo, error) {
+	nodes, err := d.taskMgr.GetNodesByRole("background")
+	// map
+	if err != nil {
+		return nil, nil
+	}
+	if len(nodes) == 0 {
+		nodes, err = d.taskMgr.GetNodesByRole("")
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	res := make([]*infosync.ServerInfo, 0, len(nodes))
+
+	for _, info := range infos {
+		_, ok := nodes[disttaskutil.GenerateExecID(info.IP, info.Port)]
+		if ok {
+			res = append(res, info)
+		}
+	}
+	return res, nil
 }
 
 // GetAllSchedulerIDs gets all the scheduler IDs.
