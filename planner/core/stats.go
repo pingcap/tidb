@@ -251,7 +251,7 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 
 func init() {
 	// To handle cycle import, we have to define this function here.
-	statistics.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID
+	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID
 }
 
 // getTblInfoForUsedStatsByPhysicalID get table name, partition name and TableInfo that will be used to record used stats.

@@ -15,9 +15,11 @@
 package executor
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -34,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/exp/slices"
 )
 
 type (
@@ -169,20 +170,22 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 			continue
 		}
 		// make result stable
-		slices.SortFunc(results, func(i, j inspectionResult) bool {
-			if i.degree != j.degree {
-				return i.degree > j.degree
+		slices.SortFunc(results, func(i, j inspectionResult) int {
+			if c := cmp.Compare(i.degree, j.degree); c != 0 {
+				return -c
 			}
-			if lhs, rhs := i.item, j.item; lhs != rhs {
-				return lhs < rhs
+			// lhs and rhs
+			if c := cmp.Compare(i.item, j.item); c != 0 {
+				return c
 			}
-			if i.actual != j.actual {
-				return i.actual < j.actual
+			if c := cmp.Compare(i.actual, j.actual); c != 0 {
+				return c
 			}
-			if lhs, rhs := i.tp, j.tp; lhs != rhs {
-				return lhs < rhs
+			// lhs and rhs
+			if c := cmp.Compare(i.tp, j.tp); c != 0 {
+				return c
 			}
-			return i.instance < j.instance
+			return cmp.Compare(i.instance, j.instance)
 		})
 		for _, result := range results {
 			if len(result.instance) == 0 {

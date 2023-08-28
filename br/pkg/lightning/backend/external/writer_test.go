@@ -19,14 +19,18 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	dbkv "github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -41,7 +45,7 @@ func TestWriter(t *testing.T) {
 	writer := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
-		Build(memStore, 0, "/test")
+		Build(memStore, "/test", 0)
 
 	kvCnt := rand.Intn(10) + 10
 	kvs := make([]common.KvPair, kvCnt)
@@ -103,7 +107,7 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(60).
-		Build(memStore, 0, "/test")
+		Build(memStore, "/test", 0)
 
 	// 200 bytes key values.
 	kvCnt := 10
@@ -139,4 +143,73 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 		require.Equal(t, dataFiles[i], fmt.Sprintf("/test/0/%d", i))
 		require.Equal(t, statFiles[i], fmt.Sprintf("/test/0_stat/%d", i))
 	}
+}
+
+func TestWriterDuplicateDetect(t *testing.T) {
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+
+	writer := NewWriterBuilder().
+		SetPropKeysDistance(2).
+		SetMemorySizeLimit(1000).
+		EnableDuplicationDetection().
+		Build(memStore, "/test", 0)
+	kvCount := 20
+	kvs := make([]common.KvPair, 0, kvCount)
+	for i := 0; i < kvCount; i++ {
+		v := i
+		if v == kvCount/2 {
+			v-- // insert a duplicate key.
+		}
+		kvs = append(kvs, common.KvPair{
+			Key:   []byte{byte(v)},
+			Val:   []byte{byte(v)},
+			RowID: dbkv.IntHandle(i).Encoded(),
+		})
+	}
+	rows := kv.MakeRowsFromKvPairs(kvs)
+	err := writer.AppendRows(ctx, nil, rows)
+	require.NoError(t, err)
+	_, err = writer.Close(ctx)
+	require.NoError(t, err)
+
+	keys := make([][]byte, 0, kvCount)
+	values := make([][]byte, 0, kvCount)
+
+	kvReader, err := newKVReader(ctx, "/test/0/0", memStore, 0, 100)
+	require.NoError(t, err)
+	for i := 0; i < kvCount; i++ {
+		key, value, err := kvReader.nextKV()
+		require.NoError(t, err)
+		require.Equal(t, kvs[i].Val, value)
+		clonedKey := make([]byte, len(key))
+		copy(clonedKey, key)
+		clonedVal := make([]byte, len(value))
+		copy(clonedVal, value)
+		keys = append(keys, clonedKey)
+		values = append(values, clonedVal)
+	}
+	_, _, err = kvReader.nextKV()
+	require.Equal(t, io.EOF, err)
+
+	dir := t.TempDir()
+	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
+	require.NoError(t, err)
+	keyAdapter := local.DupDetectKeyAdapter{}
+	data := &MemoryIngestData{
+		keyAdapter:         keyAdapter,
+		duplicateDetection: true,
+		duplicateDB:        db,
+		dupDetectOpt:       local.DupDetectOpt{ReportErrOnDup: true},
+		keys:               keys,
+		values:             values,
+		ts:                 123,
+	}
+	iter := data.NewIter(ctx, nil, nil)
+
+	for iter.First(); iter.Valid(); iter.Next() {
+	}
+	err = iter.Error()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "found duplicate key")
 }
