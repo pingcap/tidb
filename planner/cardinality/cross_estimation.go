@@ -15,6 +15,7 @@
 package cardinality
 
 import (
+	"github.com/pingcap/tidb/planner/property"
 	"math"
 
 	"github.com/pingcap/tidb/expression"
@@ -34,12 +35,12 @@ const SelectionFactor = 0.8
 // `select * from tbl where a = 1 order by pk limit 1`
 // if order of column `a` is strictly correlated with column `pk`, the row count of table scan should be:
 // `1 + row_count(a < 1 or a is null)`
-func CrossEstimateTableRowCount(sctx sessionctx.Context, tblStats *statistics.Table, path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
+func CrossEstimateTableRowCount(sctx sessionctx.Context, statsInfo *property.StatsInfo, tblStats *statistics.Table, path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
 	if tblStats.Pseudo || len(path.TableFilters) == 0 || !sctx.GetSessionVars().EnableCorrelationAdjustment {
 		return 0, false, 0
 	}
 	col, corr := getMostCorrCol4Handle(path.TableFilters, tblStats, sctx.GetSessionVars().CorrelationThreshold)
-	return crossEstimateRowCount(sctx, tblStats, path, path.TableFilters, col, corr, expectedCnt, desc)
+	return crossEstimateRowCount(sctx, statsInfo, tblStats, path, path.TableFilters, col, corr, expectedCnt, desc)
 }
 
 // CrossEstimateIndexRowCount estimates row count of index scan using histogram of another column which is in TableFilters/IndexFilters
@@ -47,7 +48,7 @@ func CrossEstimateTableRowCount(sctx sessionctx.Context, tblStats *statistics.Ta
 // `select * from tbl where a = 1 order by b limit 1`
 // if order of column `a` is strictly correlated with column `b`, the row count of IndexScan(b) should be:
 // `1 + row_count(a < 1 or a is null)`
-func CrossEstimateIndexRowCount(sctx sessionctx.Context, tblStats *statistics.Table, path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
+func CrossEstimateIndexRowCount(sctx sessionctx.Context, statsInfo *property.StatsInfo, tblStats *statistics.Table, path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
 	filtersLen := len(path.TableFilters) + len(path.IndexFilters)
 	sessVars := sctx.GetSessionVars()
 	if tblStats.Pseudo || filtersLen == 0 || !sessVars.EnableExtendedStats || !sctx.GetSessionVars().EnableCorrelationAdjustment {
@@ -57,7 +58,7 @@ func CrossEstimateIndexRowCount(sctx sessionctx.Context, tblStats *statistics.Ta
 	filters := make([]expression.Expression, 0, filtersLen)
 	filters = append(filters, path.TableFilters...)
 	filters = append(filters, path.IndexFilters...)
-	return crossEstimateRowCount(sctx, tblStats, path, filters, col, corr, expectedCnt, desc)
+	return crossEstimateRowCount(sctx, statsInfo, tblStats, path, filters, col, corr, expectedCnt, desc)
 }
 
 // getMostCorrCol4Handle checks if column in the condition is correlated enough with handle. If the condition
@@ -93,7 +94,7 @@ func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.T
 }
 
 // crossEstimateRowCount is the common logic of crossEstimateTableRowCount and crossEstimateIndexRowCount.
-func crossEstimateRowCount(sctx sessionctx.Context, tblStats *statistics.Table, path *util.AccessPath, conds []expression.Expression, col *expression.Column, corr, expectedCnt float64, desc bool) (float64, bool, float64) {
+func crossEstimateRowCount(sctx sessionctx.Context, statsInfo *property.StatsInfo, tblStats *statistics.Table, path *util.AccessPath, conds []expression.Expression, col *expression.Column, corr, expectedCnt float64, desc bool) (float64, bool, float64) {
 	// If the scan is not full range scan, we cannot use histogram of other columns for estimation, because
 	// the histogram reflects value distribution in the whole table level.
 	if col == nil || len(path.AccessConds) > 0 {
@@ -112,7 +113,7 @@ func crossEstimateRowCount(sctx sessionctx.Context, tblStats *statistics.Table, 
 		return 0, err == nil, corr
 	}
 	idxID := int64(-1)
-	idxIDs, idxExists := tblStats.HistColl.ColID2IdxIDs[colID]
+	idxIDs, idxExists := statsInfo.HistColl.ColID2IdxIDs[colID]
 	if idxExists && len(idxIDs) > 0 {
 		idxID = idxIDs[0]
 	}

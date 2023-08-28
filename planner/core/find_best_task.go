@@ -2453,7 +2453,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		selectivity := ds.StatsInfo().RowCount / path.CountAfterAccess
 		uniformEst := math.Min(path.CountAfterAccess, prop.ExpectedCnt/selectivity)
 
-		corrEst, ok, corr := cardinality.CrossEstimateTableRowCount(ds.SCtx(), ds.statisticTable, path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
+		corrEst, ok, corr := cardinality.CrossEstimateTableRowCount(ds.SCtx(), ds.StatsInfo(), ds.statisticTable, path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
 		if ok {
 			// TODO: actually, before using this count as the estimated row count of table scan, we need additionally
 			// check if count < row_count(first_region | last_region), and use the larger one since we build one copTask
@@ -2517,7 +2517,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		len(path.IndexFilters)+len(path.TableFilters) > 0
 
 	if (isMatchProp || prop.IsSortItemEmpty()) && prop.ExpectedCnt < ds.StatsInfo().RowCount && !ignoreExpectedCnt {
-		count, ok, corr := cardinality.CrossEstimateIndexRowCount(ds.SCtx(), ds.statisticTable, path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
+		count, ok, corr := cardinality.CrossEstimateIndexRowCount(ds.SCtx(), ds.StatsInfo(), ds.statisticTable, path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
 		if ok {
 			rowCount = count
 		} else if abs := math.Abs(corr); abs < 1 {
