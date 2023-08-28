@@ -193,7 +193,7 @@ func (b *builtinSetStringVarSig) vecEvalString(input *chunk.Chunk, result *chunk
 	return nil
 }
 
-func (b *builtinSetIntVarSig) vectorized() bool {
+func (*builtinSetIntVarSig) vectorized() bool {
 	return true
 }
 
