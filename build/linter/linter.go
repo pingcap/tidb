@@ -17,4 +17,5 @@ package linter
 import (
 	// it is necessary to make skywalking-eye into gomod.
 	_ "github.com/apache/skywalking-eyes/pkg/config"
+	_ "github.com/emmansun/gmsm/smx509"
 )

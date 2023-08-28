@@ -1747,6 +1747,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_emmansun_gmsm",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/emmansun/gmsm",
+        sha256 = "5da76717b27d39bf9c413371fcf37990fb6ed5f3ea276c3127c765d453ed689d",
+        strip_prefix = "github.com/emmansun/gmsm@v0.19.3",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/emmansun/gmsm/com_github_emmansun_gmsm-v0.19.3.zip",
+            "http://ats.apps.svc/gomod/github.com/emmansun/gmsm/com_github_emmansun_gmsm-v0.19.3.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/emmansun/gmsm/com_github_emmansun_gmsm-v0.19.3.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/emmansun/gmsm/com_github_emmansun_gmsm-v0.19.3.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_envoyproxy_go_control_plane",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/envoyproxy/go-control-plane",
