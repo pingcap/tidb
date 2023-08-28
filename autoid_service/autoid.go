@@ -46,7 +46,7 @@ var (
 )
 
 const (
-	autoIDLeaderPath = "tidb/autoid/leader"
+	autoIDLeaderPath = "/tidb/autoid/leader"
 )
 
 type autoIDKey struct {
