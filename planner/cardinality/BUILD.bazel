@@ -45,13 +45,14 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "row_count_test.go",
         "selectivity_test.go",
         "trace_test.go",
     ],
     data = glob(["testdata/**"]),
     embed = [":cardinality"],
     flaky = True,
-    shard_count = 30,
+    shard_count = 31,
     deps = [
         "//config",
         "//domain",

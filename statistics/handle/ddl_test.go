@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -51,9 +52,9 @@ func TestDDLAfterLoad(t *testing.T) {
 	tableInfo = tbl.Meta()
 
 	sctx := mock.NewContext()
-	count := statsTbl.ColumnGreaterRowCount(sctx, types.NewDatum(recordCount+1), tableInfo.Columns[0].ID)
+	count := cardinality.ColumnGreaterRowCount(sctx, statsTbl, types.NewDatum(recordCount+1), tableInfo.Columns[0].ID)
 	require.Equal(t, 0.0, count)
-	count = statsTbl.ColumnGreaterRowCount(sctx, types.NewDatum(recordCount+1), tableInfo.Columns[2].ID)
+	count = cardinality.ColumnGreaterRowCount(sctx, statsTbl, types.NewDatum(recordCount+1), tableInfo.Columns[2].ID)
 	require.Equal(t, 333, int(count))
 }
 
@@ -133,10 +134,10 @@ func TestDDLHistogram(t *testing.T) {
 	require.False(t, statsTbl.Pseudo)
 	require.True(t, statsTbl.Columns[tableInfo.Columns[3].ID].IsStatsInitialized())
 	sctx := mock.NewContext()
-	count, err := statsTbl.ColumnEqualRowCount(sctx, types.NewIntDatum(0), tableInfo.Columns[3].ID)
+	count, err := cardinality.ColumnEqualRowCount(sctx, statsTbl, types.NewIntDatum(0), tableInfo.Columns[3].ID)
 	require.NoError(t, err)
 	require.Equal(t, float64(2), count)
-	count, err = statsTbl.ColumnEqualRowCount(sctx, types.NewIntDatum(1), tableInfo.Columns[3].ID)
+	count, err = cardinality.ColumnEqualRowCount(sctx, statsTbl, types.NewIntDatum(1), tableInfo.Columns[3].ID)
 	require.NoError(t, err)
 	require.Equal(t, float64(0), count)
 
