@@ -261,14 +261,19 @@ func TestReplaceConflictKeys(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	rawKeyBase64 := "dIAAAAAAAABLX2mAAAAAAAAAAQOAAAAAAAAABg=="
 	rawKey, err := base64.StdEncoding.DecodeString(rawKeyBase64)
+	require.NoError(t, err)
 	rawValue1Base64 := "AAAAAAAAAAE="
 	rawValue1, err := base64.StdEncoding.DecodeString(rawValue1Base64)
+	require.NoError(t, err)
 	rawValue2Base64 := "AAAAAAAAAAI="
 	rawValue2, err := base64.StdEncoding.DecodeString(rawValue2Base64)
+	require.NoError(t, err)
 	rawHandle1Base64 := "dIAAAAAAAABLX3KAAAAAAAAAAQ=="
 	rawHandle1, err := base64.StdEncoding.DecodeString(rawHandle1Base64)
+	require.NoError(t, err)
 	rawHandle2Base64 := "dIAAAAAAAABLX3KAAAAAAAAAAg=="
 	rawHandle2, err := base64.StdEncoding.DecodeString(rawHandle2Base64)
+	require.NoError(t, err)
 	mockDB.ExpectQuery("\\QSELECT raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v1 WHERE table_name = ? AND index_name <> 'PRIMARY' ORDER BY raw_key\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "index_name", "raw_value", "raw_handle"}).
 			AddRow(rawKey, "uni_b", rawValue1, rawHandle1).
@@ -301,8 +306,10 @@ func TestReplaceConflictKeys(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	require.Equal(t, int32(2), fnGetLatestCount.Load())
+	require.Equal(t, int32(3), fnGetLatestCount.Load())
 	require.Equal(t, int32(1), fnDeleteKeyCount.Load())
+	err = mockDB.ExpectationsWereMet()
+	require.NoError(t, err)
 }
 
 func TestErrorMgrHasError(t *testing.T) {

@@ -148,12 +148,6 @@ const (
 		ORDER BY raw_key;
 	`
 
-	selectConflictKeysReplaceByRawHandle = `
-		SELECT raw_row
-		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND raw_handle = ?;
-	`
-
 	insertIntoDupRecord = `
 		INSERT INTO %s.` + DupRecordTable + `
 		(task_id, table_name, path, offset, error, row_id, row_data)
@@ -527,7 +521,7 @@ func (em *ErrorManager) RemoveAllConflictKeys(
 }
 
 // ReplaceConflictKeys query all conflicting rows (handle and their
-// values) from the current error report and resolve them concurrently
+// values) from the current error report and resolve them
 // by replacing the necessary rows and reserving the others.
 func (em *ErrorManager) ReplaceConflictKeys(
 	ctx context.Context,
@@ -557,6 +551,8 @@ func (em *ErrorManager) ReplaceConflictKeys(
 
 	g, gCtx := errgroup.WithContext(ctx)
 	pool.ApplyOnErrorGroup(g, func() error {
+		// TODO: provide a detailed document to explain the algorithm and link it here
+		// demo for "replace" algorithm: https://github.com/lyzx2001/tidb-conflict-replace
 		// check index KV first
 		rawKeyRows, err := em.db.QueryContext(
 			gCtx, fmt.Sprintf(selectIndexConflictKeysReplace, em.schemaEscaped),
@@ -570,8 +566,8 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			if err := rawKeyRows.Scan(&rawKey, &indexName, &rawValue, &rawHandle); err != nil {
 				return errors.Trace(err)
 			}
-			em.logger.Debug("got rawKey, index_name, raw_value, raw_handle from table",
-				zap.Binary("rawKey", rawKey),
+			em.logger.Debug("got raw_key, index_name, raw_value, raw_handle from table",
+				zap.Binary("raw_key", rawKey),
 				zap.String("index_name", indexName),
 				zap.Binary("raw_value", rawValue),
 				zap.Binary("raw_handle", rawHandle))
@@ -581,7 +577,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				return errors.Trace(err)
 			}
 			em.logger.Debug("got latest value from fnGetLatest",
-				zap.Binary("rawKey", rawKey),
+				zap.Binary("raw_key", rawKey),
 				zap.Binary("latest value", value))
 
 			if bytes.Equal(rawValue, value) {
@@ -607,7 +603,9 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				return errors.Trace(err)
 			}
 
-			decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx, tbl.Meta(), handle, tbl.Cols(), overwrittenRow)
+			overwrittenRowHandle, err := tablecodec.DecodeRowKey(rowKey)
+			//overwrittenRowHandle, err := decoder.DecodeHandleFromRowKey(rowKey)
+			decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx, tbl.Meta(), overwrittenRowHandle, tbl.Cols(), overwrittenRow)
 			if err != nil {
 				return errors.Trace(err)
 			}
