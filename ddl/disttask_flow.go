@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
+	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -49,7 +50,7 @@ func (*litBackfillFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
 }
 
 // ProcessNormalFlow processes the normal flow.
-func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (h *litBackfillFlowHandle) ProcessNormalFlow(ctx context.Context, taskHandle dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	var globalTaskMeta BackfillGlobalMeta
 	if err = json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
 		return nil, err
@@ -74,7 +75,7 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 	if tblInfo.Partition == nil {
 		switch gTask.Step {
 		case proto.StepOne:
-			serverNodes, err := dispatcher.GenerateSchedulerNodes(d.ctx)
+			serverNodes, err := taskHandle.GetAllSchedulerIDs(ctx, h, gTask)
 			if err != nil {
 				return nil, err
 			}
@@ -179,7 +180,30 @@ func (*litBackfillFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.Tas
 	return nil, nil
 }
 
-func (*litBackfillFlowHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (h *litBackfillFlowHandle) GetEligibleInstances(
+	ctx context.Context,
+	taskHandle dispatcher.TaskHandle,
+	task *proto.Task,
+) ([]*infosync.ServerInfo, error) {
+	serverInfos, err := dispatcher.GenerateSchedulerNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if task.Step == proto.StepTwo {
+		// Only the nodes that executed step one can have step two.
+		instanceIDs, err := taskHandle.GetPreviousSchedulerIDs(ctx, task.ID, proto.StepOne)
+		if err != nil {
+			return nil, err
+		}
+
+		involvedServerInfos := make([]*infosync.ServerInfo, 0, len(serverInfos))
+		for _, id := range instanceIDs {
+			if idx := disttaskutil.FindServerInfo(serverInfos, id); idx >= 0 {
+				involvedServerInfos = append(involvedServerInfos, serverInfos[idx])
+			}
+		}
+		return involvedServerInfos, nil
+	}
 	return dispatcher.GenerateSchedulerNodes(ctx)
 }
 

@@ -52,6 +52,8 @@ var (
 type TaskHandle interface {
 	// GetAllSchedulerIDs gets handles the task's all scheduler instances.
 	GetAllSchedulerIDs(ctx context.Context, handle TaskFlowHandle, task *proto.Task) ([]string, error)
+	// GetPreviousSchedulerIDs gets previous scheduler IDs.
+	GetPreviousSchedulerIDs(ctx context.Context, taskID int64, step int64) ([]string, error)
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(taskID int64, step int64) ([][]byte, error)
 	storage.SessionExecutor
@@ -327,7 +329,7 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, handle TaskFlowHandle, me
 	}
 
 	// 3. select all available TiDB nodes for task.
-	serverNodes, err := handle.GetEligibleInstances(d.ctx, task)
+	serverNodes, err := handle.GetEligibleInstances(d.ctx, d, task)
 	logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
 
 	if err != nil {
@@ -376,7 +378,7 @@ func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error)
 
 // GetAllSchedulerIDs gets all the scheduler IDs.
 func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, handle TaskFlowHandle, task *proto.Task) ([]string, error) {
-	serverInfos, err := handle.GetEligibleInstances(ctx, task)
+	serverInfos, err := handle.GetEligibleInstances(ctx, d, task)
 	if err != nil {
 		return nil, err
 	}
@@ -409,6 +411,11 @@ func (d *dispatcher) GetPreviousSubtaskMetas(taskID int64, step int64) ([][]byte
 		previousSubtaskMetas = append(previousSubtaskMetas, subtask.Meta)
 	}
 	return previousSubtaskMetas, nil
+}
+
+// GetPreviousSchedulerIDs gets scheduler IDs that run previous step.
+func (d *dispatcher) GetPreviousSchedulerIDs(ctx context.Context, taskID int64, step int64) ([]string, error) {
+	return d.taskMgr.GetSchedulerIDsByTaskIDAndStep(taskID, step)
 }
 
 // WithNewSession executes the function with a new session.

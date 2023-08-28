@@ -510,6 +510,26 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 	return instanceIDs, nil
 }
 
+// GetSchedulerIDsByTaskIDAndStep gets the scheduler IDs of the given global task ID and step.
+func (stm *TaskManager) GetSchedulerIDsByTaskIDAndStep(taskID int64, step int64) ([]string, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select distinct(exec_id) from mysql.tidb_background_subtask
+		where task_key = %? and step = %?`, taskID, step)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+
+	instanceIDs := make([]string, 0, len(rs))
+	for _, r := range rs {
+		id := r.GetString(0)
+		instanceIDs = append(instanceIDs, id)
+	}
+
+	return instanceIDs, nil
+}
+
 // UpdateGlobalTaskAndAddSubTasks update the global task and add new subtasks
 func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, prevState string) (bool, error) {
 	retryable := true
