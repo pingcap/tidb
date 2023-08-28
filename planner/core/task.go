@@ -1985,7 +1985,7 @@ func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.Groupi
 		// for every grouping set, pick its cols out, and combine with normal group cols to get the ndv.
 		groupingSetCols := groupingSet.ExtractCols()
 		groupingSetCols = append(groupingSetCols, normalGbyCols...)
-		ndv, _ := getColsNDVWithMatchedLen(groupingSetCols, childSchema, childStats)
+		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(groupingSetCols, childSchema, childStats)
 		sumNDV += ndv
 	}
 	// After group operator, all same rows are grouped into one row, that means all
@@ -2012,7 +2012,7 @@ func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.Groupi
 					// when meet an id in grouping sets, skip it (cause its null) and append the rest ids to count the incrementNDV.
 					beforeLen := len(intersectionIDs)
 					intersectionIDs = append(intersectionIDs, oneGNDV.Cols[i:]...)
-					incrementNDV, _ := getColsDNVWithMatchedLenFromUniqueIDs(intersectionIDs, childSchema, childStats)
+					incrementNDV, _ := cardinality.EstimateColsDNVWithMatchedLenFromUniqueIDs(intersectionIDs, childSchema, childStats)
 					newGNDV += incrementNDV
 					// restore the before intersectionIDs slice.
 					intersectionIDs = intersectionIDs[:beforeLen]
