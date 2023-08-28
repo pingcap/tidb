@@ -28,8 +28,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// AddLockedTables add locked tables id to store
-func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
+// AddLockedTables add locked tables id  to store
+func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.TableName, maxChunkSize int) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -41,8 +41,12 @@ func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.Table
 		return "", err
 	}
 
-	// Load tables to check duplicate when inserting.
-	rows, _, err := h.execRestrictedSQL(ctx, "SELECT table_id FROM mysql.stats_table_locked")
+	// Load tables to check duplicate before insert.
+	recordSet, err := exec.ExecuteInternal(ctx, "SELECT table_id FROM mysql.stats_table_locked")
+	if err != nil {
+		return "", err
+	}
+	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, maxChunkSize)
 	if err != nil {
 		return "", err
 	}
