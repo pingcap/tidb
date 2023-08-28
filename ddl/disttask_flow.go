@@ -204,7 +204,7 @@ func (h *litBackfillFlowHandle) GetEligibleInstances(
 		}
 		return involvedServerInfos, nil
 	}
-	return dispatcher.GenerateSchedulerNodes(ctx)
+	return serverInfos, nil
 }
 
 // IsRetryableErr implements TaskFlowHandle.IsRetryableErr interface.
