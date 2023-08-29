@@ -285,17 +285,25 @@ func (d *sqlDigester) reduceLit(currTok *token) {
 		d.tokens.popBack(1)
 	}
 
-	// "?, ?, ?, ?" => "..." or IN (lit) => IN (...)
+	// "?, ?, ?, ?" => "..."
 	last2 := d.tokens.back(2)
-	if d.isGenericList(last2) || d.isInList(last2) {
+	if d.isGenericList(last2) {
 		d.tokens.popBack(2)
 		currTok.tok = genericSymbolList
 		currTok.lit = "..."
 		return
 	}
 
-	// Aggressive reduce lists.
+	// IN (lit) => IN (...)
 	last4 := d.tokens.back(4)
+	if d.isSingleLiteralInList(last4) {
+		d.tokens.popBack(2)
+		d.tokens.pushBack(token{genericSymbolList, "..."})
+		d.tokens.pushBack(last4[0])
+		return
+	}
+
+	// Aggressive reduce lists.
 	if d.isGenericLists(last4) {
 		d.tokens.popBack(4)
 		currTok.tok = genericSymbolList
@@ -380,15 +388,15 @@ func (d *sqlDigester) isGenericList(last2 []token) (generic bool) {
 	return
 }
 
-func (d *sqlDigester) isInList(last2 []token) (generic bool) {
-	if len(last2) < 2 {
+func (d *sqlDigester) isSingleLiteralInList(last4 []token) (generic bool) {
+	if len(last4) < 4 {
 		return false
 	}
 
-	if !d.isLeftParen(last2[1]) || !d.isInKeyword(last2[0]) {
-		return false
+	if d.isLeftParen(last4[3]) && d.isInKeyword(last4[2]) && last4[1].tok == genericSymbol && d.isRightParen(last4[0]) {
+		return true
 	}
-	return true
+	return false
 }
 
 func (d *sqlDigester) isOrderOrGroupBy() (orderOrGroupBy bool) {
@@ -458,8 +466,18 @@ func (*sqlDigester) isLeftParen(tok token) (isLeftParen bool) {
 	return
 }
 
+func (*sqlDigester) isRightParen(tok token) (isLeftParen bool) {
+	isLeftParen = tok.lit == ")"
+	return
+}
+
 func (*sqlDigester) isInKeyword(tok token) (isInKeyword bool) {
 	isInKeyword = tok.lit == "in"
+	return
+}
+
+func (*sqlDigester) isQuestionMarkKeyword(tok token) (isQuestionMarkKeyword bool) {
+	isQuestionMarkKeyword = tok.lit == "?"
 	return
 }
 
