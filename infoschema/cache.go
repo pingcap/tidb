@@ -63,6 +63,11 @@ func (h *InfoCache) GetLatest() InfoSchema {
 	return nil
 }
 
+// Len returns the size of the cache
+func (h *InfoCache) Len() int {
+	return len(h.cache)
+}
+
 func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {
 	logutil.BgLogger().Debug("SCHEMA CACHE get schema", zap.Uint64("timestamp", ts))
 	// search one by one instead of binary search, because the timestamp of a schema could be 0
