@@ -53,16 +53,18 @@ func (*litBackfillFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
 }
 
 // ProcessNormalFlow processes the normal flow.
-func (h *litBackfillFlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (h *litBackfillFlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
 	var globalTaskMeta BackfillGlobalMeta
-	if err = json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
+	if err := json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
 		return nil, err
 	}
 	job := &globalTaskMeta.Job
 	var tblInfo *model.TableInfo
-	tblInfo, err = getTblInfo(h.d, job)
+	tblInfo, err := getTblInfo(h.d, job)
+	if err != nil {
+		return nil, err
+	}
 	var subTaskMetas [][]byte
-
 	// generate partition table's plan.
 	if tblInfo.Partition != nil {
 		if gTask.Step != proto.StepInit {
