@@ -513,7 +513,7 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 
 // IsSchedulerCanceled checks if subtask 'execID' of task 'taskID' has been canceled somehow.
 func (stm *TaskManager) IsSchedulerCanceled(taskID int64, execID string) (bool, error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select distinct(exec_id) from mysql.tidb_background_subtask where task_key = %? and exec_id = %?", taskID, execID)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select 1 from mysql.tidb_background_subtask where task_key = %? and exec_id = %?", taskID, execID)
 	if err != nil {
 		return false, err
 	}

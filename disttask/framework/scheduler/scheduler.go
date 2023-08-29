@@ -319,7 +319,7 @@ func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, m
 	if err = executor.Run(minimalTaskCtx); err != nil {
 		s.onError(err)
 	}
-	logutil.Logger(s.logCtx).Info("minimal task done")
+	logutil.Logger(s.logCtx).Info("minimal task done", zap.Stringer("minimal_task", minimalTask))
 }
 
 // Rollback rollbacks the scheduler task.
