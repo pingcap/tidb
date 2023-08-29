@@ -191,7 +191,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		LocalWriterMemCacheSize: int64(config.DefaultLocalWriterMemCacheSize),
 		ShouldCheckTiKV:         true,
 		DupeDetectEnabled:       false,
-		DuplicateDetectOpt:      local.DupDetectOpt{ReportErrOnDup: false},
+		DuplicateDetectOpt:      common.DupDetectOpt{ReportErrOnDup: false},
 		StoreWriteBWLimit:       int(e.MaxWriteSpeed),
 		MaxOpenFiles:            int(util.GenRLimit("table_import")),
 		KeyspaceName:            tidb.GetGlobalKeyspaceName(),
@@ -248,17 +248,14 @@ type TableImporter struct {
 	logger          *zap.Logger
 	regionSplitSize int64
 	regionSplitKeys int64
-	// the smallest auto-generated ID in current import.
-	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
-	lastInsertID  uint64
-	diskQuota     int64
-	diskQuotaLock *syncutil.RWMutex
+	diskQuota       int64
+	diskQuotaLock   *syncutil.RWMutex
 }
 
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, ti.dataStore)
+			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, ti.dataStore, storage.DecompressConfig{})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -501,16 +498,6 @@ func (ti *TableImporter) fullTableName() string {
 func (ti *TableImporter) Close() error {
 	ti.backend.Close()
 	return nil
-}
-
-func (ti *TableImporter) setLastInsertID(id uint64) {
-	// todo: if we run concurrently, we should use atomic operation here.
-	if id == 0 {
-		return
-	}
-	if ti.lastInsertID == 0 || id < ti.lastInsertID {
-		ti.lastInsertID = id
-	}
 }
 
 // CheckDiskQuota checks disk quota.
