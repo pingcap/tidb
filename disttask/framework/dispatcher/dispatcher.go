@@ -78,6 +78,8 @@ type dispatcher struct {
 	liveNodeFetchTick int
 	// taskNodes stores the id of current scheduler nodes.
 	taskNodes []string
+	// rand is for generating random selection of nodes.
+	rand *rand.Rand
 }
 
 // MockOwnerChange mock owner change in tests.
@@ -97,6 +99,7 @@ func newDispatcher(ctx context.Context, taskMgr *storage.TaskManager, serverID s
 		liveNodeFetchInterval: DefaultLiveNodesCheckInterval,
 		liveNodeFetchTick:     0,
 		taskNodes:             nil,
+		rand:                  rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	if dsp.impl == nil {
 		logutil.BgLogger().Warn("gen dispatcher impl failed, this type impl doesn't register")
@@ -280,7 +283,7 @@ func (d *dispatcher) replaceDeadNodesIfAny() error {
 		replaceNodes := make(map[string]string)
 		for _, nodeID := range d.taskNodes {
 			if ok := disttaskutil.MatchServerInfo(d.liveNodes, nodeID); !ok {
-				n := d.liveNodes[rand.Int()%len(d.liveNodes)] //nolint:gosec
+				n := d.liveNodes[d.rand.Int()%len(d.liveNodes)] //nolint:gosec
 				replaceNodes[nodeID] = disttaskutil.GenerateExecID(n.IP, n.Port)
 			}
 		}
