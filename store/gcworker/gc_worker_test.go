@@ -2059,9 +2059,9 @@ func TestSkipGCAndOnlyResolveLock(t *testing.T) {
 	err = s.gcWorker.leaderTick(ctx)
 	require.NoError(t, err)
 
-	// check the lock has been resolved.
+	// check the lock has not been resolved.
 	err = txn.Commit(ctx)
-	require.Error(t, err)
+	require.NoError(t, err)
 
 	// check gc is skipped
 	last, err := s.gcWorker.loadTime(gcLastRunTimeKey)
