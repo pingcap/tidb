@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "cardinality",
     srcs = [
+        "cross_estimation.go",
         "histogram.go",
         "join.go",
         "ndv.go",
@@ -35,6 +36,7 @@ go_library(
         "//util/logutil",
         "//util/mathutil",
         "//util/ranger",
+        "//util/set",
         "//util/tracing",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
