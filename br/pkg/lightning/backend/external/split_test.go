@@ -15,13 +15,157 @@
 package external
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"math"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/rand"
 )
+
+func TestGeneralProperties(t *testing.T) {
+	seed := time.Now().Unix()
+	rand.Seed(uint64(seed))
+	t.Logf("seed: %d", seed)
+
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+
+	kvNum := rand.Intn(1000) + 100
+	keys := make([][]byte, kvNum)
+	values := make([][]byte, kvNum)
+	for i := range keys {
+		keyLen := rand.Intn(100) + 1
+		valueLen := rand.Intn(100) + 1
+		keys[i] = make([]byte, keyLen)
+		values[i] = make([]byte, valueLen)
+		rand.Read(keys[i])
+		rand.Read(values[i])
+	}
+
+	dataFiles, statFiles, err := MockExternalEngine(memStore, keys, values)
+	require.NoError(t, err)
+	splitter, err := NewRangeSplitter(
+		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 1,
+	)
+	var lastEndKey []byte
+notExhausted:
+	endKey, dataFiles, statFiles, splitKeys, err := splitter.SplitOneRangesGroup()
+	require.NoError(t, err)
+
+	// endKey should be strictly greater than lastEndKey
+	if lastEndKey != nil && endKey != nil {
+		cmp := bytes.Compare(endKey, lastEndKey)
+		require.Equal(t, 1, cmp, "endKey: %v, lastEndKey: %v", endKey, lastEndKey)
+	}
+
+	// check dataFiles and statFiles
+	lenDataFiles := len(dataFiles)
+	lenStatFiles := len(statFiles)
+	require.Equal(t, lenDataFiles, lenStatFiles)
+	require.Greater(t, lenDataFiles, 0)
+	require.Greater(t, len(splitKeys), 0)
+
+	// splitKeys should be strictly increasing
+	for i := 1; i < len(splitKeys); i++ {
+		cmp := bytes.Compare(splitKeys[i], splitKeys[i-1])
+		require.Equal(t, 1, cmp, "splitKeys: %v", splitKeys)
+	}
+	// first splitKeys should be strictly greater than lastEndKey
+	cmp := bytes.Compare(splitKeys[0], lastEndKey)
+	require.Equal(t, 1, cmp, "splitKeys: %v, lastEndKey: %v", splitKeys, lastEndKey)
+	// last splitKeys should be strictly less than endKey
+	if endKey != nil {
+		cmp = bytes.Compare(splitKeys[len(splitKeys)-1], endKey)
+		require.Equal(t, -1, cmp, "splitKeys: %v, endKey: %v", splitKeys, endKey)
+	}
+
+	lastEndKey = endKey
+	if endKey != nil {
+		goto notExhausted
+	}
+	require.NoError(t, splitter.Close())
+}
+
+func TestOnlyOneGroup(t *testing.T) {
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+	subDir := "/mock-test"
+
+	writer := NewWriterBuilder().
+		SetMemorySizeLimit(15).
+		SetPropSizeDistance(1).
+		SetPropKeysDistance(1).
+		Build(memStore, subDir, 5)
+
+	dataFiles, statFiles, err := MockExternalEngineWithWriter(memStore, writer, subDir, [][]byte{{1}, {2}}, [][]byte{{1}, {2}})
+	require.NoError(t, err)
+
+	splitter, err := NewRangeSplitter(
+		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 10,
+	)
+	require.NoError(t, err)
+	endKey, dataFiles, statFiles, splitKeys, err := splitter.SplitOneRangesGroup()
+	require.NoError(t, err)
+	require.Nil(t, endKey)
+	require.Len(t, dataFiles, 1)
+	require.Len(t, statFiles, 1)
+	require.Len(t, splitKeys, 0)
+	require.NoError(t, splitter.Close())
+
+	splitter, err = NewRangeSplitter(
+		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 1,
+	)
+	require.NoError(t, err)
+	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
+	require.NoError(t, err)
+	require.Nil(t, endKey)
+	require.Len(t, dataFiles, 1)
+	require.Len(t, statFiles, 1)
+	require.Equal(t, [][]byte{{2}}, splitKeys)
+	require.NoError(t, splitter.Close())
+}
+
+func TestSortedData(t *testing.T) {
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+	kvNum := 100
+
+	keys := make([][]byte, kvNum)
+	values := make([][]byte, kvNum)
+	for i := range keys {
+		keys[i] = []byte(fmt.Sprintf("key%03d", i))
+		values[i] = []byte(fmt.Sprintf("value%03d", i))
+	}
+
+	dataFiles, statFiles, err := MockExternalEngine(memStore, keys, values)
+	require.NoError(t, err)
+	// we just need to make sure there are multiple files.
+	require.Greater(t, len(dataFiles), 1)
+	avgKVPerFile := math.Ceil(float64(kvNum) / float64(len(dataFiles)))
+	rangesGroupKV := 30
+	groupFileNumUpperBound := int(math.Ceil(float64(rangesGroupKV-1)/avgKVPerFile)) + 1
+
+	splitter, err := NewRangeSplitter(
+		ctx, dataFiles, statFiles, memStore, 1000, int64(rangesGroupKV), 1000, 10,
+	)
+	require.NoError(t, err)
+
+notExhausted:
+	endKey, dataFiles, statFiles, _, err := splitter.SplitOneRangesGroup()
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(dataFiles), groupFileNumUpperBound)
+	require.LessOrEqual(t, len(statFiles), groupFileNumUpperBound)
+	if endKey != nil {
+		goto notExhausted
+	}
+	require.NoError(t, splitter.Close())
+}
 
 func TestRangeSplitterStrictCase(t *testing.T) {
 	ctx := context.Background()
@@ -140,4 +284,5 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	require.Len(t, dataFiles, 0)
 	require.Len(t, statFiles, 0)
 	require.Len(t, splitKeys, 0)
+	require.NoError(t, splitter.Close())
 }
