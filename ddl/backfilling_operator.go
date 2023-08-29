@@ -288,7 +288,9 @@ func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecord
 }
 
 func (w *tableScanWorker) Close() {
-	w.sessPool.Put(w.se.Context)
+	if w.se != nil {
+		w.sessPool.Put(w.se.Context)
+	}
 }
 
 func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecordChunk)) {
@@ -447,7 +449,10 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 	send(result)
 }
 
-func (*indexIngestWorker) Close() {
+func (w *indexIngestWorker) Close() {
+	if w.se != nil {
+		w.sessPool.Put(w.se.Context)
+	}
 }
 
 // WriteLocal will write index records to lightning engine.

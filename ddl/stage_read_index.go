@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -24,13 +23,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/ddl/ingest"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/logutil"
@@ -113,7 +110,6 @@ func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask []byte
 
 	var startKey, endKey kv.Key
 	var tbl table.PhysicalTable
-	var isPartition bool
 
 	currentVer, err1 := getValidCurrentVersion(d.store)
 	if err1 != nil {
@@ -130,79 +126,38 @@ func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask []byte
 			return nil, err
 		}
 		tbl = parTbl.GetPartition(pid)
-		isPartition = true
 	} else {
 		startKey, endKey = sm.StartKey, sm.EndKey
 		tbl = r.ptbl
 	}
 
-	mockReorgInfo := &reorgInfo{Job: r.job, d: d.ddlCtx}
-	elements := make([]*meta.Element, 0)
-	elements = append(elements, &meta.Element{ID: r.index.ID, TypeKey: meta.IndexElementKey})
-	mockReorgInfo.elements = elements
-	mockReorgInfo.currElement = mockReorgInfo.elements[0]
-
-	ingestScheduler := newIngestBackfillScheduler(ctx, mockReorgInfo, d.sessPool, tbl, true)
-	defer ingestScheduler.close(true)
-
-	consumer := newResultConsumer(d.ddlCtx, mockReorgInfo, nil, true)
-	consumer.run(ingestScheduler, startKey, &r.totalRowCnt)
-
-	err = ingestScheduler.setupWorkers()
+	bc, ok := ingest.LitBackCtxMgr.Load(r.job.ID)
+	if !ok {
+		logutil.Logger(ctx).Error(ingest.LitErrGetBackendFail, zap.Int64("job ID", r.job.ID))
+		return nil, errors.Trace(errors.New("cannot get lightning backend"))
+	}
+	ei, err := bc.Register(r.job.ID, r.index.ID, r.job.SchemaName, r.job.TableName)
 	if err != nil {
-		logutil.BgLogger().Error("setup workers error",
-			zap.String("category", "ddl"),
-			zap.Error(err))
+		logutil.Logger(ctx).Warn("cannot register new engine", zap.Error(err),
+			zap.Int64("job ID", r.job.ID), zap.Int64("index ID", r.index.ID))
 		return nil, err
 	}
 
-	taskIDAlloc := newTaskIDAllocator()
-	for {
-		kvRanges, err := splitTableRanges(r.ptbl, d.store, startKey, endKey, backfillTaskChanSize)
-		if err != nil {
-			return nil, err
-		}
-		if len(kvRanges) == 0 {
-			break
-		}
-
-		logutil.BgLogger().Info("start backfill workers to reorg record",
-			zap.String("category", "ddl"),
-			zap.Int("workerCnt", ingestScheduler.currentWorkerSize()),
-			zap.Int("regionCnt", len(kvRanges)),
-			zap.String("startKey", hex.EncodeToString(startKey)),
-			zap.String("endKey", hex.EncodeToString(endKey)))
-
-		sendTasks(ingestScheduler, consumer, tbl, kvRanges, mockReorgInfo, taskIDAlloc)
-		if consumer.shouldAbort() {
-			break
-		}
-		rangeEndKey := kvRanges[len(kvRanges)-1].EndKey
-		startKey = rangeEndKey.Next()
-		if startKey.Cmp(endKey) >= 0 {
-			break
-		}
-	}
-	ingestScheduler.close(false)
-
-	if err := consumer.getResult(); err != nil {
-		return nil, err
-	}
-
-	flushMode := ingest.FlushModeForceLocalAndCheckDiskQuota
-	if isPartition {
-		flushMode = ingest.FlushModeForceGlobal
-	}
-	_, _, err = r.bc.Flush(r.index.ID, flushMode)
+	sessCtx, err := newSessCtx(d.store, r.job.ReorgMeta.SQLMode, r.job.ReorgMeta.Location)
 	if err != nil {
-		if common.ErrFoundDuplicateKeys.Equal(err) {
-			err = convertToKeyExistsErr(err, r.index, r.ptbl.Meta())
-		}
-		logutil.BgLogger().Error("flush error",
-			zap.String("category", "ddl"), zap.Error(err))
 		return nil, err
 	}
-	return nil, nil
+
+	pipe, err := NewAddIndexIngestPipeline(
+		ctx, d.store, d.sessPool, ei, sessCtx, tbl, r.index, startKey, endKey)
+	if err != nil {
+		return nil, err
+	}
+	err = pipe.Execute()
+	if err != nil {
+		return nil, err
+	}
+	return nil, pipe.Close()
 }
 
 func (r *readIndexToLocalStage) CleanupSubtaskExecEnv(_ context.Context) error {
