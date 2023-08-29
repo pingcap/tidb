@@ -247,11 +247,7 @@ func (d *dispatcher) onRunning() error {
 
 func (d *dispatcher) replaceDeadNodesIfAny() error {
 	if len(d.taskNodes) == 0 {
-		schedulerIDs, err := d.taskMgr.GetSchedulerIDsByTaskID(d.task.ID)
-		if err != nil {
-			return err
-		}
-		d.taskNodes = schedulerIDs
+		return errors.Errorf("len(d.taskNodes) == 0, onNextStage is not invoked before onRunning")
 	}
 	d.liveNodeFetchTick++
 	if d.liveNodeFetchTick == d.liveNodeFetchInterval {
@@ -412,6 +408,10 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error {
 	}
 	if len(serverNodes) == 0 {
 		return errors.New("no available TiDB node to dispatch subtasks")
+	}
+	d.taskNodes = make([]string, len(serverNodes))
+	for i := range serverNodes {
+		d.taskNodes[i] = disttaskutil.GenerateExecID(serverNodes[i].IP, serverNodes[i].Port)
 	}
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
