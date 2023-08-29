@@ -39,7 +39,7 @@ func AdjustRowCountForTableScanByLimit(sctx sessionctx.Context,
 	rowCount := path.CountAfterAccess
 	if expectedCnt < dsStatsInfo.RowCount {
 		selectivity := dsStatsInfo.RowCount / path.CountAfterAccess
-		uniformEst := math.Min(path.CountAfterAccess, expectedCnt/selectivity)
+		uniformEst := min(path.CountAfterAccess, expectedCnt/selectivity)
 
 		corrEst, ok, corr := crossEstimateTableRowCount(sctx,
 			dsStatsInfo, dsTableStats, dsStatisticTable, path, expectedCnt, desc)
@@ -53,10 +53,10 @@ func AdjustRowCountForTableScanByLimit(sctx sessionctx.Context,
 			// we do not add this check temporarily.
 
 			// to reduce risks of correlation adjustment, use the maximum between uniformEst and corrEst
-			rowCount = math.Max(uniformEst, corrEst)
+			rowCount = max(uniformEst, corrEst)
 		} else if abs := math.Abs(corr); abs < 1 {
 			correlationFactor := math.Pow(1-abs, float64(sctx.GetSessionVars().CorrelationExpFactor))
-			rowCount = math.Min(path.CountAfterAccess, uniformEst/correlationFactor)
+			rowCount = min(path.CountAfterAccess, uniformEst/correlationFactor)
 		}
 	}
 	return rowCount
@@ -91,7 +91,7 @@ func AdjustRowCountForIndexScanByLimit(sctx sessionctx.Context,
 	} else if abs := math.Abs(corr); abs < 1 {
 		correlationFactor := math.Pow(1-abs, float64(sctx.GetSessionVars().CorrelationExpFactor))
 		selectivity := dsStatsInfo.RowCount / rowCount
-		rowCount = math.Min(expectedCnt/selectivity/correlationFactor, rowCount)
+		rowCount = min(expectedCnt/selectivity/correlationFactor, rowCount)
 	}
 	return rowCount
 }
@@ -164,7 +164,7 @@ func crossEstimateRowCount(sctx sessionctx.Context,
 	if len(remained) > 0 {
 		scanCount = scanCount / SelectionFactor
 	}
-	scanCount = math.Min(scanCount, path.CountAfterAccess)
+	scanCount = min(scanCount, path.CountAfterAccess)
 	return scanCount, true, 0
 }
 
