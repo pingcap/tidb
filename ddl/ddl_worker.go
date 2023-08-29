@@ -145,14 +145,14 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sess.Pool, delRange
 }
 
 func (w *worker) jobLogger(job *model.Job) *zap.Logger {
-	var traceInfo *model.TraceInfo
+	logger := logutil.Logger(w.logCtx)
 	if job != nil {
-		traceInfo = job.TraceInfo
+		logger = logutil.LoggerWithTraceInfo(
+			logger.With(zap.Int64("jobID", job.ID)),
+			job.TraceInfo,
+		)
 	}
-	return logutil.LoggerWithTraceInfo(
-		logutil.Logger(w.logCtx).With(zap.Int64("jobID", job.ID)),
-		traceInfo,
-	)
+	return logger
 }
 
 func (w *worker) typeStr() string {
