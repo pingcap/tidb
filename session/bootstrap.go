@@ -585,7 +585,7 @@ const (
 		key(state),
       	UNIQUE KEY task_key(task_key)
 	);`
-
+	// CreateDistFrameworkMeta create a table that distributed task framework uses
 	CreateDistFrameworkMeta = `CREATE TABLE IF NOT EXISTS mysql.dist_framework_meta (
         host VARCHAR(100) NOT NULL PRIMARY KEY,
         role VARCHAR(64));`

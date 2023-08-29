@@ -164,11 +164,11 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 		if name == variable.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
-			serverId := disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())
+			serverID := disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())
 			_, err = e.Ctx().(sqlexec.SQLExecutor).ExecuteInternal(ctx,
 				`update mysql.dist_framework_meta
 					set role = %?
-					where host = %?`, valStr, serverId)
+					where host = %?`, valStr, serverID)
 		}
 		return err
 	}
