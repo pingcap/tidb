@@ -2448,29 +2448,9 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		filterCondition: slices.Clone(path.TableFilters),
 	}.Init(ds.SCtx(), ds.SelectBlockOffset())
 	ts.SetSchema(ds.schema.Clone())
-	rowCount := path.CountAfterAccess
-	if prop.ExpectedCnt < ds.StatsInfo().RowCount {
-		selectivity := ds.StatsInfo().RowCount / path.CountAfterAccess
-		uniformEst := math.Min(path.CountAfterAccess, prop.ExpectedCnt/selectivity)
-
-		corrEst, ok, corr := cardinality.CrossEstimateTableRowCount(ds.SCtx(),
-			ds.StatsInfo(), ds.tableStats, ds.statisticTable, path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
-		if ok {
-			// TODO: actually, before using this count as the estimated row count of table scan, we need additionally
-			// check if count < row_count(first_region | last_region), and use the larger one since we build one copTask
-			// for one region now, so even if it is `limit 1`, we have to scan at least one region in table scan.
-			// Currently, we can use `tikvrpc.CmdDebugGetRegionProperties` interface as `getSampRegionsRowCount()` does
-			// to get the row count in a region, but that result contains MVCC old version rows, so it is not that accurate.
-			// Considering that when this scenario happens, the execution time is close between IndexScan and TableScan,
-			// we do not add this check temporarily.
-
-			// to reduce risks of correlation adjustment, use the maximum between uniformEst and corrEst
-			rowCount = math.Max(uniformEst, corrEst)
-		} else if abs := math.Abs(corr); abs < 1 {
-			correlationFactor := math.Pow(1-abs, float64(ds.SCtx().GetSessionVars().CorrelationExpFactor))
-			rowCount = math.Min(path.CountAfterAccess, uniformEst/correlationFactor)
-		}
-	}
+	rowCount := cardinality.AdjustRowCountForTableScanByLimit(ds.SCtx(),
+		ds.StatsInfo(), ds.tableStats, ds.statisticTable,
+		path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
 	// We need NDV of columns since it may be used in cost estimation of join. Precisely speaking,
 	// we should track NDV of each histogram bucket, and sum up the NDV of buckets we actually need
 	// to scan, but this would only help improve accuracy of NDV for one column, for other columns,
@@ -2518,15 +2498,9 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		len(path.IndexFilters)+len(path.TableFilters) > 0
 
 	if (isMatchProp || prop.IsSortItemEmpty()) && prop.ExpectedCnt < ds.StatsInfo().RowCount && !ignoreExpectedCnt {
-		count, ok, corr := cardinality.CrossEstimateIndexRowCount(ds.SCtx(),
-			ds.StatsInfo(), ds.tableStats, ds.statisticTable, path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
-		if ok {
-			rowCount = count
-		} else if abs := math.Abs(corr); abs < 1 {
-			correlationFactor := math.Pow(1-abs, float64(ds.SCtx().GetSessionVars().CorrelationExpFactor))
-			selectivity := ds.StatsInfo().RowCount / rowCount
-			rowCount = math.Min(prop.ExpectedCnt/selectivity/correlationFactor, rowCount)
-		}
+		rowCount = cardinality.AdjustRowCountForIndexScanByLimit(ds.SCtx(),
+			ds.StatsInfo(), ds.tableStats, ds.statisticTable,
+			path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
 	}
 	is.SetStats(ds.tableStats.ScaleByExpectCnt(rowCount))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
