@@ -148,6 +148,7 @@ go_library(
         "//parser/tidb",
         "//parser/types",
         "//planner",
+        "//planner/cardinality",
         "//planner/core",
         "//planner/util",
         "//plugin",
