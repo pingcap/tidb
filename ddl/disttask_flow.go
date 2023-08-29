@@ -59,39 +59,12 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatc
 		return nil, err
 	}
 	job := &globalTaskMeta.Job
-	tblInfo, err := getTblInfo(h.d, job)
+	var tblInfo *model.TableInfo
+	tblInfo, err = getTblInfo(h.d, job)
 	var subTaskMetas [][]byte
-	if tblInfo.Partition == nil {
-		switch gTask.Step {
-		case proto.StepInit:
-			subtaskMeta, err := generateNonPartitionPlan(h.d, tblInfo, job)
-			if err != nil {
-				return nil, err
-			}
-			gTask.Step = proto.StepOne
-			return subtaskMeta, nil
-		case proto.StepOne:
-			serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
-			if err != nil {
-				return nil, err
-			}
-			subTaskMetas = make([][]byte, 0, len(serverNodes))
-			dummyMeta := &BackfillSubTaskMeta{}
-			metaBytes, err := json.Marshal(dummyMeta)
-			if err != nil {
-				return nil, err
-			}
-			for range serverNodes {
-				subTaskMetas = append(subTaskMetas, metaBytes)
-			}
-			gTask.Step = proto.StepTwo
-			return subTaskMetas, nil
-		case proto.StepTwo:
-			return nil, nil
-		default:
-			return nil, nil
-		}
-	} else {
+
+	// generate partition table's plan.
+	if tblInfo.Partition != nil {
 		if gTask.Step != proto.StepInit {
 			// This flow for partition table has only one step
 			return nil, nil
@@ -102,6 +75,37 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatc
 		}
 		gTask.Step = proto.StepOne
 		return subTaskMetas, nil
+	}
+
+	// generate non-partition table's plan.
+	switch gTask.Step {
+	case proto.StepInit:
+		subtaskMeta, err := generateNonPartitionPlan(h.d, tblInfo, job)
+		if err != nil {
+			return nil, err
+		}
+		gTask.Step = proto.StepOne
+		return subtaskMeta, nil
+	case proto.StepOne:
+		serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
+		if err != nil {
+			return nil, err
+		}
+		subTaskMetas = make([][]byte, 0, len(serverNodes))
+		dummyMeta := &BackfillSubTaskMeta{}
+		metaBytes, err := json.Marshal(dummyMeta)
+		if err != nil {
+			return nil, err
+		}
+		for range serverNodes {
+			subTaskMetas = append(subTaskMetas, metaBytes)
+		}
+		gTask.Step = proto.StepTwo
+		return subTaskMetas, nil
+	case proto.StepTwo:
+		return nil, nil
+	default:
+		return nil, nil
 	}
 }
 
