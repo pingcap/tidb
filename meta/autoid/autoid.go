@@ -595,7 +595,7 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *
 			AutoSyncInterval: 30 * time.Second,
 			TLS:              ebd.TLSConfig(),
 		})
-		etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(store.GetCodec()))
+		etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespaceSlash(store.GetCodec()))
 		if err != nil {
 			logutil.BgLogger().Error("fail to connect etcd, fallback to default", zap.String("category", "autoid client"), zap.Error(err))
 			return nil
