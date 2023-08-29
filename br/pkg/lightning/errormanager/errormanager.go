@@ -597,19 +597,23 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			// encode the row key of the data KV that needs to be deleted
 			rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, handle)
 			// get the latest value of the row key of the data KV that needs to be deleted
-			overwrittenRow, err := fnGetLatest(gCtx, rowKey)
-			em.logger.Debug("got overwrittenRow from fnGetLatest",
+			overwritten, err := fnGetLatest(gCtx, rowKey)
+			em.logger.Debug("got overwritten from fnGetLatest",
 				zap.Binary("rowKey", rowKey),
-				zap.Binary("overwrittenRow", overwrittenRow))
+				zap.Binary("overwritten", overwritten))
 			// if the latest value cannot be found, that means the data KV has been deleted
-			if tikverr.IsErrNotFound(err) || overwrittenRow == nil {
+			if tikverr.IsErrNotFound(err) || overwritten == nil {
 				continue
 			}
 			if err != nil {
 				return errors.Trace(err)
 			}
-			overwrittenRowHandle, err := tablecodec.DecodeRowKey(rowKey)
-			decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx, tbl.Meta(), overwrittenRowHandle, tbl.Cols(), overwrittenRow)
+
+			overwrittenHandle, err := tablecodec.DecodeRowKey(rowKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx, tbl.Meta(), overwrittenHandle, tbl.Cols(), overwritten)
 			if err != nil {
 				return errors.Trace(err)
 			}
