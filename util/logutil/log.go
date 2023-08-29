@@ -200,6 +200,19 @@ func BgLogger() *zap.Logger {
 	return log.L()
 }
 
+// LoggerWithTraceInfo attaches fields from trace info to logger
+func LoggerWithTraceInfo(logger *zap.Logger, info *model.TraceInfo) *zap.Logger {
+	if logger == nil {
+		logger = log.L()
+	}
+
+	if fields := fieldsFromTraceInfo(info); len(fields) > 0 {
+		logger = logger.With(fields...)
+	}
+
+	return logger
+}
+
 // WithConnID attaches connId to context.
 func WithConnID(ctx context.Context, connID uint64) context.Context {
 	return WithFields(ctx, zap.Uint64("conn", connID))

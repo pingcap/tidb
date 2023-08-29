@@ -140,8 +140,19 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sess.Pool, delRange
 		delRangeManager: delRangeMgr,
 	}
 	worker.addingDDLJobKey = addingDDLJobPrefix + worker.typeStr()
-	worker.logCtx = logutil.WithKeyValue(context.Background(), "worker", worker.String())
+	worker.logCtx = logutil.WithFields(context.Background(), zap.String("worker", worker.String()), zap.String("category", "ddl"))
 	return worker
+}
+
+func (w *worker) jobLogger(job *model.Job) *zap.Logger {
+	logger := logutil.Logger(w.logCtx)
+	if job != nil {
+		logger = logutil.LoggerWithTraceInfo(
+			logger.With(zap.Int64("jobID", job.ID)),
+			job.TraceInfo,
+		)
+	}
+	return logger
 }
 
 func (w *worker) typeStr() string {
@@ -167,7 +178,7 @@ func (w *worker) Close() {
 		w.sessPool.Put(w.sess.Session())
 	}
 	w.wg.Wait()
-	logutil.Logger(w.logCtx).Info("DDL worker closed", zap.String("category", "ddl"), zap.Duration("take time", time.Since(startTime)))
+	logutil.Logger(w.logCtx).Info("DDL worker closed", zap.Duration("take time", time.Since(startTime)))
 }
 
 func (dc *ddlCtx) asyncNotifyByEtcd(etcdPath string, jobID int64, jobType string) {
@@ -416,7 +427,7 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 		return nil
 	}
 	if kv.ErrEntryTooLarge.Equal(err) {
-		logutil.Logger(w.logCtx).Warn("update DDL job failed", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Error(err))
+		w.jobLogger(job).Warn("update DDL job failed", zap.String("job", job.String()), zap.Error(err))
 		w.sess.Rollback()
 		err1 := w.sess.Begin()
 		if err1 != nil {
@@ -443,7 +454,7 @@ func (w *worker) updateDDLJob(job *model.Job, meetErr bool) error {
 	})
 	updateRawArgs := needUpdateRawArgs(job, meetErr)
 	if !updateRawArgs {
-		logutil.Logger(w.logCtx).Info("meet something wrong before update DDL job, shouldn't update raw args", zap.String("category", "ddl"),
+		w.jobLogger(job).Info("meet something wrong before update DDL job, shouldn't update raw args",
 			zap.String("job", job.String()))
 	}
 	return errors.Trace(updateDDLJob2Table(w.sess, job, updateRawArgs))
@@ -601,7 +612,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	}
 
 	job.BinlogInfo.FinishedTS = t.StartTS
-	logutil.Logger(w.logCtx).Info("finish DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
+	w.jobLogger(job).Info("finish DDL job", zap.String("job", job.String()))
 	updateRawArgs := true
 	if job.Type == model.ActionAddPrimaryKey && !job.IsCancelled() {
 		// ActionAddPrimaryKey needs to check the warnings information in job.Args.
@@ -825,7 +836,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		if !dbterror.ErrPausedDDLJob.Equal(runJobErr) {
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
-			logutil.Logger(w.logCtx).Info("run DDL job failed, sleeps a while then retries it.", zap.String("category", "ddl"),
+			w.jobLogger(job).Info("run DDL job failed, sleeps a while then retries it.",
 				zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
 		}
 
@@ -889,8 +900,7 @@ func (w *worker) waitDependencyJobFinished(job *model.Job, cnt *int) {
 	if job.DependencyID != noneDependencyJob {
 		intervalCnt := int(3 * time.Second / waitDependencyJobInterval)
 		if *cnt%intervalCnt == 0 {
-			logutil.Logger(w.logCtx).Info("DDL job need to wait dependent job, sleeps a while, then retries it.", zap.String("category", "ddl"),
-				zap.Int64("jobID", job.ID),
+			w.jobLogger(job).Info("DDL job need to wait dependent job, sleeps a while, then retries it.",
 				zap.Int64("dependentJobID", job.DependencyID),
 				zap.Duration("waitTime", waitDependencyJobInterval))
 		}
@@ -918,15 +928,16 @@ func (w *worker) countForPanic(job *model.Job) {
 	}
 	job.ErrorCount++
 
+	logger := w.jobLogger(job)
 	// Load global DDL variables.
 	if err1 := loadDDLVars(w); err1 != nil {
-		logutil.Logger(w.logCtx).Error("load DDL global variable failed", zap.String("category", "ddl"), zap.Error(err1))
+		logger.Error("load DDL global variable failed", zap.Error(err1))
 	}
 	errorCount := variable.GetDDLErrorCountLimit()
 
 	if job.ErrorCount > errorCount {
 		msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCount)
-		logutil.Logger(w.logCtx).Warn(msg)
+		logger.Warn(msg)
 		job.Error = toTError(errors.New(msg))
 		job.State = model.JobStateCancelled
 	}
@@ -937,20 +948,21 @@ func (w *worker) countForError(err error, job *model.Job) error {
 	job.Error = toTError(err)
 	job.ErrorCount++
 
+	logger := w.jobLogger(job)
 	// If job is cancelled, we shouldn't return an error and shouldn't load DDL variables.
 	if job.State == model.JobStateCancelled {
-		logutil.Logger(w.logCtx).Info("DDL job is cancelled normally", zap.String("category", "ddl"), zap.Error(err))
+		logger.Info("DDL job is cancelled normally", zap.Error(err))
 		return nil
 	}
-	logutil.Logger(w.logCtx).Warn("run DDL job error", zap.String("category", "ddl"), zap.Error(err))
+	logger.Warn("run DDL job error", zap.Error(err))
 
 	// Load global DDL variables.
 	if err1 := loadDDLVars(w); err1 != nil {
-		logutil.Logger(w.logCtx).Error("load DDL global variable failed", zap.String("category", "ddl"), zap.Error(err1))
+		logger.Error("load DDL global variable failed", zap.Error(err1))
 	}
 	// Check error limit to avoid falling into an infinite loop.
 	if job.ErrorCount > variable.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && job.IsRollbackable() {
-		logutil.Logger(w.logCtx).Warn("DDL job error count exceed the limit, cancelling it now", zap.String("category", "ddl"), zap.Int64("jobID", job.ID), zap.Int64("errorCountLimit", variable.GetDDLErrorCountLimit()))
+		logger.Warn("DDL job error count exceed the limit, cancelling it now", zap.Int64("errorCountLimit", variable.GetDDLErrorCountLimit()))
 		job.State = model.JobStateCancelling
 	}
 	return err
@@ -958,11 +970,11 @@ func (w *worker) countForError(err error, job *model.Job) error {
 
 func (w *worker) processJobPausingRequest(d *ddlCtx, job *model.Job) (isRunnable bool, err error) {
 	if job.IsPaused() {
-		logutil.Logger(w.logCtx).Debug("paused DDL job ", zap.String("category", "ddl"), zap.String("job", job.String()))
+		w.jobLogger(job).Debug("paused DDL job ", zap.String("job", job.String()))
 		return false, err
 	}
 	if job.IsPausing() {
-		logutil.Logger(w.logCtx).Debug("pausing DDL job ", zap.String("category", "ddl"), zap.String("job", job.String()))
+		w.jobLogger(job).Debug("pausing DDL job ", zap.String("job", job.String()))
 		job.State = model.JobStatePaused
 		return false, pauseReorgWorkers(w, d, job)
 	}
@@ -980,7 +992,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	failpoint.Inject("mockPanicInRunDDLJob", func(val failpoint.Value) {})
 
 	if job.Type != model.ActionMultiSchemaChange {
-		logutil.Logger(w.logCtx).Info("run DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
+		w.jobLogger(job).Info("run DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
 	}
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {
@@ -990,13 +1002,13 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
 	if job.IsFinished() {
-		logutil.Logger(w.logCtx).Debug("finish DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
+		w.jobLogger(job).Debug("finish DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
 		return ver, err
 	}
 
 	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
-		logutil.Logger(w.logCtx).Debug("cancel DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
+		w.jobLogger(job).Debug("cancel DDL job", zap.String("job", job.String()))
 		return convertJob2RollbackJob(w, d, t, job)
 	}
 
