@@ -28,6 +28,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// Stats logger.
+var log = logutil.BgLogger().With(zap.String("category", "stats"))
+
 // AddLockedTables add locked tables id to store.
 func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.TableName, maxChunkSize int) (string, error) {
 	h.mu.Lock()
@@ -51,13 +54,12 @@ func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.Table
 		return "", err
 	}
 
-	dupTables := make([]string, 0)
-	tableLocked := make([]int64, 0)
+	dupTables := make([]string, 0, len(tables))
+	tableLocked := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		tableLocked = append(tableLocked, row.GetInt64(0))
 	}
 
-	log := logutil.BgLogger().With(zap.String("category", "stats"))
 	log.Info("lock table", zap.Int64s("tableIDs", tids))
 
 	// Insert locked tables.
