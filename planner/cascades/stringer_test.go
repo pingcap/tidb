@@ -53,7 +53,7 @@ func TestGroupStringer(t *testing.T) {
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	defer func() {
-		domain.GetDomain(ctx).StatsHandle().CloseStatsCache()
+		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)

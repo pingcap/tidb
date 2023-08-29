@@ -32,7 +32,7 @@ func TestCacheKey(t *testing.T) {
 	ctx.GetSessionVars().ConnectionID = 0
 	ctx.GetSessionVars().InRestrictedSQL = false
 	defer func() {
-		domain.GetDomain(ctx).StatsHandle().CloseStatsCache()
+		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 	variable.RestrictedReadOnly.Store(false)
 	variable.VarTiDBSuperReadOnly.Store(false)

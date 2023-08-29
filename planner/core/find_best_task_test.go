@@ -137,7 +137,7 @@ func (p *mockPhysicalPlan4Test) MemoryUsage() (sum int64) {
 func TestCostOverflow(t *testing.T) {
 	ctx := MockContext()
 	defer func() {
-		domain.GetDomain(ctx).StatsHandle().CloseStatsCache()
+		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 	// Plan Tree: mockPlan -> mockDataSource
 	mockPlan := mockLogicalPlan4Test{costOverflow: true}.Init(ctx)
@@ -154,7 +154,7 @@ func TestCostOverflow(t *testing.T) {
 func TestEnforcedProperty(t *testing.T) {
 	ctx := MockContext()
 	defer func() {
-		domain.GetDomain(ctx).StatsHandle().CloseStatsCache()
+		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 	// PlanTree : mockLogicalPlan -> mockDataSource
 	mockPlan := mockLogicalPlan4Test{}.Init(ctx)
@@ -191,7 +191,7 @@ func TestEnforcedProperty(t *testing.T) {
 func TestHintCannotFitProperty(t *testing.T) {
 	ctx := MockContext()
 	defer func() {
-		domain.GetDomain(ctx).StatsHandle().CloseStatsCache()
+		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 	// PlanTree : mockLogicalPlan -> mockDataSource
 	mockPlan0 := mockLogicalPlan4Test{

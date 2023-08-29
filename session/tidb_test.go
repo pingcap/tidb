@@ -67,7 +67,7 @@ func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 func TestParseErrorWarn(t *testing.T) {
 	ctx := core.MockContext()
 	defer func() {
-		domain.GetDomain(ctx).StatsHandle().CloseStatsCache()
+		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 	nodes, err := Parse(ctx, "select /*+ adf */ 1")
 	require.NoError(t, err)

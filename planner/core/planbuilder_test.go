@@ -121,7 +121,7 @@ func TestGetPathByIndexName(t *testing.T) {
 func TestRewriterPool(t *testing.T) {
 	ctx := MockContext()
 	defer func() {
-		domain.GetDomain(ctx).StatsHandle().CloseStatsCache()
+		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 	builder, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
 
@@ -172,7 +172,7 @@ func TestDisableFold(t *testing.T) {
 
 	ctx := MockContext()
 	defer func() {
-		domain.GetDomain(ctx).StatsHandle().CloseStatsCache()
+		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 	for _, c := range cases {
 		st, err := parser.New().ParseOneStmt(c.SQL, "", "")
@@ -655,7 +655,7 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 	ctx := MockContext()
 	defer func() {
-		domain.GetDomain(ctx).StatsHandle().CloseStatsCache()
+		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 	pb, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
 

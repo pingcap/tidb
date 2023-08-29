@@ -426,7 +426,7 @@ func TestLRUPlanCacheMemoryUsage(t *testing.T) {
 	pTypes := []*types.FieldType{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)}
 	ctx := MockContext()
 	defer func() {
-		domain.GetDomain(ctx).StatsHandle().CloseStatsCache()
+		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 	ctx.GetSessionVars().EnablePreparedPlanCacheMemoryMonitor = true
 	lru := NewLRUPlanCache(3, 0, 0, ctx, false)

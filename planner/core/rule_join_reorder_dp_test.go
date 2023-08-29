@@ -213,7 +213,7 @@ func TestDPReorderAllCartesian(t *testing.T) {
 
 	ctx := MockContext()
 	defer func() {
-		domain.GetDomain(ctx).StatsHandle().CloseStatsCache()
+		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 	ctx.GetSessionVars().PlanID.Store(-1)
 

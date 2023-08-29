@@ -731,7 +731,7 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 
 	ctx := core.MockContext()
 	defer func() {
-		domain.GetDomain(ctx).StatsHandle().CloseStatsCache()
+		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 	aggCol := &expression.Column{
 		Index:   0,

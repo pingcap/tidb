@@ -105,7 +105,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		require.NotNil(t, otrace)
 		physicalList := getList(otrace)
 		require.True(t, checkList(physicalList, testcase.physicalList))
-		domain.GetDomain(sctx).StatsHandle().CloseStatsCache()
+		domain.GetDomain(sctx).StatsHandle().Close()
 	}
 }
 

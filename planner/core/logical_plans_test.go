@@ -725,7 +725,7 @@ func TestCS3389(t *testing.T) {
 func TestAllocID(t *testing.T) {
 	ctx := MockContext()
 	defer func() {
-		domain.GetDomain(ctx).StatsHandle().CloseStatsCache()
+		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 	pA := DataSource{}.Init(ctx, 0)
 	pB := DataSource{}.Init(ctx, 0)
