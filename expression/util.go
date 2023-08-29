@@ -707,6 +707,165 @@ func pushNotAcrossArgs(ctx sessionctx.Context, exprs []Expression, not bool) ([]
 	return newExprs, flag
 }
 
+// todo: consider more no precision-loss downcast cases.
+func noPrecisionLossCastCompatible(cast, argCol *types.FieldType) bool {
+	// now only consider varchar type and integer.
+	if !(types.IsTypeVarchar(cast.GetType()) && types.IsTypeVarchar(argCol.GetType()) ||
+		mysql.IsIntegerType(cast.GetType()) && mysql.IsIntegerType(argCol.GetType())) {
+		// varchar type and integer on the storage layer is quite same, while the char type has its padding suffix.
+		return false
+	}
+	if types.IsTypeVarchar(cast.GetType()) {
+		// cast varchar function only bear the flen extension.
+		if cast.GetFlen() < argCol.GetFlen() {
+			return false
+		}
+		if !collate.CompatibleCollate(cast.GetCollate(), argCol.GetCollate()) {
+			return false
+		}
+	} else {
+		// For integers, we should ignore the potential display length represented by flen, using the default flen of the type.
+		castFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(cast.GetType())
+		originFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(argCol.GetType())
+		// cast integer function only bear the flen extension and signed symbol unchanged.
+		if castFlen < originFlen {
+			return false
+		}
+		if mysql.HasUnsignedFlag(cast.GetFlag()) != mysql.HasUnsignedFlag(argCol.GetFlag()) {
+			return false
+		}
+	}
+	return true
+}
+
+// eliminateCastFunction will detect the original arg before and the cast type after, once upon
+// there is no precision loss between them, current cast wrapper can be eliminated. For string
+// type, collation is also taken into consideration. (mainly used to build range or point)
+func eliminateCastFunction(sctx sessionctx.Context, expr Expression) (_ Expression, changed bool) {
+	f, ok := expr.(*ScalarFunction)
+	if !ok {
+		return expr, false
+	}
+	_, collation := expr.CharsetAndCollation()
+	switch f.FuncName.L {
+	case ast.LogicOr:
+		dnfItems := FlattenDNFConditions(f)
+		rmCast := false
+		rmCastItems := make([]Expression, len(dnfItems))
+		for i, dnfItem := range dnfItems {
+			newExpr, curDowncast := eliminateCastFunction(sctx, dnfItem)
+			rmCastItems[i] = newExpr
+			if curDowncast {
+				rmCast = true
+			}
+		}
+		if rmCast {
+			// compose the new DNF expression.
+			return ComposeDNFCondition(sctx, rmCastItems...), true
+		}
+		return expr, false
+	case ast.LogicAnd:
+		cnfItems := FlattenCNFConditions(f)
+		rmCast := false
+		rmCastItems := make([]Expression, len(cnfItems))
+		for i, cnfItem := range cnfItems {
+			newExpr, curDowncast := eliminateCastFunction(sctx, cnfItem)
+			rmCastItems[i] = newExpr
+			if curDowncast {
+				rmCast = true
+			}
+		}
+		if rmCast {
+			// compose the new DNF expression.
+			return ComposeDNFCondition(sctx, rmCastItems...), true
+		}
+		return expr, false
+	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
+		// for case: eq(cast(test.t2.a, varchar(100), "aaaaa"), once t2.a is covered by index or pk, try deconstructing it out.
+		if cast, ok := f.GetArgs()[0].(*ScalarFunction); ok && cast.FuncName.L == ast.Cast {
+			// eg: if (cast(A) EQ const) with incompatible collation, even if cast is eliminated, the condition still can not be used to build range.
+			if cast.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(cast.RetType.GetCollate(), collation) {
+				return expr, false
+			}
+			if constVal, ok := f.GetArgs()[1].(*Constant); ok {
+				val, err := constVal.Eval(chunk.Row{})
+				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
+					// treat col<=>null as range scan instead of point get to avoid incorrect results
+					// when nullable unique index has multiple matches for filter x is null
+					return expr, false
+				}
+				// the direct args of cast function should be column.
+				c, ok := cast.GetArgs()[0].(*Column)
+				if !ok {
+					return expr, false
+				}
+
+				// current only consider varchar and integer
+				if !noPrecisionLossCastCompatible(cast.RetType, c.RetType) {
+					return expr, false
+				}
+
+				// the column is covered by indexes, deconstructing it out.
+				return NewFunctionInternal(sctx, f.FuncName.L, f.RetType, c, f.GetArgs()[1]), true
+			}
+		}
+		// for case: eq("aaaaa"， cast(test.t2.a, varchar(100)), once t2.a is covered by index or pk, try deconstructing it out.
+		if cast, ok := f.GetArgs()[1].(*ScalarFunction); ok && cast.FuncName.L == ast.Cast {
+			// eg: if (cast(A) EQ const) with incompatible collation, even if cast is eliminated, the condition still can not be used to build range.
+			if cast.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(cast.RetType.GetCollate(), collation) {
+				return expr, false
+			}
+			if constVal, ok := f.GetArgs()[0].(*Constant); ok {
+				val, err := constVal.Eval(chunk.Row{})
+				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
+					// treat col<=>null as range scan instead of point get to avoid incorrect results
+					// when nullable unique index has multiple matches for filter x is null
+					return expr, false
+				}
+				// the direct args of cast function should be column.
+				c, ok := cast.GetArgs()[0].(*Column)
+				if !ok {
+					return expr, false
+				}
+
+				// current only consider varchar and integer
+				if !noPrecisionLossCastCompatible(cast.RetType, c.RetType) {
+					return expr, false
+				}
+				return NewFunctionInternal(sctx, f.FuncName.L, f.RetType, c, f.GetArgs()[0]), true
+			}
+		}
+	case ast.In:
+		// case for: cast(a<int> as bigint) in (1,2,3), we could deconstruct column 'a out directly.
+		cast, ok := f.GetArgs()[0].(*ScalarFunction)
+		if !ok || cast.FuncName.L != ast.Cast {
+			return expr, false
+		}
+		// eg: if (cast(A) IN {const}) with incompatible collation, even if cast is eliminated, the condition still can not be used to build range.
+		if cast.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(cast.RetType.GetCollate(), collation) {
+			return expr, false
+		}
+		for _, arg := range f.GetArgs()[1:] {
+			if _, ok := arg.(*Constant); !ok {
+				return expr, false
+			}
+		}
+		// the direct args of cast function should be column.
+		c, ok := cast.GetArgs()[0].(*Column)
+		if !ok {
+			return expr, false
+		}
+		// current only consider varchar and integer
+		if !noPrecisionLossCastCompatible(cast.RetType, c.RetType) {
+			return expr, false
+		}
+		newArgs := []Expression{c}
+		newArgs = append(newArgs, f.GetArgs()[1:]...)
+		return NewFunctionInternal(sctx, f.FuncName.L, f.RetType, newArgs...), true
+	}
+	return expr, false
+}
+
 // pushNotAcrossExpr try to eliminate the NOT expr in expression tree.
 // Input `not` indicates whether there's a `NOT` be pushed down.
 // Output `changed` indicates whether the output expression differs from the
@@ -777,6 +936,11 @@ func GetExprInsideIsTruth(expr Expression) Expression {
 // PushDownNot pushes the `not` function down to the expression's arguments.
 func PushDownNot(ctx sessionctx.Context, expr Expression) Expression {
 	newExpr, _ := pushNotAcrossExpr(ctx, expr, false)
+	return newExpr
+}
+
+func EliminateNoPrecisionLossCast(sctx sessionctx.Context, expr Expression) Expression {
+	newExpr, _ := eliminateCastFunction(sctx, expr)
 	return newExpr
 }
 
