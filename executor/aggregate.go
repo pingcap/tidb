@@ -52,46 +52,53 @@ import (
 
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult
 
+const spillFlag = 1
+const spilledPartitionNum = 256
+
 type parallelHashAggSpillHelper struct {
 	lock             sync.Mutex
-	spilledFiles     [][]string
-	isSpillTriggered bool
+	spilledChunksIO  [][]*chunk.ListInDisk
+	isSpillTriggered int32
 
 	// Final worker will decrease this var after reading it
 	partitionNeedRestore int
 }
 
-func (p *parallelHashAggSpillHelper) addSpillFile(partitionNum int, fileName string) {
+func (p *parallelHashAggSpillHelper) addListInDisks(listInDisk []*chunk.ListInDisk) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	p.isSpillTriggered = true
-	p.spilledFiles[partitionNum] = append(p.spilledFiles[partitionNum], fileName)
+	for i := 0; i < spilledPartitionNum; i++ {
+		p.spilledChunksIO[i] = append(p.spilledChunksIO[i], listInDisk[i])
+	}
 }
 
-func (p *parallelHashAggSpillHelper) getSpillFiles(partitionNum int) []string {
+func (p *parallelHashAggSpillHelper) getListInDisks(partitionNum int) []*chunk.ListInDisk {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	if len(p.spilledFiles[partitionNum]) == 0 {
-		return make([]string, 0)
+	if len(p.spilledChunksIO[partitionNum]) == 0 {
+		return make([]*chunk.ListInDisk, 0)
 	}
 
-	return p.spilledFiles[partitionNum]
+	return p.spilledChunksIO[partitionNum]
 }
 
 func (p *parallelHashAggSpillHelper) isInSpillMode() bool {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-	return p.isSpillTriggered
+	return atomic.LoadInt32(&p.isSpillTriggered) == spillFlag
+}
+
+func (p *parallelHashAggSpillHelper) triggerSpill() {
+	atomic.StoreInt32(&p.isSpillTriggered, spillFlag)
 }
 
 // baseHashAggWorker stores the common attributes of HashAggFinalWorker and HashAggPartialWorker.
 // nolint:structcheck
 type baseHashAggWorker struct {
-	ctx          sessionctx.Context
-	finishCh     <-chan struct{}
-	aggFuncs     []aggfuncs.AggFunc
-	maxChunkSize int
-	stats        *AggWorkerStat
+	ctx               sessionctx.Context
+	finishCh          <-chan struct{}
+	aggFuncs          []aggfuncs.AggFunc
+	maxChunkSize      int
+	stats             *AggWorkerStat
+	partialResultsMem int64
 
 	memTracker *memory.Tracker
 	BInMap     int // indicate there are 2^BInMap buckets in Golang Map.
@@ -100,12 +107,13 @@ type baseHashAggWorker struct {
 func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc,
 	maxChunkSize int, memTrack *memory.Tracker) baseHashAggWorker {
 	baseWorker := baseHashAggWorker{
-		ctx:          ctx,
-		finishCh:     finishCh,
-		aggFuncs:     aggFuncs,
-		maxChunkSize: maxChunkSize,
-		memTracker:   memTrack,
-		BInMap:       0,
+		ctx:               ctx,
+		finishCh:          finishCh,
+		aggFuncs:          aggFuncs,
+		maxChunkSize:      maxChunkSize,
+		memTracker:        memTrack,
+		BInMap:            0,
+		partialResultsMem: 0,
 	}
 	return baseWorker
 }
@@ -162,7 +170,7 @@ func (p *partialWorkerSync) waitForExitOfAliveWorkers() {
 
 // HashAggPartialWorker indicates the partial workers of parallel hash agg execution,
 // the number of the worker can be set by `tidb_hashagg_partial_concurrency`.
-type HashAggPartialWorker struct {
+type HashAggPartialWorker struct { // marker
 	baseHashAggWorker
 
 	inputCh        chan *chunk.Chunk
@@ -180,14 +188,18 @@ type HashAggPartialWorker struct {
 	// and is reused by childExec and partial worker.
 	chk *chunk.Chunk
 
-	isDataSpilled bool
-	workerSync    *partialWorkerSync
-	spillHelper   *parallelHashAggSpillHelper
+	isSpillPrepared         bool
+	workerSync              *partialWorkerSync
+	spillHelper             *parallelHashAggSpillHelper
+	tmpChksForSpill         []*chunk.Chunk
+	getNewTmpChunkFunc      func() *chunk.Chunk
+	getSpillChunkFieldTypes func() []*types.FieldType
+	spilledChunksIO         []*chunk.ListInDisk
 }
 
 // HashAggFinalWorker indicates the final workers of parallel hash agg execution,
 // the number of the worker can be set by `tidb_hashagg_final_concurrency`.
-type HashAggFinalWorker struct {
+type HashAggFinalWorker struct { // marker
 	baseHashAggWorker
 
 	rowBuffer           []types.Datum
@@ -254,7 +266,7 @@ type AfFinalResult struct {
       | data fetcher | +------> | | | |  ......  | |   partialInputChs
       +--------------+          +-+ +-+          +-+
 */
-type HashAggExec struct {
+type HashAggExec struct { // marker
 	exec.BaseExecutor
 
 	sc               *stmtctx.StatementContext
@@ -487,6 +499,18 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 			groupByItems:      e.GroupByItems,
 			chk:               tryNewCacheChunk(e.Children(0)),
 			groupKey:          make([][]byte, 0, 8),
+			isSpillPrepared:   false,
+			getNewTmpChunkFunc: func() *chunk.Chunk {
+				base := e.Base()
+				retTypes := base.RetFieldTypes()
+
+				// This string field is used for storing groupby key
+				retTypes = append(retTypes, types.NewFieldType(mysql.TypeString))
+				return chunk.New(retTypes, base.InitCap(), base.MaxChunkSize())
+			},
+			getSpillChunkFieldTypes: func() []*types.FieldType {
+				return append(e.Base().RetFieldTypes(), types.NewFieldType(mysql.TypeString))
+			},
 		}
 		// There is a bucket in the empty partialResultsMap.
 		failpoint.Inject("ConsumeRandomPanic", nil)
@@ -556,9 +580,68 @@ func recoveryHashAgg(output chan *AfFinalResult, r interface{}) {
 	logutil.BgLogger().Error("parallel hash aggregation panicked", zap.Error(err), zap.Stack("stack"))
 }
 
+func (w *HashAggPartialWorker) prepareForSpillWhenNeeded() {
+	if !w.isSpillPrepared {
+		w.isSpillPrepared = true
+		w.tmpChksForSpill = make([]*chunk.Chunk, spilledPartitionNum)
+		w.spilledChunksIO = make([]*chunk.ListInDisk, spilledPartitionNum)
+		for i := 0; i < spilledPartitionNum; i++ {
+			w.tmpChksForSpill[i] = w.getNewTmpChunkFunc()
+			w.spilledChunksIO[i] = chunk.NewListInDisk(w.getSpillChunkFieldTypes())
+		}
+	}
+}
+
+func (w *HashAggPartialWorker) spillDataToDisk(ctx sessionctx.Context) error {
+	if len(w.partialResultsMap) == 0 {
+		return nil
+	}
+
+	w.prepareForSpillWhenNeeded()
+	for key, partialResults := range w.partialResultsMap {
+		partitionNum := int(murmur3.Sum32([]byte(key))) % spilledPartitionNum
+		if w.tmpChksForSpill[partitionNum].IsFull() {
+			err := w.spilledChunksIO[partitionNum].Add(w.tmpChksForSpill[partitionNum])
+			if err != nil {
+				return err
+			}
+			w.tmpChksForSpill[partitionNum].Reset()
+		}
+
+		for i, aggFunc := range w.aggFuncs {
+			if err := aggFunc.AppendFinalResult2Chunk(ctx, partialResults[i], w.tmpChksForSpill[partitionNum]); err != nil {
+				logutil.BgLogger().Error("HashAggPartialWorker failed to append partial result to Chunk when spilling", zap.Error(err))
+			}
+		}
+		w.tmpChksForSpill[partitionNum].AppendString(len(w.aggFuncs), key)
+	}
+
+	// Clear the groupby keys and partialResultsMap
+	w.partialResultsMap = make(aggPartialResultMapper)
+	w.memTracker.Consume(-w.partialResultsMem)
+	w.BInMap = 0
+	w.partialResultsMem = 0
+	return nil
+}
+
+func (w *HashAggPartialWorker) spillRemainingDataToDisk(ctx sessionctx.Context) error {
+	for i := 0; i < spilledPartitionNum; i++ {
+		if w.tmpChksForSpill[i].NumRows() > 0 {
+			err := w.spilledChunksIO[i].Add(w.tmpChksForSpill[i])
+			if err != nil {
+				return err
+			}
+			w.tmpChksForSpill[i].Reset()
+		}
+	}
+	return nil
+}
+
+// partial marker
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
 	start := time.Now()
 	needShuffle, sc := false, ctx.GetSessionVars().StmtCtx
+	hasError := false
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.globalOutputCh, r)
@@ -566,13 +649,21 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 
 		w.workerSync.waitForRunningWorkers()
 
-		if w.spillHelper.isInSpillMode() {
-			// Do not put w.spillHelper.needSpill() and !w.isDataSpilled judgement in one line
-			if !w.isDataSpilled {
-				// TODO do spill
+		if !hasError {
+			if w.spillHelper.isInSpillMode() {
+				// Do not put `w.spillHelper.needSpill()` and `len(w.groupKey) > 0` judgement in one line
+				if len(w.groupKey) > 0 {
+					if err := w.spillDataToDisk(ctx); err != nil {
+						w.globalOutputCh <- &AfFinalResult{err: err}
+					}
+					if err := w.spillRemainingDataToDisk(ctx); err != nil {
+						w.globalOutputCh <- &AfFinalResult{err: err}
+					}
+				}
+				w.spillHelper.addListInDisks(w.spilledChunksIO)
+			} else if needShuffle {
+				w.shuffleIntermData(sc, finalConcurrency)
 			}
-		} else if needShuffle {
-			w.shuffleIntermData(sc, finalConcurrency)
 		}
 
 		w.workerSync.waitForExitOfAliveWorkers()
@@ -590,12 +681,14 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		if w.stats != nil {
 			w.stats.WaitTime += int64(time.Since(waitStart))
 		}
+
 		if !ok {
 			return
 		}
 
 		execStart := time.Now()
 		if err := w.updatePartialResult(ctx, sc, w.chk, len(w.partialResultsMap)); err != nil {
+			hasError = true
 			w.globalOutputCh <- &AfFinalResult{err: err}
 			return
 		}
@@ -607,6 +700,15 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		// The intermData can be promised to be not empty if reaching here,
 		// so we set needShuffle to be true.
 		needShuffle = true
+
+		if w.spillHelper.isInSpillMode() {
+			err := w.spillDataToDisk(ctx)
+			if err != nil {
+				hasError = true
+				w.globalOutputCh <- &AfFinalResult{err: err}
+				return
+			}
+		}
 	}
 }
 
@@ -740,7 +842,9 @@ func (w *baseHashAggWorker) getPartialResult(_ *stmtctx.StatementContext, groupK
 		allMemDelta += int64(partialResultSize * 8)
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
 		if len(mapper)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
+			mem := int64(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
+			w.memTracker.Consume(mem)
+			w.partialResultsMem += mem
 			w.BInMap++
 		}
 		mapper[string(groupKey[i])] = partialResults[i]
@@ -748,6 +852,7 @@ func (w *baseHashAggWorker) getPartialResult(_ *stmtctx.StatementContext, groupK
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(allMemDelta)
+	w.partialResultsMem += allMemDelta
 	return partialResults
 }
 
@@ -877,6 +982,7 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 	}
 }
 
+// final marker
 func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
 	start := time.Now()
 	defer func() {
@@ -1124,6 +1230,7 @@ func (e *HashAggExec) resetSpillMode() {
 	atomic.StoreUint32(&e.inSpillMode, 0)
 }
 
+// Unparallel's execution function marker
 // execute fetches Chunks from src and update each aggregate function for each row in Chunk.
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	defer func() {
@@ -1164,7 +1271,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		for j := 0; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
-				if atomic.LoadUint32(&e.inSpillMode) == 1 && e.groupSet.Count() > 0 {
+				if atomic.LoadUint32(&e.inSpillMode) == 1 && e.groupSet.Count() > 0 { // check spill marker
 					sel = append(sel, j)
 					continue
 				}
@@ -1185,7 +1292,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		// spill unprocessed data when exceeded.
 		if len(sel) > 0 {
 			e.childResult.SetSel(sel)
-			err = e.spillUnprocessedData(len(sel) == cap(sel))
+			err = e.spillUnprocessedData(len(sel) == cap(sel)) // unparallel's spill
 			if err != nil {
 				return err
 			}
@@ -1603,7 +1710,15 @@ func (a *AggSpillDiskAction) Action(tracker *memory.Tracker) {
 			zap.Uint32("spillTimes", a.spillTimes),
 			zap.Int64("consumed", tracker.BytesConsumed()),
 			zap.Int64("quota", tracker.GetBytesLimit()))
-		atomic.StoreUint32(&a.e.inSpillMode, 1)
+		if a.e.isUnparallelExec {
+			atomic.StoreUint32(&a.e.inSpillMode, 1)
+		} else {
+			if len(a.e.partialWorkers) > 0 {
+				a.e.partialWorkers[0].spillHelper.triggerSpill()
+			} else {
+				logutil.BgLogger().Error("0 length of partialWorkers0 in parallel hash aggregation is illegal")
+			}
+		}
 		memory.QueryForceDisk.Add(1)
 		return
 	}
