@@ -74,7 +74,7 @@ func GetAvgRowSize(ctx sessionctx.Context, coll *statistics.HistColl, cols []*ex
 			// We differentiate if the column is encoded as key or value, because the resulted size
 			// is different.
 			if sessionVars.EnableChunkRPC && !isForScan {
-				size += AvgColSizeChunkFormat(colHist, coll.RealtimeCount)
+				size += avgColSizeChunkFormat(colHist, coll.RealtimeCount)
 			} else {
 				size += AvgColSize(colHist, coll.RealtimeCount, isEncodedKey)
 			}
@@ -103,7 +103,7 @@ func GetAvgRowSizeListInDisk(coll *statistics.HistColl, cols []*expression.Colum
 				size += float64(chunk.EstimateTypeWidth(col.GetType()))
 				continue
 			}
-			size += AvgColSizeListInDisk(colHist, coll.RealtimeCount)
+			size += avgColSizeListInDisk(colHist, coll.RealtimeCount)
 		}
 	}
 	// Add 8 byte for each column's size record. See `ListInDisk` for details.
@@ -140,9 +140,9 @@ func AvgColSize(c *statistics.Column, count int64, isKey bool) float64 {
 	return math.Round(float64(c.TotColSize)/float64(count)*100) / 100
 }
 
-// AvgColSizeChunkFormat is the average column size of the histogram. These sizes are derived from function `Encode`
+// avgColSizeChunkFormat is the average column size of the histogram. These sizes are derived from function `Encode`
 // and `DecodeToChunk`, so we need to update them if those 2 functions are changed.
-func AvgColSizeChunkFormat(c *statistics.Column, count int64) float64 {
+func avgColSizeChunkFormat(c *statistics.Column, count int64) float64 {
 	if count == 0 {
 		return 0
 	}
@@ -160,9 +160,9 @@ func AvgColSizeChunkFormat(c *statistics.Column, count int64) float64 {
 	return math.Round((avgSize-math.Log2(avgSize))*100)/100 + 8
 }
 
-// AvgColSizeListInDisk is the average column size of the histogram. These sizes are derived
+// avgColSizeListInDisk is the average column size of the histogram. These sizes are derived
 // from `chunk.ListInDisk` so we need to update them if those 2 functions are changed.
-func AvgColSizeListInDisk(c *statistics.Column, count int64) float64 {
+func avgColSizeListInDisk(c *statistics.Column, count int64) float64 {
 	if count == 0 {
 		return 0
 	}
