@@ -335,11 +335,12 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, handle TaskFlowHandle, me
 	// 4. filter by role.
 	serverNodes, err = d.filterByRole(serverNodes)
 
-	logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
-
 	if err != nil {
 		return err
 	}
+
+	logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
+
 	if len(serverNodes) == 0 {
 		return errors.New("no available TiDB node to dispatch subtasks")
 	}
@@ -384,17 +385,18 @@ func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error)
 func (d *dispatcher) filterByRole(infos []*infosync.ServerInfo) ([]*infosync.ServerInfo, error) {
 	nodes, err := d.taskMgr.GetNodesByRole("background")
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
+
 	if len(nodes) == 0 {
 		nodes, err = d.taskMgr.GetNodesByRole("")
 	}
+
 	if err != nil {
 		return nil, err
 	}
 
 	res := make([]*infosync.ServerInfo, 0, len(nodes))
-
 	for _, info := range infos {
 		_, ok := nodes[disttaskutil.GenerateExecID(info.IP, info.Port)]
 		if ok {
