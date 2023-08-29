@@ -46,6 +46,35 @@ type Column struct {
 	IsHandle bool
 }
 
+// Copy copies the column.
+func (c *Column) Copy() *Column {
+	if c == nil {
+		return nil
+	}
+	nc := &Column{
+		PhysicalID: c.PhysicalID,
+		Flag:       c.Flag,
+		StatsVer:   c.StatsVer,
+		IsHandle:   c.IsHandle,
+	}
+	c.LastAnalyzePos.Copy(&nc.LastAnalyzePos)
+	if c.CMSketch != nil {
+		nc.CMSketch = c.CMSketch.Copy()
+	}
+	if c.TopN != nil {
+		nc.TopN = c.TopN.Copy()
+	}
+	if c.FMSketch != nil {
+		nc.FMSketch = c.FMSketch.Copy()
+	}
+	if c.Info != nil {
+		nc.Info = c.Info.Clone()
+	}
+	nc.Histogram = *c.Histogram.Copy()
+	nc.StatsLoadedStatus = c.StatsLoadedStatus.Copy()
+	return nc
+}
+
 func (c *Column) String() string {
 	return c.Histogram.ToString(0)
 }

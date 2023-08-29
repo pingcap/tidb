@@ -982,8 +982,13 @@ func (hg *Histogram) OutOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum 
 
 // Copy deep copies the histogram.
 func (hg *Histogram) Copy() *Histogram {
+	if hg == nil {
+		return nil
+	}
 	newHist := *hg
-	newHist.Bounds = hg.Bounds.CopyConstruct()
+	if hg.Bounds != nil {
+		newHist.Bounds = hg.Bounds.CopyConstruct()
+	}
 	newHist.Buckets = make([]Bucket, 0, len(hg.Buckets))
 	newHist.Buckets = append(newHist.Buckets, hg.Buckets...)
 	return &newHist
@@ -1499,6 +1504,14 @@ func NewStatsAllEvictedStatus() StatsLoadedStatus {
 	return StatsLoadedStatus{
 		statsInitialized: true,
 		evictedStatus:    AllEvicted,
+	}
+}
+
+// Copy copies the status
+func (s *StatsLoadedStatus) Copy() StatsLoadedStatus {
+	return StatsLoadedStatus{
+		statsInitialized: s.statsInitialized,
+		evictedStatus:    s.evictedStatus,
 	}
 }
 
