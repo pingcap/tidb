@@ -776,8 +776,8 @@ func eliminateCastFunction(sctx sessionctx.Context, expr Expression) (_ Expressi
 			}
 		}
 		if rmCast {
-			// compose the new DNF expression.
-			return ComposeDNFCondition(sctx, rmCastItems...), true
+			// compose the new CNF expression.
+			return ComposeCNFCondition(sctx, rmCastItems...), true
 		}
 		return expr, false
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
@@ -939,6 +939,10 @@ func PushDownNot(ctx sessionctx.Context, expr Expression) Expression {
 	return newExpr
 }
 
+// EliminateNoPrecisionLossCast remove the redundant cast function for range build convenience.
+// 1: deeper cast embedded in other complicated function will not be considered.
+// 2: cast args should be one for original base column and one for constant.
+// 3: some collation compatibility and precision loss will be considered when remove this cast func.
 func EliminateNoPrecisionLossCast(sctx sessionctx.Context, expr Expression) Expression {
 	newExpr, _ := eliminateCastFunction(sctx, expr)
 	return newExpr
