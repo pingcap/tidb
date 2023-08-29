@@ -55,7 +55,7 @@ func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.Table
 		return "", err
 	}
 
-	dupTables := make([]string, 0, len(tables))
+	skippedTables := make([]string, 0, len(tables))
 	statsLogger.Info("lock table", zap.Int64s("tableIDs", tids))
 
 	// Insert locked tables.
@@ -66,7 +66,7 @@ func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.Table
 			}
 			tableLocked = append(tableLocked, tid)
 		} else {
-			dupTables = append(dupTables, tables[i].Schema.L+"."+tables[i].Name.L)
+			skippedTables = append(skippedTables, tables[i].Schema.L+"."+tables[i].Name.L)
 		}
 	}
 
@@ -89,11 +89,11 @@ func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.Table
 	// Update handle.tableLocked after transaction success, if txn failed, tableLocked won't be updated.
 	h.tableLocked = tableLocked
 
-	mag := generateDuplicateTablesMessage(tids, dupTables, lockAction, lockedStatus)
+	mag := generateSkippedTablesMessage(tids, skippedTables, lockAction, lockedStatus)
 	return mag, nil
 }
 
-func generateDuplicateTablesMessage(tids []int64, dupTables []string, action, status string) string {
+func generateSkippedTablesMessage(tids []int64, dupTables []string, action, status string) string {
 	if len(dupTables) > 0 {
 		tables := strings.Join(dupTables, ", ")
 		var msg string

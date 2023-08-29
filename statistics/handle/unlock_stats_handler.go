@@ -42,14 +42,14 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 	if err != nil {
 		return "", err
 	}
-	unlockedTables := make([]string, 0, len(tables))
+	skippedTables := make([]string, 0, len(tables))
 
 	statsLogger.Info("unlock table", zap.Int64s("tableIDs", tids))
 	for i, tid := range tids {
 		var exist bool
 		exist, tableLocked = removeIfTableLocked(tableLocked, tid)
 		if !exist {
-			unlockedTables = append(unlockedTables, tables[i].Schema.L+"."+tables[i].Name.L)
+			skippedTables = append(skippedTables, tables[i].Schema.L+"."+tables[i].Name.L)
 			continue
 		}
 		if err := updateStatsAndUnlockTable(ctx, exec, tid, maxChunkSize); err != nil {
@@ -77,7 +77,7 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 	// Update handle.tableLocked after transaction success, if txn failed, tableLocked won't be updated.
 	h.tableLocked = tableLocked
 
-	mag := generateDuplicateTablesMessage(tids, unlockedTables, unlockAction, unlockedStatus)
+	mag := generateSkippedTablesMessage(tids, skippedTables, unlockAction, unlockedStatus)
 	return mag, nil
 }
 
