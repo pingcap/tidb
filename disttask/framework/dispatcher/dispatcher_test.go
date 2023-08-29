@@ -145,7 +145,7 @@ const (
 )
 
 func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
-	failpoint.Enable("github.com/pingcap/tidb/domain/MockDisableDistTask", "return(true)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/MockDisableDistTask", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/MockDisableDistTask"))
 	}()
