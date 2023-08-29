@@ -294,10 +294,10 @@ func (t *Table) Copy() *Table {
 		ModifyCount:    t.ModifyCount,
 	}
 	for id, col := range t.Columns {
-		newHistColl.Columns[id] = col
+		newHistColl.Columns[id] = col.Copy()
 	}
 	for id, idx := range t.Indices {
-		newHistColl.Indices[id] = idx
+		newHistColl.Indices[id] = idx.Copy()
 	}
 	nt := &Table{
 		HistColl:        newHistColl,

@@ -38,6 +38,34 @@ type Index struct {
 	PhysicalID int64
 }
 
+// Copy copies the index.
+func (idx *Index) Copy() *Index {
+	if idx == nil {
+		return nil
+	}
+	nc := &Index{
+		PhysicalID: idx.PhysicalID,
+		Flag:       idx.Flag,
+		StatsVer:   idx.StatsVer,
+	}
+	idx.LastAnalyzePos.Copy(&nc.LastAnalyzePos)
+	if idx.CMSketch != nil {
+		nc.CMSketch = idx.CMSketch.Copy()
+	}
+	if idx.TopN != nil {
+		nc.TopN = idx.TopN.Copy()
+	}
+	if idx.FMSketch != nil {
+		nc.FMSketch = idx.FMSketch.Copy()
+	}
+	if idx.Info != nil {
+		nc.Info = idx.Info.Clone()
+	}
+	nc.Histogram = *idx.Histogram.Copy()
+	nc.StatsLoadedStatus = idx.StatsLoadedStatus.Copy()
+	return nc
+}
+
 // ItemID implements TableCacheItem
 func (idx *Index) ItemID() int64 {
 	return idx.Info.ID
