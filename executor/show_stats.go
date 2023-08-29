@@ -18,6 +18,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"slices"
 	"strings"
 
@@ -225,7 +226,7 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 		if !col.IsStatsInitialized() {
 			continue
 		}
-		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.RealtimeCount, false),
+		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, cardinality.AvgColSize(col, statsTbl.RealtimeCount, false),
 			col.StatsLoadedStatus.StatusToString(), col.MemoryUsage())
 	}
 	for _, idx := range stableIdxsStats(statsTbl.Indices) {

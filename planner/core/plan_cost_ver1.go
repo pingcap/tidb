@@ -205,14 +205,14 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer1(_ property.TaskType, option 
 
 	// index-side net I/O cost: rows * row-size * net-factor
 	netFactor := getTableNetFactor(p.tablePlan)
-	rowSize := getTblStats(p.indexPlan).GetAvgRowSize(p.SCtx(), p.indexPlan.Schema().Columns, true, false)
+	rowSize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.indexPlan), p.indexPlan.Schema().Columns, true, false)
 	p.planCost += getCardinality(p.indexPlan, costFlag) * rowSize * netFactor
 
 	// index-side net seek cost
 	p.planCost += estimateNetSeekCost(p.indexPlan)
 
 	// table-side net I/O cost: rows * row-size * net-factor
-	tblRowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.SCtx(), p.tablePlan.Schema().Columns, false, false)
+	tblRowSize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
 	p.planCost += getCardinality(p.tablePlan, costFlag) * tblRowSize * netFactor
 
 	// table-side seek cost
@@ -245,7 +245,7 @@ func (p *PhysicalIndexReader) getPlanCostVer1(_ property.TaskType, option *PlanC
 	p.planCost = indexPlanCost
 	// net I/O cost: rows * row-size * net-factor
 	tblStats := getTblStats(p.indexPlan)
-	rowSize = tblStats.GetAvgRowSize(p.SCtx(), p.indexPlan.Schema().Columns, true, false)
+	rowSize = cardinality.GetAvgRowSize(p.SCtx(), tblStats, p.indexPlan.Schema().Columns, true, false)
 	rowCount = getCardinality(p.indexPlan, costFlag)
 	netFactor = getTableNetFactor(p.indexPlan)
 	p.planCost += rowCount * rowSize * netFactor
@@ -265,7 +265,7 @@ func (p *PhysicalIndexReader) getPlanCostVer1(_ property.TaskType, option *PlanC
 // GetNetDataSize calculates the cost of the plan in network data transfer.
 func (p *PhysicalIndexReader) GetNetDataSize() float64 {
 	tblStats := getTblStats(p.indexPlan)
-	rowSize := tblStats.GetAvgRowSize(p.SCtx(), p.indexPlan.Schema().Columns, true, false)
+	rowSize := cardinality.GetAvgRowSize(p.SCtx(), tblStats, p.indexPlan.Schema().Columns, true, false)
 	return p.indexPlan.StatsCount() * rowSize
 }
 
@@ -291,7 +291,7 @@ func (p *PhysicalTableReader) getPlanCostVer1(_ property.TaskType, option *PlanC
 		tableCost = childCost
 		p.planCost = childCost
 		// net I/O cost: rows * row-size * net-factor
-		rowSize = getTblStats(p.tablePlan).GetAvgRowSize(p.SCtx(), p.tablePlan.Schema().Columns, false, false)
+		rowSize = cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
 		rowCount = getCardinality(p.tablePlan, costFlag)
 		p.planCost += rowCount * rowSize * netFactor
 		// net seek cost
@@ -315,7 +315,7 @@ func (p *PhysicalTableReader) getPlanCostVer1(_ property.TaskType, option *PlanC
 		} else {
 			// cop protocol
 			concurrency = float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
-			rowSize = getTblStats(p.tablePlan).GetAvgRowSize(p.SCtx(), p.tablePlan.Schema().Columns, false, false)
+			rowSize = cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
 			seekCost = estimateNetSeekCost(p.tablePlan)
 			tType := property.CopSingleReadTaskType
 			childCost, err := p.tablePlan.getPlanCostVer1(tType, option)
@@ -348,7 +348,7 @@ func (p *PhysicalTableReader) getPlanCostVer1(_ property.TaskType, option *PlanC
 
 // GetNetDataSize calculates the estimated total data size fetched from storage.
 func (p *PhysicalTableReader) GetNetDataSize() float64 {
-	rowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.SCtx(), p.tablePlan.Schema().Columns, false, false)
+	rowSize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
 	return p.tablePlan.StatsCount() * rowSize
 }
 
@@ -368,7 +368,7 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer1(_ property.TaskType, option *
 		netFactor := getTableNetFactor(tblScan)
 		p.planCost += childCost // child's cost
 		tblStats := getTblStats(tblScan)
-		rowSize := tblStats.GetAvgRowSize(p.SCtx(), tblScan.Schema().Columns, false, false)
+		rowSize := cardinality.GetAvgRowSize(p.SCtx(), tblStats, tblScan.Schema().Columns, false, false)
 		p.planCost += getCardinality(tblScan, costFlag) * rowSize * netFactor // net I/O cost
 	}
 	for _, partialScan := range p.partialPlans {
@@ -387,7 +387,7 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer1(_ property.TaskType, option *
 		netFactor := getTableNetFactor(partialScan)
 		p.planCost += childCost // child's cost
 		tblStats := getTblStats(partialScan)
-		rowSize := tblStats.GetAvgRowSize(p.SCtx(), partialScan.Schema().Columns, isIdxScan, false)
+		rowSize := cardinality.GetAvgRowSize(p.SCtx(), tblStats, partialScan.Schema().Columns, isIdxScan, false)
 		p.planCost += getCardinality(partialScan, costFlag) * rowSize * netFactor // net I/O cost
 	}
 
@@ -403,7 +403,7 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer1(_ property.TaskType, option *
 // GetPartialReaderNetDataSize returns the estimated total response data size of a partial read.
 func (p *PhysicalIndexMergeReader) GetPartialReaderNetDataSize(plan PhysicalPlan) float64 {
 	_, isIdxScan := plan.(*PhysicalIndexScan)
-	return plan.StatsCount() * getTblStats(plan).GetAvgRowSize(p.SCtx(), plan.Schema().Columns, isIdxScan, false)
+	return plan.StatsCount() * cardinality.GetAvgRowSize(p.SCtx(), getTblStats(plan), plan.Schema().Columns, isIdxScan, false)
 }
 
 // getPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
@@ -1114,10 +1114,10 @@ func (p *BatchPointGetPlan) GetCost(opt *physicalOptimizeOp) float64 {
 	cost := 0.0
 	if p.IndexInfo == nil {
 		rowCount = float64(len(p.Handles))
-		rowSize = p.StatsInfo().HistColl.GetTableAvgRowSize(p.SCtx(), cols, kv.TiKV, true)
+		rowSize = cardinality.GetTableAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, kv.TiKV, true)
 	} else {
 		rowCount = float64(len(p.IndexValues))
-		rowSize = p.StatsInfo().HistColl.GetIndexAvgRowSize(p.SCtx(), cols, p.IndexInfo.Unique)
+		rowSize = cardinality.GetIndexAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, p.IndexInfo.Unique)
 	}
 	networkFactor := sessVars.GetNetworkFactor(p.TblInfo)
 	seekFactor := sessVars.GetSeekFactor(p.TblInfo)
@@ -1149,9 +1149,9 @@ func (p *BatchPointGetPlan) GetAvgRowSize() float64 {
 		return 0 // the cost of BatchGet generated in fast plan optimization is always 0
 	}
 	if p.IndexInfo == nil {
-		return p.StatsInfo().HistColl.GetTableAvgRowSize(p.SCtx(), cols, kv.TiKV, true)
+		return cardinality.GetTableAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, kv.TiKV, true)
 	}
-	return p.StatsInfo().HistColl.GetIndexAvgRowSize(p.SCtx(), cols, p.IndexInfo.Unique)
+	return cardinality.GetIndexAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, p.IndexInfo.Unique)
 }
 
 // GetCost returns cost of the PointGetPlan.
@@ -1164,9 +1164,9 @@ func (p *PointGetPlan) GetCost(opt *physicalOptimizeOp) float64 {
 	var rowSize float64
 	cost := 0.0
 	if p.IndexInfo == nil {
-		rowSize = p.StatsInfo().HistColl.GetTableAvgRowSize(p.SCtx(), cols, kv.TiKV, true)
+		rowSize = cardinality.GetTableAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, kv.TiKV, true)
 	} else {
-		rowSize = p.StatsInfo().HistColl.GetIndexAvgRowSize(p.SCtx(), cols, p.IndexInfo.Unique)
+		rowSize = cardinality.GetIndexAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, p.IndexInfo.Unique)
 	}
 	networkFactor := sessVars.GetNetworkFactor(p.TblInfo)
 	seekFactor := sessVars.GetSeekFactor(p.TblInfo)
@@ -1197,9 +1197,9 @@ func (p *PointGetPlan) GetAvgRowSize() float64 {
 		return 0 // the cost of PointGet generated in fast plan optimization is always 0
 	}
 	if p.IndexInfo == nil {
-		return p.StatsInfo().HistColl.GetTableAvgRowSize(p.SCtx(), cols, kv.TiKV, true)
+		return cardinality.GetTableAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, kv.TiKV, true)
 	}
-	return p.StatsInfo().HistColl.GetIndexAvgRowSize(p.SCtx(), cols, p.IndexInfo.Unique)
+	return cardinality.GetIndexAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, p.IndexInfo.Unique)
 }
 
 // getPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.

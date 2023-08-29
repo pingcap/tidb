@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -200,7 +201,7 @@ func (p *PhysicalTableReader) GetTableScan() (*PhysicalTableScan, error) {
 
 // GetAvgRowSize return the average row size of this plan.
 func (p *PhysicalTableReader) GetAvgRowSize() float64 {
-	return getTblStats(p.tablePlan).GetAvgRowSize(p.SCtx(), p.tablePlan.Schema().Columns, false, false)
+	return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
 }
 
 // MemoryUsage return the memory usage of PhysicalTableReader
@@ -492,12 +493,12 @@ func (p *PhysicalIndexLookUpReader) ExtractCorrelatedCols() (corCols []*expressi
 
 // GetIndexNetDataSize return the estimated total size in bytes via network transfer.
 func (p *PhysicalIndexLookUpReader) GetIndexNetDataSize() float64 {
-	return getTblStats(p.indexPlan).GetAvgRowSize(p.SCtx(), p.indexPlan.Schema().Columns, true, false) * p.indexPlan.StatsCount()
+	return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.indexPlan), p.indexPlan.Schema().Columns, true, false) * p.indexPlan.StatsCount()
 }
 
 // GetAvgTableRowSize return the average row size of each final row.
 func (p *PhysicalIndexLookUpReader) GetAvgTableRowSize() float64 {
-	return getTblStats(p.tablePlan).GetAvgRowSize(p.SCtx(), p.tablePlan.Schema().Columns, false, false)
+	return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
 }
 
 // BuildPlanTrace implements PhysicalPlan interface.
@@ -584,7 +585,7 @@ type PhysicalIndexMergeReader struct {
 
 // GetAvgTableRowSize return the average row size of table plan.
 func (p *PhysicalIndexMergeReader) GetAvgTableRowSize() float64 {
-	return getTblStats(p.TablePlans[len(p.TablePlans)-1]).GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
+	return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.TablePlans[len(p.TablePlans)-1]), p.Schema().Columns, false, false)
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.

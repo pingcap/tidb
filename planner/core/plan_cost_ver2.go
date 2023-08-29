@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"math"
 	"strconv"
 
@@ -241,8 +242,8 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 
 	indexRows := getCardinality(p.indexPlan, option.CostFlag)
 	tableRows := getCardinality(p.indexPlan, option.CostFlag)
-	indexRowSize := getTblStats(p.indexPlan).GetAvgRowSize(p.SCtx(), p.indexPlan.Schema().Columns, true, false)
-	tableRowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.SCtx(), p.tablePlan.Schema().Columns, false, false)
+	indexRowSize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.indexPlan), p.indexPlan.Schema().Columns, true, false)
+	tableRowSize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	requestFactor := getTaskRequestFactorVer2(p, taskType)

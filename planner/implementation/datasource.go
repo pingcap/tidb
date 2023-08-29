@@ -15,6 +15,7 @@
 package implementation
 
 import (
+	"github.com/pingcap/tidb/planner/cardinality"
 	"math"
 
 	"github.com/pingcap/tidb/expression"
@@ -76,7 +77,7 @@ func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, source *planner
 // CalcCost calculates the cost of the table reader Implementation.
 func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	reader := impl.plan.(*plannercore.PhysicalTableReader)
-	width := impl.tblColHists.GetAvgRowSize(impl.plan.SCtx(), reader.Schema().Columns, false, false)
+	width := cardinality.GetAvgRowSize(impl.plan.SCtx(), impl.tblColHists, reader.Schema().Columns, false, false)
 	sessVars := reader.SCtx().GetSessionVars()
 	// TableReaderImpl don't have tableInfo property, so using nil to replace it.
 	// Todo add the tableInfo property for the TableReaderImpl.
@@ -123,7 +124,7 @@ func NewTableScanImpl(ts *plannercore.PhysicalTableScan, cols []*expression.Colu
 // CalcCost calculates the cost of the table scan Implementation.
 func (impl *TableScanImpl) CalcCost(outCount float64, _ ...memo.Implementation) float64 {
 	ts := impl.plan.(*plannercore.PhysicalTableScan)
-	width := impl.tblColHists.GetTableAvgRowSize(impl.plan.SCtx(), impl.tblCols, kv.TiKV, true)
+	width := cardinality.GetTableAvgRowSize(impl.plan.SCtx(), impl.tblColHists, impl.tblCols, kv.TiKV, true)
 	sessVars := ts.SCtx().GetSessionVars()
 	impl.cost = outCount * sessVars.GetScanFactor(ts.Table) * width
 	if ts.Desc {
@@ -155,7 +156,7 @@ func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 	reader := impl.plan.(*plannercore.PhysicalIndexReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	networkCost := outCount * sessVars.GetNetworkFactor(impl.tblInfo) *
-		impl.tblColHists.GetAvgRowSize(reader.SCtx(), children[0].GetPlan().Schema().Columns,
+		cardinality.GetAvgRowSize(reader.SCtx(), impl.tblColHists, children[0].GetPlan().Schema().Columns,
 			true, false)
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	impl.cost = (networkCost + children[0].GetCost()) / copIterWorkers
@@ -181,7 +182,7 @@ type IndexScanImpl struct {
 func (impl *IndexScanImpl) CalcCost(outCount float64, _ ...memo.Implementation) float64 {
 	is := impl.plan.(*plannercore.PhysicalIndexScan)
 	sessVars := is.SCtx().GetSessionVars()
-	rowSize := impl.tblColHists.GetIndexAvgRowSize(is.SCtx(), is.Schema().Columns, is.Index.Unique)
+	rowSize := cardinality.GetIndexAvgRowSize(is.SCtx(), impl.tblColHists, is.Schema().Columns, is.Index.Unique)
 	cost := outCount * rowSize * sessVars.GetScanFactor(is.Table)
 	if is.Desc {
 		cost = outCount * rowSize * sessVars.GetDescScanFactor(is.Table)

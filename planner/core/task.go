@@ -307,7 +307,7 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 
 func getAvgRowSize(stats *property.StatsInfo, cols []*expression.Column) (size float64) {
 	if stats.HistColl != nil {
-		size = stats.HistColl.GetAvgRowSizeListInDisk(cols)
+		size = cardinality.GetAvgRowSizeListInDisk(stats.HistColl, cols)
 	} else {
 		// Estimate using just the type info.
 		for _, col := range cols {
@@ -2548,7 +2548,7 @@ func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan PhysicalPl
 
 func collectRowSizeFromMPPPlan(mppPlan PhysicalPlan) (rowSize float64) {
 	if mppPlan != nil && mppPlan.StatsInfo() != nil && mppPlan.StatsInfo().HistColl != nil {
-		return mppPlan.StatsInfo().HistColl.GetAvgRowSize(mppPlan.SCtx(), mppPlan.Schema().Columns, false, false)
+		return cardinality.GetAvgRowSize(mppPlan.SCtx(), mppPlan.StatsInfo().HistColl, mppPlan.Schema().Columns, false, false)
 	}
 	return 1 // use 1 as lower-bound for safety
 }
