@@ -33,8 +33,8 @@ import (
 
 func TestBackfillFlowHandle(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	handler := ddl.NewLitBackfillFlowHandle(dom.DDL())
-
+	handler, err := ddl.NewLitBackfillFlowHandle(dom.DDL())
+	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
