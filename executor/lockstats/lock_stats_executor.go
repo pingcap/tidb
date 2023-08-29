@@ -50,12 +50,14 @@ func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 		return err
 	}
 
-	msg, err := h.AddLockedTables(tids, pids, e.Tables)
+	sv := e.Ctx().GetSessionVars()
+
+	msg, err := h.AddLockedTables(tids, pids, e.Tables, sv.MaxChunkSize)
 	if err != nil {
 		return err
 	}
 	if msg != "" {
-		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
+		sv.StmtCtx.AppendWarning(errors.New(msg))
 	}
 
 	return nil

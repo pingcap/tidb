@@ -343,7 +343,7 @@ PARTITION p0 VALUES LESS THAN (6)
 	require.NotNil(t, jsTable)
 	// only has p0 stats
 	require.NotNil(t, jsTable.Partitions["p0"])
-	require.Nil(t, jsTable.Partitions["global"])
+	require.Nil(t, jsTable.Partitions[handle.TiDBGlobalStats])
 
 	// change static to dynamic then assert
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
@@ -365,7 +365,7 @@ PARTITION p0 VALUES LESS THAN (6)
 	require.NotNil(t, jsTable)
 	// has both global and p0 stats
 	require.NotNil(t, jsTable.Partitions["p0"])
-	require.NotNil(t, jsTable.Partitions["global"])
+	require.NotNil(t, jsTable.Partitions[handle.TiDBGlobalStats])
 }
 
 func TestDumpHistoricalStatsFallback(t *testing.T) {
