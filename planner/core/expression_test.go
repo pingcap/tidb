@@ -44,8 +44,7 @@ type testCase struct {
 func runTests(t *testing.T, tests []testCase) {
 	ctx := MockContext()
 	defer func() {
-		do := domain.GetDomain(ctx)
-		do.StatsHandle().CloseStatsCache()
+		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 	for _, tt := range tests {
 		expr := parseExpr(t, tt.exprStr)
