@@ -310,7 +310,7 @@ func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskH
 	return nil, err
 }
 
-func (*flowHandle) GetEligibleInstances(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*flowHandle) GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error) {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {

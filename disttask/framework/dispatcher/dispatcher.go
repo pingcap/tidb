@@ -329,7 +329,7 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, handle TaskFlowHandle, me
 	}
 
 	// 3. select all available TiDB nodes for task.
-	serverNodes, err := handle.GetEligibleInstances(d.ctx, d, task)
+	serverNodes, err := handle.GetEligibleInstances(d.ctx, task)
 	logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
 
 	if err != nil {
@@ -378,7 +378,7 @@ func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error)
 
 // GetAllSchedulerIDs gets all the scheduler IDs.
 func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, handle TaskFlowHandle, task *proto.Task) ([]string, error) {
-	serverInfos, err := handle.GetEligibleInstances(ctx, d, task)
+	serverInfos, err := handle.GetEligibleInstances(ctx, task)
 	if err != nil {
 		return nil, err
 	}

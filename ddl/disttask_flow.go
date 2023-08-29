@@ -182,11 +182,7 @@ func (*litBackfillFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.Tas
 	return nil, nil
 }
 
-func (h *litBackfillFlowHandle) GetEligibleInstances(
-	ctx context.Context,
-	taskHandle dispatcher.TaskHandle,
-	task *proto.Task,
-) ([]*infosync.ServerInfo, error) {
+func (h *litBackfillFlowHandle) GetEligibleInstances(ctx context.Context, task *proto.Task) ([]*infosync.ServerInfo, error) {
 	serverInfos, err := dispatcher.GenerateSchedulerNodes(ctx)
 	if err != nil {
 		return nil, err
