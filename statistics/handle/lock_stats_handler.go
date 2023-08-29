@@ -19,13 +19,18 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
+)
+
+const (
+	lockAction     = "locking"
+	unlockAction   = "unlocking"
+	lockedStatus   = "locked"
+	unlockedStatus = "unlocked"
 )
 
 // Stats logger.
@@ -45,21 +50,12 @@ func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.Table
 	}
 
 	// Load tables to check duplicate before insert.
-	recordSet, err := exec.ExecuteInternal(ctx, "SELECT table_id FROM mysql.stats_table_locked")
-	if err != nil {
-		return "", err
-	}
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, maxChunkSize)
+	tableLocked, err := loadLockedTables(ctx, exec, maxChunkSize)
 	if err != nil {
 		return "", err
 	}
 
 	dupTables := make([]string, 0, len(tables))
-	tableLocked := make([]int64, 0, len(rows))
-	for _, row := range rows {
-		tableLocked = append(tableLocked, row.GetInt64(0))
-	}
-
 	statsLogger.Info("lock table", zap.Int64s("tableIDs", tids))
 
 	// Insert locked tables.
@@ -93,22 +89,22 @@ func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.Table
 	// Update handle.tableLocked after transaction success, if txn failed, tableLocked won't be updated.
 	h.tableLocked = tableLocked
 
-	mag := generateDuplicateTablesMessage(tids, dupTables)
+	mag := generateDuplicateTablesMessage(tids, dupTables, lockAction, lockedStatus)
 	return mag, nil
 }
 
-func generateDuplicateTablesMessage(tids []int64, dupTables []string) string {
+func generateDuplicateTablesMessage(tids []int64, dupTables []string, action, status string) string {
 	if len(dupTables) > 0 {
 		tables := strings.Join(dupTables, ", ")
 		var msg string
 		if len(tids) > 1 {
 			if len(tids) > len(dupTables) {
-				msg = "skip locking locked tables: " + tables + ", other tables locked successfully"
+				msg = fmt.Sprintf("skip %s %s tables: %s, other tables %s successfully", action, status, tables, status)
 			} else {
-				msg = "skip locking locked tables: " + tables
+				msg = fmt.Sprintf("skip %s %s tables: %s", action, status, tables)
 			}
 		} else {
-			msg = "skip locking locked table: " + tables
+			msg = fmt.Sprintf("skip %s %s table: %s", action, status, tables)
 		}
 		return msg
 	}
@@ -125,145 +121,62 @@ func insertIntoStatsTableLocked(ctx context.Context, exec sqlexec.SQLExecutor, t
 	return nil
 }
 
-// RemoveLockedTables remove tables from table locked array
-func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
+// LoadLockedTables load locked tables from store
+func (h *Handle) LoadLockedTables(maxChunkSize int) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(ctx, "begin pessimistic")
+
+	tableLocked, err := loadLockedTables(ctx, exec, maxChunkSize)
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	//load tables to check unlock the unlock table
-	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_table_locked")
-	if err != nil {
-		return "", err
-	}
+	// Update all locked tables.
+	h.tableLocked = tableLocked
 
-	nonlockedTables := make([]string, 0)
-	tableLocked := make([]int64, 0)
+	return nil
+}
+
+// IsTableLocked check whether table is locked in handle with Handle.Mutex
+func (h *Handle) IsTableLocked(tableID int64) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.isTableLockedWithoutLock(tableID)
+}
+
+// isTableLockedWithoutLock check whether table is locked in handle without Handle.Mutex
+func (h *Handle) isTableLockedWithoutLock(tableID int64) bool {
+	return isTableLocked(h.tableLocked, tableID)
+}
+
+// isTableLocked check whether table is locked
+func isTableLocked(tableLocked []int64, tableID int64) bool {
+	return lockTableIndexOf(tableLocked, tableID) > -1
+}
+
+// GetTableLockedAndClearForTest for unit test only
+func (h *Handle) GetTableLockedAndClearForTest() []int64 {
+	tableLocked := h.tableLocked
+	h.tableLocked = make([]int64, 0)
+	return tableLocked
+}
+
+func loadLockedTables(ctx context.Context, exec sqlexec.SQLExecutor, maxChunkSize int) ([]int64, error) {
+	recordSet, err := exec.ExecuteInternal(ctx, "SELECT table_id FROM mysql.stats_table_locked")
+	if err != nil {
+		return nil, err
+	}
+	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, maxChunkSize)
+	if err != nil {
+		return nil, err
+	}
+	tableLocked := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		tableLocked = append(tableLocked, row.GetInt64(0))
 	}
-
-	strTids := fmt.Sprintf("%v", tids)
-	logutil.BgLogger().Info("unlock table ", zap.String("category", "stats"), zap.String("tableIDs", strTids))
-	for i, tid := range tids {
-		// get stats delta during table locked
-		count, modifyCount, version, err := h.getStatsDeltaFromTableLocked(ctx, tid)
-		if err != nil {
-			logutil.BgLogger().Error("error occurred when getStatsDeltaFromTableLocked", zap.String("category", "stats"), zap.Error(err))
-			return "", err
-		}
-		// update stats_meta with stats delta
-		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", version, count, modifyCount, tid)
-		if err != nil {
-			logutil.BgLogger().Error("error occurred when update mysql.stats_meta", zap.String("category", "stats"), zap.Error(err))
-			return "", err
-		}
-		cache.TableRowStatsCache.Invalidate(tid)
-
-		_, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_table_locked where table_id = %?", tid)
-		if err != nil {
-			logutil.BgLogger().Error("error occurred when delete from mysql.stats_table_locked ", zap.String("category", "stats"), zap.Error(err))
-			return "", err
-		}
-		var exist bool
-		exist, tableLocked = removeIfTableLocked(tableLocked, tid)
-		if !exist {
-			nonlockedTables = append(nonlockedTables, tables[i].Schema.L+"."+tables[i].Name.L)
-		}
-	}
-	//delete related partitions while don't warning delete empty partitions
-	for _, tid := range pids {
-		// get stats delta during table locked
-		count, modifyCount, version, err := h.getStatsDeltaFromTableLocked(ctx, tid)
-		if err != nil {
-			logutil.BgLogger().Error("error occurred when getStatsDeltaFromTableLocked", zap.String("category", "stats"), zap.Error(err))
-			return "", err
-		}
-		// update stats_meta with stats delta
-		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", version, count, modifyCount, tid)
-		if err != nil {
-			logutil.BgLogger().Error("error occurred when update mysql.stats_meta", zap.String("category", "stats"), zap.Error(err))
-			return "", err
-		}
-		cache.TableRowStatsCache.Invalidate(tid)
-
-		_, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_table_locked where table_id = %?", tid)
-		if err != nil {
-			logutil.BgLogger().Error("error occurred when delete from mysql.stats_table_locked ", zap.String("category", "stats"), zap.Error(err))
-			return "", err
-		}
-		_, tableLocked = removeIfTableLocked(tableLocked, tid)
-	}
-
-	err = finishTransaction(ctx, exec, err)
-	if err != nil {
-		return "", err
-	}
-	// update handle.tableLocked after transaction success, if txn failed, tableLocked won't be updated
-	h.tableLocked = tableLocked
-
-	if len(nonlockedTables) > 0 {
-		tables := nonlockedTables[0]
-		for i, table := range nonlockedTables {
-			if i == 0 {
-				continue
-			}
-			tables += ", " + table
-		}
-		var msg string
-		if len(tids) > 1 {
-			if len(tids) > len(nonlockedTables) {
-				msg = "skip unlocking non-locked tables: " + tables + ", other tables unlocked successfully"
-			} else {
-				msg = "skip unlocking non-locked tables: " + tables
-			}
-		} else {
-			msg = "skip unlocking non-locked table: " + tables
-		}
-		return msg, err
-	}
-	return "", err
-}
-
-// getStatsDeltaFromTableLocked get count, modify_count and version for the given table from mysql.stats_table_locked.
-func (h *Handle) getStatsDeltaFromTableLocked(ctx context.Context, tableID int64) (count, modifyCount int64, version uint64, err error) {
-	rows, _, err := h.execRestrictedSQL(ctx, "select count, modify_count, version from mysql.stats_table_locked where table_id = %?", tableID)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-
-	if len(rows) == 0 {
-		return 0, 0, 0, nil
-	}
-	count = rows[0].GetInt64(0)
-	modifyCount = rows[0].GetInt64(1)
-	version = rows[0].GetUint64(2)
-	return count, modifyCount, version, nil
-}
-
-// LoadLockedTables load locked tables from store
-func (h *Handle) LoadLockedTables() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_table_locked")
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	h.tableLocked = make([]int64, len(rows))
-	for i, row := range rows {
-		h.tableLocked[i] = row.GetInt64(0)
-	}
-
-	return nil
+	return tableLocked, nil
 }
 
 // removeIfTableLocked try to remove the table from table locked array
@@ -275,23 +188,6 @@ func removeIfTableLocked(tableLocked []int64, tableID int64) (bool, []int64) {
 	return idx > -1, tableLocked
 }
 
-// IsTableLocked check whether table is locked in handle with Handle.Mutex
-func (h *Handle) IsTableLocked(tableID int64) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.isTableLocked(tableID)
-}
-
-// IsTableLocked check whether table is locked in handle without Handle.Mutex
-func (h *Handle) isTableLocked(tableID int64) bool {
-	return isTableLocked(h.tableLocked, tableID)
-}
-
-// isTableLocked check whether table is locked
-func isTableLocked(tableLocked []int64, tableID int64) bool {
-	return lockTableIndexOf(tableLocked, tableID) > -1
-}
-
 // lockTableIndexOf get the locked table's index in the array
 func lockTableIndexOf(tableLocked []int64, tableID int64) int {
 	for idx, id := range tableLocked {
@@ -300,11 +196,4 @@ func lockTableIndexOf(tableLocked []int64, tableID int64) int {
 		}
 	}
 	return -1
-}
-
-// GetTableLockedAndClearForTest for unit test only
-func (h *Handle) GetTableLockedAndClearForTest() []int64 {
-	tableLocked := h.tableLocked
-	h.tableLocked = make([]int64, 0)
-	return tableLocked
 }

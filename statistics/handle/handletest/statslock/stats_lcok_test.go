@@ -61,7 +61,7 @@ func TestStatsLockAndUnlockTable(t *testing.T) {
 	require.Equal(t, tblStats, tblStats1)
 
 	tableLocked1 := handle.GetTableLockedAndClearForTest()
-	err = handle.LoadLockedTables()
+	err = handle.LoadLockedTables(8)
 	require.Nil(t, err)
 	tableLocked2 := handle.GetTableLockedAndClearForTest()
 	require.Equal(t, tableLocked1, tableLocked2)
@@ -117,7 +117,7 @@ func TestStatsLockTableRepeatedly(t *testing.T) {
 		"Warning 1105 skip locking locked table: test.t",
 	))
 
-	err = handle.LoadLockedTables()
+	err = handle.LoadLockedTables(8)
 	require.Nil(t, err)
 	tableLocked2 := handle.GetTableLockedAndClearForTest()
 	require.Equal(t, tableLocked1, tableLocked2)
@@ -176,7 +176,7 @@ func TestStatsLockAndUnlockTables(t *testing.T) {
 	require.Equal(t, tbl2Stats, tbl2Stats1)
 
 	tableLocked1 := handle.GetTableLockedAndClearForTest()
-	err = handle.LoadLockedTables()
+	err = handle.LoadLockedTables(8)
 	require.Nil(t, err)
 	tableLocked2 := handle.GetTableLockedAndClearForTest()
 	require.Equal(t, tableLocked1, tableLocked2)

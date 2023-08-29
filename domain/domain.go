@@ -2384,6 +2384,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 	logutil.BgLogger().Info("updateStatsWorker started.")
 	lease := do.statsLease
+	maxChunkSize := ctx.GetSessionVars().MaxChunkSize
 	deltaUpdateTicker := time.NewTicker(20 * lease)
 	gcStatsTicker := time.NewTicker(100 * lease)
 	loadLockedTablesTicker := time.NewTicker(5 * lease)
@@ -2417,7 +2418,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 				logutil.BgLogger().Debug("dump stats delta failed", zap.Error(err))
 			}
 		case <-loadLockedTablesTicker.C:
-			err := statsHandle.LoadLockedTables()
+			err := statsHandle.LoadLockedTables(maxChunkSize)
 			if err != nil {
 				logutil.BgLogger().Debug("load locked table failed", zap.Error(err))
 			}
