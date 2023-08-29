@@ -32,7 +32,7 @@ const (
 func resolveLockTickTime() time.Duration {
 	failpoint.Inject("ResolveLockTickTime", func(val failpoint.Value) {
 		t := time.Duration(val.(int))
-		failpoint.Return(t * time.Second)
+		failpoint.Return(t)
 	})
 	return 5 * time.Second
 }
@@ -80,7 +80,8 @@ func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 						})
 						handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 							// we will scan all locks and try to resolve them by check txn status.
-							return tikv.ResolveLocksForRange(ctx, c.env, math.MaxUint64, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, tikv.GCScanLockLimit)
+							return tikv.ResolveLocksForRange(
+								ctx, c.env, math.MaxUint64, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, tikv.GCScanLockLimit)
 						}
 						workerPool := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
 						var wg sync.WaitGroup

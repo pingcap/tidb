@@ -163,7 +163,8 @@ func newAdvancerLockResolver(store tikv.Storage) *AdvancerLockResolver {
 
 // ResolveLocksInOneRegion tries to resolve expired locks with this method.
 // It will check status of the txn. Resolve the lock if txn is expired, Or do nothing.
-func (l *AdvancerLockResolver) ResolveLocksInOneRegion(bo *tikv.Backoffer, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
+func (l *AdvancerLockResolver) ResolveLocksInOneRegion(
+	bo *tikv.Backoffer, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
 	_, err := l.GetStore().GetLockResolver().ResolveLocks(bo, 0, locks)
 	if err != nil {
 		return nil, err

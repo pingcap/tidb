@@ -55,13 +55,12 @@ type mockGCWorkerLockResolver struct {
 	batchResolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
 }
 
-func (l *mockGCWorkerLockResolver) ScanLocksInOneRegion(ctx context.Context, key []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+func (l *mockGCWorkerLockResolver) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
 	locks, loc := l.scanLocks(key)
 	return locks, loc, nil
-
 }
 
-func (l *mockGCWorkerLockResolver) ResolveLocksInOneRegion(ctx context.Context, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
+func (l *mockGCWorkerLockResolver) ResolveLocksInOneRegion(bo *tikv.Backoffer, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
 	return l.batchResolveLocks(locks, loc)
 }
 
@@ -1039,7 +1038,7 @@ func TestResolveLockRangeInfine(t *testing.T) {
 		require.NoError(t, failpoint.Disable("tikvclient/invalidCacheAndRetry"))
 	}()
 
-	_, err := tikv.ResolveLocksForRange(gcContext(), s.gcWorker.uuid, s.gcWorker.lockResolver, 1, []byte{0}, []byte{1})
+	_, err := tikv.ResolveLocksForRange(gcContext(), s.gcWorker.lockResolver, 1, []byte{0}, []byte{1}, tikv.NewNoopBackoff, 10)
 	require.Error(t, err)
 }
 
@@ -1103,7 +1102,7 @@ func TestResolveLockRangeMeetRegionCacheMiss(t *testing.T) {
 			return loc, nil
 		},
 	}
-	_, err := tikv.ResolveLocksForRange(gcContext(), s.gcWorker.uuid, mockLockResolver, safepointTS, []byte{0}, []byte{10})
+	_, err := tikv.ResolveLocksForRange(gcContext(), mockLockResolver, safepointTS, []byte{0}, []byte{10}, tikv.NewNoopBackoff, 10)
 	require.NoError(t, err)
 	require.Equal(t, 2, resolveCnt)
 	require.Equal(t, 2, scanCnt)
@@ -1189,7 +1188,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 		}
 		return loc, nil
 	}
-	_, err := tikv.ResolveLocksForRange(gcContext(), s.gcWorker.uuid, mockGCLockResolver, 1, []byte(""), []byte("z"))
+	_, err := tikv.ResolveLocksForRange(gcContext(), mockGCLockResolver, 1, []byte(""), []byte("z"), tikv.NewNoopBackoff, 10)
 	require.NoError(t, err)
 	require.Len(t, resolvedLock, 4)
 	expects := [][]byte{[]byte("a"), []byte("b"), []byte("o"), []byte("p")}

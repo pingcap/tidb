@@ -645,14 +645,17 @@ func (t *testEnv) unregisterTask() {
 	}
 }
 
-func (t *testEnv) ScanLocks(ctx context.Context, key []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
 	locks, loc := t.scanLocks(key)
 	return locks, loc, nil
-
 }
 
-func (t *testEnv) ResolveLocks(ctx context.Context, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
+func (t *testEnv) ResolveLocksInOneRegion(bo *tikv.Backoffer, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
 	return t.resolveLocks(locks, loc)
+}
+
+func (t *testEnv) Identifier() string {
+	return "advance test"
 }
 
 func (t *testEnv) GetStore() tikv.Storage {
@@ -694,14 +697,14 @@ func (p *mockPDClient) ScanRegions(ctx context.Context, key, endKey []byte, limi
 	}, nil
 }
 
-func (c *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Store, error) {
+func (p *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Store, error) {
 	return &metapb.Store{
 		Id:      storeID,
 		Address: fmt.Sprintf("127.0.0.%d", storeID),
 	}, nil
 }
 
-func (c *mockPDClient) GetRegion(ctx context.Context, key []byte, opts ...pd.GetRegionOption) (*pd.Region, error) {
+func (p *mockPDClient) GetRegion(ctx context.Context, key []byte, opts ...pd.GetRegionOption) (*pd.Region, error) {
 	return newMockRegion(1, []byte("1"), []byte("3")), nil
 }
 
