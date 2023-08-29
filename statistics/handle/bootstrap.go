@@ -39,6 +39,7 @@ import (
 func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID := row.GetInt64(1)
+		// The table is read-only. Please do not modify it.
 		table, ok := h.getTableByPhysicalID(is, physicalID)
 		if !ok {
 			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
