@@ -832,7 +832,7 @@ func eliminateCastFunction(sctx sessionctx.Context, expr Expression) (_ Expressi
 				if !noPrecisionLossCastCompatible(cast.RetType, c.RetType) {
 					return expr, false
 				}
-				return NewFunctionInternal(sctx, f.FuncName.L, f.RetType, c, f.GetArgs()[0]), true
+				return NewFunctionInternal(sctx, f.FuncName.L, f.RetType, f.GetArgs()[0], c), true
 			}
 		}
 	case ast.In:
