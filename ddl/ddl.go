@@ -1039,6 +1039,10 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
 func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	job.TraceInfo = &model.TraceInfo{
+		ConnectionID: ctx.GetSessionVars().ConnectionID,
+		SessionAlias: ctx.GetSessionVars().SessionAlias,
+	}
 	if mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
 		// In multiple schema change, we don't run the job.
 		// Instead, we merge all the jobs into one pending job.
