@@ -21,6 +21,8 @@ type WithSource[T any] interface {
 
 // WithSink is an interface that can be used to set the sink of an operator.
 type WithSink[T any] interface {
+	// SetSink sets the sink of the operator.
+	// Operator implementations should call the Finish method of the sink when they are done.
 	SetSink(channel DataChannel[T])
 }
 

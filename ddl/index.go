@@ -1653,11 +1653,11 @@ func newAddIndexIngestWorker(ctx context.Context, t table.PhysicalTable, d *ddlC
 }
 
 // WriteLocal will write index records to lightning engine.
-func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey kv.Key, err error) {
+func (w *addIndexIngestWorker) WriteLocal(rs *IndexRecordChunk) (count int, nextKey kv.Key, err error) {
 	oprStartTime := time.Now()
 	copCtx := w.copReqSenderPool.copCtx
 	vars := w.sessCtx.GetSessionVars()
-	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, copCtx, vars, rs.chunk)
+	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, copCtx, vars, rs.Chunk)
 	if err != nil || cnt == 0 {
 		return 0, nil, err
 	}
