@@ -1698,7 +1698,7 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
 		if len(accesses) > 0 && ds.statisticTable.Pseudo {
-			path.CountAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
+			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.statisticTable)
 		} else {
 			selectivity := path.CountAfterAccess / float64(ds.statisticTable.RealtimeCount)
 			for i := range accesses {
@@ -1849,7 +1849,7 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
 		if len(accesses) > 0 && ds.statisticTable.Pseudo {
-			path.CountAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
+			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.statisticTable)
 		} else {
 			selectivity := path.CountAfterAccess / float64(ds.statisticTable.RealtimeCount)
 			for i := range accesses {

@@ -1795,7 +1795,7 @@ func (is *PhysicalIndexScan) getScanRowSize() float64 {
 	} else {
 		scanCols = is.schema.Columns
 	}
-	return is.tblColHists.GetIndexAvgRowSize(is.SCtx(), scanCols, is.Index.Unique)
+	return cardinality.GetIndexAvgRowSize(is.SCtx(), is.tblColHists, scanCols, is.Index.Unique)
 }
 
 // initSchema is used to set the schema of PhysicalIndexScan. Before calling this,
@@ -2422,11 +2422,11 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *pro
 
 func (ts *PhysicalTableScan) getScanRowSize() float64 {
 	if ts.StoreType == kv.TiKV {
-		return ts.tblColHists.GetTableAvgRowSize(ts.SCtx(), ts.tblCols, ts.StoreType, true)
+		return cardinality.GetTableAvgRowSize(ts.SCtx(), ts.tblColHists, ts.tblCols, ts.StoreType, true)
 	}
 	// If `ts.handleCol` is nil, then the schema of tableScan doesn't have handle column.
 	// This logic can be ensured in column pruning.
-	return ts.tblColHists.GetTableAvgRowSize(ts.SCtx(), ts.Schema().Columns, ts.StoreType, ts.HandleCols != nil)
+	return cardinality.GetTableAvgRowSize(ts.SCtx(), ts.tblColHists, ts.Schema().Columns, ts.StoreType, ts.HandleCols != nil)
 }
 
 func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool) (*PhysicalTableScan, float64) {

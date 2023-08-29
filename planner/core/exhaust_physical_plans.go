@@ -2131,7 +2131,7 @@ func checkChildFitBC(p Plan) bool {
 	if p.StatsInfo().HistColl == nil {
 		return p.SCtx().GetSessionVars().BroadcastJoinThresholdCount == -1 || p.StatsInfo().Count() < p.SCtx().GetSessionVars().BroadcastJoinThresholdCount
 	}
-	avg := p.StatsInfo().HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
+	avg := cardinality.GetAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, p.Schema().Columns, false, false)
 	sz := avg * float64(p.StatsInfo().Count())
 	return p.SCtx().GetSessionVars().BroadcastJoinThresholdSize == -1 || sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdSize)
 }
@@ -2142,7 +2142,7 @@ func calcBroadcastExchangeSize(p Plan, mppStoreCnt int) (row float64, size float
 	if s.HistColl == nil {
 		return row, 0, false
 	}
-	avg := s.HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
+	avg := cardinality.GetAvgRowSize(p.SCtx(), s.HistColl, p.Schema().Columns, false, false)
 	size = avg * row
 	return row, size, true
 }
@@ -2169,7 +2169,7 @@ func calcHashExchangeSize(p Plan, mppStoreCnt int) (row float64, sz float64, has
 	if s.HistColl == nil {
 		return row, 0, false
 	}
-	avg := s.HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
+	avg := cardinality.GetAvgRowSize(p.SCtx(), s.HistColl, p.Schema().Columns, false, false)
 	sz = avg * row
 	return row, sz, true
 }

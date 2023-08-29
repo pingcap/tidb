@@ -22,22 +22,12 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
-)
-
-const (
-	pseudoEqualRate   = 1000
-	pseudoLessRate    = 3
-	pseudoBetweenRate = 40
-	pseudoColSize     = 8.0
 )
 
 const (
@@ -480,11 +470,6 @@ func (t *Table) IsOutdated() bool {
 	return false
 }
 
-// PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
-func (t *Table) PseudoAvgCountPerValue() float64 {
-	return float64(t.RealtimeCount) / pseudoEqualRate
-}
-
 // ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.
 func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 	cols := make(map[int64]*Column)
@@ -601,88 +586,6 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 		}
 	}
 	return t
-}
-
-// GetAvgRowSize computes average row size for given columns.
-func (coll *HistColl) GetAvgRowSize(ctx sessionctx.Context, cols []*expression.Column, isEncodedKey bool, isForScan bool) (size float64) {
-	sessionVars := ctx.GetSessionVars()
-	if coll.Pseudo || len(coll.Columns) == 0 || coll.RealtimeCount == 0 {
-		size = pseudoColSize * float64(len(cols))
-	} else {
-		for _, col := range cols {
-			colHist, ok := coll.Columns[col.UniqueID]
-			// Normally this would not happen, it is for compatibility with old version stats which
-			// does not include TotColSize.
-			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.RealtimeCount)) {
-				size += pseudoColSize
-				continue
-			}
-			// We differentiate if the column is encoded as key or value, because the resulted size
-			// is different.
-			if sessionVars.EnableChunkRPC && !isForScan {
-				size += colHist.AvgColSizeChunkFormat(coll.RealtimeCount)
-			} else {
-				size += colHist.AvgColSize(coll.RealtimeCount, isEncodedKey)
-			}
-		}
-	}
-	if sessionVars.EnableChunkRPC && !isForScan {
-		// Add 1/8 byte for each column's nullBitMap byte.
-		return size + float64(len(cols))/8
-	}
-	// Add 1 byte for each column's flag byte. See `encode` for details.
-	return size + float64(len(cols))
-}
-
-// GetAvgRowSizeListInDisk computes average row size for given columns.
-func (coll *HistColl) GetAvgRowSizeListInDisk(cols []*expression.Column) (size float64) {
-	if coll.Pseudo || len(coll.Columns) == 0 || coll.RealtimeCount == 0 {
-		for _, col := range cols {
-			size += float64(chunk.EstimateTypeWidth(col.GetType()))
-		}
-	} else {
-		for _, col := range cols {
-			colHist, ok := coll.Columns[col.UniqueID]
-			// Normally this would not happen, it is for compatibility with old version stats which
-			// does not include TotColSize.
-			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.RealtimeCount)) {
-				size += float64(chunk.EstimateTypeWidth(col.GetType()))
-				continue
-			}
-			size += colHist.AvgColSizeListInDisk(coll.RealtimeCount)
-		}
-	}
-	// Add 8 byte for each column's size record. See `ListInDisk` for details.
-	return size + float64(8*len(cols))
-}
-
-// GetTableAvgRowSize computes average row size for a table scan, exclude the index key-value pairs.
-func (coll *HistColl) GetTableAvgRowSize(ctx sessionctx.Context, cols []*expression.Column, storeType kv.StoreType, handleInCols bool) (size float64) {
-	size = coll.GetAvgRowSize(ctx, cols, false, true)
-	switch storeType {
-	case kv.TiKV:
-		size += tablecodec.RecordRowKeyLen
-		// The `cols` for TiKV always contain the row_id, so prefix row size subtract its length.
-		size -= 8
-	case kv.TiFlash:
-		if !handleInCols {
-			size += 8 /* row_id length */
-		}
-	}
-	return
-}
-
-// GetIndexAvgRowSize computes average row size for a index scan.
-func (coll *HistColl) GetIndexAvgRowSize(ctx sessionctx.Context, cols []*expression.Column, isUnique bool) (size float64) {
-	size = coll.GetAvgRowSize(ctx, cols, true, true)
-	// tablePrefix(1) + tableID(8) + indexPrefix(2) + indexID(8)
-	// Because the cols for index scan always contain the handle, so we don't add the rowID here.
-	size += 19
-	if !isUnique {
-		// add the len("_")
-		size++
-	}
-	return
 }
 
 // CheckAnalyzeVerOnTable checks whether the given version is the one from the tbl.

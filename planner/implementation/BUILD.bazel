@@ -15,6 +15,7 @@ go_library(
         "//expression",
         "//kv",
         "//parser/model",
+        "//planner/cardinality",
         "//planner/core",
         "//planner/memo",
         "//statistics",
