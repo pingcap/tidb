@@ -8,6 +8,7 @@ go_test(
         "stats_lcok_test.go",
     ],
     flaky = True,
+    shard_count = 3,
     deps = [
         "//config",
         "//domain",
