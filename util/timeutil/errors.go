@@ -12,8 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package importintotest
+package timeutil
 
-func (s *mockGCSSuite) TestDummy() {
-	s.True(true, gcsEndpoint)
-}
+import (
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/util/dbterror"
+)
+
+// ErrUnknownTimeZone indicates timezone is unknown.
+var ErrUnknownTimeZone = dbterror.ClassVariable.NewStd(mysql.ErrUnknownTimeZone)

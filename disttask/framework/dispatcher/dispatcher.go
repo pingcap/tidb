@@ -39,7 +39,7 @@ const (
 )
 
 var (
-	// DefaultDispatchConcurrency is the default concurrency for handling global task.
+	// DefaultDispatchConcurrency is the default concurrency for handling task.
 	DefaultDispatchConcurrency = 4
 	checkTaskFinishedInterval  = 500 * time.Millisecond
 	checkTaskRunningInterval   = 300 * time.Millisecond
@@ -73,11 +73,11 @@ var MockOwnerChange func()
 func newDispatcher(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) *dispatcher {
 	logPrefix := fmt.Sprintf("task_id: %d, task_type: %s, server_id: %s", task.ID, task.Type, serverID)
 	return &dispatcher{
-		ctx,
-		taskMgr,
-		task,
-		logutil.WithKeyValue(context.Background(), "dispatcher", logPrefix),
-		serverID,
+		ctx:      ctx,
+		taskMgr:  taskMgr,
+		task:     task,
+		logCtx:   logutil.WithKeyValue(context.Background(), "dispatcher", logPrefix),
+		serverID: serverID,
 	}
 }
 
@@ -122,14 +122,14 @@ func (d *dispatcher) scheduleTask() {
 			})
 			switch d.task.State {
 			case proto.TaskStateCancelling:
-				err = d.handleCancelling()
+				err = d.onCancelling()
 			case proto.TaskStateReverting:
-				err = d.handleReverting()
+				err = d.onReverting()
 			case proto.TaskStatePending:
-				err = d.handlePending()
+				err = d.onPending()
 			case proto.TaskStateRunning:
-				err = d.handleRunning()
-			case proto.TaskStateSucceed, proto.TaskStateReverted:
+				err = d.onRunning()
+			case proto.TaskStateSucceed, proto.TaskStateReverted, proto.TaskStateFailed:
 				logutil.Logger(d.logCtx).Info("schedule task, task is finished", zap.String("state", d.task.State))
 				return
 			}
@@ -149,15 +149,15 @@ func (d *dispatcher) scheduleTask() {
 }
 
 // handle task in cancelling state, dispatch revert subtasks.
-func (d *dispatcher) handleCancelling() error {
-	logutil.Logger(d.logCtx).Debug("handle cancelling state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
+func (d *dispatcher) onCancelling() error {
+	logutil.Logger(d.logCtx).Debug("on cancelling state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
 	errs := []error{errors.New("cancel")}
-	return d.processErrFlow(errs)
+	return d.onErrHandlingStage(errs)
 }
 
 // handle task in reverting state, check all revert subtasks finished.
-func (d *dispatcher) handleReverting() error {
-	logutil.Logger(d.logCtx).Debug("handle reverting state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
+func (d *dispatcher) onReverting() error {
+	logutil.Logger(d.logCtx).Debug("on reverting state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
 	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.task.ID, proto.TaskStateRevertPending, proto.TaskStateReverting)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
@@ -171,20 +171,20 @@ func (d *dispatcher) handleReverting() error {
 	}
 	// Wait all subtasks in this stage finished.
 	GetTaskFlowHandle(d.task.Type).OnTicker(d.ctx, d.task)
-	logutil.Logger(d.logCtx).Debug("handle reverting state, this task keeps current state", zap.String("state", d.task.State))
+	logutil.Logger(d.logCtx).Debug("on reverting state, this task keeps current state", zap.String("state", d.task.State))
 	return nil
 }
 
 // handle task in pending state, dispatch subtasks.
-func (d *dispatcher) handlePending() error {
-	logutil.Logger(d.logCtx).Debug("handle pending state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
-	return d.processNormalFlow()
+func (d *dispatcher) onPending() error {
+	logutil.Logger(d.logCtx).Debug("on pending state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
+	return d.onNextStage()
 }
 
 // handle task in running state, check all running subtasks finished.
 // If subtasks finished, run into the next stage.
-func (d *dispatcher) handleRunning() error {
-	logutil.Logger(d.logCtx).Debug("handle running state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
+func (d *dispatcher) onRunning() error {
+	logutil.Logger(d.logCtx).Debug("on running state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
 	subTaskErrs, err := d.taskMgr.CollectSubTaskError(d.task.ID)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("collect subtask error failed", zap.Error(err))
@@ -192,7 +192,7 @@ func (d *dispatcher) handleRunning() error {
 	}
 	if len(subTaskErrs) > 0 {
 		logutil.Logger(d.logCtx).Warn("subtasks encounter errors")
-		return d.processErrFlow(subTaskErrs)
+		return d.onErrHandlingStage(subTaskErrs)
 	}
 	// check current stage finished.
 	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.task.ID, proto.TaskStatePending, proto.TaskStateRunning)
@@ -204,11 +204,11 @@ func (d *dispatcher) handleRunning() error {
 	prevStageFinished := cnt == 0
 	if prevStageFinished {
 		logutil.Logger(d.logCtx).Info("previous stage finished, generate dist plan", zap.Int64("stage", d.task.Step))
-		return d.processNormalFlow()
+		return d.onNextStage()
 	}
 	// Wait all subtasks in this stage finished.
 	GetTaskFlowHandle(d.task.Type).OnTicker(d.ctx, d.task)
-	logutil.Logger(d.logCtx).Debug("handing running state, this task keeps current state", zap.String("state", d.task.State))
+	logutil.Logger(d.logCtx).Debug("on running state, this task keeps current state", zap.String("state", d.task.State))
 	return nil
 }
 
@@ -232,28 +232,30 @@ func (d *dispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, 
 			break
 		}
 		if i%10 == 0 {
-			logutil.Logger(d.logCtx).Warn("updateTask first failed", zap.String("previous state", prevState), zap.String("curr state", d.task.State),
+			logutil.Logger(d.logCtx).Warn("updateTask first failed", zap.String("from", prevState), zap.String("to", d.task.State),
 				zap.Int("retry times", retryTimes), zap.Error(err))
 		}
 		time.Sleep(retrySQLInterval)
 	}
 	if err != nil && retryTimes != nonRetrySQLTime {
 		logutil.Logger(d.logCtx).Warn("updateTask failed",
-			zap.String("previous state", prevState), zap.String("curr state", d.task.State), zap.Int("retry times", retryTimes), zap.Error(err))
+			zap.String("from", prevState), zap.String("to", d.task.State), zap.Int("retry times", retryTimes), zap.Error(err))
 	}
 	return err
 }
 
-func (d *dispatcher) processErrFlow(receiveErr []error) error {
+func (d *dispatcher) onErrHandlingStage(receiveErr []error) error {
 	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
-	// 1. generate the needed global task meta and subTask meta (dist-plan).
+	// 1. generate the needed task meta and subTask meta (dist-plan).
 	handle := GetTaskFlowHandle(d.task.Type)
 	if handle == nil {
 		logutil.Logger(d.logCtx).Warn("gen task flow handle failed, this type handle doesn't register")
-		return d.updateTask(proto.TaskStateReverted, nil, retrySQLTimes)
+		// state transform: pending --> running --> canceling --> failed.
+		return d.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
 	}
 	meta, err := handle.ProcessErrFlow(d.ctx, d, d.task, receiveErr)
 	if err != nil {
+		// processErrFlow must be retryable, if not, there will have resource leak for tasks.
 		logutil.Logger(d.logCtx).Warn("handle error failed", zap.Error(err))
 		return err
 	}
@@ -276,22 +278,18 @@ func (d *dispatcher) dispatchSubTask4Revert(task *proto.Task, handle TaskFlowHan
 	return d.updateTask(proto.TaskStateReverting, subTasks, retrySQLTimes)
 }
 
-func (d *dispatcher) processNormalFlow() error {
+func (d *dispatcher) onNextStage() error {
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
 	handle := GetTaskFlowHandle(d.task.Type)
 	if handle == nil {
 		logutil.Logger(d.logCtx).Warn("gen task flow handle failed, this type handle doesn't register", zap.String("type", d.task.Type))
 		d.task.Error = errors.New("unsupported task type")
-		return d.updateTask(proto.TaskStateReverted, nil, retrySQLTimes)
+		// state transform: pending -> failed.
+		return d.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
 	}
 	metas, err := handle.ProcessNormalFlow(d.ctx, d, d.task)
 	if err != nil {
-		logutil.Logger(d.logCtx).Warn("generate dist-plan failed", zap.Error(err))
-		if handle.IsRetryableErr(err) {
-			return err
-		}
-		d.task.Error = err
-		return d.updateTask(proto.TaskStateReverted, nil, retrySQLTimes)
+		return d.handlePlanErr(handle, err)
 	}
 	// 2. dispatch dist-plan to EligibleInstances.
 	return d.dispatchSubTask(d.task, handle, metas)
@@ -322,13 +320,13 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, handle TaskFlowHandle, me
 		// Write the global task meta into the storage.
 		err := d.updateTask(proto.TaskStateSucceed, nil, retryTimes)
 		if err != nil {
-			logutil.Logger(d.logCtx).Warn("update global task failed", zap.Error(err))
+			logutil.Logger(d.logCtx).Warn("update task failed", zap.Error(err))
 			return err
 		}
 		return nil
 	}
 
-	// 3. select all available TiDB nodes for this global tasks.
+	// 3. select all available TiDB nodes for task.
 	serverNodes, err := handle.GetEligibleInstances(d.ctx, task)
 	logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
 
@@ -347,6 +345,16 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, handle TaskFlowHandle, me
 		subTasks = append(subTasks, proto.NewSubtask(task.ID, task.Type, instanceID, meta))
 	}
 	return d.updateTask(proto.TaskStateRunning, subTasks, retrySQLTimes)
+}
+
+func (d *dispatcher) handlePlanErr(handle TaskFlowHandle, err error) error {
+	logutil.Logger(d.logCtx).Warn("generate plan failed", zap.Error(err), zap.String("state", d.task.State))
+	if handle.IsRetryableErr(err) {
+		return err
+	}
+	d.task.Error = err
+	// state transform: pending -> failed.
+	return d.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.
@@ -421,12 +429,12 @@ func VerifyTaskStateTransform(from, to string) bool {
 			proto.TaskStateCancelling,
 			proto.TaskStatePausing,
 			proto.TaskStateSucceed,
-			proto.TaskStateReverted,
+			proto.TaskStateFailed,
 		},
 		proto.TaskStateRunning: {
 			proto.TaskStateSucceed,
 			proto.TaskStateReverting,
-			proto.TaskStateReverted,
+			proto.TaskStateFailed,
 			proto.TaskStateCancelling,
 			proto.TaskStatePausing,
 		},

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/meta/autoid"
 	"go.uber.org/zap"
 )
 
@@ -66,12 +67,18 @@ type ImportStepMeta struct {
 	Chunks   []Chunk
 	Checksum Checksum
 	Result   Result
+	// MaxIDs stores the max id that have been used during encoding for each allocator type.
+	// the max id is same among all allocator types for now, since we're using same base, see
+	// NewPanickingAllocators for more info.
+	MaxIDs map[autoid.AllocatorType]int64
 }
 
 // PostProcessStepMeta is the meta of post process step.
 type PostProcessStepMeta struct {
 	// accumulated checksum of all subtasks in import step.
 	Checksum Checksum
+	// MaxIDs of max all max-ids of subtasks in import step.
+	MaxIDs map[autoid.AllocatorType]int64
 }
 
 // SharedVars is the shared variables between subtask and minimal tasks.

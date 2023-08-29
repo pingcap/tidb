@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/planner"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table/tables"
 )
@@ -154,9 +155,16 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
 	var localChecksum verify.KVChecksum
+	maxIDs := make(map[autoid.AllocatorType]int64, 3)
 	for _, subtaskMeta := range subtaskMetas {
 		checksum := verify.MakeKVChecksum(subtaskMeta.Checksum.Size, subtaskMeta.Checksum.KVs, subtaskMeta.Checksum.Sum)
 		localChecksum.Add(&checksum)
+
+		for key, val := range subtaskMeta.MaxIDs {
+			if maxIDs[key] < val {
+				maxIDs[key] = val
+			}
+		}
 	}
 	postProcessStepMeta := &PostProcessStepMeta{
 		Checksum: Checksum{
@@ -164,6 +172,7 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 			KVs:  localChecksum.SumKVS(),
 			Sum:  localChecksum.Sum(),
 		},
+		MaxIDs: maxIDs,
 	}
 	return json.Marshal(postProcessStepMeta)
 }

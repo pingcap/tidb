@@ -111,9 +111,11 @@ type chunkProcessor struct {
 	dataWriter    backend.EngineWriter
 	indexWriter   backend.EngineWriter
 
-	encoder     kvEncoder
-	kvCodec     tikv.Codec
-	progress    *asyncloaddata.Progress
+	encoder  kvEncoder
+	kvCodec  tikv.Codec
+	progress *asyncloaddata.Progress
+	// startOffset is the offset of the first interested row in this chunk.
+	// some rows before startOffset might be skipped if skip_rows > 0.
 	startOffset int64
 
 	// total duration takes by read/encode/deliver.

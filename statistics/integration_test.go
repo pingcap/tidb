@@ -293,12 +293,12 @@ func TestExpBackoffEstimation(t *testing.T) {
 	}
 
 	// The last case is that no column is loaded and we get no stats at all.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/cleanEstResults", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/cardinality/cleanEstResults", `return(true)`))
 	testdata.OnRecord(func() {
 		output[inputLen-1] = testdata.ConvertRowsToStrings(tk.MustQuery(input[inputLen-1]).Rows())
 	})
 	tk.MustQuery(input[inputLen-1]).Check(testkit.Rows(output[inputLen-1]...))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/cleanEstResults"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/cardinality/cleanEstResults"))
 }
 
 func TestGlobalStats(t *testing.T) {
@@ -627,24 +627,6 @@ func TestNotLoadedStatsOnAllNULLCol(t *testing.T) {
 		"  │   └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false",
 		"  └─TableReader(Probe) 4.00 root  data:TableFullScan",
 		"    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"))
-}
-
-func TestCrossValidationSelectivity(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	h := dom.StatsHandle()
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	tk.MustExec("create table t (a int, b int, c int, primary key (a, b) clustered)")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	tk.MustExec("insert into t values (1,2,3), (1,4,5)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	tk.MustExec("analyze table t")
-	tk.MustQuery("explain format = 'brief' select * from t where a = 1 and b > 0 and b < 1000 and c > 1000").Check(testkit.Rows(
-		"TableReader 0.00 root  data:Selection",
-		"└─Selection 0.00 cop[tikv]  gt(test.t.c, 1000)",
-		"  └─TableRangeScan 2.00 cop[tikv] table:t range:(1 0,1 1000), keep order:false"))
 }
 
 func TestShowHistogramsLoadStatus(t *testing.T) {

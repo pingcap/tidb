@@ -40,6 +40,14 @@ func MakeKeyspaceEtcdNamespace(c tikv.Codec) string {
 	return fmt.Sprintf(tidbKeyspaceEtcdPathPrefix+"%d", c.GetKeyspaceID())
 }
 
+// MakeKeyspaceEtcdNamespaceSlash return the keyspace prefix path for etcd namespace, and end with a slash.
+func MakeKeyspaceEtcdNamespaceSlash(c tikv.Codec) string {
+	if c.GetAPIVersion() == kvrpcpb.APIVersion_V1 {
+		return ""
+	}
+	return fmt.Sprintf(tidbKeyspaceEtcdPathPrefix+"%d/", c.GetKeyspaceID())
+}
+
 // GetKeyspaceNameBySettings is used to get Keyspace name setting.
 func GetKeyspaceNameBySettings() (keyspaceName string) {
 	keyspaceName = config.GetGlobalKeyspaceName()

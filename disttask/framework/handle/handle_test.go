@@ -49,7 +49,7 @@ func TestHandle(t *testing.T) {
 	require.Equal(t, "1", task.Key)
 	require.Equal(t, proto.TaskTypeExample, task.Type)
 	// no dispatcher registered
-	require.Equal(t, proto.TaskStateReverted, task.State)
+	require.Equal(t, proto.TaskStateFailed, task.State)
 	require.Equal(t, proto.StepInit, task.Step)
 	require.Equal(t, uint64(2), task.Concurrency)
 	require.Equal(t, []byte("byte"), task.Meta)
