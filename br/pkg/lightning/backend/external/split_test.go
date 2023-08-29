@@ -76,20 +76,57 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	require.Len(t, dataFiles123, 6)
 	require.Len(t, statFiles123, 6)
 
+	// "/mock-test/X/0" contains "key0X" and "key1X"
+	// "/mock-test/X/1" contains "key2X"
 	require.Equal(t, []string{
 		"/mock-test/1/0", "/mock-test/1/1",
 		"/mock-test/2/0", "/mock-test/2/1",
 		"/mock-test/3/0", "/mock-test/3/1",
 	}, dataFiles123)
 
+	// group keys = 2, region keys = 1
 	splitter, err := NewRangeSplitter(
 		ctx, dataFiles123, statFiles123, memStore, 1000, 2, 1000, 1,
 	)
 	require.NoError(t, err)
+
+	// [key01, key03), split at key02
 	endKey, dataFiles, statFiles, splitKeys, err := splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.EqualValues(t, kv.Key("key03"), endKey)
 	require.Equal(t, []string{"/mock-test/1/0", "/mock-test/2/0"}, dataFiles)
 	require.Equal(t, []string{"/mock-test/1_stat/0", "/mock-test/2_stat/0"}, statFiles)
 	require.Equal(t, [][]byte{[]byte("key02")}, splitKeys)
+
+	// [key03, key12), split at key11
+	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
+	require.NoError(t, err)
+	require.EqualValues(t, kv.Key("key12"), endKey)
+	require.Equal(t, []string{"/mock-test/1/0", "/mock-test/2/0", "/mock-test/3/0"}, dataFiles)
+	require.Equal(t, []string{"/mock-test/1_stat/0", "/mock-test/2_stat/0", "/mock-test/3_stat/0"}, statFiles)
+	require.Equal(t, [][]byte{[]byte("key11")}, splitKeys)
+
+	// [key12, key21), split at key13
+	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
+	require.NoError(t, err)
+	require.EqualValues(t, kv.Key("key21"), endKey)
+	require.Equal(t, []string{"/mock-test/1/0", "/mock-test/2/0", "/mock-test/3/0"}, dataFiles)
+	require.Equal(t, []string{"/mock-test/1_stat/0", "/mock-test/2_stat/0", "/mock-test/3_stat/0"}, statFiles)
+	require.Equal(t, [][]byte{[]byte("key13")}, splitKeys)
+
+	// [key21, key23), split at key22
+	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
+	require.NoError(t, err)
+	require.EqualValues(t, kv.Key("key23"), endKey)
+	require.Equal(t, []string{"/mock-test/1/1", "/mock-test/2/0", "/mock-test/2/1", "/mock-test/3/0"}, dataFiles)
+	require.Equal(t, []string{"/mock-test/1_stat/1", "/mock-test/2_stat/0", "/mock-test/2_stat/1", "/mock-test/3_stat/0"}, statFiles)
+	require.Equal(t, [][]byte{[]byte("key22")}, splitKeys)
+
+	// [key23, nil), no split key
+	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
+	require.NoError(t, err)
+	require.Nil(t, endKey)
+	require.Equal(t, []string{"/mock-test/1/1", "/mock-test/2/1", "/mock-test/3/1"}, dataFiles)
+	require.Equal(t, []string{"/mock-test/3_stat/1"}, statFiles)
+	require.Nil(t, splitKeys)
 }

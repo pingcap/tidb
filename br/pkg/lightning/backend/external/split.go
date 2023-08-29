@@ -35,8 +35,16 @@ type RangeSplitter struct {
 	statFiles []string
 
 	// filename -> index in dataFiles/statFiles
-	activeDataFiles map[string]int
-	activeStatFiles map[string]int
+	activeDataFiles             map[string]int
+	activeStatFiles             map[string]int
+	curGroupSize                int64
+	curGroupKeys                int64
+	curRangeSize                int64
+	curRangeKeys                int64
+	recordSplitKeyAfterNextProp bool
+	lastDataFile                string
+	lastStatFile                string
+	lastHeapSize                int
 
 	rangeSplitKeysBuf [][]byte
 }
@@ -81,9 +89,10 @@ func (r *RangeSplitter) Close() error {
 }
 
 // SplitOneRangesGroup splits one group of ranges. `endKeyOfGroup` represents the
-// end key of the group, but it will be nil when the group is the last one.
+// end key of the group, but it maybe be nil when the group is the last one.
 // `dataFiles` and `statFiles` are all the files that have overlapping key ranges
 // in this group.
+// `rangeSplitKeys` are the internal split keys of the ranges in this group.
 func (r *RangeSplitter) SplitOneRangesGroup() (
 	endKeyOfGroup kv.Key,
 	dataFiles []string,
@@ -91,27 +100,21 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 	rangeSplitKeys [][]byte,
 	err error,
 ) {
-	var curGroupSize, curGroupKeys int64
-	var curRangeSize, curRangeKeys int64
-	var lastDataFile, lastStatFile string
-	var lastHeapSize int
-	var exhaustedDataFiles, exhaustedStatFile []string
+	var (
+		exhaustedDataFiles, exhaustedStatFile []string
+		retDataFiles, retStatFiles            []string
+		returnAfterNextProp                   = false
+	)
+
 	for r.propIter.Next() {
 		if err = r.propIter.Error(); err != nil {
 			return nil, nil, nil, nil, err
 		}
 		prop := r.propIter.prop()
-		curGroupSize += int64(prop.size)
-		curRangeSize += int64(prop.size)
-		curGroupKeys += int64(prop.keys)
-		curRangeKeys += int64(prop.keys)
-
-		// a tricky way to detect source file exhausted
-		heapSize := r.propIter.iter.h.Len()
-		if heapSize < lastHeapSize {
-			exhaustedDataFiles = append(exhaustedDataFiles, lastDataFile)
-			exhaustedStatFile = append(exhaustedStatFile, lastStatFile)
-		}
+		r.curGroupSize += int64(prop.size)
+		r.curRangeSize += int64(prop.size)
+		r.curGroupKeys += int64(prop.keys)
+		r.curRangeKeys += int64(prop.keys)
 
 		fileIdx := r.propIter.readerIndex()
 		dataFilePath := r.dataFiles[fileIdx]
@@ -119,14 +122,17 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 		r.activeDataFiles[dataFilePath] = fileIdx
 		r.activeStatFiles[statFilePath] = fileIdx
 
-		if curRangeSize >= r.rangeSize || curRangeKeys >= r.rangeKeys {
-			r.rangeSplitKeysBuf = append(r.rangeSplitKeysBuf, kv.Key(prop.key).Clone())
-			curRangeSize = 0
-			curRangeKeys = 0
+		// a tricky way to detect source file exhausted
+		heapSize := r.propIter.iter.h.Len()
+		if heapSize < r.lastHeapSize {
+			println("heap size drop", heapSize, r.lastHeapSize)
+			println("last data file", r.lastDataFile)
+			println("after read key", string(prop.key))
+			exhaustedDataFiles = append(exhaustedDataFiles, r.lastDataFile)
+			exhaustedStatFile = append(exhaustedStatFile, r.lastStatFile)
 		}
 
-		if curGroupSize >= r.rangesGroupSize || curGroupKeys >= r.rangesGroupKeys {
-			retDataFiles, retStatFiles := r.cloneActiveFiles()
+		if returnAfterNextProp {
 			for _, p := range exhaustedDataFiles {
 				delete(r.activeDataFiles, p)
 			}
@@ -135,16 +141,33 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 				delete(r.activeStatFiles, p)
 			}
 			exhaustedStatFile = exhaustedStatFile[:0]
-			// TODO(lance6716): this is the start key of a range?
 			return prop.key, retDataFiles, retStatFiles, r.takeSplitKeys(), nil
 		}
+		if r.recordSplitKeyAfterNextProp {
+			r.rangeSplitKeysBuf = append(r.rangeSplitKeysBuf, kv.Key(prop.key).Clone())
+			r.recordSplitKeyAfterNextProp = false
+		}
 
-		lastDataFile = dataFilePath
-		lastStatFile = statFilePath
-		lastHeapSize = heapSize
+		if r.curRangeSize >= r.rangeSize || r.curRangeKeys >= r.rangeKeys {
+			r.curRangeSize = 0
+			r.curRangeKeys = 0
+			r.recordSplitKeyAfterNextProp = true
+		}
+
+		if r.curGroupSize >= r.rangesGroupSize || r.curGroupKeys >= r.rangesGroupKeys {
+			retDataFiles, retStatFiles = r.cloneActiveFiles()
+
+			r.curGroupSize = 0
+			r.curGroupKeys = 0
+			returnAfterNextProp = true
+		}
+
+		r.lastDataFile = dataFilePath
+		r.lastStatFile = statFilePath
+		r.lastHeapSize = heapSize
 	}
 
-	retDataFiles, retStatFiles := r.cloneActiveFiles()
+	retDataFiles, retStatFiles = r.cloneActiveFiles()
 	return nil, retDataFiles, retStatFiles, r.takeSplitKeys(), r.propIter.Error()
 }
 
