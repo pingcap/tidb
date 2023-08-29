@@ -124,7 +124,7 @@ func TestEqualDatumsAsBinary(t *testing.T) {
 	ctx := core.MockContext()
 	base := exec.NewBaseExecutor(ctx, nil, 0)
 	defer func() {
-		domain.GetDomain(ctx).StatsHandle().CloseStatsCache()
+		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 	e := &InsertValues{BaseExecutor: base}
 	for _, tt := range tests {
