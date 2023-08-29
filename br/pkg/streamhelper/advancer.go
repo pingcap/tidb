@@ -62,7 +62,7 @@ type CheckpointAdvancer struct {
 
 	// the cached last checkpoint.
 	// if no progress, this cache can help us don't to send useless requests.
-	lastCheckpoint checkpoint
+	lastCheckpoint *checkpoint
 
 	checkpoints   *spans.ValueSortedFull
 	checkpointsMu sync.Mutex
@@ -83,15 +83,15 @@ type checkpoint struct {
 	resolveLockTime time.Time
 }
 
-func newCheckpointWithTS(ts uint64) checkpoint {
-	return checkpoint{
+func newCheckpointWithTS(ts uint64) *checkpoint {
+	return &checkpoint{
 		TS:              ts,
 		resolveLockTime: time.Now(),
 	}
 }
 
-func NewCheckpointWithSpan(s spans.Valued) checkpoint {
-	return checkpoint{
+func NewCheckpointWithSpan(s spans.Valued) *checkpoint {
+	return &checkpoint{
 		StartKey:        s.Key.StartKey,
 		EndKey:          s.Key.EndKey,
 		TS:              s.Value,
@@ -99,11 +99,15 @@ func NewCheckpointWithSpan(s spans.Valued) checkpoint {
 	}
 }
 
-func (c checkpoint) safeTS() uint64 {
+func (c *checkpoint) UpdateResolveLockTime(t time.Time) {
+	c.resolveLockTime = t
+}
+
+func (c *checkpoint) safeTS() uint64 {
 	return c.TS - 1
 }
 
-func (c checkpoint) equal(o checkpoint) bool {
+func (c *checkpoint) equal(o *checkpoint) bool {
 	return bytes.Equal(c.StartKey, o.StartKey) &&
 		bytes.Equal(c.EndKey, o.EndKey) && c.TS == o.TS
 }
@@ -111,7 +115,7 @@ func (c checkpoint) equal(o checkpoint) bool {
 // if a checkpoint stay in a time too long(3 min)
 // we should try to resolve lock for the range
 // to keep the RPO in 5 min.
-func (c checkpoint) needResolveLocks() bool {
+func (c *checkpoint) needResolveLocks() bool {
 	failpoint.Inject("NeedResolveLocks", func(val failpoint.Value) {
 		failpoint.Return(val.(bool))
 	})
@@ -142,7 +146,7 @@ func (c *CheckpointAdvancer) UpdateConfigWith(f func(*config.Config)) {
 }
 
 // only used for test
-func (c *CheckpointAdvancer) UpdateLastCheckpoint(p checkpoint) {
+func (c *CheckpointAdvancer) UpdateLastCheckpoint(p *checkpoint) {
 	c.lastCheckpoint = p
 }
 

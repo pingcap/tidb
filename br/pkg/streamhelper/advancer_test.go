@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
+	"go.uber.org/atomic"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -319,10 +320,9 @@ func TestResolveLock(t *testing.T) {
 		}
 	}
 	// ensure resolve locks triggered and collect all locks from scan locks
-	resolveLockCnt := 0
-	resolveLockCntRef := &resolveLockCnt
+	resolveLockRef := atomic.NewBool(false)
 	env.resolveLocks = func(locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
-		*resolveLockCntRef += 1
+		resolveLockRef.Store(true)
 		require.ElementsMatch(t, locks, allLocks)
 		return loc, nil
 	}
@@ -347,7 +347,7 @@ func TestResolveLock(t *testing.T) {
 	coll := streamhelper.NewClusterCollector(ctx, env)
 	err := adv.GetCheckpointInRange(ctx, []byte{}, []byte{}, coll)
 
-	require.Eventually(t, func() bool { return *resolveLockCntRef > 0 },
+	require.Eventually(t, func() bool { return resolveLockRef.Load() },
 		8*time.Second, 50*time.Microsecond)
 
 	require.NoError(t, err)

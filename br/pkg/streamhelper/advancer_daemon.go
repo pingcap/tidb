@@ -72,7 +72,7 @@ func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 						var targets []spans.Valued
 						c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
 							// when get locks here. assume these locks are not belong to same txn,
-							// but startTS close to 1 minute. try resolve these locks at one time
+							// but these locks' start ts are close to 1 minute. try resolve these locks at one time
 							vsf.TraverseValuesLessThan(tsoAfter(c.lastCheckpoint.TS, time.Minute), func(v spans.Valued) bool {
 								targets = append(targets, v)
 								return true
@@ -111,7 +111,7 @@ func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 							logutil.Key("StartKey", c.lastCheckpoint.StartKey),
 							logutil.Key("EndKey", c.lastCheckpoint.EndKey),
 							zap.Int("targets", len(targets)))
-						//c.lastCheckpoint.resolveLockTime = time.Now()
+						c.lastCheckpoint.UpdateResolveLockTime(time.Now())
 					}
 				}
 			}
