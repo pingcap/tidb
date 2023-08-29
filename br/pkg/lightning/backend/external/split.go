@@ -129,6 +129,7 @@ func (r *RangeSplitter) Close() error {
 // `dataFiles` and `statFiles` are all the files that have overlapping key ranges
 // in this group.
 // `rangeSplitKeys` are the internal split keys of the ranges in this group.
+// TODO(lance6716): endKeyOfGroup maybe or must be nil when the group is the last one?
 func (r *RangeSplitter) SplitOneRangesGroup() (
 	endKeyOfGroup kv.Key,
 	dataFiles []string,
@@ -211,6 +212,8 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 	}
 
 	retDataFiles, retStatFiles = r.cloneActiveFiles()
+	r.activeDataFiles = make(map[string]int)
+	r.activeStatFiles = make(map[string]int)
 	return nil, retDataFiles, retStatFiles, r.takeSplitKeys(), r.propIter.Error()
 }
 

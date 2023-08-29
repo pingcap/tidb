@@ -132,4 +132,12 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	require.Equal(t, []string{"/mock-test/3/1"}, dataFiles)
 	require.Equal(t, []string{"/mock-test/3_stat/1"}, statFiles)
 	require.Len(t, splitKeys, 0)
+
+	// read after drain all data
+	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
+	require.NoError(t, err)
+	require.Nil(t, endKey)
+	require.Len(t, dataFiles, 0)
+	require.Len(t, statFiles, 0)
+	require.Len(t, splitKeys, 0)
 }
