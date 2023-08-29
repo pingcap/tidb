@@ -85,6 +85,30 @@ func RebaseGlobalAutoID(ctx context.Context, newBase int64, store kv.Storage, db
 	return nil
 }
 
+// RebaseTableAllocators rebase the allocators of a table.
+// This function only rebase a table allocator when its new base is given in
+// `bases` param, else it will be skipped.
+// base is the max id that have been used by the table, the next usable id will
+// be base + 1, see Allocator.Alloc.
+func RebaseTableAllocators(ctx context.Context, bases map[autoid.AllocatorType]int64, store kv.Storage, dbID int64,
+	tblInfo *model.TableInfo) error {
+	allocators, err := GetGlobalAutoIDAlloc(store, dbID, tblInfo)
+	if err != nil {
+		return err
+	}
+	for _, alloc := range allocators {
+		base, ok := bases[alloc.GetType()]
+		if !ok {
+			continue
+		}
+		err = alloc.Rebase(ctx, base, false)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // GetGlobalAutoIDAlloc returns the autoID allocators for a table.
 // export it for testing.
 func GetGlobalAutoIDAlloc(store kv.Storage, dbID int64, tblInfo *model.TableInfo) ([]autoid.Allocator, error) {

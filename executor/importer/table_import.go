@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/config"
 	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
@@ -132,7 +133,9 @@ func GetTiKVModeSwitcherWithPDClient(ctx context.Context, logger *zap.Logger) (p
 	return pdCli, NewTiKVModeSwitcher(tls, pdCli, logger), nil
 }
 
-func getCachedKVStoreFrom(pdAddr string, tls *common.TLS) (tidbkv.Storage, error) {
+// GetCachedKVStoreFrom gets a cached kv store from PD address.
+// Callers should NOT close the kv store.
+func GetCachedKVStoreFrom(pdAddr string, tls *common.TLS) (tidbkv.Storage, error) {
 	// Disable GC because TiDB enables GC already.
 	keySpaceName := tidb.GetGlobalKeyspaceName()
 	// the kv store we get is a cached store, so we can't close it.
@@ -171,7 +174,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 	}
 
 	// no need to close kvStore, since it's a cached store.
-	kvStore, err := getCachedKVStoreFrom(tidbCfg.Path, tls)
+	kvStore, err := GetCachedKVStoreFrom(tidbCfg.Path, tls)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -375,50 +378,9 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 		}
 	}
 
-	if common.TableHasAutoID(e.Table.Meta()) {
-		tidbCfg := tidb.GetGlobalConfig()
-		hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
-		tls, err4 := common.NewTLS(
-			tidbCfg.Security.ClusterSSLCA,
-			tidbCfg.Security.ClusterSSLCert,
-			tidbCfg.Security.ClusterSSLKey,
-			hostPort,
-			nil, nil, nil,
-		)
-		if err4 != nil {
-			return nil, err4
-		}
-
-		// no need to close kvStore, since it's a cached store.
-		kvStore, err4 := getCachedKVStoreFrom(tidbCfg.Path, tls)
-		if err4 != nil {
-			return nil, errors.Trace(err4)
-		}
-		if err3 := common.RebaseGlobalAutoID(ctx, 0, kvStore, e.DBID, e.Table.Meta()); err3 != nil {
-			return nil, errors.Trace(err3)
-		}
-		newMinRowID, _, err3 := common.AllocGlobalAutoID(ctx, maxRowID, kvStore, e.DBID, e.Table.Meta())
-		if err3 != nil {
-			return nil, errors.Trace(err3)
-		}
-		e.rebaseChunkRowID(newMinRowID, tableCp.Engines)
-	}
-
 	// Add index engine checkpoint
 	tableCp.Engines[common.IndexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
 	return tableCp.Engines, nil
-}
-
-func (*LoadDataController) rebaseChunkRowID(rowIDBase int64, engines map[int32]*checkpoints.EngineCheckpoint) {
-	if rowIDBase == 0 {
-		return
-	}
-	for _, engine := range engines {
-		for _, chunk := range engine.Chunks {
-			chunk.Chunk.PrevRowIDMax += rowIDBase
-			chunk.Chunk.RowIDMax += rowIDBase
-		}
-	}
 }
 
 // a simplified version of EstimateCompactionThreshold
@@ -498,6 +460,11 @@ func (ti *TableImporter) fullTableName() string {
 func (ti *TableImporter) Close() error {
 	ti.backend.Close()
 	return nil
+}
+
+// Allocators returns allocators used to record max used ID, i.e. PanickingAllocators.
+func (ti *TableImporter) Allocators() autoid.Allocators {
+	return ti.encTable.Allocators(nil)
 }
 
 // CheckDiskQuota checks disk quota.

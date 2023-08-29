@@ -153,9 +153,13 @@ type LoadDataReaderInfo struct {
 
 // Plan describes the plan of LOAD DATA.
 type Plan struct {
-	DBName           string
-	DBID             int64
-	TableInfo        *model.TableInfo
+	DBName string
+	DBID   int64
+	// TableInfo is the table info we used during import, we might change it
+	// if add index by SQL is enabled(it's disabled now).
+	TableInfo *model.TableInfo
+	// DesiredTableInfo is the table info before import, and the desired table info
+	// after import.
 	DesiredTableInfo *model.TableInfo
 
 	Path   string
