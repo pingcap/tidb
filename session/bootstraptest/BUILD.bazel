@@ -8,7 +8,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 10,
+    shard_count = 11,
     deps = [
         "//config",
         "//ddl",
@@ -17,6 +17,7 @@ go_test(
         "//meta",
         "//parser/model",
         "//parser/terror",
+        "//server/handler",
         "//session",  #keep
         "//sessionctx",
         "//testkit",  #keep
