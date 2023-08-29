@@ -34,7 +34,8 @@ import (
 )
 
 type litBackfillFlowHandle struct {
-	d DDL
+	d                    DDL
+	previousSchedulerIDs []string
 }
 
 var _ dispatcher.TaskFlowHandle = (*litBackfillFlowHandle)(nil)
@@ -75,19 +76,20 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(ctx context.Context, taskHandl
 	if tblInfo.Partition == nil {
 		switch gTask.Step {
 		case proto.StepOne:
-			serverNodes, err := taskHandle.GetAllSchedulerIDs(ctx, h, gTask)
+			schedulerIDs, err := taskHandle.GetPreviousSchedulerIDs(ctx, gTask.ID, gTask.Step)
 			if err != nil {
 				return nil, err
 			}
-			subTaskMetas = make([][]byte, 0, len(serverNodes))
+			subTaskMetas = make([][]byte, 0, len(schedulerIDs))
 			dummyMeta := &BackfillSubTaskMeta{}
 			metaBytes, err := json.Marshal(dummyMeta)
 			if err != nil {
 				return nil, err
 			}
-			for range serverNodes {
+			for range schedulerIDs {
 				subTaskMetas = append(subTaskMetas, metaBytes)
 			}
+			h.previousSchedulerIDs = schedulerIDs
 			gTask.Step = proto.StepTwo
 			return subTaskMetas, nil
 		case proto.StepTwo:
@@ -191,13 +193,8 @@ func (h *litBackfillFlowHandle) GetEligibleInstances(
 	}
 	if task.Step == proto.StepTwo {
 		// Only the nodes that executed step one can have step two.
-		instanceIDs, err := taskHandle.GetPreviousSchedulerIDs(ctx, task.ID, proto.StepOne)
-		if err != nil {
-			return nil, err
-		}
-
 		involvedServerInfos := make([]*infosync.ServerInfo, 0, len(serverInfos))
-		for _, id := range instanceIDs {
+		for _, id := range h.previousSchedulerIDs {
 			if idx := disttaskutil.FindServerInfo(serverInfos, id); idx >= 0 {
 				involvedServerInfos = append(involvedServerInfos, serverInfos[idx])
 			}

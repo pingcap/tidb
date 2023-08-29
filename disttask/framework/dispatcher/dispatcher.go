@@ -414,7 +414,7 @@ func (d *dispatcher) GetPreviousSubtaskMetas(taskID int64, step int64) ([][]byte
 }
 
 // GetPreviousSchedulerIDs gets scheduler IDs that run previous step.
-func (d *dispatcher) GetPreviousSchedulerIDs(ctx context.Context, taskID int64, step int64) ([]string, error) {
+func (d *dispatcher) GetPreviousSchedulerIDs(_ context.Context, taskID int64, step int64) ([]string, error) {
 	return d.taskMgr.GetSchedulerIDsByTaskIDAndStep(taskID, step)
 }
 
