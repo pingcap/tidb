@@ -173,7 +173,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 			dispatcher.DefaultDispatchConcurrency = originalConcurrency
 		}
 	}()
-
+	require.NoError(t, mgr.StartManager(":4000", "background"))
 	dispatcher.RegisterTaskFlowHandle(taskTypeExample, NumberExampleHandle{})
 
 	// 3s
