@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "planner",
@@ -11,5 +11,23 @@ go_library(
     deps = [
         "//disttask/framework/storage",
         "//sessionctx",
+    ],
+)
+
+go_test(
+    name = "planner_test",
+    timeout = "short",
+    srcs = [
+        "plan_test.go",
+        "planner_test.go",
+    ],
+    embed = [":planner"],
+    flaky = True,
+    deps = [
+        "//disttask/framework/storage",
+        "//testkit",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
     ],
 )
