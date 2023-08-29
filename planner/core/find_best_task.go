@@ -2448,9 +2448,12 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		filterCondition: slices.Clone(path.TableFilters),
 	}.Init(ds.SCtx(), ds.SelectBlockOffset())
 	ts.SetSchema(ds.schema.Clone())
-	rowCount := cardinality.AdjustRowCountForTableScanByLimit(ds.SCtx(),
-		ds.StatsInfo(), ds.tableStats, ds.statisticTable,
-		path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
+	rowCount := path.CountAfterAccess
+	if prop.ExpectedCnt < ds.StatsInfo().RowCount {
+		rowCount = cardinality.AdjustRowCountForTableScanByLimit(ds.SCtx(),
+			ds.StatsInfo(), ds.tableStats, ds.statisticTable,
+			path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
+	}
 	// We need NDV of columns since it may be used in cost estimation of join. Precisely speaking,
 	// we should track NDV of each histogram bucket, and sum up the NDV of buckets we actually need
 	// to scan, but this would only help improve accuracy of NDV for one column, for other columns,
