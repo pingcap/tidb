@@ -3663,7 +3663,8 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 		storeBootstrapped[store.UUID()] = true
 	}
 
-	return modifyBootstrapVersionForTest(store, ver)
+	modifyBootstrapVersionForTest(ver)
+	return ver
 }
 
 func finishBootstrap(store kv.Storage) {
