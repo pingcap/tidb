@@ -15,12 +15,46 @@
 package external
 
 import (
+	"bytes"
+	"container/heap"
 	"context"
 	"slices"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/kv"
 )
+
+type exhaustedHeapElem struct {
+	key      []byte
+	dataFile string
+	statFile string
+}
+
+type exhaustedHeap []exhaustedHeapElem
+
+func (h exhaustedHeap) Len() int {
+	return len(h)
+}
+
+func (h exhaustedHeap) Less(i, j int) bool {
+	return bytes.Compare(h[i].key, h[j].key) < 0
+}
+
+func (h exhaustedHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+}
+
+func (h *exhaustedHeap) Push(x interface{}) {
+	*h = append(*h, x.(exhaustedHeapElem))
+}
+
+func (h *exhaustedHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[:n-1]
+	return x
+}
 
 // RangeSplitter is used to split key ranges of an external engine. It will
 // return one group of ranges by invoking `SplitOneRangesGroup` once.
@@ -45,6 +79,8 @@ type RangeSplitter struct {
 	lastDataFile                string
 	lastStatFile                string
 	lastHeapSize                int
+	lastRangeProperty           *rangeProperty
+	willExhaustHeap             exhaustedHeap
 
 	rangeSplitKeysBuf [][]byte
 }
@@ -101,9 +137,9 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 	err error,
 ) {
 	var (
-		exhaustedDataFiles, exhaustedStatFile []string
-		retDataFiles, retStatFiles            []string
-		returnAfterNextProp                   = false
+		exhaustedDataFiles, exhaustedStatFiles []string
+		retDataFiles, retStatFiles             []string
+		returnAfterNextProp                    = false
 	)
 
 	for r.propIter.Next() {
@@ -116,20 +152,31 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 		r.curGroupKeys += int64(prop.keys)
 		r.curRangeKeys += int64(prop.keys)
 
+		// a tricky way to detect source file will exhaust
+		heapSize := r.propIter.iter.h.Len()
+		if heapSize < r.lastHeapSize {
+			heap.Push(&r.willExhaustHeap, exhaustedHeapElem{
+				key:      r.lastRangeProperty.lastKey,
+				dataFile: r.lastDataFile,
+				statFile: r.lastStatFile,
+			})
+		}
+
 		fileIdx := r.propIter.readerIndex()
 		dataFilePath := r.dataFiles[fileIdx]
 		statFilePath := r.statFiles[fileIdx]
 		r.activeDataFiles[dataFilePath] = fileIdx
 		r.activeStatFiles[statFilePath] = fileIdx
+		r.lastDataFile = dataFilePath
+		r.lastStatFile = statFilePath
+		r.lastHeapSize = heapSize
+		r.lastRangeProperty = prop
 
-		// a tricky way to detect source file exhausted
-		heapSize := r.propIter.iter.h.Len()
-		if heapSize < r.lastHeapSize {
-			println("heap size drop", heapSize, r.lastHeapSize)
-			println("last data file", r.lastDataFile)
-			println("after read key", string(prop.key))
-			exhaustedDataFiles = append(exhaustedDataFiles, r.lastDataFile)
-			exhaustedStatFile = append(exhaustedStatFile, r.lastStatFile)
+		for r.willExhaustHeap.Len() > 0 &&
+			bytes.Compare(r.willExhaustHeap[0].key, prop.firstKey) < 0 {
+			exhaustedDataFiles = append(exhaustedDataFiles, r.willExhaustHeap[0].dataFile)
+			exhaustedStatFiles = append(exhaustedStatFiles, r.willExhaustHeap[0].statFile)
+			heap.Pop(&r.willExhaustHeap)
 		}
 
 		if returnAfterNextProp {
@@ -137,14 +184,14 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 				delete(r.activeDataFiles, p)
 			}
 			exhaustedDataFiles = exhaustedDataFiles[:0]
-			for _, p := range exhaustedStatFile {
+			for _, p := range exhaustedStatFiles {
 				delete(r.activeStatFiles, p)
 			}
-			exhaustedStatFile = exhaustedStatFile[:0]
-			return prop.key, retDataFiles, retStatFiles, r.takeSplitKeys(), nil
+			exhaustedStatFiles = exhaustedStatFiles[:0]
+			return prop.firstKey, retDataFiles, retStatFiles, r.takeSplitKeys(), nil
 		}
 		if r.recordSplitKeyAfterNextProp {
-			r.rangeSplitKeysBuf = append(r.rangeSplitKeysBuf, kv.Key(prop.key).Clone())
+			r.rangeSplitKeysBuf = append(r.rangeSplitKeysBuf, kv.Key(prop.firstKey).Clone())
 			r.recordSplitKeyAfterNextProp = false
 		}
 
@@ -161,10 +208,6 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 			r.curGroupKeys = 0
 			returnAfterNextProp = true
 		}
-
-		r.lastDataFile = dataFilePath
-		r.lastStatFile = statFilePath
-		r.lastHeapSize = heapSize
 	}
 
 	retDataFiles, retStatFiles = r.cloneActiveFiles()

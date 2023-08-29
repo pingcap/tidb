@@ -90,9 +90,10 @@ func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
 	}
 	kvLen += n
 
-	if len(s.rc.currProp.key) == 0 {
-		s.rc.currProp.key = key
+	if len(s.rc.currProp.firstKey) == 0 {
+		s.rc.currProp.firstKey = key
 	}
+	s.rc.currProp.lastKey = key
 
 	s.offset += uint64(kvLen)
 	s.rc.currProp.size += uint64(len(key) + len(value))
@@ -103,7 +104,7 @@ func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
 		newProp := *s.rc.currProp
 		s.rc.props = append(s.rc.props, &newProp)
 
-		s.rc.currProp.key = nil
+		s.rc.currProp.firstKey = nil
 		s.rc.currProp.offset = s.offset
 		s.rc.currProp.keys = 0
 		s.rc.currProp.size = 0

@@ -106,27 +106,30 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	require.Equal(t, []string{"/mock-test/1_stat/0", "/mock-test/2_stat/0", "/mock-test/3_stat/0"}, statFiles)
 	require.Equal(t, [][]byte{[]byte("key11")}, splitKeys)
 
-	// [key12, key21), split at key13
+	// [key12, key21), split at key13. the last key of "/mock-test/1/0" is "key11",
+	// so it's not used
 	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.EqualValues(t, kv.Key("key21"), endKey)
-	require.Equal(t, []string{"/mock-test/1/0", "/mock-test/2/0", "/mock-test/3/0"}, dataFiles)
-	require.Equal(t, []string{"/mock-test/1_stat/0", "/mock-test/2_stat/0", "/mock-test/3_stat/0"}, statFiles)
+	require.Equal(t, []string{"/mock-test/2/0", "/mock-test/3/0"}, dataFiles)
+	require.Equal(t, []string{"/mock-test/2_stat/0", "/mock-test/3_stat/0"}, statFiles)
 	require.Equal(t, [][]byte{[]byte("key13")}, splitKeys)
 
-	// [key21, key23), split at key22
+	// [key21, key23), split at key22.
+	// the last key of "/mock-test/2/0" is "key12", and the last key of "/mock-test/3/0" is "key13",
+	// so they are not used
 	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.EqualValues(t, kv.Key("key23"), endKey)
-	require.Equal(t, []string{"/mock-test/1/1", "/mock-test/2/0", "/mock-test/2/1", "/mock-test/3/0"}, dataFiles)
-	require.Equal(t, []string{"/mock-test/1_stat/1", "/mock-test/2_stat/0", "/mock-test/2_stat/1", "/mock-test/3_stat/0"}, statFiles)
+	require.Equal(t, []string{"/mock-test/1/1", "/mock-test/2/1"}, dataFiles)
+	require.Equal(t, []string{"/mock-test/1_stat/1", "/mock-test/2_stat/1"}, statFiles)
 	require.Equal(t, [][]byte{[]byte("key22")}, splitKeys)
 
 	// [key23, nil), no split key
 	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.Nil(t, endKey)
-	require.Equal(t, []string{"/mock-test/1/1", "/mock-test/2/1", "/mock-test/3/1"}, dataFiles)
+	require.Equal(t, []string{"/mock-test/3/1"}, dataFiles)
 	require.Equal(t, []string{"/mock-test/3_stat/1"}, statFiles)
-	require.Nil(t, splitKeys)
+	require.Len(t, splitKeys, 0)
 }
