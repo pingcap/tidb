@@ -99,6 +99,3 @@ desc format='brief' select max(d collate utf8mb4_bin) from tt;
 --error 1253
 select max(d collate utf8mb4_bin) from tt;
 
-# cleanup environment
-drop database collation_agg_func;
-use test

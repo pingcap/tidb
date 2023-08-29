@@ -1,5 +1,4 @@
 set @@foreign_key_checks=1;
-use test;
 drop table if exists t1,t2;
 create table t1 (id int key);
 create table t2 (id int key, foreign key fk(id) references t1(id) ON UPDATE CASCADE ON DELETE CASCADE);

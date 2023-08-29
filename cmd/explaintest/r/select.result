@@ -1,6 +1,7 @@
 set tidb_cost_model_version=1;
 set @@sql_mode='STRICT_TRANS_TABLES';
 set @@tidb_enable_outer_join_reorder=true;
+set @@tidb_stats_load_sync_wait=20000;
 DROP TABLE IF EXISTS t;
 CREATE TABLE t (
 c1 int,

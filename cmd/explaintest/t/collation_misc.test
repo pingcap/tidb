@@ -60,6 +60,9 @@ use cd_test_latin1;
 select @@character_set_database;
 select @@collation_database;
 
+drop database if exists cd_test_utf8;
+drop database if exists cd_test_latin1;
+
 # DefaultDBAfterDropCurDB
 --error 1273
 create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;
@@ -82,5 +85,3 @@ select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COL
 # charset
 show charset;
 show collation;
-
-use test;
