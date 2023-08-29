@@ -50,10 +50,6 @@ type deliveredRow struct {
 	offset int64
 }
 
-type deliverResult struct {
-	err error
-}
-
 type deliverKVBatch struct {
 	dataKVs  kv.Pairs
 	indexKVs kv.Pairs
@@ -172,6 +168,10 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context) error {
 	var err error
 	reachEOF := false
 	for !reachEOF {
+		readPos, _ := p.parser.Pos()
+		if readPos >= p.chunkInfo.Chunk.EndOffset {
+			break
+		}
 		var readDur, encodeDur time.Duration
 		canDeliver := false
 		rowBatch := make([]deliveredRow, 0, MinDeliverRowCnt)
@@ -181,6 +181,7 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context) error {
 		for !canDeliver {
 			readDurStart := time.Now()
 			err = p.parser.ReadRow()
+			readPos, _ = p.parser.Pos()
 			// todo: we can implement a ScannedPos which don't return error, will change it later.
 			newOffset, _ = p.parser.ScannedPos()
 
@@ -215,7 +216,7 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context) error {
 			// pebble cannot allow > 4.0G kv in one batch.
 			// we will meet pebble panic when import sql file and each kv has the size larger than 4G / maxKvPairsCnt.
 			// so add this check.
-			if kvSize >= MinDeliverBytes || len(rowBatch) >= MinDeliverRowCnt {
+			if kvSize >= MinDeliverBytes || len(rowBatch) >= MinDeliverRowCnt || readPos == p.chunkInfo.Chunk.EndOffset {
 				canDeliver = true
 				kvSize = 0
 			}

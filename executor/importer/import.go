@@ -660,6 +660,15 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		}
 	}
 
+	// when split-file is set, data file will be split into chunks of 256 MiB.
+	// skip_rows should be 0 or 1, we add this restriction to simplify skip_rows
+	// logic, so we only need to skip on the first chunk for each data file.
+	// CSV parser limit each row size to LargestEntryLimit(120M), the first row
+	// will NOT cross file chunk.
+	if p.SplitFile && p.IgnoreLines > 1 {
+		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("skip_rows, should be <= 1 when split-file is enabled")
+	}
+
 	p.adjustOptions()
 	return nil
 }
@@ -1061,6 +1070,11 @@ func (e *LoadDataController) GetParser(
 	}
 	parser.SetLogger(litlog.Logger{Logger: logutil.Logger(ctx)})
 
+	return parser, nil
+}
+
+// HandleSkipNRows skips the first N rows of the data file.
+func (e *LoadDataController) HandleSkipNRows(parser mydump.Parser) error {
 	// handle IGNORE N LINES
 	ignoreOneLineFn := parser.ReadRow
 	if csvParser, ok := parser.(*mydump.CSVParser); ok {
@@ -1072,17 +1086,17 @@ func (e *LoadDataController) GetParser(
 
 	ignoreLineCnt := e.IgnoreLines
 	for ignoreLineCnt > 0 {
-		err = ignoreOneLineFn()
+		err := ignoreOneLineFn()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
-				return parser, nil
+				return nil
 			}
-			return nil, err
+			return err
 		}
 
 		ignoreLineCnt--
 	}
-	return parser, nil
+	return nil
 }
 
 func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
