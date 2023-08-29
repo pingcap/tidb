@@ -1179,8 +1179,10 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 
 var (
 	// SupportUpgradeStateVer is exported for testing.
+	// The minimum version that can be upgraded by paused user DDL.
 	SupportUpgradeStateVer int64 = version145
 	// SupportUpgradeHTTPOpVer is exported for testing.
+	// The minimum version of the upgrade can be notified through the HTTP API.
 	SupportUpgradeHTTPOpVer int64 = version172
 )
 
@@ -1338,13 +1340,25 @@ func checkOrSyncUpgrade(s Session, ver int64) {
 		return
 	}
 
-	isUpgrading, err := IsUpgradingClusterState(s)
-	if err != nil {
-		logutil.BgLogger().Fatal("get global state failed", zap.String("category", "upgrading"), zap.Error(err))
-	}
-	if !isUpgrading {
-		logutil.BgLogger().Fatal("global state isn't upgrading, please send a request to start the upgrade first",
-			zap.String("category", "upgrading"), zap.Error(err))
+	interval := 200 * time.Millisecond
+	retryTimes := int(time.Duration(internalSQLTimeout) * time.Second / interval)
+	for i := 0; i < retryTimes; i++ {
+		isUpgrading, err := IsUpgradingClusterState(s)
+		if err == nil {
+			if isUpgrading {
+				break
+			}
+			logutil.BgLogger().Fatal("global state isn't upgrading, please send a request to start the upgrade first",
+				zap.String("category", "upgrading"), zap.Error(err))
+		}
+
+		if i == retryTimes-1 {
+			logutil.BgLogger().Fatal("get global state failed", zap.String("category", "upgrading"), zap.Error(err))
+		}
+		if i%10 == 0 {
+			logutil.BgLogger().Warn("get global state failed", zap.String("category", "upgrading"), zap.Error(err))
+		}
+		time.Sleep(interval)
 	}
 	logutil.BgLogger().Info("global state is upgrading", zap.String("category", "upgrading"),
 		zap.Int64("old version", ver), zap.Int64("latest version", currentBootstrapVersion))
