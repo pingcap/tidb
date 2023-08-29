@@ -691,7 +691,7 @@ func calculateFileBytes(ctx context.Context,
 	}
 	defer reader.Close()
 
-	compressReader, err := storage.NewLimitedInterceptReader(reader, compressType, offset)
+	compressReader, err := storage.NewLimitedInterceptReader(reader, compressType, storage.DecompressConfig{}, offset)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}

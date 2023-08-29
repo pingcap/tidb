@@ -650,6 +650,7 @@ func OpenReader(
 	ctx context.Context,
 	fileMeta *SourceFileMeta,
 	store storage.ExternalStorage,
+	decompressCfg storage.DecompressConfig,
 ) (reader storage.ReadSeekCloser, err error) {
 	switch {
 	case fileMeta.Type == SourceTypeParquet:
@@ -659,7 +660,7 @@ func OpenReader(
 		if err2 != nil {
 			return nil, err2
 		}
-		reader, err = storage.WithCompression(store, compressType).Open(ctx, fileMeta.Path)
+		reader, err = storage.WithCompression(store, compressType, decompressCfg).Open(ctx, fileMeta.Path)
 	default:
 		reader, err = store.Open(ctx, fileMeta.Path)
 	}
