@@ -103,6 +103,7 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 	}
 
 	physicalPlan.AddProcessor(planner.ProcessorSpec{
+		ID: len(inputStreams),
 		Input: planner.InputSpec{
 			ColumnTypes: []byte{
 				// Checksum_crc64_xor, Total_kvs, Total_bytes, ReadRowCnt, LoadedRowCnt, ColSizeMap
