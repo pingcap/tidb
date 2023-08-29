@@ -125,11 +125,10 @@ func (r *RangeSplitter) Close() error {
 }
 
 // SplitOneRangesGroup splits one group of ranges. `endKeyOfGroup` represents the
-// end key of the group, but it maybe be nil when the group is the last one.
+// end key of the group, but it will be nil when the group is the last one.
 // `dataFiles` and `statFiles` are all the files that have overlapping key ranges
 // in this group.
 // `rangeSplitKeys` are the internal split keys of the ranges in this group.
-// TODO(lance6716): endKeyOfGroup maybe or must be nil when the group is the last one?
 func (r *RangeSplitter) SplitOneRangesGroup() (
 	endKeyOfGroup kv.Key,
 	dataFiles []string,

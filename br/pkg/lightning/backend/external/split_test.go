@@ -286,3 +286,51 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	require.Len(t, splitKeys, 0)
 	require.NoError(t, splitter.Close())
 }
+
+func TestExactlyKeyNum(t *testing.T) {
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+	kvNum := 3
+
+	keys := make([][]byte, kvNum)
+	values := make([][]byte, kvNum)
+	for i := range keys {
+		keys[i] = []byte(fmt.Sprintf("key%03d", i))
+		values[i] = []byte(fmt.Sprintf("value%03d", i))
+	}
+
+	subDir := "/mock-test"
+
+	writer := NewWriterBuilder().
+		SetMemorySizeLimit(15).
+		SetPropSizeDistance(1).
+		SetPropKeysDistance(1).
+		Build(memStore, subDir, 5)
+
+	dataFiles, statFiles, err := MockExternalEngineWithWriter(memStore, writer, subDir, keys, values)
+	require.NoError(t, err)
+
+	// maxRangeKeys = 3
+	splitter, err := NewRangeSplitter(
+		ctx, dataFiles, statFiles, memStore, 1000, 100, 1000, 3,
+	)
+	require.NoError(t, err)
+	endKey, splitDataFiles, splitStatFiles, splitKeys, err := splitter.SplitOneRangesGroup()
+	require.NoError(t, err)
+	require.Nil(t, endKey)
+	require.Equal(t, dataFiles, splitDataFiles)
+	require.Equal(t, statFiles, splitStatFiles)
+	require.Len(t, splitKeys, 0)
+
+	// rangesGroupKeys = 3
+	splitter, err = NewRangeSplitter(
+		ctx, dataFiles, statFiles, memStore, 1000, 3, 1000, 1,
+	)
+	require.NoError(t, err)
+	endKey, splitDataFiles, splitStatFiles, splitKeys, err = splitter.SplitOneRangesGroup()
+	require.NoError(t, err)
+	require.Nil(t, endKey)
+	require.Equal(t, dataFiles, splitDataFiles)
+	require.Equal(t, statFiles, splitStatFiles)
+	require.Equal(t, [][]byte{[]byte("key001"), []byte("key002")}, splitKeys)
+}
