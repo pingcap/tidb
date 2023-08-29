@@ -455,7 +455,8 @@ func (stm *TaskManager) StartSubtask(id int64) error {
 
 // StartManager insert the manager information into dist_framework_meta.
 func (stm *TaskManager) StartManager(tidbID string, role string) error {
-	_, err := stm.executeSQLWithNewSession(stm.ctx, `insert into mysql.dist_framework_meta values(%?, %?)`, tidbID, role)
+	_, err := stm.executeSQLWithNewSession(stm.ctx, `insert into mysql.dist_framework_meta values(%?, %?)
+        on duplicate key update role = %?`, tidbID, role, role)
 	return err
 }
 

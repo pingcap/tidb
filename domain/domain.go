@@ -1462,7 +1462,7 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager, serverID string) {
 	err := schedulerManager.Start()
 	if err != nil {
-		logutil.BgLogger().Error("dist task scheduler failed")
+		logutil.BgLogger().Error("dist task scheduler failed", zap.Error(err))
 		return
 	}
 	logutil.BgLogger().Info("dist task scheduler started")
