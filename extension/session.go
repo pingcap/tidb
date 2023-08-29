@@ -26,8 +26,9 @@ import (
 // ConnEventInfo is the connection info for the event
 type ConnEventInfo struct {
 	*variable.ConnectionInfo
-	ActiveRoles []*auth.RoleIdentity
-	Error       error
+	SessionAlias string
+	ActiveRoles  []*auth.RoleIdentity
+	Error        error
 }
 
 // ConnEventTp is the type of the connection event
@@ -66,6 +67,8 @@ type StmtEventInfo interface {
 	CurrentDB() string
 	// ConnectionInfo returns the connection info of the current session
 	ConnectionInfo() *variable.ConnectionInfo
+	// SessionAlias returns the session alias value set by user
+	SessionAlias() string
 	// StmtNode returns the parsed ast of the statement
 	// When parse error, this method will return a nil value
 	StmtNode() ast.StmtNode

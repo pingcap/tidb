@@ -76,6 +76,53 @@ func TestStatsLockAndUnlockTable(t *testing.T) {
 	require.Equal(t, int64(2), tblStats2.RealtimeCount)
 }
 
+func TestStatsLockTableRepeatedly(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b))")
+	tk.MustExec("analyze table test.t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+
+	handle := domain.GetDomain(tk.Session()).StatsHandle()
+	tblStats := handle.GetTableStats(tbl.Meta())
+	for _, col := range tblStats.Columns {
+		require.True(t, col.IsStatsInitialized())
+	}
+	tk.MustExec("lock stats t")
+
+	rows := tk.MustQuery("select count(*) from mysql.stats_table_locked").Rows()
+	num, _ := strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, num, 1)
+
+	tk.MustExec("insert into t(a, b) values(1,'a')")
+	tk.MustExec("insert into t(a, b) values(2,'b')")
+
+	tk.MustExec("analyze table test.t")
+	tblStats1 := handle.GetTableStats(tbl.Meta())
+	require.Equal(t, tblStats, tblStats1)
+
+	// Lock the table again and check the warning.
+	tableLocked1 := handle.GetTableLockedAndClearForTest()
+	tk.MustExec("lock stats t")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1105 skip locking locked table: test.t",
+	))
+
+	err = handle.LoadLockedTables()
+	require.Nil(t, err)
+	tableLocked2 := handle.GetTableLockedAndClearForTest()
+	require.Equal(t, tableLocked1, tableLocked2)
+}
+
 func TestStatsLockAndUnlockTables(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()

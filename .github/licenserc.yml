@@ -48,4 +48,5 @@ header:
     - "build/image/.ci_bazel"
     - "**/OWNERS"
     - "OWNERS_ALIASES"
+    - "disttask/framework/mock/*_mock.go"
   comment: on-failure

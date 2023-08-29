@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package statistics_test
+package cardinality_test
 
 import (
 	"bytes"
@@ -28,9 +28,9 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/planner/cardinality"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
@@ -58,7 +58,7 @@ func TestTraceCE(t *testing.T) {
 			Trace []*tracing.CETraceRecord
 		}
 	)
-	traceSuiteData := statistics.GetTraceSuiteData()
+	traceSuiteData := cardinality.GetCardinalitySuiteData()
 	traceSuiteData.LoadTestCases(t, &in, &out)
 
 	// Load needed statistics.
@@ -200,7 +200,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 			ResultForV2 interface{}
 		}
 	)
-	traceSuiteData := statistics.GetTraceSuiteData()
+	traceSuiteData := cardinality.GetCardinalitySuiteData()
 	traceSuiteData.LoadTestCases(t, &in, &out)
 
 	// Trigger loading needed statistics.
@@ -248,7 +248,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(tblInfos[i], dsSchemaCols[i])
-		_, _, err = histColl.Selectivity(sctx, selConditions[i], nil)
+		_, _, err = cardinality.Selectivity(sctx, histColl, selConditions[i], nil)
 		require.NoError(t, err, sql, "For ver2")
 		traceInfo := stmtCtx.OptimizerDebugTrace
 		buf.Reset()
@@ -272,7 +272,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(tblInfos[i], dsSchemaCols[i])
-		_, _, err = histColl.Selectivity(sctx, selConditions[i], nil)
+		_, _, err = cardinality.Selectivity(sctx, histColl, selConditions[i], nil)
 		require.NoError(t, err, sql, "For ver1")
 		traceInfo := stmtCtx.OptimizerDebugTrace
 		buf.Reset()

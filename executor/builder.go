@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/executor/internal/pdhelper"
 	"github.com/pingcap/tidb/executor/internal/querywatch"
 	"github.com/pingcap/tidb/executor/internal/vecgroupchecker"
+	"github.com/pingcap/tidb/executor/lockstats"
 	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -1072,7 +1073,7 @@ func (b *executorBuilder) buildLoadStats(v *plannercore.LoadStats) exec.Executor
 }
 
 func (b *executorBuilder) buildLockStats(v *plannercore.LockStats) exec.Executor {
-	e := &LockStatsExec{
+	e := &lockstats.LockExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, v.ID()),
 		Tables:       v.Tables,
 	}
@@ -1080,7 +1081,7 @@ func (b *executorBuilder) buildLockStats(v *plannercore.LockStats) exec.Executor
 }
 
 func (b *executorBuilder) buildUnlockStats(v *plannercore.UnlockStats) exec.Executor {
-	e := &UnlockStatsExec{
+	e := &lockstats.UnlockExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, v.ID()),
 		Tables:       v.Tables,
 	}

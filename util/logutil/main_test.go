@@ -22,6 +22,9 @@ import (
 )
 
 const (
+	// zapLogWithoutCheckKeyPattern is used to match the zap log format but do not check some specified key, such as the following log:
+	// [2019/02/13 15:56:05.385 +08:00] [INFO] [log_test.go:167] ["info message"]["str key"=val] ["int key"=123]
+	zapLogWithoutCheckKeyPattern = `\[\d\d\d\d/\d\d/\d\d \d\d:\d\d:\d\d.\d\d\d\ (\+|-)\d\d:\d\d\] \[(FATAL|ERROR|WARN|INFO|DEBUG)\] \[([\w_%!$@.,+~-]+|\\.)+:\d+\] \[.*\] (\[.*=.*\]).*\n`
 	// zapLogPatern is used to match the zap log format, such as the following log:
 	// [2019/02/13 15:56:05.385 +08:00] [INFO] [log_test.go:167] ["info message"] [conn=conn1] ["str key"=val] ["int key"=123]
 	zapLogWithConnIDPattern = `\[\d\d\d\d/\d\d/\d\d \d\d:\d\d:\d\d.\d\d\d\ (\+|-)\d\d:\d\d\] \[(FATAL|ERROR|WARN|INFO|DEBUG)\] \[([\w_%!$@.,+~-]+|\\.)+:\d+\] \[.*\] \[conn=.*\] (\[.*=.*\]).*\n`

@@ -1,10 +1,10 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//      http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -12,20 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package local
+package common
 
 import (
 	"math"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/util/codec"
 )
 
-// KeyAdapter is used to encode and decode keys.
+// KeyAdapter is used to encode and decode keys so that duplicate key can be
+// identified by rowID and avoid overwritten.
 type KeyAdapter interface {
-	// Encode encodes the key with its corresponding rowID. It appends the encoded key to dst and returns the
-	// resulting slice. The encoded key is guaranteed to be in ascending order for comparison.
+	// Encode encodes the key with its corresponding rowID. It appends the encoded
+	// key to dst and returns the resulting slice. The encoded key is guaranteed to
+	// be in ascending order for comparison.
+	// rowID must be a coded mem-comparable value, one way to get it is to use
+	// tidb/util/codec package.
 	Encode(dst []byte, key []byte, rowID []byte) []byte
 
 	// Decode decodes the original key to dst. It appends the encoded key to dst and returns the resulting slice.
@@ -45,25 +48,32 @@ func reallocBytes(b []byte, n int) []byte {
 	return b
 }
 
-type noopKeyAdapter struct{}
+// NoopKeyAdapter is a key adapter that does nothing.
+type NoopKeyAdapter struct{}
 
-func (noopKeyAdapter) Encode(dst []byte, key []byte, _ []byte) []byte {
+// Encode implements KeyAdapter.
+func (NoopKeyAdapter) Encode(dst []byte, key []byte, _ []byte) []byte {
 	return append(dst, key...)
 }
 
-func (noopKeyAdapter) Decode(dst []byte, data []byte) ([]byte, error) {
+// Decode implements KeyAdapter.
+func (NoopKeyAdapter) Decode(dst []byte, data []byte) ([]byte, error) {
 	return append(dst, data...), nil
 }
 
-func (noopKeyAdapter) EncodedLen(key []byte, _ []byte) int {
+// EncodedLen implements KeyAdapter.
+func (NoopKeyAdapter) EncodedLen(key []byte, _ []byte) int {
 	return len(key)
 }
 
-var _ KeyAdapter = noopKeyAdapter{}
+var _ KeyAdapter = NoopKeyAdapter{}
 
-type dupDetectKeyAdapter struct{}
+// DupDetectKeyAdapter is a key adapter that appends rowID to the key to avoid
+// overwritten.
+type DupDetectKeyAdapter struct{}
 
-func (dupDetectKeyAdapter) Encode(dst []byte, key []byte, rowID []byte) []byte {
+// Encode implements KeyAdapter.
+func (DupDetectKeyAdapter) Encode(dst []byte, key []byte, rowID []byte) []byte {
 	dst = codec.EncodeBytes(dst, key)
 	dst = reallocBytes(dst, len(rowID)+2)
 	dst = append(dst, rowID...)
@@ -72,7 +82,8 @@ func (dupDetectKeyAdapter) Encode(dst []byte, key []byte, rowID []byte) []byte {
 	return dst
 }
 
-func (dupDetectKeyAdapter) Decode(dst []byte, data []byte) ([]byte, error) {
+// Decode implements KeyAdapter.
+func (DupDetectKeyAdapter) Decode(dst []byte, data []byte) ([]byte, error) {
 	if len(data) < 2 {
 		return nil, errors.New("insufficient bytes to decode value")
 	}
@@ -96,14 +107,15 @@ func (dupDetectKeyAdapter) Decode(dst []byte, data []byte) ([]byte, error) {
 	return append(dst, key...), nil
 }
 
-func (dupDetectKeyAdapter) EncodedLen(key []byte, rowID []byte) int {
+// EncodedLen implements KeyAdapter.
+func (DupDetectKeyAdapter) EncodedLen(key []byte, rowID []byte) int {
 	return codec.EncodedBytesLength(len(key)) + len(rowID) + 2
 }
 
-var _ KeyAdapter = dupDetectKeyAdapter{}
+var _ KeyAdapter = DupDetectKeyAdapter{}
 
 // static vars for rowID
 var (
-	MinRowID  = common.EncodeIntRowID(math.MinInt64)
-	ZeroRowID = common.EncodeIntRowID(0)
+	MinRowID  = EncodeIntRowID(math.MinInt64)
+	ZeroRowID = EncodeIntRowID(0)
 )
