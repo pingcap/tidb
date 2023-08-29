@@ -335,7 +335,7 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, handle TaskFlowHandle, me
 	// 4. filter by role.
 	serverNodes, err = d.filterByRole(serverNodes)
 
-	logutil.Logger(d.logCtx).Info("ywq test eligible instances", zap.Int("num", len(serverNodes)))
+	logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
 
 	if err != nil {
 		return err
