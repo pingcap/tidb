@@ -278,23 +278,9 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 		}
 		return
 	}
-	var (
-		ok   bool
-		col  *expression.Column
-		cast *expression.ScalarFunction
-	)
+	var col *expression.Column
+	var ok bool
 	if col, ok = expr.GetArgs()[0].(*expression.Column); ok {
-		ft = col.RetType
-		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
-		if err != nil {
-			return nil
-		}
-		op = expr.FuncName.L
-	} else if cast, ok = expr.GetArgs()[0].(*expression.ScalarFunction); ok && cast.FuncName.L == ast.Cast {
-		// deconstructing the column out.
-		if col, ok = cast.GetArgs()[0].(*expression.Column); !ok {
-			return nil
-		}
 		ft = col.RetType
 		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
 		if err != nil {
@@ -304,13 +290,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 	} else {
 		col, ok = expr.GetArgs()[1].(*expression.Column)
 		if !ok {
-			// deconstructing the column out.
-			if cast, ok = expr.GetArgs()[1].(*expression.ScalarFunction); !(ok && cast.FuncName.L == ast.Cast) {
-				return nil
-			}
-			if col, ok = cast.GetArgs()[0].(*expression.Column); !ok {
-				return nil
-			}
+			return nil
 		}
 		ft = col.RetType
 		value, err = expr.GetArgs()[0].Eval(chunk.Row{})

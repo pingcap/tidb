@@ -214,15 +214,6 @@ func (c *conditionChecker) matchColumn(expr expression.Expression) bool {
 	return false
 }
 
-func (c *conditionChecker) downcastMatchColumn(expr expression.Expression) bool {
-	if c.checkerCol != nil {
-		if f, ok := expr.(*expression.ScalarFunction); ok && f.FuncName.L == ast.Cast {
-			return c.checkerCol.EqualByExprAndID(nil, f.GetArgs()[0])
-		}
-	}
-	return false
-}
-
 func (c *conditionChecker) checkColumn(expr expression.Expression) (isAccessCond, shouldReserve bool) {
 	if c.matchColumn(expr) {
 		return true, !c.isFullLengthColumn()

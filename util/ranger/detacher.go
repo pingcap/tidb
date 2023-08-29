@@ -102,70 +102,65 @@ func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.
 // in function which is `column in (constant list)`.
 // If so, it will return the offset of this column in the slice, otherwise return -1 for not found.
 // Since combining `x >= 2` and `x <= 2` can lead to an eq condition `x = 2`, we take le/ge/lt/gt into consideration.
-// 1@param: return the expression passed, returning the new expression if it's downcast.
-// 2@param: indicate the expression returned is changed or not.
-// 3@param: indicate the related column offset with the expression.
-func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expression, cols []*expression.Column) (expression.Expression, int) {
+func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expression, cols []*expression.Column) int {
 	f, ok := expr.(*expression.ScalarFunction)
 	if !ok {
-		return expr, -1
+		return -1
 	}
 	_, collation := expr.CharsetAndCollation()
 	switch f.FuncName.L {
 	case ast.LogicOr:
 		dnfItems := expression.FlattenDNFConditions(f)
 		offset := int(-1)
-		downcastItems := make([]expression.Expression, len(dnfItems))
-		for i, dnfItem := range dnfItems {
-			newExpr, curOffset := getPotentialEqOrInColOffset(sctx, dnfItem, cols)
+		for _, dnfItem := range dnfItems {
+			curOffset := getPotentialEqOrInColOffset(sctx, dnfItem, cols)
 			if curOffset == -1 {
-				return expr, -1
+				return -1
 			}
 			if offset != -1 && curOffset != offset {
-				return expr, -1
+				return -1
 			}
-			downcastItems[i] = newExpr
 			offset = curOffset
 		}
-		return expr, offset
+		return offset
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
 		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
-				return expr, -1
+				return -1
 			}
 			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
-				return expr, -1
+				return -1
 			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
 				val, err := constVal.Eval(chunk.Row{})
 				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
 					// treat col<=>null as range scan instead of point get to avoid incorrect results
 					// when nullable unique index has multiple matches for filter x is null
-					return expr, -1
+					return -1
 				}
 				for i, col := range cols {
 					// When cols are a generated expression col, compare them in terms of virtual expr.
 					if col.EqualByExprAndID(nil, c) {
-						return expr, i
+						return i
 					}
 				}
 			}
 		}
 		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
-				return expr, -1
+				return -1
 			}
 			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
-				return expr, -1
+				return -1
 			}
 			if constVal, ok := f.GetArgs()[0].(*expression.Constant); ok {
 				val, err := constVal.Eval(chunk.Row{})
 				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
-					return expr, -1
+					return -1
 				}
 				for i, col := range cols {
 					if col.Equal(nil, c) {
-						return expr, i
+						return i
 					}
 				}
 			}
@@ -173,23 +168,23 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 	case ast.In:
 		c, ok := f.GetArgs()[0].(*expression.Column)
 		if !ok {
-			return expr, -1
+			return -1
 		}
 		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
-			return expr, -1
+			return -1
 		}
 		for _, arg := range f.GetArgs()[1:] {
 			if _, ok := arg.(*expression.Constant); !ok {
-				return expr, -1
+				return -1
 			}
 		}
 		for i, col := range cols {
 			if col.Equal(nil, c) {
-				return expr, i
+				return i
 			}
 		}
 	}
-	return expr, -1
+	return -1
 }
 
 type cnfItemRangeResult struct {
@@ -621,7 +616,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 	columnValues := make([]*valueInfo, len(cols))
 	offsets := make([]int, len(conditions))
 	for i, cond := range conditions {
-		cond, offset := getPotentialEqOrInColOffset(sctx, cond, cols)
+		offset := getPotentialEqOrInColOffset(sctx, cond, cols)
 		offsets[i] = offset
 		if offset == -1 {
 			continue
@@ -1207,7 +1202,7 @@ func AddExpr4EqAndInCondition(sctx sessionctx.Context, conditions []expression.E
 	// e.g. the original condition is `WHERE b = 100 AND a = 200 AND c = 300`, the definition of
 	// index is (tidb_shard(a), a, b), then accesses is "[a = 200, b = 100]"
 	for i, cond := range conditions {
-		cond, offset := getPotentialEqOrInColOffset(sctx, cond, cols)
+		offset := getPotentialEqOrInColOffset(sctx, cond, cols)
 		offsets[i] = offset
 		if offset == -1 {
 			continue
