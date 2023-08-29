@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"sort"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
@@ -28,20 +30,23 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/tikv/client-go/v2/tikv"
-	"sort"
 )
 
 type litBackfillFlowHandle struct {
-	d DDL
+	d *ddl
 }
 
 var _ dispatcher.TaskFlowHandle = (*litBackfillFlowHandle)(nil)
 
 // NewLitBackfillFlowHandle creates a new litBackfillFlowHandle.
-func NewLitBackfillFlowHandle(d DDL) dispatcher.TaskFlowHandle {
-	return &litBackfillFlowHandle{
-		d: d,
+func NewLitBackfillFlowHandle(d DDL) (dispatcher.TaskFlowHandle, error) {
+	ddl, ok := d.(*ddl)
+	if !ok {
+		return nil, errors.New("The getDDL result should be the type of *ddl")
 	}
+	return &litBackfillFlowHandle{
+		d: ddl,
+	}, nil
 }
 
 func (*litBackfillFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
@@ -53,17 +58,13 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatc
 	if err = json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
 		return nil, err
 	}
-	d, ok := h.d.(*ddl)
-	if !ok {
-		return nil, errors.New("The getDDL result should be the type of *ddl")
-	}
 	job := &globalTaskMeta.Job
-	tblInfo, err := getTblInfo(d, job)
+	tblInfo, err := getTblInfo(h.d, job)
 	var subTaskMetas [][]byte
 	if tblInfo.Partition == nil {
 		switch gTask.Step {
 		case proto.StepInit:
-			subtaskMeta, err := generateNonPartitionPlan(d, tblInfo, job)
+			subtaskMeta, err := generateNonPartitionPlan(h.d, tblInfo, job)
 			if err != nil {
 				return nil, err
 			}
