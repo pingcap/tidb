@@ -29,7 +29,7 @@ import (
 )
 
 // Stats logger.
-var log = logutil.BgLogger().With(zap.String("category", "stats"))
+var statsLogger = logutil.BgLogger().With(zap.String("category", "stats"))
 
 // AddLockedTables add locked tables id to store.
 func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.TableName, maxChunkSize int) (string, error) {
@@ -60,7 +60,7 @@ func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.Table
 		tableLocked = append(tableLocked, row.GetInt64(0))
 	}
 
-	log.Info("lock table", zap.Int64s("tableIDs", tids))
+	statsLogger.Info("lock table", zap.Int64s("tableIDs", tids))
 
 	// Insert locked tables.
 	for i, tid := range tids {
