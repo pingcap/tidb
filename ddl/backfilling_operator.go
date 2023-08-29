@@ -185,7 +185,7 @@ func (src *TableScanTaskSource) generateTasks() error {
 		for _, task := range batchTasks {
 			select {
 			case <-src.ctx.Done():
-				return nil
+				return src.ctx.Err()
 			case src.sink.Channel() <- task:
 			}
 		}
@@ -278,7 +278,7 @@ func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecord
 	if w.se == nil {
 		sessCtx, err := w.sessPool.Get()
 		if err != nil {
-			logutil.Logger(w.ctx).Error("copReqSender get session from pool failed", zap.Error(err))
+			logutil.Logger(w.ctx).Error("tableScanWorker get session from pool failed", zap.Error(err))
 			sender(IndexRecordChunk{Err: err})
 			return
 		}
@@ -316,6 +316,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		return rs.Close()
 	})
 	if err != nil {
+		// TODO(tangenta): cancel operator instead of sending error to sink.
 		idxResult.Err = err
 		sender(idxResult)
 	}
@@ -402,7 +403,12 @@ type indexIngestWorker struct {
 	srcChunkPool chan *chunk.Chunk
 }
 
-func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, sender func(IndexWriteResult)) {
+func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWriteResult)) {
+	defer func() {
+		if rs.Chunk != nil {
+			w.srcChunkPool <- rs.Chunk
+		}
+	}()
 	result := IndexWriteResult{
 		ID:  rs.ID,
 		Err: rs.Err,
@@ -411,29 +417,26 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, sender func(IndexWri
 		sessCtx, err := w.sessPool.Get()
 		if err != nil {
 			result.Err = err
-			sender(result)
+			send(result)
 			return
 		}
 		w.se = session.NewSession(sessCtx)
 	}
-	defer func() {
-		w.srcChunkPool <- rs.Chunk
-	}()
 	if result.Err != nil {
 		logutil.Logger(w.ctx).Error("encounter error when handle index chunk",
 			zap.Int("id", rs.ID), zap.Error(rs.Err))
-		sender(result)
+		send(result)
 		return
 	}
 	count, nextKey, err := w.WriteLocal(&rs)
 	if err != nil {
 		result.Err = err
-		sender(result)
+		send(result)
 		return
 	}
 	if count == 0 {
-		logutil.Logger(w.ctx).Info("finish a table scan task", zap.Int("id", rs.ID))
-		sender(result)
+		logutil.Logger(w.ctx).Info("finish a index ingest task", zap.Int("id", rs.ID))
+		send(result)
 		return
 	}
 	result.Added = count
@@ -441,7 +444,7 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, sender func(IndexWri
 	if ResultCounterForTest != nil && result.Err == nil {
 		ResultCounterForTest.Add(1)
 	}
-	sender(result)
+	send(result)
 }
 
 func (*indexIngestWorker) Close() {

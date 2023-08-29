@@ -36,6 +36,7 @@ type Worker[T, R any] interface {
 // WorkerPool is a pool of workers.
 type WorkerPool[T, R any] struct {
 	ctx           context.Context
+	cancel        context.CancelFunc
 	name          string
 	numWorkers    int32
 	originWorkers int32
@@ -103,7 +104,7 @@ func (p *WorkerPool[T, R]) Start(ctx context.Context) {
 		}
 	}
 
-	p.ctx = ctx
+	p.ctx, p.cancel = context.WithCancel(ctx)
 
 	for i := 0; i < int(p.numWorkers); i++ {
 		p.runAWorker()
@@ -224,6 +225,9 @@ func (p *WorkerPool[T, R]) Wait() {
 
 // Release releases the pool.
 func (p *WorkerPool[T, R]) Release() {
+	if p.cancel != nil {
+		p.cancel()
+	}
 	if p.resChan != nil {
 		close(p.resChan)
 		p.resChan = nil
