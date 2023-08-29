@@ -130,11 +130,10 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	} else {
 		for !req.IsFull() && e.Idx < e.partitionList[0].NumRow() {
-			row, err := e.partitionList[0].GetSortedRow(e.Idx)
+			_, _, err := e.partitionList[0].GetSortedRowAndAlwaysAppendToChunk(e.Idx, req)
 			if err != nil {
 				return err
 			}
-			req.AppendRow(row)
 			e.Idx++
 		}
 	}
@@ -145,11 +144,13 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	if e.multiWayMerge == nil {
 		e.multiWayMerge = &multiWayMerge{e.lessRow, e.compressRow, make([]partitionPointer, 0, len(e.partitionList))}
 		for i := 0; i < len(e.partitionList); i++ {
-			row, err := e.partitionList[i].GetSortedRow(0)
+			chk := chunk.New(retTypes(e), 1, 1)
+
+			row, _, err := e.partitionList[i].GetSortedRowAndAlwaysAppendToChunk(0, chk)
 			if err != nil {
 				return err
 			}
-			e.multiWayMerge.elements = append(e.multiWayMerge.elements, partitionPointer{row: row, partitionID: i, consumed: 0})
+			e.multiWayMerge.elements = append(e.multiWayMerge.elements, partitionPointer{chk: chk, row: row, partitionID: i, consumed: 0})
 		}
 		heap.Init(e.multiWayMerge)
 	}
@@ -158,12 +159,14 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 		partitionPtr := e.multiWayMerge.elements[0]
 		req.AppendRow(partitionPtr.row)
 		partitionPtr.consumed++
+		partitionPtr.chk.Reset()
 		if partitionPtr.consumed >= e.partitionList[partitionPtr.partitionID].NumRow() {
 			heap.Remove(e.multiWayMerge, 0)
 			continue
 		}
-		partitionPtr.row, err = e.partitionList[partitionPtr.partitionID].
-			GetSortedRow(partitionPtr.consumed)
+
+		partitionPtr.row, _, err = e.partitionList[partitionPtr.partitionID].
+			GetSortedRowAndAlwaysAppendToChunk(partitionPtr.consumed, partitionPtr.chk)
 		if err != nil {
 			return err
 		}
@@ -288,6 +291,7 @@ func (e *SortExec) compressRow(rowI, rowJ chunk.Row) int {
 }
 
 type partitionPointer struct {
+	chk         *chunk.Chunk
 	row         chunk.Row
 	partitionID int
 	consumed    int

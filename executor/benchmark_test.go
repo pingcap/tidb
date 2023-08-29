@@ -1887,6 +1887,17 @@ func defaultSortTestCase() *sortCase {
 	return tc
 }
 
+func sortTestCaseWithMemoryLimit(bytesLimit int64) *sortCase {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(-1, bytesLimit)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, bytesLimit)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	tc := &sortCase{rows: 300000, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
+	return tc
+}
+
 func benchmarkSortExec(b *testing.B, cas *sortCase) {
 	opt := mockDataSourceParameters{
 		schema: expression.NewSchema(cas.columns()...),
@@ -1933,7 +1944,20 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 func BenchmarkSortExec(b *testing.B) {
 	b.ReportAllocs()
 	cas := defaultSortTestCase()
-	// all random data
+	benchmarkSortExecDerivateCases(b, cas)
+}
+
+func BenchmarkSortExecSpillToDisk(b *testing.B) {
+	enableTmpStorageOnOOMCurrentVal := variable.EnableTmpStorageOnOOM.Load()
+	variable.EnableTmpStorageOnOOM.Store(true)
+	defer variable.EnableTmpStorageOnOOM.Store(enableTmpStorageOnOOMCurrentVal)
+
+	b.ReportAllocs()
+	cas := sortTestCaseWithMemoryLimit(1)
+	benchmarkSortExecDerivateCases(b, cas)
+}
+
+func benchmarkSortExecDerivateCases(b *testing.B, cas *sortCase) {
 	cas.ndvs = []int{0, 0}
 	cas.orderByIdx = []int{0, 1}
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {

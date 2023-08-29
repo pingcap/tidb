@@ -264,12 +264,13 @@ func (c *RowContainer) GetChunk(chkIdx int) (*Chunk, error) {
 
 // GetRow returns the row the ptr pointed to.
 func (c *RowContainer) GetRow(ptr RowPtr) (row Row, err error) {
-	row, _, err = c.GetRowAndAppendToChunk(ptr, nil)
+	row, _, err = c.GetRowAndAppendToChunkIfInDisk(ptr, nil)
 	return row, err
 }
 
-// GetRowAndAppendToChunk gets a Row from the RowContainer by RowPtr.
-func (c *RowContainer) GetRowAndAppendToChunk(ptr RowPtr, chk *Chunk) (row Row, _ *Chunk, err error) {
+// GetRowAndAppendToChunkIfInDisk gets a Row from the RowContainer by RowPtr. If the container has spilled, the row will
+// be appended to the chunk. It'll return `nil` chunk if the container hasn't spilled, or it returns an error.
+func (c *RowContainer) GetRowAndAppendToChunkIfInDisk(ptr RowPtr, chk *Chunk) (row Row, _ *Chunk, err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	if c.alreadySpilled() {
@@ -279,6 +280,23 @@ func (c *RowContainer) GetRowAndAppendToChunk(ptr RowPtr, chk *Chunk) (row Row, 
 		return c.m.records.inDisk.GetRowAndAppendToChunk(ptr, chk)
 	}
 	return c.m.records.inMemory.GetRow(ptr), nil, nil
+}
+
+// GetRowAndAlwaysAppendToChunk gets a Row from the RowContainer by RowPtr. Unlike `GetRowAndAppendToChunkIfInDisk`, this
+// function always appends the row to the chunk, without considering whether it has spilled.
+// It'll return `nil` chunk if it returns an error, or the chunk will be the same with the argument.
+func (c *RowContainer) GetRowAndAlwaysAppendToChunk(ptr RowPtr, chk *Chunk) (row Row, _ *Chunk, err error) {
+	row, retChk, err := c.GetRowAndAppendToChunkIfInDisk(ptr, chk)
+	if err != nil {
+		return row, nil, err
+	}
+
+	if retChk == nil {
+		// The container hasn't spilled, and the row is not appended to the chunk, so append the chunk explicitly here
+		chk.AppendRow(row)
+	}
+
+	return row, chk, nil
 }
 
 // GetMemTracker returns the memory tracker in records, panics if the RowContainer has already spilled.
@@ -565,6 +583,14 @@ func (c *SortedRowContainer) GetSortedRow(idx int) (Row, error) {
 	defer c.ptrM.RUnlock()
 	ptr := c.ptrM.rowPtrs[idx]
 	return c.RowContainer.GetRow(ptr)
+}
+
+// GetSortedRowAndAlwaysAppendToChunk returns the row the idx pointed to.
+func (c *SortedRowContainer) GetSortedRowAndAlwaysAppendToChunk(idx int, chk *Chunk) (Row, *Chunk, error) {
+	c.ptrM.RLock()
+	defer c.ptrM.RUnlock()
+	ptr := c.ptrM.rowPtrs[idx]
+	return c.RowContainer.GetRowAndAlwaysAppendToChunk(ptr, chk)
 }
 
 // ActionSpill returns a SortAndSpillDiskAction for sorting and spilling over to disk.
