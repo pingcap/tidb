@@ -16,6 +16,7 @@ package handler
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
@@ -90,7 +91,7 @@ func (h ClusterUpgradeHandler) StartUpgrade() (hasDone bool, err error) {
 		return true, nil
 	}
 
-	err = session.SyncUpgradeState(se)
+	err = session.SyncUpgradeState(se, 10*time.Second)
 	return false, err
 }
 
