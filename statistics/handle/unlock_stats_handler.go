@@ -17,6 +17,7 @@ package handle
 import (
 	"context"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/statistics/handle/cache"
@@ -98,22 +99,19 @@ func updateStatsAndUnlockTable(ctx context.Context, exec sqlexec.SQLExecutor, ti
 	}
 	cache.TableRowStatsCache.Invalidate(tid)
 
-	if _, err := exec.ExecuteInternal(ctx, "DELETE FROM mysql.stats_table_locked WHERE table_id = %?", tid); err != nil {
-		return err
-	}
-
-	return nil
+	_, err = exec.ExecuteInternal(ctx, "DELETE FROM mysql.stats_table_locked WHERE table_id = %?", tid)
+	return err
 }
 
 // getStatsDeltaFromTableLocked get count, modify_count and version for the given table from mysql.stats_table_locked.
 func getStatsDeltaFromTableLocked(ctx context.Context, tableID int64, exec sqlexec.SQLExecutor, maxChunkSize int) (count, modifyCount int64, version uint64, err error) {
 	recordSet, err := exec.ExecuteInternal(ctx, "SELECT count, modify_count, version FROM mysql.stats_table_locked WHERE table_id = %?", tableID)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, errors.Trace(err)
 	}
 	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, maxChunkSize)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, errors.Trace(err)
 	}
 	if len(rows) == 0 {
 		return 0, 0, 0, nil
