@@ -738,6 +738,40 @@ func noPrecisionLossCastCompatible(cast, argCol *types.FieldType) bool {
 	return true
 }
 
+func unwrapCast(sctx sessionctx.Context, parentF *ScalarFunction, castOffset int) (Expression, bool) {
+	_, collation := parentF.CharsetAndCollation()
+	cast, ok := parentF.GetArgs()[castOffset].(*ScalarFunction)
+	if !ok || cast.FuncName.L != ast.Cast {
+		return parentF, false
+	}
+	// eg: if (cast(A) EQ const) with incompatible collation, even if cast is eliminated, the condition still can not be used to build range.
+	if cast.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(cast.RetType.GetCollate(), collation) {
+		return parentF, false
+	}
+	// 1-castOffset should be constant
+	if _, ok := parentF.GetArgs()[1-castOffset].(*Constant); !ok {
+		return parentF, false
+	}
+
+	// the direct args of cast function should be column.
+	c, ok := cast.GetArgs()[0].(*Column)
+	if !ok {
+		return parentF, false
+	}
+
+	// current only consider varchar and integer
+	if !noPrecisionLossCastCompatible(cast.RetType, c.RetType) {
+		return parentF, false
+	}
+
+	// the column is covered by indexes, deconstructing it out.
+	if castOffset == 0 {
+		return NewFunctionInternal(sctx, parentF.FuncName.L, parentF.RetType, c, parentF.GetArgs()[1]), true
+	} else {
+		return NewFunctionInternal(sctx, parentF.FuncName.L, parentF.RetType, parentF.GetArgs()[0], c), true
+	}
+}
+
 // eliminateCastFunction will detect the original arg before and the cast type after, once upon
 // there is no precision loss between them, current cast wrapper can be eliminated. For string
 // type, collation is also taken into consideration. (mainly used to build range or point)
@@ -782,58 +816,12 @@ func eliminateCastFunction(sctx sessionctx.Context, expr Expression) (_ Expressi
 		return expr, false
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
 		// for case: eq(cast(test.t2.a, varchar(100), "aaaaa"), once t2.a is covered by index or pk, try deconstructing it out.
-		if cast, ok := f.GetArgs()[0].(*ScalarFunction); ok && cast.FuncName.L == ast.Cast {
-			// eg: if (cast(A) EQ const) with incompatible collation, even if cast is eliminated, the condition still can not be used to build range.
-			if cast.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(cast.RetType.GetCollate(), collation) {
-				return expr, false
-			}
-			if constVal, ok := f.GetArgs()[1].(*Constant); ok {
-				val, err := constVal.Eval(chunk.Row{})
-				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
-					// treat col<=>null as range scan instead of point get to avoid incorrect results
-					// when nullable unique index has multiple matches for filter x is null
-					return expr, false
-				}
-				// the direct args of cast function should be column.
-				c, ok := cast.GetArgs()[0].(*Column)
-				if !ok {
-					return expr, false
-				}
-
-				// current only consider varchar and integer
-				if !noPrecisionLossCastCompatible(cast.RetType, c.RetType) {
-					return expr, false
-				}
-
-				// the column is covered by indexes, deconstructing it out.
-				return NewFunctionInternal(sctx, f.FuncName.L, f.RetType, c, f.GetArgs()[1]), true
-			}
+		if newF, ok := unwrapCast(sctx, f, 0); ok {
+			return newF, true
 		}
 		// for case: eq("aaaaa"， cast(test.t2.a, varchar(100)), once t2.a is covered by index or pk, try deconstructing it out.
-		if cast, ok := f.GetArgs()[1].(*ScalarFunction); ok && cast.FuncName.L == ast.Cast {
-			// eg: if (cast(A) EQ const) with incompatible collation, even if cast is eliminated, the condition still can not be used to build range.
-			if cast.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(cast.RetType.GetCollate(), collation) {
-				return expr, false
-			}
-			if constVal, ok := f.GetArgs()[0].(*Constant); ok {
-				val, err := constVal.Eval(chunk.Row{})
-				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
-					// treat col<=>null as range scan instead of point get to avoid incorrect results
-					// when nullable unique index has multiple matches for filter x is null
-					return expr, false
-				}
-				// the direct args of cast function should be column.
-				c, ok := cast.GetArgs()[0].(*Column)
-				if !ok {
-					return expr, false
-				}
-
-				// current only consider varchar and integer
-				if !noPrecisionLossCastCompatible(cast.RetType, c.RetType) {
-					return expr, false
-				}
-				return NewFunctionInternal(sctx, f.FuncName.L, f.RetType, f.GetArgs()[0], c), true
-			}
+		if newF, ok := unwrapCast(sctx, f, 1); ok {
+			return newF, true
 		}
 	case ast.In:
 		// case for: cast(a<int> as bigint) in (1,2,3), we could deconstruct column 'a out directly.
