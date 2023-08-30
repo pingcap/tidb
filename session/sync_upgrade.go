@@ -29,35 +29,50 @@ import (
 	"go.uber.org/zap"
 )
 
+// isContextDone checks if context is done.
+func isContextDone(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+	}
+	return false
+}
+
 // SyncUpgradeState syncs upgrade state to etcd.
 func SyncUpgradeState(s sessionctx.Context, timeout time.Duration) error {
 	ctx, cancelFunc := context.WithTimeout(context.Background(), timeout)
 	defer cancelFunc()
 	dom := domain.GetDomain(s)
 	err := dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateUpgrading))
+	logger := logutil.BgLogger().With(zap.String("category", "upgrading"))
 	if err != nil {
-		logutil.BgLogger().Error("update global state failed", zap.String("category", "upgrading"), zap.String("state", syncer.StateUpgrading), zap.Error(err))
+		logger.Error("update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
 		return err
 	}
 
 	interval := 200 * time.Millisecond
-	retryTimes := int(timeout / interval)
+	retryTimes := int(timeout/interval) + 1
 	for i := 0; i < retryTimes; i++ {
-		op, err := owner.GetOwnerOpValue(ctx, dom.EtcdClient(), ddl.DDLOwnerKey, "upgrade bootstrap")
+		if isContextDone(ctx) {
+			logger.Error("get owner op failed", zap.Duration("timeout", timeout), zap.Error(err))
+			return ctx.Err()
+		}
+
+		var op owner.OpType
+		childCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		op, err = owner.GetOwnerOpValue(childCtx, dom.EtcdClient(), ddl.DDLOwnerKey, "upgrade bootstrap")
+		cancel()
 		if err == nil && op.String() == owner.OpGetUpgradingState.String() {
 			break
 		}
-		if i == retryTimes-1 {
-			logutil.BgLogger().Error("get owner op failed", zap.String("category", "upgrading"), zap.Stringer("state", op), zap.Error(err))
-			return err
-		}
 		if i%10 == 0 {
-			logutil.BgLogger().Warn("get owner op failed", zap.String("category", "upgrading"), zap.Stringer("state", op), zap.Error(err))
+			logger.Warn("get owner op failed", zap.Stringer("state", op), zap.Error(err))
 		}
 		time.Sleep(interval)
 	}
 
-	logutil.BgLogger().Info("update global state to upgrading", zap.String("category", "upgrading"), zap.String("state", syncer.StateUpgrading))
+	logger.Info("update global state to upgrading", zap.String("state", syncer.StateUpgrading))
 	return nil
 }
 
@@ -72,12 +87,13 @@ func SyncNormalRunning(s sessionctx.Context) error {
 		}
 	})
 
+	logger := logutil.BgLogger().With(zap.String("category", "upgrading"))
 	jobErrs, err := ddl.ResumeAllJobsBySystem(s)
 	if err != nil {
-		logutil.BgLogger().Warn("resume all paused jobs failed", zap.String("category", "upgrading"), zap.Error(err))
+		logger.Warn("resume all paused jobs failed", zap.Error(err))
 	}
 	for _, e := range jobErrs {
-		logutil.BgLogger().Warn("resume the job failed ", zap.String("category", "upgrading"), zap.Error(e))
+		logger.Warn("resume the job failed", zap.Error(e))
 	}
 
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -85,10 +101,10 @@ func SyncNormalRunning(s sessionctx.Context) error {
 	dom := domain.GetDomain(s)
 	err = dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateNormalRunning))
 	if err != nil {
-		logutil.BgLogger().Error("update global state to normal failed", zap.String("category", "upgrading"), zap.Error(err))
+		logger.Error("update global state to normal failed", zap.Error(err))
 		return err
 	}
-	logutil.BgLogger().Info("update global state to normal running finished", zap.String("category", "upgrading"))
+	logger.Info("update global state to normal running finished")
 	return nil
 }
 
@@ -114,26 +130,26 @@ func checkOrSyncUpgrade(s Session, ver int64) {
 }
 
 func isUpgradingClusterStateWithRetry(s sessionctx.Context, oldVer, newVer int64, timeout time.Duration) {
+	now := time.Now()
 	interval := 200 * time.Millisecond
-	retryTimes := int(timeout / interval)
+	retryTimes := int(timeout/interval) + 1
+	logger := logutil.BgLogger().With(zap.String("category", "upgrading"))
 	for i := 0; i < retryTimes; i++ {
 		isUpgrading, err := IsUpgradingClusterState(s)
 		if err == nil {
 			if isUpgrading {
 				break
 			}
-			logutil.BgLogger().Fatal("global state isn't upgrading, please send a request to start the upgrade first",
-				zap.String("category", "upgrading"), zap.Error(err))
+			logger.Fatal("global state isn't upgrading, please send a request to start the upgrade first", zap.Error(err))
 		}
 
-		if i == retryTimes-1 {
-			logutil.BgLogger().Fatal("get global state failed", zap.String("category", "upgrading"), zap.Error(err))
+		if time.Since(now) >= timeout {
+			logger.Fatal("get global state failed", zap.Error(err))
 		}
 		if i%10 == 0 {
-			logutil.BgLogger().Warn("get global state failed", zap.String("category", "upgrading"), zap.Error(err))
+			logger.Warn("get global state failed", zap.Error(err))
 		}
 		time.Sleep(interval)
 	}
-	logutil.BgLogger().Info("global state is upgrading", zap.String("category", "upgrading"),
-		zap.Int64("old version", oldVer), zap.Int64("latest version", newVer))
+	logger.Info("global state is upgrading", zap.Int64("old version", oldVer), zap.Int64("latest version", newVer))
 }
