@@ -3926,7 +3926,7 @@
         ],
         "Plan": [
           "TableReader 1.00 root partition:p0,pDef data:Selection",
-          "└─Selection 1.00 cop[tikv]  or(eq(test_partition.t1.a, 1), 0)",
+          "└─Selection 1.00 cop[tikv]  eq(test_partition.t1.a, 1)",
           "  └─TableFullScan 11.00 cop[tikv] table:t1 keep order:false"
         ],
         "IndexPlan": [
