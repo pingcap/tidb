@@ -49,14 +49,12 @@ func (e *UnlockExec) Next(context.Context, *chunk.Chunk) error {
 		return err
 	}
 
-	sv := e.Ctx().GetSessionVars()
-
-	msg, err := h.RemoveLockedTables(tids, pids, e.Tables, sv.MaxChunkSize)
+	msg, err := h.RemoveLockedTables(tids, pids, e.Tables)
 	if err != nil {
 		return err
 	}
 	if msg != "" {
-		sv.StmtCtx.AppendWarning(errors.New(msg))
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
 	}
 
 	return nil

@@ -25,7 +25,7 @@ import (
 )
 
 // RemoveLockedTables remove tables from table locked array
-func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.TableName, maxChunkSize int) (string, error) {
+func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 

@@ -33,11 +33,18 @@ const (
 	unlockedStatus = "unlocked"
 )
 
-// Stats logger.
-var statsLogger = logutil.BgLogger().With(zap.String("category", "stats"))
+var (
+	// maxChunkSize is the max chunk size for load locked tables.
+	// We use 1024 as the default value, which is the same as the default value of session.maxChunkSize.
+	// The reason why we don't use session.maxChunkSize is that we don't want to introduce a new dependency.
+	// See: https://github.com/pingcap/tidb/pull/46478#discussion_r1308786474
+	maxChunkSize = 1024
+	// Stats logger.
+	statsLogger = logutil.BgLogger().With(zap.String("category", "stats"))
+)
 
 // AddLockedTables add locked tables id to store.
-func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.TableName, maxChunkSize int) (string, error) {
+func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -122,7 +129,7 @@ func insertIntoStatsTableLocked(ctx context.Context, exec sqlexec.SQLExecutor, t
 }
 
 // LoadLockedTables load locked tables from store
-func (h *Handle) LoadLockedTables(maxChunkSize int) error {
+func (h *Handle) LoadLockedTables() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
