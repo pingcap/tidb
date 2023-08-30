@@ -429,6 +429,48 @@ func TestBindingSymbolList(t *testing.T) {
 	require.NotNil(t, bind.UpdateTime)
 }
 
+// TestBindingInListWithSingleLiteral tests sql with "IN (Lit)", fixes #44298
+func TestBindingInListWithSingleLiteral(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b));")
+	tk.MustExec("insert into t value(1, 1);")
+
+	// GIVEN
+	sqlcmd := "select a, b from t where a in (1)"
+	binding := `create global binding for select a, b from t where a in (1, 2, 3) using select a, b from t use index (ib) where a in (1, 2, 3)`
+
+	// before binding
+	tk.MustQuery(sqlcmd)
+	require.Equal(t, "t:ia", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex(sqlcmd, "ia(a)"))
+
+	tk.MustExec(binding)
+
+	// after binding
+	tk.MustQuery(sqlcmd)
+	require.Equal(t, "t:ib", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex(sqlcmd, "ib(b)"))
+
+	// Normalize
+	sql, hash := parser.NormalizeDigest("select a, b from test . t where a in (1)")
+
+	bindData := dom.BindHandle().GetBindRecord(hash.String(), sql, "test")
+	require.NotNil(t, bindData)
+	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` in ( ... )", bindData.OriginalSQL)
+	bind := bindData.Bindings[0]
+	require.Equal(t, "SELECT `a`,`b` FROM `test`.`t` USE INDEX (`ib`) WHERE `a` IN (1,2,3)", bind.BindSQL)
+	require.Equal(t, "test", bindData.Db)
+	require.Equal(t, bindinfo.Enabled, bind.Status)
+	require.NotNil(t, bind.Charset)
+	require.NotNil(t, bind.Collation)
+	require.NotNil(t, bind.CreateTime)
+	require.NotNil(t, bind.UpdateTime)
+}
+
 func TestDMLSQLBind(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

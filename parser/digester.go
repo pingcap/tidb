@@ -193,6 +193,7 @@ func (d *sqlDigester) normalize(sql string, keepHint bool) {
 		}
 
 		d.reduceLit(&currTok)
+		d.reduceInListWithSingleLiteral(&currTok)
 
 		if currTok.tok == identifier {
 			if strings.HasPrefix(currTok.lit, "_") {
@@ -294,15 +295,7 @@ func (d *sqlDigester) reduceLit(currTok *token) {
 		return
 	}
 
-	// IN (lit) => IN (...)
 	last4 := d.tokens.back(4)
-	if d.isSingleLiteralInList(last4) {
-		d.tokens.popBack(2)
-		d.tokens.pushBack(token{genericSymbolList, "..."})
-		d.tokens.pushBack(last4[0])
-		return
-	}
-
 	// Aggressive reduce lists.
 	if d.isGenericLists(last4) {
 		d.tokens.popBack(4)
@@ -340,6 +333,16 @@ func (d *sqlDigester) isGenericLists(last4 []token) bool {
 		return false
 	}
 	return true
+}
+
+func (d *sqlDigester) reduceInListWithSingleLiteral(currTok *token) {
+	// IN (lit) => IN (...)
+	last3 := d.tokens.back(3)
+	if d.isSingleLiteralInList(last3, currTok) {
+		d.tokens.popBack(1)
+		d.tokens.pushBack(token{genericSymbolList, "..."})
+		return
+	}
 }
 
 func (d *sqlDigester) isPrefixByUnary(currTok int) (isUnary bool) {
@@ -388,12 +391,12 @@ func (d *sqlDigester) isGenericList(last2 []token) (generic bool) {
 	return
 }
 
-func (d *sqlDigester) isSingleLiteralInList(last4 []token) (generic bool) {
-	if len(last4) < 4 {
+func (d *sqlDigester) isSingleLiteralInList(last3 []token, currToken *token) (generic bool) {
+	if len(last3) < 3 {
 		return false
 	}
 
-	if d.isLeftParen(last4[3]) && d.isInKeyword(last4[2]) && last4[1].tok == genericSymbol && d.isRightParen(last4[0]) {
+	if d.isInKeyword(last3[0]) && d.isLeftParen(last3[1]) && last3[2].tok == genericSymbol && d.isRightParen(*currToken) {
 		return true
 	}
 	return false
