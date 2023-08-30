@@ -52,8 +52,7 @@ func SyncUpgradeState(s sessionctx.Context, timeout time.Duration) error {
 	}
 
 	interval := 200 * time.Millisecond
-	retryTimes := int(timeout/interval) + 1
-	for i := 0; i < retryTimes; i++ {
+	for i := 0; ; i++ {
 		if isContextDone(ctx) {
 			logger.Error("get owner op failed", zap.Duration("timeout", timeout), zap.Error(err))
 			return ctx.Err()
@@ -132,9 +131,8 @@ func checkOrSyncUpgrade(s Session, ver int64) {
 func isUpgradingClusterStateWithRetry(s sessionctx.Context, oldVer, newVer int64, timeout time.Duration) {
 	now := time.Now()
 	interval := 200 * time.Millisecond
-	retryTimes := int(timeout/interval) + 1
 	logger := logutil.BgLogger().With(zap.String("category", "upgrading"))
-	for i := 0; i < retryTimes; i++ {
+	for i := 0; ; i++ {
 		isUpgrading, err := IsUpgradingClusterState(s)
 		if err == nil {
 			if isUpgrading {
