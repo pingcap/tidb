@@ -3073,6 +3073,11 @@ func TestAlterTableExchangePartition(t *testing.T) {
 
 func TestExchangePartitionTableCompatiable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	restoreConfig := config.RestoreFunc()
+	defer restoreConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
 	type testCase struct {
 		ptSQL       string
 		ntSQL       string
@@ -3289,6 +3294,12 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 			"create temporary table nt34 (id int);",
 			"alter table pt34 exchange partition p0 with table nt34;",
 			dbterror.ErrPartitionExchangeTempTable,
+		},
+		{
+			"create table pt35 (a int, b int, unique index(b)) partition by hash(a) partitions 1;",
+			"create table nt35 (a int, b int, unique index(b));",
+			"alter table pt35 exchange partition p0 with table nt35;",
+			dbterror.ErrPartitionExchangeDifferentOption,
 		},
 	}
 
