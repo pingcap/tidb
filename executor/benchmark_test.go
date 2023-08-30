@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/executor/aggregate"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -215,7 +216,7 @@ func (mds *mockDataSource) Next(ctx context.Context, req *chunk.Chunk) error {
 func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 	baseExec := exec.NewBaseExecutor(opt.ctx, opt.schema, 0)
 	m := &mockDataSource{baseExec, opt, nil, nil, 0}
-	rTypes := retTypes(m)
+	rTypes := exec.RetTypes(m)
 	colData := make([][]interface{}, len(rTypes))
 	for i := 0; i < len(rTypes); i++ {
 		colData[i] = m.genColDatums(i)
@@ -223,12 +224,12 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 
 	m.genData = make([]*chunk.Chunk, (m.p.rows+m.MaxChunkSize()-1)/m.MaxChunkSize())
 	for i := range m.genData {
-		m.genData[i] = chunk.NewChunkWithCapacity(retTypes(m), m.MaxChunkSize())
+		m.genData[i] = chunk.NewChunkWithCapacity(exec.RetTypes(m), m.MaxChunkSize())
 	}
 
 	for i := 0; i < m.p.rows; i++ {
 		idx := i / m.MaxChunkSize()
-		retTypes := retTypes(m)
+		retTypes := exec.RetTypes(m)
 		for colIdx := 0; colIdx < len(rTypes); colIdx++ {
 			switch retTypes[colIdx].GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
@@ -298,7 +299,7 @@ func buildHashAggExecutor(ctx sessionctx.Context, src exec.Executor, schema *exp
 	plan.SetChildren(nil)
 	b := newExecutorBuilder(ctx, nil, nil)
 	exec := b.build(plan)
-	hashAgg := exec.(*HashAggExec)
+	hashAgg := exec.(*aggregate.HashAggExec)
 	hashAgg.SetChildren(0, src)
 	return exec
 }
@@ -407,7 +408,7 @@ func benchmarkAggExecWithCase(b *testing.B, casTest *aggTestCase) {
 		b.StopTimer() // prepare a new agg-executor
 		aggExec := buildAggExecutor(b, casTest, dataSource)
 		tmpCtx := context.Background()
-		chk := newFirstChunk(aggExec)
+		chk := exec.NewFirstChunk(aggExec)
 		dataSource.prepareChunks()
 
 		b.StartTimer()
@@ -644,7 +645,7 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 		schema := expression.NewSchema(childCols...)
 		windowExec := buildWindowExecutor(casTest.ctx, casTest.windowFunc, casTest.numFunc, casTest.frame, dataSource, schema, childCols[1:2], casTest.concurrency, casTest.dataSourceSorted)
 		tmpCtx := context.Background()
-		chk := newFirstChunk(windowExec)
+		chk := exec.NewFirstChunk(windowExec)
 		dataSource.prepareChunks()
 
 		b.StartTimer()
@@ -919,8 +920,8 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 			isOuterJoin:     false,
 			useOuterToBuild: testCase.useOuterToBuild,
 			concurrency:     uint(testCase.concurrency),
-			probeTypes:      retTypes(outerExec),
-			buildTypes:      retTypes(innerExec),
+			probeTypes:      exec.RetTypes(outerExec),
+			buildTypes:      exec.RetTypes(innerExec),
 		},
 		probeSideTupleFetcher: &probeSideTupleFetcher{
 			probeSideExec: outerExec,
@@ -934,7 +935,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 
 	childrenUsedSchema := markChildrenUsedColsForTest(e.Schema(), e.Children(0).Schema(), e.Children(1).Schema())
 	defaultValues := make([]types.Datum, e.buildWorker.buildSideExec.Schema().Len())
-	lhsTypes, rhsTypes := retTypes(innerExec), retTypes(outerExec)
+	lhsTypes, rhsTypes := exec.RetTypes(innerExec), exec.RetTypes(outerExec)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.probeWorkers[i] = &probeWorker{
 			workerID:    i,
@@ -1016,19 +1017,19 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 
 func benchmarkHashJoinExec(b *testing.B, casTest *hashJoinTestCase, opt1, opt2 *mockDataSource, testResult bool) {
 	b.StopTimer()
-	exec := prepare4HashJoin(casTest, opt1, opt2)
+	executor := prepare4HashJoin(casTest, opt1, opt2)
 	tmpCtx := context.Background()
-	chk := newFirstChunk(exec)
+	chk := exec.NewFirstChunk(executor)
 	opt1.prepareChunks()
 	opt2.prepareChunks()
 
 	totalRow := 0
 	b.StartTimer()
-	if err := exec.Open(tmpCtx); err != nil {
+	if err := executor.Open(tmpCtx); err != nil {
 		b.Fatal(err)
 	}
 	for {
-		if err := exec.Next(tmpCtx, chk); err != nil {
+		if err := executor.Next(tmpCtx, chk); err != nil {
 			b.Fatal(err)
 		}
 		if chk.NumRows() == 0 {
@@ -1039,12 +1040,12 @@ func benchmarkHashJoinExec(b *testing.B, casTest *hashJoinTestCase, opt1, opt2 *
 
 	if testResult {
 		time.Sleep(200 * time.Millisecond)
-		if spilled := exec.rowContainer.alreadySpilledSafeForTest(); spilled != casTest.disk {
+		if spilled := executor.rowContainer.alreadySpilledSafeForTest(); spilled != casTest.disk {
 			b.Fatal("wrong usage with disk:", spilled, casTest.disk)
 		}
 	}
 
-	if err := exec.Close(); err != nil {
+	if err := executor.Close(); err != nil {
 		b.Fatal(err)
 	}
 	b.StopTimer()
@@ -1345,7 +1346,7 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 	outerCols, innerCols := tc.columns(), tc.columns()
 	joinSchema := expression.NewSchema(outerCols...)
 	joinSchema.Append(innerCols...)
-	leftTypes, rightTypes := retTypes(outerDS), retTypes(innerDS)
+	leftTypes, rightTypes := exec.RetTypes(outerDS), exec.RetTypes(innerDS)
 	defaultValues := make([]types.Datum, len(innerCols))
 	colLens := make([]int, len(innerCols))
 	for i := range colLens {
@@ -1382,7 +1383,7 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 		keyOff2IdxOff: keyOff2IdxOff,
 		lastColHelper: nil,
 	}
-	e.joinResult = newFirstChunk(e)
+	e.joinResult = exec.NewFirstChunk(e)
 	return e, nil
 }
 
@@ -1412,7 +1413,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 	for _, keyIdx := range tc.innerJoinKeyIdx {
 		innerJoinKeys = append(innerJoinKeys, innerCols[keyIdx])
 	}
-	leftTypes, rightTypes := retTypes(outerDS), retTypes(innerDS)
+	leftTypes, rightTypes := exec.RetTypes(outerDS), exec.RetTypes(innerDS)
 	defaultValues := make([]types.Datum, len(innerCols))
 	colLens := make([]int, len(innerCols))
 	for i := range colLens {
@@ -1485,15 +1486,15 @@ func benchmarkIndexJoinExecWithCase(
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
-		var exec exec.Executor
+		var executor exec.Executor
 		var err error
 		switch execType {
 		case indexInnerHashJoin:
-			exec, err = prepare4IndexInnerHashJoin(tc, outerDS, innerDS)
+			executor, err = prepare4IndexInnerHashJoin(tc, outerDS, innerDS)
 		case indexOuterHashJoin:
-			exec, err = prepare4IndexOuterHashJoin(tc, outerDS, innerDS)
+			executor, err = prepare4IndexOuterHashJoin(tc, outerDS, innerDS)
 		case indexMergeJoin:
-			exec, err = prepare4IndexMergeJoin(tc, outerDS, innerDS)
+			executor, err = prepare4IndexMergeJoin(tc, outerDS, innerDS)
 		}
 
 		if err != nil {
@@ -1501,16 +1502,16 @@ func benchmarkIndexJoinExecWithCase(
 		}
 
 		tmpCtx := context.Background()
-		chk := newFirstChunk(exec)
+		chk := exec.NewFirstChunk(executor)
 		outerDS.prepareChunks()
 		innerDS.prepareChunks()
 
 		b.StartTimer()
-		if err = exec.Open(tmpCtx); err != nil {
+		if err = executor.Open(tmpCtx); err != nil {
 			b.Fatal(err)
 		}
 		for {
-			if err := exec.Next(tmpCtx, chk); err != nil {
+			if err := executor.Next(tmpCtx, chk); err != nil {
 				b.Fatal(err)
 			}
 			if chk.NumRows() == 0 {
@@ -1518,7 +1519,7 @@ func benchmarkIndexJoinExecWithCase(
 			}
 		}
 
-		if err := exec.Close(); err != nil {
+		if err := executor.Close(); err != nil {
 			b.Fatal(err)
 		}
 		b.StopTimer()
@@ -1577,8 +1578,8 @@ func prepareMergeJoinExec(tc *mergeJoinTestCase, joinSchema *expression.Schema, 
 		false,
 		defaultValues,
 		nil,
-		retTypes(leftExec),
-		retTypes(rightExec),
+		exec.RetTypes(leftExec),
+		exec.RetTypes(rightExec),
 		tc.childrenUsedSchema,
 		false,
 	)
@@ -1789,23 +1790,23 @@ func benchmarkMergeJoinExecWithCase(b *testing.B, tc *mergeJoinTestCase, innerDS
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
-		var exec exec.Executor
+		var executor exec.Executor
 		switch joinType {
 		case innerMergeJoin:
-			exec = prepare4MergeJoin(tc, innerDS, outerDS, true, 2)
+			executor = prepare4MergeJoin(tc, innerDS, outerDS, true, 2)
 		}
 
 		tmpCtx := context.Background()
-		chk := newFirstChunk(exec)
+		chk := exec.NewFirstChunk(executor)
 		outerDS.prepareChunks()
 		innerDS.prepareChunks()
 
 		b.StartTimer()
-		if err := exec.Open(tmpCtx); err != nil {
+		if err := executor.Open(tmpCtx); err != nil {
 			b.Fatal(err)
 		}
 		for {
-			if err := exec.Next(tmpCtx, chk); err != nil {
+			if err := executor.Next(tmpCtx, chk); err != nil {
 				b.Fatal(err)
 			}
 			if chk.NumRows() == 0 {
@@ -1813,7 +1814,7 @@ func benchmarkMergeJoinExecWithCase(b *testing.B, tc *mergeJoinTestCase, innerDS
 			}
 		}
 
-		if err := exec.Close(); err != nil {
+		if err := executor.Close(); err != nil {
 			b.Fatal(err)
 		}
 		b.StopTimer()
@@ -1906,27 +1907,27 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 		ndvs:   cas.ndvs,
 	}
 	dataSource := buildMockDataSource(opt)
-	exec := &SortExec{
+	executor := &SortExec{
 		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 4, dataSource),
 		ByItems:      make([]*util.ByItems, 0, len(cas.orderByIdx)),
 		schema:       dataSource.Schema(),
 	}
 	for _, idx := range cas.orderByIdx {
-		exec.ByItems = append(exec.ByItems, &util.ByItems{Expr: cas.columns()[idx]})
+		executor.ByItems = append(executor.ByItems, &util.ByItems{Expr: cas.columns()[idx]})
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		tmpCtx := context.Background()
-		chk := newFirstChunk(exec)
+		chk := exec.NewFirstChunk(executor)
 		dataSource.prepareChunks()
 
 		b.StartTimer()
-		if err := exec.Open(tmpCtx); err != nil {
+		if err := executor.Open(tmpCtx); err != nil {
 			b.Fatal(err)
 		}
 		for {
-			if err := exec.Next(tmpCtx, chk); err != nil {
+			if err := executor.Next(tmpCtx, chk); err != nil {
 				b.Fatal(err)
 			}
 			if chk.NumRows() == 0 {
@@ -1934,7 +1935,7 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 			}
 		}
 
-		if err := exec.Close(); err != nil {
+		if err := executor.Close(); err != nil {
 			b.Fatal(err)
 		}
 		b.StopTimer()
@@ -2068,7 +2069,7 @@ func benchmarkLimitExec(b *testing.B, cas *limitCase) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		tmpCtx := context.Background()
-		chk := newFirstChunk(exe)
+		chk := exec.NewFirstChunk(exe)
 		dataSource.prepareChunks()
 
 		b.StartTimer()
@@ -2172,7 +2173,7 @@ func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
 		b.Run(fmt.Sprintf("MapRows %v", c.rowNum), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				aggMap := make(aggPartialResultMapper)
+				aggMap := make(aggregate.AggPartialResultMapper)
 				tempSlice := make([]aggfuncs.PartialResult, 10)
 				for num := 0; num < c.rowNum; num++ {
 					aggMap[strconv.Itoa(num)] = tempSlice

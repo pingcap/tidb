@@ -128,7 +128,7 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	req.GrowAndReset(len(rows))
-	mutableRow := chunk.MutRowFromTypes(retTypes(e))
+	mutableRow := chunk.MutRowFromTypes(exec.RetTypes(e))
 	for _, row := range rows {
 		mutableRow.SetDatums(row...)
 		req.AppendRow(mutableRow.ToRow())
