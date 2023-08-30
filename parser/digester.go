@@ -295,8 +295,8 @@ func (d *sqlDigester) reduceLit(currTok *token) {
 		return
 	}
 
-	last4 := d.tokens.back(4)
 	// Aggressive reduce lists.
+	last4 := d.tokens.back(4)
 	if d.isGenericLists(last4) {
 		d.tokens.popBack(4)
 		currTok.tok = genericSymbolList
