@@ -1357,7 +1357,7 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 
 	// 1-2. ignore real-time stats.
 	// Use pseudo stats table. The total row count is 10000.
-	testKit.MustExec("set @@tidb_opt_objective = 'determined'")
+	testKit.MustExec("set @@tidb_opt_objective = 'determinate'")
 	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(
 		"TableReader_7 3.33 root  data:Selection_6",
 		"└─Selection_6 3.33 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
@@ -1376,7 +1376,7 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	}
 	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
 	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(analyzedPlan...))
-	testKit.MustExec("set @@tidb_opt_objective = 'determined'")
+	testKit.MustExec("set @@tidb_opt_objective = 'determinate'")
 	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(analyzedPlan...))
 
 	// 3. Insert another 4 rows of data.
@@ -1396,6 +1396,6 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 
 	// 3-2. ignore real-time stats.
 	// The execution plan is the same as case 2.
-	testKit.MustExec("set @@tidb_opt_objective = 'determined'")
+	testKit.MustExec("set @@tidb_opt_objective = 'determinate'")
 	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(analyzedPlan...))
 }

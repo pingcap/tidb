@@ -1541,7 +1541,7 @@ type SessionVars struct {
 	// OptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
 	// For now, the possible values and corresponding behaviors are:
 	// OptObjectiveModerate: The default value. The optimizer considers the real-time stats (real-time row count, modify count).
-	// OptObjectiveDetermined: The optimizer doesn't consider the real-time stats.
+	// OptObjectiveDeterminate: The optimizer doesn't consider the real-time stats.
 	OptObjective string
 }
 
@@ -3632,8 +3632,8 @@ const (
 	// OptObjectiveModerate is a possible value and the default value for TiDBOptObjective.
 	// Please see comments of SessionVars.OptObjective for details.
 	OptObjectiveModerate string = "moderate"
-	// OptObjectiveDetermined is a possible value for TiDBOptObjective.
-	OptObjectiveDetermined = "determined"
+	// OptObjectiveDeterminate is a possible value for TiDBOptObjective.
+	OptObjectiveDeterminate = "determinate"
 )
 
 // GetOptObjective return the session variable "tidb_opt_objective".

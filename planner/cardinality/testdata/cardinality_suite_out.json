@@ -236,7 +236,7 @@
         ]
       },
       {
-        "SQL": "set @@tidb_opt_objective = 'determined'",
+        "SQL": "set @@tidb_opt_objective = 'determinate'",
         "Result": null
       },
       {

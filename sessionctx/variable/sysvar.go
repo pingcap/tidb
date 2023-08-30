@@ -2801,7 +2801,7 @@ var defaultSysVars = []*SysVar{
 		Name:           TiDBOptObjective,
 		Value:          DefTiDBOptObjective,
 		Type:           TypeEnum,
-		PossibleValues: []string{OptObjectiveModerate, OptObjectiveDetermined},
+		PossibleValues: []string{OptObjectiveModerate, OptObjectiveDeterminate},
 		SetSession: func(vars *SessionVars, s string) error {
 			vars.OptObjective = s
 			return nil
