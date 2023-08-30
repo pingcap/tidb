@@ -321,6 +321,7 @@ func AutoIncrementIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mIncIDPrefix, tableID))
 }
 
+// IsAutoIncrementIDKey checks whether the key is auto increment key.
 func IsAutoIncrementIDKey(key []byte) bool {
 	return strings.HasPrefix(string(key), mIncIDPrefix+":")
 }
