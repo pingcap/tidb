@@ -1038,7 +1038,20 @@ func TestResolveLockRangeInfine(t *testing.T) {
 		require.NoError(t, failpoint.Disable("tikvclient/invalidCacheAndRetry"))
 	}()
 
-	_, err := tikv.ResolveLocksForRange(gcContext(), s.gcWorker.lockResolver, 1, []byte{0}, []byte{1}, tikv.NewNoopBackoff, 10)
+	mockLockResolver := &mockGCWorkerLockResolver{
+		tikvStore: s.tikvStore,
+		scanLocks: func(key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
+			return []*txnlock.Lock{}, &tikv.KeyLocation{}
+		},
+		batchResolveLocks: func(
+			locks []*txnlock.Lock,
+			loc *tikv.KeyLocation,
+		) (*tikv.KeyLocation, error) {
+			// mock error to test backoff
+			return nil, errors.New("mock error")
+		},
+	}
+	_, err := tikv.ResolveLocksForRange(gcContext(), mockLockResolver, 1, []byte{0}, []byte{1}, tikv.NewNoopBackoff, 10)
 	require.Error(t, err)
 }
 
