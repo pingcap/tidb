@@ -1698,12 +1698,12 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
 		if len(accesses) > 0 && ds.statisticTable.Pseudo {
-			path.CountAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
+			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.statisticTable)
 		} else {
 			selectivity := path.CountAfterAccess / float64(ds.statisticTable.RealtimeCount)
 			for i := range accesses {
 				col := path.IdxCols[path.EqOrInCondCount+i]
-				ndv := ds.getColumnNDV(col.ID)
+				ndv := cardinality.EstimateColumnNDV(ds.statisticTable, col.ID)
 				ndv *= selectivity
 				if ndv < 1 {
 					ndv = 1.0
@@ -1849,12 +1849,12 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
 		if len(accesses) > 0 && ds.statisticTable.Pseudo {
-			path.CountAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
+			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.statisticTable)
 		} else {
 			selectivity := path.CountAfterAccess / float64(ds.statisticTable.RealtimeCount)
 			for i := range accesses {
 				col := path.IdxCols[path.EqOrInCondCount+i]
-				ndv := ds.getColumnNDV(col.ID)
+				ndv := cardinality.EstimateColumnNDV(ds.statisticTable, col.ID)
 				ndv *= selectivity
 				if ndv < 1 {
 					ndv = 1.0

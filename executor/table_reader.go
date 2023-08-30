@@ -285,7 +285,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 			}
 			var results []distsql.SelectResult
 			for _, kvReq := range kvReqs {
-				result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
+				result, err := e.SelectResult(ctx, e.Ctx(), kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 				if err != nil {
 					return nil, err
 				}
@@ -298,7 +298,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		if err != nil {
 			return nil, err
 		}
-		result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
+		result, err := e.SelectResult(ctx, e.Ctx(), kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 		if err != nil {
 			return nil, err
 		}
@@ -313,7 +313,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		}
 		var results []distsql.SelectResult
 		for _, kvReq := range kvReqs {
-			result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
+			result, err := e.SelectResult(ctx, e.Ctx(), kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 			if err != nil {
 				return nil, err
 			}
@@ -334,7 +334,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	})
 	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 
-	result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
+	result, err := e.SelectResult(ctx, e.Ctx(), kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 	if err != nil {
 		return nil, err
 	}

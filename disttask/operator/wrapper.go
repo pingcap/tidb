@@ -15,6 +15,7 @@
 package operator
 
 import (
+	"context"
 	"fmt"
 
 	"golang.org/x/sync/errgroup"
@@ -104,7 +105,7 @@ func (s *simpleOperator[T, R]) String() string {
 }
 
 func newSimpleOperator[T, R any](transform func(task T) R, concurrency int) *simpleOperator[T, R] {
-	asyncOp := NewAsyncOperatorWithTransform("simple", concurrency, transform)
+	asyncOp := NewAsyncOperatorWithTransform(context.Background(), "simple", concurrency, transform)
 	return &simpleOperator[T, R]{
 		AsyncOperator: asyncOp,
 	}

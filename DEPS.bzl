@@ -60,13 +60,13 @@ def go_deps():
         name = "co_honnef_go_tools",
         build_file_proto_mode = "disable_global",
         importpath = "honnef.co/go/tools",
-        sha256 = "bdd216490737b6cd0fe2655f574415606136f56033cc9f95c9d077c0227aa71c",
-        strip_prefix = "honnef.co/go/tools@v0.4.3",
+        sha256 = "3f7c266a830f3a0727ac0b85cd7cd74a765c05d337d73af20906219f1a4ec4c3",
+        strip_prefix = "honnef.co/go/tools@v0.4.5",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/honnef.co/go/tools/co_honnef_go_tools-v0.4.3.zip",
-            "http://ats.apps.svc/gomod/honnef.co/go/tools/co_honnef_go_tools-v0.4.3.zip",
-            "https://cache.hawkingrei.com/gomod/honnef.co/go/tools/co_honnef_go_tools-v0.4.3.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/honnef.co/go/tools/co_honnef_go_tools-v0.4.3.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/honnef.co/go/tools/co_honnef_go_tools-v0.4.5.zip",
+            "http://ats.apps.svc/gomod/honnef.co/go/tools/co_honnef_go_tools-v0.4.5.zip",
+            "https://cache.hawkingrei.com/gomod/honnef.co/go/tools/co_honnef_go_tools-v0.4.5.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/honnef.co/go/tools/co_honnef_go_tools-v0.4.5.zip",
         ],
     )
     go_repository(
@@ -5741,13 +5741,13 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sha256 = "1ddca1fa78d880aebb15ecfd7028a1c0d7d717b4e3a59200aa13d8623aa867b0",
-        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20230728080053-8a9db88bc88a",
+        sha256 = "e5ed8f109f8c7ef94d89d9006c27b6744beabbb8c785479fd8c0673680b301c5",
+        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20230825101459-934e842bfd6e",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230728080053-8a9db88bc88a.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230728080053-8a9db88bc88a.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230728080053-8a9db88bc88a.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230728080053-8a9db88bc88a.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230825101459-934e842bfd6e.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230825101459-934e842bfd6e.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230825101459-934e842bfd6e.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230825101459-934e842bfd6e.zip",
         ],
     )
     go_repository(
@@ -6112,6 +6112,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/rlmcpherson/s3gof3r/com_github_rlmcpherson_s3gof3r-v0.5.0.zip",
             "https://cache.hawkingrei.com/gomod/github.com/rlmcpherson/s3gof3r/com_github_rlmcpherson_s3gof3r-v0.5.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/rlmcpherson/s3gof3r/com_github_rlmcpherson_s3gof3r-v0.5.0.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_robfig_cron_v3",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/robfig/cron/v3",
+        sha256 = "ebe6454642220832a451b8cc50eae5f9150fd8d36b90b242a5de27676be86c70",
+        strip_prefix = "github.com/robfig/cron/v3@v3.0.1",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/robfig/cron/v3/com_github_robfig_cron_v3-v3.0.1.zip",
+            "http://ats.apps.svc/gomod/github.com/robfig/cron/v3/com_github_robfig_cron_v3-v3.0.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/robfig/cron/v3/com_github_robfig_cron_v3-v3.0.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/robfig/cron/v3/com_github_robfig_cron_v3-v3.0.1.zip",
         ],
     )
     go_repository(

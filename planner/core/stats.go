@@ -167,43 +167,6 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSche
 	return profile, nil
 }
 
-// getTotalRowCount returns the total row count, which is obtained when collecting colHist.
-func getTotalRowCount(statsTbl *statistics.Table, colHist *statistics.Column) int64 {
-	if colHist.IsFullLoad() {
-		return int64(colHist.TotalRowCount())
-	}
-	// If colHist is not fully loaded, we may still get its total row count from other index/column stats.
-	for _, idx := range statsTbl.Indices {
-		if idx.IsFullLoad() && idx.LastUpdateVersion == colHist.LastUpdateVersion {
-			return int64(idx.TotalRowCount())
-		}
-	}
-	for _, col := range statsTbl.Columns {
-		if col.IsFullLoad() && col.LastUpdateVersion == colHist.LastUpdateVersion {
-			return int64(col.TotalRowCount())
-		}
-	}
-	return 0
-}
-
-// getColumnNDV computes estimated NDV of specified column using the original
-// histogram of `DataSource` which is retrieved from storage(not the derived one).
-func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
-	hist, ok := ds.statisticTable.Columns[colID]
-	if ok && hist.IsStatsInitialized() {
-		ndv = float64(hist.Histogram.NDV)
-		// TODO: a better way to get the total row count derived from the last analyze.
-		analyzeCount := getTotalRowCount(ds.statisticTable, hist)
-		if analyzeCount > 0 {
-			factor := float64(ds.statisticTable.RealtimeCount) / float64(analyzeCount)
-			ndv *= factor
-		}
-	} else {
-		ndv = float64(ds.statisticTable.RealtimeCount) * distinctFactor
-	}
-	return ndv
-}
-
 func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.GroupNDV {
 	if colGroups == nil {
 		return nil
@@ -309,7 +272,7 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 	}
 
 	for _, col := range ds.schema.Columns {
-		tableStats.ColNDVs[col.UniqueID] = ds.getColumnNDV(col.ID)
+		tableStats.ColNDVs[col.UniqueID] = cardinality.EstimateColumnNDV(ds.statisticTable, col.ID)
 	}
 	ds.tableStats = tableStats
 	ds.tableStats.GroupNDVs = ds.getGroupNDVs(colGroups)
@@ -637,60 +600,6 @@ func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expressi
 	return lt.StatsInfo(), nil
 }
 
-func getGroupNDV4Cols(cols []*expression.Column, stats *property.StatsInfo) *property.GroupNDV {
-	if len(cols) == 0 || len(stats.GroupNDVs) == 0 {
-		return nil
-	}
-	cols = expression.SortColumns(cols)
-	for _, groupNDV := range stats.GroupNDVs {
-		if len(cols) != len(groupNDV.Cols) {
-			continue
-		}
-		match := true
-		for i, col := range groupNDV.Cols {
-			if col != cols[i].UniqueID {
-				match = false
-				break
-			}
-		}
-		if match {
-			return &groupNDV
-		}
-	}
-	return nil
-}
-
-// getColsNDVWithMatchedLen returns the NDV of a couple of columns.
-// If the columns match any GroupNDV maintained by child operator, we can get an accurate NDV.
-// Otherwise, we simply return the max NDV among the columns, which is a lower bound.
-func getColsNDVWithMatchedLen(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) (float64, int) {
-	ndv := 1.0
-	if groupNDV := getGroupNDV4Cols(cols, profile); groupNDV != nil {
-		return math.Max(groupNDV.NDV, ndv), len(groupNDV.Cols)
-	}
-	indices := schema.ColumnsIndices(cols)
-	if indices == nil {
-		logutil.BgLogger().Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
-		return ndv, 1
-	}
-	for _, idx := range indices {
-		// It is a very naive estimation.
-		col := schema.Columns[idx]
-		ndv = math.Max(ndv, profile.ColNDVs[col.UniqueID])
-	}
-	return ndv, 1
-}
-
-func getColsDNVWithMatchedLenFromUniqueIDs(ids []int64, schema *expression.Schema, profile *property.StatsInfo) (float64, int) {
-	cols := make([]*expression.Column, 0, len(ids))
-	for _, id := range ids {
-		cols = append(cols, &expression.Column{
-			UniqueID: id,
-		})
-	}
-	return getColsNDVWithMatchedLen(cols, schema, profile)
-}
-
 func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
 	if len(colGroups) == 0 || len(childProfile.GroupNDVs) == 0 {
 		return nil
@@ -741,7 +650,7 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 	})
 	for i, expr := range p.Exprs {
 		cols := expression.ExtractColumns(expr)
-		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = getColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
+		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = cardinality.EstimateColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
 	}
 	p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
 	return p.StatsInfo(), nil
@@ -784,7 +693,7 @@ func (*LogicalAggregation) getGroupNDVs(colGroups [][]*expression.Column, childP
 	// Note that gbyCols may not be the exact GROUP BY columns, e.g, GROUP BY a+b,
 	// but we have no other approaches for the NDV estimation of these cases
 	// except for using the independent assumption, unless we can use stats of expression index.
-	groupNDV := getGroupNDV4Cols(gbyCols, childProfile)
+	groupNDV := childProfile.GetGroupNDV4Cols(gbyCols)
 	if groupNDV == nil {
 		return nil
 	}
@@ -804,7 +713,7 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 		la.StatsInfo().GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols)
 		return la.StatsInfo(), nil
 	}
-	ndv, _ := getColsNDVWithMatchedLen(gbyCols, childSchema[0], childProfile)
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(gbyCols, childSchema[0], childProfile)
 	la.SetStats(&property.StatsInfo{
 		RowCount: ndv,
 		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
@@ -864,17 +773,12 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	}
 	leftProfile, rightProfile := childStats[0], childStats[1]
 	leftJoinKeys, rightJoinKeys, _, _ := p.GetJoinKeys()
-	helper := &fullJoinRowCountHelper{
-		sctx:          p.SCtx(),
-		cartesian:     0 == len(p.EqualConditions),
-		leftProfile:   leftProfile,
-		rightProfile:  rightProfile,
-		leftJoinKeys:  leftJoinKeys,
-		rightJoinKeys: rightJoinKeys,
-		leftSchema:    childSchema[0],
-		rightSchema:   childSchema[1],
-	}
-	p.equalCondOutCnt = helper.estimate()
+	p.equalCondOutCnt = cardinality.EstimateFullJoinRowCount(p.SCtx(),
+		0 == len(p.EqualConditions),
+		leftProfile, rightProfile,
+		leftJoinKeys, rightJoinKeys,
+		childSchema[0], childSchema[1],
+		nil, nil)
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.SetStats(&property.StatsInfo{
 			RowCount: leftProfile.RowCount * SelectionFactor,
@@ -942,42 +846,6 @@ func (p *LogicalJoin) ExtractColGroups(colGroups [][]*expression.Column) [][]*ex
 		extracted = append(extracted, colGroups[offset])
 	}
 	return extracted
-}
-
-type fullJoinRowCountHelper struct {
-	sctx          sessionctx.Context
-	cartesian     bool
-	leftProfile   *property.StatsInfo
-	rightProfile  *property.StatsInfo
-	leftJoinKeys  []*expression.Column
-	rightJoinKeys []*expression.Column
-	leftSchema    *expression.Schema
-	rightSchema   *expression.Schema
-
-	leftNAJoinKeys  []*expression.Column
-	rightNAJoinKeys []*expression.Column
-}
-
-func (h *fullJoinRowCountHelper) estimate() float64 {
-	if h.cartesian {
-		return h.leftProfile.RowCount * h.rightProfile.RowCount
-	}
-	var leftKeyNDV, rightKeyNDV float64
-	var leftColCnt, rightColCnt int
-	if len(h.leftJoinKeys) > 0 || len(h.rightJoinKeys) > 0 {
-		leftKeyNDV, leftColCnt = getColsNDVWithMatchedLen(h.leftJoinKeys, h.leftSchema, h.leftProfile)
-		rightKeyNDV, rightColCnt = getColsNDVWithMatchedLen(h.rightJoinKeys, h.rightSchema, h.rightProfile)
-	} else {
-		leftKeyNDV, leftColCnt = getColsNDVWithMatchedLen(h.leftNAJoinKeys, h.leftSchema, h.leftProfile)
-		rightKeyNDV, rightColCnt = getColsNDVWithMatchedLen(h.rightNAJoinKeys, h.rightSchema, h.rightProfile)
-	}
-	count := h.leftProfile.RowCount * h.rightProfile.RowCount / math.Max(leftKeyNDV, rightKeyNDV)
-	if h.sctx.GetSessionVars().TiDBOptJoinReorderThreshold <= 0 {
-		return count
-	}
-	// If we enable the DP choice, we multiple the 0.9 for each remained join key supposing that 0.9 is the correlation factor between them.
-	// This estimation logic is referred to Presto.
-	return count * math.Pow(0.9, float64(len(h.leftJoinKeys)-mathutil.Max(leftColCnt, rightColCnt)))
 }
 
 func (la *LogicalApply) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
@@ -1149,7 +1017,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 			p.StatsInfo().ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
 		}
 		if p.cte.IsDistinct {
-			p.StatsInfo().RowCount, _ = getColsNDVWithMatchedLen(p.schema.Columns, p.schema, p.StatsInfo())
+			p.StatsInfo().RowCount, _ = cardinality.EstimateColsNDVWithMatchedLen(p.schema.Columns, p.schema, p.StatsInfo())
 		} else {
 			p.StatsInfo().RowCount += recurStat.RowCount
 		}

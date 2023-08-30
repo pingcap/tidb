@@ -271,7 +271,9 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 		},
 		TLS: tlsConfig,
 	})
-	etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(store.GetCodec()))
+	if store.GetCodec().GetKeyspace() != nil {
+		etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespaceSlash(store.GetCodec()))
+	}
 	if err != nil {
 		panic(err)
 	}
@@ -325,7 +327,7 @@ func MockForTest(store kv.Storage) autoid.AutoIDAllocClient {
 
 // Close closes the Service and clean up resource.
 func (s *Service) Close() {
-	if s.leaderShip != nil {
+	if s.leaderShip != nil && s.leaderShip.IsOwner() {
 		for k, v := range s.autoIDMap {
 			if v.base > 0 {
 				err := v.forceRebase(context.Background(), s.store, k.dbID, k.tblID, v.base, v.isUnsigned)
@@ -377,6 +379,11 @@ const batch = 4000
 
 // AllocAutoID implements gRPC AutoIDAlloc interface.
 func (s *Service) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
+	serviceKeyspaceID := uint32(s.store.GetCodec().GetKeyspaceID())
+	if req.KeyspaceID != serviceKeyspaceID {
+		logutil.BgLogger().Info("Current service is not request keyspace leader.", zap.Uint32("req-keyspace-id", req.KeyspaceID), zap.Uint32("service-keyspace-id", serviceKeyspaceID))
+		return nil, errors.Trace(errors.New("not leader"))
+	}
 	var res *autoid.AutoIDResponse
 	for {
 		var err error
