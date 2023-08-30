@@ -97,7 +97,7 @@ func (op *encodeAndSortOperator) Close() error {
 	return op.firstErr.Load()
 }
 
-func (op *encodeAndSortOperator) String() string {
+func (*encodeAndSortOperator) String() string {
 	return "encodeAndSortOperator"
 }
 
