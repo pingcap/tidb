@@ -49,7 +49,7 @@ var (
 )
 
 // TaskHandle provides the interface for operations needed by Dispatcher.
-// Then we can use  dispatcher‘s function in Dispatcher interface.
+// Then we can use dispatcher's function in Dispatcher interface.
 type TaskHandle interface {
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(taskID int64, step int64) ([][]byte, error)
