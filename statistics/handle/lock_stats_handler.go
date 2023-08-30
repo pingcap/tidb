@@ -98,9 +98,9 @@ func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.Table
 	// Update handle.tableLocked after transaction success, if txn failed, tableLocked won't be updated.
 	h.tableLocked = tableLocked
 
-	mag := generateSkippedTablesMessage(tids, skippedTables, lockAction, lockedStatus)
+	msg := generateSkippedTablesMessage(tids, skippedTables, lockAction, lockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.
-	return mag, err
+	return msg, err
 }
 
 func generateSkippedTablesMessage(tids []int64, dupTables []string, action, status string) string {
