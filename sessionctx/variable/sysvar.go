@@ -173,8 +173,8 @@ var defaultSysVars = []*SysVar{
 		s.TiFlashMaxBytesBeforeExternalSort = TidbOptInt64(val, DefTiFlashMaxBytesBeforeExternalSort)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxTiFlashQueryMemoryPerNode, Type: TypeUnsigned, Value: strconv.Itoa(DefTiFlashMaxQueryMemoryPerNode), MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
-		s.TiFlashMaxQueryMemoryPerNode = TidbOptUint64(val, DefTiFlashMaxQueryMemoryPerNode)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxTiFlashQueryMemoryPerNode, Type: TypeInt, Value: strconv.Itoa(DefTiFlashMaxQueryMemoryPerNode), MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.TiFlashMaxQueryMemoryPerNode = TidbOptInt64(val, DefTiFlashMaxQueryMemoryPerNode)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTiFlashAutoSpillRatio, Type: TypeFloat, Value: strconv.FormatFloat(DefTiFlashAutoSpillRatio, 'f', -1, 64), MinValue: 0, MaxValue: 1, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, flag ScopeFlag) (string, error) {

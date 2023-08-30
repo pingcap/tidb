@@ -884,10 +884,10 @@ type SessionVars struct {
 	// not limit and spill will never happen
 	TiFlashMaxBytesBeforeExternalSort int64
 
-	// TiFlash max query memory per node, Default value is 0, which means no limit
+	// TiFlash max query memory per node, -1 and 0 means no limit, and the default value is 0
 	// If TiFlashMaxQueryMemoryPerNode > 0 && TiFlashAutoSpillRatio > 0, it will trigger auto spill in TiFlash side, and when auto spill
 	// is triggered, per executor's memory usage threshold set by TiFlashMaxBytesBeforeExternalJoin/TiFlashMaxBytesBeforeExternalGroupBy/TiFlashMaxBytesBeforeExternalSort will be ignored.
-	TiFlashMaxQueryMemoryPerNode uint64
+	TiFlashMaxQueryMemoryPerNode int64
 
 	// The percentage threshold to trigger auto spill in TiFlash if TiFlashMaxQueryMemoryPerNode is set
 	TiFlashAutoSpillRatio float64

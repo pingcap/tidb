@@ -135,18 +135,18 @@ func TestMaxTiFlashQueryMemoryPerNode(t *testing.T) {
 	vars := NewSessionVars(nil)
 	val, err := sv.Validate(vars, "-10", ScopeSession)
 	require.NoError(t, err) // it has been auto converted if out of range
-	require.Equal(t, "0", val)
+	require.Equal(t, "-1", val)
 	val, err = sv.Validate(vars, "-10", ScopeGlobal)
 	require.NoError(t, err) // it has been auto converted if out of range
-	require.Equal(t, "0", val)
+	require.Equal(t, "-1", val)
 	val, err = sv.Validate(vars, "100", ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "100", val)
 	val, err = sv.Validate(vars, strconv.FormatUint(uint64(math.MaxInt64)+1, 10), ScopeSession)
-	require.NoError(t, err) // it has been auto converted if out of range
-	require.Equal(t, strconv.FormatUint(math.MaxInt64, 10), val)
+	// can not autoconvert because the input is out of the range of Int64
+	require.Error(t, err)
 	require.Nil(t, sv.SetSessionFromHook(vars, "10000")) // sets
-	require.Equal(t, uint64(10000), vars.TiFlashMaxQueryMemoryPerNode)
+	require.Equal(t, int64(10000), vars.TiFlashMaxQueryMemoryPerNode)
 }
 
 func TestTiFlashAutoSpillRatio(t *testing.T) {
