@@ -253,7 +253,7 @@ func RetTypes(e Executor) []*types.FieldType {
 	return base.RetFieldTypes()
 }
 
-// newFirstChunk creates a new chunk to buffer current executor's result.
+// NewFirstChunk creates a new chunk to buffer current executor's result.
 func NewFirstChunk(e Executor) *chunk.Chunk {
 	base := e.Base()
 	return chunk.New(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
