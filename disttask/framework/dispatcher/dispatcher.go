@@ -284,14 +284,6 @@ func (d *dispatcher) dispatchSubTask4Revert(task *proto.Task, meta []byte) error
 
 func (d *dispatcher) onNextStage() error {
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
-	//handle := GetTaskFlowHandle(d.task.Type)
-	//if handle == nil {
-	//	logutil.Logger(d.logCtx).Warn("gen task flow handle failed, this type handle doesn't register", zap.String("type", d.task.Type))
-	//	d.task.Error = errors.New("unsupported task type")
-	//	// state transform: pending -> failed.
-	//	return d.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
-	//}
-	// ywq todo update state outside of dispatcher...
 	metas, err := d.handle.OnNextStage(d.ctx, d, d.task)
 	if err != nil {
 		return d.handlePlanErr(err)

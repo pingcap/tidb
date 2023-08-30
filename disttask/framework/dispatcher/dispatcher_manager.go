@@ -188,7 +188,7 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 	_ = dm.gPool.Run(func() {
 		dispatcher, err := newDispatcher(dm.ctx, dm.taskMgr, dm.serverID, task)
 		if err != nil {
-			// todo....
+			return
 		}
 		dm.setRunningTask(task, dispatcher)
 		dispatcher.executeTask()
