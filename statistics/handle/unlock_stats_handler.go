@@ -80,9 +80,9 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 	// Update handle.tableLocked after transaction success, if txn failed, tableLocked won't be updated.
 	h.tableLocked = tableLocked
 
-	mag := generateSkippedTablesMessage(tids, skippedTables, unlockAction, unlockedStatus)
+	msg := generateSkippedTablesMessage(tids, skippedTables, unlockAction, unlockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.
-	return mag, err
+	return msg, err
 }
 
 func updateStatsAndUnlockTable(ctx context.Context, exec sqlexec.SQLExecutor, tid int64, maxChunkSize int) error {
