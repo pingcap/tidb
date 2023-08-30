@@ -213,42 +213,6 @@ func newList(e exec.Executor) *chunk.List {
 	return chunk.NewList(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
 }
 
-// Next is a wrapper function on e.Next(), it handles some common codes.
-// func Next(ctx context.Context, e exec.Executor, req *chunk.Chunk) error {
-// 	base := e.Base()
-// 	if base.RuntimeStats() != nil {
-// 		start := time.Now()
-// 		defer func() { base.RuntimeStats().Record(time.Since(start), req.NumRows()) }()
-// 	}
-// 	sessVars := base.Ctx().GetSessionVars()
-// 	if atomic.LoadUint32(&sessVars.Killed) == 2 {
-// 		return exeerrors.ErrMaxExecTimeExceeded
-// 	}
-// 	if atomic.LoadUint32(&sessVars.Killed) == 1 {
-// 		return exeerrors.ErrQueryInterrupted
-// 	}
-
-// 	r, ctx := tracing.StartRegionEx(ctx, fmt.Sprintf("%T.Next", e))
-// 	defer r.End()
-
-// 	if topsqlstate.TopSQLEnabled() && sessVars.StmtCtx.IsSQLAndPlanRegistered.CompareAndSwap(false, true) {
-// 		registerSQLAndPlanInExecForTopSQL(sessVars)
-// 	}
-// 	err := e.Next(ctx, req)
-
-// 	if err != nil {
-// 		return err
-// 	}
-// 	// recheck whether the session/query is killed during the Next()
-// 	if atomic.LoadUint32(&sessVars.Killed) == 2 {
-// 		err = exeerrors.ErrMaxExecTimeExceeded
-// 	}
-// 	if atomic.LoadUint32(&sessVars.Killed) == 1 {
-// 		err = exeerrors.ErrQueryInterrupted
-// 	}
-// 	return err
-// }
-
 // CommandDDLJobsExec is the general struct for Cancel/Pause/Resume commands on
 // DDL jobs. These command currently by admin have the very similar struct and
 // operations, it should be a better idea to have them in the same struct.
