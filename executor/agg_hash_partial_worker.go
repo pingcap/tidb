@@ -26,6 +26,13 @@ import (
 	"github.com/twmb/murmur3"
 )
 
+// HashAggIntermData indicates the intermediate data of aggregation execution.
+type HashAggIntermData struct {
+	groupKeys        []string
+	cursor           int
+	partialResultMap aggPartialResultMapper
+}
+
 // HashAggPartialWorker indicates the partial workers of parallel hash agg execution,
 // the number of the worker can be set by `tidb_hashagg_partial_concurrency`.
 type HashAggPartialWorker struct {

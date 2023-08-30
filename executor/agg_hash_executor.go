@@ -37,6 +37,15 @@ import (
 	"github.com/pingcap/tidb/util/set"
 )
 
+// HashAggInput indicates the input of hash agg exec.
+type HashAggInput struct {
+	chk *chunk.Chunk
+	// giveBackCh is bound with specific partial worker,
+	// it's used to reuse the `chk`,
+	// and tell the data-fetcher which partial worker it should send data to.
+	giveBackCh chan<- *chunk.Chunk
+}
+
 // HashAggExec deals with all the aggregate functions.
 // It is built from the Aggregate Plan. When Next() is called, it reads all the data from Src
 // and updates all the items in PartialAggFuncs.
