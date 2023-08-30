@@ -65,7 +65,7 @@ type dispatcher struct {
 	task     *proto.Task
 	logCtx   context.Context
 	serverID string
-	handle   Dispatcher
+	impl     Dispatcher
 }
 
 // MockOwnerChange mock owner change in tests.
@@ -73,16 +73,16 @@ var MockOwnerChange func()
 
 func newDispatcher(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) (*dispatcher, error) {
 	logPrefix := fmt.Sprintf("task_id: %d, task_type: %s, server_id: %s", task.ID, task.Type, serverID)
-	handle := GetTaskDispatcher(task.Type)
+	impl := GetTaskDispatcher(task.Type)
 	dsp := &dispatcher{
 		ctx:      ctx,
 		taskMgr:  taskMgr,
 		task:     task,
 		logCtx:   logutil.WithKeyValue(context.Background(), "dispatcher", logPrefix),
 		serverID: serverID,
-		handle:   handle,
+		impl:     impl,
 	}
-	if dsp.handle == nil {
+	if dsp.impl == nil {
 		logutil.BgLogger().Warn("gen task flow handle failed, this type handle doesn't register")
 		dsp.task.Error = errors.New("unsupported task type")
 		// state transform: pending -> failed.
@@ -180,7 +180,7 @@ func (d *dispatcher) onReverting() error {
 		return d.updateTask(proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 	// Wait all subtasks in this stage finished.
-	d.handle.OnTicker(d.ctx, d.task)
+	d.impl.OnTicker(d.ctx, d.task)
 	logutil.Logger(d.logCtx).Debug("on reverting state, this task keeps current state", zap.String("state", d.task.State))
 	return nil
 }
@@ -217,7 +217,7 @@ func (d *dispatcher) onRunning() error {
 		return d.onNextStage()
 	}
 	// Wait all subtasks in this stage finished.
-	d.handle.OnTicker(d.ctx, d.task)
+	d.impl.OnTicker(d.ctx, d.task)
 	logutil.Logger(d.logCtx).Debug("on running state, this task keeps current state", zap.String("state", d.task.State))
 	return nil
 }
@@ -257,7 +257,7 @@ func (d *dispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, 
 func (d *dispatcher) onErrHandlingStage(receiveErr []error) error {
 	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
 	// 1. generate the needed task meta and subTask meta (dist-plan).
-	meta, err := d.handle.OnErrStage(d.ctx, d, d.task, receiveErr)
+	meta, err := d.impl.OnErrStage(d.ctx, d, d.task, receiveErr)
 	if err != nil {
 		// processErrFlow must be retryable, if not, there will have resource leak for tasks.
 		logutil.Logger(d.logCtx).Warn("handle error failed", zap.Error(err))
@@ -284,7 +284,7 @@ func (d *dispatcher) dispatchSubTask4Revert(task *proto.Task, meta []byte) error
 
 func (d *dispatcher) onNextStage() error {
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
-	metas, err := d.handle.OnNextStage(d.ctx, d, d.task)
+	metas, err := d.impl.OnNextStage(d.ctx, d, d.task)
 	if err != nil {
 		return d.handlePlanErr(err)
 	}
@@ -324,7 +324,7 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error {
 	}
 
 	// 3. select all available TiDB nodes for task.
-	serverNodes, err := d.handle.GetEligibleInstances(d.ctx, task)
+	serverNodes, err := d.impl.GetEligibleInstances(d.ctx, task)
 	logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
 
 	if err != nil {
@@ -346,7 +346,7 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error {
 
 func (d *dispatcher) handlePlanErr(err error) error {
 	logutil.Logger(d.logCtx).Warn("generate plan failed", zap.Error(err), zap.String("state", d.task.State))
-	if d.handle.IsRetryableErr(err) {
+	if d.impl.IsRetryableErr(err) {
 		return err
 	}
 	d.task.Error = err
@@ -373,7 +373,7 @@ func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error)
 
 // GetAllSchedulerIDs gets all the scheduler IDs.
 func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, task *proto.Task) ([]string, error) {
-	serverInfos, err := d.handle.GetEligibleInstances(ctx, task)
+	serverInfos, err := d.impl.GetEligibleInstances(ctx, task)
 	if err != nil {
 		return nil, err
 	}
