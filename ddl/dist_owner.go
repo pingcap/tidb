@@ -23,4 +23,7 @@ var CheckBackfillJobFinishInterval = 300 * time.Millisecond
 
 const (
 	distPhysicalTableConcurrency = 16
+	// rowCountUpdateTickInterval is the interval of updating the job row count.
+	// Update row count per 20 * CheckBackfillJobFinishInterval milliseconds.
+	rowCountUpdateTickInterval = 20
 )

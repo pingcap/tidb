@@ -25,7 +25,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/disttask/framework/handle"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -1617,7 +1617,6 @@ type addIndexIngestWorker struct {
 	writer           ingest.Writer
 	copReqSenderPool *copReqSenderPool
 	checkpointMgr    *ingest.CheckpointManager
-	flushLock        *sync.RWMutex
 
 	resultCh   chan *backfillResult
 	jobID      int64
@@ -1903,11 +1902,18 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	g.Go(func() error {
 		ticker := time.NewTicker(CheckBackfillJobFinishInterval)
 		defer ticker.Stop()
+		tickCnt := 0
 		for {
 			select {
 			case <-done:
+				w.updateJobRowCount(taskKey, reorgInfo.Job.ID)
 				return nil
 			case <-ticker.C:
+				tickCnt++
+				if tickCnt == rowCountUpdateTickInterval {
+					tickCnt = 0
+					w.updateJobRowCount(taskKey, reorgInfo.Job.ID)
+				}
 				if err = w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
 					if !dbterror.ErrCancelledDDLJob.Equal(err) {
 						return errors.Trace(err)
@@ -1922,7 +1928,39 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 			}
 		}
 	})
-	return g.Wait()
+	err = g.Wait()
+	return err
+}
+
+func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
+	taskMgr, err := storage.GetTaskManager()
+	if err != nil {
+		logutil.BgLogger().Error("cannot get task manager", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+		return
+	}
+	gTask, err := taskMgr.GetGlobalTaskByKey(taskKey)
+	if err != nil || gTask == nil {
+		logutil.BgLogger().Error("cannot get global task", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+		return
+	}
+	metas, err := taskMgr.GetSucceedSubtaskMeta(gTask.ID)
+	if err != nil {
+		logutil.BgLogger().Error("cannot get subtasks", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+		return
+	}
+	var total int64
+	for _, m := range metas {
+		sm := &BackfillSubTaskMeta{}
+		err := json.Unmarshal(m, sm)
+		if err != nil {
+			logutil.BgLogger().Error("unmarshal error",
+				zap.String("category", "ddl"),
+				zap.Error(err))
+			return
+		}
+		total += sm.RowCount
+	}
+	w.getReorgCtx(jobID).setRowCount(total)
 }
 
 func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {

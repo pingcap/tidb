@@ -39,6 +39,7 @@ type BackfillSubTaskMeta struct {
 	PhysicalTableID int64  `json:"physical_table_id"`
 	StartKey        []byte `json:"start_key"`
 	EndKey          []byte `json:"end_key"`
+	RowCount        int64  `json:"row_count"`
 }
 
 // NewBackfillSchedulerHandle creates a new backfill scheduler.

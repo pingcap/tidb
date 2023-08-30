@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/disttask/operator"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -66,11 +68,14 @@ func NewAddIndexIngestPipeline(
 	ctx context.Context,
 	store kv.Storage,
 	sessPool opSessPool,
+	backendCtx ingest.BackendCtx,
 	engine ingest.Engine,
 	sessCtx sessionctx.Context,
 	tbl table.PhysicalTable,
 	idxInfo *model.IndexInfo,
 	startKey, endKey kv.Key,
+	totalRowCount *atomic.Int64,
+	metricCounter prometheus.Counter,
 ) (*operator.AsyncPipeline, error) {
 	index := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
 	copCtx, err := NewCopContext(tbl.Meta(), idxInfo, sessCtx)
@@ -87,7 +92,7 @@ func NewAddIndexIngestPipeline(
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool, tbl, index, engine, srcChkPool, writerCnt)
-	sinkOp := newIndexWriteResultSink(ctx)
+	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, index, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
@@ -469,7 +474,13 @@ func (w *indexIngestWorker) WriteLocal(rs *IndexRecordChunk) (count int, nextKey
 }
 
 type indexWriteResultSink struct {
-	ctx context.Context
+	ctx        context.Context
+	backendCtx ingest.BackendCtx
+	tbl        table.PhysicalTable
+	index      table.Index
+
+	rowCount      *atomic.Int64
+	metricCounter prometheus.Counter
 
 	errGroup errgroup.Group
 	source   operator.DataChannel[IndexWriteResult]
@@ -477,10 +488,20 @@ type indexWriteResultSink struct {
 
 func newIndexWriteResultSink(
 	ctx context.Context,
+	backendCtx ingest.BackendCtx,
+	tbl table.PhysicalTable,
+	index table.Index,
+	rowCount *atomic.Int64,
+	metricCounter prometheus.Counter,
 ) *indexWriteResultSink {
 	return &indexWriteResultSink{
-		ctx:      ctx,
-		errGroup: errgroup.Group{},
+		ctx:           ctx,
+		backendCtx:    backendCtx,
+		tbl:           tbl,
+		index:         index,
+		rowCount:      rowCount,
+		metricCounter: metricCounter,
+		errGroup:      errgroup.Group{},
 	}
 }
 
@@ -494,20 +515,42 @@ func (s *indexWriteResultSink) Open() error {
 }
 
 func (s *indexWriteResultSink) collectResult() error {
-	// TODO(tangenta): use results to update reorg info and metrics.
 	for {
 		select {
 		case <-s.ctx.Done():
 			return nil
 		case result, ok := <-s.source.Channel():
 			if !ok {
+				s.flush()
 				return nil
+			}
+			s.rowCount.Add(int64(result.Added))
+			if s.metricCounter != nil {
+				s.metricCounter.Add(float64(result.Added))
 			}
 			if result.Err != nil {
 				return result.Err
 			}
 		}
 	}
+}
+
+func (s *indexWriteResultSink) flush() error {
+	flushMode := ingest.FlushModeForceLocalAndCheckDiskQuota
+	if s.tbl.GetPartitionedTable() != nil {
+		flushMode = ingest.FlushModeForceGlobal
+	}
+	idxInfo := s.index.Meta()
+	_, _, err := s.backendCtx.Flush(idxInfo.ID, flushMode)
+	if err != nil {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = convertToKeyExistsErr(err, idxInfo, s.tbl.Meta())
+		}
+		logutil.BgLogger().Error("flush error",
+			zap.String("category", "ddl"), zap.Error(err))
+		return err
+	}
+	return nil
 }
 
 func (s *indexWriteResultSink) Close() error {
