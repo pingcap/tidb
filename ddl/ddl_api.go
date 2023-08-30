@@ -7765,7 +7765,7 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx sessionctx.Context, colTypes []typ
 		switch colType.GetType() {
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
 			switch vkind {
-			case types.KindString, types.KindBytes:
+			case types.KindString, types.KindBytes, types.KindNull:
 			default:
 				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
