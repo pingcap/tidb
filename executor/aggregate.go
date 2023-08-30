@@ -49,34 +49,6 @@ import (
 	"go.uber.org/zap"
 )
 
-type aggPartialResultMapper map[string][]aggfuncs.PartialResult
-
-// baseHashAggWorker stores the common attributes of HashAggFinalWorker and HashAggPartialWorker.
-// nolint:structcheck
-type baseHashAggWorker struct {
-	ctx          sessionctx.Context
-	finishCh     <-chan struct{}
-	aggFuncs     []aggfuncs.AggFunc
-	maxChunkSize int
-	stats        *AggWorkerStat
-
-	memTracker *memory.Tracker
-	BInMap     int // indicate there are 2^BInMap buckets in Golang Map.
-}
-
-func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc,
-	maxChunkSize int, memTrack *memory.Tracker) baseHashAggWorker {
-	baseWorker := baseHashAggWorker{
-		ctx:          ctx,
-		finishCh:     finishCh,
-		aggFuncs:     aggFuncs,
-		maxChunkSize: maxChunkSize,
-		memTracker:   memTrack,
-		BInMap:       0,
-	}
-	return baseWorker
-}
-
 // HashAggPartialWorker indicates the partial workers of parallel hash agg execution,
 // the number of the worker can be set by `tidb_hashagg_partial_concurrency`.
 type HashAggPartialWorker struct {
@@ -609,44 +581,6 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 		expression.PutColumn(buf)
 	}
 	return groupKey, nil
-}
-
-func (w *baseHashAggWorker) getPartialResult(_ *stmtctx.StatementContext, groupKey [][]byte, mapper aggPartialResultMapper) [][]aggfuncs.PartialResult {
-	n := len(groupKey)
-	partialResults := make([][]aggfuncs.PartialResult, n)
-	allMemDelta := int64(0)
-	partialResultSize := w.getPartialResultSliceLenConsiderByteAlign()
-	for i := 0; i < n; i++ {
-		var ok bool
-		if partialResults[i], ok = mapper[string(groupKey[i])]; ok {
-			continue
-		}
-		partialResults[i] = make([]aggfuncs.PartialResult, partialResultSize)
-		for j, af := range w.aggFuncs {
-			partialResult, memDelta := af.AllocPartialResult()
-			partialResults[i][j] = partialResult
-			allMemDelta += memDelta // the memory usage of PartialResult
-		}
-		allMemDelta += int64(partialResultSize * 8)
-		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
-		if len(mapper)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
-			w.BInMap++
-		}
-		mapper[string(groupKey[i])] = partialResults[i]
-		allMemDelta += int64(len(groupKey[i]))
-	}
-	failpoint.Inject("ConsumeRandomPanic", nil)
-	w.memTracker.Consume(allMemDelta)
-	return partialResults
-}
-
-func (w *baseHashAggWorker) getPartialResultSliceLenConsiderByteAlign() int {
-	length := len(w.aggFuncs)
-	if len(w.aggFuncs) == 1 {
-		return 1
-	}
-	return length + length&1
 }
 
 func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok bool) {
