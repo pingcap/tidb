@@ -135,11 +135,11 @@ func SetTiFlashConfVarsInContext(ctx context.Context, sctx sessionctx.Context) c
 		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBEnableTiFlashPipelineMode, "0")
 	}
 	if sctx.GetSessionVars().TiFlashMaxQueryMemoryPerNode <= 0 {
-		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxTiFlashQueryMemoryPerNode, "0")
+		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiFlashMemQuotaQueryPerNode, "0")
 	} else {
-		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxTiFlashQueryMemoryPerNode, strconv.FormatInt(sctx.GetSessionVars().TiFlashMaxQueryMemoryPerNode, 10))
+		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiFlashMemQuotaQueryPerNode, strconv.FormatInt(sctx.GetSessionVars().TiFlashMaxQueryMemoryPerNode, 10))
 	}
-	ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBTiFlashAutoSpillRatio, strconv.FormatFloat(sctx.GetSessionVars().TiFlashAutoSpillRatio, 'f', -1, 64))
+	ctx = metadata.AppendToOutgoingContext(ctx, variable.TiFlashQuerySpillRatio, strconv.FormatFloat(sctx.GetSessionVars().TiFlashAutoSpillRatio, 'f', -1, 64))
 	return ctx
 }
 

@@ -129,9 +129,9 @@ func TestTiFlashMaxBytes(t *testing.T) {
 	}
 }
 
-func TestMaxTiFlashQueryMemoryPerNode(t *testing.T) {
+func TestTiFlashMemQuotaQueryPerNode(t *testing.T) {
 	// test TiFlash query memory threshold
-	sv := GetSysVar(TiDBMaxTiFlashQueryMemoryPerNode)
+	sv := GetSysVar(TiFlashMemQuotaQueryPerNode)
 	vars := NewSessionVars(nil)
 	val, err := sv.Validate(vars, "-10", ScopeSession)
 	require.NoError(t, err) // it has been auto converted if out of range
@@ -149,9 +149,9 @@ func TestMaxTiFlashQueryMemoryPerNode(t *testing.T) {
 	require.Equal(t, int64(10000), vars.TiFlashMaxQueryMemoryPerNode)
 }
 
-func TestTiFlashAutoSpillRatio(t *testing.T) {
+func TestTiFlashQuerySpillRatio(t *testing.T) {
 	// test TiFlash auto spill ratio
-	sv := GetSysVar(TiDBTiFlashAutoSpillRatio)
+	sv := GetSysVar(TiFlashQuerySpillRatio)
 	vars := NewSessionVars(nil)
 	val, err := sv.Validate(vars, "-10", ScopeSession)
 	require.NoError(t, err) // it has been auto converted if out of range
