@@ -61,7 +61,7 @@ func newReadIndexToLocalStage(
 	}
 }
 
-func (r *readIndexToLocalStage) InitSubtaskExecEnv(ctx context.Context) error {
+func (*readIndexToLocalStage) InitSubtaskExecEnv(_ context.Context) error {
 	logutil.BgLogger().Info("read index stage init subtask exec env",
 		zap.String("category", "ddl"))
 	return nil

@@ -521,8 +521,7 @@ func (s *indexWriteResultSink) collectResult() error {
 			return nil
 		case result, ok := <-s.source.Channel():
 			if !ok {
-				s.flush()
-				return nil
+				return s.flush()
 			}
 			s.rowCount.Add(int64(result.Added))
 			if s.metricCounter != nil {
