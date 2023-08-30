@@ -51,7 +51,7 @@ var taskDispatcherMap struct {
 	dispatcherMap map[string]Dispatcher
 }
 
-// RegisterTaskDispatcher is used to register the task handle.
+// RegisterTaskDispatcher is used to register the task Dispatcher.
 func RegisterTaskDispatcher(taskType string, dispatcherHandle Dispatcher) {
 	taskDispatcherMap.Lock()
 	taskDispatcherMap.dispatcherMap[taskType] = dispatcherHandle
@@ -65,7 +65,7 @@ func ClearTaskDispatcher() {
 	taskDispatcherMap.Unlock()
 }
 
-// GetTaskDispatcher is used to get the  task handle.
+// GetTaskDispatcher is used to get the task Dispatcher.
 func GetTaskDispatcher(taskType string) Dispatcher {
 	taskDispatcherMap.Lock()
 	defer taskDispatcherMap.Unlock()

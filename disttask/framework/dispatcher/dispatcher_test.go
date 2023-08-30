@@ -255,7 +255,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 		require.NoError(t, err)
 		taskIDs = append(taskIDs, taskID)
 	}
-	// test normal flow
+	// test OnNextStage.
 	checkGetRunningTaskCnt(taskCnt)
 	tasks := checkTaskRunningCnt()
 	for i, taskID := range taskIDs {
@@ -331,27 +331,27 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	checkGetRunningTaskCnt(0)
 }
 
-func TestSimpleNormalFlow(t *testing.T) {
+func TestSimple(t *testing.T) {
 	checkDispatch(t, 1, true, false)
 }
 
-func TestSimpleErrFlow(t *testing.T) {
+func TestSimpleErrStage(t *testing.T) {
 	checkDispatch(t, 1, false, false)
 }
 
-func TestSimpleCancelFlow(t *testing.T) {
+func TestSimpleCancel(t *testing.T) {
 	checkDispatch(t, 1, false, true)
 }
 
-func TestParallelNormalFlow(t *testing.T) {
+func TestParallel(t *testing.T) {
 	checkDispatch(t, 3, true, false)
 }
 
-func TestParallelErrFlow(t *testing.T) {
+func TestParallelErrStage(t *testing.T) {
 	checkDispatch(t, 3, false, false)
 }
 
-func TestParallelCancelFlow(t *testing.T) {
+func TestParallelCancel(t *testing.T) {
 	checkDispatch(t, 3, false, true)
 }
 

@@ -43,7 +43,7 @@ func (s *importIntoSuite) enableFailPoint(path, term string) {
 	})
 }
 
-func (s *importIntoSuite) TestFlowHandleGetEligibleInstances() {
+func (s *importIntoSuite) TestDispatcherGetEligibleInstances() {
 	makeFailpointRes := func(v interface{}) string {
 		bytes, err := json.Marshal(v)
 		s.NoError(err)

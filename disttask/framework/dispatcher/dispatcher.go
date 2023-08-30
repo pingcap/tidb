@@ -49,15 +49,14 @@ var (
 )
 
 // TaskHandle provides the interface for operations needed by Dispatcher.
+// Then we can use  dispatcher‘s function in Dispatcher interface.
 type TaskHandle interface {
-	// GetAllSchedulerIDs gets handles the task's all scheduler instances.
-	GetAllSchedulerIDs(ctx context.Context, task *proto.Task) ([]string, error)
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(taskID int64, step int64) ([][]byte, error)
 	storage.SessionExecutor
 }
 
-// Manage the lifetime of a task
+// Manage the lifetime of a task.
 // including submitting subtasks and updating the status of a task.
 type dispatcher struct {
 	ctx      context.Context
@@ -255,11 +254,10 @@ func (d *dispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, 
 }
 
 func (d *dispatcher) onErrHandlingStage(receiveErr []error) error {
-	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
 	// 1. generate the needed task meta and subTask meta (dist-plan).
 	meta, err := d.impl.OnErrStage(d.ctx, d, d.task, receiveErr)
 	if err != nil {
-		// processErrFlow must be retryable, if not, there will have resource leak for tasks.
+		// OnErrStage must be retryable, if not, there will have resource leak for tasks.
 		logutil.Logger(d.logCtx).Warn("handle error failed", zap.Error(err))
 		return err
 	}
