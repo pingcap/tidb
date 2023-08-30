@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/ddl/ingest"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/disttask/framework/proto"
@@ -110,6 +111,7 @@ func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask []byte
 
 	var startKey, endKey kv.Key
 	var tbl table.PhysicalTable
+	var isPartition bool
 
 	currentVer, err1 := getValidCurrentVersion(d.store)
 	if err1 != nil {
@@ -126,6 +128,7 @@ func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask []byte
 			return nil, err
 		}
 		tbl = parTbl.GetPartition(pid)
+		isPartition = true
 	} else {
 		startKey, endKey = sm.StartKey, sm.EndKey
 		tbl = r.ptbl
@@ -157,7 +160,25 @@ func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask []byte
 	if err != nil {
 		return nil, err
 	}
-	return nil, pipe.Close()
+	err = pipe.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	flushMode := ingest.FlushModeForceLocalAndCheckDiskQuota
+	if isPartition {
+		flushMode = ingest.FlushModeForceGlobal
+	}
+	_, _, err = r.bc.Flush(r.index.ID, flushMode)
+	if err != nil {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = convertToKeyExistsErr(err, r.index, r.ptbl.Meta())
+		}
+		logutil.BgLogger().Error("flush error",
+			zap.String("category", "ddl"), zap.Error(err))
+		return nil, err
+	}
+	return nil, nil
 }
 
 func (r *readIndexToLocalStage) CleanupSubtaskExecEnv(_ context.Context) error {
