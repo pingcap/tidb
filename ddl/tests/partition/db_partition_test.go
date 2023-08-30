@@ -6550,7 +6550,7 @@ func TestListExchangeValidate(t *testing.T) {
 	tk.MustContainErrMsg(`alter table lp EXCHANGE PARTITION p0 WITH TABLE np`,
 		"[ddl:1737]Found a row that does not match the partition")
 	tk.MustExec(`alter table lp EXCHANGE PARTITION pNull WITH TABLE np`)
-
+	// TODO: Check EXCHANGE with DEFAULT partition!!
 }
 
 func TestRangeExchangeValidate(t *testing.T) {
@@ -6575,4 +6575,3 @@ func TestRangeExchangeValidate(t *testing.T) {
 }
 
 // TODO: check EXCHANGE how it handles null (for all types of partitioning!!!)
-// TODO: Check EXCHANGE with DEFAULT partition!!
