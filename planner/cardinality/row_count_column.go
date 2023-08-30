@@ -52,7 +52,7 @@ func GetRowCountByColumnRanges(sctx sessionctx.Context, coll *statistics.HistCol
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
 		result, err = getPseudoRowCountByColumnRanges(sc, float64(coll.RealtimeCount), colRanges, 0)
 		if err == nil && sc.EnableOptimizerCETrace && ok {
-			CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats-Pseudo", uint64(result))
+			ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats-Pseudo", uint64(result))
 		}
 		return result, err
 	}
@@ -65,7 +65,7 @@ func GetRowCountByColumnRanges(sctx sessionctx.Context, coll *statistics.HistCol
 	}
 	result, err = GetColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, false)
 	if sc.EnableOptimizerCETrace {
-		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats", uint64(result))
+		ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats", uint64(result))
 	}
 	return result, errors.Trace(err)
 }
@@ -97,7 +97,7 @@ func GetRowCountByIntColumnRanges(sctx sessionctx.Context, coll *statistics.Hist
 			result = getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.RealtimeCount))
 		}
 		if sc.EnableOptimizerCETrace && ok {
-			CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats-Pseudo", uint64(result))
+			ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats-Pseudo", uint64(result))
 		}
 		return result, nil
 	}
@@ -110,7 +110,7 @@ func GetRowCountByIntColumnRanges(sctx sessionctx.Context, coll *statistics.Hist
 	}
 	result, err = GetColumnRowCount(sctx, c, intRanges, coll.RealtimeCount, coll.ModifyCount, true)
 	if sc.EnableOptimizerCETrace {
-		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats", uint64(result))
+		ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats", uint64(result))
 	}
 	return result, errors.Trace(err)
 }
