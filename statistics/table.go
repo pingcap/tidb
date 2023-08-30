@@ -311,6 +311,7 @@ func (t *Table) Copy() *Table {
 
 // ShallowCopy copies the current table.
 // It's different from Copy(). Only the struct Table (and also the embedded HistColl) is copied here.
+// The internal containers, like t.Columns and t.Indices, and the stats, like TopN and Histogram are not copied.
 func (t *Table) ShallowCopy() *Table {
 	newHistColl := HistColl{
 		PhysicalID:     t.PhysicalID,
