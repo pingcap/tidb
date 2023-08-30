@@ -55,8 +55,12 @@ func TestGeneralProperties(t *testing.T) {
 	)
 	var lastEndKey []byte
 notExhausted:
-	endKey, dataFiles, statFiles, splitKeys, err := splitter.SplitOneRangesGroup()
+	startKey, endKey, dataFiles, statFiles, splitKeys, err := splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
+
+	if lastEndKey != nil {
+		require.Equal(t, lastEndKey, startKey)
+	}
 
 	// endKey should be strictly greater than lastEndKey
 	if lastEndKey != nil && endKey != nil {
@@ -333,4 +337,8 @@ func TestExactlyKeyNum(t *testing.T) {
 	require.Equal(t, dataFiles, splitDataFiles)
 	require.Equal(t, statFiles, splitStatFiles)
 	require.Equal(t, [][]byte{[]byte("key001"), []byte("key002")}, splitKeys)
+}
+
+func TestOneWideRange(t *testing.T) {
+
 }

@@ -79,6 +79,7 @@ type RangeSplitter struct {
 	lastDataFile                string
 	lastStatFile                string
 	lastHeapSize                int
+	lastGroupEndKey             []byte
 	lastRangeProperty           *rangeProperty
 	willExhaustHeap             exhaustedHeap
 
@@ -88,10 +89,8 @@ type RangeSplitter struct {
 // NewRangeSplitter creates a new RangeSplitter.
 // `dataFiles` and `statFiles` must be corresponding to each other.
 // `rangesGroupSize` and `rangesGroupKeys` controls the total range group
-// size of one `SplitOneRangesGroup` invocation, while `rangeSize` and
-// `rangeKeys` controls the size of one range.
-// `maxWays` controls the merge heap size limit. When the actual heap size drops
-// below `maxWays`, the `SplitOneRangesGroup` will return as the last group.
+// size / key numbers of one `SplitOneRangesGroup` invocation, while `rangeSize`
+// and `rangeKeys` controls the size / key number of one range.
 func NewRangeSplitter(
 	ctx context.Context,
 	dataFiles, statFiles []string,
@@ -124,13 +123,15 @@ func (r *RangeSplitter) Close() error {
 	return r.propIter.Close()
 }
 
-// SplitOneRangesGroup splits one group of ranges. `endKeyOfGroup` represents the
-// end key of the group, but it will be nil when the group is the last one.
+// SplitOneRangesGroup returns one group of ranges of [startKey, endKey).
+// `endKey` will be the start key of the next group. `startKey` and `endKey`
+// will` be nil when the group is the last one.
 // `dataFiles` and `statFiles` are all the files that have overlapping key ranges
-// in this group.
+// with this group.
 // `rangeSplitKeys` are the internal split keys of the ranges in this group.
 func (r *RangeSplitter) SplitOneRangesGroup() (
-	endKeyOfGroup kv.Key,
+	startKey []byte,
+	endKey []byte,
 	dataFiles []string,
 	statFiles []string,
 	rangeSplitKeys [][]byte,
@@ -140,19 +141,32 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 		exhaustedDataFiles, exhaustedStatFiles []string
 		retDataFiles, retStatFiles             []string
 		returnAfterNextProp                    = false
+		prop                                   *rangeProperty
 	)
 
 	for r.propIter.Next() {
 		if err = r.propIter.Error(); err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
-		prop := r.propIter.prop()
+		// save the start key of this group. In order to be continuous, we will
+		// use last group's end key if it exists.
+		if startKey == nil {
+			if r.lastGroupEndKey != nil {
+				startKey = r.lastGroupEndKey
+			} else {
+				startKey = r.propIter.prop().firstKey
+			}
+		}
+		prop = r.propIter.prop()
 		r.curGroupSize += int64(prop.size)
 		r.curRangeSize += int64(prop.size)
 		r.curGroupKeys += int64(prop.keys)
 		r.curRangeKeys += int64(prop.keys)
 
-		// a tricky way to detect source file will exhaust
+		// a tricky way to detect source file will exhaust. When the heap size drops it
+		// means the last heap element is the last one of the file. and we use
+		// `willExhaustHeap` to check whether the end key of range property is passed so
+		// the file can be deleted from active files.
 		heapSize := r.propIter.iter.h.Len()
 		if heapSize < r.lastHeapSize {
 			heap.Push(&r.willExhaustHeap, exhaustedHeapElem{
@@ -160,6 +174,13 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 				dataFile: r.lastDataFile,
 				statFile: r.lastStatFile,
 			})
+		}
+
+		for r.willExhaustHeap.Len() > 0 &&
+			bytes.Compare(r.willExhaustHeap[0].key, prop.firstKey) < 0 {
+			exhaustedDataFiles = append(exhaustedDataFiles, r.willExhaustHeap[0].dataFile)
+			exhaustedStatFiles = append(exhaustedStatFiles, r.willExhaustHeap[0].statFile)
+			heap.Pop(&r.willExhaustHeap)
 		}
 
 		fileIdx := r.propIter.readerIndex()
@@ -172,14 +193,8 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 		r.lastHeapSize = heapSize
 		r.lastRangeProperty = prop
 
-		for r.willExhaustHeap.Len() > 0 &&
-			bytes.Compare(r.willExhaustHeap[0].key, prop.firstKey) < 0 {
-			exhaustedDataFiles = append(exhaustedDataFiles, r.willExhaustHeap[0].dataFile)
-			exhaustedStatFiles = append(exhaustedStatFiles, r.willExhaustHeap[0].statFile)
-			heap.Pop(&r.willExhaustHeap)
-		}
-
 		if returnAfterNextProp {
+			// clean the active files for next SplitOneRangesGroup invocation.
 			for _, p := range exhaustedDataFiles {
 				delete(r.activeDataFiles, p)
 			}
@@ -188,10 +203,11 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 				delete(r.activeStatFiles, p)
 			}
 			exhaustedStatFiles = exhaustedStatFiles[:0]
-			return prop.firstKey, retDataFiles, retStatFiles, r.takeSplitKeys(), nil
+			r.lastGroupEndKey = prop.firstKey
+			return startKey, prop.firstKey, retDataFiles, retStatFiles, r.takeSplitKeys(), nil
 		}
 		if r.recordSplitKeyAfterNextProp {
-			r.rangeSplitKeysBuf = append(r.rangeSplitKeysBuf, kv.Key(prop.firstKey).Clone())
+			r.rangeSplitKeysBuf = append(r.rangeSplitKeysBuf, slices.Clone(prop.firstKey))
 			r.recordSplitKeyAfterNextProp = false
 		}
 
@@ -203,17 +219,27 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 
 		if r.curGroupSize >= r.rangesGroupSize || r.curGroupKeys >= r.rangesGroupKeys {
 			retDataFiles, retStatFiles = r.cloneActiveFiles()
-
 			r.curGroupSize = 0
 			r.curGroupKeys = 0
 			returnAfterNextProp = true
 		}
 	}
 
+	// all files are exhausted. we will return the "next key" of largest end key of
+	// range properties
+
+	lastKeyOfAll := r.propIter.prop().lastKey
+	for r.willExhaustHeap.Len() > 0 {
+		if bytes.Compare(r.willExhaustHeap[0].key, lastKeyOfAll) > 0 {
+			lastKeyOfAll = r.willExhaustHeap[0].key
+		}
+		heap.Pop(&r.willExhaustHeap)
+	}
+
 	retDataFiles, retStatFiles = r.cloneActiveFiles()
 	r.activeDataFiles = make(map[string]int)
 	r.activeStatFiles = make(map[string]int)
-	return nil, retDataFiles, retStatFiles, r.takeSplitKeys(), r.propIter.Error()
+	return startKey, kv.Key(lastKeyOfAll).Next(), retDataFiles, retStatFiles, r.takeSplitKeys(), r.propIter.Error()
 }
 
 func (r *RangeSplitter) cloneActiveFiles() (data []string, stat []string) {
