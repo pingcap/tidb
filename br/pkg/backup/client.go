@@ -539,7 +539,7 @@ func BuildBackupRangeAndInitSchema(
 		hasTable := false
 		err = m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
 			if tableInfo.Version > version.CURRENT_BACKUP_SUPPORT_TABLE_INFO_VERSION {
-				// normaly this shouldn't happen in a production env.
+				// normally this shouldn't happen in a production env.
 				// because we had a unit test to avoid table info version update silencly.
 				// and had version check before run backup.
 				return errors.Errorf("backup doesn't not support table %s with version %d, maybe try a new version of br",
