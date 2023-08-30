@@ -45,26 +45,8 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 )
-
-// HashAggPartialWorker indicates the partial workers of parallel hash agg execution,
-// the number of the worker can be set by `tidb_hashagg_partial_concurrency`.
-type HashAggPartialWorker struct {
-	baseHashAggWorker
-
-	inputCh           chan *chunk.Chunk
-	outputChs         []chan *HashAggIntermData
-	globalOutputCh    chan *AfFinalResult
-	giveBackCh        chan<- *HashAggInput
-	partialResultsMap aggPartialResultMapper
-	groupByItems      []expression.Expression
-	groupKey          [][]byte
-	// chk stores the input data from child,
-	// and is reused by childExec and partial worker.
-	chk *chunk.Chunk
-}
 
 // HashAggFinalWorker indicates the final workers of parallel hash agg execution,
 // the number of the worker can be set by `tidb_hashagg_final_concurrency`.
@@ -409,67 +391,10 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 	e.parallelExecInitialized = true
 }
 
-func (w *HashAggPartialWorker) getChildInput() bool {
-	select {
-	case <-w.finishCh:
-		return false
-	case chk, ok := <-w.inputCh:
-		if !ok {
-			return false
-		}
-		w.chk.SwapColumns(chk)
-		w.giveBackCh <- &HashAggInput{
-			chk:        chk,
-			giveBackCh: w.inputCh,
-		}
-	}
-	return true
-}
-
 func recoveryHashAgg(output chan *AfFinalResult, r interface{}) {
 	err := errors.Errorf("%v", r)
 	output <- &AfFinalResult{err: errors.Errorf("%v", r)}
 	logutil.BgLogger().Error("parallel hash aggregation panicked", zap.Error(err), zap.Stack("stack"))
-}
-
-func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
-	start := time.Now()
-	needShuffle, sc := false, ctx.GetSessionVars().StmtCtx
-	defer func() {
-		if r := recover(); r != nil {
-			recoveryHashAgg(w.globalOutputCh, r)
-		}
-		if needShuffle {
-			w.shuffleIntermData(sc, finalConcurrency)
-		}
-		w.memTracker.Consume(-w.chk.MemoryUsage())
-		if w.stats != nil {
-			w.stats.WorkerTime += int64(time.Since(start))
-		}
-		waitGroup.Done()
-	}()
-	for {
-		waitStart := time.Now()
-		ok := w.getChildInput()
-		if w.stats != nil {
-			w.stats.WaitTime += int64(time.Since(waitStart))
-		}
-		if !ok {
-			return
-		}
-		execStart := time.Now()
-		if err := w.updatePartialResult(ctx, sc, w.chk, len(w.partialResultsMap)); err != nil {
-			w.globalOutputCh <- &AfFinalResult{err: err}
-			return
-		}
-		if w.stats != nil {
-			w.stats.ExecTime += int64(time.Since(execStart))
-			w.stats.TaskNum++
-		}
-		// The intermData can be promised to be not empty if reaching here,
-		// so we set needShuffle to be true.
-		needShuffle = true
-	}
 }
 
 func getGroupKeyMemUsage(groupKey [][]byte) int64 {
@@ -479,56 +404,6 @@ func getGroupKeyMemUsage(groupKey [][]byte) int64 {
 	}
 	mem += aggfuncs.DefSliceSize * int64(cap(groupKey))
 	return mem
-}
-
-func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, _ int) (err error) {
-	memSize := getGroupKeyMemUsage(w.groupKey)
-	w.groupKey, err = getGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
-	failpoint.Inject("ConsumeRandomPanic", nil)
-	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKey) - memSize)
-	if err != nil {
-		return err
-	}
-
-	partialResults := w.getPartialResult(sc, w.groupKey, w.partialResultsMap)
-	numRows := chk.NumRows()
-	rows := make([]chunk.Row, 1)
-	allMemDelta := int64(0)
-	for i := 0; i < numRows; i++ {
-		for j, af := range w.aggFuncs {
-			rows[0] = chk.GetRow(i)
-			memDelta, err := af.UpdatePartialResult(ctx, rows, partialResults[i][j])
-			if err != nil {
-				return err
-			}
-			allMemDelta += memDelta
-		}
-	}
-	w.memTracker.Consume(allMemDelta)
-	return nil
-}
-
-// shuffleIntermData shuffles the intermediate data of partial workers to corresponded final workers.
-// We only support parallel execution for single-machine, so process of encode and decode can be skipped.
-func (w *HashAggPartialWorker) shuffleIntermData(_ *stmtctx.StatementContext, finalConcurrency int) {
-	groupKeysSlice := make([][]string, finalConcurrency)
-	for groupKey := range w.partialResultsMap {
-		finalWorkerIdx := int(murmur3.Sum32([]byte(groupKey))) % finalConcurrency
-		if groupKeysSlice[finalWorkerIdx] == nil {
-			groupKeysSlice[finalWorkerIdx] = make([]string, 0, len(w.partialResultsMap)/finalConcurrency)
-		}
-		groupKeysSlice[finalWorkerIdx] = append(groupKeysSlice[finalWorkerIdx], groupKey)
-	}
-
-	for i := range groupKeysSlice {
-		if groupKeysSlice[i] == nil {
-			continue
-		}
-		w.outputChs[i] <- &HashAggIntermData{
-			groupKeys:        groupKeysSlice[i],
-			partialResultMap: w.partialResultsMap,
-		}
-	}
 }
 
 // getGroupKey evaluates the group items and args of aggregate functions.
