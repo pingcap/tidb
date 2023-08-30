@@ -15,10 +15,12 @@
 package errormanager
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"math/rand"
 	"strconv"
@@ -191,7 +193,7 @@ func TestReplaceConflictKeys(t *testing.T) {
 		Name:         model.NewCIStr("a"),
 		Offset:       0,
 		DefaultValue: 0,
-		FieldType:    *types.NewFieldType(0),
+		FieldType:    *types.NewFieldType(mysql.TypeLong),
 		Hidden:       true,
 		State:        model.StatePublic,
 	}
@@ -202,7 +204,7 @@ func TestReplaceConflictKeys(t *testing.T) {
 		Name:         model.NewCIStr("b"),
 		Offset:       1,
 		DefaultValue: 0,
-		FieldType:    *types.NewFieldType(0),
+		FieldType:    *types.NewFieldType(mysql.TypeLong),
 		Hidden:       true,
 		State:        model.StatePublic,
 	}
@@ -213,12 +215,13 @@ func TestReplaceConflictKeys(t *testing.T) {
 		Name:         model.NewCIStr("c"),
 		Offset:       2,
 		DefaultValue: 0,
-		FieldType:    *types.NewFieldType(0),
+		FieldType:    *types.NewFieldType(mysql.TypeBlob),
 		Hidden:       true,
 		State:        model.StatePublic,
 	}
 
 	index := &model.IndexInfo{
+		ID:    1,
 		Name:  model.NewCIStr("uni_b"),
 		Table: model.NewCIStr(""),
 		Columns: []*model.IndexColumn{
@@ -278,6 +281,9 @@ func TestReplaceConflictKeys(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "index_name", "raw_value", "raw_handle"}).
 			AddRow(rawKey, "uni_b", rawValue1, rawHandle1).
 			AddRow(rawKey, "uni_b", rawValue2, rawHandle2))
+	rawRowBase64 := "gAACAAAAAgMBAAYABjIuY3N2"
+	rawRow, err := base64.StdEncoding.DecodeString(rawRowBase64)
+	require.NoError(t, err)
 
 	decoder, err := tidbkv.NewTableKVDecoder(tbl, "test", &encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
@@ -298,10 +304,20 @@ func TestReplaceConflictKeys(t *testing.T) {
 		ctx, tbl, "test", pool, decoder,
 		func(ctx context.Context, key []byte) ([]byte, error) {
 			fnGetLatestCount.Add(1)
-			return rawValue1, nil
+			switch {
+			case bytes.Equal(key, rawKey):
+				return rawValue1, nil
+			case bytes.Equal(key, rawHandle2):
+				return rawRow, nil
+			default:
+				return nil, fmt.Errorf("key %v is not expected", key)
+			}
 		},
 		func(ctx context.Context, key []byte) error {
 			fnDeleteKeyCount.Add(1)
+			if !bytes.Equal(key, rawHandle2) {
+				return fmt.Errorf("key %v is not expected", key)
+			}
 			return nil
 		},
 	)
