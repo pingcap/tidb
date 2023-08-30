@@ -12,6 +12,7 @@ go_library(
     name = "ddl",
     srcs = [
         "backfilling.go",
+        "backfilling_dispatcher.go",
         "backfilling_operator.go",
         "backfilling_scheduler.go",
         "callback.go",
@@ -34,7 +35,6 @@ go_library(
         "index_cop.go",
         "index_merge_tmp.go",
         "job_table.go",
-        "litBackfill_dispatcher.go",
         "mock.go",
         "multi_schema_change.go",
         "options.go",
@@ -167,6 +167,7 @@ go_test(
     timeout = "moderate",
     srcs = [
         "attributes_sql_test.go",
+        "backfilling_dispatcher_test.go",
         "backfilling_test.go",
         "cancel_test.go",
         "cluster_test.go",
@@ -197,7 +198,6 @@ go_test(
         "index_modify_test.go",
         "integration_test.go",
         "job_table_test.go",
-        "litBackfill_dispatcher_test.go",
         "main_test.go",
         "modify_column_test.go",
         "multi_schema_change_test.go",

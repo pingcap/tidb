@@ -32,28 +32,28 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-type litBackfillDispatcher struct {
+type backfillingDispatcher struct {
 	d *ddl
 }
 
-var _ dispatcher.Dispatcher = (*litBackfillDispatcher)(nil)
+var _ dispatcher.Dispatcher = (*backfillingDispatcher)(nil)
 
-// NewLitBackfillDispatcher creates a new litBackfillDispatcher.
-func NewLitBackfillDispatcher(d DDL) (dispatcher.Dispatcher, error) {
+// NewBackfillingDispatcher creates a new backfillingDispatcher.
+func NewBackfillingDispatcher(d DDL) (dispatcher.Dispatcher, error) {
 	ddl, ok := d.(*ddl)
 	if !ok {
 		return nil, errors.New("The getDDL result should be the type of *ddl")
 	}
-	return &litBackfillDispatcher{
+	return &backfillingDispatcher{
 		d: ddl,
 	}, nil
 }
 
-func (*litBackfillDispatcher) OnTicker(_ context.Context, _ *proto.Task) {
+func (*backfillingDispatcher) OnTicker(_ context.Context, _ *proto.Task) {
 }
 
 // OnNextStage generate next stage's plan.
-func (h *litBackfillDispatcher) OnNextStage(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
+func (h *backfillingDispatcher) OnNextStage(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
 	var globalTaskMeta BackfillGlobalMeta
 	if err := json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
 		return nil, err
@@ -112,7 +112,7 @@ func (h *litBackfillDispatcher) OnNextStage(ctx context.Context, _ dispatcher.Ta
 }
 
 // OnErrStage generate error handling stage's plan.
-func (*litBackfillDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, receiveErr []error) (meta []byte, err error) {
+func (*backfillingDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, receiveErr []error) (meta []byte, err error) {
 	// We do not need extra meta info when rolling back
 	firstErr := receiveErr[0]
 	task.Error = firstErr
@@ -120,12 +120,12 @@ func (*litBackfillDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHan
 	return nil, nil
 }
 
-func (*litBackfillDispatcher) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*backfillingDispatcher) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return dispatcher.GenerateSchedulerNodes(ctx)
 }
 
 // IsRetryableErr implements TaskFlowHandle.IsRetryableErr interface.
-func (*litBackfillDispatcher) IsRetryableErr(error) bool {
+func (*backfillingDispatcher) IsRetryableErr(error) bool {
 	return true
 }
 
