@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/operator"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -96,7 +97,7 @@ func (s *importStepScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]pr
 	if err != nil {
 		return nil, err
 	}
-	s.logger.Info("split subtask", zap.Int32("engine-id", subtaskMeta.ID))
+	s.logger.Info("split and run subtask", zap.Int32("engine-id", subtaskMeta.ID))
 
 	dataEngine, err := s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
 	if err != nil {
@@ -121,15 +122,24 @@ func (s *importStepScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]pr
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
-	miniTask := make([]proto.MinimalTask, 0, len(subtaskMeta.Chunks))
+	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
+	op := newEncodeAndSortOperator(ctx, int(s.taskMeta.Plan.ThreadCnt), s.logger)
+	op.SetSource(source)
+	pipeline := operator.NewAsyncPipeline(op)
+	if err = pipeline.Execute(); err != nil {
+		return nil, err
+	}
+
 	for _, chunk := range subtaskMeta.Chunks {
-		miniTask = append(miniTask, &importStepMinimalTask{
+		source.Channel() <- &importStepMinimalTask{
 			Plan:       s.taskMeta.Plan,
 			Chunk:      chunk,
 			SharedVars: sharedVars,
-		})
+		}
 	}
-	return miniTask, nil
+	source.Finish()
+
+	return nil, pipeline.Close()
 }
 
 func (s *importStepScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaBytes []byte) ([]byte, error) {
