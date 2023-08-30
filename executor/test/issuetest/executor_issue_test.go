@@ -145,16 +145,16 @@ func TestIssue24210(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockProjectionExecBaseExecutorOpenReturnedError"))
 
 	// for HashAggExec
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockHashAggExecBaseExecutorOpenReturnedError", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/aggregate/mockHashAggExecBaseExecutorOpenReturnedError", `return(true)`))
 	err = tk.ExecToErr("select sum(a) from (select 1 as a, 2 as b) t group by b")
 	require.EqualError(t, err, "mock HashAggExec.baseExecutor.Open returned error")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockHashAggExecBaseExecutorOpenReturnedError"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/aggregate/mockHashAggExecBaseExecutorOpenReturnedError"))
 
 	// for StreamAggExec
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockStreamAggExecBaseExecutorOpenReturnedError", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/aggregate/mockStreamAggExecBaseExecutorOpenReturnedError", `return(true)`))
 	err = tk.ExecToErr("select sum(a) from (select 1 as a, 2 as b) t")
 	require.EqualError(t, err, "mock StreamAggExec.baseExecutor.Open returned error")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockStreamAggExecBaseExecutorOpenReturnedError"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/aggregate/mockStreamAggExecBaseExecutorOpenReturnedError"))
 
 	// for SelectionExec
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockSelectionExecBaseExecutorOpenReturnedError", `return(true)`))

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/executor/aggregate"
 	"github.com/pingcap/tidb/executor/internal/builder"
 	"github.com/pingcap/tidb/executor/internal/calibrateresource"
 	"github.com/pingcap/tidb/executor/internal/exec"
@@ -1379,7 +1380,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 	us := &UnionScanExec{BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), reader)}
 	// Get the handle column index of the below Plan.
 	us.handleCols = v.HandleCols
-	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
+	us.mutableRow = chunk.MutRowFromTypes(exec.RetTypes(us))
 
 	// If the push-downed condition contains virtual column, we may build a selection upon reader
 	originReader := reader
@@ -1388,7 +1389,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 	}
 
 	us.collators = make([]collate.Collator, 0, len(us.columns))
-	for _, tp := range retTypes(us) {
+	for _, tp := range exec.RetTypes(us) {
 		us.collators = append(us.collators, collate.GetCollator(tp.GetCollate()))
 	}
 
@@ -1539,8 +1540,8 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) exec.
 			v.JoinType == plannercore.RightOuterJoin,
 			defaultValues,
 			v.OtherConditions,
-			retTypes(leftExec),
-			retTypes(rightExec),
+			exec.RetTypes(leftExec),
+			exec.RetTypes(rightExec),
 			markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema()),
 			false,
 		),
@@ -1605,7 +1606,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Ex
 	}
 	e.hashJoinCtx.allocPool = e.AllocPool
 	defaultValues := v.DefaultValues
-	lhsTypes, rhsTypes := retTypes(leftExec), retTypes(rightExec)
+	lhsTypes, rhsTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
 	if v.InnerChildIdx == 1 {
 		if len(v.RightConditions) > 0 {
 			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
@@ -1692,7 +1693,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Ex
 	// When a hybrid type column is hashed multiple times, we need to distinguish what field types are used.
 	// For example, the condition `enum = int and enum = string`, we should use ETInt to hash the first column,
 	// and use ETString to hash the second column, although they may be the same column.
-	leftExecTypes, rightExecTypes := retTypes(leftExec), retTypes(rightExec)
+	leftExecTypes, rightExecTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
 	leftTypes, rightTypes := make([]*types.FieldType, 0, len(v.LeftJoinKeys)+len(v.LeftNAJoinKeys)), make([]*types.FieldType, 0, len(v.RightJoinKeys)+len(v.RightNAJoinKeys))
 	// set left types and right types for joiner.
 	for i, col := range v.LeftJoinKeys {
@@ -1744,9 +1745,9 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) exec.Exec
 		return nil
 	}
 	sessionVars := b.ctx.GetSessionVars()
-	e := &HashAggExec{
+	e := &aggregate.HashAggExec{
 		BaseExecutor:    exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
-		sc:              sessionVars.StmtCtx,
+		Sc:              sessionVars.StmtCtx,
 		PartialAggFuncs: make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
 		GroupByItems:    v.GroupByItems,
 	}
@@ -1770,26 +1771,26 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) exec.Exec
 	// +--------+
 	// 1 row in set (0.00 sec)
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
-		e.defaultVal = nil
+		e.DefaultVal = nil
 	} else {
 		if v.IsFinalAgg() {
-			e.defaultVal = e.Ctx().GetSessionVars().GetNewChunkWithCapacity(retTypes(e), 1, 1, e.AllocPool)
+			e.DefaultVal = e.Ctx().GetSessionVars().GetNewChunkWithCapacity(exec.RetTypes(e), 1, 1, e.AllocPool)
 		}
 	}
 	for _, aggDesc := range v.AggFuncs {
 		if aggDesc.HasDistinct || len(aggDesc.OrderByItems) > 0 {
-			e.isUnparallelExec = true
+			e.IsUnparallelExec = true
 		}
 	}
 	// When we set both tidb_hashagg_final_concurrency and tidb_hashagg_partial_concurrency to 1,
 	// we do not need to parallelly execute hash agg,
 	// and this action can be a workaround when meeting some unexpected situation using parallelExec.
 	if finalCon, partialCon := sessionVars.HashAggFinalConcurrency(), sessionVars.HashAggPartialConcurrency(); finalCon <= 0 || partialCon <= 0 || finalCon == 1 && partialCon == 1 {
-		e.isUnparallelExec = true
+		e.IsUnparallelExec = true
 	}
 	partialOrdinal := 0
 	for i, aggDesc := range v.AggFuncs {
-		if e.isUnparallelExec {
+		if e.IsUnparallelExec {
 			e.PartialAggFuncs = append(e.PartialAggFuncs, aggfuncs.Build(b.ctx, aggDesc, i))
 		} else {
 			ordinal := []int{partialOrdinal}
@@ -1810,9 +1811,9 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) exec.Exec
 				)
 			}
 		}
-		if e.defaultVal != nil {
+		if e.DefaultVal != nil {
 			value := aggDesc.GetDefaultValue()
-			e.defaultVal.AppendDatum(i, &value)
+			e.DefaultVal.AppendDatum(i, &value)
 		}
 	}
 
@@ -1825,26 +1826,26 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) exec.
 	if b.err != nil {
 		return nil
 	}
-	e := &StreamAggExec{
+	e := &aggregate.StreamAggExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
-		groupChecker: vecgroupchecker.NewVecGroupChecker(b.ctx, v.GroupByItems),
-		aggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
+		GroupChecker: vecgroupchecker.NewVecGroupChecker(b.ctx, v.GroupByItems),
+		AggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
 	}
 
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
-		e.defaultVal = nil
+		e.DefaultVal = nil
 	} else {
 		// Only do this for final agg, see issue #35295, #30923
 		if v.IsFinalAgg() {
-			e.defaultVal = e.Ctx().GetSessionVars().GetNewChunkWithCapacity(retTypes(e), 1, 1, e.AllocPool)
+			e.DefaultVal = e.Ctx().GetSessionVars().GetNewChunkWithCapacity(exec.RetTypes(e), 1, 1, e.AllocPool)
 		}
 	}
 	for i, aggDesc := range v.AggFuncs {
 		aggFunc := aggfuncs.Build(b.ctx, aggDesc, i)
-		e.aggFuncs = append(e.aggFuncs, aggFunc)
-		if e.defaultVal != nil {
+		e.AggFuncs = append(e.AggFuncs, aggFunc)
+		if e.DefaultVal != nil {
 			value := aggDesc.GetDefaultValue()
-			e.defaultVal.AppendDatum(i, &value)
+			e.DefaultVal.AppendDatum(i, &value)
 		}
 	}
 
@@ -2300,7 +2301,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor
 		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
 	}
 	tupleJoiner := newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
-		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil, false)
+		defaultValues, otherConditions, exec.RetTypes(leftChild), exec.RetTypes(rightChild), nil, false)
 	serialExec := &NestedLoopApplyExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), outerExec, innerExec),
 		innerExec:    innerExec,
@@ -2337,7 +2338,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor
 			corCols = append(corCols, corCol)
 			innerFilters = append(innerFilters, innerFilter.Clone())
 			joiners = append(joiners, newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
-				defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil, false))
+				defaultValues, otherConditions, exec.RetTypes(leftChild), exec.RetTypes(rightChild), nil, false))
 		}
 
 		allExecs := append([]exec.Executor{outerExec}, innerExecs...)
@@ -3188,7 +3189,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	if b.err != nil {
 		return nil
 	}
-	outerTypes := retTypes(outerExec)
+	outerTypes := exec.RetTypes(outerExec)
 	innerPlan := v.Children()[v.InnerChildIdx]
 	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
 	for i, col := range innerPlan.Schema().Columns {
@@ -3318,7 +3319,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e.innerCtx.hashCols = innerHashCols
 	e.innerCtx.hashCollators = hashCollators
 
-	e.joinResult = tryNewCacheChunk(e)
+	e.joinResult = exec.TryNewCacheChunk(e)
 	executor_metrics.ExecutorCounterIndexLookUpJoin.Inc()
 	return e
 }
@@ -3328,7 +3329,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	if b.err != nil {
 		return nil
 	}
-	outerTypes := retTypes(outerExec)
+	outerTypes := exec.RetTypes(outerExec)
 	innerPlan := v.Children()[v.InnerChildIdx]
 	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
 	for i, col := range innerPlan.Schema().Columns {
@@ -4552,7 +4553,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	}
 	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 	e.resultHandler = &tableResultHandler{}
-	result, err := builder.SelectResult(ctx, builder.ctx, kvReq, retTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
+	result, err := builder.SelectResult(ctx, builder.ctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 	if err != nil {
 		return nil, err
 	}

@@ -16,15 +16,23 @@ package exec
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
+	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/pingcap/tidb/util/tracing"
 )
 
 // Executor is the physical implementation of an algebra operator.
@@ -230,4 +238,71 @@ func (e *BaseExecutor) ReleaseSysSession(ctx context.Context, sctx sessionctx.Co
 		return
 	}
 	sysSessionPool.Put(sctx.(pools.Resource))
+}
+
+// TryNewCacheChunk tries to get a cached chunk
+func TryNewCacheChunk(e Executor) *chunk.Chunk {
+	base := e.Base()
+	s := base.Ctx().GetSessionVars()
+	return s.GetNewChunkWithCapacity(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize(), base.AllocPool)
+}
+
+// RetTypes returns all output column types.
+func RetTypes(e Executor) []*types.FieldType {
+	base := e.Base()
+	return base.RetFieldTypes()
+}
+
+// NewFirstChunk creates a new chunk to buffer current executor's result.
+func NewFirstChunk(e Executor) *chunk.Chunk {
+	base := e.Base()
+	return chunk.New(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
+}
+
+// Next is a wrapper function on e.Next(), it handles some common codes.
+func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
+	base := e.Base()
+	if base.RuntimeStats() != nil {
+		start := time.Now()
+		defer func() { base.RuntimeStats().Record(time.Since(start), req.NumRows()) }()
+	}
+	sessVars := base.Ctx().GetSessionVars()
+	if atomic.LoadUint32(&sessVars.Killed) == 2 {
+		return exeerrors.ErrMaxExecTimeExceeded
+	}
+	if atomic.LoadUint32(&sessVars.Killed) == 1 {
+		return exeerrors.ErrQueryInterrupted
+	}
+
+	r, ctx := tracing.StartRegionEx(ctx, fmt.Sprintf("%T.Next", e))
+	defer r.End()
+
+	if topsqlstate.TopSQLEnabled() && sessVars.StmtCtx.IsSQLAndPlanRegistered.CompareAndSwap(false, true) {
+		RegisterSQLAndPlanInExecForTopSQL(sessVars)
+	}
+	err := e.Next(ctx, req)
+
+	if err != nil {
+		return err
+	}
+	// recheck whether the session/query is killed during the Next()
+	if atomic.LoadUint32(&sessVars.Killed) == 2 {
+		err = exeerrors.ErrMaxExecTimeExceeded
+	}
+	if atomic.LoadUint32(&sessVars.Killed) == 1 {
+		err = exeerrors.ErrQueryInterrupted
+	}
+	return err
+}
+
+// RegisterSQLAndPlanInExecForTopSQL register the sql and plan information if it doesn't register before execution.
+// This uses to catch the running SQL when Top SQL is enabled in execution.
+func RegisterSQLAndPlanInExecForTopSQL(sessVars *variable.SessionVars) {
+	stmtCtx := sessVars.StmtCtx
+	normalizedSQL, sqlDigest := stmtCtx.SQLDigest()
+	topsql.RegisterSQL(normalizedSQL, sqlDigest, sessVars.InRestrictedSQL)
+	normalizedPlan, planDigest := stmtCtx.GetPlanDigest()
+	if len(normalizedPlan) > 0 {
+		topsql.RegisterPlan(normalizedPlan, planDigest)
+	}
 }

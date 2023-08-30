@@ -144,7 +144,7 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	if e.multiWayMerge == nil {
 		e.multiWayMerge = &multiWayMerge{e.lessRow, e.compressRow, make([]partitionPointer, 0, len(e.partitionList))}
 		for i := 0; i < len(e.partitionList); i++ {
-			chk := chunk.New(retTypes(e), 1, 1)
+			chk := chunk.New(exec.RetTypes(e), 1, 1)
 
 			row, _, err := e.partitionList[i].GetSortedRowAndAlwaysAppendToChunk(0, chk)
 			if err != nil {
@@ -177,7 +177,7 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 }
 
 func (e *SortExec) fetchRowChunks(ctx context.Context) error {
-	fields := retTypes(e)
+	fields := exec.RetTypes(e)
 	byItemsDesc := make([]bool, len(e.ByItems))
 	for i, byItem := range e.ByItems {
 		byItemsDesc[i] = byItem.Desc
@@ -198,8 +198,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		e.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
 	}
 	for {
-		chk := tryNewCacheChunk(e.Children(0))
-		err := Next(ctx, e.Children(0), chk)
+		chk := exec.TryNewCacheChunk(e.Children(0))
+		err := exec.Next(ctx, e.Children(0), chk)
 		if err != nil {
 			return err
 		}
@@ -456,14 +456,14 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
-	e.rowChunks = chunk.NewList(retTypes(e), e.InitCap(), e.MaxChunkSize())
+	e.rowChunks = chunk.NewList(exec.RetTypes(e), e.InitCap(), e.MaxChunkSize())
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	for uint64(e.rowChunks.Len()) < e.totalLimit {
-		srcChk := tryNewCacheChunk(e.Children(0))
+		srcChk := exec.TryNewCacheChunk(e.Children(0))
 		// adjust required rows by total limit
 		srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.Len())), e.MaxChunkSize())
-		err := Next(ctx, e.Children(0), srcChk)
+		err := exec.Next(ctx, e.Children(0), srcChk)
 		if err != nil {
 			return err
 		}
@@ -486,9 +486,9 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
 		heap.Pop(e.chkHeap)
 	}
-	childRowChk := tryNewCacheChunk(e.Children(0))
+	childRowChk := exec.TryNewCacheChunk(e.Children(0))
 	for {
-		err := Next(ctx, e.Children(0), childRowChk)
+		err := exec.Next(ctx, e.Children(0), childRowChk)
 		if err != nil {
 			return err
 		}
@@ -530,7 +530,7 @@ func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (e *TopNExec) doCompaction() error {
-	newRowChunks := chunk.NewList(retTypes(e), e.InitCap(), e.MaxChunkSize())
+	newRowChunks := chunk.NewList(exec.RetTypes(e), e.InitCap(), e.MaxChunkSize())
 	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	for _, rowPtr := range e.rowPtrs {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))

@@ -126,9 +126,9 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 			}).run()
 		}
 		e.executed = true
-		chk := tryNewCacheChunk(e.analyzeExec)
+		chk := exec.TryNewCacheChunk(e.analyzeExec)
 		for {
-			err = Next(ctx, e.analyzeExec, chk)
+			err = exec.Next(ctx, e.analyzeExec, chk)
 			if err != nil || chk.NumRows() == 0 {
 				break
 			}

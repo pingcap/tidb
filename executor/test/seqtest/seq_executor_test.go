@@ -712,9 +712,9 @@ func TestParallelHashAggClose(t *testing.T) {
 	//     └─TableFullScan_10   | 3.00  | cop[tikv]  | table:t, keep order:fa$se, stats:pseudo |
 
 	// Goroutine should not leak when error happen.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/parallelHashAggError", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/aggregate/parallelHashAggError", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/parallelHashAggError"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/aggregate/parallelHashAggError"))
 	}()
 	ctx := context.Background()
 	rss, err := tk.Session().Execute(ctx, "select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
@@ -734,9 +734,9 @@ func TestUnparallelHashAggClose(t *testing.T) {
 	tk.MustExec("insert into t values(1,1),(2,2)")
 
 	// Goroutine should not leak when error happen.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/unparallelHashAggError", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/aggregate/unparallelHashAggError", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/unparallelHashAggError"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/aggregate/unparallelHashAggError"))
 	}()
 	ctx := context.Background()
 	rss, err := tk.Session().Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")

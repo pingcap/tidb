@@ -170,10 +170,10 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	return nil
 }
 
-// NewChunk create a chunk base on top-level executor's newFirstChunk().
+// NewChunk create a chunk base on top-level executor's exec.NewFirstChunk().
 func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 	if alloc == nil {
-		return newFirstChunk(a.executor)
+		return exec.NewFirstChunk(a.executor)
 	}
 
 	base := a.executor.Base()
@@ -694,7 +694,7 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 			terror.Call(e.Close)
 			return err
 		}
-		err = Next(ctx, e, newFirstChunk(e))
+		err = exec.Next(ctx, e, exec.NewFirstChunk(e))
 		if err != nil {
 			return err
 		}
@@ -860,7 +860,7 @@ func (c *chunkRowRecordSet) Next(_ context.Context, chk *chunk.Chunk) error {
 
 func (c *chunkRowRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 	if alloc == nil {
-		return newFirstChunk(c.e)
+		return exec.NewFirstChunk(c.e)
 	}
 
 	base := c.e.Base()
@@ -921,7 +921,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e exec.Exe
 	}()
 	var rows []chunk.Row
 	var err error
-	req := tryNewCacheChunk(e)
+	req := exec.TryNewCacheChunk(e)
 	for {
 		err = a.next(ctx, e, req)
 		if err != nil {
@@ -965,7 +965,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 		}
 	}
 
-	err = a.next(ctx, e, tryNewCacheChunk(e))
+	err = a.next(ctx, e, exec.TryNewCacheChunk(e))
 	if err != nil {
 		return nil, err
 	}
@@ -1220,7 +1220,7 @@ func (a *ExecStmt) openExecutor(ctx context.Context, e exec.Executor) (err error
 
 func (a *ExecStmt) next(ctx context.Context, e exec.Executor, req *chunk.Chunk) error {
 	start := time.Now()
-	err := Next(ctx, e, req)
+	err := exec.Next(ctx, e, req)
 	a.phaseNextDurations[0] += time.Since(start)
 	return err
 }

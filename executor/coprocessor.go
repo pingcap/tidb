@@ -60,13 +60,13 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 		return h.buildErrorResponse(err)
 	}
 
-	chk := tryNewCacheChunk(e)
+	chk := exec.TryNewCacheChunk(e)
 	tps := e.Base().RetFieldTypes()
 	var totalChunks, partChunks []tipb.Chunk
 	memTracker := h.sctx.GetSessionVars().StmtCtx.MemTracker
 	for {
 		chk.Reset()
-		err = Next(ctx, e, chk)
+		err = exec.Next(ctx, e, chk)
 		if err != nil {
 			return h.buildErrorResponse(err)
 		}
@@ -100,11 +100,11 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 		return stream.Send(h.buildErrorResponse(err))
 	}
 
-	chk := tryNewCacheChunk(e)
+	chk := exec.TryNewCacheChunk(e)
 	tps := e.Base().RetFieldTypes()
 	for {
 		chk.Reset()
-		if err = Next(ctx, e, chk); err != nil {
+		if err = exec.Next(ctx, e, chk); err != nil {
 			return stream.Send(h.buildErrorResponse(err))
 		}
 		if chk.NumRows() == 0 {

@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
@@ -167,11 +168,11 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	for i := 0; i < concurrency; i++ {
 		if !e.keepOuterOrder {
 			e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
-			e.joinChkResourceCh[i] <- newFirstChunk(e)
+			e.joinChkResourceCh[i] <- exec.NewFirstChunk(e)
 		} else {
 			e.joinChkResourceCh[i] = make(chan *chunk.Chunk, numResChkHold)
 			for j := 0; j < numResChkHold; j++ {
-				e.joinChkResourceCh[i] <- newFirstChunk(e)
+				e.joinChkResourceCh[i] <- exec.NewFirstChunk(e)
 			}
 		}
 	}

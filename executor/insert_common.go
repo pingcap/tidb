@@ -446,8 +446,8 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	// process `insert|replace into ... select ... from ...`
 	e := base.insertCommon()
 	selectExec := e.Children(0)
-	fields := retTypes(selectExec)
-	chk := tryNewCacheChunk(selectExec)
+	fields := exec.RetTypes(selectExec)
+	chk := exec.TryNewCacheChunk(selectExec)
 	iter := chunk.NewIterator4Chunk(chk)
 	rows := make([][]types.Datum, 0, chk.Capacity())
 
@@ -462,7 +462,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	// just ignore the transaction which contain `insert|replace into ... select ... from ...` statement.
 	e.Ctx().GetTxnWriteThroughputSLI().SetInvalid()
 	for {
-		err := Next(ctx, selectExec, chk)
+		err := exec.Next(ctx, selectExec, chk)
 		if err != nil {
 			return err
 		}

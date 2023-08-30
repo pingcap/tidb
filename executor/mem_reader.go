@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -81,7 +82,7 @@ func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *Inde
 		table:         idxReader.table.Meta(),
 		kvRanges:      kvRanges,
 		conditions:    us.conditions,
-		retFieldTypes: retTypes(us),
+		retFieldTypes: exec.RetTypes(us),
 		outputOffset:  outputOffset,
 		cacheTable:    us.cacheTable,
 		keepOrder:     us.keepOrder,
@@ -244,7 +245,7 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 		columns:       us.columns,
 		kvRanges:      kvRanges,
 		conditions:    us.conditions,
-		retFieldTypes: retTypes(us),
+		retFieldTypes: exec.RetTypes(us),
 		colIDs:        colIDs,
 		buffer: allocBuf{
 			handleBytes: make([]byte, 0, 16),
@@ -668,7 +669,7 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 		index:         idxLookUpReader.index,
 		table:         idxLookUpReader.table.Meta(),
 		kvRanges:      kvRanges,
-		retFieldTypes: retTypes(us),
+		retFieldTypes: exec.RetTypes(us),
 		outputOffset:  outputOffset,
 		cacheTable:    us.cacheTable,
 	}
@@ -679,7 +680,7 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 		columns:       idxLookUpReader.columns,
 		table:         idxLookUpReader.table,
 		conditions:    us.conditions,
-		retFieldTypes: retTypes(us),
+		retFieldTypes: exec.RetTypes(us),
 		idxReader:     memIdxReader,
 
 		partitionMode:     idxLookUpReader.partitionTableMode,
@@ -799,7 +800,7 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 				kvRanges:      nil,
 				conditions:    us.conditions,
 				addedRows:     make([][]types.Datum, 0),
-				retFieldTypes: retTypes(us),
+				retFieldTypes: exec.RetTypes(us),
 				colIDs:        colIDs,
 				pkColIDs:      pkColIDs,
 				buffer: allocBuf{
@@ -815,7 +816,7 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 				table:         indexMergeReader.table.Meta(),
 				kvRanges:      nil,
 				compareExec:   compareExec{desc: indexMergeReader.descs[i]},
-				retFieldTypes: retTypes(us),
+				retFieldTypes: exec.RetTypes(us),
 				outputOffset:  outputOffset,
 			})
 		}
@@ -826,7 +827,7 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 		table:            indexMergeReader.table,
 		columns:          indexMergeReader.columns,
 		conditions:       us.conditions,
-		retFieldTypes:    retTypes(us),
+		retFieldTypes:    exec.RetTypes(us),
 		indexMergeReader: indexMergeReader,
 		memReaders:       memReaders,
 		isIntersection:   indexMergeReader.isIntersection,

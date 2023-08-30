@@ -97,7 +97,7 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
-	e.outerList = chunk.NewList(retTypes(e.outerExec), e.InitCap(), e.MaxChunkSize())
+	e.outerList = chunk.NewList(exec.RetTypes(e.outerExec), e.InitCap(), e.MaxChunkSize())
 	e.outerList.GetMemTracker().SetLabel(memory.LabelForOuterList)
 	e.outerList.GetMemTracker().AttachTo(e.memTracker)
 
@@ -109,8 +109,8 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	e.hasMatch = make([]bool, e.concurrency)
 	e.hasNull = make([]bool, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
-		e.innerChunk[i] = tryNewCacheChunk(e.innerExecs[i])
-		e.innerList[i] = chunk.NewList(retTypes(e.innerExecs[i]), e.InitCap(), e.MaxChunkSize())
+		e.innerChunk[i] = exec.TryNewCacheChunk(e.innerExecs[i])
+		e.innerList[i] = chunk.NewList(exec.RetTypes(e.innerExecs[i]), e.InitCap(), e.MaxChunkSize())
 		e.innerList[i].GetMemTracker().SetLabel(memory.LabelForInnerList)
 		e.innerList[i].GetMemTracker().AttachTo(e.memTracker)
 	}
@@ -120,7 +120,7 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	e.outerRowCh = make(chan outerRow)
 	e.exit = make(chan struct{})
 	for i := 0; i < e.concurrency; i++ {
-		e.freeChkCh <- newFirstChunk(e)
+		e.freeChkCh <- exec.NewFirstChunk(e)
 	}
 
 	if e.useCache {
@@ -208,8 +208,8 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 	var err error
 	for {
 		failpoint.Inject("parallelApplyOuterWorkerPanic", nil)
-		chk := tryNewCacheChunk(e.outerExec)
-		if err := Next(ctx, e.outerExec, chk); err != nil {
+		chk := exec.TryNewCacheChunk(e.outerExec)
+		if err := exec.Next(ctx, e.outerExec, chk); err != nil {
 			e.putResult(nil, err)
 			return
 		}
@@ -309,14 +309,14 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 
 	if e.useCache {
 		// create a new one in this case since it may be in the cache
-		e.innerList[id] = chunk.NewList(retTypes(e.innerExecs[id]), e.InitCap(), e.MaxChunkSize())
+		e.innerList[id] = chunk.NewList(exec.RetTypes(e.innerExecs[id]), e.InitCap(), e.MaxChunkSize())
 	} else {
 		e.innerList[id].Reset()
 	}
 
 	innerIter := chunk.NewIterator4Chunk(e.innerChunk[id])
 	for {
-		err := Next(ctx, e.innerExecs[id], e.innerChunk[id])
+		err := exec.Next(ctx, e.innerExecs[id], e.innerChunk[id])
 		if err != nil {
 			return err
 		}

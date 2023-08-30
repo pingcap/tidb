@@ -127,7 +127,7 @@ type showTableRegionRowItem struct {
 func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.MaxChunkSize())
 	if e.result == nil {
-		e.result = newFirstChunk(e)
+		e.result = exec.NewFirstChunk(e)
 		err := e.fetchAll(ctx)
 		if err != nil {
 			return errors.Trace(err)

@@ -153,8 +153,8 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 }
 
 func (e *WindowExec) fetchChild(ctx context.Context) (eof bool, err error) {
-	childResult := tryNewCacheChunk(e.Children(0))
-	err = Next(ctx, e.Children(0), childResult)
+	childResult := exec.TryNewCacheChunk(e.Children(0))
+	err = exec.Next(ctx, e.Children(0), childResult)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

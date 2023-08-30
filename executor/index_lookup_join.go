@@ -439,7 +439,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	for requiredRows > task.outerResult.Len() {
 		chk := ow.ctx.GetSessionVars().GetNewChunkWithCapacity(ow.outerCtx.rowTypes, maxChunkSize, maxChunkSize, ow.executor.Base().AllocPool)
 		chk = chk.SetRequiredRows(requiredRows, maxChunkSize)
-		err := Next(ctx, ow.executor, chk)
+		err := exec.Next(ctx, ow.executor, chk)
 		if err != nil {
 			return task, err
 		}
@@ -702,7 +702,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		return err
 	}
 
-	innerResult := chunk.NewList(retTypes(innerExec), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
+	innerResult := chunk.NewList(exec.RetTypes(innerExec), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
@@ -711,7 +711,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			return ctx.Err()
 		default:
 		}
-		err := Next(ctx, innerExec, iw.executorChk)
+		err := exec.Next(ctx, innerExec, iw.executorChk)
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
 			return err
@@ -720,7 +720,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			break
 		}
 		innerResult.Add(iw.executorChk)
-		iw.executorChk = tryNewCacheChunk(innerExec)
+		iw.executorChk = exec.TryNewCacheChunk(innerExec)
 	}
 	task.innerResult = innerResult
 	return nil

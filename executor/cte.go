@@ -346,8 +346,8 @@ func (p *cteProducer) computeSeedPart(ctx context.Context) (err error) {
 		if p.limitDone(p.iterInTbl) {
 			break
 		}
-		chk := tryNewCacheChunk(p.seedExec)
-		if err = Next(ctx, p.seedExec, chk); err != nil {
+		chk := exec.TryNewCacheChunk(p.seedExec)
+		if err = exec.Next(ctx, p.seedExec, chk); err != nil {
 			return
 		}
 		if chk.NumRows() == 0 {
@@ -391,8 +391,8 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 	}
 
 	for {
-		chk := tryNewCacheChunk(p.recursiveExec)
-		if err = Next(ctx, p.recursiveExec, chk); err != nil {
+		chk := exec.TryNewCacheChunk(p.recursiveExec)
+		if err = exec.Next(ctx, p.recursiveExec, chk); err != nil {
 			return
 		}
 		if chk.NumRows() == 0 {
