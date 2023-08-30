@@ -316,8 +316,8 @@ func ColumnGreaterRowCount(sctx sessionctx.Context, t *statistics.Table, value t
 	return c.GreaterRowCount(value) * c.GetIncreaseFactor(t.RealtimeCount)
 }
 
-// ColumnLessRowCount estimates the row count where the column less than value. Note that null values are not counted.
-func ColumnLessRowCount(sctx sessionctx.Context, t *statistics.Table, value types.Datum, colID int64) float64 {
+// columnLessRowCount estimates the row count where the column less than value. Note that null values are not counted.
+func columnLessRowCount(sctx sessionctx.Context, t *statistics.Table, value types.Datum, colID int64) float64 {
 	c, ok := t.Columns[colID]
 	if !ok || c.IsInvalid(sctx, t.Pseudo) {
 		return float64(t.RealtimeCount) / pseudoLessRate
@@ -325,8 +325,8 @@ func ColumnLessRowCount(sctx sessionctx.Context, t *statistics.Table, value type
 	return c.LessRowCount(sctx, value) * c.GetIncreaseFactor(t.RealtimeCount)
 }
 
-// ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func ColumnBetweenRowCount(sctx sessionctx.Context, t *statistics.Table, a, b types.Datum, colID int64) (float64, error) {
+// columnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
+func columnBetweenRowCount(sctx sessionctx.Context, t *statistics.Table, a, b types.Datum, colID int64) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	c, ok := t.Columns[colID]
 	if !ok || c.IsInvalid(sctx, t.Pseudo) {
