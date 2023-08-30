@@ -83,7 +83,7 @@ func newDispatcher(ctx context.Context, taskMgr *storage.TaskManager, serverID s
 		impl:     impl,
 	}
 	if dsp.impl == nil {
-		logutil.BgLogger().Warn("gen task flow handle failed, this type handle doesn't register")
+		logutil.BgLogger().Warn("gen dispatcher impl failed, this type impl doesn't register")
 		dsp.task.Error = errors.New("unsupported task type")
 		// state transform: pending -> failed.
 		return nil, dsp.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
