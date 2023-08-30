@@ -63,3 +63,5 @@ for casename in $SELECTED_TEST_NAME; do
     BR_LOG_TO_TERM=1 \
     bash "$script" && echo "TEST: [$casename] success!"
 done
+
+# add this line to trigger br integration test
