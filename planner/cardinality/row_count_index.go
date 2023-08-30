@@ -65,7 +65,7 @@ func GetRowCountByIndexRanges(sctx sessionctx.Context, coll *statistics.HistColl
 		}
 		result, err = getPseudoRowCountByIndexRanges(sc, indexRanges, float64(coll.RealtimeCount), colsLen)
 		if err == nil && sc.EnableOptimizerCETrace && ok {
-			CETraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats-Pseudo", uint64(result))
+			ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats-Pseudo", uint64(result))
 		}
 		return result, err
 	}
@@ -82,7 +82,7 @@ func GetRowCountByIndexRanges(sctx sessionctx.Context, coll *statistics.HistColl
 		result, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, coll.RealtimeCount, coll.ModifyCount)
 	}
 	if sc.EnableOptimizerCETrace {
-		CETraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats", uint64(result))
+		ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats", uint64(result))
 	}
 	return result, errors.Trace(err)
 }
