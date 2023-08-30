@@ -68,7 +68,7 @@ func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 				{
 					// lastCheckpoint is not increased too long enough.
 					// assume the cluster has expired locks for whatever reasons.
-					if c.lastCheckpoint.needResolveLocks() {
+					if c.lastCheckpoint != nil && c.lastCheckpoint.needResolveLocks() {
 						var targets []spans.Valued
 						c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
 							// when get locks here. assume these locks are not belong to same txn,
