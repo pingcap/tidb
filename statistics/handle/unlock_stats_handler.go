@@ -40,6 +40,10 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 	if err != nil {
 		return "", err
 	}
+	defer func() {
+		// Commit or rollback the transaction.
+		err = finishTransaction(ctx, exec, err)
+	}()
 
 	// Load tables to check locked before delete.
 	tableLocked, err := loadLockedTables(ctx, exec, maxChunkSize)
@@ -73,16 +77,12 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 		}
 	}
 
-	err = finishTransaction(ctx, exec, err)
-	if err != nil {
-		return "", err
-	}
-
 	// Update handle.tableLocked after transaction success, if txn failed, tableLocked won't be updated.
 	h.tableLocked = tableLocked
 
 	mag := generateSkippedTablesMessage(tids, skippedTables, unlockAction, unlockedStatus)
-	return mag, nil
+	// Note: defer commit transaction, so we can't use `return nil` here.
+	return mag, err
 }
 
 func updateStatsAndUnlockTable(ctx context.Context, exec sqlexec.SQLExecutor, tid int64, maxChunkSize int) error {
