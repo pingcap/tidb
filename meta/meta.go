@@ -313,7 +313,7 @@ func ParseAutoTableIDKey(key []byte) (int64, error) {
 }
 
 func (*Meta) autoIncrementIDKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mIncIDPrefix, tableID))
+	return AutoIncrementIDKey(tableID)
 }
 
 // AutoIncrementIDKey decodes the auto inc table key.
