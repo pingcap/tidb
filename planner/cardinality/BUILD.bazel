@@ -4,7 +4,6 @@ go_library(
     name = "cardinality",
     srcs = [
         "cross_estimation.go",
-        "histogram.go",
         "join.go",
         "ndv.go",
         "pseudo.go",
@@ -60,7 +59,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":cardinality"],
     flaky = True,
-    shard_count = 32,
+    shard_count = 31,
     deps = [
         "//config",
         "//domain",
@@ -83,7 +82,6 @@ go_test(
         "//testkit/testmain",
         "//testkit/testsetup",
         "//types",
-        "//util/chunk",
         "//util/codec",
         "//util/collate",
         "//util/mock",
