@@ -109,6 +109,10 @@ func (op *encodeAndSortOperator) onError(err error) {
 	op.errCh <- err
 }
 
+func (op *encodeAndSortOperator) Done() <-chan struct{} {
+	return op.ctx.Done()
+}
+
 type chunkWorker struct {
 	ctx context.Context
 	op  *encodeAndSortOperator
@@ -120,7 +124,7 @@ func (w *chunkWorker) HandleTask(task *importStepMinimalTask, _ func(workerpool.
 	}
 	// we don't use the input send function, it makes workflow more complex
 	// we send result to errCh and handle it here.
-	executor := &ImportMinimalTaskExecutor{mTtask: task}
+	executor := newImportMinimalTaskExecutor(task)
 	if err := executor.Run(w.ctx); err != nil {
 		w.op.onError(err)
 	}

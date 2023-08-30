@@ -44,13 +44,20 @@ import (
 // TestSyncChan is used to test.
 var TestSyncChan = make(chan struct{})
 
-// ImportMinimalTaskExecutor is a minimal task executor for IMPORT INTO.
-type ImportMinimalTaskExecutor struct {
+// importMinimalTaskExecutor is a minimal task executor for IMPORT INTO.
+type importMinimalTaskExecutor struct {
 	mTtask *importStepMinimalTask
 }
 
-// Run implements the SubtaskExecutor.Run interface.
-func (e *ImportMinimalTaskExecutor) Run(ctx context.Context) error {
+var newImportMinimalTaskExecutor = newImportMinimalTaskExecutor0
+
+func newImportMinimalTaskExecutor0(t *importStepMinimalTask) scheduler.SubtaskExecutor {
+	return &importMinimalTaskExecutor{
+		mTtask: t,
+	}
+}
+
+func (e *importMinimalTaskExecutor) Run(ctx context.Context) error {
 	logger := logutil.BgLogger().With(zap.String("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
 	logger.Info("run minimal task")
 	failpoint.Inject("waitBeforeSortChunk", func() {
