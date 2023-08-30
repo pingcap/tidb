@@ -2033,11 +2033,13 @@ func getGCRules(ids []int64, rules map[string]*label.Rule) []string {
 }
 
 // RunGCJob sends GC command to KV. It is exported for kv api, do not use it with GCWorker at the same time.
-func RunGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int) error {
+// only use for test
+func RunGCJob(ctx context.Context, lockResolver tikv.RegionLockResolver, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int) error {
 	gcWorker := &GCWorker{
-		tikvStore: s,
-		uuid:      identifier,
-		pdClient:  pd,
+		tikvStore:    s,
+		uuid:         identifier,
+		pdClient:     pd,
+		lockResolver: lockResolver,
 	}
 
 	if concurrency <= 0 {
@@ -2070,11 +2072,12 @@ func RunGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safePoint uint6
 // RunDistributedGCJob notifies TiKVs to do GC. It is exported for kv api, do not use it with GCWorker at the same time.
 // This function may not finish immediately because it may take some time to do resolveLocks.
 // Param concurrency specifies the concurrency of resolveLocks phase.
-func RunDistributedGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int) error {
+func RunDistributedGCJob(ctx context.Context, lockResolver tikv.RegionLockResolver, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int) error {
 	gcWorker := &GCWorker{
-		tikvStore: s,
-		uuid:      identifier,
-		pdClient:  pd,
+		tikvStore:    s,
+		uuid:         identifier,
+		pdClient:     pd,
+		lockResolver: lockResolver,
 	}
 
 	safePoint, err := gcWorker.setGCWorkerServiceSafePoint(ctx, safePoint)

@@ -1295,12 +1295,25 @@ func TestSetServiceSafePoint(t *testing.T) {
 
 func TestRunGCJobAPI(t *testing.T) {
 	s := createGCWorkerSuite(t)
+	mockLockResolver := &mockGCWorkerLockResolver{
+		tikvStore: s.tikvStore,
+		scanLocks: func(key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
+			return []*txnlock.Lock{}, &tikv.KeyLocation{}
+		},
+		batchResolveLocks: func(
+			locks []*txnlock.Lock,
+			loc *tikv.KeyLocation,
+		) (*tikv.KeyLocation, error) {
+			// no locks
+			return loc, nil
+		},
+	}
 
 	gcSafePointCacheInterval = 0
 
 	p := s.createGCProbe(t, "k1")
 	safePoint := s.mustAllocTs(t)
-	err := RunGCJob(gcContext(), s.tikvStore, s.pdClient, safePoint, "mock", 1)
+	err := RunGCJob(gcContext(), mockLockResolver, s.tikvStore, s.pdClient, safePoint, "mock", 1)
 	require.NoError(t, err)
 	s.checkCollected(t, p)
 	etcdSafePoint := s.loadEtcdSafePoint(t)
@@ -1312,9 +1325,22 @@ func TestRunDistGCJobAPI(t *testing.T) {
 	s := createGCWorkerSuite(t)
 
 	gcSafePointCacheInterval = 0
+	mockLockResolver := &mockGCWorkerLockResolver{
+		tikvStore: s.tikvStore,
+		scanLocks: func(key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
+			return []*txnlock.Lock{}, &tikv.KeyLocation{}
+		},
+		batchResolveLocks: func(
+			locks []*txnlock.Lock,
+			loc *tikv.KeyLocation,
+		) (*tikv.KeyLocation, error) {
+			// no locks
+			return loc, nil
+		},
+	}
 
 	safePoint := s.mustAllocTs(t)
-	err := RunDistributedGCJob(gcContext(), s.tikvStore, s.pdClient, safePoint, "mock", 1)
+	err := RunDistributedGCJob(gcContext(), mockLockResolver, s.tikvStore, s.pdClient, safePoint, "mock", 1)
 	require.NoError(t, err)
 	pdSafePoint := s.mustGetSafePointFromPd(t)
 	require.Equal(t, safePoint, pdSafePoint)
