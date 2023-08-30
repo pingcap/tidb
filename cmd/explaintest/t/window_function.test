@@ -1,5 +1,4 @@
 set tidb_cost_model_version=1;
-use test;
 drop table if exists t;
 create table t (a int, b int, c timestamp, index idx(a));
 set @@tidb_enable_window_function = 1;

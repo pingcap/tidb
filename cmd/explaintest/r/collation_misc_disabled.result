@@ -118,4 +118,3 @@ binary	binary	63	Yes	Yes	1
 ascii_bin	ascii	65	Yes	Yes	1
 utf8_bin	utf8	83	Yes	Yes	1
 gbk_bin	gbk	87	Yes	Yes	1
-use test;

@@ -1,5 +1,4 @@
 set @@foreign_key_checks=1;
-use test;
 drop table if exists t1,t2;
 create table t1 (id int key);
 create table t2 (id int key, foreign key fk(id) references t1(id) ON UPDATE CASCADE ON DELETE CASCADE);
@@ -137,7 +136,7 @@ Update	N/A	root		N/A
 explain format = 'brief' delete t_1,t_2 from t_1 join t_2 where t_1.id=t_2.id and t_1.id > 0;
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
-├─MergeJoin	4166.67	root		inner join, left key:test.t_1.id, right key:test.t_2.id
+├─MergeJoin	4166.67	root		inner join, left key:explain_foreign_key.t_1.id, right key:explain_foreign_key.t_2.id
 │ ├─TableReader(Build)	3333.33	root		data:TableRangeScan
 │ │ └─TableRangeScan	3333.33	cop[tikv]	table:t_2	range:(0,+inf], keep order:true, stats:pseudo
 │ └─TableReader(Probe)	3333.33	root		data:TableRangeScan
@@ -158,7 +157,7 @@ Update	N/A	root		N/A
 explain format = 'brief' delete t_1,t_2 from t_1 join t_2 where t_1.id=t_2.id and t_1.id > 0;
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
-└─MergeJoin	4166.67	root		inner join, left key:test.t_1.id, right key:test.t_2.id
+└─MergeJoin	4166.67	root		inner join, left key:explain_foreign_key.t_1.id, right key:explain_foreign_key.t_2.id
   ├─TableReader(Build)	3333.33	root		data:TableRangeScan
   │ └─TableRangeScan	3333.33	cop[tikv]	table:t_2	range:(0,+inf], keep order:true, stats:pseudo
   └─TableReader(Probe)	3333.33	root		data:TableRangeScan

@@ -1,5 +1,4 @@
 set tidb_cost_model_version=1;
-use test;
 drop table if exists t1, t2;
 create table t1 (c1 int primary key, c2 int, index c2 (c2));
 create table t2 (c1 int unique, c2 int);
@@ -35,8 +34,8 @@ CTEFullScan_20	8001.00	root	CTE:cte	data:CTE_0
 CTE_0	8001.00	root		Recursive CTE
 ├─TableReader_13(Seed Part)	10000.00	root		data:TableFullScan_12
 │ └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection_16(Recursive Part)	8000.00	root		cast(plus(test.t1.c2, 1), int(11))->test.t1.c2
-  └─Selection_17	8000.00	root		lt(test.t1.c2, 10)
+└─Projection_16(Recursive Part)	8000.00	root		cast(plus(explain_cte.t1.c2, 1), int(11))->explain_cte.t1.c2
+  └─Selection_17	8000.00	root		lt(explain_cte.t1.c2, 10)
     └─CTETable_18	10000.00	root		Scan on CTE_0
 explain with cte(a) as (with recursive cte1(a) as (select 1 union select a + 1 from cte1 where a < 10) select * from cte1) select * from cte;
 id	estRows	task	access object	operator info
@@ -85,15 +84,15 @@ CTE_0	2.00	root		Recursive CTE
 CTE_1	8001.00	root		Recursive CTE
 ├─TableReader_28(Seed Part)	10000.00	root		data:TableFullScan_27
 │ └─TableFullScan_27	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection_31(Recursive Part)	8000.00	root		cast(plus(test.t1.c2, 1), int(11))->test.t1.c2
-  └─Selection_32	8000.00	root		lt(test.t1.c2, 10)
+└─Projection_31(Recursive Part)	8000.00	root		cast(plus(explain_cte.t1.c2, 1), int(11))->explain_cte.t1.c2
+  └─Selection_32	8000.00	root		lt(explain_cte.t1.c2, 10)
     └─CTETable_33	10000.00	root		Scan on CTE_1
 explain with q(a,b) as (select * from t1) select /*+ merge(q) no_merge(q1) */ * from q, q q1 where q.a=1 and q1.a=2;
 id	estRows	task	access object	operator info
 HashJoin_15	2.56	root		CARTESIAN inner join
-├─Selection_19(Build)	1.60	root		eq(test.t1.c1, 2)
+├─Selection_19(Build)	1.60	root		eq(explain_cte.t1.c1, 2)
 │ └─CTEFullScan_20	2.00	root	CTE:q AS q1	data:CTE_0
-└─Selection_17(Probe)	1.60	root		eq(test.t1.c1, 1)
+└─Selection_17(Probe)	1.60	root		eq(explain_cte.t1.c1, 1)
   └─CTEFullScan_18	2.00	root	CTE:q	data:CTE_0
 CTE_0	2.00	root		Non-Recursive CTE
 └─Batch_Point_Get_12(Seed Part)	2.00	root	table:t1	handle:[1 2], keep order:false, desc:false
@@ -114,7 +113,7 @@ Apply_24	10000.00	root		CARTESIAN semi join
 └─Selection_29(Probe)	14400.00	root		eq(Column#8, 1)
   └─CTEFullScan_30	18000.00	root	CTE:qn	data:CTE_0
 CTE_0	1.80	root		Recursive CTE
-├─Projection_17(Seed Part)	1.00	root		plus(mul(test.t1.c1, 0), 1)->Column#4
+├─Projection_17(Seed Part)	1.00	root		plus(mul(explain_cte.t1.c1, 0), 1)->Column#4
 │ └─TableDual_18	1.00	root		rows:1
 └─Projection_19(Recursive Part)	0.80	root		plus(Column#5, 1)->Column#7
   └─Selection_20	0.80	root		eq(Column#5, 0)
@@ -125,7 +124,7 @@ CTEFullScan_19	8001.00	root	CTE:cte1	data:CTE_0
 CTE_0	8001.00	root		Recursive CTE, limit(offset:0, count:1)
 ├─TableReader_13(Seed Part)	10000.00	root		data:TableFullScan_12
 │ └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection_16(Recursive Part)	10000.00	root		cast(plus(test.t1.c1, 1), int(11))->test.t1.c1
+└─Projection_16(Recursive Part)	10000.00	root		cast(plus(explain_cte.t1.c1, 1), int(11))->explain_cte.t1.c1
   └─CTETable_17	10000.00	root		Scan on CTE_0
 explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 100 offset 100) select * from cte1;
 id	estRows	task	access object	operator info
@@ -133,7 +132,7 @@ CTEFullScan_19	8001.00	root	CTE:cte1	data:CTE_0
 CTE_0	8001.00	root		Recursive CTE, limit(offset:100, count:100)
 ├─TableReader_13(Seed Part)	10000.00	root		data:TableFullScan_12
 │ └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection_16(Recursive Part)	10000.00	root		cast(plus(test.t1.c1, 1), int(11))->test.t1.c1
+└─Projection_16(Recursive Part)	10000.00	root		cast(plus(explain_cte.t1.c1, 1), int(11))->explain_cte.t1.c1
   └─CTETable_17	10000.00	root		Scan on CTE_0
 explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 0 offset 0) select * from cte1;
 id	estRows	task	access object	operator info
@@ -141,31 +140,31 @@ CTEFullScan_19	8001.00	root	CTE:cte1	data:CTE_0
 CTE_0	8001.00	root		Recursive CTE, limit(offset:0, count:0)
 ├─TableReader_13(Seed Part)	10000.00	root		data:TableFullScan_12
 │ └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection_16(Recursive Part)	10000.00	root		cast(plus(test.t1.c1, 1), int(11))->test.t1.c1
+└─Projection_16(Recursive Part)	10000.00	root		cast(plus(explain_cte.t1.c1, 1), int(11))->explain_cte.t1.c1
   └─CTETable_17	10000.00	root		Scan on CTE_0
 explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1;
 id	estRows	task	access object	operator info
-HashJoin_25	6400.80	root		inner join, equal:[eq(test.t1.c1, test.t1.c1)]
-├─Selection_29(Build)	6400.80	root		not(isnull(test.t1.c1))
+HashJoin_25	6400.80	root		inner join, equal:[eq(explain_cte.t1.c1, explain_cte.t1.c1)]
+├─Selection_29(Build)	6400.80	root		not(isnull(explain_cte.t1.c1))
 │ └─CTEFullScan_30	8001.00	root	CTE:cte1 AS dt2	data:CTE_0
-└─Selection_27(Probe)	6400.80	root		not(isnull(test.t1.c1))
+└─Selection_27(Probe)	6400.80	root		not(isnull(explain_cte.t1.c1))
   └─CTEFullScan_28	8001.00	root	CTE:cte1 AS dt1	data:CTE_0
 CTE_0	8001.00	root		Recursive CTE, limit(offset:0, count:1)
 ├─TableReader_18(Seed Part)	10000.00	root		data:TableFullScan_17
 │ └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection_21(Recursive Part)	10000.00	root		cast(plus(test.t1.c1, 1), int(11))->test.t1.c1
+└─Projection_21(Recursive Part)	10000.00	root		cast(plus(explain_cte.t1.c1, 1), int(11))->explain_cte.t1.c1
   └─CTETable_22	10000.00	root		Scan on CTE_0
 explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 0 offset 0) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1;
 id	estRows	task	access object	operator info
-HashJoin_25	6400.80	root		inner join, equal:[eq(test.t1.c1, test.t1.c1)]
-├─Selection_29(Build)	6400.80	root		not(isnull(test.t1.c1))
+HashJoin_25	6400.80	root		inner join, equal:[eq(explain_cte.t1.c1, explain_cte.t1.c1)]
+├─Selection_29(Build)	6400.80	root		not(isnull(explain_cte.t1.c1))
 │ └─CTEFullScan_30	8001.00	root	CTE:cte1 AS dt2	data:CTE_0
-└─Selection_27(Probe)	6400.80	root		not(isnull(test.t1.c1))
+└─Selection_27(Probe)	6400.80	root		not(isnull(explain_cte.t1.c1))
   └─CTEFullScan_28	8001.00	root	CTE:cte1 AS dt1	data:CTE_0
 CTE_0	8001.00	root		Recursive CTE, limit(offset:0, count:0)
 ├─TableReader_18(Seed Part)	10000.00	root		data:TableFullScan_17
 │ └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection_21(Recursive Part)	10000.00	root		cast(plus(test.t1.c1, 1), int(11))->test.t1.c1
+└─Projection_21(Recursive Part)	10000.00	root		cast(plus(explain_cte.t1.c1, 1), int(11))->explain_cte.t1.c1
   └─CTETable_22	10000.00	root		Scan on CTE_0
 explain with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 1) select * from cte1;
 id	estRows	task	access object	operator info
@@ -402,37 +401,37 @@ TopN	40.00	root		Column#180, Column#181, Column#182, Column#186, offset:0, count
         └─CTEFullScan	50.00	root	CTE:year_total AS t_s_firstyear	data:CTE_0
 CTE_0	50.00	root		Non-Recursive CTE
 └─Union(Seed Part)	50.00	root		
-  ├─Projection	25.00	root		test.customer.c_customer_id->Column#160, test.customer.c_first_name->Column#161, test.customer.c_last_name->Column#162, test.customer.c_preferred_cust_flag->Column#163, test.customer.c_birth_country->Column#164, test.customer.c_login->Column#165, test.customer.c_email_address->Column#166, test.date_dim.d_year->Column#167, Column#73->Column#168, s->Column#169
-  │ └─Selection	25.00	root		or(or(and(1, and(eq(test.date_dim.d_year, 2001), gt(Column#73, 0))), and(1, eq(test.date_dim.d_year, 2002))), 0)
-  │   └─HashAgg	31.25	root		group by:Column#233, Column#234, Column#235, Column#236, Column#237, Column#238, Column#239, Column#240, funcs:sum(Column#224)->Column#73, funcs:firstrow(Column#225)->test.customer.c_customer_id, funcs:firstrow(Column#226)->test.customer.c_first_name, funcs:firstrow(Column#227)->test.customer.c_last_name, funcs:firstrow(Column#228)->test.customer.c_preferred_cust_flag, funcs:firstrow(Column#229)->test.customer.c_birth_country, funcs:firstrow(Column#230)->test.customer.c_login, funcs:firstrow(Column#231)->test.customer.c_email_address, funcs:firstrow(Column#232)->test.date_dim.d_year
-  │     └─Projection	31.25	root		minus(test.store_sales.ss_ext_list_price, test.store_sales.ss_ext_discount_amt)->Column#224, test.customer.c_customer_id->Column#225, test.customer.c_first_name->Column#226, test.customer.c_last_name->Column#227, test.customer.c_preferred_cust_flag->Column#228, test.customer.c_birth_country->Column#229, test.customer.c_login->Column#230, test.customer.c_email_address->Column#231, test.date_dim.d_year->Column#232, test.customer.c_customer_id->Column#233, test.customer.c_first_name->Column#234, test.customer.c_last_name->Column#235, test.customer.c_preferred_cust_flag->Column#236, test.customer.c_birth_country->Column#237, test.customer.c_login->Column#238, test.customer.c_email_address->Column#239, test.date_dim.d_year->Column#240
-  │       └─Projection	31.25	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.store_sales.ss_ext_discount_amt, test.store_sales.ss_ext_list_price, test.date_dim.d_year
-  │         └─IndexJoin	31.25	root		inner join, inner:IndexLookUp, outer key:test.store_sales.ss_customer_sk, inner key:test.customer.c_customer_sk, equal cond:eq(test.store_sales.ss_customer_sk, test.customer.c_customer_sk)
-  │           ├─HashJoin(Build)	25.00	root		inner join, equal:[eq(test.date_dim.d_date_sk, test.store_sales.ss_sold_date_sk)]
+  ├─Projection	25.00	root		explain_cte.customer.c_customer_id->Column#160, explain_cte.customer.c_first_name->Column#161, explain_cte.customer.c_last_name->Column#162, explain_cte.customer.c_preferred_cust_flag->Column#163, explain_cte.customer.c_birth_country->Column#164, explain_cte.customer.c_login->Column#165, explain_cte.customer.c_email_address->Column#166, explain_cte.date_dim.d_year->Column#167, Column#73->Column#168, s->Column#169
+  │ └─Selection	25.00	root		or(or(and(1, and(eq(explain_cte.date_dim.d_year, 2001), gt(Column#73, 0))), and(1, eq(explain_cte.date_dim.d_year, 2002))), 0)
+  │   └─HashAgg	31.25	root		group by:Column#233, Column#234, Column#235, Column#236, Column#237, Column#238, Column#239, Column#240, funcs:sum(Column#224)->Column#73, funcs:firstrow(Column#225)->explain_cte.customer.c_customer_id, funcs:firstrow(Column#226)->explain_cte.customer.c_first_name, funcs:firstrow(Column#227)->explain_cte.customer.c_last_name, funcs:firstrow(Column#228)->explain_cte.customer.c_preferred_cust_flag, funcs:firstrow(Column#229)->explain_cte.customer.c_birth_country, funcs:firstrow(Column#230)->explain_cte.customer.c_login, funcs:firstrow(Column#231)->explain_cte.customer.c_email_address, funcs:firstrow(Column#232)->explain_cte.date_dim.d_year
+  │     └─Projection	31.25	root		minus(explain_cte.store_sales.ss_ext_list_price, explain_cte.store_sales.ss_ext_discount_amt)->Column#224, explain_cte.customer.c_customer_id->Column#225, explain_cte.customer.c_first_name->Column#226, explain_cte.customer.c_last_name->Column#227, explain_cte.customer.c_preferred_cust_flag->Column#228, explain_cte.customer.c_birth_country->Column#229, explain_cte.customer.c_login->Column#230, explain_cte.customer.c_email_address->Column#231, explain_cte.date_dim.d_year->Column#232, explain_cte.customer.c_customer_id->Column#233, explain_cte.customer.c_first_name->Column#234, explain_cte.customer.c_last_name->Column#235, explain_cte.customer.c_preferred_cust_flag->Column#236, explain_cte.customer.c_birth_country->Column#237, explain_cte.customer.c_login->Column#238, explain_cte.customer.c_email_address->Column#239, explain_cte.date_dim.d_year->Column#240
+  │       └─Projection	31.25	root		explain_cte.customer.c_customer_id, explain_cte.customer.c_first_name, explain_cte.customer.c_last_name, explain_cte.customer.c_preferred_cust_flag, explain_cte.customer.c_birth_country, explain_cte.customer.c_login, explain_cte.customer.c_email_address, explain_cte.store_sales.ss_ext_discount_amt, explain_cte.store_sales.ss_ext_list_price, explain_cte.date_dim.d_year
+  │         └─IndexJoin	31.25	root		inner join, inner:IndexLookUp, outer key:explain_cte.store_sales.ss_customer_sk, inner key:explain_cte.customer.c_customer_sk, equal cond:eq(explain_cte.store_sales.ss_customer_sk, explain_cte.customer.c_customer_sk)
+  │           ├─HashJoin(Build)	25.00	root		inner join, equal:[eq(explain_cte.date_dim.d_date_sk, explain_cte.store_sales.ss_sold_date_sk)]
   │           │ ├─TableReader(Build)	20.00	root		data:Selection
-  │           │ │ └─Selection	20.00	cop[tikv]		or(and(1, eq(test.date_dim.d_year, 2001)), or(and(1, eq(test.date_dim.d_year, 2002)), 0))
+  │           │ │ └─Selection	20.00	cop[tikv]		or(and(1, eq(explain_cte.date_dim.d_year, 2001)), or(and(1, eq(explain_cte.date_dim.d_year, 2002)), 0))
   │           │ │   └─TableFullScan	10000.00	cop[tikv]	table:date_dim	keep order:false, stats:pseudo
   │           │ └─TableReader(Probe)	9980.01	root		data:Selection
-  │           │   └─Selection	9980.01	cop[tikv]		not(isnull(test.store_sales.ss_customer_sk)), not(isnull(test.store_sales.ss_sold_date_sk))
+  │           │   └─Selection	9980.01	cop[tikv]		not(isnull(explain_cte.store_sales.ss_customer_sk)), not(isnull(explain_cte.store_sales.ss_sold_date_sk))
   │           │     └─TableFullScan	10000.00	cop[tikv]	table:store_sales	keep order:false, stats:pseudo
   │           └─IndexLookUp(Probe)	25.00	root		
-  │             ├─IndexRangeScan(Build)	25.00	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(test.customer.c_customer_sk, test.store_sales.ss_customer_sk)], keep order:false, stats:pseudo
+  │             ├─IndexRangeScan(Build)	25.00	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(explain_cte.customer.c_customer_sk, explain_cte.store_sales.ss_customer_sk)], keep order:false, stats:pseudo
   │             └─TableRowIDScan(Probe)	25.00	cop[tikv]	table:customer	keep order:false, stats:pseudo
-  └─Projection	25.00	root		test.customer.c_customer_id->Column#160, test.customer.c_first_name->Column#161, test.customer.c_last_name->Column#162, test.customer.c_preferred_cust_flag->Column#163, test.customer.c_birth_country->Column#164, test.customer.c_login->Column#165, test.customer.c_email_address->Column#166, test.date_dim.d_year->Column#167, Column#158->Column#168, w->Column#169
-    └─Selection	25.00	root		or(0, or(and(1, and(eq(test.date_dim.d_year, 2001), gt(Column#158, 0))), and(1, eq(test.date_dim.d_year, 2002))))
-      └─HashAgg	31.25	root		group by:Column#250, Column#251, Column#252, Column#253, Column#254, Column#255, Column#256, Column#257, funcs:sum(Column#241)->Column#158, funcs:firstrow(Column#242)->test.customer.c_customer_id, funcs:firstrow(Column#243)->test.customer.c_first_name, funcs:firstrow(Column#244)->test.customer.c_last_name, funcs:firstrow(Column#245)->test.customer.c_preferred_cust_flag, funcs:firstrow(Column#246)->test.customer.c_birth_country, funcs:firstrow(Column#247)->test.customer.c_login, funcs:firstrow(Column#248)->test.customer.c_email_address, funcs:firstrow(Column#249)->test.date_dim.d_year
-        └─Projection	31.25	root		minus(test.web_sales.ws_ext_list_price, test.web_sales.ws_ext_discount_amt)->Column#241, test.customer.c_customer_id->Column#242, test.customer.c_first_name->Column#243, test.customer.c_last_name->Column#244, test.customer.c_preferred_cust_flag->Column#245, test.customer.c_birth_country->Column#246, test.customer.c_login->Column#247, test.customer.c_email_address->Column#248, test.date_dim.d_year->Column#249, test.customer.c_customer_id->Column#250, test.customer.c_first_name->Column#251, test.customer.c_last_name->Column#252, test.customer.c_preferred_cust_flag->Column#253, test.customer.c_birth_country->Column#254, test.customer.c_login->Column#255, test.customer.c_email_address->Column#256, test.date_dim.d_year->Column#257
-          └─Projection	31.25	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.web_sales.ws_ext_discount_amt, test.web_sales.ws_ext_list_price, test.date_dim.d_year
-            └─IndexJoin	31.25	root		inner join, inner:IndexLookUp, outer key:test.web_sales.ws_bill_customer_sk, inner key:test.customer.c_customer_sk, equal cond:eq(test.web_sales.ws_bill_customer_sk, test.customer.c_customer_sk)
-              ├─HashJoin(Build)	25.00	root		inner join, equal:[eq(test.date_dim.d_date_sk, test.web_sales.ws_sold_date_sk)]
+  └─Projection	25.00	root		explain_cte.customer.c_customer_id->Column#160, explain_cte.customer.c_first_name->Column#161, explain_cte.customer.c_last_name->Column#162, explain_cte.customer.c_preferred_cust_flag->Column#163, explain_cte.customer.c_birth_country->Column#164, explain_cte.customer.c_login->Column#165, explain_cte.customer.c_email_address->Column#166, explain_cte.date_dim.d_year->Column#167, Column#158->Column#168, w->Column#169
+    └─Selection	25.00	root		or(0, or(and(1, and(eq(explain_cte.date_dim.d_year, 2001), gt(Column#158, 0))), and(1, eq(explain_cte.date_dim.d_year, 2002))))
+      └─HashAgg	31.25	root		group by:Column#250, Column#251, Column#252, Column#253, Column#254, Column#255, Column#256, Column#257, funcs:sum(Column#241)->Column#158, funcs:firstrow(Column#242)->explain_cte.customer.c_customer_id, funcs:firstrow(Column#243)->explain_cte.customer.c_first_name, funcs:firstrow(Column#244)->explain_cte.customer.c_last_name, funcs:firstrow(Column#245)->explain_cte.customer.c_preferred_cust_flag, funcs:firstrow(Column#246)->explain_cte.customer.c_birth_country, funcs:firstrow(Column#247)->explain_cte.customer.c_login, funcs:firstrow(Column#248)->explain_cte.customer.c_email_address, funcs:firstrow(Column#249)->explain_cte.date_dim.d_year
+        └─Projection	31.25	root		minus(explain_cte.web_sales.ws_ext_list_price, explain_cte.web_sales.ws_ext_discount_amt)->Column#241, explain_cte.customer.c_customer_id->Column#242, explain_cte.customer.c_first_name->Column#243, explain_cte.customer.c_last_name->Column#244, explain_cte.customer.c_preferred_cust_flag->Column#245, explain_cte.customer.c_birth_country->Column#246, explain_cte.customer.c_login->Column#247, explain_cte.customer.c_email_address->Column#248, explain_cte.date_dim.d_year->Column#249, explain_cte.customer.c_customer_id->Column#250, explain_cte.customer.c_first_name->Column#251, explain_cte.customer.c_last_name->Column#252, explain_cte.customer.c_preferred_cust_flag->Column#253, explain_cte.customer.c_birth_country->Column#254, explain_cte.customer.c_login->Column#255, explain_cte.customer.c_email_address->Column#256, explain_cte.date_dim.d_year->Column#257
+          └─Projection	31.25	root		explain_cte.customer.c_customer_id, explain_cte.customer.c_first_name, explain_cte.customer.c_last_name, explain_cte.customer.c_preferred_cust_flag, explain_cte.customer.c_birth_country, explain_cte.customer.c_login, explain_cte.customer.c_email_address, explain_cte.web_sales.ws_ext_discount_amt, explain_cte.web_sales.ws_ext_list_price, explain_cte.date_dim.d_year
+            └─IndexJoin	31.25	root		inner join, inner:IndexLookUp, outer key:explain_cte.web_sales.ws_bill_customer_sk, inner key:explain_cte.customer.c_customer_sk, equal cond:eq(explain_cte.web_sales.ws_bill_customer_sk, explain_cte.customer.c_customer_sk)
+              ├─HashJoin(Build)	25.00	root		inner join, equal:[eq(explain_cte.date_dim.d_date_sk, explain_cte.web_sales.ws_sold_date_sk)]
               │ ├─TableReader(Build)	20.00	root		data:Selection
-              │ │ └─Selection	20.00	cop[tikv]		or(0, or(and(1, eq(test.date_dim.d_year, 2001)), and(1, eq(test.date_dim.d_year, 2002))))
+              │ │ └─Selection	20.00	cop[tikv]		or(0, or(and(1, eq(explain_cte.date_dim.d_year, 2001)), and(1, eq(explain_cte.date_dim.d_year, 2002))))
               │ │   └─TableFullScan	10000.00	cop[tikv]	table:date_dim	keep order:false, stats:pseudo
               │ └─TableReader(Probe)	9980.01	root		data:Selection
-              │   └─Selection	9980.01	cop[tikv]		not(isnull(test.web_sales.ws_bill_customer_sk)), not(isnull(test.web_sales.ws_sold_date_sk))
+              │   └─Selection	9980.01	cop[tikv]		not(isnull(explain_cte.web_sales.ws_bill_customer_sk)), not(isnull(explain_cte.web_sales.ws_sold_date_sk))
               │     └─TableFullScan	10000.00	cop[tikv]	table:web_sales	keep order:false, stats:pseudo
               └─IndexLookUp(Probe)	25.00	root		
-                ├─IndexRangeScan(Build)	25.00	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(test.customer.c_customer_sk, test.web_sales.ws_bill_customer_sk)], keep order:false, stats:pseudo
+                ├─IndexRangeScan(Build)	25.00	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(explain_cte.customer.c_customer_sk, explain_cte.web_sales.ws_bill_customer_sk)], keep order:false, stats:pseudo
                 └─TableRowIDScan(Probe)	25.00	cop[tikv]	table:customer	keep order:false, stats:pseudo
 drop table if exists t1;
 create table t1 (id int, bench_type varchar(10),version varchar(10),tps int(20));
@@ -455,30 +454,30 @@ select v1.tps v1_tps,v2.tps v2_tps
 from version1 v1, version2 v2
 where v1.bench_type =v2.bench_type;
 id	estRows	task	access object	operator info
-HashJoin	19.97	root		inner join, equal:[eq(test.t1.bench_type, test.t1.bench_type)]
-├─Selection(Build)	15.98	root		eq(test.t1.version, "6.0.0"), not(isnull(test.t1.bench_type))
+HashJoin	19.97	root		inner join, equal:[eq(explain_cte.t1.bench_type, explain_cte.t1.bench_type)]
+├─Selection(Build)	15.98	root		eq(explain_cte.t1.version, "6.0.0"), not(isnull(explain_cte.t1.bench_type))
 │ └─CTEFullScan	19.97	root	CTE:all_data	data:CTE_0
-└─Selection(Probe)	15.98	root		eq(test.t1.version, "5.4.0"), not(isnull(test.t1.bench_type))
+└─Selection(Probe)	15.98	root		eq(explain_cte.t1.version, "5.4.0"), not(isnull(explain_cte.t1.bench_type))
   └─CTEFullScan	19.97	root	CTE:all_data	data:CTE_0
 CTE_0	19.97	root		Non-Recursive CTE
 └─TableReader(Seed Part)	19.97	root		data:Selection
-  └─Selection	19.97	cop[tikv]		or(and(eq(test.t1.version, "5.4.0"), not(isnull(test.t1.bench_type))), and(eq(test.t1.version, "6.0.0"), not(isnull(test.t1.bench_type))))
+  └─Selection	19.97	cop[tikv]		or(and(eq(explain_cte.t1.version, "5.4.0"), not(isnull(explain_cte.t1.bench_type))), and(eq(explain_cte.t1.version, "6.0.0"), not(isnull(explain_cte.t1.bench_type))))
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists tbl;
 create table tbl (id int);
 explain with t1 as (select id from tbl), t2 as (select a.id from t1 a join t1 b on a.id = b.id) select * from t2 where id in (select id from t2);
 id	estRows	task	access object	operator info
-HashJoin_33	8000.00	root		inner join, equal:[eq(test.tbl.id, test.tbl.id)]
-├─HashAgg_37(Build)	5120.00	root		group by:test.tbl.id, funcs:firstrow(test.tbl.id)->test.tbl.id
-│ └─Selection_38	8000.00	root		not(isnull(test.tbl.id))
+HashJoin_33	8000.00	root		inner join, equal:[eq(explain_cte.tbl.id, explain_cte.tbl.id)]
+├─HashAgg_37(Build)	5120.00	root		group by:explain_cte.tbl.id, funcs:firstrow(explain_cte.tbl.id)->explain_cte.tbl.id
+│ └─Selection_38	8000.00	root		not(isnull(explain_cte.tbl.id))
 │   └─CTEFullScan_39	10000.00	root	CTE:t2	data:CTE_1
-└─Selection_35(Probe)	8000.00	root		not(isnull(test.tbl.id))
+└─Selection_35(Probe)	8000.00	root		not(isnull(explain_cte.tbl.id))
   └─CTEFullScan_36	10000.00	root	CTE:t2	data:CTE_1
 CTE_1	10000.00	root		Non-Recursive CTE
-└─HashJoin_25(Seed Part)	10000.00	root		inner join, equal:[eq(test.tbl.id, test.tbl.id)]
-  ├─Selection_29(Build)	8000.00	root		not(isnull(test.tbl.id))
+└─HashJoin_25(Seed Part)	10000.00	root		inner join, equal:[eq(explain_cte.tbl.id, explain_cte.tbl.id)]
+  ├─Selection_29(Build)	8000.00	root		not(isnull(explain_cte.tbl.id))
   │ └─CTEFullScan_30	10000.00	root	CTE:t1 AS b	data:CTE_0
-  └─Selection_27(Probe)	8000.00	root		not(isnull(test.tbl.id))
+  └─Selection_27(Probe)	8000.00	root		not(isnull(explain_cte.tbl.id))
     └─CTEFullScan_28	10000.00	root	CTE:t1 AS a	data:CTE_0
 CTE_0	10000.00	root		Non-Recursive CTE
 └─TableReader_22(Seed Part)	10000.00	root		data:TableFullScan_21
@@ -493,17 +492,17 @@ insert into t3 values(1,1234);
 explain update t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c set t1.b = 4321;
 id	estRows	task	access object	operator info
 Update_17	N/A	root		N/A
-└─HashJoin_22	15.61	root		inner join, equal:[eq(test.t1.a, test.t2.c)]
-  ├─HashJoin_30(Build)	12.49	root		inner join, equal:[eq(test.t3.e, test.t2.d)]
-  │ ├─Projection_32(Build)	9.99	root		test.t3.e
+└─HashJoin_22	15.61	root		inner join, equal:[eq(explain_cte.t1.a, explain_cte.t2.c)]
+  ├─HashJoin_30(Build)	12.49	root		inner join, equal:[eq(explain_cte.t3.e, explain_cte.t2.d)]
+  │ ├─Projection_32(Build)	9.99	root		explain_cte.t3.e
   │ │ └─TableReader_35	9.99	root		data:Selection_34
-  │ │   └─Selection_34	9.99	cop[tikv]		eq(test.t3.f, 1234), not(isnull(test.t3.e))
+  │ │   └─Selection_34	9.99	cop[tikv]		eq(explain_cte.t3.f, 1234), not(isnull(explain_cte.t3.e))
   │ │     └─TableFullScan_33	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
   │ └─TableReader_38(Probe)	9980.01	root		data:Selection_37
-  │   └─Selection_37	9980.01	cop[tikv]		not(isnull(test.t2.c)), not(isnull(test.t2.d))
+  │   └─Selection_37	9980.01	cop[tikv]		not(isnull(explain_cte.t2.c)), not(isnull(explain_cte.t2.d))
   │     └─TableFullScan_36	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader_26(Probe)	9990.00	root		data:Selection_25
-    └─Selection_25	9990.00	cop[tikv]		not(isnull(test.t1.a))
+    └─Selection_25	9990.00	cop[tikv]		not(isnull(explain_cte.t1.a))
       └─TableFullScan_24	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 update t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c set t1.b = 4321;
 select * from t1;
@@ -512,16 +511,16 @@ a	b
 explain insert into t1  select t1.a, t1.b  from  t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
 id	estRows	task	access object	operator info
 Insert_1	N/A	root		N/A
-└─HashJoin_25	15.61	root		inner join, equal:[eq(test.t2.c, test.t1.a)]
-  ├─HashJoin_27(Build)	12.49	root		inner join, equal:[eq(test.t3.e, test.t2.d)]
+└─HashJoin_25	15.61	root		inner join, equal:[eq(explain_cte.t2.c, explain_cte.t1.a)]
+  ├─HashJoin_27(Build)	12.49	root		inner join, equal:[eq(explain_cte.t3.e, explain_cte.t2.d)]
   │ ├─TableReader_30(Build)	9.99	root		data:Selection_29
-  │ │ └─Selection_29	9.99	cop[tikv]		eq(test.t3.f, 1234), not(isnull(test.t3.e))
+  │ │ └─Selection_29	9.99	cop[tikv]		eq(explain_cte.t3.f, 1234), not(isnull(explain_cte.t3.e))
   │ │   └─TableFullScan_28	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
   │ └─TableReader_33(Probe)	9980.01	root		data:Selection_32
-  │   └─Selection_32	9980.01	cop[tikv]		not(isnull(test.t2.c)), not(isnull(test.t2.d))
+  │   └─Selection_32	9980.01	cop[tikv]		not(isnull(explain_cte.t2.c)), not(isnull(explain_cte.t2.d))
   │     └─TableFullScan_31	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader_36(Probe)	9990.00	root		data:Selection_35
-    └─Selection_35	9990.00	cop[tikv]		not(isnull(test.t1.a))
+    └─Selection_35	9990.00	cop[tikv]		not(isnull(explain_cte.t1.a))
       └─TableFullScan_34	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 insert into t1  select t1.a, t1.b  from  t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
 select * from t1;
@@ -531,17 +530,17 @@ a	b
 explain delete from  t1 using t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
 id	estRows	task	access object	operator info
 Delete_17	N/A	root		N/A
-└─Projection_22	15.61	root		test.t1.a, test.t1.b, test.t1._tidb_rowid, test.t2.c
-  └─HashJoin_24	15.61	root		inner join, equal:[eq(test.t2.c, test.t1.a)]
-    ├─HashJoin_26(Build)	12.49	root		inner join, equal:[eq(test.t3.e, test.t2.d)]
+└─Projection_22	15.61	root		explain_cte.t1.a, explain_cte.t1.b, explain_cte.t1._tidb_rowid, explain_cte.t2.c
+  └─HashJoin_24	15.61	root		inner join, equal:[eq(explain_cte.t2.c, explain_cte.t1.a)]
+    ├─HashJoin_26(Build)	12.49	root		inner join, equal:[eq(explain_cte.t3.e, explain_cte.t2.d)]
     │ ├─TableReader_29(Build)	9.99	root		data:Selection_28
-    │ │ └─Selection_28	9.99	cop[tikv]		eq(test.t3.f, 1234), not(isnull(test.t3.e))
+    │ │ └─Selection_28	9.99	cop[tikv]		eq(explain_cte.t3.f, 1234), not(isnull(explain_cte.t3.e))
     │ │   └─TableFullScan_27	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
     │ └─TableReader_32(Probe)	9980.01	root		data:Selection_31
-    │   └─Selection_31	9980.01	cop[tikv]		not(isnull(test.t2.c)), not(isnull(test.t2.d))
+    │   └─Selection_31	9980.01	cop[tikv]		not(isnull(explain_cte.t2.c)), not(isnull(explain_cte.t2.d))
     │     └─TableFullScan_30	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader_35(Probe)	9990.00	root		data:Selection_34
-      └─Selection_34	9990.00	cop[tikv]		not(isnull(test.t1.a))
+      └─Selection_34	9990.00	cop[tikv]		not(isnull(explain_cte.t1.a))
         └─TableFullScan_33	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 delete from  t1 using t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
 select * from t1;
