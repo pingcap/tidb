@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package aggregate
 
 import (
 	"sync"
@@ -42,7 +42,7 @@ type HashAggFinalWorker struct {
 
 	rowBuffer           []types.Datum
 	mutableRow          chunk.MutRow
-	partialResultMap    aggPartialResultMapper
+	partialResultMap    AggPartialResultMapper
 	groupSet            set.StringSetWithMemoryUsage
 	inputCh             chan *HashAggIntermData
 	outputCh            chan *AfFinalResult

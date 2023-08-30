@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -60,23 +61,23 @@ func TestJoinExec(t *testing.T) {
 		dataSource1.prepareChunks()
 		dataSource2.prepareChunks()
 
-		exec := prepare4HashJoin(casTest, dataSource1, dataSource2)
-		result := newFirstChunk(exec)
+		executor := prepare4HashJoin(casTest, dataSource1, dataSource2)
+		result := exec.NewFirstChunk(executor)
 		{
 			ctx := context.Background()
-			chk := newFirstChunk(exec)
-			err := exec.Open(ctx)
+			chk := exec.NewFirstChunk(executor)
+			err := executor.Open(ctx)
 			require.NoError(t, err)
 			for {
-				err = exec.Next(ctx, chk)
+				err = executor.Next(ctx, chk)
 				require.NoError(t, err)
 				if chk.NumRows() == 0 {
 					break
 				}
 				result.Append(chk, 0, chk.NumRows())
 			}
-			require.Equal(t, casTest.disk, exec.rowContainer.alreadySpilledSafeForTest())
-			err = exec.Close()
+			require.Equal(t, casTest.disk, executor.rowContainer.alreadySpilledSafeForTest())
+			err = executor.Close()
 			require.NoError(t, err)
 		}
 

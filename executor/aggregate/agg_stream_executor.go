@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package aggregate
 
 import (
 	"context"
@@ -33,13 +33,13 @@ type StreamAggExec struct {
 	exec.BaseExecutor
 
 	executed bool
-	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
-	isChildReturnEmpty bool
-	defaultVal         *chunk.Chunk
-	groupChecker       *vecgroupchecker.VecGroupChecker
+	// IsChildReturnEmpty indicates whether the child executor only returns an empty input.
+	IsChildReturnEmpty bool
+	DefaultVal         *chunk.Chunk
+	GroupChecker       *vecgroupchecker.VecGroupChecker
 	inputIter          *chunk.Iterator4Chunk
 	inputRow           chunk.Row
-	aggFuncs           []aggfuncs.AggFunc
+	AggFuncs           []aggfuncs.AggFunc
 	partialResults     []aggfuncs.PartialResult
 	groupRows          []chunk.Row
 	childResult        *chunk.Chunk
@@ -65,14 +65,14 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	// If panic in Open, the children executor should be closed because they are open.
 	defer closeBaseExecutor(&e.BaseExecutor)
 
-	e.childResult = tryNewCacheChunk(e.Children(0))
+	e.childResult = exec.TryNewCacheChunk(e.Children(0))
 	e.executed = false
-	e.isChildReturnEmpty = true
+	e.IsChildReturnEmpty = true
 	e.inputIter = chunk.NewIterator4Chunk(e.childResult)
 	e.inputRow = e.inputIter.End()
 
-	e.partialResults = make([]aggfuncs.PartialResult, 0, len(e.aggFuncs))
-	for _, aggFunc := range e.aggFuncs {
+	e.partialResults = make([]aggfuncs.PartialResult, 0, len(e.AggFuncs))
+	for _, aggFunc := range e.AggFuncs {
 		partialResult, memDelta := aggFunc.AllocPartialResult()
 		e.partialResults = append(e.partialResults, partialResult)
 		e.memUsageOfInitialPartialResult += memDelta
@@ -98,7 +98,7 @@ func (e *StreamAggExec) Close() error {
 		e.memTracker.Consume(-e.childResult.MemoryUsage() - e.memUsageOfInitialPartialResult)
 		e.childResult = nil
 	}
-	e.groupChecker.Reset()
+	e.GroupChecker.Reset()
 	return e.BaseExecutor.Close()
 }
 
@@ -116,19 +116,19 @@ func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 }
 
 func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (err error) {
-	if e.groupChecker.IsExhausted() {
+	if e.GroupChecker.IsExhausted() {
 		if err = e.consumeCurGroupRowsAndFetchChild(ctx, chk); err != nil {
 			return err
 		}
 		if e.executed {
 			return nil
 		}
-		_, err := e.groupChecker.SplitIntoGroups(e.childResult)
+		_, err := e.GroupChecker.SplitIntoGroups(e.childResult)
 		if err != nil {
 			return err
 		}
 	}
-	begin, end := e.groupChecker.GetNextGroup()
+	begin, end := e.GroupChecker.GetNextGroup()
 	for i := begin; i < end; i++ {
 		e.groupRows = append(e.groupRows, e.childResult.GetRow(i))
 	}
@@ -139,13 +139,13 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (
 			return err
 		}
 
-		isFirstGroupSameAsPrev, err := e.groupChecker.SplitIntoGroups(e.childResult)
+		isFirstGroupSameAsPrev, err := e.GroupChecker.SplitIntoGroups(e.childResult)
 		if err != nil {
 			return err
 		}
 
 		if isFirstGroupSameAsPrev {
-			begin, end = e.groupChecker.GetNextGroup()
+			begin, end = e.GroupChecker.GetNextGroup()
 			for i := begin; i < end; i++ {
 				e.groupRows = append(e.groupRows, e.childResult.GetRow(i))
 			}
@@ -167,7 +167,7 @@ func (e *StreamAggExec) consumeGroupRows() error {
 	}
 
 	allMemDelta := int64(0)
-	for i, aggFunc := range e.aggFuncs {
+	for i, aggFunc := range e.AggFuncs {
 		memDelta, err := aggFunc.UpdatePartialResult(e.Ctx(), e.groupRows, e.partialResults[i])
 		if err != nil {
 			return err
@@ -188,7 +188,7 @@ func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, ch
 	}
 
 	mSize := e.childResult.MemoryUsage()
-	err = Next(ctx, e.Children(0), e.childResult)
+	err = exec.Next(ctx, e.Children(0), e.childResult)
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 	if err != nil {
@@ -197,16 +197,16 @@ func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, ch
 
 	// No more data.
 	if e.childResult.NumRows() == 0 {
-		if !e.isChildReturnEmpty {
+		if !e.IsChildReturnEmpty {
 			err = e.appendResult2Chunk(chk)
-		} else if e.defaultVal != nil {
-			chk.Append(e.defaultVal, 0, 1)
+		} else if e.DefaultVal != nil {
+			chk.Append(e.DefaultVal, 0, 1)
 		}
 		e.executed = true
 		return err
 	}
 	// Reach here, "e.childrenResults[0].NumRows() > 0" is guaranteed.
-	e.isChildReturnEmpty = false
+	e.IsChildReturnEmpty = false
 	e.inputRow = e.inputIter.Begin()
 	return nil
 }
@@ -214,7 +214,7 @@ func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, ch
 // appendResult2Chunk appends result of all the aggregation functions to the
 // result chunk, and reset the evaluation context for each aggregation.
 func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
-	for i, aggFunc := range e.aggFuncs {
+	for i, aggFunc := range e.AggFuncs {
 		err := aggFunc.AppendFinalResult2Chunk(e.Ctx(), e.partialResults[i], chk)
 		if err != nil {
 			return err
@@ -224,7 +224,7 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	// All partial results have been reset, so reset the memory usage.
 	e.memTracker.ReplaceBytesUsed(e.childResult.MemoryUsage() + e.memUsageOfInitialPartialResult)
-	if len(e.aggFuncs) == 0 {
+	if len(e.AggFuncs) == 0 {
 		chk.SetNumVirtualRows(chk.NumRows() + 1)
 	}
 	return nil

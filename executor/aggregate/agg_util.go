@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package aggregate
 
 import (
 	"bytes"
@@ -74,8 +74,8 @@ func getGroupKeyMemUsage(groupKey [][]byte) int64 {
 	return mem
 }
 
-// getGroupKey evaluates the group items and args of aggregate functions.
-func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, groupByItems []expression.Expression) ([][]byte, error) {
+// GetGroupKey evaluates the group items and args of aggregate functions.
+func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, groupByItems []expression.Expression) ([][]byte, error) {
 	numRows := input.NumRows()
 	avlGroupKeyLen := mathutil.Min(len(groupKey), numRows)
 	for i := 0; i < avlGroupKeyLen; i++ {

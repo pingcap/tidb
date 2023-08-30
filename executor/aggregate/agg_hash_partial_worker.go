@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package aggregate
 
 import (
 	"sync"
@@ -30,7 +30,7 @@ import (
 type HashAggIntermData struct {
 	groupKeys        []string
 	cursor           int
-	partialResultMap aggPartialResultMapper
+	partialResultMap AggPartialResultMapper
 }
 
 // HashAggPartialWorker indicates the partial workers of parallel hash agg execution,
@@ -42,7 +42,7 @@ type HashAggPartialWorker struct {
 	outputChs         []chan *HashAggIntermData
 	globalOutputCh    chan *AfFinalResult
 	giveBackCh        chan<- *HashAggInput
-	partialResultsMap aggPartialResultMapper
+	partialResultsMap AggPartialResultMapper
 	groupByItems      []expression.Expression
 	groupKey          [][]byte
 	// chk stores the input data from child,
@@ -109,7 +109,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 
 func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, _ int) (err error) {
 	memSize := getGroupKeyMemUsage(w.groupKey)
-	w.groupKey, err = getGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
+	w.groupKey, err = GetGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKey) - memSize)
 	if err != nil {
