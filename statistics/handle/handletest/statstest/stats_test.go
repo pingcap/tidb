@@ -174,6 +174,7 @@ func testInitStatsMemTrace(t *testing.T) {
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	h.Clear()
+	require.Equal(t, h.GetMemConsumed(), int64(0))
 	require.NoError(t, h.InitStats(is))
 
 	var memCostTot int64
@@ -268,7 +269,7 @@ func TestInitStatsVer2(t *testing.T) {
 	require.Equal(t, uint8(0x33), cols[2].LastAnalyzePos.GetBytes()[0])
 	require.Equal(t, uint8(0x33), cols[3].LastAnalyzePos.GetBytes()[0])
 	h.Clear()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.InitStats(is))
 	table1 := h.GetTableStats(tbl.Meta())
 	internal.AssertTableEqual(t, table0, table1)
 	h.SetLease(0)
