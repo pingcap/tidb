@@ -316,6 +316,26 @@ func (*Meta) autoIncrementIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mIncIDPrefix, tableID))
 }
 
+// AutoIncrementIDKey decodes the auto inc table key.
+func AutoIncrementIDKey(tableID int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mIncIDPrefix, tableID))
+}
+
+func IsAutoIncrementIDKey(key []byte) bool {
+	return strings.HasPrefix(string(key), mIncIDPrefix+":")
+}
+
+// ParseAutoIncrementIDKey decodes the tableID from the auto tableID key.
+func ParseAutoIncrementIDKey(key []byte) (int64, error) {
+	if !IsAutoIncrementIDKey(key) {
+		return 0, ErrInvalidString.GenWithStack("fail to parse autoIncrementKey")
+	}
+
+	tableID := strings.TrimPrefix(string(key), mIncIDPrefix+":")
+	id, err := strconv.Atoi(tableID)
+	return int64(id), err
+}
+
 func (*Meta) autoRandomTableIDKey(tableID int64) []byte {
 	return AutoRandomTableIDKey(tableID)
 }
