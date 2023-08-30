@@ -1523,7 +1523,7 @@ func TestRandomPanicConsume(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into s(a,b) values(%v,%v),(%v,%v),(%v,%v)", i, i, i, i, i, i))
 	}
 
-	fpName := "github.com/pingcap/tidb/executor/ConsumeRandomPanic"
+	fpName := "github.com/pingcap/tidb/executor/aggregate/ConsumeRandomPanic"
 	require.NoError(t, failpoint.Enable(fpName, "5%panic(\"ERROR 1105 (HY000): Out Of Memory Quota![conn=1]\")"))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
