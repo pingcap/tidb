@@ -690,9 +690,9 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 			return NewBackfillSchedulerHandle(ctx, taskMeta, d, step == proto.StepTwo)
 		})
 
-	backFillDsp, err := NewBackfillDispatcher(d)
+	backFillDsp, err := NewBackfillingDispatcher(d)
 	if err != nil {
-		logutil.BgLogger().Warn("NewBackfillDispatcher ailed", zap.String("category", "ddl"), zap.Error(err))
+		logutil.BgLogger().Warn("NewBackfillingDispatcher ailed", zap.String("category", "ddl"), zap.Error(err))
 	} else {
 		dispatcher.RegisterTaskDispatcher(BackfillTaskType, backFillDsp)
 		scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepOne,
