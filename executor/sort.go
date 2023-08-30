@@ -144,7 +144,7 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	if e.multiWayMerge == nil {
 		e.multiWayMerge = &multiWayMerge{e.lessRow, e.compressRow, make([]partitionPointer, 0, len(e.partitionList))}
 		for i := 0; i < len(e.partitionList); i++ {
-			chk := chunk.New(retTypes(e), 1, 1)
+			chk := chunk.New(exec.RetTypes(e), 1, 1)
 
 			row, _, err := e.partitionList[i].GetSortedRowAndAlwaysAppendToChunk(0, chk)
 			if err != nil {
