@@ -24,7 +24,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// RemoveLockedTables remove tables from table locked array
+// RemoveLockedTables remove tables from table locked array.
+// - tids: table ids of which will be unlocked.
+// - pids: partition ids of which will be unlocked.
+// - tables: table names of which will be unlocked.
+// Return the message of skipped tables and error.
 func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

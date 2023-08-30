@@ -44,6 +44,10 @@ var (
 )
 
 // AddLockedTables add locked tables id to store.
+// - tids: table ids of which will be locked.
+// - pids: partition ids of which will be locked.
+// - tables: table names of which will be locked.
+// Return the message of skipped tables and error.
 func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
