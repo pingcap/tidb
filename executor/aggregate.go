@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -250,39 +249,4 @@ func (e *HashAggExec) ActionSpill() *AggSpillDiskAction {
 		}
 	}
 	return e.spillAction
-}
-
-// maxSpillTimes indicates how many times the data can spill at most.
-const maxSpillTimes = 10
-
-// AggSpillDiskAction implements memory.ActionOnExceed for unparalleled HashAgg.
-// If the memory quota of a query is exceeded, AggSpillDiskAction.Action is
-// triggered.
-type AggSpillDiskAction struct {
-	memory.BaseOOMAction
-	e          *HashAggExec
-	spillTimes uint32
-}
-
-// Action set HashAggExec spill mode.
-func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
-	// Guarantee that processed data is at least 20% of the threshold, to avoid spilling too frequently.
-	if atomic.LoadUint32(&a.e.inSpillMode) == 0 && a.spillTimes < maxSpillTimes && a.e.memTracker.BytesConsumed() >= t.GetBytesLimit()/5 {
-		a.spillTimes++
-		logutil.BgLogger().Info("memory exceeds quota, set aggregate mode to spill-mode",
-			zap.Uint32("spillTimes", a.spillTimes),
-			zap.Int64("consumed", t.BytesConsumed()),
-			zap.Int64("quota", t.GetBytesLimit()))
-		atomic.StoreUint32(&a.e.inSpillMode, 1)
-		memory.QueryForceDisk.Add(1)
-		return
-	}
-	if fallback := a.GetFallback(); fallback != nil {
-		fallback.Action(t)
-	}
-}
-
-// GetPriority get the priority of the Action
-func (*AggSpillDiskAction) GetPriority() int64 {
-	return memory.DefSpillPriority
 }
