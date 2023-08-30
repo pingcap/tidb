@@ -166,7 +166,7 @@ func TestTiFlashQuerySpillRatio(t *testing.T) {
 	val, err = sv.Validate(vars, "0.85", ScopeSession)
 	require.NoError(t, err)
 	require.Nil(t, sv.SetSessionFromHook(vars, "0.75")) // sets
-	require.Equal(t, 0.75, vars.TiFlashAutoSpillRatio)
+	require.Equal(t, 0.75, vars.TiFlashQuerySpillRatio)
 }
 
 func TestCollationServer(t *testing.T) {
