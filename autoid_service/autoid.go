@@ -327,7 +327,7 @@ func MockForTest(store kv.Storage) autoid.AutoIDAllocClient {
 
 // Close closes the Service and clean up resource.
 func (s *Service) Close() {
-	if s.leaderShip != nil {
+	if s.leaderShip != nil && s.leaderShip.IsOwner() {
 		for k, v := range s.autoIDMap {
 			if v.base > 0 {
 				err := v.forceRebase(context.Background(), s.store, k.dbID, k.tblID, v.base, v.isUnsigned)
