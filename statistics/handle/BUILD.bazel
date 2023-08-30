@@ -11,6 +11,7 @@ go_library(
         "handle_hist.go",
         "historical_stats_handler.go",
         "lock_stats_handler.go",
+        "unlock_stats_handler.go",
         "update.go",
     ],
     importpath = "github.com/pingcap/tidb/statistics/handle",
@@ -67,7 +68,7 @@ go_test(
     embed = [":handle"],
     flaky = True,
     race = "on",
-    shard_count = 27,
+    shard_count = 29,
     deps = [
         "//config",
         "//domain",
