@@ -31,7 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBackfillDispatcher(t *testing.T) {
+func TestBackfillingDispatcher(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	dsp, err := ddl.NewBackfillingDispatcher(dom.DDL())
 	require.NoError(t, err)
