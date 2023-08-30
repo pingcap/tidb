@@ -1826,7 +1826,7 @@ func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges ranger.MutableRang
 	}
 	var innerNDV float64
 	if stats := ijHelper.innerPlan.StatsInfo(); stats != nil && stats.StatsVersion != statistics.PseudoVersion {
-		innerNDV, _ = getColsNDVWithMatchedLen(path.IdxCols[:usedColsLen], ijHelper.innerPlan.Schema(), stats)
+		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(path.IdxCols[:usedColsLen], ijHelper.innerPlan.Schema(), stats)
 	}
 	// We choose the index by the NDV of the used columns, the larger the better.
 	// If NDVs are same, we choose index which uses more columns.
@@ -2131,7 +2131,7 @@ func checkChildFitBC(p Plan) bool {
 	if p.StatsInfo().HistColl == nil {
 		return p.SCtx().GetSessionVars().BroadcastJoinThresholdCount == -1 || p.StatsInfo().Count() < p.SCtx().GetSessionVars().BroadcastJoinThresholdCount
 	}
-	avg := p.StatsInfo().HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
+	avg := cardinality.GetAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, p.Schema().Columns, false, false)
 	sz := avg * float64(p.StatsInfo().Count())
 	return p.SCtx().GetSessionVars().BroadcastJoinThresholdSize == -1 || sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdSize)
 }
@@ -2142,7 +2142,7 @@ func calcBroadcastExchangeSize(p Plan, mppStoreCnt int) (row float64, size float
 	if s.HistColl == nil {
 		return row, 0, false
 	}
-	avg := s.HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
+	avg := cardinality.GetAvgRowSize(p.SCtx(), s.HistColl, p.Schema().Columns, false, false)
 	size = avg * row
 	return row, size, true
 }
@@ -2169,7 +2169,7 @@ func calcHashExchangeSize(p Plan, mppStoreCnt int) (row float64, sz float64, has
 	if s.HistColl == nil {
 		return row, 0, false
 	}
-	avg := s.HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
+	avg := cardinality.GetAvgRowSize(p.SCtx(), s.HistColl, p.Schema().Columns, false, false)
 	sz = avg * row
 	return row, sz, true
 }
@@ -2774,7 +2774,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	}
 	cacheHitRatio := 0.0
 	if la.StatsInfo().RowCount != 0 {
-		ndv, _ := getColsNDVWithMatchedLen(columns, la.schema, la.StatsInfo())
+		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(columns, la.schema, la.StatsInfo())
 		// for example, if there are 100 rows and the number of distinct values of these correlated columns
 		// are 70, then we can assume 30 rows can hit the cache so the cache hit ratio is 1 - (70/100) = 0.3
 		cacheHitRatio = 1 - (ndv / la.StatsInfo().RowCount)

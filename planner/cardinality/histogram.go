@@ -86,9 +86,13 @@ func NewHistCollBySelectivity(sctx sessionctx.Context, coll *statistics.HistColl
 			}
 		}
 		if oldCol.IsHandle {
-			err = newHistogramBySelectivity(sctx, node.ID, &oldCol.Histogram, &newCol.Histogram, splitRanges, coll.GetRowCountByIntColumnRanges)
+			err = newHistogramBySelectivity(sctx, node.ID, &oldCol.Histogram, &newCol.Histogram, splitRanges, func(sctx sessionctx.Context, id int64, ranges []*ranger.Range) (float64, error) {
+				return GetRowCountByIntColumnRanges(sctx, coll, id, ranges)
+			})
 		} else {
-			err = newHistogramBySelectivity(sctx, node.ID, &oldCol.Histogram, &newCol.Histogram, splitRanges, coll.GetRowCountByColumnRanges)
+			err = newHistogramBySelectivity(sctx, node.ID, &oldCol.Histogram, &newCol.Histogram, splitRanges, func(sctx sessionctx.Context, id int64, ranges []*ranger.Range) (float64, error) {
+				return GetRowCountByColumnRanges(sctx, coll, id, ranges)
+			})
 		}
 		if err != nil {
 			logutil.BgLogger().Warn("something wrong happened when calculating row count", zap.String("category", "Histogram-in-plan"),

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
@@ -523,10 +524,17 @@ func toPostProcessStep(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
 	var localChecksum verify.KVChecksum
+	maxIDs := make(map[autoid.AllocatorType]int64, 3)
 	columnSizeMap := make(map[int64]int64)
 	for _, subtaskMeta := range subtaskMetas {
 		checksum := verify.MakeKVChecksum(subtaskMeta.Checksum.Size, subtaskMeta.Checksum.KVs, subtaskMeta.Checksum.Sum)
 		localChecksum.Add(&checksum)
+
+		for key, val := range subtaskMeta.MaxIDs {
+			if maxIDs[key] < val {
+				maxIDs[key] = val
+			}
+		}
 
 		taskMeta.Result.ReadRowCnt += subtaskMeta.Result.ReadRowCnt
 		taskMeta.Result.LoadedRowCnt += subtaskMeta.Result.LoadedRowCnt
@@ -544,6 +552,7 @@ func toPostProcessStep(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta
 			KVs:  localChecksum.SumKVS(),
 			Sum:  localChecksum.Sum(),
 		},
+		MaxIDs: maxIDs,
 	}, nil
 }
 
