@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/stretchr/testify/require"
@@ -392,8 +393,14 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			},
 		},
 	}
-
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		// if true, test will too slow to run.
+		conf.Performance.EnableStatsCacheMemQuota = false
+	})
 	s := createPlannerSuite()
+	defer s.Close()
 	for i, tc := range tt {
 		sql := tc.sql
 		comment := fmt.Sprintf("case:%v sql:%s", i, sql)
@@ -428,6 +435,8 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			}
 		}
 		require.True(t, assert)
+		do := domain.GetDomain(sctx)
+		do.StatsHandle().Close()
 	}
 }
 

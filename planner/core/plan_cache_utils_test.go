@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/stretchr/testify/require"
@@ -30,6 +31,9 @@ func TestCacheKey(t *testing.T) {
 	ctx.GetSessionVars().TimeZone = time.UTC
 	ctx.GetSessionVars().ConnectionID = 0
 	ctx.GetSessionVars().InRestrictedSQL = false
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
 	variable.RestrictedReadOnly.Store(false)
 	variable.VarTiDBSuperReadOnly.Store(false)
 	key, err := NewPlanCacheKey(ctx.GetSessionVars(), "", "test", 1, 1, "", 0)

@@ -17,6 +17,7 @@ package memo
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/stretchr/testify/require"
@@ -27,7 +28,10 @@ func TestNewExprIterFromGroupElem(t *testing.T) {
 	defer view.Stop()
 	ctx := plannercore.MockContext()
 	schema := expression.NewSchema()
-
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
 	g0 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{}.Init(ctx, 0)), schema)
 	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0)))
@@ -70,7 +74,10 @@ func TestExprIterNext(t *testing.T) {
 	defer view.Stop()
 	ctx := plannercore.MockContext()
 	schema := expression.NewSchema()
-
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
 	g0 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewZero()}}.Init(ctx, 0)), schema)
 	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 1}.Init(ctx, 0)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))
@@ -118,7 +125,10 @@ func TestExprIterReset(t *testing.T) {
 	defer view.Stop()
 	ctx := plannercore.MockContext()
 	schema := expression.NewSchema()
-
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
 	g0 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewZero()}}.Init(ctx, 0)), schema)
 	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 1}.Init(ctx, 0)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))
@@ -191,7 +201,10 @@ func TestExprIterWithEngineType(t *testing.T) {
 	defer view.Stop()
 	ctx := plannercore.MockContext()
 	schema := expression.NewSchema()
-
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
 	g1 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)), schema).SetEngineType(EngineTiFlash)
 	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 1}.Init(ctx, 0)))
 	g1.Insert(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))

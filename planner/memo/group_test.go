@@ -64,6 +64,10 @@ func TestGroupDelete(t *testing.T) {
 
 func TestGroupDeleteAll(t *testing.T) {
 	ctx := plannercore.MockContext()
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
 	expr := NewGroupExpr(plannercore.LogicalSelection{}.Init(ctx, 0))
 	g := NewGroupWithSchema(expr, expression.NewSchema())
 	require.True(t, g.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0))))
@@ -96,6 +100,10 @@ func TestGroupFingerPrint(t *testing.T) {
 
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	ctx := plannercore.MockContext()
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
 	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt1, is)
 	require.NoError(t, err)
 	logic1, ok := plan.(plannercore.LogicalPlan)
@@ -146,6 +154,10 @@ func TestGroupFingerPrint(t *testing.T) {
 
 func TestGroupGetFirstElem(t *testing.T) {
 	ctx := plannercore.MockContext()
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
 	expr0 := NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0))
 	expr1 := NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0))
 	expr2 := NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0))
@@ -175,7 +187,12 @@ func (impl *fakeImpl) AttachChildren(...Implementation) Implementation { return 
 func (impl *fakeImpl) GetCostLimit(float64, ...Implementation) float64 { return 0 }
 
 func TestGetInsertGroupImpl(t *testing.T) {
-	g := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalLimit{}.Init(plannercore.MockContext(), 0)), expression.NewSchema())
+	ctx := plannercore.MockContext()
+	g := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0)), expression.NewSchema())
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
 	emptyProp := &property.PhysicalProperty{}
 	require.Nil(t, g.GetImpl(emptyProp))
 
@@ -211,6 +228,10 @@ func TestEngineTypeSet(t *testing.T) {
 
 func TestFirstElemAfterDelete(t *testing.T) {
 	ctx := plannercore.MockContext()
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
 	oldExpr := NewGroupExpr(plannercore.LogicalLimit{Count: 10}.Init(ctx, 0))
 	g := NewGroupWithSchema(oldExpr, expression.NewSchema())
 	newExpr := NewGroupExpr(plannercore.LogicalLimit{Count: 20}.Init(ctx, 0))
@@ -228,6 +249,10 @@ func TestBuildKeyInfo(t *testing.T) {
 	variable.EnableMDL.Store(false)
 	p := parser.New()
 	ctx := plannercore.MockContext()
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -56,7 +57,10 @@ type indexJoinContext struct {
 
 func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 	ctx := MockContext()
-
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
 	ctx.GetSessionVars().PlanID.Store(-1)
 	joinNode := LogicalJoin{}.Init(ctx, 0)
 	dataSourceNode := DataSource{}.Init(ctx, 0)

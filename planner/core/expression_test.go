@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -42,6 +43,9 @@ type testCase struct {
 
 func runTests(t *testing.T, tests []testCase) {
 	ctx := MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
 	for _, tt := range tests {
 		expr := parseExpr(t, tt.exprStr)
 		val, err := evalAstExpr(ctx, expr)
@@ -91,6 +95,10 @@ func TestCaseWhen(t *testing.T) {
 		WhenClauses: []*ast.WhenClause{whenClause},
 	}
 	ctx := MockContext()
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
 	v, err := evalAstExpr(ctx, caseExpr)
 	require.NoError(t, err)
 	require.Equal(t, types.NewDatum(int64(1)), v)
@@ -109,7 +117,10 @@ func TestCast(t *testing.T) {
 	}
 
 	ctx := MockContext()
-
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
 	ast.SetFlag(expr)
 	v, err := evalAstExpr(ctx, expr)
 	require.NoError(t, err)

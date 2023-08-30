@@ -34,6 +34,7 @@ type LFU struct {
 	cache        *ristretto.Cache
 	resultKeySet *keySetShard
 	cost         atomic.Int64
+	closed       atomic.Bool
 	closeOnce    sync.Once
 }
 
@@ -149,6 +150,9 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 		// so it should not be processed.
 		return
 	}
+	if s.closed.Load() {
+		return
+	}
 	// We do not need to calculate the cost during onEvict,
 	// because the onexit function is also called when the evict event occurs.
 	// TODO(hawkingrei): not copy the useless part.
@@ -175,6 +179,9 @@ func (s *LFU) onExit(val any) {
 	if val == nil {
 		// Sometimes the same key may be passed to the "onEvict/onExit" function twice,
 		// and in the second invocation, the value is empty, so it should not be processed.
+		return
+	}
+	if s.closed.Load() {
 		return
 	}
 	s.addCost(
@@ -210,6 +217,7 @@ func (s *LFU) metrics() *ristretto.Metrics {
 // Close implements statsCacheInner
 func (s *LFU) Close() {
 	s.closeOnce.Do(func() {
+		s.closed.Store(true)
 		s.Clear()
 		s.cache.Close()
 		s.cache.Wait()
