@@ -113,7 +113,7 @@ func TestStatsLockTableAndUnlockTableRepeatedly(t *testing.T) {
 	// Lock the table again and check the warning.
 	tableLocked1 := handle.GetTableLockedAndClearForTest()
 	tk.MustExec("lock stats t")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 skip locking locked table: test.t",
 	))
 
@@ -134,7 +134,7 @@ func TestStatsLockTableAndUnlockTableRepeatedly(t *testing.T) {
 
 	// Unlock the table again and check the warning.
 	tk.MustExec("unlock stats t")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 skip unlocking unlocked table: test.t",
 	))
 }
