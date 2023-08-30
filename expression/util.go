@@ -710,8 +710,8 @@ func pushNotAcrossArgs(ctx sessionctx.Context, exprs []Expression, not bool) ([]
 // todo: consider more no precision-loss downcast cases.
 func noPrecisionLossCastCompatible(cast, argCol *types.FieldType) bool {
 	// now only consider varchar type and integer.
-	if !(types.IsTypeVarchar(cast.GetType()) && types.IsTypeVarchar(argCol.GetType()) ||
-		mysql.IsIntegerType(cast.GetType()) && mysql.IsIntegerType(argCol.GetType())) {
+	if !(types.IsTypeVarchar(cast.GetType()) && types.IsTypeVarchar(argCol.GetType())) &&
+		!(mysql.IsIntegerType(cast.GetType()) && mysql.IsIntegerType(argCol.GetType())) {
 		// varchar type and integer on the storage layer is quite same, while the char type has its padding suffix.
 		return false
 	}
