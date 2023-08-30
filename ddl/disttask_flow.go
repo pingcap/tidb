@@ -71,28 +71,29 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 	}
 
 	var subTaskMetas [][]byte
-	if tblInfo.Partition == nil {
-		switch gTask.Step {
-		case proto.StepOne:
-			serverNodes, err := dispatcher.GenerateSchedulerNodes(d.ctx)
-			if err != nil {
-				return nil, err
-			}
-			subTaskMetas = make([][]byte, 0, len(serverNodes))
-			dummyMeta := &BackfillSubTaskMeta{}
-			metaBytes, err := json.Marshal(dummyMeta)
-			if err != nil {
-				return nil, err
-			}
-			for range serverNodes {
-				subTaskMetas = append(subTaskMetas, metaBytes)
-			}
-			gTask.Step = proto.StepTwo
-			return subTaskMetas, nil
-		case proto.StepTwo:
-			return nil, nil
-		default:
+	switch gTask.Step {
+	case proto.StepOne:
+		serverNodes, err := dispatcher.GenerateSchedulerNodes(d.ctx)
+		if err != nil {
+			return nil, err
 		}
+		subTaskMetas = make([][]byte, 0, len(serverNodes))
+		dummyMeta := &BackfillSubTaskMeta{}
+		metaBytes, err := json.Marshal(dummyMeta)
+		if err != nil {
+			return nil, err
+		}
+		for range serverNodes {
+			subTaskMetas = append(subTaskMetas, metaBytes)
+		}
+		gTask.Step = proto.StepTwo
+		return subTaskMetas, nil
+	case proto.StepTwo:
+		return nil, nil
+	}
+
+	// proto.StepInit
+	if tblInfo.Partition == nil {
 		tbl, err := getTable(d.store, job.SchemaID, tblInfo)
 		if err != nil {
 			return nil, err
