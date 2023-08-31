@@ -528,7 +528,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 	tbl tidbtbl.Table,
 	tableName string,
 	pool *utils.WorkerPool,
-	decoder *kv.TableKVDecoder,
 	fnGetLatest func(ctx context.Context, key []byte) ([]byte, error),
 	fnDeleteKey func(ctx context.Context, key []byte) error,
 ) error {
@@ -583,18 +582,10 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			if bytes.Equal(rawValue, value) {
 				continue
 			}
-			indexInfo := tbl.Meta().FindIndexByName(indexName)
-			handle, err := decoder.DecodeHandleFromIndex(indexInfo, rawKey, rawValue)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			em.logger.Debug("got handle from index",
-				zap.String("handle", handle.String()),
-				zap.Error(err))
-			// encode the row key of the data KV that needs to be deleted
-			rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, handle)
+
+			// rawHandle is the row key of the data KV that needs to be deleted
 			// get the latest value of the row key of the data KV that needs to be deleted
-			overwritten, err := fnGetLatest(gCtx, rowKey)
+			overwritten, err := fnGetLatest(gCtx, rawHandle)
 			// if the latest value cannot be found, that means the data KV has been deleted
 			if tikverr.IsErrNotFound(err) || overwritten == nil {
 				continue
@@ -603,7 +594,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				return errors.Trace(err)
 			}
 
-			overwrittenHandle, err := tablecodec.DecodeRowKey(rowKey)
+			overwrittenHandle, err := tablecodec.DecodeRowKey(rawHandle)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -624,10 +615,12 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					zap.Binary("value", kvPair.Val),
 					logutil.Key("rawKey", rawKey),
 					zap.Binary("rawValue", rawValue))
-				// if rawKey equals to KV pair's key and rawValue equals to KV pair's value, this latest data KV of the index KV needs to be deleted
-				// if not, this latest data KV of the index KV is inserted by other rows, so it is unrelated to the index KV that needs to be deleted, we cannot delete it
+				// if rawKey equals to KV pair's key and rawValue equals to KV pair's value,
+				// this latest data KV of the index KV needs to be deleted;
+				// if not, this latest data KV of the index KV was inserted by other rows,
+				// so it is unrelated to the index KV that needs to be deleted, we cannot delete it
 				if bytes.Equal(kvPair.Key, rawKey) && bytes.Equal(kvPair.Val, rawValue) {
-					if err := fnDeleteKey(gCtx, rowKey); err != nil {
+					if err := fnDeleteKey(gCtx, rawHandle); err != nil {
 						return errors.Trace(err)
 					}
 					break

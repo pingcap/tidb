@@ -27,7 +27,6 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	tidbkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -285,11 +284,6 @@ func TestReplaceConflictKeys(t *testing.T) {
 	rawRow, err := base64.StdEncoding.DecodeString(rawRowBase64)
 	require.NoError(t, err)
 
-	decoder, err := tidbkv.NewTableKVDecoder(tbl, "test", &encode.SessionOptions{
-		SQLMode: mysql.ModeStrictAllTables,
-	}, log.FromContext(ctx))
-	require.NoError(t, err)
-
 	cfg := config.NewConfig()
 	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
 	cfg.App.TaskInfoSchemaName = "lightning_task_info"
@@ -301,7 +295,7 @@ func TestReplaceConflictKeys(t *testing.T) {
 	fnDeleteKeyCount := atomic.NewInt32(0)
 	pool := utils.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
-		ctx, tbl, "test", pool, decoder,
+		ctx, tbl, "test", pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
 			fnGetLatestCount.Add(1)
 			switch {

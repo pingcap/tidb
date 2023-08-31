@@ -1064,7 +1064,7 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 		)
 	case config.DupeResAlgReplace:
 		err = local.errorMgr.ReplaceConflictKeys(
-			ctx, tbl, tableName, pool, decoder,
+			ctx, tbl, tableName, pool,
 			func(ctx context.Context, key []byte) ([]byte, error) {
 				value, err := local.getLatestValue(ctx, logger, key)
 				if err != nil {
