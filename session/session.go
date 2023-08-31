@@ -4281,6 +4281,11 @@ func (s *session) EncodeSessionStates(ctx context.Context,
 		return err
 	}
 
+	hasRestrictVarPriv := false
+	checker := privilege.GetPrivilegeManager(s)
+	if checker == nil || checker.RequestDynamicVerification(s.sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
+		hasRestrictVarPriv = true
+	}
 	// Encode session variables. We put it here instead of SessionVars to avoid cycle import.
 	sessionStates.SystemVars = make(map[string]string)
 	for _, sv := range variable.GetSysVars() {
@@ -4294,9 +4299,28 @@ func (s *session) EncodeSessionStates(ctx context.Context,
 		case sv.ReadOnly:
 			// Skip read-only variables here. We encode them into SessionStates manually.
 			continue
-		case sem.IsEnabled() && sem.IsInvisibleSysVar(sv.Name):
-			// If they are shown, there will be a security issue.
-			continue
+		case !hasRestrictVarPriv && sem.IsEnabled() && sem.IsInvisibleSysVar(sv.Name):
+			val, keep, err := s.sessionVars.GetSessionStatesSystemVar(sv.Name)
+			if err != nil {
+				return err
+			} else if !keep {
+				continue
+			} else if sv.HasGlobalScope() {
+				globalVal, err := sv.GetGlobalFromHook(ctx, s.sessionVars)
+				if err != nil {
+					return err
+				}
+				// If the session value is the same with the global one, skip it.
+				if val == globalVal {
+					continue
+				}
+			} else if val == sv.Value {
+				// SysVar.Value stands for the default value.
+				continue
+			}
+			// 1. The RESTRICTED_VARIABLES_ADMIN is revoked after setting the session variable.
+			// 2. The global variable is updated after the session is created.
+			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs(fmt.Sprintf("session has set invisible variable '%s'", sv.Name))
 		}
 		// Get all session variables because the default values may change between versions.
 		if val, keep, err := s.sessionVars.GetSessionStatesSystemVar(sv.Name); err != nil {
