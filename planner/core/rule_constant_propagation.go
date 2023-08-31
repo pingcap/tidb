@@ -58,7 +58,7 @@ func (cp *constantPropagationSolver) optimize(ctx context.Context, p LogicalPlan
 	}
 	// match conditions
 	candidateConstantPredicates := cp.matchConditions(p)
-	if candidateConstantPredicates != nil && len(candidateConstantPredicates) > 0 {
+	if len(candidateConstantPredicates) > 0 {
 		// constant propagation
 		cp.pullUpCandidateConstantPredicates(p, candidateConstantPredicates, opt)
 	}
@@ -66,7 +66,10 @@ func (cp *constantPropagationSolver) optimize(ctx context.Context, p LogicalPlan
 	for i, children := range p.Children() {
 		cp.currentChildIdx = i
 		cp.parentPlan = p
-		cp.optimize(ctx, children, opt)
+		_, err := cp.optimize(ctx, children, opt)
+		if err != nil {
+			return cp.root, err
+		}
 	}
 	return cp.root, nil
 }
@@ -76,7 +79,7 @@ func (*constantPropagationSolver) name() string {
 }
 
 // todo
-func (cp *constantPropagationSolver) matchConditions(p LogicalPlan) []expression.Expression {
+func (_ *constantPropagationSolver) matchConditions(p LogicalPlan) []expression.Expression {
 	// step1: match tree condition
 	var tryToMatchTreePattern1 bool
 	var tryToMatchTreePattern2 bool
@@ -128,7 +131,6 @@ func (cp *constantPropagationSolver) matchConditions(p LogicalPlan) []expression
 		if match {
 			result = append(result, candidatePredicate)
 		}
-
 	}
 	return result
 }
