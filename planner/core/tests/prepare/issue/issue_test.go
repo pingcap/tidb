@@ -365,7 +365,8 @@ func TestIssue28920(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a, @b`).Check(testkit.Rows("-5175976006730879891 <nil> 8 屘厒镇览錻碛斵大擔觏譨頙硺箄魨搝珄鋧扭趖 <nil> <nil> <nil>"))
 }
 
-func TestIssue18066(t *testing.T) {
+func TestIssue4PreparedPlanCache(t *testing.T) {
+	// Issue18066
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
@@ -387,14 +388,7 @@ func TestIssue18066(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("select EXEC_COUNT, plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`'").Check(
 		testkit.Rows("3 2 1"))
-}
-
-func TestIssue26873(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-
-	tk.MustExec("use test")
+	// TestIssue26873
 	tk.MustExec("drop table if exists t")
 
 	tk.MustExec("create table t(a int primary key, b int, c int)")
@@ -404,14 +398,7 @@ func TestIssue26873(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @p").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-}
-
-func TestIssue29511(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-
-	tk.MustExec("use test")
+	// TestIssue29511
 	tk.MustExec("drop table if exists t")
 
 	tk.MustExec("CREATE TABLE `t` (`COL1` bigint(20) DEFAULT NULL COMMENT 'WITH DEFAULT', UNIQUE KEY `UK_COL1` (`COL1`))")
@@ -419,14 +406,7 @@ func TestIssue29511(t *testing.T) {
 	tk.MustExec("prepare stmt from 'select/*+ hash_agg() */ max(col1) from t where col1 = ? and col1 > ?;';")
 	tk.MustExec("set @a=-3865356285544170443, @b=-4055949188488870713;")
 	tk.MustQuery("execute stmt using @a,@b;").Check(testkit.Rows("-3865356285544170443"))
-}
-
-func TestIssue23671(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-
-	tk.MustExec("use test")
+	// TestIssue23671
 	tk.MustExec("drop table if exists t")
 
 	tk.MustExec("create table t (a int, b int, index ab(a, b))")
