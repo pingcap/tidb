@@ -3204,16 +3204,7 @@ func TestLimitPushDown(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 
 	tk.MustExec(`create table t (a int)`)
-	tk.MustExec(`insert into t values (1)`)
-	tk.MustExec(`insert into t values (1)`)
-	tk.MustExec(`insert into t values (1)`)
-	tk.MustExec(`insert into t values (1)`)
-	tk.MustExec(`insert into t values (1)`)
-	tk.MustExec(`insert into t values (1)`)
-	tk.MustExec(`insert into t values (1)`)
-	tk.MustExec(`insert into t values (1)`)
-	tk.MustExec(`insert into t values (1)`)
-	tk.MustExec(`insert into t values (1)`)
+	tk.MustExec(`insert into t values (1), (1), (1), (1), (1), (1), (1), (1), (1), (1)`)
 	tk.MustExec(`analyze table t`)
 
 	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
