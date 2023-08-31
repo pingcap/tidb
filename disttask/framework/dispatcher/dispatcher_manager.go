@@ -186,7 +186,10 @@ func (*Manager) checkConcurrencyOverflow(cnt int) bool {
 func (dm *Manager) startDispatcher(task *proto.Task) {
 	// Using the pool with block, so it wouldn't return an error.
 	_ = dm.gPool.Run(func() {
-		dispatcher := newDispatcher(dm.ctx, dm.taskMgr, dm.serverID, task)
+		dispatcher, err := newDispatcher(dm.ctx, dm.taskMgr, dm.serverID, task)
+		if err != nil {
+			return
+		}
 		dm.setRunningTask(task, dispatcher)
 		dispatcher.executeTask()
 		dm.delRunningTask(task.ID)
@@ -194,6 +197,6 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 }
 
 // MockDispatcher mock one dispatcher for one task, only used for tests.
-func (dm *Manager) MockDispatcher(task *proto.Task) *dispatcher {
+func (dm *Manager) MockDispatcher(task *proto.Task) (*dispatcher, error) {
 	return newDispatcher(dm.ctx, dm.taskMgr, dm.serverID, task)
 }

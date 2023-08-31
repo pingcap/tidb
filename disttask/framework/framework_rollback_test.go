@@ -29,15 +29,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type rollbackFlowHandle struct{}
+type rollbackDispatcher struct{}
 
-var _ dispatcher.TaskFlowHandle = (*rollbackFlowHandle)(nil)
+var _ dispatcher.Dispatcher = (*rollbackDispatcher)(nil)
 var rollbackCnt atomic.Int32
 
-func (*rollbackFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
+func (*rollbackDispatcher) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (*rollbackFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (*rollbackDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State == proto.TaskStatePending {
 		gTask.Step = proto.StepOne
 		return [][]byte{
@@ -49,15 +49,15 @@ func (*rollbackFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.Tas
 	return nil, nil
 }
 
-func (*rollbackFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+func (*rollbackDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	return []byte("rollbacktask1"), nil
 }
 
-func (*rollbackFlowHandle) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*rollbackDispatcher) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return generateSchedulerNodes4Test()
 }
 
-func (*rollbackFlowHandle) IsRetryableErr(error) bool {
+func (*rollbackDispatcher) IsRetryableErr(error) bool {
 	return true
 }
 
@@ -105,8 +105,8 @@ func (e *rollbackSubtaskExecutor) Run(_ context.Context) error {
 }
 
 func RegisterRollbackTaskMeta(m *sync.Map) {
-	dispatcher.ClearTaskFlowHandle()
-	dispatcher.RegisterTaskFlowHandle(proto.TaskTypeExample, &rollbackFlowHandle{})
+	dispatcher.ClearTaskDispatcher()
+	dispatcher.RegisterTaskDispatcher(proto.TaskTypeExample, &rollbackDispatcher{})
 	scheduler.ClearSchedulers()
 	scheduler.RegisterTaskType(proto.TaskTypeExample)
 	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
@@ -119,7 +119,7 @@ func RegisterRollbackTaskMeta(m *sync.Map) {
 }
 
 func TestFrameworkRollback(t *testing.T) {
-	defer dispatcher.ClearTaskFlowHandle()
+	defer dispatcher.ClearTaskDispatcher()
 	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 

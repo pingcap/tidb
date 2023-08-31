@@ -43,7 +43,7 @@ func (s *importIntoSuite) enableFailPoint(path, term string) {
 	})
 }
 
-func (s *importIntoSuite) TestFlowHandleGetEligibleInstances() {
+func (s *importIntoSuite) TestDispatcherGetEligibleInstances() {
 	makeFailpointRes := func(v interface{}) string {
 		bytes, err := json.Marshal(v)
 		s.NoError(err)
@@ -60,10 +60,10 @@ func (s *importIntoSuite) TestFlowHandleGetEligibleInstances() {
 	}
 	mockedAllServerInfos := makeFailpointRes(serverInfoMap)
 
-	h := flowHandle{}
+	dsp := importDispatcher{}
 	gTask := &proto.Task{Meta: []byte("{}")}
 	s.enableFailPoint("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", mockedAllServerInfos)
-	eligibleInstances, err := h.GetEligibleInstances(context.Background(), gTask)
+	eligibleInstances, err := dsp.GetEligibleInstances(context.Background(), gTask)
 	s.NoError(err)
 	// order of slice is not stable, change to map
 	resultMap := map[string]*infosync.ServerInfo{}
@@ -73,7 +73,7 @@ func (s *importIntoSuite) TestFlowHandleGetEligibleInstances() {
 	s.Equal(serverInfoMap, resultMap)
 
 	gTask.Meta = []byte(`{"EligibleInstances":[{"ip": "1.1.1.1", "listening_port": 4000}]}`)
-	eligibleInstances, err = h.GetEligibleInstances(context.Background(), gTask)
+	eligibleInstances, err = dsp.GetEligibleInstances(context.Background(), gTask)
 	s.NoError(err)
 	s.Equal([]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}}, eligibleInstances)
 }
@@ -87,21 +87,21 @@ func (s *importIntoSuite) TestUpdateCurrentTask() {
 	bs, err := json.Marshal(taskMeta)
 	require.NoError(s.T(), err)
 
-	h := flowHandle{}
-	require.Equal(s.T(), int64(0), h.currTaskID.Load())
-	require.False(s.T(), h.disableTiKVImportMode.Load())
+	dsp := importDispatcher{}
+	require.Equal(s.T(), int64(0), dsp.currTaskID.Load())
+	require.False(s.T(), dsp.disableTiKVImportMode.Load())
 
-	h.updateCurrentTask(&proto.Task{
+	dsp.updateCurrentTask(&proto.Task{
 		ID:   1,
 		Meta: bs,
 	})
-	require.Equal(s.T(), int64(1), h.currTaskID.Load())
-	require.True(s.T(), h.disableTiKVImportMode.Load())
+	require.Equal(s.T(), int64(1), dsp.currTaskID.Load())
+	require.True(s.T(), dsp.disableTiKVImportMode.Load())
 
-	h.updateCurrentTask(&proto.Task{
+	dsp.updateCurrentTask(&proto.Task{
 		ID:   1,
 		Meta: bs,
 	})
-	require.Equal(s.T(), int64(1), h.currTaskID.Load())
-	require.True(s.T(), h.disableTiKVImportMode.Load())
+	require.Equal(s.T(), int64(1), dsp.currTaskID.Load())
+	require.True(s.T(), dsp.disableTiKVImportMode.Load())
 }

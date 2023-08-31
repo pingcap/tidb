@@ -31,14 +31,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBackfillFlowHandle(t *testing.T) {
+func TestBackfillingDispatcher(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	handler, err := ddl.NewLitBackfillFlowHandle(dom.DDL())
+	dsp, err := ddl.NewBackfillingDispatcher(dom.DDL())
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	// test partition table ProcessNormalFlow
+	// test partition table OnNextStage.
 	tk.MustExec("create table tp1(id int primary key, v int) PARTITION BY RANGE (id) (\n    " +
 		"PARTITION p0 VALUES LESS THAN (10),\n" +
 		"PARTITION p1 VALUES LESS THAN (100),\n" +
@@ -48,7 +48,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	metas, err := handler.ProcessNormalFlow(context.Background(), nil, gTask)
+	metas, err := dsp.OnNextStage(context.Background(), nil, gTask)
 	require.NoError(t, err)
 	require.Equal(t, proto.StepOne, gTask.Step)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
@@ -58,24 +58,24 @@ func TestBackfillFlowHandle(t *testing.T) {
 		require.Equal(t, par.ID, subTask.PhysicalTableID)
 	}
 
-	// test partition table ProcessNormalFlow after step1 finished
+	// test partition table OnNextStage after step1 finished.
 	gTask.State = proto.TaskStateRunning
-	metas, err = handler.ProcessNormalFlow(context.Background(), nil, gTask)
+	metas, err = dsp.OnNextStage(context.Background(), nil, gTask)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
 
-	// test partition table ProcessErrFlow
-	errMeta, err := handler.ProcessErrFlow(context.Background(), nil, gTask, []error{errors.New("mockErr")})
+	// test partition table OnErrStage.
+	errMeta, err := dsp.OnErrStage(context.Background(), nil, gTask, []error{errors.New("mockErr")})
 	require.NoError(t, err)
 	require.Nil(t, errMeta)
 
-	errMeta, err = handler.ProcessErrFlow(context.Background(), nil, gTask, []error{errors.New("mockErr")})
+	errMeta, err = dsp.OnErrStage(context.Background(), nil, gTask, []error{errors.New("mockErr")})
 	require.NoError(t, err)
 	require.Nil(t, errMeta)
 
 	tk.MustExec("create table t1(id int primary key, v int)")
 	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", ddl.BackfillTaskType)
-	_, err = handler.ProcessNormalFlow(context.Background(), nil, gTask)
+	_, err = dsp.OnNextStage(context.Background(), nil, gTask)
 	require.NoError(t, err)
 }
 

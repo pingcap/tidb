@@ -690,11 +690,11 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 			return NewBackfillSchedulerHandle(ctx, taskMeta, d, step == proto.StepTwo)
 		})
 
-	backfillHandle, err := NewLitBackfillFlowHandle(d)
+	backFillDsp, err := NewBackfillingDispatcher(d)
 	if err != nil {
-		logutil.BgLogger().Warn("NewLitBackfillFlowHandle failed", zap.String("category", "ddl"), zap.Error(err))
+		logutil.BgLogger().Warn("NewBackfillingDispatcher failed", zap.String("category", "ddl"), zap.Error(err))
 	} else {
-		dispatcher.RegisterTaskFlowHandle(BackfillTaskType, backfillHandle)
+		dispatcher.RegisterTaskDispatcher(BackfillTaskType, backFillDsp)
 		scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepOne,
 			func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
 				return &scheduler.EmptyExecutor{}, nil

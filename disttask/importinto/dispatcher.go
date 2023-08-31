@@ -120,7 +120,7 @@ func (t *taskInfo) close(ctx context.Context) {
 	}
 }
 
-type flowHandle struct {
+type importDispatcher struct {
 	mu sync.RWMutex
 	// NOTE: there's no need to sync for below 2 fields actually, since we add a restriction that only one
 	// task can be running at a time. but we might support task queuing in the future, leave it for now.
@@ -136,32 +136,32 @@ type flowHandle struct {
 	disableTiKVImportMode atomic.Bool
 }
 
-var _ dispatcher.TaskFlowHandle = (*flowHandle)(nil)
+var _ dispatcher.Dispatcher = (*importDispatcher)(nil)
 
-func (h *flowHandle) OnTicker(ctx context.Context, task *proto.Task) {
+func (dsp *importDispatcher) OnTick(ctx context.Context, task *proto.Task) {
 	// only switch TiKV mode or register task when task is running
 	if task.State != proto.TaskStateRunning {
 		return
 	}
-	h.switchTiKVMode(ctx, task)
-	h.registerTask(ctx, task)
+	dsp.switchTiKVMode(ctx, task)
+	dsp.registerTask(ctx, task)
 }
 
-func (h *flowHandle) switchTiKVMode(ctx context.Context, task *proto.Task) {
-	h.updateCurrentTask(task)
+func (dsp *importDispatcher) switchTiKVMode(ctx context.Context, task *proto.Task) {
+	dsp.updateCurrentTask(task)
 	// only import step need to switch to IMPORT mode,
 	// If TiKV is in IMPORT mode during checksum, coprocessor will time out.
-	if h.disableTiKVImportMode.Load() || task.Step != StepImport {
+	if dsp.disableTiKVImportMode.Load() || task.Step != StepImport {
 		return
 	}
 
-	if time.Since(h.lastSwitchTime.Load()) < config.DefaultSwitchTiKVModeInterval {
+	if time.Since(dsp.lastSwitchTime.Load()) < config.DefaultSwitchTiKVModeInterval {
 		return
 	}
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if time.Since(h.lastSwitchTime.Load()) < config.DefaultSwitchTiKVModeInterval {
+	dsp.mu.Lock()
+	defer dsp.mu.Unlock()
+	if time.Since(dsp.lastSwitchTime.Load()) < config.DefaultSwitchTiKVModeInterval {
 		return
 	}
 
@@ -173,23 +173,23 @@ func (h *flowHandle) switchTiKVMode(ctx context.Context, task *proto.Task) {
 	}
 	switcher.ToImportMode(ctx)
 	pdCli.Close()
-	h.lastSwitchTime.Store(time.Now())
+	dsp.lastSwitchTime.Store(time.Now())
 }
 
-func (h *flowHandle) registerTask(ctx context.Context, task *proto.Task) {
-	val, _ := h.taskInfoMap.LoadOrStore(task.ID, &taskInfo{taskID: task.ID})
+func (dsp *importDispatcher) registerTask(ctx context.Context, task *proto.Task) {
+	val, _ := dsp.taskInfoMap.LoadOrStore(task.ID, &taskInfo{taskID: task.ID})
 	info := val.(*taskInfo)
 	info.register(ctx)
 }
 
-func (h *flowHandle) unregisterTask(ctx context.Context, task *proto.Task) {
-	if val, loaded := h.taskInfoMap.LoadAndDelete(task.ID); loaded {
+func (dsp *importDispatcher) unregisterTask(ctx context.Context, task *proto.Task) {
+	if val, loaded := dsp.taskInfoMap.LoadAndDelete(task.ID); loaded {
 		info := val.(*taskInfo)
 		info.close(ctx)
 	}
 }
 
-func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (
+func (dsp *importDispatcher) OnNextStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (
 	resSubtaskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
 		zap.String("type", gTask.Type),
@@ -201,18 +201,18 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	if err != nil {
 		return nil, err
 	}
-	logger.Info("process normal flow")
+	logger.Info("on next stage")
 
 	defer func() {
 		// currently, framework will take the task as finished when err is not nil or resSubtaskMeta is empty.
 		taskFinished := err == nil && len(resSubtaskMeta) == 0
 		if taskFinished {
 			// todo: we're not running in a transaction with task update
-			if err2 := h.finishJob(ctx, handle, gTask, taskMeta); err2 != nil {
+			if err2 := dsp.finishJob(ctx, handle, gTask, taskMeta); err2 != nil {
 				err = err2
 			}
-		} else if err != nil && !h.IsRetryableErr(err) {
-			if err2 := h.failJob(ctx, handle, gTask, taskMeta, logger, err.Error()); err2 != nil {
+		} else if err != nil && !dsp.IsRetryableErr(err) {
+			if err2 := dsp.failJob(ctx, handle, gTask, taskMeta, logger, err.Error()); err2 != nil {
 				// todo: we're not running in a transaction with task update, there might be case
 				// failJob return error, but task update succeed.
 				logger.Error("call failJob failed", zap.Error(err2))
@@ -244,9 +244,9 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		gTask.Step = StepImport
 		return metaBytes, nil
 	case StepImport:
-		h.switchTiKV2NormalMode(ctx, gTask, logger)
+		dsp.switchTiKV2NormalMode(ctx, gTask, logger)
 		failpoint.Inject("clearLastSwitchTime", func() {
-			h.lastSwitchTime.Store(time.Time{})
+			dsp.lastSwitchTime.Store(time.Time{})
 		})
 		stepMeta, err2 := toPostProcessStep(handle, gTask, taskMeta)
 		if err2 != nil {
@@ -273,13 +273,13 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	}
 }
 
-func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) ([]byte, error) {
+func (dsp *importDispatcher) OnErrStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) ([]byte, error) {
 	logger := logutil.BgLogger().With(
 		zap.String("type", gTask.Type),
 		zap.Int64("task-id", gTask.ID),
 		zap.String("step", stepStr(gTask.Step)),
 	)
-	logger.Info("process error flow", zap.Errors("errors", receiveErrs))
+	logger.Info("on error stage", zap.Errors("errors", receiveErrs))
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
@@ -289,7 +289,7 @@ func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskH
 	for _, receiveErr := range receiveErrs {
 		errStrs = append(errStrs, receiveErr.Error())
 	}
-	if err = h.failJob(ctx, handle, gTask, taskMeta, logger, strings.Join(errStrs, "; ")); err != nil {
+	if err = dsp.failJob(ctx, handle, gTask, taskMeta, logger, strings.Join(errStrs, "; ")); err != nil {
 		return nil, err
 	}
 
@@ -311,7 +311,7 @@ func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskH
 	return nil, err
 }
 
-func (*flowHandle) GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*importDispatcher) GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error) {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
@@ -323,19 +323,19 @@ func (*flowHandle) GetEligibleInstances(ctx context.Context, gTask *proto.Task) 
 	return dispatcher.GenerateSchedulerNodes(ctx)
 }
 
-func (*flowHandle) IsRetryableErr(error) bool {
+func (*importDispatcher) IsRetryableErr(error) bool {
 	// TODO: check whether the error is retryable.
 	return false
 }
 
-func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, task *proto.Task, logger *zap.Logger) {
-	h.updateCurrentTask(task)
-	if h.disableTiKVImportMode.Load() {
+func (dsp *importDispatcher) switchTiKV2NormalMode(ctx context.Context, task *proto.Task, logger *zap.Logger) {
+	dsp.updateCurrentTask(task)
+	if dsp.disableTiKVImportMode.Load() {
 		return
 	}
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	dsp.mu.Lock()
+	defer dsp.mu.Unlock()
 
 	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(ctx, logger)
 	if err != nil {
@@ -346,15 +346,15 @@ func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, task *proto.Task
 	pdCli.Close()
 
 	// clear it, so next task can switch TiKV mode again.
-	h.lastSwitchTime.Store(time.Time{})
+	dsp.lastSwitchTime.Store(time.Time{})
 }
 
-func (h *flowHandle) updateCurrentTask(task *proto.Task) {
-	if h.currTaskID.Swap(task.ID) != task.ID {
+func (dsp *importDispatcher) updateCurrentTask(task *proto.Task) {
+	if dsp.currTaskID.Swap(task.ID) != task.ID {
 		taskMeta := &TaskMeta{}
 		if err := json.Unmarshal(task.Meta, taskMeta); err == nil {
 			// for raftkv2, switch mode in local backend
-			h.disableTiKVImportMode.Store(taskMeta.Plan.DisableTiKVImportMode || taskMeta.Plan.IsRaftKV2)
+			dsp.disableTiKVImportMode.Store(taskMeta.Plan.DisableTiKVImportMode || taskMeta.Plan.IsRaftKV2)
 		}
 	}
 }
@@ -584,8 +584,8 @@ func job2Step(ctx context.Context, taskMeta *TaskMeta, step string) error {
 	})
 }
 
-func (h *flowHandle) finishJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
-	h.unregisterTask(ctx, gTask)
+func (dsp *importDispatcher) finishJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
+	dsp.unregisterTask(ctx, gTask)
 	redactSensitiveInfo(gTask, taskMeta)
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
 	return handle.WithNewSession(func(se sessionctx.Context) error {
@@ -594,10 +594,10 @@ func (h *flowHandle) finishJob(ctx context.Context, handle dispatcher.TaskHandle
 	})
 }
 
-func (h *flowHandle) failJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task,
+func (dsp *importDispatcher) failJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task,
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
-	h.switchTiKV2NormalMode(ctx, gTask, logger)
-	h.unregisterTask(ctx, gTask)
+	dsp.switchTiKV2NormalMode(ctx, gTask, logger)
+	dsp.unregisterTask(ctx, gTask)
 	redactSensitiveInfo(gTask, taskMeta)
 	return handle.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
@@ -655,5 +655,5 @@ func stepStr(step int64) string {
 }
 
 func init() {
-	dispatcher.RegisterTaskFlowHandle(proto.ImportInto, &flowHandle{})
+	dispatcher.RegisterTaskDispatcher(proto.ImportInto, &importDispatcher{})
 }
