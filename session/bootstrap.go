@@ -973,7 +973,7 @@ const (
 	//   create table `mysql.tidb_runaway_watch` and table `mysql.tidb_runaway_watch_done`
 	//   to persist runaway watch and deletion of runaway watch at 7.3.
 	version172 = 172
-	// version 173 add column `execution_info` to `mysql.tidb_background_subtask`.
+	// version 173 add column `summary` to `mysql.tidb_background_subtask`.
 	version173 = 173
 )
 
@@ -2718,7 +2718,7 @@ func upgradeToVer173(s Session, ver int64) {
 	if ver >= version173 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `execution_info` JSON", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s Session) {

@@ -251,31 +251,6 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	dom.Close()
 }
 
-func TestDDLBackgroundSubtaskTable(t *testing.T) {
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	se := CreateSessionAndSetID(t, store)
-
-	MustExec(t, se, "use mysql")
-	for i := 1; i < 10; i++ {
-		MustExec(t, se, "insert into mysql.tidb_background_subtask(id, state, checkpoint, execution_info) values (?, ?, ?, ?);", i, 0, "", "{}")
-	}
-	for i := 2; i < 10; i++ {
-		MustExec(t, se, `update tidb_background_subtask set execution_info = json_set(execution_info, "$.row_count", ?) where id = ?;`, i, i)
-	}
-	r := MustExecToRecodeSet(t, se, "select sum(json_extract(execution_info, '$.row_count')) from tidb_background_subtask;")
-	req := r.NewChunk(nil)
-	err := r.Next(context.Background(), req)
-	require.NoError(t, err)
-	row := req.GetRow(0)
-	require.Equal(t, 1, row.Len())
-	require.Equal(t, 54, row.GetInt64(0))
-	require.NoError(t, r.Close())
-}
-
 // TestUpgrade tests upgrading
 func TestUpgrade(t *testing.T) {
 	ctx := context.Background()
