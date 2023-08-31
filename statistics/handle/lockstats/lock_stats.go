@@ -127,6 +127,7 @@ func insertIntoStatsTableLocked(ctx context.Context, exec sqlexec.SQLExecutor, t
 	return nil
 }
 
+// LoadLockedTables loads locked tables from mysql.stats_table_locked.
 func LoadLockedTables(ctx context.Context, exec sqlexec.SQLExecutor) ([]int64, error) {
 	recordSet, err := exec.ExecuteInternal(ctx, "SELECT table_id FROM mysql.stats_table_locked")
 	if err != nil {
