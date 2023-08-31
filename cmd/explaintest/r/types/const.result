@@ -28,20 +28,20 @@ DROP TABLE IF EXISTS tb5;
 create table tb5(a bigint, b bigint);
 insert into tb5 values (10, -9223372036854775808);
 select a - b from tb5;
-Error 1690: BIGINT value is out of range in '(types_const.tb5.a - types_const.tb5.b)'
+Error 1690: BIGINT value is out of range in '(types__const.tb5.a - types__const.tb5.b)'
 set sql_mode='';
 select a - b from tb5;
-Error 1690: BIGINT value is out of range in '(types_const.tb5.a - types_const.tb5.b)'
+Error 1690: BIGINT value is out of range in '(types__const.tb5.a - types__const.tb5.b)'
 set @@sql_mode=default;
 set sql_mode='';
 DROP TABLE IF EXISTS tb5;
 create table tb5(a bigint, b bigint);
 insert into tb5 values (10, -9223372036854775808);
 select a - b from tb5;
-Error 1690: BIGINT value is out of range in '(types_const.tb5.a - types_const.tb5.b)'
+Error 1690: BIGINT value is out of range in '(types__const.tb5.a - types__const.tb5.b)'
 set sql_mode='NO_UNSIGNED_SUBTRACTION';
 select a - b from tb5;
-Error 1690: BIGINT value is out of range in '(types_const.tb5.a - types_const.tb5.b)'
+Error 1690: BIGINT value is out of range in '(types__const.tb5.a - types__const.tb5.b)'
 set @@sql_mode=default;
 set sql_mode='';
 select cast(-1 as unsigned) - cast(-1 as unsigned);
@@ -179,7 +179,7 @@ CREATE TABLE `COUNT` (a bigint);
 DROP TABLE COUNT;
 CREATE TABLE COUNT(a bigint);
 [parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 18 near "COUNT(a bigint);" 
-CREATE TABLE types_const.COUNT(a bigint);
+CREATE TABLE types__const.COUNT(a bigint);
 DROP TABLE COUNT;
 CREATE TABLE BIT_AND (a bigint);
 DROP TABLE BIT_AND;
@@ -187,7 +187,7 @@ CREATE TABLE `BIT_AND` (a bigint);
 DROP TABLE BIT_AND;
 CREATE TABLE BIT_AND(a bigint);
 [parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 20 near "BIT_AND(a bigint);" 
-CREATE TABLE types_const.BIT_AND(a bigint);
+CREATE TABLE types__const.BIT_AND(a bigint);
 DROP TABLE BIT_AND;
 CREATE TABLE NOW (a bigint);
 DROP TABLE NOW;
@@ -195,7 +195,7 @@ CREATE TABLE `NOW` (a bigint);
 DROP TABLE NOW;
 CREATE TABLE NOW(a bigint);
 [parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 16 near "NOW(a bigint);" 
-CREATE TABLE types_const.NOW(a bigint);
+CREATE TABLE types__const.NOW(a bigint);
 DROP TABLE NOW;
 set sql_mode='IGNORE_SPACE';
 CREATE TABLE COUNT (a bigint);
@@ -204,7 +204,7 @@ CREATE TABLE `COUNT` (a bigint);
 DROP TABLE COUNT;
 CREATE TABLE COUNT(a bigint);
 [parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 18 near "COUNT(a bigint);" 
-CREATE TABLE types_const.COUNT(a bigint);
+CREATE TABLE types__const.COUNT(a bigint);
 DROP TABLE COUNT;
 CREATE TABLE BIT_AND (a bigint);
 Error 1064: You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 21 near "BIT_AND (a bigint);" 
@@ -212,7 +212,7 @@ CREATE TABLE `BIT_AND` (a bigint);
 DROP TABLE BIT_AND;
 CREATE TABLE BIT_AND(a bigint);
 [parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 20 near "BIT_AND(a bigint);" 
-CREATE TABLE types_const.BIT_AND(a bigint);
+CREATE TABLE types__const.BIT_AND(a bigint);
 DROP TABLE BIT_AND;
 CREATE TABLE NOW (a bigint);
 Error 1064: You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 17 near "NOW (a bigint);" 
@@ -220,7 +220,7 @@ CREATE TABLE `NOW` (a bigint);
 DROP TABLE NOW;
 CREATE TABLE NOW(a bigint);
 [parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 16 near "NOW(a bigint);" 
-CREATE TABLE types_const.NOW(a bigint);
+CREATE TABLE types__const.NOW(a bigint);
 DROP TABLE NOW;
 set @@sql_mode=default;
 set sql_mode='';

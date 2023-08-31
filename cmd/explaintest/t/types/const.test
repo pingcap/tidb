@@ -150,7 +150,7 @@ CREATE TABLE `COUNT` (a bigint);
 DROP TABLE COUNT;
 -- error 1064
 CREATE TABLE COUNT(a bigint);
-CREATE TABLE types_const.COUNT(a bigint);
+CREATE TABLE types__const.COUNT(a bigint);
 DROP TABLE COUNT;
 CREATE TABLE BIT_AND (a bigint);
 DROP TABLE BIT_AND;
@@ -158,7 +158,7 @@ CREATE TABLE `BIT_AND` (a bigint);
 DROP TABLE BIT_AND;
 -- error 1064
 CREATE TABLE BIT_AND(a bigint);
-CREATE TABLE types_const.BIT_AND(a bigint);
+CREATE TABLE types__const.BIT_AND(a bigint);
 DROP TABLE BIT_AND;
 CREATE TABLE NOW (a bigint);
 DROP TABLE NOW;
@@ -166,7 +166,7 @@ CREATE TABLE `NOW` (a bigint);
 DROP TABLE NOW;
 -- error 1064
 CREATE TABLE NOW(a bigint);
-CREATE TABLE types_const.NOW(a bigint);
+CREATE TABLE types__const.NOW(a bigint);
 DROP TABLE NOW;
 set sql_mode='IGNORE_SPACE';
 -- error 1064
@@ -175,7 +175,7 @@ CREATE TABLE `COUNT` (a bigint);
 DROP TABLE COUNT;
 -- error 1064
 CREATE TABLE COUNT(a bigint);
-CREATE TABLE types_const.COUNT(a bigint);
+CREATE TABLE types__const.COUNT(a bigint);
 DROP TABLE COUNT;
 -- error 1064
 CREATE TABLE BIT_AND (a bigint);
@@ -183,7 +183,7 @@ CREATE TABLE `BIT_AND` (a bigint);
 DROP TABLE BIT_AND;
 -- error 1064
 CREATE TABLE BIT_AND(a bigint);
-CREATE TABLE types_const.BIT_AND(a bigint);
+CREATE TABLE types__const.BIT_AND(a bigint);
 DROP TABLE BIT_AND;
 -- error 1064
 CREATE TABLE NOW (a bigint);
@@ -191,7 +191,7 @@ CREATE TABLE `NOW` (a bigint);
 DROP TABLE NOW;
 -- error 1064
 CREATE TABLE NOW(a bigint);
-CREATE TABLE types_const.NOW(a bigint);
+CREATE TABLE types__const.NOW(a bigint);
 DROP TABLE NOW;
 set @@sql_mode=default;
 
