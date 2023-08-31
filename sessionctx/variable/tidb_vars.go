@@ -904,6 +904,9 @@ const (
 
 	// TiDBEnableCheckConstraint indicates whether to enable check constraint feature.
 	TiDBEnableCheckConstraint = "tidb_enable_check_constraint"
+
+	// TiDBOptEnableHashJoin indicates whether to enable hash join.
+	TiDBOptEnableHashJoin = "tidb_opt_enable_hash_join"
 )
 
 // TiDB vars that have only global scope
@@ -1389,6 +1392,7 @@ const (
 	DefTiDBLockUnchangedKeys                          = true
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
+	DefTiDBOptEnableHashJoin                          = true
 )
 
 // Process global variables.

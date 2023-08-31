@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/size"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -244,7 +243,7 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 	// If TiDB_SMJ hint is existed, it should consider enforce merge join,
 	// because we can't trust lhsChildProperty completely.
 	if (p.preferJoinType&preferMergeJoin) > 0 ||
-		(p.preferJoinType&preferNoHashJoin) > 0 { // if hash join is not allowed, generate as many other types of join as possible to avoid 'cant-find-plan' error.
+		p.shouldSkipHashJoin() { // if hash join is not allowed, generate as many other types of join as possible to avoid 'cant-find-plan' error.
 		joins = append(joins, p.getEnforcedMergeJoin(prop, schema, statsInfo)...)
 	}
 
@@ -391,6 +390,10 @@ var ForceUseOuterBuild4Test = atomic.NewBool(false)
 // TODO: use hint and remove this variable
 var ForcedHashLeftJoin4Test = atomic.NewBool(false)
 
+func (p *LogicalJoin) shouldSkipHashJoin() bool {
+	return (p.preferJoinType&preferNoHashJoin) > 0 || (p.SCtx().GetSessionVars().EnableHashJoin == false)
+}
+
 func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []PhysicalPlan, forced bool) {
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return
@@ -450,11 +453,10 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 		}
 	}
 
-	forced = (p.preferJoinType&preferHashJoin > 0) || forceLeftToBuild || forceRightToBuild
-	noHashJoin := (p.preferJoinType & preferNoHashJoin) > 0
-	if !forced && noHashJoin {
+	forced = forceLeftToBuild || forceRightToBuild
+	if !forced && p.shouldSkipHashJoin() {
 		return nil, false
-	} else if forced && noHashJoin {
+	} else if forced && p.shouldSkipHashJoin() {
 		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
 			"Some HASH_JOIN and NO_HASH_JOIN hints conflict, NO_HASH_JOIN is ignored"))
 	}
