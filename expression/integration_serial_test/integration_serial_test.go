@@ -39,6 +39,7 @@ import (
 )
 
 func TestIssue17727(t *testing.T) {
+	require.True(t, false)
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
