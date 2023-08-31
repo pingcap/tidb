@@ -726,9 +726,9 @@ func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 // The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
 func compareCandidates(sctx sessionctx.Context, lhs, rhs *candidatePath) int {
 	// This rule is empirical but not always correct.
-	// If x's range row count is significantly lower than y's, for example, 500 times, we think x is better.
+	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
 	if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 {
-		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 500))
+		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
 		if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
 			return -1
 		}
