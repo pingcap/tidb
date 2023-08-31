@@ -721,13 +721,27 @@ func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 	return result, true
 }
 
-// compareCandidates is the core of skyline pruning. It compares the two candidate paths on three dimensions:
-// (1): the set of columns that occurred in the access condition,
-// (2): does it require a double scan,
-// (3): whether or not it matches the physical property.
-// If `x` is not worse than `y` at all factors,
-// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
-func compareCandidates(lhs, rhs *candidatePath) int {
+// compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
+// The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
+func compareCandidates(sctx sessionctx.Context, lhs, rhs *candidatePath) int {
+	// This rule is empirical but not always correct.
+	// If x's range row count is significantly lower than y's, for example, 500 times, we think x is better.
+	if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 {
+		n := 500.0
+		if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > n {
+			return -1
+		}
+		if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > n {
+			return 1
+		}
+	}
+
+	// Below compares the two candidate paths on three dimensions:
+	// (1): the set of columns that occurred in the access condition,
+	// (2): does it require a double scan,
+	// (3): whether or not it matches the physical property.
+	// If `x` is not worse than `y` at all factors,
+	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	if !comparable1 {
 		return 0
@@ -872,7 +886,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			if candidates[i].path.StoreType == kv.TiFlash {
 				continue
 			}
-			result := compareCandidates(candidates[i], currentCandidate)
+			result := compareCandidates(ds.SCtx(), candidates[i], currentCandidate)
 			if result == 1 {
 				pruned = true
 				// We can break here because the current candidate cannot prune others anymore.
