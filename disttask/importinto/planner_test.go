@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/planner"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/stretchr/testify/require"
@@ -117,6 +118,7 @@ func TestToPhysicalPlan(t *testing.T) {
 	require.NoError(t, err)
 	subtaskMeta2 := PostProcessStepMeta{
 		Checksum: Checksum{Size: 1, KVs: 2, Sum: 3},
+		MaxIDs:   map[autoid.AllocatorType]int64{},
 	}
 	bs, err = json.Marshal(subtaskMeta2)
 	require.NoError(t, err)
