@@ -12586,7 +12586,7 @@
             {
               "format": "short",
               "label": null,
-              "logBase": 10,
+              "logBase": 1,
               "max": null,
               "min": null,
               "show": true
