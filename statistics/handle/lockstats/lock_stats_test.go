@@ -78,46 +78,6 @@ func TestGenerateDuplicateTablesMessage(t *testing.T) {
 	}
 }
 
-func TestRemoveIfTableLocked(t *testing.T) {
-	tests := []struct {
-		name          string
-		tableLocked   []int64
-		removeTableID int64
-		expectedExist bool
-		expectedTable []int64
-	}{
-		{
-			name:          "no table locked",
-			tableLocked:   []int64{},
-			removeTableID: 1,
-			expectedExist: false,
-			expectedTable: []int64{},
-		},
-		{
-			name:          "table locked",
-			tableLocked:   []int64{1, 2, 3},
-			removeTableID: 1,
-			expectedExist: true,
-			expectedTable: []int64{2, 3},
-		},
-		{
-			name:          "table not locked",
-			tableLocked:   []int64{1, 2, 3},
-			removeTableID: 4,
-			expectedExist: false,
-			expectedTable: []int64{1, 2, 3},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			exist, tables := removeIfTableLocked(tt.tableLocked, tt.removeTableID)
-			require.Equal(t, tt.expectedExist, exist)
-			require.Equal(t, tt.expectedTable, tables)
-		})
-	}
-}
-
 func TestLockTableIndexOf(t *testing.T) {
 	tests := []struct {
 		name          string

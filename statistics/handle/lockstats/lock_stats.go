@@ -168,12 +168,3 @@ func finishTransaction(ctx context.Context, exec sqlexec.SQLExecutor, err error)
 	}
 	return errors.Trace(err)
 }
-
-// removeIfTableLocked try to remove the table from table locked array
-func removeIfTableLocked(tableLocked []int64, tableID int64) (bool, []int64) {
-	idx := lockTableIndexOf(tableLocked, tableID)
-	if idx > -1 {
-		tableLocked = append(tableLocked[:idx], tableLocked[idx+1:]...)
-	}
-	return idx > -1, tableLocked
-}

@@ -26,6 +26,5 @@ go_test(
     srcs = ["lock_stats_test.go"],
     embed = [":lockstats"],
     flaky = True,
-    shard_count = 3,
     deps = ["@com_github_stretchr_testify//require"],
 )

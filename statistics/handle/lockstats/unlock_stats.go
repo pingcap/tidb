@@ -52,9 +52,7 @@ func RemoveLockedTables(exec sqlexec.SQLExecutor, tids []int64, pids []int64, ta
 
 	statsLogger.Info("unlock table", zap.Int64s("tableIDs", tids))
 	for i, tid := range tids {
-		var exist bool
-		exist, tableLocked = removeIfTableLocked(tableLocked, tid)
-		if !exist {
+		if !IsTableLocked(tableLocked, tid) {
 			skippedTables = append(skippedTables, tables[i].Schema.L+"."+tables[i].Name.L)
 			continue
 		}
@@ -65,9 +63,7 @@ func RemoveLockedTables(exec sqlexec.SQLExecutor, tids []int64, pids []int64, ta
 
 	// Delete related partitions while don't warning delete empty partitions
 	for _, tid := range pids {
-		var exist bool
-		exist, tableLocked = removeIfTableLocked(tableLocked, tid)
-		if !exist {
+		if !IsTableLocked(tableLocked, tid) {
 			continue
 		}
 		if err := updateStatsAndUnlockTable(ctx, exec, tid, maxChunkSize); err != nil {
