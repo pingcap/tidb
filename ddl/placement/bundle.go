@@ -288,26 +288,11 @@ func (b *Bundle) String() string {
 
 // Tidy will post optimize Rules, trying to generate rules that suits PD.
 func (b *Bundle) Tidy() error {
-	extraCnt := map[PeerRoleType]int{}
 	tempRules := b.Rules[:0]
-
-	// One Bundle is from one PlacementSettings, rule share same location labels, so we can use the first rule's location labels.
-	var locationLabels []string
-	for _, rule := range b.Rules {
-		if len(rule.LocationLabels) > 0 {
-			locationLabels = rule.LocationLabels
-			break
-		}
-	}
 	id := 0
 	for _, rule := range b.Rules {
 		// useless Rule
 		if rule.Count <= 0 {
-			continue
-		}
-		// merge all empty constraints
-		if len(rule.Constraints) == 0 {
-			extraCnt[rule.Role] += rule.Count
 			continue
 		}
 		// refer to tidb#22065.
@@ -321,35 +306,11 @@ func (b *Bundle) Tidy() error {
 		if err != nil {
 			return err
 		}
-		// Constraints.Add() will automatically avoid duplication
-		// if -engine=tiflash is added and there is only one constraint
-		// then it must be -engine=tiflash
-		// it is seen as an empty constraint, so merge it
-		if len(rule.Constraints) == 1 {
-			extraCnt[rule.Role] += rule.Count
-			continue
-		}
 		rule.ID = strconv.Itoa(id)
 		tempRules = append(tempRules, rule)
 		id++
 	}
 
-	for role, cnt := range extraCnt {
-		// add -engine=tiflash, refer to tidb#22065.
-		tempRules = append(tempRules, &Rule{
-			ID:    strconv.Itoa(id),
-			Role:  role,
-			Count: cnt,
-			Constraints: []Constraint{{
-				Op:     NotIn,
-				Key:    EngineLabelKey,
-				Values: []string{EngineLabelTiFlash},
-			}},
-			// the merged rule should have the same location labels with the original rules.
-			LocationLabels: locationLabels,
-		})
-		id++
-	}
 	groups := make(map[string]*ConstraintsGroup)
 	finalRules := tempRules[:0]
 	for _, rule := range tempRules {
@@ -437,8 +398,8 @@ func (c *ConstraintsGroup) MergeTransformableRoles() {
 			mergedRule.ID = rule.ID
 		}
 	}
-	mergedRule.Role = Voter
 	if mergedRule != nil {
+		mergedRule.Role = Voter
 		newRules = append(newRules, mergedRule)
 	}
 	c.rules = newRules
