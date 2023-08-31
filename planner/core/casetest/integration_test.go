@@ -1608,6 +1608,12 @@ func TestFixControl45132(t *testing.T) {
 		`TableReader_7 128.00 root  data:Selection_6`,
 		`└─Selection_6 128.00 cop[tikv]  eq(test.t.a, 2)`,
 		`  └─TableFullScan_5 12928.00 cop[tikv] table:t keep order:false`))
+
+	tk.MustExec(`set @@tidb_opt_fix_control = "45132:0"`)
+	tk.MustQuery(`explain select * from t where a=2`).Check(testkit.Rows(
+		`TableReader_7 128.00 root  data:Selection_6`,
+		`└─Selection_6 128.00 cop[tikv]  eq(test.t.a, 2)`,
+		`  └─TableFullScan_5 12928.00 cop[tikv] table:t keep order:false`))
 }
 
 func TestFixControl44262(t *testing.T) {

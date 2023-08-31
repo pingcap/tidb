@@ -729,11 +729,13 @@ func compareCandidates(sctx sessionctx.Context, lhs, rhs *candidatePath) int {
 	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
 	if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 {
 		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
-		if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
-			return -1
-		}
-		if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
-			return 1
+		if threshold > 0 { // set it to 0 to disable this rule
+			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
+				return -1
+			}
+			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
+				return 1
+			}
 		}
 	}
 
