@@ -36,6 +36,7 @@ go_test(
         "//config",
         "//errno",
         "//expression",
+        "//parser/auth",
         "//parser/mysql",
         "//parser/terror",
         "//server",
