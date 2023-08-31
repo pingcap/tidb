@@ -202,9 +202,9 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(
 
 // DumpStatsToJSONBySnapshot dumps statistic to json.
 func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*JSONTable, error) {
-	h.mu.Lock()
-	isDynamicMode := variable.PartitionPruneMode(h.mu.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
-	h.mu.Unlock()
+	h.ctxMu.Lock()
+	isDynamicMode := variable.PartitionPruneMode(h.ctxMu.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
+	h.ctxMu.Unlock()
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)

@@ -168,19 +168,25 @@ func (e *ShowExec) fetchShowStatsLocked() error {
 				if pi != nil {
 					partitionName = "global"
 				}
-				if h.IsTableLocked(tbl.ID) {
+				if isLocked, err := h.IsTableLocked(tbl.ID); err != nil {
+					return err
+				} else if isLocked {
 					e.appendTableForStatsLocked(db.Name.O, tbl.Name.O, partitionName)
 				}
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						if h.IsTableLocked(def.ID) {
+						if isLocked, err := h.IsTableLocked(def.ID); err != nil {
+							return err
+						} else if isLocked {
 							e.appendTableForStatsLocked(db.Name.O, tbl.Name.O, def.Name.O)
 						}
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					if h.IsTableLocked(def.ID) {
+					if isLocked, err := h.IsTableLocked(def.ID); err != nil {
+						return err
+					} else if isLocked {
 						e.appendTableForStatsLocked(db.Name.O, tbl.Name.O, def.Name.O)
 					}
 				}

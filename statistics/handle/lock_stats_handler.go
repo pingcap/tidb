@@ -49,11 +49,11 @@ var (
 // - tables: table names of which will be locked.
 // Return the message of skipped tables and error.
 func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.ctxMu.Lock()
+	defer h.ctxMu.Unlock()
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	exec := h.ctxMu.ctx.(sqlexec.SQLExecutor)
 
 	_, err := exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
 	if err != nil {
@@ -95,9 +95,6 @@ func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.Table
 		}
 	}
 
-	// Update handle.tableLocked after transaction success, if txn failed, tableLocked won't be updated.
-	h.tableLocked = tableLocked
-
 	msg := generateSkippedTablesMessage(tids, skippedTables, lockAction, lockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.
 	return msg, err
@@ -131,46 +128,33 @@ func insertIntoStatsTableLocked(ctx context.Context, exec sqlexec.SQLExecutor, t
 	return nil
 }
 
-// LoadLockedTables load locked tables from store
-func (h *Handle) LoadLockedTables() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-
-	tableLocked, err := loadLockedTables(ctx, exec, maxChunkSize)
-	if err != nil {
-		return err
-	}
-
-	// Update all locked tables.
-	h.tableLocked = tableLocked
-
-	return nil
-}
-
 // IsTableLocked check whether table is locked in handle with Handle.Mutex
-func (h *Handle) IsTableLocked(tableID int64) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+func (h *Handle) IsTableLocked(tableID int64) (bool, error) {
+	h.ctxMu.RLock()
+	defer h.ctxMu.RUnlock()
 	return h.isTableLockedWithoutLock(tableID)
 }
 
+// loadLockedTablesWithoutLock load locked tables from store without Handle.Mutex.
+func (h *Handle) loadLockedTablesWithoutLock() ([]int64, error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	exec := h.ctxMu.ctx.(sqlexec.SQLExecutor)
+
+	return loadLockedTables(ctx, exec, maxChunkSize)
+}
+
 // isTableLockedWithoutLock check whether table is locked in handle without Handle.Mutex
-func (h *Handle) isTableLockedWithoutLock(tableID int64) bool {
-	return isTableLocked(h.tableLocked, tableID)
+func (h *Handle) isTableLockedWithoutLock(tableID int64) (bool, error) {
+	tableLocked, err := h.loadLockedTablesWithoutLock()
+	if err != nil {
+		return false, err
+	}
+	return isTableLocked(tableLocked, tableID), nil
 }
 
 // isTableLocked check whether table is locked
 func isTableLocked(tableLocked []int64, tableID int64) bool {
 	return lockTableIndexOf(tableLocked, tableID) > -1
-}
-
-// GetTableLockedAndClearForTest for unit test only
-func (h *Handle) GetTableLockedAndClearForTest() []int64 {
-	tableLocked := h.tableLocked
-	h.tableLocked = make([]int64, 0)
-	return tableLocked
 }
 
 func loadLockedTables(ctx context.Context, exec sqlexec.SQLExecutor, maxChunkSize int) ([]int64, error) {
@@ -206,4 +190,11 @@ func lockTableIndexOf(tableLocked []int64, tableID int64) int {
 		}
 	}
 	return -1
+}
+
+// GetTableLockedAndClearForTest for unit test only
+func (h *Handle) GetTableLockedAndClearForTest() ([]int64, error) {
+	h.ctxMu.RLock()
+	defer h.ctxMu.RUnlock()
+	return h.loadLockedTablesWithoutLock()
 }

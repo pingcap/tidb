@@ -93,7 +93,10 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	sessionVars := e.Ctx().GetSessionVars()
 
 	// Filter the locked tables.
-	tasks, needAnalyzeTableCnt, skippedTables := filterAndCollectTasks(e.tasks, statsHandle, infoSchema)
+	tasks, needAnalyzeTableCnt, skippedTables, err := filterAndCollectTasks(e.tasks, statsHandle, infoSchema)
+	if err != nil {
+		return err
+	}
 	warnLockedTableMsg(sessionVars, needAnalyzeTableCnt, skippedTables)
 
 	if len(tasks) == 0 {
@@ -170,7 +173,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 }
 
 // filterAndCollectTasks filters the tasks that are not locked and collects the table IDs.
-func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, infoSchema infoschema.InfoSchema) ([]*analyzeTask, uint, []string) {
+func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, infoSchema infoschema.InfoSchema) ([]*analyzeTask, uint, []string, error) {
 	var (
 		filteredTasks       []*analyzeTask
 		skippedTables       []string
@@ -180,7 +183,10 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 
 	for _, task := range tasks {
 		tableID := getTableIDFromTask(task)
-		isLocked := statsHandle.IsTableLocked(tableID)
+		isLocked, err := statsHandle.IsTableLocked(tableID)
+		if err != nil {
+			return nil, 0, nil, err
+		}
 		if !isLocked {
 			filteredTasks = append(filteredTasks, task)
 		}
@@ -200,7 +206,7 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 		}
 	}
 
-	return filteredTasks, needAnalyzeTableCnt, skippedTables
+	return filteredTasks, needAnalyzeTableCnt, skippedTables, nil
 }
 
 // warnLockedTableMsg warns the locked table IDs.

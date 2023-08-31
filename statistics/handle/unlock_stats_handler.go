@@ -31,11 +31,11 @@ import (
 // - tables: table names of which will be unlocked.
 // Return the message of skipped tables and error.
 func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.ctxMu.Lock()
+	defer h.ctxMu.Unlock()
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	exec := h.ctxMu.ctx.(sqlexec.SQLExecutor)
 
 	_, err := exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
 	if err != nil {
@@ -77,9 +77,6 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 			return "", err
 		}
 	}
-
-	// Update handle.tableLocked after transaction success, if txn failed, tableLocked won't be updated.
-	h.tableLocked = tableLocked
 
 	msg := generateSkippedTablesMessage(tids, skippedTables, unlockAction, unlockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.

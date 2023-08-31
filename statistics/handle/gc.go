@@ -156,9 +156,9 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 // ClearOutdatedHistoryStats clear outdated historical stats
 func (h *Handle) ClearOutdatedHistoryStats() error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	h.ctxMu.Lock()
+	defer h.ctxMu.Unlock()
+	exec := h.ctxMu.ctx.(sqlexec.SQLExecutor)
 	sql := "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
 	rs, err := exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
 	if err != nil {
@@ -188,9 +188,9 @@ func (h *Handle) ClearOutdatedHistoryStats() error {
 }
 
 func (h *Handle) gcHistoryStatsFromKV(physicalID int64) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	h.ctxMu.Lock()
+	defer h.ctxMu.Unlock()
+	exec := h.ctxMu.ctx.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, err := exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
@@ -211,11 +211,11 @@ func (h *Handle) gcHistoryStatsFromKV(physicalID int64) error {
 
 // deleteHistStatsFromKV deletes all records about a column or an index and updates version.
 func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex int) (err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.ctxMu.Lock()
+	defer h.ctxMu.Unlock()
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	exec := h.ctxMu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
@@ -223,7 +223,7 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	txn, err := h.ctxMu.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -260,9 +260,9 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
 func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	h.ctxMu.Lock()
+	defer h.ctxMu.Unlock()
+	exec := h.ctxMu.ctx.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
@@ -271,7 +271,7 @@ func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	txn, err := h.ctxMu.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -307,9 +307,9 @@ func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 }
 
 func (h *Handle) removeDeletedExtendedStats(version uint64) (err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	h.ctxMu.Lock()
+	defer h.ctxMu.Unlock()
+	exec := h.ctxMu.ctx.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {

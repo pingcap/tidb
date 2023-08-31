@@ -392,9 +392,9 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 	}()
 	// TODO: pass in do.InfoSchema() to DumpStatsDeltaToKV.
 	is := func() infoschema.InfoSchema {
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		return h.mu.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		h.ctxMu.Lock()
+		defer h.ctxMu.Unlock()
+		return h.ctxMu.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	}()
 	currentTime := time.Now()
 	for id, item := range deltaMap {
@@ -434,10 +434,10 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	if delta.Count == 0 {
 		return true, nil
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.ctxMu.Lock()
+	defer h.ctxMu.Unlock()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	exec := h.ctxMu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return false, errors.Trace(err)
@@ -446,15 +446,18 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		err = finishTransaction(ctx, exec, err)
 	}()
 
-	txn, err := h.mu.ctx.Txn(true)
+	txn, err := h.ctxMu.ctx.Txn(true)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	startTS := txn.StartTS()
 	updateStatsMeta := func(id int64) error {
-		var err error
+		isLocked, err := h.isTableLockedWithoutLock(id)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		// This lock is already locked on it so it use isTableLockedWithoutLock without lock.
-		if h.isTableLockedWithoutLock(id) {
+		if isLocked {
 			if delta.Delta < 0 {
 				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
 			} else {
@@ -478,10 +481,10 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	if err = updateStatsMeta(id); err != nil {
 		return
 	}
-	affectedRows := h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
+	affectedRows := h.ctxMu.ctx.GetSessionVars().StmtCtx.AffectedRows()
 
 	// if it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-	is := h.mu.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	is := h.ctxMu.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	if is == nil {
 		return false, errors.New("cannot get the information schema")
 	}
@@ -491,7 +494,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		}
 	}
 
-	affectedRows += h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
+	affectedRows += h.ctxMu.ctx.GetSessionVars().StmtCtx.AffectedRows()
 	updated = affectedRows > 0
 	return
 }
@@ -662,9 +665,9 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 }
 
 func (h *Handle) getAnalyzeSnapshot() (bool, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	analyzeSnapshot, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAnalyzeSnapshot)
+	h.ctxMu.Lock()
+	defer h.ctxMu.Unlock()
+	analyzeSnapshot, err := h.ctxMu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAnalyzeSnapshot)
 	if err != nil {
 		return false, err
 	}
@@ -717,8 +720,12 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			tbls[i], tbls[j] = tbls[j], tbls[i]
 		})
 		for _, tbl := range tbls {
-			//if table locked, skip analyze
-			if h.IsTableLocked(tbl.Meta().ID) {
+			// If table locked, skip analyze.
+			if isLocked, err := h.IsTableLocked(tbl.Meta().ID); err != nil {
+				statsLogger.Error("check table lock failed", zap.Error(err))
+				continue
+			} else if isLocked {
+				statsLogger.Info("skip analyze locked table", zap.String("db", db), zap.String("table", tbl.Meta().Name.O))
 				continue
 			}
 			tblInfo := tbl.Meta()
@@ -767,7 +774,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 			return false
 		}
 		logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"), zap.String("sql", escaped), zap.String("reason", reason))
-		tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+		tableStatsVer := h.ctxMu.ctx.GetSessionVars().AnalyzeVersion
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 		h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
 		return true
@@ -781,7 +788,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 				return false
 			}
 			logutil.BgLogger().Info("auto analyze for unanalyzed", zap.String("category", "stats"), zap.String("sql", escaped))
-			tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+			tableStatsVer := h.ctxMu.ctx.GetSessionVars().AnalyzeVersion
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 			h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sqlWithIdx, paramsWithIdx...)
 			return true
@@ -791,9 +798,9 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 }
 
 func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo, pi *model.PartitionInfo, db string, ratio float64, analyzeSnapshot bool) bool {
-	h.mu.RLock()
-	tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
-	h.mu.RUnlock()
+	h.ctxMu.RLock()
+	tableStatsVer := h.ctxMu.ctx.GetSessionVars().AnalyzeVersion
+	h.ctxMu.RUnlock()
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
 	partitionNames := make([]interface{}, 0, len(pi.Definitions))
 	for _, def := range pi.Definitions {
