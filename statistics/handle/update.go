@@ -722,10 +722,12 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		for _, tbl := range tbls {
 			// If table locked, skip analyze.
 			if isLocked, err := h.IsTableLocked(tbl.Meta().ID); err != nil {
-				statsLogger.Error("check table lock failed", zap.Error(err))
+				logutil.BgLogger().Error("check table lock failed",
+					zap.String("category", "stats"), zap.Error(err))
 				continue
 			} else if isLocked {
-				statsLogger.Info("skip analyze locked table", zap.String("db", db), zap.String("table", tbl.Meta().Name.O))
+				logutil.BgLogger().Info("skip analyze locked table", zap.String("category", "stats"),
+					zap.String("db", db), zap.String("table", tbl.Meta().Name.O))
 				continue
 			}
 			tblInfo := tbl.Meta()

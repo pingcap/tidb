@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package handle
+package lockstats
 
 import (
 	"context"
@@ -26,16 +26,13 @@ import (
 )
 
 // RemoveLockedTables remove tables from table locked array.
+// - exec: sql executor.
 // - tids: table ids of which will be unlocked.
 // - pids: partition ids of which will be unlocked.
 // - tables: table names of which will be unlocked.
 // Return the message of skipped tables and error.
-func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
+func RemoveLockedTables(exec sqlexec.SQLExecutor, tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 
 	_, err := exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
 	if err != nil {
@@ -47,7 +44,7 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 	}()
 
 	// Load tables to check locked before delete.
-	tableLocked, err := loadLockedTables(ctx, exec, maxChunkSize)
+	tableLocked, err := LoadLockedTables(ctx, exec)
 	if err != nil {
 		return "", err
 	}
