@@ -13,7 +13,7 @@ require (
 	go.uber.org/zap v1.25.0
 	golang.org/x/text v0.12.0
 	modernc.org/parser v1.1.0
-	modernc.org/y v1.0.9
+	modernc.org/y v1.1.0
 )
 
 require (
@@ -27,7 +27,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/golex v1.1.0 // indirect
 	modernc.org/mathutil v1.6.0 // indirect
-	modernc.org/sortutil v1.1.1 // indirect
+	modernc.org/sortutil v1.2.0 // indirect
 	modernc.org/strutil v1.2.0 // indirect
 )
 
