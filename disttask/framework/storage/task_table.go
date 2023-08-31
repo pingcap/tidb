@@ -285,14 +285,15 @@ func row2SubTask(r chunk.Row) *proto.Subtask {
 		updateTime = time.Unix(ts, 0)
 	}
 	task := &proto.Subtask{
-		ID:          r.GetInt64(0),
-		Step:        r.GetInt64(1),
-		Type:        proto.Int2Type(int(r.GetInt64(5))),
-		SchedulerID: r.GetString(6),
-		State:       r.GetString(8),
-		Meta:        r.GetBytes(12),
-		StartTime:   startTime,
-		UpdateTime:  updateTime,
+		ID:            r.GetInt64(0),
+		Step:          r.GetInt64(1),
+		Type:          proto.Int2Type(int(r.GetInt64(5))),
+		SchedulerID:   r.GetString(6),
+		State:         r.GetString(8),
+		Meta:          r.GetBytes(12),
+		ExecutionInfo: r.GetString(14),
+		StartTime:     startTime,
+		UpdateTime:    updateTime,
 	}
 	tid, err := strconv.Atoi(r.GetString(3))
 	if err != nil {
@@ -310,9 +311,9 @@ func (stm *TaskManager) AddNewSubTask(globalTaskID int64, step int64, designated
 	}
 
 	_, err := stm.executeSQLWithNewSession(stm.ctx, `insert into mysql.tidb_background_subtask
-		(task_key, step, exec_id, meta, state, type, checkpoint)
-		values (%?, %?, %?, %?, %?, %?, %?)`,
-		globalTaskID, step, designatedTiDBID, meta, st, proto.Type2Int(tp), []byte{})
+		(task_key, step, exec_id, meta, state, type, checkpoint, execution_info)
+		values (%?, %?, %?, %?, %?, %?, %?, %?)`,
+		globalTaskID, step, designatedTiDBID, meta, st, proto.Type2Int(tp), []byte{}, `'{}'`)
 	if err != nil {
 		return err
 	}
@@ -539,9 +540,9 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 		for _, subtask := range subtasks {
 			// TODO: insert subtasks in batch
 			_, err = ExecSQL(stm.ctx, se, `insert into mysql.tidb_background_subtask
-					(step, task_key, exec_id, meta, state, type, checkpoint)
-					values (%?, %?, %?, %?, %?, %?, %?)`,
-				gTask.Step, gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{})
+					(step, task_key, exec_id, meta, state, type, checkpoint, execution_info)
+					values (%?, %?, %?, %?, %?, %?, %?, %?)`,
+				gTask.Step, gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{}, `'{}'`)
 			if err != nil {
 				return err
 			}
