@@ -1046,7 +1046,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		exit:                make(chan struct{}),
 		sysSessionPool:      newSessionPool(capacity, factory),
 		statsLease:          statsLease,
-		infoCache:           infoschema.NewCache(16),
+		infoCache:           infoschema.NewCache(64),
 		slowQuery:           newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		indexUsageSyncLease: idxUsageSyncLease,
 		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
