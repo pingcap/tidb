@@ -86,12 +86,11 @@ func TestIssue31375(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
-func TestIssue29303(t *testing.T) {
+func TestIssueEnablePreparedPlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
-	tk.MustExec(`set tidb_enable_clustered_index=on`)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists PK_MULTI_COL_360`)
 	tk.MustExec(`CREATE TABLE PK_MULTI_COL_360 (
@@ -105,14 +104,7 @@ func TestIssue29303(t *testing.T) {
 	tk.MustExec(`set @a="龂", @b="龂", @c="龂", @d="龂"`)
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows("� 龂 � 龂"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // unsafe range
-}
-
-func TestIssue34725(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-
-	tk.MustExec(`use test`)
+	// TestIssue34725
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`CREATE TABLE t (
 		a int(11) DEFAULT NULL,
@@ -124,6 +116,43 @@ func TestIssue34725(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows(`102 102`))
 	tk.MustExec(`set @a=-97, @b=-97, @c=-97`)
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows())
+	// TestIssue28942
+	tk.MustExec(`drop table if exists IDT_MULTI15853STROBJSTROBJ`)
+	tk.MustExec(`
+	CREATE TABLE IDT_MULTI15853STROBJSTROBJ (
+	  COL1 enum('aa','bb','cc') DEFAULT NULL,
+	  COL2 mediumint(41) DEFAULT NULL,
+	  KEY U_M_COL4 (COL1,COL2)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	tk.MustExec(`insert into IDT_MULTI15853STROBJSTROBJ values("aa", 1)`)
+	tk.MustExec(`prepare stmt from 'SELECT * FROM IDT_MULTI15853STROBJSTROBJ WHERE col1 = ? AND col1 != ?'`)
+	tk.MustExec(`set @a="mm", @b="aa"`)
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows()) // empty result
+	tk.MustExec(`set @a="aa", @b="aa"`)
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows()) // empty result
+	// TestIssue28254
+	tk.MustExec("drop table if exists PK_GCOL_STORED9816")
+	tk.MustExec("CREATE TABLE `PK_GCOL_STORED9816` (`COL102` decimal(55,0) DEFAULT NULL)")
+	tk.MustExec("insert into PK_GCOL_STORED9816 values(9710290195629059011)")
+	tk.MustExec("prepare stmt from 'select count(*) from PK_GCOL_STORED9816 where col102 > ?'")
+	tk.MustExec("set @a=9860178624005968368")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("0"))
+	tk.MustExec("set @a=-7235178122860450591")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1"))
+	tk.MustExec("set @a=9860178624005968368")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("0"))
+	tk.MustExec("set @a=-7235178122860450591")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1"))
+	//  TestIssue33067
+	tk.MustExec("DROP TABLE IF EXISTS `t`")
+	tk.MustExec("CREATE TABLE `t` (`COL1` char(20) DEFAULT NULL, `COL2` bit(16),`COL3` date, KEY `U_M_COL5` (`COL3`,`COL2`))")
+	tk.MustExec("insert into t values ('','>d','9901-06-17')")
+	tk.MustExec("prepare stmt from 'select * from t where col1 is not null and col2 not in (?, ?, ?) and col3 in (?, ?, ?)'")
+	tk.MustExec(`set @a=-21188, @b=26824, @c=31855, @d="5597-1-4", @e="5755-12-6", @f="1253-7-12"`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows())
+	tk.MustExec(`set @a=-5360, @b=-11715, @c=9399, @d="9213-09-13", @e="4705-12-24", @f="9901-06-17"`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows(" >d 9901-06-17"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func TestIssue33628(t *testing.T) {
@@ -138,64 +167,6 @@ func TestIssue33628(t *testing.T) {
 	tk.MustExec(`execute stmt`)
 	tk.MustExec(`execute stmt`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-}
-
-func TestIssue28942(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-
-	tk.MustExec(`use test`)
-	tk.MustExec(`drop table if exists IDT_MULTI15853STROBJSTROBJ`)
-	tk.MustExec(`
-	CREATE TABLE IDT_MULTI15853STROBJSTROBJ (
-	  COL1 enum('aa','bb','cc') DEFAULT NULL,
-	  COL2 mediumint(41) DEFAULT NULL,
-	  KEY U_M_COL4 (COL1,COL2)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
-	tk.MustExec(`insert into IDT_MULTI15853STROBJSTROBJ values("aa", 1)`)
-	tk.MustExec(`prepare stmt from 'SELECT * FROM IDT_MULTI15853STROBJSTROBJ WHERE col1 = ? AND col1 != ?'`)
-	tk.MustExec(`set @a="mm", @b="aa"`)
-	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows()) // empty result
-	tk.MustExec(`set @a="aa", @b="aa"`)
-	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows()) // empty result
-}
-
-func TestIssue28254(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists PK_GCOL_STORED9816")
-	tk.MustExec("CREATE TABLE `PK_GCOL_STORED9816` (`COL102` decimal(55,0) DEFAULT NULL)")
-	tk.MustExec("insert into PK_GCOL_STORED9816 values(9710290195629059011)")
-	tk.MustExec("prepare stmt from 'select count(*) from PK_GCOL_STORED9816 where col102 > ?'")
-	tk.MustExec("set @a=9860178624005968368")
-	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("0"))
-	tk.MustExec("set @a=-7235178122860450591")
-	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1"))
-	tk.MustExec("set @a=9860178624005968368")
-	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("0"))
-	tk.MustExec("set @a=-7235178122860450591")
-	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1"))
-}
-
-func TestIssue33067(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-
-	tk.MustExec("use test")
-	tk.MustExec("DROP TABLE IF EXISTS `t`")
-	tk.MustExec("CREATE TABLE `t` (`COL1` char(20) DEFAULT NULL, `COL2` bit(16),`COL3` date, KEY `U_M_COL5` (`COL3`,`COL2`))")
-	tk.MustExec("insert into t values ('','>d','9901-06-17')")
-	tk.MustExec("prepare stmt from 'select * from t where col1 is not null and col2 not in (?, ?, ?) and col3 in (?, ?, ?)'")
-	tk.MustExec(`set @a=-21188, @b=26824, @c=31855, @d="5597-1-4", @e="5755-12-6", @f="1253-7-12"`)
-	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows())
-	tk.MustExec(`set @a=-5360, @b=-11715, @c=9399, @d="9213-09-13", @e="4705-12-24", @f="9901-06-17"`)
-	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows(" >d 9901-06-17"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func TestIssue42439(t *testing.T) {
@@ -342,7 +313,7 @@ func TestIssue28828(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
-func TestIssue4PreparedPlanCache(t *testing.T) {
+func TestIssueEnablePreparedPlanCache2(t *testing.T) {
 	// Issue18066
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
