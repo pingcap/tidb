@@ -1013,7 +1013,7 @@ func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, si
 	return ranges
 }
 
-func (local *Backend) readAndSplitIntoRange(
+func readAndSplitIntoRange(
 	ctx context.Context,
 	engine *Engine,
 	sizeLimit int64,
@@ -1032,13 +1032,12 @@ func (local *Backend) readAndSplitIntoRange(
 	engineFileTotalSize, engineFileLength := engine.KVStatistics()
 
 	if engineFileTotalSize <= sizeLimit && engineFileLength <= keysLimit {
-
 		ranges := []common.Range{{Start: firstKey, End: endKey}}
 		return ranges, nil
 	}
 
 	logger := log.FromContext(ctx).With(zap.String("engine", engine.ID()))
-	ranges, err := engine.SplitRanges(ctx, firstKey, endKey, sizeLimit, keysLimit, logger)
+	ranges, err := engine.SplitRanges(firstKey, endKey, sizeLimit, keysLimit, logger)
 	logger.Info("split local engine key ranges",
 		zap.Int64("totalSize", engineFileTotalSize), zap.Int64("totalCount", engineFileLength),
 		logutil.Key("firstKey", firstKey), logutil.Key("lastKey", lastKey),
@@ -1124,7 +1123,7 @@ func (local *Backend) generateAndSendJob(
 		end := jobRanges[len(jobRanges)-1].End
 		sizeLimit := int64(config.SplitRegionSize)
 		keysLimit := int64(config.SplitRegionKeys)
-		jrs, err := localEngine.SplitRanges(ctx, start, end, sizeLimit, keysLimit, logger)
+		jrs, err := localEngine.SplitRanges(start, end, sizeLimit, keysLimit, logger)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1427,7 +1426,7 @@ func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, re
 	}
 
 	// split sorted file into range about regionSplitSize per file
-	regionRanges, err := local.readAndSplitIntoRange(ctx, lf, regionSplitSize, regionSplitKeys)
+	regionRanges, err := readAndSplitIntoRange(ctx, lf, regionSplitSize, regionSplitKeys)
 	if err != nil {
 		return err
 	}

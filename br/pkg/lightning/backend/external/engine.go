@@ -194,7 +194,6 @@ func (e *Engine) ID() string {
 
 // SplitRanges split the ranges by split keys provided by external engine.
 func (e *Engine) SplitRanges(
-	_not_ context.Context,
 	startKey, endKey []byte,
 	_, _ int64,
 	_ log.Logger,

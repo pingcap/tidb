@@ -292,7 +292,6 @@ func (e *Engine) ID() string {
 
 // SplitRanges gets size properties from pebble and split ranges according to size/keys limit.
 func (e *Engine) SplitRanges(
-	ctx context.Context,
 	startKey, endKey []byte,
 	sizeLimit, keysLimit int64,
 	logger log.Logger,

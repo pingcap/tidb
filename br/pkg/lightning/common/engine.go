@@ -38,11 +38,6 @@ type Engine interface {
 	// ImportedStatistics returns the imported kv size and imported kv length.
 	ImportedStatistics() (importedKVSize int64, importedKVLength int64)
 	// SplitRanges splits the range [startKey, endKey) into multiple ranges.
-	SplitRanges(
-		ctx context.Context,
-		startKey, endKey []byte,
-		sizeLimit, keysLimit int64,
-		logger log.Logger,
-	) ([]Range, error)
+	SplitRanges(startKey, endKey []byte, sizeLimit, keysLimit int64, logger log.Logger) ([]Range, error)
 	// TODO(lance6716): add more methods
 }
