@@ -1066,21 +1066,19 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 		err = local.errorMgr.ReplaceConflictKeys(
 			ctx, tbl, tableName, pool, decoder,
 			func(ctx context.Context, key []byte) ([]byte, error) {
-				// TODO: check whether need for loop to retry when encountering error
 				value, err := local.getLatestValue(ctx, logger, key)
-				if err == nil {
-					return value, nil
+				if err != nil {
+					return nil, errors.Trace(err)
 				}
-				return nil, errors.Trace(err)
+				return value, nil
 			},
 			func(ctx context.Context, key []byte) error {
-				// TODO: check whether need for loop to retry when encountering error
 				err := local.deleteDuplicateRow(ctx, logger, key)
-				if err == nil {
-					return nil
+				if err != nil {
+					logger.Debug("delete duplicate rows encounter error", zap.Error(err))
+					return errors.Trace(err)
 				}
-				logger.Debug("delete duplicate rows encounter error", zap.Error(err))
-				return errors.Trace(err)
+				return nil
 			},
 		)
 	}
