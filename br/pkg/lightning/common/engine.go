@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//      http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -12,8 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package importintotest
+package common
 
-func (s *mockGCSSuite) TestDummy() {
-	s.True(true, gcsEndpoint)
+import "context"
+
+// Engine describes the common interface of local and external engine that
+// local backend uses.
+type Engine interface {
+	// LoadIngestData returns an IngestData that contains the data in [start, end).
+	LoadIngestData(ctx context.Context, start, end []byte) (IngestData, error)
+	// TODO(lance6716): add more methods
 }

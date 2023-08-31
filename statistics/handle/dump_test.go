@@ -97,7 +97,6 @@ func TestConversion(t *testing.T) {
 
 	tbl := h.GetTableStats(tableInfo.Meta())
 	requireTableEqual(t, loadTbl, tbl)
-
 	cleanStats(tk, dom)
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {
@@ -137,7 +136,7 @@ func TestDumpGlobalStats(t *testing.T) {
 	stats := getStatsJSON(t, dom, "test", "t")
 	require.NotNil(t, stats.Partitions["p0"])
 	require.NotNil(t, stats.Partitions["p1"])
-	require.Nil(t, stats.Partitions["global"])
+	require.Nil(t, stats.Partitions[handle.TiDBGlobalStats])
 
 	// global-stats is existed
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -145,7 +144,7 @@ func TestDumpGlobalStats(t *testing.T) {
 	stats = getStatsJSON(t, dom, "test", "t")
 	require.NotNil(t, stats.Partitions["p0"])
 	require.NotNil(t, stats.Partitions["p1"])
-	require.NotNil(t, stats.Partitions["global"])
+	require.NotNil(t, stats.Partitions[handle.TiDBGlobalStats])
 }
 
 func TestLoadGlobalStats(t *testing.T) {

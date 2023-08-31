@@ -204,8 +204,8 @@ func recordUsedItemStatsStatus(sctx sessionctx.Context, stats interface{}, table
 	recordForColOrIdx[id] = loadStatus.StatusToString()
 }
 
-// CETraceRange appends a list of ranges and related information into CE trace
-func CETraceRange(sctx sessionctx.Context, tableID int64, colNames []string, ranges []*ranger.Range, tp string, rowCount uint64) {
+// ceTraceRange appends a list of ranges and related information into CE trace
+func ceTraceRange(sctx sessionctx.Context, tableID int64, colNames []string, ranges []*ranger.Range, tp string, rowCount uint64) {
 	sc := sctx.GetSessionVars().StmtCtx
 	allPoint := true
 	for _, ran := range ranges {
