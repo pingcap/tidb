@@ -559,6 +559,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		if err != nil {
 			return errors.Trace(err)
 		}
+		defer rawKeyRows.Close()
 		for rawKeyRows.Next() {
 			var rawKey, rawValue, rawHandle []byte
 			var indexName string
@@ -628,10 +629,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			}
 		}
 		if err := rawKeyRows.Err(); err != nil {
-			_ = rawKeyRows.Close()
-			return errors.Trace(err)
-		}
-		if err := rawKeyRows.Close(); err != nil {
 			return errors.Trace(err)
 		}
 
