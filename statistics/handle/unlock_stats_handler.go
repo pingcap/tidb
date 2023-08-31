@@ -31,11 +31,11 @@ import (
 // - tables: table names of which will be unlocked.
 // Return the message of skipped tables and error.
 func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
-	h.ctxMu.Lock()
-	defer h.ctxMu.Unlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.ctxMu.ctx.(sqlexec.SQLExecutor)
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 
 	_, err := exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
 	if err != nil {

@@ -91,9 +91,9 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64, source
 	if !tbl.IsInitialized() {
 		return
 	}
-	h.ctxMu.Lock()
-	defer h.ctxMu.Unlock()
-	err := recordHistoricalStatsMeta(h.ctxMu.ctx, tableID, version, source)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	err := recordHistoricalStatsMeta(h.mu.ctx, tableID, version, source)
 	if err != nil {
 		logutil.BgLogger().Error("record historical stats meta failed",
 			zap.Int64("table-id", tableID),
