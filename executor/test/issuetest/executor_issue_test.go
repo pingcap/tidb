@@ -163,9 +163,10 @@ func TestIssue24210(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockSelectionExecBaseExecutorOpenReturnedError"))
 }
 
-func TestIssue25506(t *testing.T) {
+func TestUnionIssue(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	// Issue25506
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tbl_3, tbl_23")
 	tk.MustExec("create table tbl_3 (col_15 bit(20))")
@@ -174,6 +175,50 @@ func TestIssue25506(t *testing.T) {
 	tk.MustExec("create table tbl_23 (col_15 bit(15))")
 	tk.MustExec("insert into tbl_23 values (0xF)")
 	tk.MustQuery("(select col_15 from tbl_23) union all (select col_15 from tbl_3 for update) order by col_15").Check(testkit.Rows("\x00\x00\x0F", "\x00\x00\xFF", "\x00\xFF\xFF"))
+	// Issue26532
+	tk.MustQuery("select greatest(cast(\"2020-01-01 01:01:01\" as datetime), cast(\"2019-01-01 01:01:01\" as datetime) )union select null;").Sort().Check(testkit.Rows("2020-01-01 01:01:01", "<nil>"))
+	tk.MustQuery("select least(cast(\"2020-01-01 01:01:01\" as datetime), cast(\"2019-01-01 01:01:01\" as datetime) )union select null;").Sort().Check(testkit.Rows("2019-01-01 01:01:01", "<nil>"))
+	tk.MustQuery("select greatest(\"2020-01-01 01:01:01\" ,\"2019-01-01 01:01:01\" )union select null;").Sort().Check(testkit.Rows("2020-01-01 01:01:01", "<nil>"))
+	tk.MustQuery("select least(\"2020-01-01 01:01:01\" , \"2019-01-01 01:01:01\" )union select null;").Sort().Check(testkit.Rows("2019-01-01 01:01:01", "<nil>"))
+	// Issue30971
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (id int);")
+	tk.MustExec("create table t2 (id int, c int);")
+
+	testCases := []struct {
+		sql    string
+		fields int
+	}{
+		// Fix a bug that the column length field returned to client is incorrect using MySQL prepare protocol.
+		{"select * from t1 union select 1 from t1", 1},
+		{"select c from t2 union select * from t1", 1},
+		{"select * from t1", 1},
+		{"select * from t2 where c in (select * from t1)", 2},
+		{"insert into t1 values (?)", 0},
+		{"update t1 set id = ?", 0},
+	}
+	for _, test := range testCases {
+		_, _, fields, err := tk.Session().PrepareStmt(test.sql)
+		require.NoError(t, err)
+		require.Len(t, fields, test.fields)
+	}
+	// 31530
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (id int primary key, v int)")
+	tk.MustExec("insert into t1 values(1, 10)")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 10"))
+
+	// update t1 before session1 transaction not finished
+	tk2.MustExec("update t1 set v=11 where id=1")
+
+	tk.MustQuery("(select 'a' as c, id, v from t1 for update) union all (select 'b', id, v from t1) order by c").Check(testkit.Rows("a 1 11", "b 1 10"))
+	tk.MustQuery("(select 'a' as c, id, v from t1) union all (select 'b', id, v from t1 for update) order by c").Check(testkit.Rows("a 1 10", "b 1 11"))
+	tk.MustQuery("(select 'a' as c, id, v from t1 where id=1 for update) union all (select 'b', id, v from t1 where id=1) order by c").Check(testkit.Rows("a 1 11", "b 1 10"))
+	tk.MustQuery("(select 'a' as c, id, v from t1 where id=1) union all (select 'b', id, v from t1 where id=1 for update) order by c").Check(testkit.Rows("a 1 10", "b 1 11"))
+	tk.MustExec("rollback")
 }
 
 func TestIssue26348(t *testing.T) {
@@ -196,16 +241,6 @@ d decimal(15,8) DEFAULT NULL
 	// differs from MySQL cause constant-fold .
 	tk.MustQuery("select \"20210606\"*50000.00*(5.04600000/36000)").Check(testkit.Rows("141642663.71666598"))
 	tk.MustQuery("select cast(\"20210606\" as double)*50000.00*(5.04600000/36000)").Check(testkit.Rows("141642663.71666598"))
-}
-
-func TestIssue26532(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustQuery("select greatest(cast(\"2020-01-01 01:01:01\" as datetime), cast(\"2019-01-01 01:01:01\" as datetime) )union select null;").Sort().Check(testkit.Rows("2020-01-01 01:01:01", "<nil>"))
-	tk.MustQuery("select least(cast(\"2020-01-01 01:01:01\" as datetime), cast(\"2019-01-01 01:01:01\" as datetime) )union select null;").Sort().Check(testkit.Rows("2019-01-01 01:01:01", "<nil>"))
-	tk.MustQuery("select greatest(\"2020-01-01 01:01:01\" ,\"2019-01-01 01:01:01\" )union select null;").Sort().Check(testkit.Rows("2020-01-01 01:01:01", "<nil>"))
-	tk.MustQuery("select least(\"2020-01-01 01:01:01\" , \"2019-01-01 01:01:01\" )union select null;").Sort().Check(testkit.Rows("2019-01-01 01:01:01", "<nil>"))
 }
 
 func TestIssue25447(t *testing.T) {
@@ -361,33 +396,6 @@ func TestIssue29498(t *testing.T) {
 	require.Equal(t, "00:00:00.567", row[len(row)-12:])
 }
 
-func TestIssue30971(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1 (id int);")
-	tk.MustExec("create table t2 (id int, c int);")
-
-	testCases := []struct {
-		sql    string
-		fields int
-	}{
-		// Fix a bug that the column length field returned to client is incorrect using MySQL prepare protocol.
-		{"select * from t1 union select 1 from t1", 1},
-		{"select c from t2 union select * from t1", 1},
-		{"select * from t1", 1},
-		{"select * from t2 where c in (select * from t1)", 2},
-		{"insert into t1 values (?)", 0},
-		{"update t1 set id = ?", 0},
-	}
-	for _, test := range testCases {
-		_, _, fields, err := tk.Session().PrepareStmt(test.sql)
-		require.NoError(t, err)
-		require.Len(t, fields, test.fields)
-	}
-}
-
 func TestIssue31678(t *testing.T) {
 	// The issue31678 is mainly about type conversion in UNION
 	store := testkit.CreateMockStore(t)
@@ -504,31 +512,6 @@ func TestFix31038(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/disable-collect-execution", `return(true)`))
 	tk.MustQuery("select * from t123;")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/disable-collect-execution"))
-}
-
-func TestFix31530(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk2.MustExec("use test")
-	defer func() {
-		tk.MustExec("drop table if exists t1")
-	}()
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (id int primary key, v int)")
-	tk.MustExec("insert into t1 values(1, 10)")
-	tk.MustExec("begin pessimistic")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("1 10"))
-
-	// update t1 before session1 transaction not finished
-	tk2.MustExec("update t1 set v=11 where id=1")
-
-	tk.MustQuery("(select 'a' as c, id, v from t1 for update) union all (select 'b', id, v from t1) order by c").Check(testkit.Rows("a 1 11", "b 1 10"))
-	tk.MustQuery("(select 'a' as c, id, v from t1) union all (select 'b', id, v from t1 for update) order by c").Check(testkit.Rows("a 1 10", "b 1 11"))
-	tk.MustQuery("(select 'a' as c, id, v from t1 where id=1 for update) union all (select 'b', id, v from t1 where id=1) order by c").Check(testkit.Rows("a 1 11", "b 1 10"))
-	tk.MustQuery("(select 'a' as c, id, v from t1 where id=1) union all (select 'b', id, v from t1 where id=1 for update) order by c").Check(testkit.Rows("a 1 10", "b 1 11"))
-	tk.MustExec("rollback")
 }
 
 func TestFix31537(t *testing.T) {
