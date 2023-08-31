@@ -1413,6 +1413,55 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 	}
 }
 
+func TestDowncastPointGetOrRangeScan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a bigint key)")
+	tk.MustExec("create table t2 (a int key)")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as (select a from t1) union (select a from t2)")
+	// select * from v where a = 1 will lead a condition: EQ(cast(t2.a as bigint), 1),
+	// we should downcast it, utilizing t2.a =1 to walking through the pk point-get. Because cast doesn't contain any precision loss.
+
+	tk.MustExec("create table t3 (a varchar(100) key)")
+	tk.MustExec("create table t4 (a varchar(10) key)")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v2 as (select a from t3) union (select a from t4)")
+	// select * from v2 where a = 'test' will lead a condition: EQ(cast(t2.a as varchar(100) same collation), 1),
+	// we should downcast it, utilizing t2.a = 'test' to walking through the pk point-get. Because cast doesn't contain any precision loss.
+
+	tk.MustExec("create table t5 (a char(100) key)")
+	tk.MustExec("create table t6 (a char(10) key)")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v3 as (select a from t5) union (select a from t6)")
+	// select * from v3 where a = 'test' will lead a condition: EQ(cast(t2.a as char(100) same collation), 1),
+	// for char type, it depends, with binary collate, the appended '0' after cast column a from char(10) to char(100) will make some difference
+	// on comparison on where a = 'test' before and after the UNION operator; so we didn't allow this kind of type downcast currently (precision diff).
+
+	tk.MustExec("create table t7 (a varchar(100) key)")
+	tk.MustExec("create table t8 (a int key)")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v4 as (select a from t7) union (select a from t8)")
+	// since UNION OP will unify the a(int) and a(varchar100) as varchar(100)
+	// select * from v4 where a = "test" will lead a condition: EQ(cast(t2.a as varchar(100)), "test"), and since
+	// cast int to varchar(100) may have some precision loss, we couldn't utilize a="test" to get the range directly.
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	integrationSuiteData := GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+		})
+		tk.MustQuery("explain format='brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
+	}
+}
+
 func TestNullConditionForPrefixIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
