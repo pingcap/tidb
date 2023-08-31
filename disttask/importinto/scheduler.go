@@ -130,6 +130,7 @@ func (s *importStepScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]pr
 		return nil, err
 	}
 
+outer:
 	for _, chunk := range subtaskMeta.Chunks {
 		// TODO: current workpool impl doesn't drain the input channel, it will
 		// just return on context cancel(error happened), so we add this select.
@@ -140,7 +141,7 @@ func (s *importStepScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]pr
 			SharedVars: sharedVars,
 		}:
 		case <-op.Done():
-			break
+			break outer
 		}
 	}
 	source.Finish()
