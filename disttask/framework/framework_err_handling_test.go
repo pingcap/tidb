@@ -36,7 +36,7 @@ var (
 	_ dispatcher.Dispatcher = (*planNotRetryableErrDispatcher)(nil)
 )
 
-func (*planErrDispatcher) OnTicker(_ context.Context, _ *proto.Task) {
+func (*planErrDispatcher) OnTick(_ context.Context, _ *proto.Task) {
 }
 
 func (p *planErrDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
@@ -80,7 +80,7 @@ func (*planErrDispatcher) IsRetryableErr(error) bool {
 type planNotRetryableErrDispatcher struct {
 }
 
-func (*planNotRetryableErrDispatcher) OnTicker(_ context.Context, _ *proto.Task) {
+func (*planNotRetryableErrDispatcher) OnTick(_ context.Context, _ *proto.Task) {
 }
 
 func (p *planNotRetryableErrDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {

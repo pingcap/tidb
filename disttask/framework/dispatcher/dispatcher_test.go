@@ -46,7 +46,7 @@ const (
 
 type testDispatcher struct{}
 
-func (*testDispatcher) OnTicker(_ context.Context, _ *proto.Task) {
+func (*testDispatcher) OnTick(_ context.Context, _ *proto.Task) {
 }
 
 func (*testDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (metas [][]byte, err error) {
@@ -69,7 +69,7 @@ func (*testDispatcher) IsRetryableErr(error) bool {
 
 type numberExampleDispatcher struct{}
 
-func (*numberExampleDispatcher) OnTicker(_ context.Context, _ *proto.Task) {
+func (*numberExampleDispatcher) OnTick(_ context.Context, _ *proto.Task) {
 }
 
 func (n *numberExampleDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (metas [][]byte, err error) {

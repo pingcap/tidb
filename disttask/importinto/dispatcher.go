@@ -138,7 +138,7 @@ type importDispatcher struct {
 
 var _ dispatcher.Dispatcher = (*importDispatcher)(nil)
 
-func (dsp *importDispatcher) OnTicker(ctx context.Context, task *proto.Task) {
+func (dsp *importDispatcher) OnTick(ctx context.Context, task *proto.Task) {
 	// only switch TiKV mode or register task when task is running
 	if task.State != proto.TaskStateRunning {
 		return

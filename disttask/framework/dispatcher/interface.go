@@ -25,10 +25,10 @@ import (
 
 // Dispatcher is used to control the process operations for each task.
 type Dispatcher interface {
-	// OnTicker is used to handle the ticker event, if business impl need to do some periodical work, you can
+	// OnTick is used to handle the ticker event, if business impl need to do some periodical work, you can
 	// do it here, but don't do too much work here, because the ticker interval is small, and it will block
 	// the event is generated every checkTaskRunningInterval, and only when the task NOT FINISHED and NO ERROR.
-	OnTicker(ctx context.Context, gTask *proto.Task)
+	OnTick(ctx context.Context, gTask *proto.Task)
 	// OnNextStage is used to move the task to next stage, if returns no error and there's no new subtasks
 	// the task is finished.
 	// NOTE: don't change gTask.State inside, framework will manage it.
@@ -43,6 +43,7 @@ type Dispatcher interface {
 	// GetEligibleInstances is used to get the eligible instances for the task.
 	// on certain condition we may want to use some instances to do the task, such as instances with more disk.
 	GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error)
+	// IsRetryableErr is used to check whether the error occurred in dispatcher is retryable.
 	IsRetryableErr(err error) bool
 }
 

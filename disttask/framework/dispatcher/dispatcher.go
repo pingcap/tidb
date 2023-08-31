@@ -179,7 +179,7 @@ func (d *dispatcher) onReverting() error {
 		return d.updateTask(proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 	// Wait all subtasks in this stage finished.
-	d.impl.OnTicker(d.ctx, d.task)
+	d.impl.OnTick(d.ctx, d.task)
 	logutil.Logger(d.logCtx).Debug("on reverting state, this task keeps current state", zap.String("state", d.task.State))
 	return nil
 }
@@ -216,7 +216,7 @@ func (d *dispatcher) onRunning() error {
 		return d.onNextStage()
 	}
 	// Wait all subtasks in this stage finished.
-	d.impl.OnTicker(d.ctx, d.task)
+	d.impl.OnTick(d.ctx, d.task)
 	logutil.Logger(d.logCtx).Debug("on running state, this task keeps current state", zap.String("state", d.task.State))
 	return nil
 }

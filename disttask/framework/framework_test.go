@@ -35,7 +35,7 @@ type testDispatcher struct{}
 
 var _ dispatcher.Dispatcher = (*testDispatcher)(nil)
 
-func (*testDispatcher) OnTicker(_ context.Context, _ *proto.Task) {
+func (*testDispatcher) OnTick(_ context.Context, _ *proto.Task) {
 }
 
 func (*testDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {

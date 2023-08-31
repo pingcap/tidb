@@ -34,7 +34,7 @@ type rollbackDispatcher struct{}
 var _ dispatcher.Dispatcher = (*rollbackDispatcher)(nil)
 var rollbackCnt atomic.Int32
 
-func (*rollbackDispatcher) OnTicker(_ context.Context, _ *proto.Task) {
+func (*rollbackDispatcher) OnTick(_ context.Context, _ *proto.Task) {
 }
 
 func (*rollbackDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {

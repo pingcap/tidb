@@ -49,7 +49,7 @@ func NewBackfillingDispatcher(d DDL) (dispatcher.Dispatcher, error) {
 	}, nil
 }
 
-func (*backfillingDispatcher) OnTicker(_ context.Context, _ *proto.Task) {
+func (*backfillingDispatcher) OnTick(_ context.Context, _ *proto.Task) {
 }
 
 // OnNextStage generate next stage's plan.
