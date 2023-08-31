@@ -342,29 +342,6 @@ func TestIssue28828(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
-func TestIssue28920(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-
-	tk.MustExec(`use test`)
-	tk.MustExec(`drop table if exists UK_GCOL_VIRTUAL_18928`)
-	tk.MustExec(`
-	CREATE TABLE UK_GCOL_VIRTUAL_18928 (
-	  COL102 bigint(20) DEFAULT NULL,
-	  COL103 bigint(20) DEFAULT NULL,
-	  COL1 bigint(20) GENERATED ALWAYS AS (COL102 & 10) VIRTUAL,
-	  COL2 varchar(20) DEFAULT NULL,
-	  COL4 datetime DEFAULT NULL,
-	  COL3 bigint(20) DEFAULT NULL,
-	  COL5 float DEFAULT NULL,
-	  UNIQUE KEY UK_COL1 (COL1))`)
-	tk.MustExec(`insert into UK_GCOL_VIRTUAL_18928(col102,col2) values("-5175976006730879891", "屘厒镇览錻碛斵大擔觏譨頙硺箄魨搝珄鋧扭趖")`)
-	tk.MustExec(`prepare stmt from 'SELECT * FROM UK_GCOL_VIRTUAL_18928 WHERE col1 < ? AND col2 != ?'`)
-	tk.MustExec(`set @a=10, @b="aa"`)
-	tk.MustQuery(`execute stmt using @a, @b`).Check(testkit.Rows("-5175976006730879891 <nil> 8 屘厒镇览錻碛斵大擔觏譨頙硺箄魨搝珄鋧扭趖 <nil> <nil> <nil>"))
-}
-
 func TestIssue4PreparedPlanCache(t *testing.T) {
 	// Issue18066
 	store := testkit.CreateMockStore(t)
@@ -417,6 +394,22 @@ func TestIssue4PreparedPlanCache(t *testing.T) {
 	tk.MustExec("set @a=1, @b=1, @c=10")
 	tk.MustQuery("execute s1 using @a, @b, @c").Check(testkit.Rows("1 1", "2 2"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // b>=1 and b<=1 --> b=1
+	// TestIssue28920
+	tk.MustExec(`drop table if exists UK_GCOL_VIRTUAL_18928`)
+	tk.MustExec(`
+	CREATE TABLE UK_GCOL_VIRTUAL_18928 (
+	  COL102 bigint(20) DEFAULT NULL,
+	  COL103 bigint(20) DEFAULT NULL,
+	  COL1 bigint(20) GENERATED ALWAYS AS (COL102 & 10) VIRTUAL,
+	  COL2 varchar(20) DEFAULT NULL,
+	  COL4 datetime DEFAULT NULL,
+	  COL3 bigint(20) DEFAULT NULL,
+	  COL5 float DEFAULT NULL,
+	  UNIQUE KEY UK_COL1 (COL1))`)
+	tk.MustExec(`insert into UK_GCOL_VIRTUAL_18928(col102,col2) values("-5175976006730879891", "屘厒镇览錻碛斵大擔觏譨頙硺箄魨搝珄鋧扭趖")`)
+	tk.MustExec(`prepare stmt from 'SELECT * FROM UK_GCOL_VIRTUAL_18928 WHERE col1 < ? AND col2 != ?'`)
+	tk.MustExec(`set @a=10, @b="aa"`)
+	tk.MustQuery(`execute stmt using @a, @b`).Check(testkit.Rows("-5175976006730879891 <nil> 8 屘厒镇览錻碛斵大擔觏譨頙硺箄魨搝珄鋧扭趖 <nil> <nil> <nil>"))
 }
 
 func TestIssue29296(t *testing.T) {
