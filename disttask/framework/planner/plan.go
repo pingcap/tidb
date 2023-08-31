@@ -36,9 +36,9 @@ type PlanCtx struct {
 }
 
 // LogicalPlan represents a logical plan in distribute framework.
-// A normal flow of distribute framework is: logical plan -> physical plan -> operators.
+// A normal flow of distribute framework is: logical plan -> physical plan -> pipelines.
 // To integrate with current distribute framework, the flow becomes:
-// logical plan -> task meta -> physical plan -> subtaskmetas -> operators.
+// logical plan -> task meta -> physical plan -> subtaskmetas -> pipelines.
 type LogicalPlan interface {
 	ToTaskMeta() ([]byte, error)
 	FromTaskMeta([]byte) error
@@ -46,6 +46,8 @@ type LogicalPlan interface {
 }
 
 // PhysicalPlan is a DAG of processors in distribute framework.
+// Each processor is a node process the task with a pipeline,
+// and receive/pass the result to other processors via input and output links.
 type PhysicalPlan struct {
 	Processors []ProcessorSpec
 }
@@ -62,7 +64,7 @@ func (p *PhysicalPlan) ToSubtaskMetas(ctx PlanCtx, step int64) ([][]byte, error)
 		if processor.Step != step {
 			continue
 		}
-		subtaskMeta, err := processor.Operator.ToSubtaskMeta(ctx)
+		subtaskMeta, err := processor.Pipeline.ToSubtaskMeta(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -73,12 +75,12 @@ func (p *PhysicalPlan) ToSubtaskMetas(ctx PlanCtx, step int64) ([][]byte, error)
 
 // ProcessorSpec is the specification of a processor.
 // A processor is a node in the DAG.
-// It contains input streams from other processors, as well as output streams to other processors.
-// It also contains an operator which is the actual logic of the processor.
+// It contains input links from other processors, as well as output links to other processors.
+// It also contains an pipeline which is the actual logic of the processor.
 type ProcessorSpec struct {
 	ID       int
 	Input    InputSpec
-	Operator OperatorSpec
+	Pipeline PipelineSpec
 	Output   OutputSpec
 	// We can remove this field if we find a better way to pass the result between steps.
 	Step int64
@@ -87,23 +89,24 @@ type ProcessorSpec struct {
 // InputSpec is the specification of an input.
 type InputSpec struct {
 	ColumnTypes []byte
-	Streams     []StreamSpec
+	Links       []LinkSpec
 }
 
 // OutputSpec is the specification of an output.
 type OutputSpec struct {
-	Streams []StreamSpec
+	Links []LinkSpec
 }
 
-// StreamSpec is the specification of a stream.
-type StreamSpec struct {
+// LinkSpec is the specification of a link.
+// Link connects pipelines between different nodes.
+type LinkSpec struct {
 	ProcessorID int
 	// Support endpoint for communication between processors.
 	// Endpoint string
 }
 
-// OperatorSpec is the specification of an operator.
-type OperatorSpec interface {
-	// ToSubtaskMeta converts the operator to a subtask meta
+// PipelineSpec is the specification of an pipeline.
+type PipelineSpec interface {
+	// ToSubtaskMeta converts the pipeline to a subtask meta
 	ToSubtaskMeta(PlanCtx) ([]byte, error)
 }

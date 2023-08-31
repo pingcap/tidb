@@ -31,8 +31,8 @@ import (
 
 var (
 	_ planner.LogicalPlan  = &LogicalPlan{}
-	_ planner.OperatorSpec = &ImportSpec{}
-	_ planner.OperatorSpec = &PostProcessSpec{}
+	_ planner.PipelineSpec = &ImportSpec{}
+	_ planner.PipelineSpec = &PostProcessSpec{}
 )
 
 // LogicalPlan represents a logical plan for import into.
@@ -73,7 +73,7 @@ func (p *LogicalPlan) FromTaskMeta(bs []byte) error {
 // ToPhysicalPlan converts the logical plan to physical plan.
 func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.PhysicalPlan, error) {
 	physicalPlan := &planner.PhysicalPlan{}
-	inputStreams := make([]planner.StreamSpec, 0)
+	inputLinks := make([]planner.LinkSpec, 0)
 	// physical plan only needs to be generated once.
 	// However, our current implementation requires generating it for each step.
 	// Only the first step needs to generate import specs.
@@ -87,9 +87,9 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 		for i, importSpec := range importSpecs {
 			physicalPlan.AddProcessor(planner.ProcessorSpec{
 				ID:       i,
-				Operator: importSpec,
+				Pipeline: importSpec,
 				Output: planner.OutputSpec{
-					Streams: []planner.StreamSpec{
+					Links: []planner.LinkSpec{
 						{
 							ProcessorID: len(importSpecs),
 						},
@@ -97,22 +97,22 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 				},
 				Step: StepImport,
 			})
-			inputStreams = append(inputStreams, planner.StreamSpec{
+			inputLinks = append(inputLinks, planner.LinkSpec{
 				ProcessorID: i,
 			})
 		}
 	}
 
 	physicalPlan.AddProcessor(planner.ProcessorSpec{
-		ID: len(inputStreams),
+		ID: len(inputLinks),
 		Input: planner.InputSpec{
 			ColumnTypes: []byte{
 				// Checksum_crc64_xor, Total_kvs, Total_bytes, ReadRowCnt, LoadedRowCnt, ColSizeMap
 				mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeJSON,
 			},
-			Streams: inputStreams,
+			Links: inputLinks,
 		},
-		Operator: &PostProcessSpec{
+		Pipeline: &PostProcessSpec{
 			Schema: p.Plan.DBName,
 			Table:  p.Plan.TableInfo.Name.L,
 		},
@@ -121,7 +121,7 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 	return physicalPlan, nil
 }
 
-// ImportSpec is the specification of an import operator.
+// ImportSpec is the specification of an import pipeline.
 type ImportSpec struct {
 	ID     int32
 	Plan   importer.Plan
@@ -137,7 +137,7 @@ func (s *ImportSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
 	return json.Marshal(importStepMeta)
 }
 
-// PostProcessSpec is the specification of a post process operator.
+// PostProcessSpec is the specification of a post process pipeline.
 type PostProcessSpec struct {
 	// for checksum request
 	Schema string

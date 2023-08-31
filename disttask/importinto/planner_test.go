@@ -63,13 +63,13 @@ func TestToPhysicalPlan(t *testing.T) {
 		Processors: []planner.ProcessorSpec{
 			{
 				ID: 0,
-				Operator: &ImportSpec{
+				Pipeline: &ImportSpec{
 					ID:     chunkID,
 					Plan:   logicalPlan.Plan,
 					Chunks: logicalPlan.ChunkMap[chunkID],
 				},
 				Output: planner.OutputSpec{
-					Streams: []planner.StreamSpec{
+					Links: []planner.LinkSpec{
 						{
 							ProcessorID: 1,
 						},
@@ -83,13 +83,13 @@ func TestToPhysicalPlan(t *testing.T) {
 					ColumnTypes: []byte{
 						mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeJSON,
 					},
-					Streams: []planner.StreamSpec{
+					Links: []planner.LinkSpec{
 						{
 							ProcessorID: 0,
 						},
 					},
 				},
-				Operator: &PostProcessSpec{
+				Pipeline: &PostProcessSpec{
 					Schema: "db",
 					Table:  "tb",
 				},

@@ -20,28 +20,19 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/disttask/framework/mock"
 	"github.com/pingcap/tidb/disttask/framework/planner"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/mock/gomock"
 )
 
-type mockPlan struct{}
-
-func (mockPlan) ToTaskMeta() ([]byte, error) {
-	return []byte("mock"), nil
-}
-
-func (mockPlan) FromTaskMeta([]byte) error {
-	return nil
-}
-
-func (mockPlan) ToPhysicalPlan(planner.PlanCtx) (*planner.PhysicalPlan, error) {
-	return &planner.PhysicalPlan{}, nil
-}
-
 func TestPlanner(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
@@ -60,8 +51,9 @@ func TestPlanner(t *testing.T) {
 		TaskType:   "example",
 		ThreadCnt:  1,
 	}
-	plan := &mockPlan{}
-	taskID, err := p.Run(pCtx, plan)
+	mockLogicalPlan := mock.NewMockLogicalPlan(ctrl)
+	mockLogicalPlan.EXPECT().ToTaskMeta().Return([]byte("mock"), nil)
+	taskID, err := p.Run(pCtx, mockLogicalPlan)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), taskID)
 }
