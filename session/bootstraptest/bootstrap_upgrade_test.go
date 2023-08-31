@@ -827,7 +827,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			" PARTITION `p4` VALUES LESS THAN (7096))"))
 }
 
-func TestDDLBackgroundSubtaskTable(t *testing.T) {
+func TestDDLBackgroundSubtaskTableSummary(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
