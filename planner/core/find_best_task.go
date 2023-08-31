@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -727,11 +728,11 @@ func compareCandidates(sctx sessionctx.Context, lhs, rhs *candidatePath) int {
 	// This rule is empirical but not always correct.
 	// If x's range row count is significantly lower than y's, for example, 500 times, we think x is better.
 	if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 {
-		n := 500.0
-		if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > n {
+		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 500))
+		if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
 			return -1
 		}
-		if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > n {
+		if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
 			return 1
 		}
 	}
