@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -34,6 +35,18 @@ type HashAggIntermData struct {
 	groupKeys        []string
 	cursor           int
 	partialResultMap AggPartialResultMapper
+}
+
+// getPartialResultBatch fetches a batch of partial results from HashAggIntermData.
+func (d *HashAggIntermData) getPartialResultBatch(_ *stmtctx.StatementContext, partialResult [][]aggfuncs.PartialResult, _ []aggfuncs.AggFunc, maxChunkSize int) (_ [][]aggfuncs.PartialResult, groupKeys []string, reachEnd bool) {
+	keyStart := d.cursor
+	for ; d.cursor < len(d.groupKeys) && len(partialResult) < maxChunkSize; d.cursor++ {
+		partialResult = append(partialResult, d.partialResultMap[d.groupKeys[d.cursor]])
+	}
+	if d.cursor == len(d.groupKeys) {
+		reachEnd = true
+	}
+	return partialResult, d.groupKeys[keyStart:d.cursor], reachEnd
 }
 
 // HashAggPartialWorker indicates the partial workers of parallel hash agg execution,
@@ -239,6 +252,8 @@ func (w *HashAggPartialWorker) spillDataToDisk(ctx sessionctx.Context) error {
 				logutil.BgLogger().Error("HashAggPartialWorker failed to append partial result to Chunk when spilling", zap.Error(err))
 			}
 		}
+
+		// TODO research how to store data in disk
 		w.tmpChksForSpill[partitionNum].AppendString(len(w.aggFuncs), key)
 	}
 
@@ -266,8 +281,8 @@ func (w *HashAggPartialWorker) spillRemainingDataToDisk(ctx sessionctx.Context) 
 // Exist is split into three stage: 1. wait running workers 2. do something 3. wait alive workers
 //
 //	Stage 1. decrease one running partial worker number and wait for the existence of the rest of workers
-//	Stage 2. do something
-//	Stage 3. check if we need to enter spill mode, descrease one alive partial worker number and notify final worker to execute
+//	Stage 2. do something, include checking if we need to spill data to disk
+//	Stage 3. descrease one alive partial worker number and notify final worker to execute
 type partialWorkerSync struct {
 	lock                  sync.Mutex
 	totalFinalWorkerNum   int

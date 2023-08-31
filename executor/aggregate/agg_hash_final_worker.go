@@ -173,6 +173,22 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 	}
 }
 
+func (w *HashAggFinalWorker) restoreFromDisk() {
+	for {
+		restoredPartitionNum := w.spillHelper.getPartitionNumNeedRestoring()
+		if restoredPartitionNum == spillTasksDoneFlag {
+			break;
+		}
+
+		// spilledFilesIO := w.spillHelper.getListInDisks(restoredPartitionNum)
+		// for _, diskIO := range spilledFilesIO {
+
+		// }
+	}
+
+	// TODO put data into inputCh
+}
+
 func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
 	start := time.Now()
 	defer func() {
@@ -189,13 +205,11 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 	<-w.partialAndFinalNotifier
 
 	if w.spillHelper.isInSpillMode() {
-		// TODO restore data
-	} else {
-		// TODO research more
-		if err := w.consumeIntermData(ctx); err != nil {
-			w.outputCh <- &AfFinalResult{err: err}
-		}
-		w.loadFinalResult(ctx)
-		// TODO Above codes should be changed
+		w.restoreFromDisk()
 	}
+
+	if err := w.consumeIntermData(ctx); err != nil {
+		w.outputCh <- &AfFinalResult{err: err}
+	}
+	w.loadFinalResult(ctx)
 }

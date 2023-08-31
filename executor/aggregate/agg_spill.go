@@ -29,7 +29,10 @@ const maxSpillTimes = 10
 
 const spillFlag = 1
 const spilledPartitionNum = 256
+const spillTasksDoneFlag = -1
 
+// TODO initialize parallelHashAggSpillHelper
+// TODO close spilledChunksIO
 type parallelHashAggSpillHelper struct {
 	lock             sync.Mutex
 	spilledChunksIO  [][]*chunk.ListInDisk
@@ -37,6 +40,18 @@ type parallelHashAggSpillHelper struct {
 
 	// Final worker will decrease this var after reading it
 	partitionNeedRestore int
+}
+
+func (p *parallelHashAggSpillHelper) getPartitionNumNeedRestoring() int {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	if p.partitionNeedRestore == spillTasksDoneFlag {
+		return spillTasksDoneFlag
+	}
+
+	tmp := p.partitionNeedRestore
+	p.partitionNeedRestore--
+	return tmp
 }
 
 func (p *parallelHashAggSpillHelper) addListInDisks(listInDisk []*chunk.ListInDisk) {
@@ -83,7 +98,15 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 			zap.Uint32("spillTimes", a.spillTimes),
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()))
-		atomic.StoreUint32(&a.e.inSpillMode, 1)
+		if a.e.IsUnparallelExec {
+			atomic.StoreUint32(&a.e.inSpillMode, 1)
+		} else {
+			if len(a.e.partialWorkers) > 0 {
+				a.e.partialWorkers[0].spillHelper.triggerSpill()
+			} else {
+				logutil.BgLogger().Error("0 length of partialWorkers0 in parallel hash aggregation is illegal")
+			}
+		}
 		memory.QueryForceDisk.Add(1)
 		return
 	}
