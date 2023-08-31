@@ -79,7 +79,7 @@ func (*constantPropagationSolver) name() string {
 }
 
 // todo
-func (_ *constantPropagationSolver) matchConditions(p LogicalPlan) []expression.Expression {
+func (*constantPropagationSolver) matchConditions(p LogicalPlan) []expression.Expression {
 	// step1: match tree condition
 	var tryToMatchTreePattern1 bool
 	var tryToMatchTreePattern2 bool
