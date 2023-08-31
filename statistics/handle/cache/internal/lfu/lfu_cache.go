@@ -50,7 +50,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 			if err != nil {
 				return nil, err
 			}
-			totalMemCost = int64(memTotal / 8)
+			totalMemCost = int64(memTotal / 2)
 		}
 	}
 	metrics.CapacityGauge.Set(float64(totalMemCost))
