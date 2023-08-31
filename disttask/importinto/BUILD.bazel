@@ -76,6 +76,7 @@ go_test(
         "//disttask/framework/storage",
         "//domain/infosync",
         "//executor/importer",
+        "//meta/autoid",
         "//parser/model",
         "//parser/mysql",
         "//testkit",
