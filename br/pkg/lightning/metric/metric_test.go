@@ -110,8 +110,20 @@ func TestMetricsUnregister(t *testing.T) {
 }
 
 func TestContext(t *testing.T) {
-	ctx := metric.NewContext(context.Background(), metric.NewMetrics(promutil.NewDefaultFactory()))
+	metrics := metric.NewMetrics(promutil.NewDefaultFactory())
+	ctx := metric.WithMetric(context.Background(), metrics)
 	m, ok := metric.FromContext(ctx)
 	require.True(t, ok)
 	require.NotNil(t, m)
+	m2, ok := metric.GetCommonMetric(ctx)
+	require.True(t, ok)
+	require.NotNil(t, m2)
+
+	ctx = metric.WithCommonMetric(context.Background(), metrics.Common)
+	m, ok = metric.FromContext(ctx)
+	require.False(t, ok)
+	require.Nil(t, m)
+	m2, ok = metric.GetCommonMetric(ctx)
+	require.True(t, ok)
+	require.NotNil(t, m2)
 }
