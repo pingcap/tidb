@@ -28,6 +28,8 @@
     &nbsp;
     <a href="https://ask.pingcap.com/"><img src="https://img.shields.io/badge/- Forum -red?style=social&logo=discourse" height=25></a>
     &nbsp;
+    <a href="https://discord.gg/KVRZBR2DrG?utm_source=github"><img src="https://img.shields.io/badge/- Discord -red?style=social&logo=discord" height=25></a>
+    &nbsp;
     <a href="https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb"><img src="https://img.shields.io/badge/-Slack-red?style=social&logo=slack" height=25></a>
     &nbsp;
     <a href="https://stackoverflow.com/questions/tagged/tidb"><img src="https://img.shields.io/badge/-Stack Overflow-red?style=social&logo=stackoverflow" height=25></a>
@@ -75,6 +77,7 @@ You can join the following groups or channels to discuss or ask questions about 
 
 - Seek help when you use TiDB
   - TiDB Forum: [English](https://ask.pingcap.com/), [Chinese](https://asktug.com)
+  - [Discord](https://discord.gg/KVRZBR2DrG?utm_source=github)
   - Slack channels: [#everyone](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb) (English), [#tidb-japan](https://slack.tidb.io/invite?team=tidb-community&channel=tidb-japan&ref=github-tidb) (Japanese)
   - [Stack Overflow](https://stackoverflow.com/questions/tagged/tidb) (questions tagged with #tidb)
 - Discuss TiDB's implementation and design
