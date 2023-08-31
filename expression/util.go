@@ -767,9 +767,9 @@ func unwrapCast(sctx sessionctx.Context, parentF *ScalarFunction, castOffset int
 	// the column is covered by indexes, deconstructing it out.
 	if castOffset == 0 {
 		return NewFunctionInternal(sctx, parentF.FuncName.L, parentF.RetType, c, parentF.GetArgs()[1]), true
-	} else {
-		return NewFunctionInternal(sctx, parentF.FuncName.L, parentF.RetType, parentF.GetArgs()[0], c), true
 	}
+	return NewFunctionInternal(sctx, parentF.FuncName.L, parentF.RetType, parentF.GetArgs()[0], c), true
+
 }
 
 // eliminateCastFunction will detect the original arg before and the cast type after, once upon
