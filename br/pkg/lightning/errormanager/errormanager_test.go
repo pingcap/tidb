@@ -186,7 +186,7 @@ func TestRemoveAllConflictKeys(t *testing.T) {
 	require.Equal(t, totalRows, resolved.Load())
 }
 
-func TestReplaceConflictKeys(t *testing.T) {
+func TestReplaceConflictKeysIndexKvChecking(t *testing.T) {
 	column1 := &model.ColumnInfo{
 		ID:           1,
 		Name:         model.NewCIStr("a"),
