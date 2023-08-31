@@ -52,9 +52,9 @@ func (h ClusterUpgradeHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	op := params[Operation]
 	switch op {
 	case "start":
-		hasDone, err = h.startUpgrade()
+		hasDone, err = h.StartUpgrade()
 	case "finish":
-		hasDone, err = h.finishUpgrade()
+		hasDone, err = h.FinishUpgrade()
 	case "show":
 		err = h.showUpgrade(w)
 	default:
@@ -82,7 +82,8 @@ func (h ClusterUpgradeHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 		zap.String("category", "upgrading"), zap.String("op", op), zap.Bool("hasDone", hasDone))
 }
 
-func (h ClusterUpgradeHandler) startUpgrade() (hasDone bool, err error) {
+// StartUpgrade is used to start the upgrade.
+func (h ClusterUpgradeHandler) StartUpgrade() (hasDone bool, err error) {
 	se, err := session.CreateSession(h.store)
 	if err != nil {
 		return false, err
@@ -97,11 +98,12 @@ func (h ClusterUpgradeHandler) startUpgrade() (hasDone bool, err error) {
 		return true, nil
 	}
 
-	err = session.SyncUpgradeState(se)
+	err = session.SyncUpgradeState(se, 10*time.Second)
 	return false, err
 }
 
-func (h ClusterUpgradeHandler) finishUpgrade() (hasDone bool, err error) {
+// FinishUpgrade is used to finish the upgrade.
+func (h ClusterUpgradeHandler) FinishUpgrade() (hasDone bool, err error) {
 	se, err := session.CreateSession(h.store)
 	if err != nil {
 		return false, err

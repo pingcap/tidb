@@ -646,7 +646,7 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 }
 
 func (w *partialTableWorker) getRetTpsForTableScan() []*types.FieldType {
-	return retTypes(w.tableReader)
+	return exec.RetTypes(w.tableReader)
 }
 
 func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, handleCols plannercore.HandleCols) (
@@ -1752,8 +1752,8 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 	handleCnt := len(task.handles)
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
-		chk := tryNewCacheChunk(tableReader)
-		err = Next(ctx, tableReader, chk)
+		chk := exec.TryNewCacheChunk(tableReader)
+		err = exec.Next(ctx, tableReader, chk)
 		if err != nil {
 			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
 			return err

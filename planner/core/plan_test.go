@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -729,7 +730,9 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	}
 
 	ctx := core.MockContext()
-
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
 	aggCol := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
