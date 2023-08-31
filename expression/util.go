@@ -769,7 +769,6 @@ func unwrapCast(sctx sessionctx.Context, parentF *ScalarFunction, castOffset int
 		return NewFunctionInternal(sctx, parentF.FuncName.L, parentF.RetType, c, parentF.GetArgs()[1]), true
 	}
 	return NewFunctionInternal(sctx, parentF.FuncName.L, parentF.RetType, parentF.GetArgs()[0], c), true
-
 }
 
 // eliminateCastFunction will detect the original arg before and the cast type after, once upon
