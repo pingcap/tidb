@@ -50,6 +50,7 @@ go_library(
         "rule_aggregation_skew_rewrite.go",
         "rule_build_key_info.go",
         "rule_column_pruning.go",
+        "rule_constant_propagation.go",
         "rule_decorrelate.go",
         "rule_derive_topn_from_window.go",
         "rule_eliminate_projection.go",
