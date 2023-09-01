@@ -117,13 +117,6 @@ func InitStatsMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 22), // 1ms ~ 1h
 		})
 
-	StatsCacheGauge = NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: "tidb",
-		Subsystem: "statistics",
-		Name:      "stats_cache_val",
-		Help:      "gauge of stats cache value",
-	}, []string{LblType})
-
 	StatsHealthyGauge = NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "statistics",
