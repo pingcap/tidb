@@ -27,56 +27,6 @@
               ]
             },
             {
-              "github.com/pingcap/tidb/planner/core.getStatsTable": {
-                "CountIsZero": false,
-                "HandleIsNil": false,
-                "InputPhysicalID": 100,
-                "Outdated": false,
-                "StatsTblInfo": {
-                  "Columns": [
-                    {
-                      "CMSketchInfo": null,
-                      "Correlation": 0,
-                      "HistogramSize": 0,
-                      "ID": 1,
-                      "LastUpdateVersion": 440930000000000000,
-                      "LoadingStatus": "unInitialized",
-                      "NDV": 0,
-                      "Name": "col1",
-                      "NullCount": 0,
-                      "StatsVer": 0,
-                      "TopNSize": -1,
-                      "TotColSize": 0
-                    }
-                  ],
-                  "Count": 10000,
-                  "Indexes": [
-                    {
-                      "CMSketchInfo": null,
-                      "Correlation": 0,
-                      "HistogramSize": 0,
-                      "ID": 1,
-                      "LastUpdateVersion": 440930000000000000,
-                      "LoadingStatus": "unInitialized",
-                      "NDV": 0,
-                      "Name": "i",
-                      "NullCount": 0,
-                      "StatsVer": 0,
-                      "TopNSize": -1,
-                      "TotColSize": 0
-                    }
-                  ],
-                  "ModifyCount": 0,
-                  "PhysicalID": 100,
-                  "Version": 440930000000000000
-                },
-                "TableName": "t",
-                "TblInfoID": 100,
-                "Uninitialized": true,
-                "UsePartitionStats": false
-              }
-            },
-            {
               "github.com/pingcap/tidb/planner.Optimize": [
                 {
                   "Enable binding": true,
@@ -501,56 +451,6 @@
               "Parameter datums for EXECUTE": [
                 "KindInt64 1"
               ]
-            },
-            {
-              "github.com/pingcap/tidb/planner/core.getStatsTable": {
-                "CountIsZero": false,
-                "HandleIsNil": false,
-                "InputPhysicalID": 100,
-                "Outdated": false,
-                "StatsTblInfo": {
-                  "Columns": [
-                    {
-                      "CMSketchInfo": null,
-                      "Correlation": 0,
-                      "HistogramSize": 0,
-                      "ID": 1,
-                      "LastUpdateVersion": 440930000000000000,
-                      "LoadingStatus": "unInitialized",
-                      "NDV": 0,
-                      "Name": "col1",
-                      "NullCount": 0,
-                      "StatsVer": 0,
-                      "TopNSize": -1,
-                      "TotColSize": 0
-                    }
-                  ],
-                  "Count": 10000,
-                  "Indexes": [
-                    {
-                      "CMSketchInfo": null,
-                      "Correlation": 0,
-                      "HistogramSize": 0,
-                      "ID": 1,
-                      "LastUpdateVersion": 440930000000000000,
-                      "LoadingStatus": "unInitialized",
-                      "NDV": 0,
-                      "Name": "i",
-                      "NullCount": 0,
-                      "StatsVer": 0,
-                      "TopNSize": -1,
-                      "TotColSize": 0
-                    }
-                  ],
-                  "ModifyCount": 0,
-                  "PhysicalID": 100,
-                  "Version": 440930000000000000
-                },
-                "TableName": "t",
-                "TblInfoID": 100,
-                "Uninitialized": true,
-                "UsePartitionStats": false
-              }
             },
             {
               "github.com/pingcap/tidb/planner.Optimize": [

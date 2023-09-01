@@ -33,8 +33,11 @@ type Index struct {
 	Info           *model.IndexInfo
 	Histogram
 	StatsLoadedStatus
-	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
-	Flag       int64
+	StatsVer int64 // StatsVer is the version of the current stats, used to maintain compatibility
+	Flag     int64
+	// PhysicalID is the physical table id,
+	// or it could possibly be -1, which means "stats not available".
+	// The -1 case could happen in a pseudo stats table, and in this case, this stats should not trigger stats loading.
 	PhysicalID int64
 }
 
@@ -127,9 +130,7 @@ func (idx *Index) TotalRowCount() float64 {
 
 // IsInvalid checks if this index is invalid.
 func (idx *Index) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) {
-	if !collPseudo {
-		idx.CheckStats()
-	}
+	idx.CheckStats()
 	var totalCount float64
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)

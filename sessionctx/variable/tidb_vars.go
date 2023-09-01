@@ -904,6 +904,10 @@ const (
 
 	// TiDBEnableCheckConstraint indicates whether to enable check constraint feature.
 	TiDBEnableCheckConstraint = "tidb_enable_check_constraint"
+
+	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
+	// Please see comments of SessionVars.OptObjective for details.
+	TiDBOptObjective = "tidb_opt_objective"
 )
 
 // TiDB vars that have only global scope
@@ -1389,6 +1393,7 @@ const (
 	DefTiDBLockUnchangedKeys                          = true
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
+	DefTiDBOptObjective                               = OptObjectiveModerate
 )
 
 // Process global variables.

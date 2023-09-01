@@ -68,7 +68,7 @@ func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expre
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil
 	}
-	statsTable := statistics.PseudoTable(p.TableInfo)
+	statsTable := statistics.PseudoTable(p.TableInfo, false)
 	stats := &property.StatsInfo{
 		RowCount:     float64(statsTable.RealtimeCount),
 		ColNDVs:      make(map[int64]float64, len(p.TableInfo.Columns)),

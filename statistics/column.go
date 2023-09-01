@@ -38,6 +38,9 @@ type Column struct {
 
 	// StatsLoadedStatus indicates the status of column statistics
 	StatsLoadedStatus
+	// PhysicalID is the physical table id,
+	// or it could possibly be -1, which means "stats not available".
+	// The -1 case could happen in a pseudo stats table, and in this case, this stats should not trigger stats loading.
 	PhysicalID int64
 	Flag       int64
 	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
@@ -160,22 +163,24 @@ func (c *Column) IsInvalid(
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
-	if collPseudo {
-		inValidForCollPseudo = true
-		return true
-	}
 	if sctx != nil {
 		stmtctx := sctx.GetSessionVars().StmtCtx
-		if c.IsLoadNeeded() && stmtctx != nil {
+		if (!c.IsStatsInitialized() || c.IsLoadNeeded()) && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
 			}
 			// In some tests, the c.Info is not set, so we add this check here.
-			if c.Info != nil {
+			// When we are using stats from PseudoTable(), the table ID will possibly be -1.
+			// In this case, we don't trigger stats loading.
+			if c.Info != nil && c.PhysicalID > 0 {
 				HistogramNeededItems.insert(model.TableItemID{TableID: c.PhysicalID, ID: c.Info.ID, IsIndex: false})
 			}
 		}
+	}
+	if collPseudo {
+		inValidForCollPseudo = true
+		return true
 	}
 	// In some cases, some statistics in column would be evicted
 	// For example: the cmsketch of the column might be evicted while the histogram and the topn are still exists

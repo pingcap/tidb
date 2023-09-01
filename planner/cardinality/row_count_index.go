@@ -320,9 +320,13 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 		// If the current table row count has changed, we should scale the row count accordingly.
 		count *= idx.GetIncreaseFactor(realtimeRowCount)
 
+		histNDV := idx.NDV
+		if idx.StatsVer == statistics.Version2 {
+			histNDV = histNDV - int64(idx.TopN.Num())
+		}
 		// handling the out-of-range part
 		if (outOfRangeOnIndex(idx, l) && !(isSingleCol && lowIsNull)) || outOfRangeOnIndex(idx, r) {
-			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount)
+			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, histNDV)
 		}
 
 		if debugTrace {

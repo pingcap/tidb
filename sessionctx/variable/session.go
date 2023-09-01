@@ -1537,6 +1537,12 @@ type SessionVars struct {
 
 	// SessionAlias is the identifier of the session
 	SessionAlias string
+
+	// OptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
+	// For now, the possible values and corresponding behaviors are:
+	// OptObjectiveModerate: The default value. The optimizer considers the real-time stats (real-time row count, modify count).
+	// OptObjectiveDeterminate: The optimizer doesn't consider the real-time stats.
+	OptObjective string
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -3620,4 +3626,18 @@ func RuntimeFilterModeStringToMode(name string) (RuntimeFilterMode, bool) {
 	default:
 		return -1, false
 	}
+}
+
+const (
+	// OptObjectiveModerate is a possible value and the default value for TiDBOptObjective.
+	// Please see comments of SessionVars.OptObjective for details.
+	OptObjectiveModerate string = "moderate"
+	// OptObjectiveDeterminate is a possible value for TiDBOptObjective.
+	OptObjectiveDeterminate = "determinate"
+)
+
+// GetOptObjective return the session variable "tidb_opt_objective".
+// Please see comments of SessionVars.OptObjective for details.
+func (s *SessionVars) GetOptObjective() string {
+	return s.OptObjective
 }

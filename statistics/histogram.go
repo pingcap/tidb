@@ -849,7 +849,7 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
          │   │
     lDatum  rDatum
 */
-func (hg *Histogram) OutOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum *types.Datum, modifyCount int64) (result float64) {
+func (hg *Histogram) OutOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum *types.Datum, modifyCount, histNDV int64) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -969,13 +969,30 @@ func (hg *Histogram) OutOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum 
 	}
 	rowCount = totalPercent * hg.NotNullCount()
 
+	// Upper bound logic
+
+	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
 	// Use the modifyCount as the upper bound. Note that modifyCount contains insert, delete and update. So this is
 	// a rather loose upper bound.
 	// There are some scenarios where we need to handle out-of-range estimation after both insert and delete happen.
 	// But we don't know how many increases are in the modifyCount. So we have to use this loose bound to ensure it
 	// can produce a reasonable results in this scenario.
-	if rowCount > float64(modifyCount) {
+	if rowCount > float64(modifyCount) && allowUseModifyCount {
 		return float64(modifyCount)
+	}
+
+	// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
+	// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
+	// But it's impossible to have a reliable upper bound in all cases.
+	// We use 1/NDV here (only the Histogram part is considered) and it seems reasonable and good enough for now.
+	if !allowUseModifyCount {
+		var upperBound float64
+		if histNDV > 0 {
+			upperBound = hg.NotNullCount() / float64(histNDV)
+		}
+		if rowCount > upperBound {
+			return upperBound
+		}
 	}
 	return rowCount
 }

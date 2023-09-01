@@ -2796,6 +2796,17 @@ var defaultSysVars = []*SysVar{
 		}, GetSession: func(vars *SessionVars) (string, error) {
 			return vars.SessionAlias, nil
 		}},
+	{
+		Scope:          ScopeGlobal | ScopeSession,
+		Name:           TiDBOptObjective,
+		Value:          DefTiDBOptObjective,
+		Type:           TypeEnum,
+		PossibleValues: []string{OptObjectiveModerate, OptObjectiveDeterminate},
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.OptObjective = s
+			return nil
+		},
+	},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

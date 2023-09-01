@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
+	"golang.org/x/exp/maps"
 )
 
 const (
@@ -308,6 +309,29 @@ func (t *Table) Copy() *Table {
 	return nt
 }
 
+// ShallowCopy copies the current table.
+// It's different from Copy(). Only the struct Table (and also the embedded HistColl) is copied here.
+// The internal containers, like t.Columns and t.Indices, and the stats, like TopN and Histogram are not copied.
+func (t *Table) ShallowCopy() *Table {
+	newHistColl := HistColl{
+		PhysicalID:     t.PhysicalID,
+		HavePhysicalID: t.HavePhysicalID,
+		RealtimeCount:  t.RealtimeCount,
+		Columns:        t.Columns,
+		Indices:        t.Indices,
+		Pseudo:         t.Pseudo,
+		ModifyCount:    t.ModifyCount,
+	}
+	nt := &Table{
+		HistColl:        newHistColl,
+		Version:         t.Version,
+		Name:            t.Name,
+		TblInfoUpdateTS: t.TblInfoUpdateTS,
+		ExtendedStats:   t.ExtendedStats,
+	}
+	return nt
+}
+
 // String implements Stringer interface.
 func (t *Table) String() string {
 	strs := make([]string, 0, len(t.Columns)+1)
@@ -370,18 +394,23 @@ func (t *Table) GetStatsInfo(id int64, isIndex bool) (*Histogram, *CMSketch, *To
 	return nil, nil, nil, nil, false
 }
 
-// GetColRowCount tries to get the row count of the a column if possible.
+// GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
 // This method is useful because this row count doesn't consider the modify count.
-func (t *Table) GetColRowCount() float64 {
-	ids := make([]int64, 0, len(t.Columns))
-	for id := range t.Columns {
-		ids = append(ids, id)
-	}
+func (coll *HistColl) GetAnalyzeRowCount() float64 {
+	ids := maps.Keys(coll.Columns)
 	slices.Sort(ids)
 	for _, id := range ids {
-		col := t.Columns[id]
+		col := coll.Columns[id]
 		if col != nil && col.IsFullLoad() {
 			return col.TotalRowCount()
+		}
+	}
+	ids = maps.Keys(coll.Indices)
+	slices.Sort(ids)
+	for _, id := range ids {
+		idx := coll.Indices[id]
+		if idx != nil && idx.IsFullLoad() {
+			return idx.TotalRowCount()
 		}
 	}
 	return -1
@@ -395,7 +424,7 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 	}
 	var healthy int64
 	count := float64(t.RealtimeCount)
-	if histCount := t.GetColRowCount(); histCount > 0 {
+	if histCount := t.GetAnalyzeRowCount(); histCount > 0 {
 		count = histCount
 	}
 	if float64(t.ModifyCount) < count {
@@ -460,7 +489,7 @@ func (t *Table) IsInitialized() bool {
 
 // IsOutdated returns true if the table stats is outdated.
 func (t *Table) IsOutdated() bool {
-	rowcount := t.GetColRowCount()
+	rowcount := t.GetAnalyzeRowCount()
 	if rowcount < 0 {
 		rowcount = float64(t.RealtimeCount)
 	}
@@ -550,9 +579,11 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 }
 
 // PseudoTable creates a pseudo table statistics.
-func PseudoTable(tblInfo *model.TableInfo) *Table {
+// Usually, we don't want to trigger stats loading for pseudo table.
+// But there are exceptional cases. In such cases, we should pass allowTriggerLoading as true.
+// Such case could possibly happen in getStatsTable().
+func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool) *Table {
 	const fakePhysicalID int64 = -1
-
 	pseudoHistColl := HistColl{
 		RealtimeCount:  PseudoRowCount,
 		PhysicalID:     tblInfo.ID,
@@ -575,6 +606,9 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
 				Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
 			}
+			if allowTriggerLoading {
+				t.Columns[col.ID].PhysicalID = tblInfo.ID
+			}
 		}
 	}
 	for _, idx := range tblInfo.Indices {
@@ -582,7 +616,11 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 			t.Indices[idx.ID] = &Index{
 				PhysicalID: fakePhysicalID,
 				Info:       idx,
-				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)}
+				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0),
+			}
+			if allowTriggerLoading {
+				t.Indices[idx.ID].PhysicalID = tblInfo.ID
+			}
 		}
 	}
 	return t
