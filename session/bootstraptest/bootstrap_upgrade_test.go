@@ -335,7 +335,7 @@ func TestUpgradeVersionForUpgradeHTTPOp(t *testing.T) {
 	seLatestV := session.CreateSessionAndSetID(t, store)
 	ver, err = session.GetBootstrapVersion(seLatestV)
 	require.NoError(t, err)
-	require.Less(t, session.SupportUpgradeHTTPOpVer, ver)
+	require.Equal(t, session.CurrentBootstrapVersion+1, ver)
 	// Current cluster state is upgrading.
 	isUpgrading, err = session.IsUpgradingClusterState(seLatestV)
 	require.NoError(t, err)
