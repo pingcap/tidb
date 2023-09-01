@@ -1233,20 +1233,20 @@ func builtinDateFormat(ctx sessionctx.Context, args []types.Datum) (d types.Datu
 func TestFromUnixTime(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		isDecimal      bool
-		integralPart   int64
-		decimal        float64
-		format         string
-		expect         string
+		isDecimal    bool
+		integralPart int64
+		decimal      float64
+		format       string
+		expect       string
 	}{
 		{false, 1451606400, 0, "", "2016-01-01 00:00:00"},
 		{true, 1451606400, 1451606400.123456, "", "2016-01-01 00:00:00.123456"},
 		{true, 1451606400, 1451606400.999999, "", "2016-01-01 00:00:00.999999"},
 		{true, 1451606400, 1451606400.9999999, "", "2016-01-01 00:00:01.000000"},
 		{false, 1451606400, 0, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:00"},
-		{true, 1451606400,  1451606400.123456, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:00.123456"},
-		{true, 1451606400,  1451606400.999999, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:00.999999"},
-		{true, 1451606400,  1451606400.9999999, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:01.000000"},
+		{true, 1451606400, 1451606400.123456, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:00.123456"},
+		{true, 1451606400, 1451606400.999999, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:00.999999"},
+		{true, 1451606400, 1451606400.9999999, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:01.000000"},
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	originTZ := sc.TimeZone
