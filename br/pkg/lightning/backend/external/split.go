@@ -90,8 +90,6 @@ type RangeSplitter struct {
 // `rangesGroupSize` and `rangesGroupKeys` controls the total range group
 // size of one `SplitOneRangesGroup` invocation, while `rangeSize` and
 // `rangeKeys` controls the size of one range.
-// `maxWays` controls the merge heap size limit. When the actual heap size drops
-// below `maxWays`, the `SplitOneRangesGroup` will return as the last group.
 func NewRangeSplitter(
 	ctx context.Context,
 	dataFiles, statFiles []string,
