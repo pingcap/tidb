@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
@@ -417,6 +418,8 @@ func TestShardRowIDBitsStep(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists shard_t;")
 	tk.MustExec("create table shard_t (a int) shard_row_id_bits = 15;")
+	tk.MustQuery("select @@tidb_shard_allocate_step;").Check(
+		testkit.Rows(strconv.Itoa(variable.DefTiDBShardAllocateStep)))
 	tk.MustExec("set @@tidb_shard_allocate_step=3;")
 	tk.MustExec("insert into shard_t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11);")
 	rows := tk.MustQuery("select _tidb_rowid from shard_t;").Rows()
