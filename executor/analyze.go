@@ -179,13 +179,15 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 		skippedTables       []string
 		needAnalyzeTableCnt uint
 		tids                = make([]int64, 0, len(tasks))
-		taskMap             = make(map[int64]*analyzeTask, len(tasks))
+		// taskMap is used to collect the tasks that belong to the same table.
+		// In stats v1, analyze for each index is a single task, and they have the same table id.
+		taskMap = make(map[int64][]*analyzeTask, len(tasks))
 	)
 
 	for _, task := range tasks {
 		tableID := getTableIDFromTask(task)
 		tids = append(tids, tableID)
-		taskMap[tableID] = task
+		taskMap[tableID] = append(taskMap[tableID], task)
 	}
 
 	// Check the locked tables in one transaction.
@@ -196,7 +198,7 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 
 	for tid, isLocked := range lockedStatuses {
 		if !isLocked {
-			filteredTasks = append(filteredTasks, taskMap[tid])
+			filteredTasks = append(filteredTasks, taskMap[tid]...)
 			needAnalyzeTableCnt++
 		} else {
 			tbl, ok := infoSchema.TableByID(tid)
