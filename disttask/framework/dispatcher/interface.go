@@ -23,55 +23,56 @@ import (
 	"golang.org/x/exp/maps"
 )
 
-// TaskFlowHandle is used to control the process operations for each global task.
-type TaskFlowHandle interface {
-	// OnTicker is used to handle the ticker event, if business impl need to do some periodical work, you can
+// Dispatcher is used to control the process operations for each task.
+type Dispatcher interface {
+	// OnTick is used to handle the ticker event, if business impl need to do some periodical work, you can
 	// do it here, but don't do too much work here, because the ticker interval is small, and it will block
 	// the event is generated every checkTaskRunningInterval, and only when the task NOT FINISHED and NO ERROR.
-	OnTicker(ctx context.Context, gTask *proto.Task)
-	// ProcessNormalFlow is used to move the task to next step, if returns no error and there's no new subtasks
+	OnTick(ctx context.Context, gTask *proto.Task)
+	// OnNextStage is used to move the task to next stage, if returns no error and there's no new subtasks
 	// the task is finished.
 	// NOTE: don't change gTask.State inside, framework will manage it.
 	// it's called when:
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks of previous step has all finished with no error.
-	ProcessNormalFlow(ctx context.Context, h TaskHandle, gTask *proto.Task) (subtaskMetas [][]byte, err error)
-	// ProcessErrFlow is called when:
+	OnNextStage(ctx context.Context, h TaskHandle, gTask *proto.Task) (subtaskMetas [][]byte, err error)
+	// OnErrStage is called when:
 	// 	1. subtask is finished with error.
 	// 	2. task is cancelled after we have dispatched some subtasks.
-	ProcessErrFlow(ctx context.Context, h TaskHandle, gTask *proto.Task, receiveErr []error) (subtaskMeta []byte, err error)
-	// GetEligibleInstances is used to get the eligible instances for the global task.
+	OnErrStage(ctx context.Context, h TaskHandle, gTask *proto.Task, receiveErr []error) (subtaskMeta []byte, err error)
+	// GetEligibleInstances is used to get the eligible instances for the task.
 	// on certain condition we may want to use some instances to do the task, such as instances with more disk.
 	GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error)
+	// IsRetryableErr is used to check whether the error occurred in dispatcher is retryable.
 	IsRetryableErr(err error) bool
 }
 
-var taskFlowHandleMap struct {
+var taskDispatcherMap struct {
 	syncutil.RWMutex
-	handleMap map[string]TaskFlowHandle
+	dispatcherMap map[string]Dispatcher
 }
 
-// RegisterTaskFlowHandle is used to register the global task handle.
-func RegisterTaskFlowHandle(taskType string, dispatcherHandle TaskFlowHandle) {
-	taskFlowHandleMap.Lock()
-	taskFlowHandleMap.handleMap[taskType] = dispatcherHandle
-	taskFlowHandleMap.Unlock()
+// RegisterTaskDispatcher is used to register the task Dispatcher.
+func RegisterTaskDispatcher(taskType string, dispatcherHandle Dispatcher) {
+	taskDispatcherMap.Lock()
+	taskDispatcherMap.dispatcherMap[taskType] = dispatcherHandle
+	taskDispatcherMap.Unlock()
 }
 
-// ClearTaskFlowHandle is only used in test
-func ClearTaskFlowHandle() {
-	taskFlowHandleMap.Lock()
-	maps.Clear(taskFlowHandleMap.handleMap)
-	taskFlowHandleMap.Unlock()
+// ClearTaskDispatcher is only used in test.
+func ClearTaskDispatcher() {
+	taskDispatcherMap.Lock()
+	maps.Clear(taskDispatcherMap.dispatcherMap)
+	taskDispatcherMap.Unlock()
 }
 
-// GetTaskFlowHandle is used to get the global task handle.
-func GetTaskFlowHandle(taskType string) TaskFlowHandle {
-	taskFlowHandleMap.Lock()
-	defer taskFlowHandleMap.Unlock()
-	return taskFlowHandleMap.handleMap[taskType]
+// GetTaskDispatcher is used to get the task Dispatcher.
+func GetTaskDispatcher(taskType string) Dispatcher {
+	taskDispatcherMap.Lock()
+	defer taskDispatcherMap.Unlock()
+	return taskDispatcherMap.dispatcherMap[taskType]
 }
 
 func init() {
-	taskFlowHandleMap.handleMap = make(map[string]TaskFlowHandle)
+	taskDispatcherMap.dispatcherMap = make(map[string]Dispatcher)
 }

@@ -12,27 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package proto
+package partition
 
-// TaskStep of Example.
-const (
-	StepOne = iota
-	StepTwo
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/testkit/testsetup"
+	"go.uber.org/goleak"
 )
 
-// TaskExample is the example task.
-type TaskExample struct{}
-
-// SubtaskExample is the example subtask.
-type SubtaskExample struct{}
-
-// MinimalTaskExample is the minimal example task.
-type MinimalTaskExample struct{}
-
-// IsMinimalTask is used to implement the proto.MinimalTask interface.
-func (MinimalTaskExample) IsMinimalTask() {}
-
-// String is used to implement the fmt.Stringer interface.
-func (MinimalTaskExample) String() string {
-	return "minimal task example"
+func TestMain(m *testing.M) {
+	testsetup.SetupForCommonTest()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+	}
+	goleak.VerifyTestMain(m, opts...)
 }

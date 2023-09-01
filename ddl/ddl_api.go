@@ -4869,6 +4869,9 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		return errors.Trace(dbterror.ErrTablesDifferentMetadata)
 	}
 	for _, sourceIdx := range source.Indices {
+		if sourceIdx.Global {
+			return dbterror.ErrPartitionExchangeDifferentOption.GenWithStackByArgs(fmt.Sprintf("global index: %s", sourceIdx.Name))
+		}
 		var compatIdx *model.IndexInfo
 		for _, targetIdx := range target.Indices {
 			if strings.EqualFold(sourceIdx.Name.L, targetIdx.Name.L) {

@@ -77,7 +77,7 @@ go_test(
     ],
     embed = [":storage"],
     flaky = True,
-    shard_count = 47,
+    shard_count = 48,
     deps = [
         "//br/pkg/mock",
         "@com_github_aws_aws_sdk_go//aws",
@@ -87,6 +87,7 @@ go_test(
         "@com_github_azure_azure_sdk_for_go_sdk_storage_azblob//:azblob",
         "@com_github_azure_azure_sdk_for_go_sdk_storage_azblob//bloberror",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
+        "@com_github_klauspost_compress//zstd",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
