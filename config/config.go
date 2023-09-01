@@ -893,7 +893,7 @@ var defaultConf = Config{
 	RunDDL:                       true,
 	SplitTable:                   true,
 	Lease:                        "45s",
-	TokenLimit:                   1000,
+	TokenLimit:                   math.MaxUint,
 	OOMUseTmpStorage:             true,
 	TempDir:                      DefTempDir,
 	TempStorageQuota:             -1,
@@ -1253,7 +1253,7 @@ func (c *Config) RemovedVariableCheck(confFile string) error {
 func (c *Config) Load(confFile string) error {
 	metaData, err := toml.DecodeFile(confFile, c)
 	if c.TokenLimit == 0 {
-		c.TokenLimit = 1000
+		c.TokenLimit = math.MaxUint
 	}
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.

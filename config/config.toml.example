@@ -26,7 +26,8 @@ lease = "45s"
 split-table = true
 
 # The limit of concurrent executed sessions.
-token-limit = 1000
+# 0 means unlimited, default to math.MaxUint
+token-limit = 0
 
 # The temporary directory to store the intermediate compute results.
 temp-dir = "/tmp/tidb"
