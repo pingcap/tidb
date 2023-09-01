@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -721,13 +722,31 @@ func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 	return result, true
 }
 
-// compareCandidates is the core of skyline pruning. It compares the two candidate paths on three dimensions:
-// (1): the set of columns that occurred in the access condition,
-// (2): does it require a double scan,
-// (3): whether or not it matches the physical property.
-// If `x` is not worse than `y` at all factors,
-// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
-func compareCandidates(lhs, rhs *candidatePath) int {
+// compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
+// The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
+func compareCandidates(sctx sessionctx.Context, prop *property.PhysicalProperty, lhs, rhs *candidatePath) int {
+	// This rule is empirical but not always correct.
+	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
+	if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
+		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 && // not IndexMerge since its row count estimation is not accurate enough
+		prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
+		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
+		if threshold > 0 { // set it to 0 to disable this rule
+			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
+				return -1
+			}
+			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
+				return 1
+			}
+		}
+	}
+
+	// Below compares the two candidate paths on three dimensions:
+	// (1): the set of columns that occurred in the access condition,
+	// (2): does it require a double scan,
+	// (3): whether or not it matches the physical property.
+	// If `x` is not worse than `y` at all factors,
+	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	if !comparable1 {
 		return 0
@@ -872,7 +891,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			if candidates[i].path.StoreType == kv.TiFlash {
 				continue
 			}
-			result := compareCandidates(candidates[i], currentCandidate)
+			result := compareCandidates(ds.SCtx(), prop, candidates[i], currentCandidate)
 			if result == 1 {
 				pruned = true
 				// We can break here because the current candidate cannot prune others anymore.
