@@ -17,7 +17,6 @@ package expression
 import (
 	"context"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -1247,6 +1246,10 @@ func TestFromUnixTime(t *testing.T) {
 		{true, 1451606400, 1451606400.123456, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:00.123456"},
 		{true, 1451606400, 1451606400.999999, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:00.999999"},
 		{true, 1451606400, 1451606400.9999999, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:01.000000"},
+
+		// TestIssue22206
+		{false, 5000000000, 0, "", "2128-06-11 08:53:20"},
+		{true, 32536771199, 32536771199.99999, "", "3001-01-18 23:59:59.999990"},
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	originTZ := sc.TimeZone
@@ -1298,9 +1301,10 @@ func TestFromUnixTime(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, types.KindNull, v.Kind())
 
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(math.MaxInt32+1)))
+	// TestIssue22206
+	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(32536771200)))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, chunk.Row{})
+	v, err = evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.KindNull, v.Kind())
 }
