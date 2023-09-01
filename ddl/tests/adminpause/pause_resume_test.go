@@ -312,7 +312,7 @@ func TestPauseResumeCancelAndRerunIndexStmt(t *testing.T) {
 func TestPauseResumeCancelAndRerunColumnStmt(t *testing.T) {
 	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 
-	require.Nil(t, generateTblUser(stmtKit, 500))
+	require.Nil(t, generateTblUser(stmtKit, 300))
 
 	for _, stmtCase := range columnDDLStmtCase {
 		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, true)
