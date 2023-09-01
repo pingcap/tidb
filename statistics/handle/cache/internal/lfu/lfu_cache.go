@@ -58,7 +58,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 	bufferItems := int64(64)
 
 	cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters:        mathutil.Max(mathutil.Min(totalMemCost/128*2, 2_000_000), 10), // assume the cost per table stats is 128
+		NumCounters:        mathutil.Max(mathutil.Min(totalMemCost/128, 1_000_000), 10), // assume the cost per table stats is 128
 		MaxCost:            totalMemCost,
 		BufferItems:        bufferItems,
 		OnEvict:            result.onEvict,
@@ -168,6 +168,9 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	// why add before again? because the cost will be subtracted in onExit.
 	// in fact, it is after - before
 	s.addCost(after)
+	if s.Cost() > s.cache.MaxCost() {
+		s.cache.Set(-1*table.PhysicalID-1, nil, 0)
+	}
 }
 
 func (s *LFU) onExit(val any) {
