@@ -133,7 +133,7 @@ func RegisterTaskMeta(m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
 		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
-			baseDispatcher.Handle = dispatcherHandle
+			baseDispatcher.Extension = dispatcherHandle
 			return baseDispatcher
 		})
 	scheduler.ClearSchedulers()

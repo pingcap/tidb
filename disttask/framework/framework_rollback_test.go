@@ -110,7 +110,7 @@ func RegisterRollbackTaskMeta(m *sync.Map) {
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
 		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
-			baseDispatcher.Handle = &rollbackDispatcherExt{}
+			baseDispatcher.Extension = &rollbackDispatcherExt{}
 			return baseDispatcher
 		})
 	scheduler.ClearSchedulers()

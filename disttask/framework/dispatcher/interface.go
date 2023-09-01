@@ -25,8 +25,8 @@ import (
 
 // Extension is used to control the process operations for each task.
 // it's used to extend functions of BaseDispatcher.
-// as golang doesn't support inheritance, we use an extension interface to
-// simulate abstract method as in other OO languages.
+// as golang doesn't support inheritance, we embed this interface in Dispatcher
+// to simulate abstract method as in other OO languages.
 type Extension interface {
 	// OnTick is used to handle the ticker event, if business impl need to do some periodical work, you can
 	// do it here, but don't do too much work here, because the ticker interval is small, and it will block

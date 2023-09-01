@@ -63,15 +63,15 @@ type Dispatcher interface {
 }
 
 // BaseDispatcher is the base struct for Dispatcher.
+// each task type embed this struct and implement the Extension interface.
 type BaseDispatcher struct {
 	ctx      context.Context
 	taskMgr  *storage.TaskManager
 	task     *proto.Task
 	logCtx   context.Context
 	serverID string
-	// golang doesn't support abstract class, we use this to extend the BaseDispatcher.
-	// so each task type can have its own implementation.
-	Handle Extension
+	// when RegisterDispatcherFactory, the factory MUST initialize this field.
+	Extension
 }
 
 // MockOwnerChange mock owner change in tests.
@@ -178,7 +178,7 @@ func (d *BaseDispatcher) onReverting() error {
 		return d.updateTask(proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 	// Wait all subtasks in this stage finished.
-	d.Handle.OnTick(d.ctx, d.task)
+	d.OnTick(d.ctx, d.task)
 	logutil.Logger(d.logCtx).Debug("on reverting state, this task keeps current state", zap.String("state", d.task.State))
 	return nil
 }
@@ -215,7 +215,7 @@ func (d *BaseDispatcher) onRunning() error {
 		return d.onNextStage()
 	}
 	// Wait all subtasks in this stage finished.
-	d.Handle.OnTick(d.ctx, d.task)
+	d.OnTick(d.ctx, d.task)
 	logutil.Logger(d.logCtx).Debug("on running state, this task keeps current state", zap.String("state", d.task.State))
 	return nil
 }
@@ -254,7 +254,7 @@ func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subta
 
 func (d *BaseDispatcher) onErrHandlingStage(receiveErr []error) error {
 	// 1. generate the needed task meta and subTask meta (dist-plan).
-	meta, err := d.Handle.OnErrStage(d.ctx, d, d.task, receiveErr)
+	meta, err := d.OnErrStage(d.ctx, d, d.task, receiveErr)
 	if err != nil {
 		// OnErrStage must be retryable, if not, there will have resource leak for tasks.
 		logutil.Logger(d.logCtx).Warn("handle error failed", zap.Error(err))
@@ -281,7 +281,7 @@ func (d *BaseDispatcher) dispatchSubTask4Revert(task *proto.Task, meta []byte) e
 
 func (d *BaseDispatcher) onNextStage() error {
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
-	metas, err := d.Handle.OnNextStage(d.ctx, d, d.task)
+	metas, err := d.OnNextStage(d.ctx, d, d.task)
 	if err != nil {
 		return d.handlePlanErr(err)
 	}
@@ -321,7 +321,7 @@ func (d *BaseDispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error
 	}
 
 	// 3. select all available TiDB nodes for task.
-	serverNodes, err := d.Handle.GetEligibleInstances(d.ctx, task)
+	serverNodes, err := d.GetEligibleInstances(d.ctx, task)
 	logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
 
 	if err != nil {
@@ -343,7 +343,7 @@ func (d *BaseDispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error
 
 func (d *BaseDispatcher) handlePlanErr(err error) error {
 	logutil.Logger(d.logCtx).Warn("generate plan failed", zap.Error(err), zap.String("state", d.task.State))
-	if d.Handle.IsRetryableErr(err) {
+	if d.IsRetryableErr(err) {
 		return err
 	}
 	d.task.Error = err
@@ -370,7 +370,7 @@ func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error)
 
 // GetAllSchedulerIDs gets all the scheduler IDs.
 func (d *BaseDispatcher) GetAllSchedulerIDs(ctx context.Context, task *proto.Task) ([]string, error) {
-	serverInfos, err := d.Handle.GetEligibleInstances(ctx, task)
+	serverInfos, err := d.GetEligibleInstances(ctx, task)
 	if err != nil {
 		return nil, err
 	}

@@ -139,7 +139,7 @@ func newLitBackfillDispatcher(ctx context.Context, taskMgr *storage.TaskManager,
 	dis := litBackfillDispatcher{
 		BaseDispatcher: dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task),
 	}
-	dis.BaseDispatcher.Handle = handle
+	dis.BaseDispatcher.Extension = handle
 	return &dis
 }
 

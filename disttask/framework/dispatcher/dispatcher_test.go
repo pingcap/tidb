@@ -113,7 +113,7 @@ func MockDispatcherManager(t *testing.T, pool *pools.ResourcePool) (*dispatcher.
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
 		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			mockDispatcher := dsp.MockDispatcher(task)
-			mockDispatcher.Handle = &testDispatcherExt{}
+			mockDispatcher.Extension = &testDispatcherExt{}
 			return mockDispatcher
 		})
 	return dsp, mgr
@@ -137,7 +137,7 @@ func TestGetInstance(t *testing.T) {
 	// test no server
 	task := &proto.Task{ID: 1, Type: proto.TaskTypeExample}
 	dsp := dspManager.MockDispatcher(task)
-	dsp.Handle = &testDispatcherExt{}
+	dsp.Extension = &testDispatcherExt{}
 	instanceIDs, err := dsp.GetAllSchedulerIDs(ctx, task)
 	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs when there's no subtask")
 	require.NoError(t, err)
@@ -215,7 +215,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
 		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			mockDispatcher := dsp.MockDispatcher(task)
-			mockDispatcher.Handle = &numberExampleDispatcherExt{}
+			mockDispatcher.Extension = &numberExampleDispatcherExt{}
 			return mockDispatcher
 		})
 	dsp.Start()

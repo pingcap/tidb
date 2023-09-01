@@ -169,8 +169,7 @@ func (dm *Manager) dispatchTaskLoop() {
 					task.State = proto.TaskStateFailed
 					task.Error = errors.New("unknown task type")
 					if _, err2 := dm.taskMgr.UpdateGlobalTaskAndAddSubTasks(task, nil, prevState); err2 != nil {
-						logutil.BgLogger().Warn("update task state of unknown type failed",
-							zap.Error(err2))
+						logutil.BgLogger().Warn("update task state of unknown type failed", zap.Error(err2))
 					}
 					continue
 				}

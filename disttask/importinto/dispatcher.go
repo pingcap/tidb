@@ -368,7 +368,7 @@ func newImportDispatcher(ctx context.Context, taskMgr *storage.TaskManager,
 	dis := importDispatcher{
 		BaseDispatcher: dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task),
 	}
-	dis.BaseDispatcher.Handle = &importDispatcherExt{}
+	dis.BaseDispatcher.Extension = &importDispatcherExt{}
 	return &dis
 }
 
