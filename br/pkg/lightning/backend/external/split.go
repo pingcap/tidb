@@ -21,7 +21,6 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/kv"
 )
 
 type exhaustedHeapElem struct {
@@ -128,7 +127,7 @@ func (r *RangeSplitter) Close() error {
 // in this group.
 // `rangeSplitKeys` are the internal split keys of the ranges in this group.
 func (r *RangeSplitter) SplitOneRangesGroup() (
-	endKeyOfGroup kv.Key,
+	endKeyOfGroup []byte,
 	dataFiles []string,
 	statFiles []string,
 	rangeSplitKeys [][]byte,
@@ -189,7 +188,7 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 			return prop.firstKey, retDataFiles, retStatFiles, r.takeSplitKeys(), nil
 		}
 		if r.recordSplitKeyAfterNextProp {
-			r.rangeSplitKeysBuf = append(r.rangeSplitKeysBuf, kv.Key(prop.firstKey).Clone())
+			r.rangeSplitKeysBuf = append(r.rangeSplitKeysBuf, slices.Clone(prop.firstKey))
 			r.recordSplitKeyAfterNextProp = false
 		}
 
