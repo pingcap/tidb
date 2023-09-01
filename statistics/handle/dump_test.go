@@ -97,7 +97,6 @@ func TestConversion(t *testing.T) {
 
 	tbl := h.GetTableStats(tableInfo.Meta())
 	requireTableEqual(t, loadTbl, tbl)
-
 	cleanStats(tk, dom)
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {

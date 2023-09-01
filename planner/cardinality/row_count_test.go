@@ -37,12 +37,12 @@ func TestPseudoTable(t *testing.T) {
 	require.Len(t, tbl.Columns, 1)
 	require.Greater(t, tbl.RealtimeCount, int64(0))
 	sctx := mock.NewContext()
-	count := ColumnLessRowCount(sctx, tbl, types.NewIntDatum(100), colInfo.ID)
+	count := columnLessRowCount(sctx, tbl, types.NewIntDatum(100), colInfo.ID)
 	require.Equal(t, 3333, int(count))
 	count, err := ColumnEqualRowCount(sctx, tbl, types.NewIntDatum(1000), colInfo.ID)
 	require.NoError(t, err)
 	require.Equal(t, 10, int(count))
-	count, _ = ColumnBetweenRowCount(sctx, tbl, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo.ID)
+	count, _ = columnBetweenRowCount(sctx, tbl, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo.ID)
 	require.Equal(t, 250, int(count))
 	ti.Columns = append(ti.Columns, &model.ColumnInfo{
 		ID:        2,

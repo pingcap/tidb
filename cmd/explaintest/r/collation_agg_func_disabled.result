@@ -298,5 +298,3 @@ StreamAgg	1.00	root		funcs:max(Column#8)->Column#6
 select max(d collate utf8mb4_bin) from tt;
 max(d collate utf8mb4_bin)
 {"c": "c"}
-drop database collation_agg_func;
-use test

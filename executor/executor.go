@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/executor/aggregate"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/executor/internal/pdhelper"
 	"github.com/pingcap/tidb/expression"
@@ -88,7 +89,7 @@ import (
 
 var (
 	_ exec.Executor = &CheckTableExec{}
-	_ exec.Executor = &HashAggExec{}
+	_ exec.Executor = &aggregate.HashAggExec{}
 	_ exec.Executor = &HashJoinExec{}
 	_ exec.Executor = &IndexLookUpExecutor{}
 	_ exec.Executor = &IndexReaderExecutor{}
@@ -103,7 +104,7 @@ var (
 	_ exec.Executor = &ShowDDLJobsExec{}
 	_ exec.Executor = &ShowDDLJobQueriesExec{}
 	_ exec.Executor = &SortExec{}
-	_ exec.Executor = &StreamAggExec{}
+	_ exec.Executor = &aggregate.StreamAggExec{}
 	_ exec.Executor = &TableDualExec{}
 	_ exec.Executor = &TableReaderExecutor{}
 	_ exec.Executor = &TableScanExec{}
@@ -206,64 +207,10 @@ func (*globalPanicOnExceed) GetPriority() int64 {
 	return memory.DefPanicPriority
 }
 
-// newFirstChunk creates a new chunk to buffer current executor's result.
-func newFirstChunk(e exec.Executor) *chunk.Chunk {
-	base := e.Base()
-	return chunk.New(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
-}
-
-func tryNewCacheChunk(e exec.Executor) *chunk.Chunk {
-	base := e.Base()
-	s := base.Ctx().GetSessionVars()
-	return s.GetNewChunkWithCapacity(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize(), base.AllocPool)
-}
-
 // newList creates a new List to buffer current executor's result.
 func newList(e exec.Executor) *chunk.List {
 	base := e.Base()
 	return chunk.NewList(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
-}
-
-// retTypes returns all output column types.
-func retTypes(e exec.Executor) []*types.FieldType {
-	base := e.Base()
-	return base.RetFieldTypes()
-}
-
-// Next is a wrapper function on e.Next(), it handles some common codes.
-func Next(ctx context.Context, e exec.Executor, req *chunk.Chunk) error {
-	base := e.Base()
-	if base.RuntimeStats() != nil {
-		start := time.Now()
-		defer func() { base.RuntimeStats().Record(time.Since(start), req.NumRows()) }()
-	}
-	sessVars := base.Ctx().GetSessionVars()
-	if atomic.LoadUint32(&sessVars.Killed) == 2 {
-		return exeerrors.ErrMaxExecTimeExceeded
-	}
-	if atomic.LoadUint32(&sessVars.Killed) == 1 {
-		return exeerrors.ErrQueryInterrupted
-	}
-
-	r, ctx := tracing.StartRegionEx(ctx, fmt.Sprintf("%T.Next", e))
-	defer r.End()
-
-	if topsqlstate.TopSQLEnabled() && sessVars.StmtCtx.IsSQLAndPlanRegistered.CompareAndSwap(false, true) {
-		registerSQLAndPlanInExecForTopSQL(sessVars)
-	}
-	err := e.Next(ctx, req)
-
-	if err != nil {
-		return err
-	}
-	// recheck whether the session/query is killed during the Next()
-	if atomic.LoadUint32(&sessVars.Killed) == 2 {
-		err = exeerrors.ErrMaxExecTimeExceeded
-	}
-	if atomic.LoadUint32(&sessVars.Killed) == 1 {
-		err = exeerrors.ErrQueryInterrupted
-	}
-	return err
 }
 
 // CommandDDLJobsExec is the general struct for Cancel/Pause/Resume commands on
@@ -936,7 +883,7 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, src *IndexLookUpE
 
 	var err error
 	for {
-		err = Next(ctx, src, chk)
+		err = exec.Next(ctx, src, chk)
 		if err != nil {
 			e.retCh <- errors.Trace(err)
 			break
@@ -1183,7 +1130,7 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 // Next implements the Executor Next interface.
 func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.MaxChunkSize())
-	err := Next(ctx, e.Children(0), req)
+	err := exec.Next(ctx, e.Children(0), req)
 	if err != nil {
 		return err
 	}
@@ -1369,7 +1316,7 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for !e.meetFirstBatch {
 		// transfer req's requiredRows to childResult and then adjust it in childResult
 		e.childResult = e.childResult.SetRequiredRows(req.RequiredRows(), e.MaxChunkSize())
-		err := Next(ctx, e.Children(0), e.adjustRequiredRows(e.childResult))
+		err := exec.Next(ctx, e.Children(0), e.adjustRequiredRows(e.childResult))
 		if err != nil {
 			return err
 		}
@@ -1400,7 +1347,7 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.childResult.Reset()
 	e.childResult = e.childResult.SetRequiredRows(req.RequiredRows(), e.MaxChunkSize())
 	e.adjustRequiredRows(e.childResult)
-	err := Next(ctx, e.Children(0), e.childResult)
+	err := exec.Next(ctx, e.Children(0), e.childResult)
 	if err != nil {
 		return err
 	}
@@ -1432,7 +1379,7 @@ func (e *LimitExec) Open(ctx context.Context) error {
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	e.childResult = tryNewCacheChunk(e.Children(0))
+	e.childResult = exec.TryNewCacheChunk(e.Children(0))
 	e.cursor = 0
 	e.meetFirstBatch = e.begin == 0
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -1494,12 +1441,12 @@ func init() {
 		defer r.End()
 
 		e := newExecutorBuilder(sctx, is, nil)
-		exec := e.build(p)
+		executor := e.build(p)
 		if e.err != nil {
 			return nil, e.err
 		}
-		err := exec.Open(ctx)
-		defer terror.Call(exec.Close)
+		err := executor.Open(ctx)
+		defer terror.Call(executor.Close)
 		if err != nil {
 			return nil, err
 		}
@@ -1508,15 +1455,15 @@ func init() {
 			// because the sub-query may take a long time.
 			pi.UpdateProcessInfo()
 		}
-		chk := tryNewCacheChunk(exec)
-		err = Next(ctx, exec, chk)
+		chk := exec.TryNewCacheChunk(executor)
+		err = exec.Next(ctx, executor, chk)
 		if err != nil {
 			return nil, err
 		}
 		if chk.NumRows() == 0 {
 			return nil, nil
 		}
-		row := chk.GetRow(0).GetDatumRow(retTypes(exec))
+		row := chk.GetRow(0).GetDatumRow(exec.RetTypes(executor))
 		return row, err
 	}
 }
@@ -1587,7 +1534,7 @@ func (e *SelectionExec) open(context.Context) error {
 		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
-	e.childResult = tryNewCacheChunk(e.Children(0))
+	e.childResult = exec.TryNewCacheChunk(e.Children(0))
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 	e.batched = expression.Vectorizable(e.filters)
 	if e.batched {
@@ -1629,7 +1576,7 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			req.AppendRow(e.inputRow)
 		}
 		mSize := e.childResult.MemoryUsage()
-		err := Next(ctx, e.Children(0), e.childResult)
+		err := exec.Next(ctx, e.Children(0), e.childResult)
 		e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 		if err != nil {
 			return err
@@ -1663,7 +1610,7 @@ func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) err
 			}
 		}
 		mSize := e.childResult.MemoryUsage()
-		err := Next(ctx, e.Children(0), e.childResult)
+		err := exec.Next(ctx, e.Children(0), e.childResult)
 		e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 		if err != nil {
 			return err
@@ -1695,12 +1642,12 @@ func (e *TableScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.MaxChunkSize())
 	if e.virtualTableChunkList == nil {
-		e.virtualTableChunkList = chunk.NewList(retTypes(e), e.InitCap(), e.MaxChunkSize())
+		e.virtualTableChunkList = chunk.NewList(exec.RetTypes(e), e.InitCap(), e.MaxChunkSize())
 		columns := make([]*table.Column, e.Schema().Len())
 		for i, colInfo := range e.columns {
 			columns[i] = table.ToColumn(colInfo)
 		}
-		mutableRow := chunk.MutRowFromTypes(retTypes(e))
+		mutableRow := chunk.MutRowFromTypes(exec.RetTypes(e))
 		type tableIter interface {
 			IterRecords(ctx context.Context, sctx sessionctx.Context, cols []*table.Column, fn table.RecordIterFunc) error
 		}
@@ -1753,7 +1700,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.evaluated = true
-	err := Next(ctx, e.Children(0), req)
+	err := exec.Next(ctx, e.Children(0), req)
 	if err != nil {
 		return err
 	}
@@ -1767,8 +1714,8 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return exeerrors.ErrSubqueryMoreThan1Row
 	}
 
-	childChunk := tryNewCacheChunk(e.Children(0))
-	err = Next(ctx, e.Children(0), childChunk)
+	childChunk := exec.TryNewCacheChunk(e.Children(0))
+	err = exec.Next(ctx, e.Children(0), childChunk)
 	if err != nil {
 		return err
 	}
@@ -1850,7 +1797,7 @@ func (e *UnionExec) initialize(ctx context.Context) {
 		e.concurrency = e.ChildrenLen()
 	}
 	for i := 0; i < e.concurrency; i++ {
-		e.results = append(e.results, newFirstChunk(e.Children(0)))
+		e.results = append(e.results, exec.NewFirstChunk(e.Children(0)))
 	}
 	e.resultPool = make(chan *unionWorkerResult, e.concurrency)
 	e.resourcePools = make([]chan *chunk.Chunk, e.concurrency)
@@ -1906,7 +1853,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 				return
 			case result.chk = <-e.resourcePools[workerID]:
 			}
-			result.err = Next(ctx, e.Children(childID), result.chk)
+			result.err = exec.Next(ctx, e.Children(childID), result.chk)
 			if result.err == nil && result.chk.NumRows() == 0 {
 				e.resourcePools[workerID] <- result.chk
 				break
@@ -2227,18 +2174,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.CurrInsertValues = chunk.Row{}
 
 	return
-}
-
-// registerSQLAndPlanInExecForTopSQL register the sql and plan information if it doesn't register before execution.
-// This uses to catch the running SQL when Top SQL is enabled in execution.
-func registerSQLAndPlanInExecForTopSQL(sessVars *variable.SessionVars) {
-	stmtCtx := sessVars.StmtCtx
-	normalizedSQL, sqlDigest := stmtCtx.SQLDigest()
-	topsql.RegisterSQL(normalizedSQL, sqlDigest, sessVars.InRestrictedSQL)
-	normalizedPlan, planDigest := stmtCtx.GetPlanDigest()
-	if len(normalizedPlan) > 0 {
-		topsql.RegisterPlan(normalizedPlan, planDigest)
-	}
 }
 
 // ResetUpdateStmtCtx resets statement context for UpdateStmt.

@@ -23,6 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -118,7 +119,11 @@ func TestGetPathByIndexName(t *testing.T) {
 }
 
 func TestRewriterPool(t *testing.T) {
-	builder, _ := NewPlanBuilder().Init(MockContext(), nil, &hint.BlockHintProcessor{})
+	ctx := MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	builder, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
 
 	// Make sure PlanBuilder.getExpressionRewriter() provides clean rewriter from pool.
 	// First, pick one rewriter from the pool and make it dirty.
@@ -166,6 +171,9 @@ func TestDisableFold(t *testing.T) {
 	}
 
 	ctx := MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
 	for _, c := range cases {
 		st, err := parser.New().ParseOneStmt(c.SQL, "", "")
 		require.NoError(t, err)
@@ -645,7 +653,11 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 }
 
 func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
-	pb, _ := NewPlanBuilder().Init(MockContext(), nil, &hint.BlockHintProcessor{})
+	ctx := MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	pb, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
 
 	// Create a new TableName instance.
 	tableName := &ast.TableName{

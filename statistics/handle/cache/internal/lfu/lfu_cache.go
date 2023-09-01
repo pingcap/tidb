@@ -34,6 +34,7 @@ type LFU struct {
 	cache        *ristretto.Cache
 	resultKeySet *keySetShard
 	cost         atomic.Int64
+	closed       atomic.Bool
 	closeOnce    sync.Once
 }
 
@@ -57,7 +58,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 	bufferItems := int64(64)
 
 	cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters:        mathutil.Max(totalMemCost/128*2, 10), // assume the cost per table stats is 128
+		NumCounters:        mathutil.Max(mathutil.Min(totalMemCost/128*2, 2_000_000), 10), // assume the cost per table stats is 128
 		MaxCost:            totalMemCost,
 		BufferItems:        bufferItems,
 		OnEvict:            result.onEvict,
@@ -149,6 +150,9 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 		// so it should not be processed.
 		return
 	}
+	if s.closed.Load() {
+		return
+	}
 	// We do not need to calculate the cost during onEvict,
 	// because the onexit function is also called when the evict event occurs.
 	// TODO(hawkingrei): not copy the useless part.
@@ -175,6 +179,9 @@ func (s *LFU) onExit(val any) {
 	if val == nil {
 		// Sometimes the same key may be passed to the "onEvict/onExit" function twice,
 		// and in the second invocation, the value is empty, so it should not be processed.
+		return
+	}
+	if s.closed.Load() {
 		return
 	}
 	s.addCost(
@@ -210,6 +217,7 @@ func (s *LFU) metrics() *ristretto.Metrics {
 // Close implements statsCacheInner
 func (s *LFU) Close() {
 	s.closeOnce.Do(func() {
+		s.closed.Store(true)
 		s.Clear()
 		s.cache.Close()
 		s.cache.Wait()
