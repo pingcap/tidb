@@ -595,6 +595,12 @@ const (
 	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v1 table to add back the correct rows.
 	DupeResAlgRemove
 
+	// DupeResAlgReplace records all duplicate records like the 'record' algorithm, and remove some rows with conflict
+	// and reserve other rows that can be kept and not cause conflict anymore. Users need to analyze the
+	// lightning_task_info.conflict_error_v1 table to check whether the reserved data cater to their need and check whether
+	// they need to add back the correct rows.
+	DupeResAlgReplace
+
 	// DupeResAlgErr reports an error and stops the import process.
 	// Note: this value is only used for internal.
 	DupeResAlgErr
@@ -622,6 +628,8 @@ func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
 		*dra = DupeResAlgNone
 	case "remove":
 		*dra = DupeResAlgRemove
+	case "replace":
+		*dra = DupeResAlgReplace
 	default:
 		return errors.Errorf("invalid duplicate-resolution '%s', please choose valid option between ['record', 'none', 'remove']", s)
 	}
@@ -647,6 +655,8 @@ func (dra DuplicateResolutionAlgorithm) String() string {
 		return "none"
 	case DupeResAlgRemove:
 		return "remove"
+	case DupeResAlgReplace:
+		return "replace"
 	default:
 		panic(fmt.Sprintf("invalid duplicate-resolution type '%d'", dra))
 	}

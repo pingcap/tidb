@@ -951,7 +951,7 @@ func (tr *TableImporter) postProcess(
 		rc.alterTableLock.Unlock()
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)
 		if err = firstErr(err, saveCpErr); err != nil {
-			return false, err
+			return false, errors.Trace(err)
 		}
 		cp.Status = checkpoints.CheckpointStatusAlteredAutoInc
 	}
@@ -997,7 +997,7 @@ func (tr *TableImporter) postProcess(
 			hasLocalDupe, err := dupeController.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
-				return false, err
+				return false, errors.Trace(err)
 			}
 			hasDupe = hasLocalDupe
 		}
@@ -1010,7 +1010,7 @@ func (tr *TableImporter) postProcess(
 
 		otherHasDupe, needRemoteDupe, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum, hasDupe)
 		if err != nil {
-			return false, err
+			return false, errors.Trace(err)
 		}
 		needChecksum := !otherHasDupe && needRemoteDupe
 		hasDupe = hasDupe || otherHasDupe
@@ -1023,14 +1023,14 @@ func (tr *TableImporter) postProcess(
 			hasRemoteDupe, e := dupeController.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
 			if e != nil {
 				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
-				return false, e
+				return false, errors.Trace(e)
 			}
 			hasDupe = hasDupe || hasRemoteDupe
 
 			if hasDupe {
 				if err = dupeController.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
 					tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
-					return false, err
+					return false, errors.Trace(err)
 				}
 			}
 		}
@@ -1057,7 +1057,7 @@ func (tr *TableImporter) postProcess(
 			})
 			if err != nil {
 				if rc.cfg.PostRestore.Checksum != config.OpLevelOptional {
-					return false, err
+					return false, errors.Trace(err)
 				}
 				tr.logger.Warn("do checksum failed, will skip this error and go on", log.ShortError(err))
 				err = nil
