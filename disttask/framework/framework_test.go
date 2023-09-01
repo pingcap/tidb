@@ -33,7 +33,7 @@ import (
 
 type testDispatcher struct{}
 
-var _ dispatcher.Dispatcher = (*testDispatcher)(nil)
+var _ dispatcher.DispatcherExt = (*testDispatcher)(nil)
 
 func (*testDispatcher) OnTick(_ context.Context, _ *proto.Task) {
 }
@@ -128,9 +128,14 @@ func (e *testSubtaskExecutor1) Run(_ context.Context) error {
 	return nil
 }
 
-func RegisterTaskMeta(m *sync.Map, dispatcherHandle dispatcher.Dispatcher) {
-	dispatcher.ClearTaskDispatcher()
-	dispatcher.RegisterTaskDispatcher(proto.TaskTypeExample, dispatcherHandle)
+func RegisterTaskMeta(m *sync.Map, dispatcherHandle dispatcher.DispatcherExt) {
+	dispatcher.ClearDispatcherFactory()
+	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
+		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
+			baseDispatcher.Handle = dispatcherHandle
+			return baseDispatcher
+		})
 	scheduler.ClearSchedulers()
 	scheduler.RegisterTaskType(proto.TaskTypeExample)
 	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
@@ -207,7 +212,7 @@ func DispatchTaskAndCheckState(taskKey string, t *testing.T, m *sync.Map, state 
 }
 
 func TestFrameworkBasic(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 	RegisterTaskMeta(&m, &testDispatcher{})
@@ -225,7 +230,7 @@ func TestFrameworkBasic(t *testing.T) {
 }
 
 func TestFramework3Server(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 	RegisterTaskMeta(&m, &testDispatcher{})
@@ -240,7 +245,7 @@ func TestFramework3Server(t *testing.T) {
 }
 
 func TestFrameworkAddDomain(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 	RegisterTaskMeta(&m, &testDispatcher{})
@@ -257,7 +262,7 @@ func TestFrameworkAddDomain(t *testing.T) {
 }
 
 func TestFrameworkDeleteDomain(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 	RegisterTaskMeta(&m, &testDispatcher{})
@@ -270,7 +275,7 @@ func TestFrameworkDeleteDomain(t *testing.T) {
 }
 
 func TestFrameworkWithQuery(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 	RegisterTaskMeta(&m, &testDispatcher{})
@@ -292,7 +297,7 @@ func TestFrameworkWithQuery(t *testing.T) {
 }
 
 func TestFrameworkCancelGTask(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 	RegisterTaskMeta(&m, &testDispatcher{})
@@ -302,7 +307,7 @@ func TestFrameworkCancelGTask(t *testing.T) {
 }
 
 func TestFrameworkSubTaskFailed(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 
 	var m sync.Map
@@ -317,7 +322,7 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 }
 
 func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 
 	var m sync.Map
@@ -332,7 +337,7 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 }
 
 func TestOwnerChange(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 	RegisterTaskMeta(&m, &testDispatcher{})
@@ -348,7 +353,7 @@ func TestOwnerChange(t *testing.T) {
 }
 
 func TestFrameworkCancelThenSubmitSubTask(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 	RegisterTaskMeta(&m, &testDispatcher{})

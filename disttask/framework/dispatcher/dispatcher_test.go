@@ -35,13 +35,12 @@ import (
 )
 
 var (
-	_ dispatcher.Dispatcher = (*testDispatcher)(nil)
-	_ dispatcher.Dispatcher = (*numberExampleDispatcher)(nil)
+	_ dispatcher.DispatcherExt = (*testDispatcher)(nil)
+	_ dispatcher.DispatcherExt = (*numberExampleDispatcher)(nil)
 )
 
 const (
-	taskTypeExample = "task_example"
-	subtaskCnt      = 3
+	subtaskCnt = 3
 )
 
 type testDispatcher struct{}
@@ -111,7 +110,12 @@ func MockDispatcherManager(t *testing.T, pool *pools.ResourcePool) (*dispatcher.
 	storage.SetTaskManager(mgr)
 	dsp, err := dispatcher.NewManager(util.WithInternalSourceType(ctx, "dispatcher"), mgr, "host:port")
 	require.NoError(t, err)
-	dispatcher.RegisterTaskDispatcher(proto.TaskTypeExample, &testDispatcher{})
+	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
+		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+			mockDispatcher := dsp.MockDispatcher(task)
+			mockDispatcher.Handle = &testDispatcher{}
+			return mockDispatcher
+		})
 	return dsp, mgr
 }
 
@@ -132,8 +136,8 @@ func TestGetInstance(t *testing.T) {
 	dspManager, mgr := MockDispatcherManager(t, pool)
 	// test no server
 	task := &proto.Task{ID: 1, Type: proto.TaskTypeExample}
-	dsp, err := dspManager.MockDispatcher(task)
-	require.NoError(t, err)
+	dsp := dspManager.MockDispatcher(task)
+	dsp.Handle = &testDispatcher{}
 	instanceIDs, err := dsp.GetAllSchedulerIDs(ctx, task)
 	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs when there's no subtask")
 	require.NoError(t, err)
@@ -188,7 +192,6 @@ func TestGetInstance(t *testing.T) {
 }
 
 func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
-	dispatcher.RegisterTaskDispatcher(taskTypeExample, &numberExampleDispatcher{})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/MockDisableDistTask", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/MockDisableDistTask"))
@@ -209,6 +212,12 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	defer pool.Close()
 
 	dsp, mgr := MockDispatcherManager(t, pool)
+	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
+		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+			mockDispatcher := dsp.MockDispatcher(task)
+			mockDispatcher.Handle = &numberExampleDispatcher{}
+			return mockDispatcher
+		})
 	dsp.Start()
 	defer func() {
 		dsp.Stop()
@@ -251,7 +260,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	// Mock add tasks.
 	taskIDs := make([]int64, 0, taskCnt)
 	for i := 0; i < taskCnt; i++ {
-		taskID, err := mgr.AddNewGlobalTask(fmt.Sprintf("%d", i), taskTypeExample, 0, nil)
+		taskID, err := mgr.AddNewGlobalTask(fmt.Sprintf("%d", i), proto.TaskTypeExample, 0, nil)
 		require.NoError(t, err)
 		taskIDs = append(taskIDs, taskID)
 	}
@@ -266,7 +275,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	}
 	// test parallelism control
 	if taskCnt == 1 {
-		taskID, err := mgr.AddNewGlobalTask(fmt.Sprintf("%d", taskCnt), taskTypeExample, 0, nil)
+		taskID, err := mgr.AddNewGlobalTask(fmt.Sprintf("%d", taskCnt), proto.TaskTypeExample, 0, nil)
 		require.NoError(t, err)
 		checkGetRunningTaskCnt(taskCnt)
 		// Clean the task.

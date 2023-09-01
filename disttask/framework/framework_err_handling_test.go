@@ -32,8 +32,8 @@ type planErrDispatcher struct {
 }
 
 var (
-	_ dispatcher.Dispatcher = (*planErrDispatcher)(nil)
-	_ dispatcher.Dispatcher = (*planNotRetryableErrDispatcher)(nil)
+	_ dispatcher.DispatcherExt = (*planErrDispatcher)(nil)
+	_ dispatcher.DispatcherExt = (*planNotRetryableErrDispatcher)(nil)
 )
 
 func (*planErrDispatcher) OnTick(_ context.Context, _ *proto.Task) {
@@ -100,7 +100,7 @@ func (*planNotRetryableErrDispatcher) IsRetryableErr(error) bool {
 }
 
 func TestPlanErr(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 
@@ -111,7 +111,7 @@ func TestPlanErr(t *testing.T) {
 }
 
 func TestRevertPlanErr(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 
@@ -122,7 +122,7 @@ func TestRevertPlanErr(t *testing.T) {
 }
 
 func TestPlanNotRetryableErr(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 

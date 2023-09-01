@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -31,7 +32,7 @@ import (
 
 type rollbackDispatcher struct{}
 
-var _ dispatcher.Dispatcher = (*rollbackDispatcher)(nil)
+var _ dispatcher.DispatcherExt = (*rollbackDispatcher)(nil)
 var rollbackCnt atomic.Int32
 
 func (*rollbackDispatcher) OnTick(_ context.Context, _ *proto.Task) {
@@ -105,8 +106,13 @@ func (e *rollbackSubtaskExecutor) Run(_ context.Context) error {
 }
 
 func RegisterRollbackTaskMeta(m *sync.Map) {
-	dispatcher.ClearTaskDispatcher()
-	dispatcher.RegisterTaskDispatcher(proto.TaskTypeExample, &rollbackDispatcher{})
+	dispatcher.ClearDispatcherFactory()
+	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
+		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
+			baseDispatcher.Handle = &rollbackDispatcher{}
+			return baseDispatcher
+		})
 	scheduler.ClearSchedulers()
 	scheduler.RegisterTaskType(proto.TaskTypeExample)
 	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
@@ -119,7 +125,7 @@ func RegisterRollbackTaskMeta(m *sync.Map) {
 }
 
 func TestFrameworkRollback(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 

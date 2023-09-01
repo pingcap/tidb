@@ -60,7 +60,7 @@ func (s *importIntoSuite) TestDispatcherGetEligibleInstances() {
 	}
 	mockedAllServerInfos := makeFailpointRes(serverInfoMap)
 
-	dsp := importDispatcher{}
+	dsp := importDispatcherExt{}
 	gTask := &proto.Task{Meta: []byte("{}")}
 	s.enableFailPoint("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", mockedAllServerInfos)
 	eligibleInstances, err := dsp.GetEligibleInstances(context.Background(), gTask)
@@ -87,7 +87,7 @@ func (s *importIntoSuite) TestUpdateCurrentTask() {
 	bs, err := json.Marshal(taskMeta)
 	require.NoError(s.T(), err)
 
-	dsp := importDispatcher{}
+	dsp := importDispatcherExt{}
 	require.Equal(s.T(), int64(0), dsp.currTaskID.Load())
 	require.False(s.T(), dsp.disableTiKVImportMode.Load())
 
