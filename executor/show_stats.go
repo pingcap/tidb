@@ -195,12 +195,12 @@ func (e *ShowExec) fetchShowStatsLocked() error {
 		tids = append(tids, tid)
 	}
 
-	checkedTableIDs, err := h.QueryTablesLockedStatuses(tids...)
+	lockedStatuses, err := h.QueryTablesLockedStatuses(tids...)
 	if err != nil {
 		return err
 	}
 
-	for tid, locked := range checkedTableIDs {
+	for tid, locked := range lockedStatuses {
 		if locked {
 			info := tableInfo[tid]
 			e.appendTableForStatsLocked(info.dbName, info.tblName, info.partitionName)
