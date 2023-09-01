@@ -44,15 +44,17 @@ func RemoveLockedTables(exec sqlexec.SQLExecutor, tids []int64, pids []int64, ta
 	}()
 
 	// Load tables to check locked before delete.
-	tableLocked, err := LoadLockedTables(ctx, exec)
+	lockedTables, err := QueryLockedTables(ctx, exec)
 	if err != nil {
 		return "", err
 	}
 	skippedTables := make([]string, 0, len(tables))
 
 	statsLogger.Info("unlock table", zap.Int64s("tableIDs", tids))
+
+	lockedStatuses := GetTablesLockedStatuses(lockedTables, tids...)
 	for i, tid := range tids {
-		if !IsTableLocked(tableLocked, tid) {
+		if !lockedStatuses[tid] {
 			skippedTables = append(skippedTables, tables[i].Schema.L+"."+tables[i].Name.L)
 			continue
 		}
@@ -62,11 +64,12 @@ func RemoveLockedTables(exec sqlexec.SQLExecutor, tids []int64, pids []int64, ta
 	}
 
 	// Delete related partitions while don't warning delete empty partitions
-	for _, tid := range pids {
-		if !IsTableLocked(tableLocked, tid) {
+	lockedStatuses = GetTablesLockedStatuses(lockedTables, pids...)
+	for _, pid := range pids {
+		if !lockedStatuses[pid] {
 			continue
 		}
-		if err := updateStatsAndUnlockTable(ctx, exec, tid, maxChunkSize); err != nil {
+		if err := updateStatsAndUnlockTable(ctx, exec, pid, maxChunkSize); err != nil {
 			return "", err
 		}
 	}

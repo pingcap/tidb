@@ -46,33 +46,35 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 	return lockstats.RemoveLockedTables(h.mu.ctx.(sqlexec.SQLExecutor), tids, pids, tables)
 }
 
-// IsTableLocked check whether table is locked in handle with Handle.Mutex
-func (h *Handle) IsTableLocked(tableID int64) (bool, error) {
+// QueryTablesLockedStatuses query whether table is locked in handle with Handle.Mutex.
+// Note: This function query locked tables from store, so please try to batch the query.
+func (h *Handle) QueryTablesLockedStatuses(tableIDs ...int64) (map[int64]bool, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	return h.isTableLockedWithoutLock(tableID)
+	return h.queryTablesLockedStatuses(tableIDs...)
 }
 
-// loadLockedTablesWithoutLock load locked tables from store without Handle.Mutex.
-func (h *Handle) loadLockedTablesWithoutLock() ([]int64, error) {
+// queryTablesLockedStatuses query whether table is locked in handle without Handle.Mutex
+// Note: This function query locked tables from store, so please try to batch the query.
+func (h *Handle) queryTablesLockedStatuses(tableIDs ...int64) (map[int64]bool, error) {
+	tableLocked, err := h.queryLockedTablesWithoutLock()
+	if err != nil {
+		return nil, err
+	}
+	return lockstats.GetTablesLockedStatuses(tableLocked, tableIDs...), nil
+}
+
+// queryLockedTablesWithoutLock query locked tables from store without Handle.Mutex.
+func (h *Handle) queryLockedTablesWithoutLock() (map[int64]struct{}, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 
-	return lockstats.LoadLockedTables(ctx, exec)
-}
-
-// isTableLockedWithoutLock check whether table is locked in handle without Handle.Mutex
-func (h *Handle) isTableLockedWithoutLock(tableID int64) (bool, error) {
-	tableLocked, err := h.loadLockedTablesWithoutLock()
-	if err != nil {
-		return false, err
-	}
-	return lockstats.IsTableLocked(tableLocked, tableID), nil
+	return lockstats.QueryLockedTables(ctx, exec)
 }
 
 // GetTableLockedAndClearForTest for unit test only
-func (h *Handle) GetTableLockedAndClearForTest() ([]int64, error) {
+func (h *Handle) GetTableLockedAndClearForTest() (map[int64]struct{}, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	return h.loadLockedTablesWithoutLock()
+	return h.queryLockedTablesWithoutLock()
 }

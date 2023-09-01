@@ -178,31 +178,34 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 		filteredTasks       []*analyzeTask
 		skippedTables       []string
 		needAnalyzeTableCnt uint
-		tids                = make(map[int64]struct{})
+		tids                = make([]int64, 0, len(tasks))
+		taskMap             = make(map[int64]*analyzeTask, len(tasks))
 	)
 
 	for _, task := range tasks {
 		tableID := getTableIDFromTask(task)
-		isLocked, err := statsHandle.IsTableLocked(tableID)
-		if err != nil {
-			return nil, 0, nil, err
-		}
+		tids = append(tids, tableID)
+		taskMap[tableID] = task
+	}
+
+	// Check the locked tables in one transaction.
+	lockedStatuses, err := statsHandle.QueryTablesLockedStatuses(tids...)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
+	for tid, isLocked := range lockedStatuses {
 		if !isLocked {
-			filteredTasks = append(filteredTasks, task)
-		}
-		if _, ok := tids[tableID]; !ok {
-			if isLocked {
-				tbl, ok := infoSchema.TableByID(tableID)
-				if !ok {
-					// Ignore this table because it may have been dropped.
-					logutil.BgLogger().Warn("Unknown table ID in analyze task", zap.Int64("tid", tableID))
-				} else {
-					skippedTables = append(skippedTables, tbl.Meta().Name.L)
-				}
+			filteredTasks = append(filteredTasks, taskMap[tid])
+			needAnalyzeTableCnt++
+		} else {
+			tbl, ok := infoSchema.TableByID(tid)
+			if !ok {
+				// Ignore this table because it may have been dropped.
+				logutil.BgLogger().Warn("Unknown table ID in analyze task", zap.Int64("tid", tid))
 			} else {
-				needAnalyzeTableCnt++
+				skippedTables = append(skippedTables, tbl.Meta().Name.L)
 			}
-			tids[tableID] = struct{}{}
 		}
 	}
 

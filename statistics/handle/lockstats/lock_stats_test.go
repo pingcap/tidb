@@ -77,38 +77,3 @@ func TestGenerateDuplicateTablesMessage(t *testing.T) {
 		})
 	}
 }
-
-func TestLockTableIndexOf(t *testing.T) {
-	tests := []struct {
-		name          string
-		tableLocked   []int64
-		tableID       int64
-		expectedIndex int
-	}{
-		{
-			name:          "no table locked",
-			tableLocked:   []int64{},
-			tableID:       1,
-			expectedIndex: -1,
-		},
-		{
-			name:          "table locked",
-			tableLocked:   []int64{1, 2, 3},
-			tableID:       1,
-			expectedIndex: 0,
-		},
-		{
-			name:          "table not locked",
-			tableLocked:   []int64{1, 2, 3},
-			tableID:       4,
-			expectedIndex: -1,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			index := lockTableIndexOf(tt.tableLocked, tt.tableID)
-			require.Equal(t, tt.expectedIndex, index)
-		})
-	}
-}

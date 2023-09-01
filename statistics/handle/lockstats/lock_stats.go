@@ -64,7 +64,7 @@ func AddLockedTables(exec sqlexec.SQLExecutor, tids []int64, pids []int64, table
 	}()
 
 	// Load tables to check duplicate before insert.
-	tableLocked, err := LoadLockedTables(ctx, exec)
+	lockedTables, err := QueryLockedTables(ctx, exec)
 	if err != nil {
 		return "", err
 	}
@@ -73,24 +73,24 @@ func AddLockedTables(exec sqlexec.SQLExecutor, tids []int64, pids []int64, table
 	statsLogger.Info("lock table", zap.Int64s("tableIDs", tids))
 
 	// Insert locked tables.
+	lockedStatuses := GetTablesLockedStatuses(lockedTables, tids...)
 	for i, tid := range tids {
-		if !IsTableLocked(tableLocked, tid) {
+		if !lockedStatuses[tid] {
 			if err := insertIntoStatsTableLocked(ctx, exec, tid); err != nil {
 				return "", err
 			}
-			tableLocked = append(tableLocked, tid)
 		} else {
 			skippedTables = append(skippedTables, tables[i].Schema.L+"."+tables[i].Name.L)
 		}
 	}
 
 	// Insert related partitions while don't warning duplicate partitions.
-	for _, tid := range pids {
-		if !IsTableLocked(tableLocked, tid) {
-			if err := insertIntoStatsTableLocked(ctx, exec, tid); err != nil {
+	lockedStatuses = GetTablesLockedStatuses(lockedTables, pids...)
+	for _, pid := range pids {
+		if !lockedStatuses[pid] {
+			if err := insertIntoStatsTableLocked(ctx, exec, pid); err != nil {
 				return "", err
 			}
-			tableLocked = append(tableLocked, tid)
 		}
 	}
 
@@ -127,8 +127,9 @@ func insertIntoStatsTableLocked(ctx context.Context, exec sqlexec.SQLExecutor, t
 	return nil
 }
 
-// LoadLockedTables loads locked tables from mysql.stats_table_locked.
-func LoadLockedTables(ctx context.Context, exec sqlexec.SQLExecutor) ([]int64, error) {
+// QueryLockedTables loads locked tables from mysql.stats_table_locked.
+// Return it as a map for fast query.
+func QueryLockedTables(ctx context.Context, exec sqlexec.SQLExecutor) (map[int64]struct{}, error) {
 	recordSet, err := exec.ExecuteInternal(ctx, "SELECT table_id FROM mysql.stats_table_locked")
 	if err != nil {
 		return nil, err
@@ -137,26 +138,26 @@ func LoadLockedTables(ctx context.Context, exec sqlexec.SQLExecutor) ([]int64, e
 	if err != nil {
 		return nil, err
 	}
-	tableLocked := make([]int64, 0, len(rows))
+	tableLocked := make(map[int64]struct{}, len(rows))
 	for _, row := range rows {
-		tableLocked = append(tableLocked, row.GetInt64(0))
+		tableLocked[row.GetInt64(0)] = struct{}{}
 	}
 	return tableLocked, nil
 }
 
-// IsTableLocked check whether table is locked
-func IsTableLocked(tableLocked []int64, tableID int64) bool {
-	return lockTableIndexOf(tableLocked, tableID) > -1
-}
+// GetTablesLockedStatuses check whether table is locked.
+func GetTablesLockedStatuses(tableLocked map[int64]struct{}, tableIDs ...int64) map[int64]bool {
+	lockedTableStatus := make(map[int64]bool, len(tableIDs))
 
-// lockTableIndexOf get the locked table's index in the array
-func lockTableIndexOf(tableLocked []int64, tableID int64) int {
-	for idx, id := range tableLocked {
-		if id == tableID {
-			return idx
+	for _, tid := range tableIDs {
+		if _, ok := tableLocked[tid]; ok {
+			lockedTableStatus[tid] = true
+		} else {
+			lockedTableStatus[tid] = false
 		}
 	}
-	return -1
+
+	return lockedTableStatus
 }
 
 // finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
