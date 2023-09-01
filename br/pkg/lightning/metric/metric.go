@@ -31,8 +31,8 @@ const (
 
 	StateTotalRestore   = "total_restore" // total source data bytes needs to restore
 	StateRestored       = "restored"      // source data bytes restored during restore engine
-	StateRestoreWritten = "written"       // bytes written during restore engine
-	StateImported       = "imported"      // bytes imported during import engine
+	StateRestoreWritten = "written"       // kv bytes written during restore engine
+	StateImported       = "imported"      // kv bytes imported during import engine
 
 	ProgressPhaseTotal   = "total"   // total restore progress(not include post-process, like checksum and analyze)
 	ProgressPhaseRestore = "restore" // restore engine progress
@@ -61,11 +61,21 @@ const (
 // they will have different namespace.
 // metrics here will an additional task-id const-label when used for import-into.
 type Common struct {
-	ChunkCounter                 *prometheus.CounterVec
-	BytesCounter                 *prometheus.CounterVec
-	RowsCounter                  *prometheus.CounterVec
-	RowReadSecondsHistogram      prometheus.Histogram
-	RowReadBytesHistogram        prometheus.Histogram
+	ChunkCounter *prometheus.CounterVec
+	// BytesCounter records the total bytes processed.
+	// it has a state label, values includes:
+	// 	- total_restore: total source file bytes needs to restore, it's constant.
+	// 	- restored: source file bytes encoded and sorted.
+	// 	- written: kv bytes written during encode & sort.
+	// 	- imported: kv bytes imported during import engine.
+	BytesCounter *prometheus.CounterVec
+	RowsCounter  *prometheus.CounterVec
+	// RowReadSecondsHistogram records the time spent on reading a batch of rows.
+	// for each row, the time includes time spend on reading from file,
+	// decompress if needed, and parsing into row data.
+	// then sum up all rows in a batch, and record the time.
+	RowReadSecondsHistogram prometheus.Histogram
+	// RowEncodeSecondsHistogram records the time spent on encoding a batch of rows.
 	RowEncodeSecondsHistogram    prometheus.Histogram
 	BlockDeliverSecondsHistogram prometheus.Histogram
 	BlockDeliverBytesHistogram   *prometheus.HistogramVec
@@ -110,14 +120,6 @@ func NewCommon(factory promutil.Factory, namespace string) *Common {
 				Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 7),
 			}),
 
-		RowReadBytesHistogram: factory.NewHistogram(
-			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Name:      "row_read_bytes",
-				Help:      "number of bytes being read out from data source",
-				Buckets:   prometheus.ExponentialBuckets(1024, 2, 8),
-			}),
-
 		RowEncodeSecondsHistogram: factory.NewHistogram(
 			prometheus.HistogramOpts{
 				Namespace: namespace,
@@ -157,7 +159,6 @@ func (c *Common) RegisterTo(r promutil.Registry) {
 		c.BytesCounter,
 		c.RowsCounter,
 		c.RowReadSecondsHistogram,
-		c.RowReadBytesHistogram,
 		c.RowEncodeSecondsHistogram,
 		c.BlockDeliverSecondsHistogram,
 		c.BlockDeliverBytesHistogram,
@@ -171,7 +172,6 @@ func (c *Common) UnregisterFrom(r promutil.Registry) {
 	r.Unregister(c.BytesCounter)
 	r.Unregister(c.RowsCounter)
 	r.Unregister(c.RowReadSecondsHistogram)
-	r.Unregister(c.RowReadBytesHistogram)
 	r.Unregister(c.RowEncodeSecondsHistogram)
 	r.Unregister(c.BlockDeliverSecondsHistogram)
 	r.Unregister(c.BlockDeliverBytesHistogram)
@@ -189,10 +189,14 @@ type Metrics struct {
 	ChunkParserReadBlockSecondsHistogram prometheus.Histogram
 	ApplyWorkerSecondsHistogram          *prometheus.HistogramVec
 	RowKVDeliverSecondsHistogram         prometheus.Histogram
-	ChecksumSecondsHistogram             prometheus.Histogram
-	SSTSecondsHistogram                  *prometheus.HistogramVec
-	LocalStorageUsageBytesGauge          *prometheus.GaugeVec
-	ProgressGauge                        *prometheus.GaugeVec
+	// RowReadBytesHistogram records the number of bytes read from data source
+	// for a batch of rows.
+	// it's a little duplicate with RowsCounter of state = "restored".
+	RowReadBytesHistogram       prometheus.Histogram
+	ChecksumSecondsHistogram    prometheus.Histogram
+	SSTSecondsHistogram         *prometheus.HistogramVec
+	LocalStorageUsageBytesGauge *prometheus.GaugeVec
+	ProgressGauge               *prometheus.GaugeVec
 	*Common
 }
 
@@ -266,6 +270,14 @@ func NewMetrics(factory promutil.Factory) *Metrics {
 				Help:      "time needed to send kvs to deliver loop",
 				Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
 			}),
+
+		RowReadBytesHistogram: factory.NewHistogram(
+			prometheus.HistogramOpts{
+				Namespace: lightningNamespace,
+				Name:      "row_read_bytes",
+				Help:      "number of bytes being read out from data source",
+				Buckets:   prometheus.ExponentialBuckets(1024, 2, 8),
+			}),
 		ChecksumSecondsHistogram: factory.NewHistogram(
 			prometheus.HistogramOpts{
 				Namespace: lightningNamespace,
@@ -310,6 +322,7 @@ func (m *Metrics) RegisterTo(r promutil.Registry) {
 		m.ChunkParserReadBlockSecondsHistogram,
 		m.ApplyWorkerSecondsHistogram,
 		m.RowKVDeliverSecondsHistogram,
+		m.RowReadBytesHistogram,
 		m.ChecksumSecondsHistogram,
 		m.SSTSecondsHistogram,
 		m.LocalStorageUsageBytesGauge,
@@ -329,6 +342,7 @@ func (m *Metrics) UnregisterFrom(r promutil.Registry) {
 	r.Unregister(m.ChunkParserReadBlockSecondsHistogram)
 	r.Unregister(m.ApplyWorkerSecondsHistogram)
 	r.Unregister(m.RowKVDeliverSecondsHistogram)
+	r.Unregister(m.RowReadBytesHistogram)
 	r.Unregister(m.ChecksumSecondsHistogram)
 	r.Unregister(m.SSTSecondsHistogram)
 	r.Unregister(m.LocalStorageUsageBytesGauge)

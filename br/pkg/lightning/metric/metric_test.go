@@ -17,6 +17,7 @@ package metric_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
@@ -53,9 +54,34 @@ func TestRecordEngineCount(t *testing.T) {
 }
 
 func TestMetricsRegister(t *testing.T) {
-	m := metric.NewMetrics(promutil.NewDefaultFactory())
+	getMetricCount := func(r *prometheus.Registry) int {
+		ch := make(chan *prometheus.Desc)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r.Describe(ch)
+			close(ch)
+		}()
+		var count int
+		for range ch {
+			count++
+		}
+		wg.Wait()
+		return count
+	}
+	cm := metric.NewCommon(promutil.NewDefaultFactory(), "test")
 	r := prometheus.NewRegistry()
+	require.Zero(t, getMetricCount(r))
+	cm.RegisterTo(r)
+	require.Equal(t, 8, getMetricCount(r))
+	cm.UnregisterFrom(r)
+	require.Zero(t, getMetricCount(r))
+
+	m := metric.NewMetrics(promutil.NewDefaultFactory())
+	r = prometheus.NewRegistry()
 	m.RegisterTo(r)
+	require.Equal(t, 22, getMetricCount(r))
 	assert.True(t, r.Unregister(m.ImporterEngineCounter))
 	assert.True(t, r.Unregister(m.IdleWorkersGauge))
 	assert.True(t, r.Unregister(m.KvEncoderCounter))
@@ -78,6 +104,7 @@ func TestMetricsRegister(t *testing.T) {
 	assert.True(t, r.Unregister(m.SSTSecondsHistogram))
 	assert.True(t, r.Unregister(m.LocalStorageUsageBytesGauge))
 	assert.True(t, r.Unregister(m.ProgressGauge))
+	require.Zero(t, getMetricCount(r))
 }
 
 func TestMetricsUnregister(t *testing.T) {

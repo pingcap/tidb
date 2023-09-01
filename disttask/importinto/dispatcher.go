@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/planner"
@@ -220,6 +221,10 @@ func (dsp *importDispatcherExt) OnNextStage(ctx context.Context, handle dispatch
 	var nextStep int64
 	switch gTask.Step {
 	case proto.StepInit:
+		if metrics, ok := metric.GetCommonMetric(ctx); ok {
+			metrics.BytesCounter.WithLabelValues(metric.StateTotalRestore).Add(float64(taskMeta.Plan.TotalFileSize))
+		}
+
 		if err := preProcess(ctx, handle, gTask, taskMeta, logger); err != nil {
 			return nil, err
 		}
