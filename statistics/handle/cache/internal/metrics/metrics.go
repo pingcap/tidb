@@ -44,6 +44,13 @@ func init() {
 
 // initMetricsVars init copr metrics vars.
 func initMetricsVars() {
+	metrics.StatsCacheCounter = metrics.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "stats_cache_op",
+			Help:      "Counter for statsCache operation",
+		}, []string{metrics.LblType})
 	MissCounter = metrics.StatsCacheCounter.WithLabelValues("miss")
 	HitCounter = metrics.StatsCacheCounter.WithLabelValues("hit")
 	UpdateCounter = metrics.StatsCacheCounter.WithLabelValues("update")

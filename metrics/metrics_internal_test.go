@@ -12,29 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metrics_test
+package metrics
 
 import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/parser/terror"
-	_ "github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/stretchr/testify/require"
 )
 
-func TestMetrics(_ *testing.T) {
-	// Make sure it doesn't panic.
-	metrics.PanicCounter.WithLabelValues(metrics.LabelDomain).Inc()
-}
-
-func TestRegisterMetrics(_ *testing.T) {
-	// Make sure it doesn't panic.
-	metrics.RegisterMetrics()
-}
-
-func TestExecuteErrorToLabel(t *testing.T) {
-	require.Equal(t, `unknown`, metrics.ExecuteErrorToLabel(errors.New("test")))
-	require.Equal(t, `global:2`, metrics.ExecuteErrorToLabel(terror.ErrResultUndetermined))
+func TestRetLabel(t *testing.T) {
+	require.Equal(t, opSucc, RetLabel(nil))
+	require.Equal(t, opFailed, RetLabel(errors.New("test error")))
 }
