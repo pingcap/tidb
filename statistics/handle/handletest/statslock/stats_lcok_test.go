@@ -76,7 +76,7 @@ func TestStatsLockAndUnlockTable(t *testing.T) {
 	require.Equal(t, int64(2), tblStats2.RealtimeCount)
 }
 
-func TestStatsLockTableRepeatedly(t *testing.T) {
+func TestStatsLockTableAndUnlockTableRepeatedly(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -113,7 +113,7 @@ func TestStatsLockTableRepeatedly(t *testing.T) {
 	// Lock the table again and check the warning.
 	tableLocked1 := handle.GetTableLockedAndClearForTest()
 	tk.MustExec("lock stats t")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 skip locking locked table: test.t",
 	))
 
@@ -121,6 +121,22 @@ func TestStatsLockTableRepeatedly(t *testing.T) {
 	require.Nil(t, err)
 	tableLocked2 := handle.GetTableLockedAndClearForTest()
 	require.Equal(t, tableLocked1, tableLocked2)
+
+	// Unlock the table.
+	tk.MustExec("unlock stats t")
+	rows = tk.MustQuery("select count(*) from mysql.stats_table_locked").Rows()
+	num, _ = strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, num, 0)
+
+	tk.MustExec("analyze table test.t")
+	tblStats2 := handle.GetTableStats(tbl.Meta())
+	require.Equal(t, int64(2), tblStats2.RealtimeCount)
+
+	// Unlock the table again and check the warning.
+	tk.MustExec("unlock stats t")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 skip unlocking unlocked table: test.t",
+	))
 }
 
 func TestStatsLockAndUnlockTables(t *testing.T) {

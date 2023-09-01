@@ -48,16 +48,15 @@ var (
 	retrySQLInterval           = 500 * time.Millisecond
 )
 
-// TaskHandle provides the interface for operations needed by task flow handles.
+// TaskHandle provides the interface for operations needed by Dispatcher.
+// Then we can use dispatcher's function in Dispatcher interface.
 type TaskHandle interface {
-	// GetAllSchedulerIDs gets handles the task's all scheduler instances.
-	GetAllSchedulerIDs(ctx context.Context, handle TaskFlowHandle, task *proto.Task) ([]string, error)
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(taskID int64, step int64) ([][]byte, error)
 	storage.SessionExecutor
 }
 
-// Manage the lifetime of a task
+// Manage the lifetime of a task.
 // including submitting subtasks and updating the status of a task.
 type dispatcher struct {
 	ctx      context.Context
@@ -65,20 +64,30 @@ type dispatcher struct {
 	task     *proto.Task
 	logCtx   context.Context
 	serverID string
+	impl     Dispatcher
 }
 
 // MockOwnerChange mock owner change in tests.
 var MockOwnerChange func()
 
-func newDispatcher(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) *dispatcher {
+func newDispatcher(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) (*dispatcher, error) {
 	logPrefix := fmt.Sprintf("task_id: %d, task_type: %s, server_id: %s", task.ID, task.Type, serverID)
-	return &dispatcher{
+	impl := GetTaskDispatcher(task.Type)
+	dsp := &dispatcher{
 		ctx:      ctx,
 		taskMgr:  taskMgr,
 		task:     task,
 		logCtx:   logutil.WithKeyValue(context.Background(), "dispatcher", logPrefix),
 		serverID: serverID,
+		impl:     impl,
 	}
+	if dsp.impl == nil {
+		logutil.BgLogger().Warn("gen dispatcher impl failed, this type impl doesn't register")
+		dsp.task.Error = errors.New("unsupported task type")
+		// state transform: pending -> failed.
+		return nil, dsp.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
+	}
+	return dsp, nil
 }
 
 // ExecuteTask start to schedule a task.
@@ -170,7 +179,7 @@ func (d *dispatcher) onReverting() error {
 		return d.updateTask(proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 	// Wait all subtasks in this stage finished.
-	GetTaskFlowHandle(d.task.Type).OnTicker(d.ctx, d.task)
+	d.impl.OnTick(d.ctx, d.task)
 	logutil.Logger(d.logCtx).Debug("on reverting state, this task keeps current state", zap.String("state", d.task.State))
 	return nil
 }
@@ -207,7 +216,7 @@ func (d *dispatcher) onRunning() error {
 		return d.onNextStage()
 	}
 	// Wait all subtasks in this stage finished.
-	GetTaskFlowHandle(d.task.Type).OnTicker(d.ctx, d.task)
+	d.impl.OnTick(d.ctx, d.task)
 	logutil.Logger(d.logCtx).Debug("on running state, this task keeps current state", zap.String("state", d.task.State))
 	return nil
 }
@@ -245,27 +254,20 @@ func (d *dispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, 
 }
 
 func (d *dispatcher) onErrHandlingStage(receiveErr []error) error {
-	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
 	// 1. generate the needed task meta and subTask meta (dist-plan).
-	handle := GetTaskFlowHandle(d.task.Type)
-	if handle == nil {
-		logutil.Logger(d.logCtx).Warn("gen task flow handle failed, this type handle doesn't register")
-		// state transform: pending --> running --> canceling --> failed.
-		return d.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
-	}
-	meta, err := handle.ProcessErrFlow(d.ctx, d, d.task, receiveErr)
+	meta, err := d.impl.OnErrStage(d.ctx, d, d.task, receiveErr)
 	if err != nil {
-		// processErrFlow must be retryable, if not, there will have resource leak for tasks.
+		// OnErrStage must be retryable, if not, there will have resource leak for tasks.
 		logutil.Logger(d.logCtx).Warn("handle error failed", zap.Error(err))
 		return err
 	}
 
 	// 2. dispatch revert dist-plan to EligibleInstances.
-	return d.dispatchSubTask4Revert(d.task, handle, meta)
+	return d.dispatchSubTask4Revert(d.task, meta)
 }
 
-func (d *dispatcher) dispatchSubTask4Revert(task *proto.Task, handle TaskFlowHandle, meta []byte) error {
-	instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, handle, task)
+func (d *dispatcher) dispatchSubTask4Revert(task *proto.Task, meta []byte) error {
+	instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, task)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("get task's all instances failed", zap.Error(err))
 		return err
@@ -280,22 +282,15 @@ func (d *dispatcher) dispatchSubTask4Revert(task *proto.Task, handle TaskFlowHan
 
 func (d *dispatcher) onNextStage() error {
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
-	handle := GetTaskFlowHandle(d.task.Type)
-	if handle == nil {
-		logutil.Logger(d.logCtx).Warn("gen task flow handle failed, this type handle doesn't register", zap.String("type", d.task.Type))
-		d.task.Error = errors.New("unsupported task type")
-		// state transform: pending -> failed.
-		return d.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
-	}
-	metas, err := handle.ProcessNormalFlow(d.ctx, d, d.task)
+	metas, err := d.impl.OnNextStage(d.ctx, d, d.task)
 	if err != nil {
-		return d.handlePlanErr(handle, err)
+		return d.handlePlanErr(err)
 	}
 	// 2. dispatch dist-plan to EligibleInstances.
-	return d.dispatchSubTask(d.task, handle, metas)
+	return d.dispatchSubTask(d.task, metas)
 }
 
-func (d *dispatcher) dispatchSubTask(task *proto.Task, handle TaskFlowHandle, metas [][]byte) error {
+func (d *dispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error {
 	logutil.Logger(d.logCtx).Info("dispatch subtasks", zap.String("state", d.task.State), zap.Uint64("concurrency", d.task.Concurrency), zap.Int("subtasks", len(metas)))
 	// 1. Adjust the global task's concurrency.
 	if task.Concurrency == 0 {
@@ -327,7 +322,7 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, handle TaskFlowHandle, me
 	}
 
 	// 3. select all available TiDB nodes for task.
-	serverNodes, err := handle.GetEligibleInstances(d.ctx, task)
+	serverNodes, err := d.impl.GetEligibleInstances(d.ctx, task)
 	logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
 
 	if err != nil {
@@ -347,9 +342,9 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, handle TaskFlowHandle, me
 	return d.updateTask(proto.TaskStateRunning, subTasks, retrySQLTimes)
 }
 
-func (d *dispatcher) handlePlanErr(handle TaskFlowHandle, err error) error {
+func (d *dispatcher) handlePlanErr(err error) error {
 	logutil.Logger(d.logCtx).Warn("generate plan failed", zap.Error(err), zap.String("state", d.task.State))
-	if handle.IsRetryableErr(err) {
+	if d.impl.IsRetryableErr(err) {
 		return err
 	}
 	d.task.Error = err
@@ -375,8 +370,8 @@ func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error)
 }
 
 // GetAllSchedulerIDs gets all the scheduler IDs.
-func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, handle TaskFlowHandle, task *proto.Task) ([]string, error) {
-	serverInfos, err := handle.GetEligibleInstances(ctx, task)
+func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, task *proto.Task) ([]string, error) {
+	serverInfos, err := d.impl.GetEligibleInstances(ctx, task)
 	if err != nil {
 		return nil, err
 	}
