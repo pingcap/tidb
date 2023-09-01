@@ -349,7 +349,7 @@ func (stm *TaskManager) UpdateErrorToSubtask(tidbID string, err error) error {
 }
 
 // PrintSubtaskInfo log the subtask info by taskKey.
-func (stm *TaskManager) PrintSubtaskInfo(taskKey int) {
+func (stm *TaskManager) PrintSubtaskInfo(taskKey int64) {
 	rs, _ := stm.executeSQLWithNewSession(stm.ctx,
 		"select * from mysql.tidb_background_subtask where task_key = %?", taskKey)
 
@@ -514,13 +514,13 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, prevState string) (bool, error) {
 	retryable := true
 	err := stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
-		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %? where id = %? and state = %?",
-			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Meta, serializeErr(gTask.Error), gTask.ID, prevState)
+		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %?, dispatching = %? where id = %? and state = %?",
+			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Meta, serializeErr(gTask.Error), gTask.Dispatching, gTask.ID, prevState)
 		if err != nil {
 			return err
 		}
 
-		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 && !gTask.Dispatching {
 			retryable = false
 			return errors.New("invalid task state transform, state already changed")
 		}

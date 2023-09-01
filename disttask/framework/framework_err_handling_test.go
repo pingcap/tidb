@@ -61,6 +61,10 @@ func (p *planErrDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHand
 	return nil, nil
 }
 
+func (*planErrDispatcher) OnNextStageBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) (subtaskMetas [][]byte, err error) {
+	return nil, nil
+}
+
 func (p *planErrDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	if p.callTime == 1 {
 		p.callTime++
@@ -85,6 +89,10 @@ func (*planNotRetryableErrDispatcher) OnTick(_ context.Context, _ *proto.Task) {
 
 func (p *planNotRetryableErrDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	return nil, errors.New("not retryable err")
+}
+
+func (*planNotRetryableErrDispatcher) OnNextStageBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) (subtaskMetas [][]byte, err error) {
+	return nil, nil
 }
 
 func (*planNotRetryableErrDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {

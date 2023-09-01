@@ -49,6 +49,10 @@ func (*rollbackDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandl
 	return nil, nil
 }
 
+func (*rollbackDispatcher) OnNextStageBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) (subtaskMetas [][]byte, err error) {
+	return nil, nil
+}
+
 func (*rollbackDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	return []byte("rollbacktask1"), nil
 }

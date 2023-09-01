@@ -143,9 +143,6 @@ func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error
 			s.onError(err)
 			break
 		}
-		if subtask == nil {
-			break
-		}
 		s.startSubtask(subtask.ID)
 		if err := s.getError(); err != nil {
 			break

@@ -282,12 +282,51 @@ func (d *dispatcher) dispatchSubTask4Revert(task *proto.Task, meta []byte) error
 
 func (d *dispatcher) onNextStage() error {
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
-	metas, err := d.impl.OnNextStage(d.ctx, d, d.task)
-	if err != nil {
-		return d.handlePlanErr(err)
+	d.task.EnableDynamic = true
+	if d.task.EnableDynamic {
+		// dynamic dispatch subtasks.
+		d.task.Dispatching = true
+		err := d.updateTask(proto.TaskStateRunning, nil, retrySQLTimes)
+		if err != nil {
+			return err
+		}
+		firstTime := true
+		for {
+			metas, err := d.impl.OnNextStageBatch(d.ctx, d, d.task)
+			if len(metas) == 0 {
+				if firstTime == true {
+					logutil.Logger(d.logCtx).Info("finish the task")
+					d.task.Dispatching = false
+					d.task.StateUpdateTime = time.Now().UTC()
+					// Write the global task meta into the storage.
+					err := d.updateTask(proto.TaskStateSucceed, nil, retrySQLTimes)
+					if err != nil {
+						logutil.Logger(d.logCtx).Warn("update task failed", zap.Error(err))
+						return err
+					}
+					return nil
+				} else {
+					d.task.Dispatching = false
+					return d.updateTask(proto.TaskStateRunning, nil, retrySQLTimes)
+				}
+			}
+			firstTime = false
+			// dispatch batch of subtasks to EligibleInstances.
+			err = d.dispatchSubTask(d.task, metas)
+			if err != nil {
+				d.task.Dispatching = false
+				return d.updateTask(proto.TaskStateRunning, nil, retrySQLTimes)
+			}
+		}
+	} else {
+		// dispatch all subtasks.
+		metas, err := d.impl.OnNextStage(d.ctx, d, d.task)
+		if err != nil {
+			return d.handlePlanErr(err)
+		}
+		// 2. dispatch dist-plan to EligibleInstances.
+		return d.dispatchSubTask(d.task, metas)
 	}
-	// 2. dispatch dist-plan to EligibleInstances.
-	return d.dispatchSubTask(d.task, metas)
 }
 
 func (d *dispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error {

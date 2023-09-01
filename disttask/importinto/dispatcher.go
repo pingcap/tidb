@@ -273,6 +273,10 @@ func (dsp *importDispatcher) OnNextStage(ctx context.Context, handle dispatcher.
 	}
 }
 
+func (*importDispatcher) OnNextStageBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) (subtaskMetas [][]byte, err error) {
+	return nil, nil
+}
+
 func (dsp *importDispatcher) OnErrStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) ([]byte, error) {
 	logger := logutil.BgLogger().With(
 		zap.String("type", gTask.Type),

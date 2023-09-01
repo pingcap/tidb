@@ -578,6 +578,7 @@ const (
 		state_update_time TIMESTAMP,
 		meta LONGBLOB,
 		concurrency INT(11),
+		dispatching boolean,
 		step INT(11),
 		error BLOB,
 		key(state),

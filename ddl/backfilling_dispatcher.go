@@ -111,6 +111,10 @@ func (h *backfillingDispatcher) OnNextStage(ctx context.Context, _ dispatcher.Ta
 	}
 }
 
+func (*backfillingDispatcher) OnNextStageBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) (subtaskMetas [][]byte, err error) {
+	return nil, nil
+}
+
 // OnErrStage generate error handling stage's plan.
 func (*backfillingDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, receiveErr []error) (meta []byte, err error) {
 	// We do not need extra meta info when rolling back

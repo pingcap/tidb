@@ -53,6 +53,10 @@ func (*testDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, t
 	return nil, nil
 }
 
+func (*testDispatcher) OnNextStageBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) (subtaskMetas [][]byte, err error) {
+	return nil, nil
+}
+
 func (*testDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	return nil, nil
 }
@@ -90,6 +94,10 @@ func (n *numberExampleDispatcher) OnNextStage(_ context.Context, _ dispatcher.Ta
 		return nil, errors.New("unknown step")
 	}
 	return metas, nil
+}
+
+func (*numberExampleDispatcher) OnNextStageBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) (subtaskMetas [][]byte, err error) {
+	return nil, nil
 }
 
 func (n *numberExampleDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {

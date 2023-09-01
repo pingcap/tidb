@@ -53,13 +53,15 @@ const (
 	StepTwo  int64 = 2
 )
 
-// Task represents the task of distribute framework.
+// Task represents the task of distributed framework.
 type Task struct {
-	ID    int64
-	Key   string
-	Type  string
-	State string
-	Step  int64
+	ID            int64
+	Key           string
+	Type          string
+	State         string
+	Step          int64
+	EnableDynamic bool
+	Dispatching   bool
 	// DispatcherID is not used now.
 	DispatcherID    string
 	Concurrency     uint64
