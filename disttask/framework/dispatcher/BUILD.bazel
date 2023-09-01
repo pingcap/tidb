@@ -5,8 +5,7 @@ go_library(
     srcs = [
         "dispatcher.go",
         "dispatcher_manager.go",
-        "dispatcher_mock.go",
-        "register.go",
+        "interface.go",
     ],
     importpath = "github.com/pingcap/tidb/disttask/framework/dispatcher",
     visibility = ["//visibility:public"],
@@ -24,7 +23,6 @@ go_library(
         "//util/syncutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//mock",
         "@org_golang_x_exp//maps",
         "@org_uber_go_zap//:zap",
     ],

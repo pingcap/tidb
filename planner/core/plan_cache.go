@@ -44,7 +44,7 @@ import (
 )
 
 var (
-	// PlanCacheKeyTestIssue43667 is for test.
+	// PlanCacheKeyTestIssue43667 is only for test.
 	PlanCacheKeyTestIssue43667 struct{}
 )
 

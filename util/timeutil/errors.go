@@ -12,24 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dispatcher
+package timeutil
 
 import (
-	"context"
-
-	"github.com/stretchr/testify/mock"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
-// MockHandle is used to mock the Handle.
-type MockHandle struct {
-	mock.Mock
-}
-
-// GetAllSchedulerIDs implements the Handle.GetAllSchedulerIDs interface.
-func (m *MockHandle) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error) {
-	args := m.Called(ctx, gTaskID)
-	if args.Error(1) != nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]string), nil
-}
+// ErrUnknownTimeZone indicates timezone is unknown.
+var ErrUnknownTimeZone = dbterror.ClassVariable.NewStd(mysql.ErrUnknownTimeZone)
