@@ -2109,9 +2109,10 @@ func RunDistributedGCJob(ctx context.Context, lockResolver tikv.RegionLockResolv
 // It is exported only for test, do not use it in the production environment.
 func RunResolveLocks(ctx context.Context, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int, usePhysical bool) (bool, error) {
 	gcWorker := &GCWorker{
-		tikvStore: s,
-		uuid:      identifier,
-		pdClient:  pd,
+		tikvStore:    s,
+		uuid:         identifier,
+		pdClient:     pd,
+		lockResolver: tikv.NewRegionLockResolver("test-resolver", s),
 	}
 	return gcWorker.resolveLocks(ctx, safePoint, concurrency, usePhysical)
 }
