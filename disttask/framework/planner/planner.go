@@ -19,6 +19,11 @@ import "github.com/pingcap/tidb/disttask/framework/storage"
 // Planner represents a distribute plan planner.
 type Planner struct{}
 
+// NewPlanner creates a new planer instance.
+func NewPlanner() *Planner {
+	return &Planner{}
+}
+
 // Run runs the distribute plan.
 func (*Planner) Run(planCtx PlanCtx, plan LogicalPlan) (int64, error) {
 	globalTaskManager, err := storage.GetTaskManager()

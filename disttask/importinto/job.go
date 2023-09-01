@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/disttask/framework/handle"
+	"github.com/pingcap/tidb/disttask/framework/planner"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -185,12 +186,15 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 			EligibleInstances: instances,
 			ChunkMap:          ti.chunkMap,
 		}
-		taskMeta, err2 := logicalPlan.ToTaskMeta()
-		if err2 != nil {
-			return err2
+		planCtx := planner.PlanCtx{
+			Ctx:        ctx,
+			SessionCtx: se,
+			TaskKey:    TaskKey(jobID),
+			TaskType:   proto.ImportInto,
+			ThreadCnt:  int(plan.ThreadCnt),
 		}
-		taskID, err2 = globalTaskManager.AddGlobalTaskWithSession(se, TaskKey(jobID), proto.ImportInto,
-			int(plan.ThreadCnt), taskMeta)
+		p := planner.NewPlanner()
+		taskID, err2 = p.Run(planCtx, logicalPlan)
 		if err2 != nil {
 			return err2
 		}
