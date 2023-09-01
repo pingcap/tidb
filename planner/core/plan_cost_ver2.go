@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -241,8 +242,8 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 
 	indexRows := getCardinality(p.indexPlan, option.CostFlag)
 	tableRows := getCardinality(p.indexPlan, option.CostFlag)
-	indexRowSize := getTblStats(p.indexPlan).GetAvgRowSize(p.SCtx(), p.indexPlan.Schema().Columns, true, false)
-	tableRowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.SCtx(), p.tablePlan.Schema().Columns, false, false)
+	indexRowSize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.indexPlan), p.indexPlan.Schema().Columns, true, false)
+	tableRowSize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	requestFactor := getTaskRequestFactorVer2(p, taskType)
@@ -395,7 +396,12 @@ func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanC
 	}
 
 	rows := getCardinality(p.children[0], option.CostFlag)
-	n := math.Max(1, float64(p.Count+p.Offset))
+	n := max(1, float64(p.Count+p.Offset))
+	if n > 10000 {
+		// It's only used to prevent some extreme cases, e.g. `select * from t order by a limit 18446744073709551615`.
+		// For normal cases, considering that `rows` may be under-estimated, better to keep `n` unchanged.
+		n = min(n, rows)
+	}
 	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)

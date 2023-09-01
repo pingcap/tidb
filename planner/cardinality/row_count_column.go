@@ -30,8 +30,6 @@ func init() {
 	statistics.GetRowCountByColumnRanges = GetRowCountByColumnRanges
 	statistics.GetRowCountByIntColumnRanges = GetRowCountByIntColumnRanges
 	statistics.GetRowCountByIndexRanges = GetRowCountByIndexRanges
-	statistics.EqualRowCountOnColumn = equalRowCountOnColumn
-	statistics.BetweenRowCountOnColumn = betweenRowCountOnColumn
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
@@ -54,7 +52,7 @@ func GetRowCountByColumnRanges(sctx sessionctx.Context, coll *statistics.HistCol
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
 		result, err = getPseudoRowCountByColumnRanges(sc, float64(coll.RealtimeCount), colRanges, 0)
 		if err == nil && sc.EnableOptimizerCETrace && ok {
-			CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats-Pseudo", uint64(result))
+			ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats-Pseudo", uint64(result))
 		}
 		return result, err
 	}
@@ -67,7 +65,7 @@ func GetRowCountByColumnRanges(sctx sessionctx.Context, coll *statistics.HistCol
 	}
 	result, err = GetColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, false)
 	if sc.EnableOptimizerCETrace {
-		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats", uint64(result))
+		ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats", uint64(result))
 	}
 	return result, errors.Trace(err)
 }
@@ -99,7 +97,7 @@ func GetRowCountByIntColumnRanges(sctx sessionctx.Context, coll *statistics.Hist
 			result = getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.RealtimeCount))
 		}
 		if sc.EnableOptimizerCETrace && ok {
-			CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats-Pseudo", uint64(result))
+			ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats-Pseudo", uint64(result))
 		}
 		return result, nil
 	}
@@ -112,7 +110,7 @@ func GetRowCountByIntColumnRanges(sctx sessionctx.Context, coll *statistics.Hist
 	}
 	result, err = GetColumnRowCount(sctx, c, intRanges, coll.RealtimeCount, coll.ModifyCount, true)
 	if sc.EnableOptimizerCETrace {
-		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats", uint64(result))
+		ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats", uint64(result))
 	}
 	return result, errors.Trace(err)
 }
@@ -305,4 +303,61 @@ func betweenRowCountOnColumn(sctx sessionctx.Context, c *statistics.Column, l, r
 		return histBetweenCnt
 	}
 	return float64(c.TopN.BetweenCount(sctx, lowEncoded, highEncoded)) + histBetweenCnt
+}
+
+// functions below are mainly for testing.
+
+// ColumnGreaterRowCount estimates the row count where the column greater than value.
+func ColumnGreaterRowCount(sctx sessionctx.Context, t *statistics.Table, value types.Datum, colID int64) float64 {
+	c, ok := t.Columns[colID]
+	if !ok || c.IsInvalid(sctx, t.Pseudo) {
+		return float64(t.RealtimeCount) / pseudoLessRate
+	}
+	return c.GreaterRowCount(value) * c.GetIncreaseFactor(t.RealtimeCount)
+}
+
+// columnLessRowCount estimates the row count where the column less than value. Note that null values are not counted.
+func columnLessRowCount(sctx sessionctx.Context, t *statistics.Table, value types.Datum, colID int64) float64 {
+	c, ok := t.Columns[colID]
+	if !ok || c.IsInvalid(sctx, t.Pseudo) {
+		return float64(t.RealtimeCount) / pseudoLessRate
+	}
+	return c.LessRowCount(sctx, value) * c.GetIncreaseFactor(t.RealtimeCount)
+}
+
+// columnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
+func columnBetweenRowCount(sctx sessionctx.Context, t *statistics.Table, a, b types.Datum, colID int64) (float64, error) {
+	sc := sctx.GetSessionVars().StmtCtx
+	c, ok := t.Columns[colID]
+	if !ok || c.IsInvalid(sctx, t.Pseudo) {
+		return float64(t.RealtimeCount) / pseudoBetweenRate, nil
+	}
+	aEncoded, err := codec.EncodeKey(sc, nil, a)
+	if err != nil {
+		return 0, err
+	}
+	bEncoded, err := codec.EncodeKey(sc, nil, b)
+	if err != nil {
+		return 0, err
+	}
+	count := betweenRowCountOnColumn(sctx, c, a, b, aEncoded, bEncoded)
+	if a.IsNull() {
+		count += float64(c.NullCount)
+	}
+	return count * c.GetIncreaseFactor(t.RealtimeCount), nil
+}
+
+// ColumnEqualRowCount estimates the row count where the column equals to value.
+func ColumnEqualRowCount(sctx sessionctx.Context, t *statistics.Table, value types.Datum, colID int64) (float64, error) {
+	c, ok := t.Columns[colID]
+	if !ok || c.IsInvalid(sctx, t.Pseudo) {
+		return float64(t.RealtimeCount) / pseudoEqualRate, nil
+	}
+	encodedVal, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, value)
+	if err != nil {
+		return 0, err
+	}
+	result, err := equalRowCountOnColumn(sctx, c, value, encodedVal, t.ModifyCount)
+	result *= c.GetIncreaseFactor(t.RealtimeCount)
+	return result, errors.Trace(err)
 }
