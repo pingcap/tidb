@@ -23,9 +23,11 @@ import (
 	"github.com/pingcap/tidb/util/syncutil"
 )
 
-// DispatcherExt is used to control the process operations for each task.
+// Extension is used to control the process operations for each task.
 // it's used to extend functions of BaseDispatcher.
-type DispatcherExt interface {
+// as golang doesn't support inheritance, we use an extension interface to
+// simulate abstract method as in other OO languages.
+type Extension interface {
 	// OnTick is used to handle the ticker event, if business impl need to do some periodical work, you can
 	// do it here, but don't do too much work here, because the ticker interval is small, and it will block
 	// the event is generated every checkTaskRunningInterval, and only when the task NOT FINISHED and NO ERROR.
@@ -48,6 +50,7 @@ type DispatcherExt interface {
 	IsRetryableErr(err error) bool
 }
 
+// FactoryFn is used to create a dispatcher.
 type FactoryFn func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) Dispatcher
 
 var dispatcherFactoryMap = struct {

@@ -136,7 +136,7 @@ type importDispatcherExt struct {
 	disableTiKVImportMode atomic.Bool
 }
 
-var _ dispatcher.DispatcherExt = (*importDispatcherExt)(nil)
+var _ dispatcher.Extension = (*importDispatcherExt)(nil)
 
 func (dsp *importDispatcherExt) OnTick(ctx context.Context, task *proto.Task) {
 	// only switch TiKV mode or register task when task is running

@@ -35,43 +35,43 @@ import (
 )
 
 var (
-	_ dispatcher.DispatcherExt = (*testDispatcher)(nil)
-	_ dispatcher.DispatcherExt = (*numberExampleDispatcher)(nil)
+	_ dispatcher.Extension = (*testDispatcherExt)(nil)
+	_ dispatcher.Extension = (*numberExampleDispatcherExt)(nil)
 )
 
 const (
 	subtaskCnt = 3
 )
 
-type testDispatcher struct{}
+type testDispatcherExt struct{}
 
-func (*testDispatcher) OnTick(_ context.Context, _ *proto.Task) {
+func (*testDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (*testDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (metas [][]byte, err error) {
+func (*testDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (metas [][]byte, err error) {
 	return nil, nil
 }
 
-func (*testDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+func (*testDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	return nil, nil
 }
 
 var mockedAllServerInfos = []*infosync.ServerInfo{}
 
-func (*testDispatcher) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*testDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return mockedAllServerInfos, nil
 }
 
-func (*testDispatcher) IsRetryableErr(error) bool {
+func (*testDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-type numberExampleDispatcher struct{}
+type numberExampleDispatcherExt struct{}
 
-func (*numberExampleDispatcher) OnTick(_ context.Context, _ *proto.Task) {
+func (*numberExampleDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (n *numberExampleDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (metas [][]byte, err error) {
+func (n *numberExampleDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (metas [][]byte, err error) {
 	if task.State == proto.TaskStatePending {
 		task.Step = proto.StepInit
 	}
@@ -91,16 +91,16 @@ func (n *numberExampleDispatcher) OnNextStage(_ context.Context, _ dispatcher.Ta
 	return metas, nil
 }
 
-func (n *numberExampleDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+func (n *numberExampleDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	// Don't handle not.
 	return nil, nil
 }
 
-func (*numberExampleDispatcher) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*numberExampleDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return dispatcher.GenerateSchedulerNodes(ctx)
 }
 
-func (*numberExampleDispatcher) IsRetryableErr(error) bool {
+func (*numberExampleDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
@@ -113,7 +113,7 @@ func MockDispatcherManager(t *testing.T, pool *pools.ResourcePool) (*dispatcher.
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
 		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			mockDispatcher := dsp.MockDispatcher(task)
-			mockDispatcher.Handle = &testDispatcher{}
+			mockDispatcher.Handle = &testDispatcherExt{}
 			return mockDispatcher
 		})
 	return dsp, mgr
@@ -137,7 +137,7 @@ func TestGetInstance(t *testing.T) {
 	// test no server
 	task := &proto.Task{ID: 1, Type: proto.TaskTypeExample}
 	dsp := dspManager.MockDispatcher(task)
-	dsp.Handle = &testDispatcher{}
+	dsp.Handle = &testDispatcherExt{}
 	instanceIDs, err := dsp.GetAllSchedulerIDs(ctx, task)
 	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs when there's no subtask")
 	require.NoError(t, err)
@@ -215,7 +215,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
 		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			mockDispatcher := dsp.MockDispatcher(task)
-			mockDispatcher.Handle = &numberExampleDispatcher{}
+			mockDispatcher.Handle = &numberExampleDispatcherExt{}
 			return mockDispatcher
 		})
 	dsp.Start()

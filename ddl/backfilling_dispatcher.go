@@ -37,10 +37,10 @@ type backfillingDispatcherExt struct {
 	d *ddl
 }
 
-var _ dispatcher.DispatcherExt = (*backfillingDispatcherExt)(nil)
+var _ dispatcher.Extension = (*backfillingDispatcherExt)(nil)
 
 // NewBackfillingDispatcherExt creates a new backfillingDispatcherExt.
-func NewBackfillingDispatcherExt(d DDL) (dispatcher.DispatcherExt, error) {
+func NewBackfillingDispatcherExt(d DDL) (dispatcher.Extension, error) {
 	ddl, ok := d.(*ddl)
 	if !ok {
 		return nil, errors.New("The getDDL result should be the type of *ddl")
@@ -135,7 +135,7 @@ type litBackfillDispatcher struct {
 }
 
 func newLitBackfillDispatcher(ctx context.Context, taskMgr *storage.TaskManager,
-	serverID string, task *proto.Task, handle dispatcher.DispatcherExt) dispatcher.Dispatcher {
+	serverID string, task *proto.Task, handle dispatcher.Extension) dispatcher.Dispatcher {
 	dis := litBackfillDispatcher{
 		BaseDispatcher: dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task),
 	}

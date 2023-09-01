@@ -62,6 +62,7 @@ type Dispatcher interface {
 	ExecuteTask()
 }
 
+// BaseDispatcher is the base struct for Dispatcher.
 type BaseDispatcher struct {
 	ctx      context.Context
 	taskMgr  *storage.TaskManager
@@ -70,12 +71,13 @@ type BaseDispatcher struct {
 	serverID string
 	// golang doesn't support abstract class, we use this to extend the BaseDispatcher.
 	// so each task type can have its own implementation.
-	Handle DispatcherExt
+	Handle Extension
 }
 
 // MockOwnerChange mock owner change in tests.
 var MockOwnerChange func()
 
+// NewBaseDispatcher creates a new BaseDispatcher.
 func NewBaseDispatcher(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) *BaseDispatcher {
 	logPrefix := fmt.Sprintf("task_id: %d, task_type: %s, server_id: %s", task.ID, task.Type, serverID)
 	return &BaseDispatcher{
