@@ -94,7 +94,7 @@ func (j jobStageTp) String() string {
 // to a region. The keyRange may be changed when processing because of writing
 // partial data to TiKV or region split.
 type regionJob struct {
-	keyRange Range
+	keyRange common.Range
 	// TODO: check the keyRange so that it's always included in region
 	region *split.RegionInfo
 	// stage should be updated only by convertStageTo
@@ -189,16 +189,16 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	begin := time.Now()
 	region := j.region.Region
 
-	firstKey, lastKey, err := j.ingestData.GetFirstAndLastKey(j.keyRange.start, j.keyRange.end)
+	firstKey, lastKey, err := j.ingestData.GetFirstAndLastKey(j.keyRange.Start, j.keyRange.End)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if firstKey == nil {
 		j.convertStageTo(ingested)
 		log.FromContext(ctx).Debug("keys within region is empty, skip doIngest",
-			logutil.Key("start", j.keyRange.start),
+			logutil.Key("start", j.keyRange.Start),
 			logutil.Key("regionStart", region.StartKey),
-			logutil.Key("end", j.keyRange.end),
+			logutil.Key("end", j.keyRange.End),
 			logutil.Key("regionEnd", region.EndKey))
 		return nil
 	}
@@ -298,7 +298,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		return nil
 	}
 
-	iter := j.ingestData.NewIter(ctx, j.keyRange.start, j.keyRange.end)
+	iter := j.ingestData.NewIter(ctx, j.keyRange.Start, j.keyRange.End)
 	//nolint: errcheck
 	defer iter.Close()
 
@@ -336,8 +336,8 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 				log.FromContext(ctx).Info("write to tikv partial finish",
 					zap.Int64("count", totalCount),
 					zap.Int64("size", totalSize),
-					logutil.Key("startKey", j.keyRange.start),
-					logutil.Key("endKey", j.keyRange.end),
+					logutil.Key("startKey", j.keyRange.Start),
+					logutil.Key("endKey", j.keyRange.End),
 					logutil.Key("remainStart", remainingStartKey),
 					logutil.Region(region),
 					logutil.Leader(j.region.Leader))
@@ -464,15 +464,15 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 				zap.Stringer("job stage", j.stage),
 				logutil.ShortError(j.lastRetryableErr),
 				j.region.ToZapFields(),
-				logutil.Key("start", j.keyRange.start),
-				logutil.Key("end", j.keyRange.end))
+				logutil.Key("start", j.keyRange.Start),
+				logutil.Key("end", j.keyRange.End))
 			return nil
 		}
 		log.FromContext(ctx).Warn("meet error and will doIngest region again",
 			logutil.ShortError(j.lastRetryableErr),
 			j.region.ToZapFields(),
-			logutil.Key("start", j.keyRange.start),
-			logutil.Key("end", j.keyRange.end))
+			logutil.Key("start", j.keyRange.Start),
+			logutil.Key("end", j.keyRange.End))
 	}
 	return nil
 }

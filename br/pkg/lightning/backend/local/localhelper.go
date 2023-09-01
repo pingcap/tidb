@@ -112,7 +112,7 @@ func (g *TableRegionSizeGetterImpl) GetTableRegionSize(ctx context.Context, tabl
 // Too many split&scatter requests may put a lot of pressure on TiKV and PD.
 func (local *Backend) SplitAndScatterRegionInBatches(
 	ctx context.Context,
-	ranges []Range,
+	ranges []common.Range,
 	needSplit bool,
 	batchCnt int,
 ) error {
@@ -134,7 +134,7 @@ func (local *Backend) SplitAndScatterRegionInBatches(
 // TODO: remove this file and use br internal functions
 func (local *Backend) SplitAndScatterRegionByRanges(
 	ctx context.Context,
-	ranges []Range,
+	ranges []common.Range,
 	needSplit bool,
 ) (err error) {
 	if len(ranges) == 0 {
@@ -150,8 +150,8 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 		}()
 	}
 
-	minKey := codec.EncodeBytes([]byte{}, ranges[0].start)
-	maxKey := codec.EncodeBytes([]byte{}, ranges[len(ranges)-1].end)
+	minKey := codec.EncodeBytes([]byte{}, ranges[0].Start)
+	maxKey := codec.EncodeBytes([]byte{}, ranges[len(ranges)-1].End)
 
 	scatterRegions := make([]*split.RegionInfo, 0)
 	var retryKeys [][]byte
@@ -192,12 +192,12 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 			break
 		}
 
-		needSplitRanges := make([]Range, 0, len(ranges))
+		needSplitRanges := make([]common.Range, 0, len(ranges))
 		startKey := make([]byte, 0)
 		endKey := make([]byte, 0)
 		for _, r := range ranges {
-			startKey = codec.EncodeBytes(startKey, r.start)
-			endKey = codec.EncodeBytes(endKey, r.end)
+			startKey = codec.EncodeBytes(startKey, r.Start)
+			endKey = codec.EncodeBytes(endKey, r.End)
 			idx := sort.Search(len(regions), func(i int) bool {
 				return beforeEnd(startKey, regions[i].Region.EndKey)
 			})
@@ -514,15 +514,15 @@ func (local *Backend) checkRegionScatteredOrReScatter(ctx context.Context, regio
 	}
 }
 
-func getSplitKeysByRanges(ranges []Range, regions []*split.RegionInfo, logger log.Logger) map[uint64][][]byte {
+func getSplitKeysByRanges(ranges []common.Range, regions []*split.RegionInfo, logger log.Logger) map[uint64][][]byte {
 	checkKeys := make([][]byte, 0)
 	var lastEnd []byte
 	for _, rg := range ranges {
-		if !bytes.Equal(lastEnd, rg.start) {
-			checkKeys = append(checkKeys, rg.start)
+		if !bytes.Equal(lastEnd, rg.Start) {
+			checkKeys = append(checkKeys, rg.Start)
 		}
-		checkKeys = append(checkKeys, rg.end)
-		lastEnd = rg.end
+		checkKeys = append(checkKeys, rg.End)
+		lastEnd = rg.End
 	}
 	return getSplitKeys(checkKeys, regions, logger)
 }
@@ -588,22 +588,22 @@ func keyInsideRegion(region *metapb.Region, key []byte) bool {
 	return bytes.Compare(key, region.GetStartKey()) >= 0 && (beforeEnd(key, region.GetEndKey()))
 }
 
-func intersectRange(region *metapb.Region, rg Range) Range {
+func intersectRange(region *metapb.Region, rg common.Range) common.Range {
 	var startKey, endKey []byte
 	if len(region.StartKey) > 0 {
 		_, startKey, _ = codec.DecodeBytes(region.StartKey, []byte{})
 	}
-	if bytes.Compare(startKey, rg.start) < 0 {
-		startKey = rg.start
+	if bytes.Compare(startKey, rg.Start) < 0 {
+		startKey = rg.Start
 	}
 	if len(region.EndKey) > 0 {
 		_, endKey, _ = codec.DecodeBytes(region.EndKey, []byte{})
 	}
-	if beforeEnd(rg.end, endKey) {
-		endKey = rg.end
+	if beforeEnd(rg.End, endKey) {
+		endKey = rg.End
 	}
 
-	return Range{start: startKey, end: endKey}
+	return common.Range{Start: startKey, End: endKey}
 }
 
 // StoreWriteLimiter is used to limit the write rate of a store.

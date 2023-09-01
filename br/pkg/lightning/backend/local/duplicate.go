@@ -673,13 +673,13 @@ func (m *DupeDetector) splitLocalDupTaskByKeys(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ranges := splitRangeBySizeProps(Range{start: task.StartKey, end: task.EndKey}, sizeProps, sizeLimit, keysLimit)
+	ranges := splitRangeBySizeProps(common.Range{Start: task.StartKey, End: task.EndKey}, sizeProps, sizeLimit, keysLimit)
 	newDupTasks := make([]dupTask, 0, len(ranges))
 	for _, r := range ranges {
 		newDupTasks = append(newDupTasks, dupTask{
 			KeyRange: tidbkv.KeyRange{
-				StartKey: r.start,
-				EndKey:   r.end,
+				StartKey: r.Start,
+				EndKey:   r.End,
 			},
 			tableID:   task.tableID,
 			indexInfo: task.indexInfo,
