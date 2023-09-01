@@ -1583,10 +1583,12 @@ func TestFixControl45132(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, key(a))`)
-	for i := 0; i < 10; i++ {
-		tk.MustExec(`insert into t values (1, 1), (1, 1), (1, 1), (1, 1), (1, 1), (1, 1), (1, 1), (1, 1), (1, 1), (1, 1)`)
+	values := make([]string, 0, 101)
+	for i := 0; i < 100; i++ {
+		values = append(values, "(1, 1)")
 	}
-	tk.MustExec(`insert into t values (2, 2)`) // count(1) : count(2) == 100 : 1
+	values = append(values, "(2, 2)") // count(1) : count(2) == 100 : 1
+	tk.MustExec(`insert into t values ` + strings.Join(values, ","))
 	for i := 0; i < 7; i++ {
 		tk.MustExec(`insert into t select * from t`)
 	}
