@@ -313,7 +313,7 @@ func (stm *TaskManager) AddNewSubTask(globalTaskID int64, step int64, designated
 	_, err := stm.executeSQLWithNewSession(stm.ctx, `insert into mysql.tidb_background_subtask
 		(task_key, step, exec_id, meta, state, type, checkpoint, summary)
 		values (%?, %?, %?, %?, %?, %?, %?, %?)`,
-		globalTaskID, step, designatedTiDBID, meta, st, proto.Type2Int(tp), []byte{}, `'{}'`)
+		globalTaskID, step, designatedTiDBID, meta, st, proto.Type2Int(tp), []byte{}, "{}")
 	if err != nil {
 		return err
 	}
@@ -542,7 +542,7 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 			_, err = ExecSQL(stm.ctx, se, `insert into mysql.tidb_background_subtask
 					(step, task_key, exec_id, meta, state, type, checkpoint, summary)
 					values (%?, %?, %?, %?, %?, %?, %?, %?)`,
-				gTask.Step, gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{}, `'{}'`)
+				gTask.Step, gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{}, "{}")
 			if err != nil {
 				return err
 			}
