@@ -152,9 +152,9 @@ func GetTablesLockedStatuses(tableLocked map[int64]struct{}, tableIDs ...int64) 
 	for _, tid := range tableIDs {
 		if _, ok := tableLocked[tid]; ok {
 			lockedTableStatus[tid] = true
-		} else {
-			lockedTableStatus[tid] = false
+			continue
 		}
+		lockedTableStatus[tid] = false
 	}
 
 	return lockedTableStatus
