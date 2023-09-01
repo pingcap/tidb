@@ -229,6 +229,8 @@ func TestDate(t *testing.T) {
 		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
 		{"0000-00-00 00:00:00", 0, 0, nil, 0, nil, nil, nil, nil, nil, nil, nil},
 		{"0000-00-00", 0, 0, nil, 0, nil, nil, nil, nil, nil, nil, nil},
+		{"2007-00-03", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
+		{"2007-02-00", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
 	}
 
 	dtblNil := tblToDtbl(tblNil)
@@ -1749,11 +1751,14 @@ func TestTimestampDiff(t *testing.T) {
 		unit   string
 		t1     string
 		t2     string
+		isNull bool
 		expect int64
 	}{
-		{"MONTH", "2003-02-01", "2003-05-01", 3},
-		{"YEAR", "2002-05-01", "2001-01-01", -1},
-		{"MINUTE", "2003-02-01", "2003-05-01 12:05:55", 128885},
+		{"MONTH", "2003-02-01", "2003-05-01", false, 3},
+		{"YEAR", "2002-05-01", "2001-01-01", false, -1},
+		{"MINUTE", "2003-02-01", "2003-05-01 12:05:55", false, 128885},
+		{"MONTH", "2003-00-01", "2003-05-01", true, 0},
+		{"MONTH", "2003-02-01", "2003-05-00", true, 0},
 	}
 
 	fc := funcs[ast.TimestampDiff]
@@ -1768,8 +1773,13 @@ func TestTimestampDiff(t *testing.T) {
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		require.Equal(t, test.expect, d.GetInt64())
+		if test.isNull {
+			require.True(t, d.IsNull())
+		} else {
+			require.Equal(t, test.expect, d.GetInt64())
+		}
 	}
+
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreTruncate.Store(true)
 	sc.IgnoreZeroInDate = true
@@ -1897,11 +1907,15 @@ func TestDateArithFuncs(t *testing.T) {
 		{date[1], fcAdd, -1, date[0]},
 		{date[1], fcAdd, -0.5, date[0]},
 		{date[1], fcAdd, -1.4, date[0]},
+		{"1998-10-00", fcAdd, 1, ""},
+		{"2004-00-01", fcAdd, 1, ""},
 
 		{date[1], fcSub, 1, date[0]},
 		{date[0], fcSub, -1, date[1]},
 		{date[0], fcSub, -0.5, date[1]},
 		{date[0], fcSub, -1.4, date[1]},
+		{"1998-10-00", fcSub, 31, ""},
+		{"2004-00-01", fcSub, 31, ""},
 	}
 	for _, test := range tests {
 		args := types.MakeDatums(test.inputDate, test.inputDecimal, "DAY")
@@ -1910,7 +1924,8 @@ func TestDateArithFuncs(t *testing.T) {
 		require.NotNil(t, f)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		require.Equal(t, test.expect, v.GetString())
+		s, _ := v.ToString()
+		require.Equal(t, test.expect, s)
 	}
 
 	args := types.MakeDatums(date[0], nil, "DAY")
@@ -2495,6 +2510,8 @@ func TestToSeconds(t *testing.T) {
 		"0000-00-00",
 		"1992-13-00",
 		"2007-10-07 23:59:61",
+		"1998-10-00",
+		"1998-00-11",
 		123456789}
 
 	for _, i := range testsNull {
@@ -2537,6 +2554,7 @@ func TestToDays(t *testing.T) {
 		"0000-00-00",
 		"1992-13-00",
 		"2007-10-07 23:59:61",
+		"1998-10-00",
 		123456789}
 
 	for _, i := range testsNull {
@@ -2817,6 +2835,9 @@ func TestConvertTz(t *testing.T) {
 		// TestIssue30081
 		{"2007-03-11 2:00:00", "US/Eastern", "US/Central", true, "2007-03-11 01:00:00"},
 		{"2007-03-11 3:00:00", "US/Eastern", "US/Central", true, "2007-03-11 01:00:00"},
+
+		{"2004-10-00 12:00:00", "GMT", "MET", true, ""},
+		{"2004-00-01 12:00:00", "GMT", "MET", true, ""},
 	}
 	fc := funcs[ast.ConvertTz]
 	for _, test := range tests {
@@ -2830,11 +2851,11 @@ func TestConvertTz(t *testing.T) {
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		if test.Success {
 			require.NoError(t, err)
+			result, _ := d.ToString()
+			require.Equalf(t, test.expect, result, "convert_tz(\"%v\", \"%s\", \"%s\")", test.t, test.fromTz, test.toTz)
 		} else {
 			require.Error(t, err)
 		}
-		result, _ := d.ToString()
-		require.Equalf(t, test.expect, result, "convert_tz(\"%v\", \"%s\", \"%s\")", test.t, test.fromTz, test.toTz)
 	}
 }
 
