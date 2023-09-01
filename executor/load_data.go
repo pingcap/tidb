@@ -840,6 +840,10 @@ func (w *encodeWorker) parserData2TableData(
 		row = append(row, d)
 	}
 
+	if len(w.exprWarnings) > 0 {
+		w.ctx.GetSessionVars().StmtCtx.AppendWarnings(w.exprWarnings)
+	}
+
 	// a new row buffer will be allocated in getRow
 	newRow, err := w.getRow(ctx, row)
 	if err != nil {
