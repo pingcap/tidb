@@ -625,7 +625,7 @@ Check Table Before Drop: false`
 }
 
 func TestEnsureSupportVersion(t *testing.T) {
-	// Once this test failed. please check the compatiblity carefully.
+	// Once this test failed. please check the compatibility carefully.
 	// *** Don't change this test simply. ***
 	require.Equal(t,
 		CURRENT_BACKUP_SUPPORT_TABLE_INFO_VERSION,
