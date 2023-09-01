@@ -63,6 +63,8 @@ func (h *InfoCache) ReSize(capacity int) {
 
 // Size returns the size of the cache, export for test.
 func (h *InfoCache) Size() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	return len(h.cache)
 }
 

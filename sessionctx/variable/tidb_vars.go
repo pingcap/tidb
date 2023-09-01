@@ -1085,7 +1085,6 @@ const (
 	TiDBSkipMissingPartitionStats = "tidb_skip_missing_partition_stats"
 	// TiDBSessionAlias indicates the alias of a session which is used for tracing.
 	TiDBSessionAlias = "tidb_session_alias"
-
 	// TiDBInfoSchemaCacheSize defines the capacity size of domain infoSchema cache.
 	TiDBInfoSchemaCacheSize = "tidb_info_schema_cache_size"
 )
