@@ -29,8 +29,8 @@ import (
 // - tables: table names of which will be locked.
 // Return the message of skipped tables and error.
 func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	return lockstats.AddLockedTables(h.mu.ctx.(sqlexec.SQLExecutor), tids, pids, tables)
 }
 
@@ -49,8 +49,8 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 // QueryTablesLockedStatuses query whether table is locked in handle with Handle.Mutex.
 // Note: This function query locked tables from store, so please try to batch the query.
 func (h *Handle) QueryTablesLockedStatuses(tableIDs ...int64) (map[int64]bool, error) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	return h.queryTablesLockedStatuses(tableIDs...)
 }
 
@@ -74,7 +74,7 @@ func (h *Handle) queryLockedTablesWithoutLock() (map[int64]struct{}, error) {
 
 // GetTableLockedAndClearForTest for unit test only
 func (h *Handle) GetTableLockedAndClearForTest() (map[int64]struct{}, error) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	return h.queryLockedTablesWithoutLock()
 }
