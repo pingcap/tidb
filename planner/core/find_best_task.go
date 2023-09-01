@@ -977,6 +977,9 @@ func (ds *DataSource) isPointGetConvertableSchema() bool {
 func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
+	if strings.HasPrefix(ds.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 and c=1 limit 1") {
+		fmt.Println(1)
+	}
 	if prop == nil {
 		planCounter.Dec(1)
 		return nil, 1, nil
@@ -1265,13 +1268,17 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	return
 }
 
+// convertToIndexMergeScan builds the index merge scan for intersection or union cases.
+// for property.CopMultiReadTaskType with intersection case:
+//
+//	we could
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
 	if prop.IsFlashProp() || prop.TaskTp == property.CopSingleReadTaskType {
 		return invalidTask, nil
 	}
-	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IndexMergeIsIntersection {
-		return invalidTask, nil
-	}
+	// lift the limitation of that double read can not build index merge **COP** task with intersection.
+	// that means we can output a cop task here without encapsulating it as root task, for the convenience of attaching limit to its table side.
+
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
