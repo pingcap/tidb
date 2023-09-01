@@ -1235,19 +1235,18 @@ func TestFromUnixTime(t *testing.T) {
 	tbl := []struct {
 		isDecimal      bool
 		integralPart   int64
-		fractionalPart int64
 		decimal        float64
 		format         string
 		expect         string
 	}{
-		{false, 1451606400, 0, 0, "", "2016-01-01 00:00:00"},
-		{true, 1451606400, 123456000, 1451606400.123456, "", "2016-01-01 00:00:00.123456"},
-		{true, 1451606400, 999999000, 1451606400.999999, "", "2016-01-01 00:00:00.999999"},
-		{true, 1451606400, 999999900, 1451606400.9999999, "", "2016-01-01 00:00:01.000000"},
-		{false, 1451606400, 0, 0, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:00"},
-		{true, 1451606400, 123456000, 1451606400.123456, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:00.123456"},
-		{true, 1451606400, 999999000, 1451606400.999999, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:00.999999"},
-		{true, 1451606400, 999999900, 1451606400.9999999, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:01.000000"},
+		{false, 1451606400, 0, "", "2016-01-01 00:00:00"},
+		{true, 1451606400, 1451606400.123456, "", "2016-01-01 00:00:00.123456"},
+		{true, 1451606400, 1451606400.999999, "", "2016-01-01 00:00:00.999999"},
+		{true, 1451606400, 1451606400.9999999, "", "2016-01-01 00:00:01.000000"},
+		{false, 1451606400, 0, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:00"},
+		{true, 1451606400,  1451606400.123456, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:00.123456"},
+		{true, 1451606400,  1451606400.999999, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:00.999999"},
+		{true, 1451606400,  1451606400.9999999, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:01.000000"},
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	originTZ := sc.TimeZone
@@ -1926,6 +1925,38 @@ func TestDateArithFuncs(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, v.IsNull())
 
+	// TestIssue11645
+	testHours := []struct {
+		input    string
+		hours    int
+		isNull   bool
+		expected string
+	}{
+		{"1000-01-01 00:00:00", -2, false, "0999-12-31 22:00:00"},
+		{"1000-01-01 00:00:00", -200, false, "0999-12-23 16:00:00"},
+		{"0001-01-01 00:00:00", -2, false, "0000-00-00 22:00:00"},
+		{"0001-01-01 00:00:00", -25, false, "0000-00-00 23:00:00"},
+		{"0001-01-01 00:00:00", -8784, false, "0000-00-00 00:00:00"},
+		{"0001-01-01 00:00:00", -8785, true, ""},
+		{"0001-01-02 00:00:00", -2, false, "0001-01-01 22:00:00"},
+		{"0001-01-02 00:00:00", -24, false, "0001-01-01 00:00:00"},
+		{"0001-01-02 00:00:00", -25, false, "0000-00-00 23:00:00"},
+		{"0001-01-02 00:00:00", -8785, false, "0000-00-00 23:00:00"},
+	}
+	for _, test := range testHours {
+		args := types.MakeDatums(test.input, test.hours, "HOUR")
+		f, err := fcAdd.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		if test.isNull {
+			require.True(t, v.IsNull())
+		} else {
+			require.Equal(t, test.expected, v.GetString())
+		}
+	}
+
 	testMonths := []struct {
 		input    string
 		months   int
@@ -2161,6 +2192,14 @@ func TestTimestamp(t *testing.T) {
 		{[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123"))}, "2017-01-18 12:39:50.123"},
 		{[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.999"))}, "2017-01-18 12:39:50.999"},
 		{[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.999"))}, "2017-01-18 12:39:50.999"},
+
+		// TestIssue25093
+		{[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("0.123"))}, "0000-00-00 00:00:00.123"},
+		{[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("0.4352"))}, "0000-00-00 00:00:00.4352"},
+		{[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("0.12345678"))}, "0000-00-00 00:00:00.123457"},
+		{[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("101.234"))}, "2000-01-01 00:00:00.000"},
+		{[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("0.9999999"))}, ""},
+		{[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("1.234"))}, ""},
 	}
 	fc := funcs[ast.Timestamp]
 	for _, test := range tests {
@@ -2169,8 +2208,12 @@ func TestTimestamp(t *testing.T) {
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		result, _ := d.ToString()
-		require.Equal(t, test.expect, result)
+		if test.expect != "" {
+			result, _ := d.ToString()
+			require.Equal(t, test.expect, result)
+		} else {
+			require.True(t, d.IsNull())
+		}
 	}
 
 	nilDatum := types.NewDatum(nil)
@@ -2693,6 +2736,11 @@ func TestSecToTime(t *testing.T) {
 		{0, types.NewStringDatum("123.4567891"), "00:02:03.456789"},
 		{0, types.NewStringDatum("123"), "00:02:03.000000"},
 		{0, types.NewStringDatum("abc"), "00:00:00.000000"},
+		// Issue #15613
+		{0, types.NewStringDatum("1e-4"), "00:00:00.000100"},
+		{0, types.NewStringDatum("1e-5"), "00:00:00.000010"},
+		{0, types.NewStringDatum("1e-6"), "00:00:00.000001"},
+		{0, types.NewStringDatum("1e-7"), "00:00:00.000000"},
 	}
 	for _, test := range tests {
 		comment := fmt.Sprintf("%+v", test)
@@ -2761,6 +2809,10 @@ func TestConvertTz(t *testing.T) {
 		{"2021-03-28 02:30:00", "Europe/Amsterdam", "UTC", true, "2021-03-28 01:00:00"},
 		{"2021-10-22 10:00:00", "Europe/Tallinn", "SYSTEM", true, t1.In(loc2).Format("2006-01-02 15:04:00")},
 		{"2021-10-22 10:00:00", "SYSTEM", "Europe/Tallinn", true, t2.In(loc1).Format("2006-01-02 15:04:00")},
+
+		// TestIssue30081
+		{"2007-03-11 2:00:00", "US/Eastern", "US/Central", true, "2007-03-11 01:00:00"},
+		{"2007-03-11 3:00:00", "US/Eastern", "US/Central", true, "2007-03-11 01:00:00"},
 	}
 	fc := funcs[ast.ConvertTz]
 	for _, test := range tests {
