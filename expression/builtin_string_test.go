@@ -491,56 +491,32 @@ func TestRight(t *testing.T) {
 }
 
 func TestRepeat(t *testing.T) {
+	cases := []struct {
+		args   []interface{}
+		isNull bool
+		res    string
+	}{
+		{[]interface{}{"a", int64(2)}, false, "aa"},
+		{[]interface{}{"a", uint64(16777217)}, false, strings.Repeat("a", 16777217)},
+		{[]interface{}{"a", int64(16777216)}, false, strings.Repeat("a", 16777216)},
+		{[]interface{}{"a", int64(-1)}, false, ""},
+		{[]interface{}{"a", int64(0)}, false, ""},
+		{[]interface{}{"a", uint64(0)}, false, ""},
+	}
+
 	ctx := createContext(t)
-	args := []interface{}{"a", int64(2)}
 	fc := funcs[ast.Repeat]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
-	require.NoError(t, err)
-	v, err := evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, "aa", v.GetString())
-
-	args = []interface{}{"a", uint64(2)}
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
-	require.NoError(t, err)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, "aa", v.GetString())
-
-	args = []interface{}{"a", uint64(16777217)}
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
-	require.NoError(t, err)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.False(t, v.IsNull())
-
-	args = []interface{}{"a", uint64(16777216)}
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
-	require.NoError(t, err)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.False(t, v.IsNull())
-
-	args = []interface{}{"a", int64(-1)}
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
-	require.NoError(t, err)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, "", v.GetString())
-
-	args = []interface{}{"a", int64(0)}
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
-	require.NoError(t, err)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, "", v.GetString())
-
-	args = []interface{}{"a", uint64(0)}
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
-	require.NoError(t, err)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, "", v.GetString())
+	for _, c := range cases {
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.args...)))
+		require.NoError(t, err)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		if c.isNull {
+			require.True(t, v.IsNull())
+		} else {
+			require.Equal(t, v.GetString(), c.res)
+		}
+	}
 }
 
 func TestRepeatSig(t *testing.T) {
@@ -1581,6 +1557,10 @@ func TestLpad(t *testing.T) {
 		{"hi", 5, "", nil},
 		{"hi", 5, "ab", "abahi"},
 		{"hi", 6, "ab", "ababhi"},
+		{"中文", 5, "字符", "字符字中文"},
+		{"中文", 1, "a", "中"},
+		{"中文", -5, "字符", nil},
+		{"中文", 10, "", nil},
 	}
 	fc := funcs[ast.Lpad]
 	for _, test := range tests {
@@ -1617,6 +1597,10 @@ func TestRpad(t *testing.T) {
 		{"hi", 5, "", nil},
 		{"hi", 5, "ab", "hiaba"},
 		{"hi", 6, "ab", "hiabab"},
+		{"中文", 5, "字符", "中文字符字"},
+		{"中文", 1, "a", "中"},
+		{"中文", -5, "字符", nil},
+		{"中文", 10, "", nil},
 	}
 	fc := funcs[ast.Rpad]
 	for _, test := range tests {
