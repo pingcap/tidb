@@ -4290,42 +4290,39 @@ func (s *session) EncodeSessionStates(ctx context.Context,
 	sessionStates.SystemVars = make(map[string]string)
 	for _, sv := range variable.GetSysVars() {
 		switch {
-		case sv.HasNoneScope(), sv.HasInstanceScope(), !sv.HasSessionScope():
+		case sv.HasNoneScope(), !sv.HasSessionScope():
 			// Hidden attribute is deprecated.
 			// None-scoped variables cannot be modified.
-			// Instance-scoped variables don't need to be encoded.
 			// Noop variables should also be migrated even if they are noop.
 			continue
 		case sv.ReadOnly:
 			// Skip read-only variables here. We encode them into SessionStates manually.
 			continue
-		case !hasRestrictVarPriv && sem.IsEnabled() && sem.IsInvisibleSysVar(sv.Name):
-			val, keep, err := s.sessionVars.GetSessionStatesSystemVar(sv.Name)
-			if err != nil {
-				return err
-			} else if !keep {
-				continue
-			} else if sv.HasGlobalScope() {
-				globalVal, err := sv.GetGlobalFromHook(ctx, s.sessionVars)
-				if err != nil {
-					return err
-				}
-				// If the session value is the same with the global one, skip it.
-				if val == globalVal {
-					continue
-				}
-			} else if val == sv.Value {
-				// SysVar.Value stands for the default value.
-				continue
-			}
-			// 1. The RESTRICTED_VARIABLES_ADMIN is revoked after setting the session variable.
-			// 2. The global variable is updated after the session is created.
-			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs(fmt.Sprintf("session has set invisible variable '%s'", sv.Name))
 		}
 		// Get all session variables because the default values may change between versions.
-		if val, keep, err := s.sessionVars.GetSessionStatesSystemVar(sv.Name); err != nil {
+		val, keep, err := s.sessionVars.GetSessionStatesSystemVar(sv.Name)
+		switch {
+		case err != nil:
 			return err
-		} else if keep {
+		case !keep:
+			continue
+		case !hasRestrictVarPriv && sem.IsEnabled() && sem.IsInvisibleSysVar(sv.Name):
+			// If the variable has a global scope, it should be the same with the global one.
+			// Otherwise, it should be the same with the default value.
+			defaultVal := sv.Value
+			if sv.HasGlobalScope() {
+				// If the session value is the same with the global one, skip it.
+				if defaultVal, err = sv.GetGlobalFromHook(ctx, s.sessionVars); err != nil {
+					return err
+				}
+			}
+			if val != defaultVal {
+				// Case 1: the RESTRICTED_VARIABLES_ADMIN is revoked after setting the session variable.
+				// Case 2: the global variable is updated after the session is created.
+				// In any case, the variable can't be set in the new session, so give up.
+				return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs(fmt.Sprintf("session has set invisible variable '%s'", sv.Name))
+			}
+		default:
 			sessionStates.SystemVars[sv.Name] = val
 		}
 	}
