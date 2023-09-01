@@ -2227,12 +2227,8 @@ func TestTimestamp(t *testing.T) {
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		if test.expect != "" {
-			result, _ := d.ToString()
-			require.Equal(t, test.expect, result)
-		} else {
-			require.True(t, d.IsNull())
-		}
+		result, _ := d.ToString()
+		require.Equal(t, test.expect, result)
 	}
 
 	nilDatum := types.NewDatum(nil)
