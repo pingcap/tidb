@@ -198,3 +198,17 @@ func TestIssue46083(t *testing.T) {
 	tk.MustExec("CREATE TEMPORARY TABLE v0(v1 int)")
 	tk.MustExec("INSERT INTO v0 WITH ta2 AS (TABLE v0) TABLE ta2 FOR UPDATE OF ta2;")
 }
+
+func TestIssue46005(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tbl_39(col_239 year(4) not null default '2009', primary key(col_239), unique key idx_223(col_239), key idx_224(col_239))")
+	tk.MustExec("insert into tbl_39 values (1994),(1995),(1996),(1997)")
+	tk.HasPlan(
+		"select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382",
+		"IndexMerge",
+	)
+	rs := tk.MustQuery("select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382")
+	rs.Check(testkit.Rows("1994", "1997"))
+}
