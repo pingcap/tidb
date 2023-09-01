@@ -2796,6 +2796,11 @@ var defaultSysVars = []*SysVar{
 		}, GetSession: func(vars *SessionVars) (string, error) {
 			return vars.SessionAlias, nil
 		}},
+	{Scope: ScopeGlobal, Name: TiDBInfoSchemaCacheSize, Value: strconv.Itoa(DefTiDBInfoSchemaCacheSize), Type: TypeInt, MinValue: 2, MaxValue: math.MaxUint8, AllowEmpty: true,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			InfoSchemaCacheSize.Store(TidbOptInt64(val, DefTiDBInfoSchemaCacheSize))
+			return nil
+		}},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

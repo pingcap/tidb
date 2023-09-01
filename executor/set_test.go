@@ -880,6 +880,23 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@session.tidb_skip_missing_partition_stats").Check(testkit.Rows("0"))
 	tk.MustExec("set session tidb_skip_missing_partition_stats = 1")
 	tk.MustQuery("select @@session.tidb_skip_missing_partition_stats").Check(testkit.Rows("1"))
+
+	// test tidb_info_schema_cache_size
+	tk.MustQuery("select @@global.tidb_info_schema_cache_size").Check(testkit.Rows("16"))
+	tk.MustExec("set @@global.tidb_info_schema_cache_size=64;")
+	tk.MustQuery("select @@global.tidb_info_schema_cache_size").Check(testkit.Rows("64"))
+	tk.MustExec("set @@global.tidb_info_schema_cache_size=2;")
+	tk.MustQuery("select @@global.tidb_info_schema_cache_size").Check(testkit.Rows("2"))
+	tk.MustExec("set @@global.tidb_info_schema_cache_size=256;")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_info_schema_cache_size value: '256'"))
+	tk.MustQuery("select @@global.tidb_info_schema_cache_size").Check(testkit.Rows("255"))
+	tk.MustExec("set @@global.tidb_info_schema_cache_size=0;")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_info_schema_cache_size value: '0'"))
+	tk.MustQuery("select @@global.tidb_info_schema_cache_size").Check(testkit.Rows("2"))
+	tk.MustGetErrMsg("set @@global.tidb_info_schema_cache_size='x';", "[variable:1232]Incorrect argument type to variable 'tidb_info_schema_cache_size'")
+	tk.MustQuery("select @@global.tidb_info_schema_cache_size").Check(testkit.Rows("2"))
+	tk.MustExec("set @@global.tidb_info_schema_cache_size=64;")
+	tk.MustQuery("select @@global.tidb_info_schema_cache_size").Check(testkit.Rows("64"))
 }
 
 func TestGetSetNoopVars(t *testing.T) {
