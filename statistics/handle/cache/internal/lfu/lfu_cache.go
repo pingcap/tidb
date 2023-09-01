@@ -168,6 +168,9 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	// why add before again? because the cost will be subtracted in onExit.
 	// in fact, it is after - before
 	s.addCost(after)
+	// When the memory usage of the cache exceeds the maximum value, Many item need to evict. But
+	// ristretto'c cache execute the evict operation when to write the cache. for we can evict as soon as possible,
+	// we will write some fake item to the cache. fake item have a negative key, and the value is nil.
 	if s.Cost() > s.cache.MaxCost() {
 		s.cache.Set(-1*table.PhysicalID-1, nil, 0)
 	}
