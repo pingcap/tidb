@@ -999,6 +999,7 @@ func TestCaptureHints(t *testing.T) {
 		// runtime hints
 		{"select /*+ memory_quota(1024 MB) */ * from t", "memory_quota(1024 mb)"},
 		{"select /*+ max_execution_time(1000) */ * from t", "max_execution_time(1000)"},
+		{"select /*+ tidb_kv_read_timeout(1000) */ * from t", "tidb_kv_read_timeout(1000)"},
 		// storage hints
 		{"select /*+ read_from_storage(tikv[t]) */ * from t", "read_from_storage(tikv[`t`])"},
 		// others

@@ -638,6 +638,16 @@ func TestNthPlanHint(t *testing.T) {
 		"Warning 1105 The parameter of nth_plan() is out of range"))
 }
 
+func TestTiDBKvReadTimeoutHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int);")
+	tk.MustQuery("select /*+ tidb_kv_read_timeout(1) tidb_kv_read_timeout(2) */ * from t where a=1").Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 TIDB_KV_READ_TIMEOUT() is defined more than once, only the last definition takes effect: TIDB_KV_READ_TIMEOUT(2)"))
+}
+
 func BenchmarkDecodePlan(b *testing.B) {
 	store := testkit.CreateMockStore(b)
 	tk := testkit.NewTestKit(b, store)
