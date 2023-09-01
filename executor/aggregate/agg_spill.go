@@ -91,6 +91,7 @@ type AggSpillDiskAction struct {
 
 // Action set HashAggExec spill mode.
 func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
+	// TODO if we are in final worker stage, do not enter this if-branch
 	// Guarantee that processed data is at least 20% of the threshold, to avoid spilling too frequently.
 	if atomic.LoadUint32(&a.e.inSpillMode) == 0 && a.spillTimes < maxSpillTimes && a.e.memTracker.BytesConsumed() >= t.GetBytesLimit()/5 {
 		a.spillTimes++
