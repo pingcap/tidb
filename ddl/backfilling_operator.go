@@ -544,6 +544,7 @@ func (s *indexWriteResultSink) flush() error {
 	if err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = convertToKeyExistsErr(err, idxInfo, s.tbl.Meta())
+			return err
 		}
 		logutil.BgLogger().Error("flush error",
 			zap.String("category", "ddl"), zap.Error(err))

@@ -1935,17 +1935,17 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
 	taskMgr, err := storage.GetTaskManager()
 	if err != nil {
-		logutil.BgLogger().Error("cannot get task manager", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+		logutil.BgLogger().Warn("cannot get task manager", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
 	gTask, err := taskMgr.GetGlobalTaskByKey(taskKey)
 	if err != nil || gTask == nil {
-		logutil.BgLogger().Error("cannot get global task", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+		logutil.BgLogger().Warn("cannot get global task", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
 	metas, err := taskMgr.GetSucceedSubtaskMeta(gTask.ID)
 	if err != nil {
-		logutil.BgLogger().Error("cannot get subtasks", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+		logutil.BgLogger().Warn("cannot get subtasks", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
 	var total int64
@@ -1953,7 +1953,7 @@ func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
 		sm := &BackfillSubTaskMeta{}
 		err := json.Unmarshal(m, sm)
 		if err != nil {
-			logutil.BgLogger().Error("unmarshal error",
+			logutil.BgLogger().Warn("unmarshal error",
 				zap.String("category", "ddl"),
 				zap.Error(err))
 			return

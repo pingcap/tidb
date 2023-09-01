@@ -54,6 +54,7 @@ func (i *ingestIndexStage) InitSubtaskExecEnv(_ context.Context) error {
 	if err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = convertToKeyExistsErr(err, i.index, i.ptbl.Meta())
+			return err
 		}
 		logutil.BgLogger().Error("flush error", zap.String("category", "ddl"), zap.Error(err))
 		return err
