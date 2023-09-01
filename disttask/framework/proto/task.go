@@ -92,9 +92,9 @@ type Subtask struct {
 	// UpdateTime is the time when the subtask is updated.
 	// it can be used as subtask end time if the subtask is finished.
 	// it's 0 if it hasn't started yet.
-	UpdateTime    time.Time
-	Meta          []byte
-	ExecutionInfo string
+	UpdateTime time.Time
+	Meta       []byte
+	Summary    string
 }
 
 // NewSubtask create a new subtask.

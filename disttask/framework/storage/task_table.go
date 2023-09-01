@@ -285,15 +285,15 @@ func row2SubTask(r chunk.Row) *proto.Subtask {
 		updateTime = time.Unix(ts, 0)
 	}
 	task := &proto.Subtask{
-		ID:            r.GetInt64(0),
-		Step:          r.GetInt64(1),
-		Type:          proto.Int2Type(int(r.GetInt64(5))),
-		SchedulerID:   r.GetString(6),
-		State:         r.GetString(8),
-		Meta:          r.GetBytes(12),
-		ExecutionInfo: r.GetString(14),
-		StartTime:     startTime,
-		UpdateTime:    updateTime,
+		ID:          r.GetInt64(0),
+		Step:        r.GetInt64(1),
+		Type:        proto.Int2Type(int(r.GetInt64(5))),
+		SchedulerID: r.GetString(6),
+		State:       r.GetString(8),
+		Meta:        r.GetBytes(12),
+		Summary:     r.GetString(14),
+		StartTime:   startTime,
+		UpdateTime:  updateTime,
 	}
 	tid, err := strconv.Atoi(r.GetString(3))
 	if err != nil {
