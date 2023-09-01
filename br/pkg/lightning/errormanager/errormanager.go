@@ -616,10 +616,24 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					zap.Binary("value", kvPair.Val),
 					logutil.Key("rawKey", rawKey),
 					zap.Binary("rawValue", rawValue))
-				// if rawKey equals to KV pair's key and rawValue equals to KV pair's value,
+
+				// If rawKey equals to KV pair's key and rawValue equals to KV pair's value,
 				// this latest data KV of the index KV needs to be deleted;
 				// if not, this latest data KV of the index KV was inserted by other rows,
-				// so it is unrelated to the index KV that needs to be deleted, we cannot delete it
+				// so it is unrelated to the index KV that needs to be deleted, we cannot delete it.
+
+				// An example is:
+				// (pk, uk)
+				// (1, a)
+				// (1, b)
+				// (2, a)
+
+				// (1, a) is overwritten by (2, a). We found a->1 is an overwritten index KV,
+				// and we are considering if its data KV with key "1" can be deleted.
+				// We got the latest value of key "1" which is (1, b),
+				// and encode it to get all KV pairs which is [1->b, b->1].
+				// Only if there is a->1 we dare to delete data KV with key "1".
+
 				if bytes.Equal(kvPair.Key, rawKey) && bytes.Equal(kvPair.Val, rawValue) {
 					if err := fnDeleteKey(gCtx, rawHandle); err != nil {
 						return errors.Trace(err)
