@@ -40,8 +40,10 @@ import (
 
 type blockParser struct {
 	// states for the lexer
-	reader      PooledReader
-	buf         []byte
+	reader PooledReader
+	// stores data that has NOT been parsed yet, it shares same memory as appendBuf.
+	buf []byte
+	// used to read data from the reader, the data will be moved to other buffers.
 	blockBuf    []byte
 	isLastChunk bool
 
@@ -50,7 +52,11 @@ type blockParser struct {
 
 	rowPool *zeropool.Pool[[]types.Datum]
 	lastRow Row
-	// Current file offset.
+	// the reader position we have parsed, if the underlying reader is not
+	// a compressed file, it's the file position we have parsed too.
+	// this value may go backward when failed to read quoted field, but it's
+	// for printing error message, and the parser should not be used later,
+	// so it's ok, see readQuotedField.
 	pos int64
 
 	// cache
@@ -101,7 +107,7 @@ type Chunk struct {
 	// we estimate row-id range of the chunk using file-size divided by some factor(depends on column count)
 	// after estimation, we will rebase them for all chunks of this table in this instance,
 	// then it's rebased again based on all instances of parallel import.
-	// allocatable row-id is in range [PrevRowIDMax, RowIDMax).
+	// allocatable row-id is in range (PrevRowIDMax, RowIDMax].
 	// PrevRowIDMax will be increased during local encoding
 	PrevRowIDMax int64
 	RowIDMax     int64
@@ -111,6 +117,9 @@ type Chunk struct {
 
 // Row is the content of a row.
 type Row struct {
+	// RowID is the row id of the row.
+	// as objects of this struct is reused, this RowID is increased when reading
+	// next row.
 	RowID  int64
 	Row    []types.Datum
 	Length int

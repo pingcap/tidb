@@ -322,6 +322,9 @@ func (w *encodeWorker) processStream(
 			if err != nil {
 				return err
 			}
+			if err = w.controller.HandleSkipNRows(dataParser); err != nil {
+				return err
+			}
 			err = w.processOneStream(ctx, dataParser, outCh)
 			terror.Log(dataParser.Close())
 			if err != nil {

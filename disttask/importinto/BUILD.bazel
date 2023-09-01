@@ -61,11 +61,15 @@ go_test(
     srcs = [
         "dispatcher_test.go",
         "subtask_executor_test.go",
+        "wrapper_test.go",
     ],
     embed = [":importinto"],
     flaky = True,
     race = "on",
+    shard_count = 3,
     deps = [
+        "//br/pkg/lightning/checkpoints",
+        "//br/pkg/lightning/mydump",
         "//br/pkg/lightning/verification",
         "//disttask/framework/proto",
         "//disttask/framework/storage",
