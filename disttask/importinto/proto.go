@@ -125,6 +125,7 @@ func (*postProcessStepMinimalTask) String() string {
 // Chunk records the chunk information.
 type Chunk struct {
 	Path         string
+	FileSize     int64
 	Offset       int64
 	EndOffset    int64
 	PrevRowIDMax int64
