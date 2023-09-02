@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package handle
+package lockstats
 
 import (
 	"context"
@@ -26,16 +26,13 @@ import (
 )
 
 // RemoveLockedTables remove tables from table locked array.
+// - exec: sql executor.
 // - tids: table ids of which will be unlocked.
 // - pids: partition ids of which will be unlocked.
 // - tables: table names of which will be unlocked.
 // Return the message of skipped tables and error.
-func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
+func RemoveLockedTables(exec sqlexec.SQLExecutor, tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 
 	_, err := exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
 	if err != nil {
@@ -47,17 +44,17 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 	}()
 
 	// Load tables to check locked before delete.
-	tableLocked, err := loadLockedTables(ctx, exec, maxChunkSize)
+	lockedTables, err := QueryLockedTables(ctx, exec)
 	if err != nil {
 		return "", err
 	}
 	skippedTables := make([]string, 0, len(tables))
 
 	statsLogger.Info("unlock table", zap.Int64s("tableIDs", tids))
+
+	lockedStatuses := GetTablesLockedStatuses(lockedTables, tids...)
 	for i, tid := range tids {
-		var exist bool
-		exist, tableLocked = removeIfTableLocked(tableLocked, tid)
-		if !exist {
+		if !lockedStatuses[tid] {
 			skippedTables = append(skippedTables, tables[i].Schema.L+"."+tables[i].Name.L)
 			continue
 		}
@@ -67,19 +64,15 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 	}
 
 	// Delete related partitions while don't warning delete empty partitions
-	for _, tid := range pids {
-		var exist bool
-		exist, tableLocked = removeIfTableLocked(tableLocked, tid)
-		if !exist {
+	lockedStatuses = GetTablesLockedStatuses(lockedTables, pids...)
+	for _, pid := range pids {
+		if !lockedStatuses[pid] {
 			continue
 		}
-		if err := updateStatsAndUnlockTable(ctx, exec, tid, maxChunkSize); err != nil {
+		if err := updateStatsAndUnlockTable(ctx, exec, pid, maxChunkSize); err != nil {
 			return "", err
 		}
 	}
-
-	// Update handle.tableLocked after transaction success, if txn failed, tableLocked won't be updated.
-	h.tableLocked = tableLocked
 
 	msg := generateSkippedTablesMessage(tids, skippedTables, unlockAction, unlockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.

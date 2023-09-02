@@ -104,9 +104,6 @@ type Handle struct {
 		sync.Mutex
 	}
 
-	// tableLocked used to store locked tables
-	tableLocked []int64
-
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
 
