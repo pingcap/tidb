@@ -160,6 +160,14 @@ func (e *ShowExec) fetchShowStatsLocked() error {
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
+
+	type LockedTableInfo struct {
+		dbName        string
+		tblName       string
+		partitionName string
+	}
+	tableInfo := make(map[int64]*LockedTableInfo)
+
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
@@ -168,25 +176,37 @@ func (e *ShowExec) fetchShowStatsLocked() error {
 				if pi != nil {
 					partitionName = "global"
 				}
-				if h.IsTableLocked(tbl.ID) {
-					e.appendTableForStatsLocked(db.Name.O, tbl.Name.O, partitionName)
-				}
+				tableInfo[tbl.ID] = &LockedTableInfo{db.Name.O, tbl.Name.O, partitionName}
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						if h.IsTableLocked(def.ID) {
-							e.appendTableForStatsLocked(db.Name.O, tbl.Name.O, def.Name.O)
-						}
+						tableInfo[def.ID] = &LockedTableInfo{db.Name.O, tbl.Name.O, def.Name.O}
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					if h.IsTableLocked(def.ID) {
-						e.appendTableForStatsLocked(db.Name.O, tbl.Name.O, def.Name.O)
-					}
+					tableInfo[def.ID] = &LockedTableInfo{db.Name.O, tbl.Name.O, def.Name.O}
 				}
 			}
 		}
 	}
+
+	tids := make([]int64, 0, len(tableInfo))
+	for tid := range tableInfo {
+		tids = append(tids, tid)
+	}
+
+	lockedStatuses, err := h.QueryTablesLockedStatuses(tids...)
+	if err != nil {
+		return err
+	}
+
+	for tid, locked := range lockedStatuses {
+		if locked {
+			info := tableInfo[tid]
+			e.appendTableForStatsLocked(info.dbName, info.tblName, info.partitionName)
+		}
+	}
+
 	return nil
 }
 
