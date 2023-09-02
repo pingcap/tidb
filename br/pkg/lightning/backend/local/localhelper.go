@@ -404,6 +404,9 @@ func (local *Backend) ScatterRegion(ctx context.Context, regionInfo *split.Regio
 	_ = utils.WithRetry(ctx, func() error {
 		return (local.splitCli.ScatterRegion(ctx, regionInfo))
 	}, backoffer)
+	if ctx.Err() != nil {
+		log.FromContext(ctx).Warn("scatter region failed", zap.Error(ctx.Err()))
+	}
 	return ctx.Err()
 }
 
@@ -423,12 +426,12 @@ func (local *Backend) BatchSplitRegions(
 		return nil, nil, errors.Annotatef(err, "batch split regions failed")
 	}
 	var failedErr error
-	scatterRegions := newRegions
+	splitRegions := newRegions
 	// wait for regions to be split
 	backoffer := split.NewWaitRegionOnlineBackoffer().(*split.WaitRegionOnlineBackoffer)
 	_ = utils.WithRetry(ctx, func() error {
 		retryRegions := make([]*split.RegionInfo, 0)
-		for _, region := range scatterRegions {
+		for _, region := range splitRegions {
 			// Wait for a while until the regions successfully splits.
 			ok, err2 := local.hasRegion(ctx, region.Region.Id)
 			if !ok || err2 != nil {
@@ -445,16 +448,16 @@ func (local *Backend) BatchSplitRegions(
 		}
 		// if the number of becomes smaller, we can infer TiKV side really
 		// made some progress so don't increase the retry times.
-		if len(retryRegions) < len(scatterRegions) {
+		if len(retryRegions) < len(splitRegions) {
 			backoffer.Stat.ReduceRetry()
 		}
 		log.FromContext(ctx).Warn("split region failed", zap.Int("regionCount", len(newRegions)),
 			zap.Int("failedCount", len(retryRegions)), zap.Error(failedErr))
-		scatterRegions = retryRegions
+		splitRegions = retryRegions
 		// although it's not PDBatchScanRegion, WaitRegionOnlineBackoffer will only
 		// check this error class so we simply reuse it. Will refine WaitRegionOnlineBackoffer
 		// later
-		failedErr = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scatter region failed")
+		failedErr = errors.Annotatef(berrors.ErrPDBatchScanRegion, "split region failed")
 		return failedErr
 	}, backoffer)
 
@@ -463,10 +466,11 @@ func (local *Backend) BatchSplitRegions(
 	}
 
 	// scatter regions
+	scatterRegions := newRegions
 	for _, region := range scatterRegions {
 		err = local.ScatterRegion(ctx, region)
 		if failedErr == nil {
-			failedErr = err
+			failedErr = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scatter region failed")
 		}
 	}
 
