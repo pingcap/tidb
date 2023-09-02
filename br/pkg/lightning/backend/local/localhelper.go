@@ -399,7 +399,7 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 	return nil
 }
 
-// it scatter region and retry if it fails. It retuns error if can not scatter after max_retry
+// it scatter region and retry if it fails. It returns error if can not scatter after max_retry
 func (local *Backend) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
 	backoffer := split.NewWaitRegionOnlineBackoffer().(*split.WaitRegionOnlineBackoffer)
 	_ = utils.WithRetry(ctx, func() error {
