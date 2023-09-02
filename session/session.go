@@ -4370,9 +4370,8 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 	if !s.isInternal() {
 		if txn, _ := s.Txn(false); txn != nil && txn.Valid() {
 			txn.SetOption(kv.RequestSourceType, stmtLabel)
-		} else {
-			s.sessionVars.RequestSourceType = stmtLabel
 		}
+		s.sessionVars.RequestSourceType = stmtLabel
 		return
 	}
 	if source := ctx.Value(kv.RequestSourceKey); source != nil {
