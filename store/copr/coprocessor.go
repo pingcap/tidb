@@ -269,6 +269,14 @@ type copTask struct {
 	RowCountHint     int // used for extra concurrency of small tasks, -1 for unknown row count
 	batchTaskList    map[uint64]*batchedCopTask
 	meetLockFallback bool
+<<<<<<< HEAD
+=======
+
+	// timeout value for one kv readonly request
+	tidbKvReadTimeout uint64
+	// firstReadType is used to indicate the type of first read when retrying.
+	firstReadType string
+>>>>>>> b524a2316f0 (client-go: attach request source with retry info for coprocessor (#46509))
 }
 
 type batchedCopTask struct {
@@ -1015,8 +1023,20 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		RecordTimeStat: true,
 		RecordScanStat: true,
 		TaskId:         worker.req.TaskID,
+<<<<<<< HEAD
 		RequestSource:  task.requestSource.GetRequestSource(),
+=======
+		ResourceControlContext: &kvrpcpb.ResourceControlContext{
+			ResourceGroupName: worker.req.ResourceGroupName,
+		},
+		BusyThresholdMs: uint32(task.busyThreshold.Milliseconds()),
+>>>>>>> b524a2316f0 (client-go: attach request source with retry info for coprocessor (#46509))
 	})
+	req.InputRequestSource = task.requestSource.GetRequestSource()
+	if task.firstReadType != "" {
+		req.ReadType = task.firstReadType
+		req.IsRetryRequest = true
+	}
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
 	}
@@ -1062,12 +1082,19 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data)))
 	}
 
+	var remains []*copTask
 	if worker.req.Paging.Enable {
-		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, costTime)
+		remains, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, costTime)
+	} else {
+		// Handles the response for non-paging copTask.
+		remains, err = worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, nil, costTime)
 	}
-
-	// Handles the response for non-paging copTask.
-	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, nil, costTime)
+	if req.ReadType != "" {
+		for _, remain := range remains {
+			remain.firstReadType = req.ReadType
+		}
+	}
+	return remains, err
 }
 
 const (
