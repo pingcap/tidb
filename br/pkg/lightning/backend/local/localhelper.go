@@ -399,7 +399,7 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 	return nil
 }
 
-// it scatter region and retry if it fails. It returns error if can not scatter after max_retry
+// ScatterRegion scatter the regions and retry if it fails. It returns error if can not scatter after max_retry.
 func (local *Backend) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
 	backoffer := split.NewWaitRegionOnlineBackoffer().(*split.WaitRegionOnlineBackoffer)
 	_ = utils.WithRetry(ctx, func() error {
@@ -437,9 +437,9 @@ func (local *Backend) BatchSplitRegions(
 			ok, err2 := local.hasRegion(ctx, region.Region.Id)
 			if !ok || err2 != nil {
 				if err2 == nil {
-					failedErr = errors.Errorf("region %d not found", region.Region.Id)
+					log.FromContext(ctx).Warn("split region failed", zap.Uint64("regionID", region.Region.Id))
 				} else {
-					failedErr = err2
+					log.FromContext(ctx).Warn("split region failed", zap.Uint64("regionID", region.Region.Id), zap.Error(err2))
 				}
 				retryRegions = append(retryRegions, region)
 				continue
@@ -454,7 +454,7 @@ func (local *Backend) BatchSplitRegions(
 			backoffer.Stat.ReduceRetry()
 		}
 		log.FromContext(ctx).Warn("split region failed", zap.Int("regionCount", len(newRegions)),
-			zap.Int("failedCount", len(retryRegions)), zap.Error(failedErr))
+			zap.Int("failedCount", len(retryRegions)))
 		splitRegions = retryRegions
 		// although it's not PDBatchScanRegion, WaitRegionOnlineBackoffer will only
 		// check this error class so we simply reuse it. Will refine WaitRegionOnlineBackoffer
