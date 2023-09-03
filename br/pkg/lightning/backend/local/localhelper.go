@@ -468,6 +468,7 @@ func (local *Backend) BatchSplitRegions(
 	}
 
 	// scatter regions
+	failedErr = nil
 	scatterRegions := newRegions
 	for _, region := range scatterRegions {
 		err = local.ScatterRegion(ctx, region)
