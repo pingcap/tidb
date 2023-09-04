@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
@@ -119,20 +120,14 @@ func TestRewriteKeyForTable(t *testing.T) {
 		// create schemasReplace.
 		sr := MockEmptySchemasReplace(nil)
 
-		// set preConstruct status and construct map information.
-		sr.SetPreConstructMapStatus()
-		newKey, err := sr.rewriteKeyForTable(encodedKey, WriteCF, ca.decodeTableFn, ca.encodeTableFn)
+		newKey, needWrite, err := sr.rewriteKeyForTable(encodedKey, DefaultCF, ca.decodeTableFn, ca.encodeTableFn)
 		require.Nil(t, err)
-		require.Nil(t, newKey)
+		require.True(t, needWrite)
 		require.Equal(t, len(sr.DbMap), 1)
 		require.Equal(t, len(sr.DbMap[dbID].TableMap), 1)
-		downStreamDbID := sr.DbMap[dbID].DbID
-		downStreamTblID := sr.DbMap[dbID].TableMap[tableID].TableID
+		downStreamDbID := sr.DbMap[dbID].NewDBID
+		downStreamTblID := sr.DbMap[dbID].TableMap[tableID].NewTableID
 
-		// set restoreKV status and rewrite it.
-		sr.SetRestoreKVStatus()
-		newKey, err = sr.rewriteKeyForTable(encodedKey, DefaultCF, ca.decodeTableFn, ca.encodeTableFn)
-		require.Nil(t, err)
 		decodedKey, err := ParseTxnMetaKeyFrom(newKey)
 		require.Nil(t, err)
 		require.Equal(t, decodedKey.Ts, ts)
@@ -145,7 +140,8 @@ func TestRewriteKeyForTable(t *testing.T) {
 		require.Equal(t, newTblID, downStreamTblID)
 
 		// rewrite it again, and get the same result.
-		newKey, err = sr.rewriteKeyForTable(encodedKey, WriteCF, ca.decodeTableFn, ca.encodeTableFn)
+		newKey, needWrite, err = sr.rewriteKeyForTable(encodedKey, WriteCF, ca.decodeTableFn, ca.encodeTableFn)
+		require.True(t, needWrite)
 		require.Nil(t, err)
 		decodedKey, err = ParseTxnMetaKeyFrom(newKey)
 		require.Nil(t, err)
