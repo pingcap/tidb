@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -64,7 +64,7 @@ func copReadChunkPoolSize() int {
 
 // chunkSender is used to receive the result of coprocessor request.
 type chunkSender interface {
-	AddTask(idxRecResult)
+	AddTask(IndexRecordChunk)
 }
 
 type copReqSenderPool struct {
@@ -95,12 +95,12 @@ func (c *copReqSender) run() {
 	p := c.senderPool
 	defer p.wg.Done()
 	defer util.Recover(metrics.LabelDDL, "copReqSender.run", func() {
-		p.chunkSender.AddTask(idxRecResult{err: dbterror.ErrReorgPanic})
+		p.chunkSender.AddTask(IndexRecordChunk{Err: dbterror.ErrReorgPanic})
 	}, false)
 	sessCtx, err := p.sessPool.Get()
 	if err != nil {
 		logutil.Logger(p.ctx).Error("copReqSender get session from pool failed", zap.Error(err))
-		p.chunkSender.AddTask(idxRecResult{err: err})
+		p.chunkSender.AddTask(IndexRecordChunk{Err: err})
 		return
 	}
 	se := sess.NewSession(sessCtx)
@@ -121,7 +121,7 @@ func (c *copReqSender) run() {
 		}
 		err := scanRecords(p, task, se)
 		if err != nil {
-			p.chunkSender.AddTask(idxRecResult{id: task.id, err: err})
+			p.chunkSender.AddTask(IndexRecordChunk{ID: task.id, Err: err})
 			return
 		}
 	}
@@ -156,9 +156,9 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 			if p.checkpointMgr != nil {
 				p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
 			}
-			idxRs := idxRecResult{id: task.id, chunk: srcChk, done: done}
+			idxRs := IndexRecordChunk{ID: task.id, Chunk: srcChk, Done: done}
 			failpoint.Inject("mockCopSenderError", func() {
-				idxRs.err = errors.New("mock cop error")
+				idxRs.Err = errors.New("mock cop error")
 			})
 			p.chunkSender.AddTask(idxRs)
 		}
@@ -273,7 +273,14 @@ type copContext struct {
 	virtualColFieldTps  []*types.FieldType
 }
 
-func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx sessionctx.Context) (*copContext, error) {
+// FieldTypes is only used for test.
+// TODO(tangenta): refactor the operators to avoid using this method.
+func (c *copContext) FieldTypes() []*types.FieldType {
+	return c.fieldTps
+}
+
+// NewCopContext creates a copContext.
+func NewCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx sessionctx.Context) (*copContext, error) {
 	var err error
 	usedColumnIDs := make(map[int64]struct{}, len(idxInfo.Columns))
 	usedColumnIDs, err = fillUsedColumns(usedColumnIDs, idxInfo, tblInfo)
@@ -424,10 +431,11 @@ func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, 
 		Build()
 	kvReq.RequestSource.RequestSourceInternal = true
 	kvReq.RequestSource.RequestSourceType = getDDLRequestSource(model.ActionAddIndex)
+	kvReq.RequestSource.ExplicitRequestSourceType = kvutil.ExplicitTypeDDL
 	if err != nil {
 		return nil, err
 	}
-	return distsql.Select(ctx, c.sessCtx, kvReq, c.fieldTps, statistics.NewQueryFeedback(0, nil, 0, false))
+	return distsql.Select(ctx, c.sessCtx, kvReq, c.fieldTps)
 }
 
 func (c *copContext) fetchTableScanResult(ctx context.Context, result distsql.SelectResult,
@@ -482,7 +490,7 @@ func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo,
 
 func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
+	_, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
 	sc := sCtx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()
 	for i := range colInfos {
@@ -524,11 +532,4 @@ func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
 		return kv.NewCommonHandle(handleBytes)
 	}
 	return kv.IntHandle(pkDts[0].GetInt64()), nil
-}
-
-type idxRecResult struct {
-	id    int
-	chunk *chunk.Chunk
-	err   error
-	done  bool
 }

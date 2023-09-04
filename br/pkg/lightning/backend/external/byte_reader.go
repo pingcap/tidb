@@ -52,6 +52,8 @@ func openStoreReaderAndSeek(
 	return storageReader, nil
 }
 
+// newByteReader wraps readNBytes functionality to storageReader. It will not
+// close storageReader when meet error.
 func newByteReader(ctx context.Context, storageReader storage.ReadSeekCloser, bufSize int) (*byteReader, error) {
 	r := &byteReader{
 		ctx:           ctx,
@@ -81,7 +83,14 @@ func (r *byteReader) readNBytes(n int) (*[]byte, error) {
 	for readLen < n {
 		r.cloneSlices()
 		err := r.reload()
-		if err != nil {
+		switch err {
+		case nil:
+		case io.EOF:
+			if readLen > 0 {
+				return nil, io.ErrUnexpectedEOF
+			}
+			return nil, err
+		default:
 			return nil, err
 		}
 		b = r.next(n - readLen)
@@ -124,7 +133,6 @@ func (r *byteReader) reload() error {
 		case io.ErrUnexpectedEOF:
 			// The last batch.
 			r.buf = r.buf[:nBytes]
-			break
 		default:
 			logutil.Logger(r.ctx).Warn("other error during reload", zap.Error(err))
 			return err

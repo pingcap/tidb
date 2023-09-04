@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -30,9 +31,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
-	"golang.org/x/exp/slices"
 )
 
 // secondsPerYear represents seconds in a normal year. Leap year is not considered here.
@@ -347,42 +346,6 @@ func tidbOptFloat64(opt string, defaultVal float64) float64 {
 		return defaultVal
 	}
 	return val
-}
-
-func parseTimeZone(s string) (*time.Location, error) {
-	if strings.EqualFold(s, "SYSTEM") {
-		return timeutil.SystemLocation(), nil
-	}
-
-	loc, err := time.LoadLocation(s)
-	if err == nil {
-		return loc, nil
-	}
-
-	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
-	// The time zone's value should in [-12:59,+14:00].
-	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
-		d, _, err := types.ParseDuration(nil, s[1:], 0)
-		if err == nil {
-			if s[0] == '-' {
-				if d.Duration > 12*time.Hour+59*time.Minute {
-					return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
-				}
-			} else {
-				if d.Duration > 14*time.Hour {
-					return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
-				}
-			}
-
-			ofst := int(d.Duration / time.Second)
-			if s[0] == '-' {
-				ofst = -ofst
-			}
-			return time.FixedZone("", ofst), nil
-		}
-	}
-
-	return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
 }
 
 func parseMemoryLimit(s *SessionVars, normalizedValue string, originalValue string) (byteSize uint64, normalizedStr string, err error) {

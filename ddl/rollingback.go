@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -124,7 +123,7 @@ func convertNotReorgAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Jo
 func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	if needNotifyAndStopReorgWorker(job) {
 		// column type change workers are started. we have to ask them to exit.
-		logutil.Logger(w.logCtx).Info("run the cancelling DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
+		w.jobLogger(job).Info("run the cancelling DDL job", zap.String("job", job.String()))
 		d.notifyReorgWorkerJobStateChange(job)
 		// Give the this kind of ddl one more round to run, the dbterror.ErrCancelledDDLJob should be fetched from the bottom up.
 		return w.onModifyColumn(d, t, job)
@@ -240,7 +239,7 @@ func rollingbackDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, e
 func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
 	if needNotifyAndStopReorgWorker(job) {
 		// add index workers are started. need to ask them to exit.
-		logutil.Logger(w.logCtx).Info("run the cancelling DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
+		w.jobLogger(job).Info("run the cancelling DDL job", zap.String("job", job.String()))
 		d.notifyReorgWorkerJobStateChange(job)
 		ver, err = w.onCreateIndex(d, t, job, isPK)
 	} else {
@@ -261,6 +260,30 @@ func needNotifyAndStopReorgWorker(job *model.Job) bool {
 		return true
 	}
 	return false
+}
+
+// rollbackExchangeTablePartition will clear the non-partitioned
+// table's ExchangePartitionInfo state.
+func rollbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo) (int64, error) {
+	tblInfo.ExchangePartitionInfo = nil
+	job.State = model.JobStateRollbackDone
+	job.SchemaState = model.StatePublic
+	return updateVersionAndTableInfo(d, t, job, tblInfo, true)
+}
+
+func rollingbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	if job.SchemaState == model.StateNone {
+		// Nothing is changed
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+	var nt *model.TableInfo
+	nt, err = GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	ver, err = rollbackExchangeTablePartition(d, t, job, nt)
+	return ver, errors.Trace(err)
 }
 
 func convertAddTablePartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
@@ -377,12 +400,13 @@ func rollingbackReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	}
 
 	// addingDefinitions is also in tblInfo, here pass the tblInfo as parameter directly.
+	// TODO: Test this with reorganize partition p1 into (partition p1 ...)!
 	return convertAddTablePartitionJob2RollbackJob(d, t, job, dbterror.ErrCancelledDDLJob, tblInfo)
 }
 
 func pauseReorgWorkers(w *worker, d *ddlCtx, job *model.Job) (err error) {
 	if needNotifyAndStopReorgWorker(job) {
-		logutil.Logger(w.logCtx).Info("pausing the DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
+		w.jobLogger(job).Info("pausing the DDL job", zap.String("job", job.String()))
 		d.notifyReorgWorkerJobStateChange(job)
 	}
 
@@ -399,7 +423,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackAddIndex(w, d, t, job, true)
 	case model.ActionAddTablePartition:
 		ver, err = rollingbackAddTablePartition(d, t, job)
-	case model.ActionReorganizePartition:
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
 		ver, err = rollingbackReorganizePartition(d, t, job)
 	case model.ActionDropColumn:
 		ver, err = rollingbackDropColumn(d, t, job)
@@ -409,6 +434,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		err = rollingbackDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
 		ver, err = rollingbackDropTablePartition(t, job)
+	case model.ActionExchangeTablePartition:
+		ver, err = rollingbackExchangeTablePartition(d, t, job)
 	case model.ActionDropSchema:
 		err = rollingbackDropSchema(t, job)
 	case model.ActionRenameIndex:
@@ -424,7 +451,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifyTableCharsetAndCollate,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
-		model.ActionExchangeTablePartition, model.ActionModifySchemaDefaultPlacement,
+		model.ActionModifySchemaDefaultPlacement,
 		model.ActionRecoverSchema, model.ActionAlterCheckConstraint:
 		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
 	case model.ActionMultiSchemaChange:
@@ -438,6 +465,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		err = dbterror.ErrCancelledDDLJob
 	}
 
+	logger := w.jobLogger(job)
 	if err != nil {
 		if job.Error == nil {
 			job.Error = toTError(err)
@@ -457,22 +485,22 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 			// job state and args may not be correctly overwritten. The job will be fetched to run with the cancelling
 			// state again. So we should check the error count here.
 			if err1 := loadDDLVars(w); err1 != nil {
-				logutil.Logger(w.logCtx).Error("load DDL global variable failed", zap.String("category", "ddl"), zap.Error(err1))
+				logger.Error("load DDL global variable failed", zap.Error(err1))
 			}
 			errorCount := variable.GetDDLErrorCountLimit()
 			if job.ErrorCount > errorCount {
-				logutil.Logger(w.logCtx).Warn("rollback DDL job error count exceed the limit, cancelled it now", zap.String("category", "ddl"), zap.Int64("jobID", job.ID), zap.Int64("errorCountLimit", errorCount))
+				logger.Warn("rollback DDL job error count exceed the limit, cancelled it now", zap.Int64("errorCountLimit", errorCount))
 				job.Error = toTError(errors.Errorf("rollback DDL job error count exceed the limit %d, cancelled it now", errorCount))
 				job.State = model.JobStateCancelled
 			}
 		}
 
 		if !(job.State != model.JobStateRollingback && job.State != model.JobStateCancelled) {
-			logutil.Logger(w.logCtx).Info("the DDL job is cancelled normally", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Error(err))
+			logger.Info("the DDL job is cancelled normally", zap.String("job", job.String()), zap.Error(err))
 			// If job is cancelled, we shouldn't return an error.
 			return ver, nil
 		}
-		logutil.Logger(w.logCtx).Error("run DDL job failed", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Error(err))
+		logger.Error("run DDL job failed", zap.String("job", job.String()), zap.Error(err))
 	}
 
 	return

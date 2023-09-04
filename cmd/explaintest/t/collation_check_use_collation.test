@@ -1,10 +1,6 @@
 set tidb_cost_model_version=1;
 # These tests check that the used collation is correct.
 
-# prepare database
-create database collation_check_use_collation;
-use collation_check_use_collation;
-
 # Check subquery.
 CREATE TABLE `t` (
   `a` char(10) DEFAULT NULL
@@ -124,5 +120,3 @@ SELECT (v0.c0)NOT LIKE(BINARY v0.c0) FROM v0;
 SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);
 desc format='brief' SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);
 
-# cleanup environment
-use test

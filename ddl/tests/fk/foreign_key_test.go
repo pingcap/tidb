@@ -295,7 +295,7 @@ func TestCreateTableWithForeignKeyMetaInfo3(t *testing.T) {
 }
 
 func TestCreateTableWithForeignKeyPrivilegeCheck(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -322,7 +322,7 @@ func TestCreateTableWithForeignKeyPrivilegeCheck(t *testing.T) {
 }
 
 func TestAlterTableWithForeignKeyPrivilegeCheck(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create user 'u1'@'%' identified by '';")
@@ -458,7 +458,7 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 }
 
 func TestCreateTableWithForeignKeyDML(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("use test")
@@ -475,7 +475,7 @@ func TestCreateTableWithForeignKeyDML(t *testing.T) {
 }
 
 func TestCreateTableWithForeignKeyError(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("use test")
@@ -753,7 +753,7 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 }
 
 func TestModifyColumnWithForeignKey(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1;")
@@ -834,7 +834,7 @@ func TestDropForeignKeyMetaInfo(t *testing.T) {
 }
 
 func TestTruncateOrDropTableWithForeignKeyReferred(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("use test")
@@ -922,7 +922,7 @@ func TestTruncateOrDropTableWithForeignKeyReferred(t *testing.T) {
 }
 
 func TestDropTableWithForeignKeyReferred(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1;")
@@ -938,7 +938,7 @@ func TestDropTableWithForeignKeyReferred(t *testing.T) {
 }
 
 func TestDropIndexNeededInForeignKey(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
@@ -1039,7 +1039,7 @@ func getTableInfoReferredForeignKeys(t *testing.T, dom *domain.Domain, db, tb st
 }
 
 func TestDropColumnWithForeignKey(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1;")
@@ -1144,7 +1144,7 @@ func TestRenameColumnWithForeignKeyMetaInfo(t *testing.T) {
 }
 
 func TestDropDatabaseWithForeignKeyReferred(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1;")
@@ -1282,7 +1282,7 @@ func TestAddForeignKey(t *testing.T) {
 }
 
 func TestAlterTableAddForeignKeyError(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1;")
@@ -1622,7 +1622,7 @@ func getLatestSchemaDiff(t *testing.T, tk *testkit.TestKit) *model.SchemaDiff {
 }
 
 func TestMultiSchemaAddForeignKey(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@foreign_key_checks=1;")
 	tk.MustExec("use test")

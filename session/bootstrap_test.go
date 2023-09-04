@@ -167,7 +167,6 @@ func TestBootstrapWithError(t *testing.T) {
 
 	dom, err := domap.Get(store)
 	require.NoError(t, err)
-	domap.Delete(store)
 	dom.Close()
 
 	dom1, err := BootstrapSession(store)

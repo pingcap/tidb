@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -49,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 type signalsKey struct{}
@@ -760,7 +760,7 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 		}, nil
 	case variable.SlowLogUserStr, variable.SlowLogHostStr, execdetails.BackoffTypesStr, variable.SlowLogDBStr, variable.SlowLogIndexNamesStr, variable.SlowLogDigestStr,
 		variable.SlowLogStatsInfoStr, variable.SlowLogCopProcAddr, variable.SlowLogCopWaitAddr, variable.SlowLogPlanDigest,
-		variable.SlowLogPrevStmt, variable.SlowLogQuerySQLStr, variable.SlowLogWarnings:
+		variable.SlowLogPrevStmt, variable.SlowLogQuerySQLStr, variable.SlowLogWarnings, variable.SlowLogSessAliasStr:
 		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
 			row[columnIdx] = types.NewStringDatum(value)
 			return true, nil
@@ -941,8 +941,8 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		}
 	}
 	// Sort by start time
-	slices.SortFunc(logFiles, func(i, j logFile) bool {
-		return i.start.Before(j.start)
+	slices.SortFunc(logFiles, func(i, j logFile) int {
+		return i.start.Compare(j.start)
 	})
 	return logFiles, err
 }

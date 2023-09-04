@@ -20,6 +20,7 @@ import (
 
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/stretchr/testify/require"
 )
@@ -129,4 +130,23 @@ func TestTreeRelationship(t *testing.T) {
 		require.Equal(t, collectedSpans[0].Context.SpanID, collectedSpans[1].ParentSpanID)
 		require.Equal(t, collectedSpans[1].Context.SpanID, collectedSpans[2].ParentSpanID)
 	}
+}
+
+func TestTraceInfoFromContext(t *testing.T) {
+	ctx := context.Background()
+	// get info from a non-tracing context
+	require.Nil(t, tracing.TraceInfoFromContext(ctx))
+	// ContextWithTraceInfo with a nil info will return the original context
+	require.Equal(t, ctx, tracing.ContextWithTraceInfo(ctx, nil))
+	// create a context with trace info
+	ctx, cancel := context.WithCancel(context.WithValue(ctx, "val1", "a"))
+	ctx = tracing.ContextWithTraceInfo(ctx, &model.TraceInfo{ConnectionID: 12345, SessionAlias: "alias1"})
+	// new context should have the same value as the original one
+	info := tracing.TraceInfoFromContext(ctx)
+	require.Equal(t, uint64(12345), info.ConnectionID)
+	require.Equal(t, "alias1", info.SessionAlias)
+	require.Equal(t, "a", ctx.Value("val1"))
+	require.NoError(t, ctx.Err())
+	cancel()
+	require.Error(t, ctx.Err())
 }

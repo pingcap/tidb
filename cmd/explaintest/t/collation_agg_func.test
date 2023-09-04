@@ -2,10 +2,6 @@ set tidb_cost_model_version=1;
 # These tests test the aggregate function's behavior according to collation.
 # The result of min/max of enum/set is wrong, please fix them soon.
 
-# prepare database
-create database collation_agg_func;
-use collation_agg_func;
-
 create table t(id int, value varchar(20) charset utf8mb4 collate utf8mb4_general_ci, value1 varchar(20) charset utf8mb4 collate utf8mb4_bin);
 insert into t values (1, 'abc', 'abc '),(4, 'Abc', 'abc'),(3,'def', 'def '), (5, 'abc', 'ABC');
 
@@ -103,6 +99,3 @@ desc format='brief' select max(d collate utf8mb4_bin) from tt;
 --error 1253
 select max(d collate utf8mb4_bin) from tt;
 
-# cleanup environment
-drop database collation_agg_func;
-use test

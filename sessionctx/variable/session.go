@@ -24,6 +24,7 @@ import (
 	"math"
 	"math/rand"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,7 +66,6 @@ import (
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 )
 
 var (
@@ -1070,6 +1070,10 @@ type SessionVars struct {
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
 
+	// TidbKvReadTimeout is the timeout for readonly kv request in milliseconds, 0 means using default value
+	// See https://github.com/pingcap/tidb/blob/7105505a78fc886c33258caa5813baf197b15247/docs/design/2023-06-30-configurable-kv-timeout.md?plain=1#L14-L15
+	TidbKvReadTimeout uint64
+
 	// Killed is a flag to indicate that this query is killed.
 	Killed uint32
 
@@ -1530,6 +1534,15 @@ type SessionVars struct {
 	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
 	// When set to false, give up merging partition stats to global stats.
 	SkipMissingPartitionStats bool
+
+	// SessionAlias is the identifier of the session
+	SessionAlias string
+
+	// OptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
+	// For now, the possible values and corresponding behaviors are:
+	// OptObjectiveModerate: The default value. The optimizer considers the real-time stats (real-time row count, modify count).
+	// OptObjectiveDeterminate: The optimizer doesn't consider the real-time stats.
+	OptObjective string
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -2948,6 +2961,8 @@ const (
 	SlowLogHostStr = "Host"
 	// SlowLogConnIDStr is slow log field name.
 	SlowLogConnIDStr = "Conn_ID"
+	// SlowLogSessAliasStr is the session alias set by user
+	SlowLogSessAliasStr = "Session_alias"
 	// SlowLogQueryTimeStr is slow log field name.
 	SlowLogQueryTimeStr = "Query_time"
 	// SlowLogParseTimeStr is the parse sql time.
@@ -3149,6 +3164,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if s.ConnectionID != 0 {
 		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
+	}
+	if s.SessionAlias != "" {
+		writeSlowLogItem(&buf, SlowLogSessAliasStr, s.SessionAlias)
 	}
 	if logItems.ExecRetryCount > 0 {
 		buf.WriteString(SlowLogRowPrefixStr)
@@ -3500,6 +3518,14 @@ func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 	return s.runtimeFilterMode
 }
 
+// GetTidbKvReadTimeout returns readonly kv request timeout, prefer query hint over session variable
+func (s *SessionVars) GetTidbKvReadTimeout() uint64 {
+	if s.StmtCtx.HasTidbKvReadTimeout {
+		return s.StmtCtx.TidbKvReadTimeout
+	}
+	return s.TidbKvReadTimeout
+}
+
 // RuntimeFilterType type of runtime filter "IN"
 type RuntimeFilterType int64
 
@@ -3600,4 +3626,18 @@ func RuntimeFilterModeStringToMode(name string) (RuntimeFilterMode, bool) {
 	default:
 		return -1, false
 	}
+}
+
+const (
+	// OptObjectiveModerate is a possible value and the default value for TiDBOptObjective.
+	// Please see comments of SessionVars.OptObjective for details.
+	OptObjectiveModerate string = "moderate"
+	// OptObjectiveDeterminate is a possible value for TiDBOptObjective.
+	OptObjectiveDeterminate = "determinate"
+)
+
+// GetOptObjective return the session variable "tidb_opt_objective".
+// Please see comments of SessionVars.OptObjective for details.
+func (s *SessionVars) GetOptObjective() string {
+	return s.OptObjective
 }

@@ -76,7 +76,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/txn"
@@ -444,30 +443,6 @@ func (s *session) SetSessionManager(sm util.SessionManager) {
 
 func (s *session) GetSessionManager() util.SessionManager {
 	return s.sessionManager
-}
-
-func (s *session) StoreQueryFeedback(feedback interface{}) {
-	if variable.FeedbackProbability.Load() <= 0 {
-		return
-	}
-	if fb, ok := feedback.(*statistics.QueryFeedback); !ok || fb == nil || !fb.Valid.Load() {
-		return
-	}
-	if s.statsCollector != nil {
-		do, err := GetDomain(s.store)
-		if err != nil {
-			logutil.BgLogger().Debug("domain not found", zap.Error(err))
-			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
-			return
-		}
-		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle(), s.GetSessionVars().GetEnablePseudoForOutdatedStats())
-		if err != nil {
-			logutil.BgLogger().Debug("store query feedback", zap.Error(err))
-			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
-			return
-		}
-		metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Inc()
-	}
 }
 
 func (s *session) UpdateColStatsUsage(predicateColumns []model.TableItemID) {
@@ -2214,7 +2189,16 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 	})
 
-	stmtLabel := ast.GetStmtLabel(stmtNode)
+	var stmtLabel string
+	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, s.sessionVars)
+		if err == nil && prepareStmt.PreparedAst != nil {
+			stmtLabel = ast.GetStmtLabel(prepareStmt.PreparedAst.Stmt)
+		}
+	}
+	if stmtLabel == "" {
+		stmtLabel = ast.GetStmtLabel(stmtNode)
+	}
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
 	// Backup the original resource group name since sql hint might change it during optimization
@@ -3148,7 +3132,7 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 		ctxWithTimeout, cancel := context.WithTimeout(context.Background(), variable.DefWaitSplitRegionTimeout*time.Second)
 		var regionIDs []uint64
 		for _, id := range tableIDs {
-			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, id, variable.DefTiDBScatterRegion))
+			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, id, id, variable.DefTiDBScatterRegion))
 		}
 		if variable.DefTiDBScatterRegion {
 			ddl.WaitScatterRegionFinish(ctxWithTimeout, s, regionIDs...)
@@ -3726,7 +3710,8 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 		storeBootstrapped[store.UUID()] = true
 	}
 
-	return modifyBootstrapVersionForTest(store, ver)
+	modifyBootstrapVersionForTest(ver)
+	return ver
 }
 
 func finishBootstrap(store kv.Storage) {
@@ -3956,6 +3941,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
+			zap.String("session_alias", vars.SessionAlias),
 			zap.String("user", vars.User.LoginString()),
 			zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
@@ -4295,27 +4281,48 @@ func (s *session) EncodeSessionStates(ctx context.Context,
 		return err
 	}
 
+	hasRestrictVarPriv := false
+	checker := privilege.GetPrivilegeManager(s)
+	if checker == nil || checker.RequestDynamicVerification(s.sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
+		hasRestrictVarPriv = true
+	}
 	// Encode session variables. We put it here instead of SessionVars to avoid cycle import.
 	sessionStates.SystemVars = make(map[string]string)
 	for _, sv := range variable.GetSysVars() {
 		switch {
-		case sv.HasNoneScope(), sv.HasInstanceScope(), !sv.HasSessionScope():
+		case sv.HasNoneScope(), !sv.HasSessionScope():
 			// Hidden attribute is deprecated.
 			// None-scoped variables cannot be modified.
-			// Instance-scoped variables don't need to be encoded.
 			// Noop variables should also be migrated even if they are noop.
 			continue
 		case sv.ReadOnly:
 			// Skip read-only variables here. We encode them into SessionStates manually.
 			continue
-		case sem.IsEnabled() && sem.IsInvisibleSysVar(sv.Name):
-			// If they are shown, there will be a security issue.
-			continue
 		}
 		// Get all session variables because the default values may change between versions.
-		if val, keep, err := s.sessionVars.GetSessionStatesSystemVar(sv.Name); err != nil {
+		val, keep, err := s.sessionVars.GetSessionStatesSystemVar(sv.Name)
+		switch {
+		case err != nil:
 			return err
-		} else if keep {
+		case !keep:
+			continue
+		case !hasRestrictVarPriv && sem.IsEnabled() && sem.IsInvisibleSysVar(sv.Name):
+			// If the variable has a global scope, it should be the same with the global one.
+			// Otherwise, it should be the same with the default value.
+			defaultVal := sv.Value
+			if sv.HasGlobalScope() {
+				// If the session value is the same with the global one, skip it.
+				if defaultVal, err = sv.GetGlobalFromHook(ctx, s.sessionVars); err != nil {
+					return err
+				}
+			}
+			if val != defaultVal {
+				// Case 1: the RESTRICTED_VARIABLES_ADMIN is revoked after setting the session variable.
+				// Case 2: the global variable is updated after the session is created.
+				// In any case, the variable can't be set in the new session, so give up.
+				return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs(fmt.Sprintf("session has set invisible variable '%s'", sv.Name))
+			}
+		default:
 			sessionStates.SystemVars[sv.Name] = val
 		}
 	}
@@ -4340,7 +4347,10 @@ func (s *session) DecodeSessionStates(ctx context.Context,
 	}
 
 	// Decode session variables.
-	for name, val := range sessionStates.SystemVars {
+	names := variable.OrderByDependency(sessionStates.SystemVars)
+	// Some variables must be set before others, e.g. tidb_enable_noop_functions should be before noop variables.
+	for _, name := range names {
+		val := sessionStates.SystemVars[name]
 		// Experimental system variables may change scope, data types, or even be removed.
 		// We just ignore the errors and continue.
 		if err := s.sessionVars.SetSystemVar(name, val); err != nil {
@@ -4358,9 +4368,8 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 	if !s.isInternal() {
 		if txn, _ := s.Txn(false); txn != nil && txn.Valid() {
 			txn.SetOption(kv.RequestSourceType, stmtLabel)
-		} else {
-			s.sessionVars.RequestSourceType = stmtLabel
 		}
+		s.sessionVars.RequestSourceType = stmtLabel
 		return
 	}
 	if source := ctx.Value(kv.RequestSourceKey); source != nil {

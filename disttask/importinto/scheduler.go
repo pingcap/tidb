@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -175,6 +176,12 @@ func (s *importStepScheduler) OnSubtaskFinished(ctx context.Context, subtaskMeta
 		LoadedRowCnt: uint64(dataKVCount),
 		ColSizeMap:   sharedVars.Progress.GetColSize(),
 	}
+	allocators := sharedVars.TableImporter.Allocators()
+	subtaskMeta.MaxIDs = map[autoid.AllocatorType]int64{
+		autoid.RowIDAllocType:    allocators.Get(autoid.RowIDAllocType).Base(),
+		autoid.AutoIncrementType: allocators.Get(autoid.AutoIncrementType).Base(),
+		autoid.AutoRandomType:    allocators.Get(autoid.AutoRandomType).Base(),
+	}
 	s.sharedVars.Delete(subtaskMeta.ID)
 	return json.Marshal(subtaskMeta)
 }
@@ -228,7 +235,8 @@ func init() {
 	}
 	scheduler.RegisterTaskType(proto.ImportInto, scheduler.WithPoolSize(int32(runtime.GOMAXPROCS(0))))
 	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepImport,
-		func(taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
+		func(ctx context.Context, taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
+			// TODO(tangenta): use context for lifetime control.
 			taskMeta, logger, err := prepareFn(taskID, bs, step)
 			if err != nil {
 				return nil, err
@@ -241,7 +249,8 @@ func init() {
 		},
 	)
 	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepPostProcess,
-		func(taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
+		func(ctx context.Context, taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
+			// TODO(tangenta): use context for lifetime control.
 			taskMeta, logger, err := prepareFn(taskID, bs, step)
 			if err != nil {
 				return nil, err

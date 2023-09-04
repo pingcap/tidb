@@ -29,11 +29,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -272,6 +269,7 @@ const (
 	);`
 
 	// CreateStatsFeedbackTable stores the feedback info which is used to update stats.
+	// NOTE: Feedback is deprecated, but we still need to create this table for compatibility.
 	CreateStatsFeedbackTable = `CREATE TABLE IF NOT EXISTS mysql.stats_feedback (
 		table_id 	BIGINT(64) NOT NULL,
 		is_index 	TINYINT(2) NOT NULL,
@@ -978,15 +976,17 @@ const (
 	//   create table `mysql.tidb_runaway_watch` and table `mysql.tidb_runaway_watch_done`
 	//   to persist runaway watch and deletion of runaway watch at 7.3.
 	version172 = 172
-	// version 173
+	// version 173 add column `summary` to `mysql.tidb_background_subtask`.
+	version173 = 173
+	// version 174
 	//   add new `variable tidb_analyze_last_gc_point` to mysql.tidb
 	//   used for reduce the pressure the statistics's GC jobs.
-	version173 = 173
+	version174 = 174
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version173
+var currentBootstrapVersion int64 = version174
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1128,6 +1128,7 @@ var (
 		upgradeToVer171,
 		upgradeToVer172,
 		upgradeToVer173,
+		upgradeToVer174,
 	}
 )
 
@@ -1185,8 +1186,14 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	return row.GetString(0), false, nil
 }
 
-// SupportUpgradeStateVer is exported for testing.
-var SupportUpgradeStateVer = version145
+var (
+	// SupportUpgradeStateVer is exported for testing.
+	// The minimum version that can be upgraded by paused user DDL.
+	SupportUpgradeStateVer int64 = version145
+	// SupportUpgradeHTTPOpVer is exported for testing.
+	// The minimum version of the upgrade can be notified through the HTTP API.
+	SupportUpgradeHTTPOpVer int64 = version172
+)
 
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
@@ -1197,6 +1204,10 @@ func upgrade(s Session) {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
+	if ver >= SupportUpgradeStateVer {
+		checkOrSyncUpgrade(s, ver)
+	}
+
 	// Only upgrade from under version92 and this TiDB is not owner set.
 	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
 	if ver < version92 {
@@ -1216,9 +1227,6 @@ func upgrade(s Session) {
 		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
 	}
 
-	if ver >= int64(SupportUpgradeStateVer) {
-		syncUpgradeState(s)
-	}
 	if isNull {
 		upgradeToVer99Before(s)
 	}
@@ -1230,9 +1238,6 @@ func upgrade(s Session) {
 	}
 	if isNull {
 		upgradeToVer99After(s)
-	}
-	if ver >= int64(SupportUpgradeStateVer) {
-		syncNormalRunning(s)
 	}
 
 	variable.DDLForce2Queue.Store(false)
@@ -1259,87 +1264,6 @@ func upgrade(s Session) {
 			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
 	}
-}
-
-func syncUpgradeState(s Session) {
-	totalInterval := time.Duration(internalSQLTimeout) * time.Second
-	ctx, cancelFunc := context.WithTimeout(context.Background(), totalInterval)
-	defer cancelFunc()
-	dom := domain.GetDomain(s)
-	err := dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateUpgrading))
-	if err != nil {
-		logutil.BgLogger().Fatal("[upgrading] update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
-	}
-
-	interval := 200 * time.Millisecond
-	retryTimes := int(totalInterval / interval)
-	for i := 0; i < retryTimes; i++ {
-		op, err := owner.GetOwnerOpValue(ctx, dom.EtcdClient(), ddl.DDLOwnerKey, "upgrade bootstrap")
-		if err == nil && op.String() == owner.OpGetUpgradingState.String() {
-			break
-		}
-		if i == retryTimes-1 {
-			logutil.BgLogger().Fatal("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
-		}
-		if i%10 == 0 {
-			logutil.BgLogger().Warn("get owner op failed", zap.String("category", "upgrading"), zap.Stringer("state", op), zap.Error(err))
-		}
-		time.Sleep(interval)
-	}
-
-	retryTimes = 60
-	interval = 500 * time.Millisecond
-	for i := 0; i < retryTimes; i++ {
-		jobErrs, err := ddl.PauseAllJobsBySystem(s)
-		if err == nil && len(jobErrs) == 0 {
-			break
-		}
-		jobErrStrs := make([]string, 0, len(jobErrs))
-		for _, jobErr := range jobErrs {
-			if dbterror.ErrPausedDDLJob.Equal(jobErr) {
-				continue
-			}
-			jobErrStrs = append(jobErrStrs, jobErr.Error())
-		}
-		if err == nil && len(jobErrStrs) == 0 {
-			break
-		}
-
-		if i == retryTimes-1 {
-			logutil.BgLogger().Fatal("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
-		}
-		logutil.BgLogger().Warn("pause all jobs failed", zap.String("category", "upgrading"), zap.Strings("errs", jobErrStrs), zap.Error(err))
-		time.Sleep(interval)
-	}
-	logutil.BgLogger().Info("update global state to upgrading", zap.String("category", "upgrading"), zap.String("state", syncer.StateUpgrading))
-}
-
-func syncNormalRunning(s Session) {
-	failpoint.Inject("mockResumeAllJobsFailed", func(val failpoint.Value) {
-		if val.(bool) {
-			dom := domain.GetDomain(s)
-			//nolint: errcheck
-			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), syncer.NewStateInfo(syncer.StateNormalRunning))
-			failpoint.Return()
-		}
-	})
-
-	jobErrs, err := ddl.ResumeAllJobsBySystem(s)
-	if err != nil {
-		logutil.BgLogger().Warn("resume all paused jobs failed", zap.String("category", "upgrading"), zap.Error(err))
-	}
-	for _, e := range jobErrs {
-		logutil.BgLogger().Warn("resume the job failed ", zap.String("category", "upgrading"), zap.Error(e))
-	}
-
-	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancelFunc()
-	dom := domain.GetDomain(s)
-	err = dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateNormalRunning))
-	if err != nil {
-		logutil.BgLogger().Fatal("[upgrading] update global state to normal failed", zap.Error(err))
-	}
-	logutil.BgLogger().Info("update global state to normal running finished", zap.String("category", "upgrading"))
 }
 
 // checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.
@@ -1609,6 +1533,7 @@ func upgradeToVer20(s Session, ver int64) {
 	if ver >= version20 {
 		return
 	}
+	// NOTE: Feedback is deprecated, but we still need to create this table for compatibility.
 	doReentrantDDL(s, CreateStatsFeedbackTable)
 }
 
@@ -2642,8 +2567,8 @@ func upgradeToVer136(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, CreateGlobalTask)
-	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s DROP INDEX namespace", ddl.BackgroundSubtaskTable), dbterror.ErrCantDropFieldOrKey)
-	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s ADD INDEX idx_task_key(task_key)", ddl.BackgroundSubtaskTable), dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask DROP INDEX namespace", dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_task_key(task_key)", dbterror.ErrDupKeyName)
 }
 
 func upgradeToVer137(_ Session, _ int64) {
@@ -2801,6 +2726,13 @@ func upgradeToVer173(s Session, ver int64) {
 	if ver >= version173 {
 		return
 	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer174(s Session, ver int64) {
+	if ver >= version174 {
+		return
+	}
 	writeStatsGCLastPos(s)
 }
 
@@ -2868,6 +2800,7 @@ func doDDLWorks(s Session) {
 	// Create gc_delete_range_done table.
 	mustExecute(s, CreateGCDeleteRangeDoneTable)
 	// Create stats_feedback table.
+	// NOTE: Feedback is deprecated, but we still need to create this table for compatibility.
 	mustExecute(s, CreateStatsFeedbackTable)
 	// Create role_edges table.
 	mustExecute(s, CreateRoleEdgesTable)

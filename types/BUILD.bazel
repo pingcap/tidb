@@ -61,7 +61,6 @@ go_library(
         "//util/stringutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
-        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -102,9 +101,7 @@ go_test(
         "//parser/charset",
         "//parser/mysql",
         "//parser/terror",
-        "//session",
         "//sessionctx/stmtctx",
-        "//testkit",
         "//testkit/testsetup",
         "//util/collate",
         "//util/hack",

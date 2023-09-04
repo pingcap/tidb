@@ -19,6 +19,7 @@ import (
 	"context"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -29,7 +30,6 @@ import (
 	tidbconfig "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
-	"golang.org/x/exp/slices"
 )
 
 var (

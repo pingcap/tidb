@@ -271,6 +271,11 @@ type copTask struct {
 	redirect2Replica *uint64
 	busyThreshold    time.Duration
 	meetLockFallback bool
+
+	// timeout value for one kv readonly request
+	tidbKvReadTimeout uint64
+	// firstReadType is used to indicate the type of first read when retrying.
+	firstReadType string
 }
 
 type batchedCopTask struct {
@@ -314,6 +319,8 @@ type buildCopTaskOpt struct {
 	respChan bool
 	rowHints []int
 	elapsed  *time.Duration
+	// ignoreTiDBKVReadTimeout is used to ignore tidb_kv_timeout configuration, use default timeout instead.
+	ignoreTiDBKVReadTimeout bool
 }
 
 func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*copTask, error) {
@@ -403,6 +410,9 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 				requestSource: req.RequestSource,
 				RowCountHint:  hint,
 				busyThreshold: req.StoreBusyThreshold,
+			}
+			if !opt.ignoreTiDBKVReadTimeout {
+				task.tidbKvReadTimeout = req.TidbKvReadTimeout
 			}
 			// only keep-order need chan inside task.
 			// tasks by region error will reuse the channel of parent task.
@@ -1166,14 +1176,23 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		RecordTimeStat: true,
 		RecordScanStat: true,
 		TaskId:         worker.req.TaskID,
-		RequestSource:  task.requestSource.GetRequestSource(),
 		ResourceControlContext: &kvrpcpb.ResourceControlContext{
 			ResourceGroupName: worker.req.ResourceGroupName,
 		},
 		BusyThresholdMs: uint32(task.busyThreshold.Milliseconds()),
+		BucketsVersion:  task.bucketsVer,
 	})
+	req.InputRequestSource = task.requestSource.GetRequestSource()
+	if task.firstReadType != "" {
+		req.ReadType = task.firstReadType
+		req.IsRetryRequest = true
+	}
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
+	}
+	timeout := config.GetGlobalConfig().TiKVClient.CoprReqTimeout
+	if task.tidbKvReadTimeout > 0 {
+		timeout = time.Duration(task.tidbKvReadTimeout) * time.Millisecond
 	}
 	failpoint.Inject("sleepCoprRequest", func(v failpoint.Value) {
 		//nolint:durationcheck
@@ -1209,7 +1228,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		ops = append(ops, tikv.WithMatchStores([]uint64{*task.redirect2Replica}))
 	}
 	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
-		config.GetGlobalConfig().TiKVClient.CoprReqTimeout, getEndPointType(task.storeType), task.storeAddr, ops...)
+		timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
 	err = derr.ToTiDBErr(err)
 	if err != nil {
 		if task.storeType == kv.TiDB {
@@ -1243,12 +1262,19 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data)))
 	}
 
+	var remains []*copTask
 	if worker.req.Paging.Enable {
-		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, costTime)
+		remains, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, costTime)
+	} else {
+		// Handles the response for non-paging copTask.
+		remains, err = worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, nil, costTime)
 	}
-
-	// Handles the response for non-paging copTask.
-	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, nil, costTime)
+	if req.ReadType != "" {
+		for _, remain := range remains {
+			remain.firstReadType = req.ReadType
+		}
+	}
+	return remains, err
 }
 
 const (
@@ -1352,10 +1378,11 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
 		remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
-			req:      worker.req,
-			cache:    worker.store.GetRegionCache(),
-			respChan: false,
-			eventCb:  task.eventCb,
+			req:                     worker.req,
+			cache:                   worker.store.GetRegionCache(),
+			respChan:                false,
+			eventCb:                 task.eventCb,
+			ignoreTiDBKVReadTimeout: true,
 		})
 		if err != nil {
 			return remains, err
@@ -1478,10 +1505,11 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				return nil, errors.Trace(err)
 			}
 			remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
-				req:      worker.req,
-				cache:    worker.store.GetRegionCache(),
-				respChan: false,
-				eventCb:  task.eventCb,
+				req:                     worker.req,
+				cache:                   worker.store.GetRegionCache(),
+				respChan:                false,
+				eventCb:                 task.eventCb,
+				ignoreTiDBKVReadTimeout: true,
 			})
 			if err != nil {
 				return nil, err

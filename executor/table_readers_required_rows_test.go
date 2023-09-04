@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -114,7 +113,7 @@ func mockDistsqlSelectCtxGet(ctx context.Context) (totalRows int, expectedRowsRe
 }
 
 func mockSelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int) (distsql.SelectResult, error) {
+	fieldTypes []*types.FieldType, copPlanIDs []int) (distsql.SelectResult, error) {
 	totalRows, expectedRowsRet := mockDistsqlSelectCtxGet(ctx)
 	return &requiredRowsSelectResult{
 		retTypes:        fieldTypes,
@@ -186,15 +185,15 @@ func TestTableReaderRequiredRows(t *testing.T) {
 	for _, testCase := range testCases {
 		sctx := defaultCtx()
 		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
-		exec := buildTableReader(sctx)
-		require.NoError(t, exec.Open(ctx))
-		chk := newFirstChunk(exec)
+		executor := buildTableReader(sctx)
+		require.NoError(t, executor.Open(ctx))
+		chk := exec.NewFirstChunk(executor)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.NoError(t, exec.Next(ctx, chk))
+			require.NoError(t, executor.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.NoError(t, exec.Close())
+		require.NoError(t, executor.Close())
 	}
 }
 
@@ -238,14 +237,14 @@ func TestIndexReaderRequiredRows(t *testing.T) {
 	for _, testCase := range testCases {
 		sctx := defaultCtx()
 		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
-		exec := buildIndexReader(sctx)
-		require.NoError(t, exec.Open(ctx))
-		chk := newFirstChunk(exec)
+		executor := buildIndexReader(sctx)
+		require.NoError(t, executor.Open(ctx))
+		chk := exec.NewFirstChunk(executor)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.NoError(t, exec.Next(ctx, chk))
+			require.NoError(t, executor.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.NoError(t, exec.Close())
+		require.NoError(t, executor.Close())
 	}
 }

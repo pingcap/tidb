@@ -29,12 +29,22 @@ type kvReader struct {
 	byteReader *byteReader
 }
 
-func newKVReader(ctx context.Context, name string, store storage.ExternalStorage, initFileOffset uint64, bufSize int) (*kvReader, error) {
+func newKVReader(
+	ctx context.Context,
+	name string,
+	store storage.ExternalStorage,
+	initFileOffset uint64,
+	bufSize int,
+) (*kvReader, error) {
 	sr, err := openStoreReaderAndSeek(ctx, store, name, initFileOffset)
 	if err != nil {
 		return nil, err
 	}
 	br, err := newByteReader(ctx, sr, bufSize)
+	if err != nil {
+		br.Close()
+		return nil, err
+	}
 	return &kvReader{
 		byteReader: br,
 	}, nil

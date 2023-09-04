@@ -19,9 +19,11 @@
 package ddl
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,13 +64,11 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -681,24 +681,29 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 
 	scheduler.RegisterTaskType("backfill")
 	scheduler.RegisterSchedulerConstructor("backfill", proto.StepOne,
-		func(_ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
-			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
+		func(ctx context.Context, _ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+			return NewBackfillSchedulerHandle(ctx, taskMeta, d, step == proto.StepTwo)
 		})
 
 	scheduler.RegisterSchedulerConstructor("backfill", proto.StepTwo,
-		func(_ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
-			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
+		func(ctx context.Context, _ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+			return NewBackfillSchedulerHandle(ctx, taskMeta, d, step == proto.StepTwo)
 		})
 
-	dispatcher.RegisterTaskFlowHandle(BackfillTaskType, NewLitBackfillFlowHandle(d))
-	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepOne,
-		func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
-			return &scheduler.EmptyExecutor{}, nil
-		})
-	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepTwo,
-		func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
-			return &scheduler.EmptyExecutor{}, nil
-		})
+	backFillDsp, err := NewBackfillingDispatcher(d)
+	if err != nil {
+		logutil.BgLogger().Warn("NewBackfillingDispatcher failed", zap.String("category", "ddl"), zap.Error(err))
+	} else {
+		dispatcher.RegisterTaskDispatcher(BackfillTaskType, backFillDsp)
+		scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepOne,
+			func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
+				return &scheduler.EmptyExecutor{}, nil
+			})
+		scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepTwo,
+			func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
+				return &scheduler.EmptyExecutor{}, nil
+			})
+	}
 
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
@@ -746,7 +751,7 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 		}
 	}
 	// reorg worker count at least 1 at most 10.
-	reorgCnt := mathutil.Min(mathutil.Max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
+	reorgCnt := min(max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
 	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), reorg)
 	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), general)
 	failpoint.Inject("NoDDLDispatchLoop", func(val failpoint.Value) {
@@ -983,7 +988,9 @@ func getIntervalFromPolicy(policy []time.Duration, i int) (time.Duration, bool) 
 func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	switch job.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn,
-		model.ActionReorganizePartition:
+		model.ActionReorganizePartition,
+		model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	case model.ActionCreateTable, model.ActionCreateSchema:
 		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
@@ -1037,6 +1044,10 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
 func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	job.TraceInfo = &model.TraceInfo{
+		ConnectionID: ctx.GetSessionVars().ConnectionID,
+		SessionAlias: ctx.GetSessionVars().SessionAlias,
+	}
 	if mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
 		// In multiple schema change, we don't run the job.
 		// Instead, we merge all the jobs into one pending job.
@@ -1776,8 +1787,8 @@ func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 		}
 	}
 	// sort job.
-	slices.SortFunc(allJobs, func(i, j *model.Job) bool {
-		return i.ID < j.ID
+	slices.SortFunc(allJobs, func(i, j *model.Job) int {
+		return cmp.Compare(i.ID, j.ID)
 	})
 	return allJobs, nil
 }

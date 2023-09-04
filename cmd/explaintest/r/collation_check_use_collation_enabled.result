@@ -1,6 +1,4 @@
 set tidb_cost_model_version=1;
-create database collation_check_use_collation;
-use collation_check_use_collation;
 CREATE TABLE `t` (
 `a` char(10) DEFAULT NULL
 );
@@ -197,4 +195,3 @@ Projection	80000000.00	root		is_ipv4(cast(collation_check_use_collation.t0.c1, v
   │   └─TableFullScan	10000.00	cop[tikv]	table:t0	keep order:false, stats:pseudo
   └─TableReader(Probe)	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-use test

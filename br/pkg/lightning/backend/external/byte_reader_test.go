@@ -93,9 +93,7 @@ func TestByteReader(t *testing.T) {
 	y, err = br.readNBytes(3)
 	require.NoError(t, err)
 	// Pollute mockExtStore to verify if the slice is not affected.
-	for i, b := range []byte{'x', 'y', 'z'} {
-		ms.src[i] = b
-	}
+	copy(ms.src, []byte("xyz"))
 	x = *y
 	require.Equal(t, 3, len(x))
 	require.Equal(t, byte('c'), x[2])
@@ -107,9 +105,7 @@ func TestByteReader(t *testing.T) {
 	y, err = br.readNBytes(2)
 	require.NoError(t, err)
 	// Pollute mockExtStore to verify if the slice is not affected.
-	for i, b := range []byte{'x', 'y', 'z'} {
-		ms.src[i] = b
-	}
+	copy(ms.src, []byte("xyz"))
 	x = *y
 	require.Equal(t, 2, len(x))
 	require.Equal(t, byte('b'), x[1])
@@ -219,5 +215,19 @@ func TestReset(t *testing.T) {
 		}
 	}
 	_, err = br.readNBytes(1)
+	require.Equal(t, io.EOF, err)
+}
+
+func TestUnexpectedEOF(t *testing.T) {
+	ms := &mockExtStore{src: []byte("0123456789")}
+	br, err := newByteReader(context.Background(), ms, 3)
+	require.NoError(t, err)
+	_, err = br.readNBytes(100)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+}
+
+func TestEmptyContent(t *testing.T) {
+	ms := &mockExtStore{src: []byte{}}
+	_, err := newByteReader(context.Background(), ms, 100)
 	require.Equal(t, io.EOF, err)
 }

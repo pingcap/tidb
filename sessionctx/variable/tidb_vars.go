@@ -904,6 +904,10 @@ const (
 
 	// TiDBEnableCheckConstraint indicates whether to enable check constraint feature.
 	TiDBEnableCheckConstraint = "tidb_enable_check_constraint"
+
+	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
+	// Please see comments of SessionVars.OptObjective for details.
+	TiDBOptObjective = "tidb_opt_objective"
 )
 
 // TiDB vars that have only global scope
@@ -1083,6 +1087,8 @@ const (
 	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
 	// When set to false, give up merging partition stats to global stats.
 	TiDBSkipMissingPartitionStats = "tidb_skip_missing_partition_stats"
+	// TiDBSessionAlias indicates the alias of a session which is used for tracing.
+	TiDBSessionAlias = "tidb_session_alias"
 )
 
 // TiDB intentional limits
@@ -1308,7 +1314,7 @@ const (
 	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
-	DefTiDBEnableNonPreparedPlanCache              = true
+	DefTiDBEnableNonPreparedPlanCache              = false
 	DefTiDBEnableNonPreparedPlanCacheForDML        = false
 	DefTiDBNonPreparedPlanCacheSize                = 100
 	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
@@ -1387,6 +1393,7 @@ const (
 	DefTiDBLockUnchangedKeys                          = true
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
+	DefTiDBOptObjective                               = OptObjectiveModerate
 )
 
 // Process global variables.

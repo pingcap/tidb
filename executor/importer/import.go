@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -57,7 +58,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -151,11 +151,15 @@ type LoadDataReaderInfo struct {
 	Remote *mydump.SourceFileMeta
 }
 
-// Plan describes the plan of LOAD DATA.
+// Plan describes the plan of LOAD DATA and IMPORT INTO.
 type Plan struct {
-	DBName           string
-	DBID             int64
-	TableInfo        *model.TableInfo
+	DBName string
+	DBID   int64
+	// TableInfo is the table info we used during import, we might change it
+	// if add index by SQL is enabled(it's disabled now).
+	TableInfo *model.TableInfo
+	// DesiredTableInfo is the table info before import, and the desired table info
+	// after import.
 	DesiredTableInfo *model.TableInfo
 
 	Path   string
@@ -166,7 +170,10 @@ type Plan struct {
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
 	Restrictive bool
 
-	SQLMode          mysql.SQLMode
+	SQLMode mysql.SQLMode
+	// Charset is the charset of the data file when file is CSV or TSV.
+	// it might be nil when using LOAD DATA and no charset is specified.
+	// for IMPORT INTO, it is always non-nil.
 	Charset          *string
 	ImportantSysVars map[string]string
 
@@ -226,11 +233,11 @@ type LoadDataController struct {
 	Table table.Table
 
 	// how input field(or input column) from data file is mapped, either to a column or variable.
-	// if there's NO column list clause in load data statement, then it's table's columns
+	// if there's NO column list clause in SQL statement, then it's table's columns
 	// else it's user defined list.
 	FieldMappings []*FieldMapping
 	// see InsertValues.InsertColumns
-	// todo: our behavior is different with mysql. such as for table t(a,b)
+	// Note: our behavior is different with mysql. such as for table t(a,b)
 	// - "...(a,a) set a=100" is allowed in mysql, but not in tidb
 	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
 	// - ref columns in set clause is allowed in mysql, but not in tidb
@@ -459,7 +466,6 @@ func (e *LoadDataController) checkFieldParams() error {
 		}
 		// NOTE: IMPORT INTO also don't support user set empty LinesTerminatedBy or FieldsTerminatedBy,
 		// but it's check in initOptions.
-		// TODO: support lines terminated is "".
 		if len(e.LinesTerminatedBy) == 0 {
 			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty")
 		}
@@ -658,6 +664,15 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		}
 	}
 
+	// when split-file is set, data file will be split into chunks of 256 MiB.
+	// skip_rows should be 0 or 1, we add this restriction to simplify skip_rows
+	// logic, so we only need to skip on the first chunk for each data file.
+	// CSV parser limit each row size to LargestEntryLimit(120M), the first row
+	// will NOT cross file chunk.
+	if p.SplitFile && p.IgnoreLines > 1 {
+		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("skip_rows, should be <= 1 when split-file is enabled")
+	}
+
 	p.adjustOptions()
 	return nil
 }
@@ -848,7 +863,7 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 	return csvConfig
 }
 
-// InitDataFiles initializes the data store and load data files.
+// InitDataFiles initializes the data store and files.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	u, err2 := storage.ParseRawURL(e.Path)
 	if err2 != nil {
@@ -990,7 +1005,7 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 		f := e.dataFiles[i]
 		result = append(result, LoadDataReaderInfo{
 			Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore)
+				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore, storage.DecompressConfig{})
 				if err2 != nil {
 					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the INFILE path is correct")
 				}
@@ -1059,6 +1074,11 @@ func (e *LoadDataController) GetParser(
 	}
 	parser.SetLogger(litlog.Logger{Logger: logutil.Logger(ctx)})
 
+	return parser, nil
+}
+
+// HandleSkipNRows skips the first N rows of the data file.
+func (e *LoadDataController) HandleSkipNRows(parser mydump.Parser) error {
 	// handle IGNORE N LINES
 	ignoreOneLineFn := parser.ReadRow
 	if csvParser, ok := parser.(*mydump.CSVParser); ok {
@@ -1070,17 +1090,17 @@ func (e *LoadDataController) GetParser(
 
 	ignoreLineCnt := e.IgnoreLines
 	for ignoreLineCnt > 0 {
-		err = ignoreOneLineFn()
+		err := ignoreOneLineFn()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
-				return parser, nil
+				return nil
 			}
-			return nil, err
+			return err
 		}
 
 		ignoreLineCnt--
 	}
-	return parser, nil
+	return nil
 }
 
 func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
@@ -1133,11 +1153,10 @@ type JobImportParam struct {
 
 // JobImportResult is the result of the job import.
 type JobImportResult struct {
-	Msg          string
-	LastInsertID uint64
-	Affected     uint64
-	Warnings     []stmtctx.SQLWarn
-	ColSizeMap   map[int64]int64
+	Msg        string
+	Affected   uint64
+	Warnings   []stmtctx.SQLWarn
+	ColSizeMap map[int64]int64
 }
 
 // JobImporter is the interface for importing a job.
@@ -1171,5 +1190,5 @@ func GetMsgFromBRError(err error) string {
 	return raw[:len(raw)-len(berrMsg)-len(": ")]
 }
 
-// TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
+// TestSyncCh is used in unit test to synchronize the execution.
 var TestSyncCh = make(chan struct{})

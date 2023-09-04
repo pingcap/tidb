@@ -16,9 +16,11 @@ package extsort
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"math/rand"
+	"slices"
 	"sync"
 	"testing"
 
@@ -28,7 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 func TestDiskSorterCommon(t *testing.T) {
@@ -92,8 +93,8 @@ func TestDiskSorterReopen(t *testing.T) {
 	}
 	require.NoError(t, w.Close())
 
-	slices.SortFunc(kvs, func(a, b keyValue) bool {
-		return bytes.Compare(a.key, b.key) < 0
+	slices.SortFunc(kvs, func(a, b keyValue) int {
+		return bytes.Compare(a.key, b.key)
 	})
 	verify := func() {
 		iter, err := sorter.NewIterator(context.Background())
@@ -535,8 +536,8 @@ func TestMergingIter(t *testing.T) {
 			{[]byte("j1"), []byte("vj1")},
 		}),
 	}
-	slices.SortFunc(files, func(a, b *fileMetadata) bool {
-		return bytes.Compare(a.startKey, b.startKey) < 0
+	slices.SortFunc(files, func(a, b *fileMetadata) int {
+		return bytes.Compare(a.startKey, b.startKey)
 	})
 
 	iter := newMergingIter(files, openIter)
@@ -712,8 +713,8 @@ func TestPickCompactionFiles(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		actual := pickCompactionFiles(tc.allFiles, tc.compactionThreshold, zap.NewNop())
-		slices.SortFunc(actual, func(a, b *fileMetadata) bool {
-			return a.fileNum < b.fileNum
+		slices.SortFunc(actual, func(a, b *fileMetadata) int {
+			return cmp.Compare(a.fileNum, b.fileNum)
 		})
 		require.Equal(t, tc.expected, actual)
 	}

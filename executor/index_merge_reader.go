@@ -16,10 +16,12 @@ package executor
 
 import (
 	"bytes"
+	"cmp"
 	"container/heap"
 	"context"
 	"fmt"
 	"runtime/trace"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -39,7 +41,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	plannerutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -52,7 +53,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 var (
@@ -121,7 +121,6 @@ type IndexMergeReaderExecutor struct {
 
 	resultCh   chan *indexMergeTableTask
 	resultCurr *indexMergeTableTask
-	feedbacks  []*statistics.QueryFeedback
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
@@ -182,9 +181,6 @@ func (e *IndexMergeReaderExecutor) Open(_ context.Context) (err error) {
 			return err
 		}
 	} else {
-		for _, feedback := range e.feedbacks {
-			feedback.Invalidate() // feedback is not ready for partition tables
-		}
 		e.partitionKeyRanges = make([][][]kv.KeyRange, len(e.prunedPartitions))
 		for i, p := range e.prunedPartitions {
 			if e.partitionKeyRanges[i], err = e.buildKeyRangesForTable(p); err != nil {
@@ -233,11 +229,11 @@ func (e *IndexMergeReaderExecutor) buildKeyRangesForTable(tbl table.Table) (rang
 		_, ok := plan[0].(*plannercore.PhysicalIndexScan)
 		if !ok {
 			firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges[i], false, e.descs[i], tbl.Meta().IsCommonHandle)
-			firstKeyRanges, err := distsql.TableHandleRangesToKVRanges(sc, []int64{getPhysicalTableID(tbl)}, tbl.Meta().IsCommonHandle, firstPartRanges, nil)
+			firstKeyRanges, err := distsql.TableHandleRangesToKVRanges(sc, []int64{getPhysicalTableID(tbl)}, tbl.Meta().IsCommonHandle, firstPartRanges)
 			if err != nil {
 				return nil, err
 			}
-			secondKeyRanges, err := distsql.TableHandleRangesToKVRanges(sc, []int64{getPhysicalTableID(tbl)}, tbl.Meta().IsCommonHandle, secondPartRanges, nil)
+			secondKeyRanges, err := distsql.TableHandleRangesToKVRanges(sc, []int64{getPhysicalTableID(tbl)}, tbl.Meta().IsCommonHandle, secondPartRanges)
 			if err != nil {
 				return nil, err
 			}
@@ -245,7 +241,7 @@ func (e *IndexMergeReaderExecutor) buildKeyRangesForTable(tbl table.Table) (rang
 			ranges = append(ranges, keyRanges)
 			continue
 		}
-		keyRange, err := distsql.IndexRangesToKVRanges(sc, getPhysicalTableID(tbl), e.indexes[i].ID, e.ranges[i], e.feedbacks[i])
+		keyRange, err := distsql.IndexRangesToKVRanges(sc, getPhysicalTableID(tbl), e.indexes[i].ID, e.ranges[i])
 		if err != nil {
 			return nil, err
 		}
@@ -409,15 +405,15 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 					// init kvReq and worker for this partition
 					// The key ranges should be ordered.
-					slices.SortFunc(keyRange, func(i, j kv.KeyRange) bool {
-						return bytes.Compare(i.StartKey, j.StartKey) < 0
+					slices.SortFunc(keyRange, func(i, j kv.KeyRange) int {
+						return bytes.Compare(i.StartKey, j.StartKey)
 					})
 					kvReq, err := builder.SetKeyRanges(keyRange).Build()
 					if err != nil {
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
-					result, err := distsql.SelectWithRuntimeStats(ctx, e.Ctx(), kvReq, tps, e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.getPartitalPlanID(workID))
+					result, err := distsql.SelectWithRuntimeStats(ctx, e.Ctx(), kvReq, tps, getPhysicalPlanIDs(e.partialPlans[workID]), e.getPartitalPlanID(workID))
 					if err != nil {
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
@@ -432,12 +428,9 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					results = []distsql.SelectResult{ssr}
 				}
 				ctx1, cancel := context.WithCancel(ctx)
-				_, fetchErr := worker.fetchHandles(ctx1, results, exitCh, fetchCh, e.finished, e.handleCols, workID)
-				if fetchErr != nil { // this error is synced in fetchHandles(), don't sync it again
-					e.feedbacks[workID].Invalidate()
-				}
+				// this error is reported in fetchHandles(), so ignore it here.
+				_, _ = worker.fetchHandles(ctx1, results, exitCh, fetchCh, e.finished, e.handleCols, workID)
 				cancel()
-				e.Ctx().StoreQueryFeedback(e.feedbacks[workID])
 			},
 			handleWorkerPanic(ctx, e.finished, fetchCh, nil, partialIndexWorkerType),
 		)
@@ -472,7 +465,6 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					txnScope:         e.txnScope,
 					readReplicaScope: e.readReplicaScope,
 					isStaleness:      e.isStaleness,
-					feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
 					plans:            e.partialPlans[workID],
 					ranges:           e.ranges[workID],
 					netDataSize:      e.partialNetDataSizes[workID],
@@ -495,8 +487,8 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 				}
 
 				if len(e.prunedPartitions) != 0 && len(e.byItems) != 0 {
-					slices.SortFunc(worker.prunedPartitions, func(i, j table.PhysicalTable) bool {
-						return i.GetPhysicalID() < j.GetPhysicalID()
+					slices.SortFunc(worker.prunedPartitions, func(i, j table.PhysicalTable) int {
+						return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 					})
 					partialTableReader.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
 						sctx:       e.Ctx(),
@@ -546,17 +538,13 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					// fetch all handles from this table
 					ctx1, cancel := context.WithCancel(ctx)
 					_, fetchErr := worker.fetchHandles(ctx1, exitCh, fetchCh, e.finished, e.handleCols, parTblIdx, workID)
-					if fetchErr != nil { // this error is synced in fetchHandles, so don't sync it again
-						e.feedbacks[workID].Invalidate()
-					}
-
 					// release related resources
 					cancel()
 					tableReaderClosed = true
 					if err = worker.tableReader.Close(); err != nil {
 						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
 					}
-					e.Ctx().StoreQueryFeedback(e.feedbacks[workID])
+					// this error is reported in fetchHandles(), so ignore it here.
 					if fetchErr != nil {
 						break
 					}
@@ -658,13 +646,17 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 }
 
 func (w *partialTableWorker) getRetTpsForTableScan() []*types.FieldType {
-	return retTypes(w.tableReader)
+	return exec.RetTypes(w.tableReader)
 }
 
 func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, handleCols plannercore.HandleCols) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	handles = make([]kv.Handle, 0, w.batchSize)
+	if len(w.byItems) != 0 {
+		retChk = chunk.NewChunkWithCapacity(w.getRetTpsForTableScan(), w.batchSize)
+	}
 	var memUsage int64
+	var chunkRowOffset int
 	defer w.memTracker.Consume(-memUsage)
 	for len(handles) < w.batchSize {
 		requiredRows := w.batchSize - len(handles)
@@ -678,7 +670,7 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		start := time.Now()
 		err = errors.Trace(w.tableReader.Next(ctx, chk))
 		if err != nil {
-			return handles, nil, err
+			return nil, nil, err
 		}
 		if be := w.tableReader.Base(); be != nil && be.RuntimeStats() != nil {
 			be.RuntimeStats().Record(time.Since(start), chk.NumRows())
@@ -692,12 +684,12 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memDelta := chk.MemoryUsage()
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
-		for i := 0; i < chk.NumRows(); i++ {
+		for chunkRowOffset = 0; chunkRowOffset < chk.NumRows(); chunkRowOffset++ {
 			if w.pushedLimit != nil {
 				w.scannedKeys++
 				if w.scannedKeys > (w.pushedLimit.Offset + w.pushedLimit.Count) {
 					// Skip the handles after Offset+Count.
-					return handles, retChk, nil
+					break
 				}
 			}
 			var handle kv.Handle
@@ -706,21 +698,18 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 				return nil, nil, err1
 			}
 			if ok {
-				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(i))
+				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(chunkRowOffset))
 			} else {
-				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(i))
+				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(chunkRowOffset))
 			}
 			if err != nil {
 				return nil, nil, err
 			}
 			handles = append(handles, handle)
 		}
-		// used for limit embedded.
+		// used for order by
 		if len(w.byItems) != 0 {
-			if retChk == nil {
-				retChk = chunk.NewChunkWithCapacity(w.getRetTpsForTableScan(), w.batchSize)
-			}
-			retChk.Append(chk, 0, chk.NumRows())
+			retChk.Append(chk, 0, chunkRowOffset)
 		}
 	}
 	w.batchSize *= 2
@@ -789,7 +778,6 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		readReplicaScope: e.readReplicaScope,
 		isStaleness:      e.isStaleness,
 		columns:          e.columns,
-		feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
 		plans:            e.tblPlans,
 		netDataSize:      e.dataAvgRowSize * float64(len(handles)),
 	}
@@ -914,7 +902,6 @@ func (e *IndexMergeReaderExecutor) Close() error {
 	e.processWorkerWg.Wait()
 	e.finished = nil
 	e.workerStarted = false
-	// TODO: how to store e.feedbacks
 	return nil
 }
 
@@ -1594,7 +1581,11 @@ func (w *partialIndexWorker) getRetTpsForIndexScan(handleCols plannercore.Handle
 func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, handleCols plannercore.HandleCols) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	handles = make([]kv.Handle, 0, w.batchSize)
+	if len(w.byItems) != 0 {
+		retChk = chunk.NewChunkWithCapacity(w.getRetTpsForIndexScan(handleCols), w.batchSize)
+	}
 	var memUsage int64
+	var chunkRowOffset int
 	defer w.memTracker.Consume(-memUsage)
 	for len(handles) < w.batchSize {
 		requiredRows := w.batchSize - len(handles)
@@ -1608,7 +1599,7 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		start := time.Now()
 		err = errors.Trace(idxResult.Next(ctx, chk))
 		if err != nil {
-			return handles, nil, err
+			return nil, nil, err
 		}
 		if w.stats != nil && w.idxID != 0 {
 			w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(w.idxID).Record(time.Since(start), chk.NumRows())
@@ -1622,12 +1613,12 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memDelta := chk.MemoryUsage()
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
-		for i := 0; i < chk.NumRows(); i++ {
+		for chunkRowOffset = 0; chunkRowOffset < chk.NumRows(); chunkRowOffset++ {
 			if w.pushedLimit != nil {
 				w.scannedKeys++
 				if w.scannedKeys > (w.pushedLimit.Offset + w.pushedLimit.Count) {
 					// Skip the handles after Offset+Count.
-					return handles, retChk, nil
+					break
 				}
 			}
 			var handle kv.Handle
@@ -1636,21 +1627,18 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 				return nil, nil, err1
 			}
 			if ok {
-				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(i))
+				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(chunkRowOffset))
 			} else {
-				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(i))
+				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(chunkRowOffset))
 			}
 			if err != nil {
 				return nil, nil, err
 			}
 			handles = append(handles, handle)
 		}
-		// used for limit embedded.
+		// used for order by
 		if len(w.byItems) != 0 {
-			if retChk == nil {
-				retChk = chunk.NewChunkWithCapacity(w.getRetTpsForIndexScan(handleCols), w.batchSize)
-			}
-			retChk.Append(chk, 0, chk.NumRows())
+			retChk.Append(chk, 0, chunkRowOffset)
 		}
 	}
 	w.batchSize *= 2
@@ -1764,8 +1752,8 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 	handleCnt := len(task.handles)
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
-		chk := tryNewCacheChunk(tableReader)
-		err = Next(ctx, tableReader, chk)
+		chk := exec.TryNewCacheChunk(tableReader)
+		err = exec.Next(ctx, tableReader, chk)
 		if err != nil {
 			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
 			return err

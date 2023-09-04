@@ -108,7 +108,7 @@ func buildInsertTimerSQL(dbName, tableName string, record *api.TimerRecord) (str
 		"EVENT_DATA, "+
 		"SUMMARY_DATA, "+
 		"VERSION) "+
-		"VALUES (%%?, %%?, %%?, 'TIDB', %%?, %%?, %%?, %s, %%?, JSON_MERGE_PATCH('{}', %%?), %%?, %%?, %s, %%?, %%?, 1)",
+		"VALUES (%%?, %%?, %%?, %%?, %%?, %%?, %%?, %s, %%?, JSON_MERGE_PATCH('{}', %%?), %%?, %%?, %s, %%?, %%?, 1)",
 		indentString(dbName, tableName),
 		watermarkFormat,
 		eventStartFormat,
@@ -118,6 +118,7 @@ func buildInsertTimerSQL(dbName, tableName string, record *api.TimerRecord) (str
 		record.Namespace,
 		record.Key,
 		record.Data,
+		record.TimeZone,
 		string(record.SchedPolicyType),
 		record.SchedPolicyExpr,
 		record.HookClass,
@@ -410,6 +411,11 @@ func buildUpdateCriteria(update *api.TimerUpdate, args []any) (string, []any, er
 
 	if val, ok := update.EventExtra.Get(); ok {
 		extFields["event"] = newEventExtObj(val)
+	}
+
+	if val, ok := update.TimeZone.Get(); ok {
+		updateFields = append(updateFields, "TIMEZONE = %?")
+		args = append(args, val)
 	}
 
 	if val, ok := update.SchedPolicyType.Get(); ok {

@@ -149,14 +149,20 @@ type Domain struct {
 	memoryUsageAlarmHandle  *memoryusagealarm.Handle
 	serverMemoryLimitHandle *servermemorylimit.Handle
 	// TODO: use Run for each process in future pr
-	wg                       *util.WaitGroupEnhancedWrapper
-	statsUpdating            atomicutil.Int32
-	cancel                   context.CancelFunc
-	indexUsageSyncLease      time.Duration
-	dumpFileGcChecker        *dumpFileGcChecker
-	planReplayerHandle       *planReplayerHandle
-	extractTaskHandle        *ExtractHandle
-	expiredTimeStamp4PC      types.Time
+	wg                  *util.WaitGroupEnhancedWrapper
+	statsUpdating       atomicutil.Int32
+	cancel              context.CancelFunc
+	indexUsageSyncLease time.Duration
+	dumpFileGcChecker   *dumpFileGcChecker
+	planReplayerHandle  *planReplayerHandle
+	extractTaskHandle   *ExtractHandle
+	expiredTimeStamp4PC struct {
+		// let `expiredTimeStamp4PC` use its own lock to avoid any block across domain.Reload()
+		// and compiler.Compile(), see issue https://github.com/pingcap/tidb/issues/45400
+		sync.RWMutex
+		expiredTimeStamp types.Time
+	}
+
 	logBackupAdvancer        *daemon.OwnerDaemon
 	historicalStatsWorker    *HistoricalStatsWorker
 	ttlJobManager            atomic.Pointer[ttlworker.JobManager]
@@ -224,6 +230,9 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	}
 
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
+		// try to insert here as well to correct the schemaTs if previous is wrong
+		// the insert method check if schemaTs is zero
+		do.infoCache.Insert(is, uint64(schemaTs))
 		return is, true, 0, nil, nil
 	}
 
@@ -479,18 +488,18 @@ func (do *Domain) GetSnapshotMeta(startTS uint64) (*meta.Meta, error) {
 
 // ExpiredTimeStamp4PC gets expiredTimeStamp4PC from domain.
 func (do *Domain) ExpiredTimeStamp4PC() types.Time {
-	do.m.Lock()
-	defer do.m.Unlock()
+	do.expiredTimeStamp4PC.RLock()
+	defer do.expiredTimeStamp4PC.RUnlock()
 
-	return do.expiredTimeStamp4PC
+	return do.expiredTimeStamp4PC.expiredTimeStamp
 }
 
 // SetExpiredTimeStamp4PC sets the expiredTimeStamp4PC from domain.
 func (do *Domain) SetExpiredTimeStamp4PC(time types.Time) {
-	do.m.Lock()
-	defer do.m.Unlock()
+	do.expiredTimeStamp4PC.Lock()
+	defer do.expiredTimeStamp4PC.Unlock()
 
-	do.expiredTimeStamp4PC = time
+	do.expiredTimeStamp4PC.expiredTimeStamp = time
 }
 
 // DDL gets DDL from domain.
@@ -1041,7 +1050,6 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		slowQuery:           newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		indexUsageSyncLease: idxUsageSyncLease,
 		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
-		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 		mdlCheckTableInfo: &mdlCheckTableInfo{
 			mu:         sync.Mutex{},
 			jobsVerMap: make(map[int64]int64),
@@ -1057,6 +1065,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
 	do.initDomainSysVars()
+	do.expiredTimeStamp4PC.expiredTimeStamp = types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
 	return do
 }
 
@@ -1167,10 +1176,6 @@ func (do *Domain) Init(
 	if err != nil {
 		return err
 	}
-	err = do.initResourceGroupsController(ctx, pdCli)
-	if err != nil {
-		return err
-	}
 	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdCli)
 	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
@@ -1201,6 +1206,12 @@ func (do *Domain) Init(
 		}
 	} else {
 		do.connIDAllocator = globalconn.NewSimpleAllocator()
+	}
+
+	// should put `initResourceGroupsController` after fetching server ID
+	err = do.initResourceGroupsController(ctx, pdCli, do.ServerID())
+	if err != nil {
+		return err
 	}
 
 	startReloadTime := time.Now()
@@ -1446,12 +1457,12 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		defer func() {
 			storage.SetTaskManager(nil)
 		}()
-		do.distTaskFrameworkLoop(ctx, taskManager, schedulerManager)
+		do.distTaskFrameworkLoop(ctx, taskManager, schedulerManager, serverID)
 	}, "distTaskFrameworkLoop")
 	return nil
 }
 
-func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager) {
+func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager, serverID string) {
 	schedulerManager.Start()
 	logutil.BgLogger().Info("dist task scheduler started")
 	defer func() {
@@ -1466,7 +1477,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 			return
 		}
 		var err error
-		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager)
+		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager, serverID)
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
 			return
@@ -2375,16 +2386,11 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	lease := do.statsLease
 	deltaUpdateTicker := time.NewTicker(20 * lease)
 	gcStatsTicker := time.NewTicker(100 * lease)
-	dumpFeedbackTicker := time.NewTicker(200 * lease)
-	loadFeedbackTicker := time.NewTicker(5 * lease)
-	loadLockedTablesTicker := time.NewTicker(5 * lease)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
 	readMemTricker := time.NewTicker(memory.ReadMemInterval)
 	statsHandle := do.StatsHandle()
 	defer func() {
 		dumpColStatsUsageTicker.Stop()
-		loadFeedbackTicker.Stop()
-		dumpFeedbackTicker.Stop()
 		gcStatsTicker.Stop()
 		deltaUpdateTicker.Stop()
 		readMemTricker.Stop()
@@ -2408,26 +2414,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
 			if err != nil {
 				logutil.BgLogger().Debug("dump stats delta failed", zap.Error(err))
-			}
-			statsHandle.UpdateErrorRate(do.InfoSchema())
-		case <-loadFeedbackTicker.C:
-			statsHandle.UpdateStatsByLocalFeedback(do.InfoSchema())
-			if !owner.IsOwner() {
-				continue
-			}
-			err := statsHandle.HandleUpdateStats(do.InfoSchema())
-			if err != nil {
-				logutil.BgLogger().Debug("update stats using feedback failed", zap.Error(err))
-			}
-		case <-loadLockedTablesTicker.C:
-			err := statsHandle.LoadLockedTables()
-			if err != nil {
-				logutil.BgLogger().Debug("load locked table failed", zap.Error(err))
-			}
-		case <-dumpFeedbackTicker.C:
-			err := statsHandle.DumpStatsFeedbackToKV()
-			if err != nil {
-				logutil.BgLogger().Debug("dump stats feedback failed", zap.Error(err))
 			}
 		case <-gcStatsTicker.C:
 			if !owner.IsOwner() {

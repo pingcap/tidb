@@ -15,10 +15,12 @@
 package indexmergereadtest
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math/rand"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 )
 
 func TestSingleTableRead(t *testing.T) {
@@ -1011,11 +1012,11 @@ func getResult(values []*valueStruct, a int, b int, limit int, desc bool) []*val
 			ret = append(ret, value)
 		}
 	}
-	slices.SortFunc(ret, func(a, b *valueStruct) bool {
+	slices.SortFunc(ret, func(a, b *valueStruct) int {
 		if desc {
-			return a.c > b.c
+			return cmp.Compare(b.c, a.c)
 		}
-		return a.c < b.c
+		return cmp.Compare(a.c, b.c)
 	})
 	if len(ret) > limit {
 		return ret[:limit]
@@ -1261,4 +1262,17 @@ func TestIndexMergeKeepOrderDirtyRead(t *testing.T) {
 	tk.HasPlan(querySQL, "IndexMerge")
 	tk.MustQuery(querySQL).Check(testkit.Rows("1 2 4", "1 1 1"))
 	tk.MustExec("rollback")
+}
+
+func TestIssues46005(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_index_lookup_size = 1024")
+	tk.MustExec("create table t(a int, b int, c int, index idx1(a, c), index idx2(b, c))")
+	for i := 0; i < 1500; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t(a,b,c) values (1, 1, %d)", i))
+	}
+
+	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 1025")
 }
