@@ -291,7 +291,15 @@ func TestMemoryControl(t *testing.T) {
 
 	for i := 1000; i > 990; i-- {
 		lfu.SetCapacity(int64(i-1) * (2*mockCMSMemoryUsage + mockCMSMemoryUsage))
-		time.Sleep(500 * time.Millisecond)
+		lfu.wait()
 		require.Equal(t, int64(i-1)*(2*mockCMSMemoryUsage+mockCMSMemoryUsage), lfu.Cost())
 	}
+	for i := 990; i > 100; i = i - 100 {
+		lfu.SetCapacity(int64(i-1) * (2*mockCMSMemoryUsage + mockCMSMemoryUsage))
+		lfu.wait()
+		require.Equal(t, int64(i-1)*(2*mockCMSMemoryUsage+mockCMSMemoryUsage), lfu.Cost())
+	}
+	lfu.SetCapacity(int64(10) * (2*mockCMSMemoryUsage + mockCMSMemoryUsage))
+	lfu.wait()
+	require.Equal(t, int64(10)*(2*mockCMSMemoryUsage+mockCMSMemoryUsage), lfu.Cost())
 }
