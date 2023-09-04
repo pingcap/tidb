@@ -35,6 +35,7 @@ import (
 	txn_driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -213,7 +214,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		tikv.WithCodec(codec),
 	)
 
-	s, err = tikv.NewKVStore(uuid, pdClient, spkv, rpcClient, tikv.WithPDHTTPClient(tlsConfig, etcdAddrs))
+	s, err = tikv.NewKVStore(uuid, pdClient, spkv, &injectTraceClient{Client: rpcClient}, tikv.WithPDHTTPClient(tlsConfig, etcdAddrs))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -405,4 +406,23 @@ func (s *tikvStore) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 
 func (s *tikvStore) GetCodec() tikv.Codec {
 	return s.codec
+}
+
+// injectTraceClient injects trace info to the tikv request
+type injectTraceClient struct {
+	tikv.Client
+}
+
+// SendRequest sends Request.
+func (c *injectTraceClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if info := tracing.TraceInfoFromContext(ctx); info != nil {
+		source := req.Context.SourceStmt
+		if source == nil {
+			source = &kvrpcpb.SourceStmt{}
+			req.Context.SourceStmt = source
+		}
+		source.ConnectionId = info.ConnectionID
+		source.SessionAlias = info.SessionAlias
+	}
+	return c.Client.SendRequest(ctx, addr, req, timeout)
 }

@@ -25,15 +25,34 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+func copHandlerCtx(ctx context.Context, req *coprocessor.Request) context.Context {
+	source := req.Context.SourceStmt
+	if source == nil {
+		return ctx
+	}
+
+	traceInfo := &model.TraceInfo{
+		ConnectionID: source.ConnectionId,
+		SessionAlias: source.SessionAlias,
+	}
+
+	ctx = tracing.ContextWithTraceInfo(ctx, traceInfo)
+	ctx = logutil.WithTraceFields(ctx, traceInfo)
+	return ctx
+}
 
 // CoprocessorDAGHandler uses to handle cop dag request.
 type CoprocessorDAGHandler struct {
@@ -50,6 +69,8 @@ func NewCoprocessorDAGHandler(sctx sessionctx.Context) *CoprocessorDAGHandler {
 
 // HandleRequest handles the coprocessor request.
 func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
+	ctx = copHandlerCtx(ctx, req)
+
 	e, err := h.buildDAGExecutor(req)
 	if err != nil {
 		return h.buildErrorResponse(err)
@@ -90,6 +111,9 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 
 // HandleStreamRequest handles the coprocessor stream request.
 func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *coprocessor.Request, stream tikvpb.Tikv_CoprocessorStreamServer) error {
+	ctx = copHandlerCtx(ctx, req)
+	logutil.Logger(ctx).Debug("handle coprocessor stream request")
+
 	e, err := h.buildDAGExecutor(req)
 	if err != nil {
 		return stream.Send(h.buildErrorResponse(err))
