@@ -5,7 +5,7 @@ go_library(
     srcs = [
         "byte_reader.go",
         "codec.go",
-        "concurrentReader.go",
+        "concurrent_reader.go",
         "engine.go",
         "file.go",
         "iter.go",
