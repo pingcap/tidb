@@ -59,7 +59,7 @@ var (
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
 
 	// ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
-	ExtractSelectAndNormalizeDigest func(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error)
+	ExtractSelectAndNormalizeDigest func(stmtNode ast.StmtNode, specifiledDB string, forBinding bool) (ast.StmtNode, string, string, error)
 )
 
 type paramMarkerExtractor struct {
@@ -125,7 +125,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		Params:        extractor.markers,
 		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
-	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
+	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text(), false)
 
 	var (
 		normalizedSQL4PC, digest4PC string
@@ -146,7 +146,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		if !cacheable {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip prepared plan-cache: " + reason))
 		}
-		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(paramStmt, vars.CurrentDB)
+		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(paramStmt, vars.CurrentDB, false)
 		if err != nil || selectStmtNode == nil {
 			normalizedSQL4PC = ""
 			digest4PC = ""

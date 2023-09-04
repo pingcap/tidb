@@ -674,7 +674,7 @@ func (w *JobContext) setDDLLabelForTopSQL(jobQuery string) {
 	}
 
 	if jobQuery != w.cacheSQL || w.cacheDigest == nil {
-		w.cacheNormalizedSQL, w.cacheDigest = parser.NormalizeDigest(jobQuery)
+		w.cacheNormalizedSQL, w.cacheDigest = parser.NormalizeDigest(jobQuery, false)
 		w.cacheSQL = jobQuery
 		w.ddlJobCtx = topsql.AttachAndRegisterSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, false)
 	} else {

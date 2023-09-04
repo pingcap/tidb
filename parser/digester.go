@@ -57,9 +57,9 @@ func (d *Digest) Bytes() []byte {
 // for example: both DigestHash('select 1') and DigestHash('select 2') => e1c71d1661ae46e09b7aaec1c390957f0d6260410df4e4bc71b9c8d681021471
 //
 // Deprecated: It is logically consistent with NormalizeDigest.
-func DigestHash(sql string) (digest *Digest) {
+func DigestHash(sql string, forBinding bool) (digest *Digest) {
 	d := digesterPool.Get().(*sqlDigester)
-	digest = d.doDigest(sql)
+	digest = d.doDigest(sql, forBinding)
 	digesterPool.Put(d)
 	return
 }
@@ -83,21 +83,9 @@ func DigestNormalized(normalized string) (digest *Digest) {
 // which removes general property of a statement but keeps specific property.
 //
 // for example: Normalize('select 1 from b where a = 1') => 'select ? from b where a = ?'
-func Normalize(sql string) (result string) {
+func Normalize(sql string, forBinding bool) (result string) {
 	d := digesterPool.Get().(*sqlDigester)
-	result = d.doNormalize(sql, false)
-	digesterPool.Put(d)
-	return
-}
-
-// NormalizeForBinding generates the normalized statements with additional binding rules
-// it will get normalized form of statement text
-// which removes general property of a statement but keeps specific property.
-//
-// for example: Normalize('select 1 from b where a = 1') => 'select ? from b where a = ?'
-func NormalizeForBinding(sql string) (result string) {
-	d := digesterPool.Get().(*sqlDigester)
-	result = d.doNormalizeForBinding(sql, false)
+	result = d.doNormalize(sql, false, forBinding)
 	digesterPool.Put(d)
 	return
 }
@@ -107,25 +95,17 @@ func NormalizeForBinding(sql string) (result string) {
 // which removes general property of a statement but keeps specific property.
 //
 // for example: Normalize('select /*+ use_index(t, primary) */ 1 from b where a = 1') => 'select /*+ use_index(t, primary) */ ? from b where a = ?'
-func NormalizeKeepHint(sql string) (result string) {
+func NormalizeKeepHint(sql string, forBinding bool) (result string) {
 	d := digesterPool.Get().(*sqlDigester)
-	result = d.doNormalize(sql, true)
+	result = d.doNormalize(sql, true, forBinding)
 	digesterPool.Put(d)
 	return
 }
 
 // NormalizeDigest combines Normalize and DigestNormalized into one method.
-func NormalizeDigest(sql string) (normalized string, digest *Digest) {
+func NormalizeDigest(sql string, forBinding bool) (normalized string, digest *Digest) {
 	d := digesterPool.Get().(*sqlDigester)
-	normalized, digest = d.doNormalizeDigest(sql)
-	digesterPool.Put(d)
-	return
-}
-
-// NormalizeDigestForBinding combines Normalize and DigestNormalized into one method, with additional binding rules
-func NormalizeDigestForBinding(sql string) (normalized string, digest *Digest) {
-	d := digesterPool.Get().(*sqlDigester)
-	normalized, digest = d.doNormalizeDigestForBinding(sql)
+	normalized, digest = d.doNormalizeDigest(sql, forBinding)
 	digesterPool.Put(d)
 	return
 }
@@ -160,8 +140,8 @@ func (d *sqlDigester) doDigestNormalized(normalized string) (digest *Digest) {
 	return
 }
 
-func (d *sqlDigester) doDigest(sql string) (digest *Digest) {
-	d.normalize(sql, false)
+func (d *sqlDigester) doDigest(sql string, forBinding bool) (digest *Digest) {
+	d.normalize(sql, false, forBinding)
 	d.hasher.Write(d.buffer.Bytes())
 	d.buffer.Reset()
 	digest = NewDigest(d.hasher.Sum(nil))
@@ -169,33 +149,15 @@ func (d *sqlDigester) doDigest(sql string) (digest *Digest) {
 	return
 }
 
-func (d *sqlDigester) doNormalize(sql string, keepHint bool) (result string) {
-	d.normalize(sql, keepHint)
+func (d *sqlDigester) doNormalize(sql string, keepHint bool, forBinding bool) (result string) {
+	d.normalize(sql, keepHint, forBinding)
 	result = d.buffer.String()
 	d.buffer.Reset()
 	return
 }
 
-func (d *sqlDigester) doNormalizeForBinding(sql string, keepHint bool) (result string) {
-	d.normalizeForBinding(sql, keepHint)
-	result = d.buffer.String()
-	d.buffer.Reset()
-	return
-}
-
-func (d *sqlDigester) doNormalizeDigest(sql string) (normalized string, digest *Digest) {
-	d.normalize(sql, false)
-	normalized = d.buffer.String()
-	d.hasher.Write(d.buffer.Bytes())
-	d.buffer.Reset()
-	digest = NewDigest(d.hasher.Sum(nil))
-	d.hasher.Reset()
-	return
-}
-
-// doNormalizeDigestForBinding generate digest for normalized string with additional binding rules
-func (d *sqlDigester) doNormalizeDigestForBinding(sql string) (normalized string, digest *Digest) {
-	d.normalizeForBinding(sql, false)
+func (d *sqlDigester) doNormalizeDigest(sql string, forBinding bool) (normalized string, digest *Digest) {
+	d.normalize(sql, false, forBinding)
 	normalized = d.buffer.String()
 	d.hasher.Write(d.buffer.Bytes())
 	d.buffer.Reset()
@@ -213,7 +175,7 @@ const (
 	genericSymbolList = -2
 )
 
-func (d *sqlDigester) normalize(sql string, keepHint bool) {
+func (d *sqlDigester) normalize(sql string, keepHint bool, forBinding bool) {
 	d.lexer.reset(sql)
 	d.lexer.setKeepHint(keepHint)
 	for {
@@ -232,64 +194,11 @@ func (d *sqlDigester) normalize(sql string, keepHint bool) {
 
 		d.reduceLit(&currTok)
 
-		if currTok.tok == identifier {
-			if strings.HasPrefix(currTok.lit, "_") {
-				_, err := charset.GetCharsetInfo(currTok.lit[1:])
-				if err == nil {
-					currTok.tok = underscoreCS
-					goto APPEND
-				}
-			}
-
-			if tok1 := d.lexer.isTokenIdentifier(currTok.lit, pos.Offset); tok1 != 0 {
-				currTok.tok = tok1
-			}
+		// Apply binding matching specific rules
+		if forBinding {
+			// IN (Lit) => IN ( ... ) #44298
+			d.reduceInListWithSingleLiteral(&currTok)
 		}
-	APPEND:
-		d.tokens.pushBack(currTok)
-	}
-	d.lexer.reset("")
-	for i, token := range d.tokens {
-		if i > 0 {
-			d.buffer.WriteRune(' ')
-		}
-		if token.tok == singleAtIdentifier {
-			d.buffer.WriteString("@")
-			d.buffer.WriteString(token.lit)
-		} else if token.tok == underscoreCS {
-			d.buffer.WriteString("(_charset)")
-		} else if token.tok == identifier || token.tok == quotedIdentifier {
-			d.buffer.WriteByte('`')
-			d.buffer.WriteString(token.lit)
-			d.buffer.WriteByte('`')
-		} else {
-			d.buffer.WriteString(token.lit)
-		}
-	}
-	d.tokens.reset()
-}
-
-// Normalize the sql command with additional binding specific rules
-func (d *sqlDigester) normalizeForBinding(sql string, keepHint bool) {
-	d.lexer.reset(sql)
-	d.lexer.setKeepHint(keepHint)
-	for {
-		tok, pos, lit := d.lexer.scan()
-		if tok == invalid {
-			break
-		}
-		if pos.Offset == len(sql) || (pos.Offset == len(sql)-1 && sql[pos.Offset] == ';') {
-			break
-		}
-		currTok := token{tok, strings.ToLower(lit)}
-
-		if !keepHint && d.reduceOptimizerHint(&currTok) {
-			continue
-		}
-
-		d.reduceLit(&currTok)
-		// Binding specific rules: IN (Lit) => IN ( ... ) #44298
-		d.reduceInListWithSingleLiteral(&currTok)
 
 		if currTok.tok == identifier {
 			if strings.HasPrefix(currTok.lit, "_") {

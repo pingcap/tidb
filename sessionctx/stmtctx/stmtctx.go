@@ -552,7 +552,7 @@ func (sc *StatementContext) ResetStmtCache() {
 // it will cache result after first calling.
 func (sc *StatementContext) SQLDigest() (normalized string, sqlDigest *parser.Digest) {
 	sc.digestMemo.Do(func() {
-		sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(sc.OriginalSQL)
+		sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(sc.OriginalSQL, false)
 	})
 	return sc.digestMemo.normalized, sc.digestMemo.digest
 }
@@ -566,7 +566,7 @@ func (sc *StatementContext) InitSQLDigest(normalized string, digest *parser.Dige
 
 // ResetSQLDigest sets the normalized and digest for sql anyway, **DO NOT USE THIS UNLESS YOU KNOW WHAT YOU ARE DOING NOW**.
 func (sc *StatementContext) ResetSQLDigest(s string) {
-	sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(s)
+	sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(s, false)
 }
 
 // GetPlanDigest gets the normalized plan and plan digest.

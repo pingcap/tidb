@@ -242,7 +242,7 @@ func TestDeadlock(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, mysql.ErrLockDeadlock, int(e.Code()))
 
-	_, digest := parser.NormalizeDigest("update deadlock set v = v + 1 where k = 1")
+	_, digest := parser.NormalizeDigest("update deadlock set v = v + 1 where k = 1", false)
 
 	expectedDeadlockInfo := []string{
 		fmt.Sprintf("%v/%v/%v/%v", ts1, ts2, digest, "update `deadlock` set `v` = `v` + ? where `k` = ?"),

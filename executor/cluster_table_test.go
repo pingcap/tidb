@@ -294,8 +294,8 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("insert into test_sql_digest_text_retriever values (1, 1)")
 
-	insertNormalized, insertDigest := parser.NormalizeDigest("insert into test_sql_digest_text_retriever values (1, 1)")
-	_, updateDigest := parser.NormalizeDigest("update test_sql_digest_text_retriever set v = v + 1 where id = 1")
+	insertNormalized, insertDigest := parser.NormalizeDigest("insert into test_sql_digest_text_retriever values (1, 1)", false)
+	_, updateDigest := parser.NormalizeDigest("update test_sql_digest_text_retriever set v = v + 1 where id = 1", false)
 	r := &expression.SQLDigestTextRetriever{
 		SQLDigestsMap: map[string]string{
 			insertDigest.String(): "",
@@ -322,11 +322,11 @@ func TestFunctionDecodeSQLDigests(t *testing.T) {
 	tk.MustExec("create table test_func_decode_sql_digests(id int primary key, v int)")
 
 	q1 := "begin"
-	norm1, digest1 := parser.NormalizeDigest(q1)
+	norm1, digest1 := parser.NormalizeDigest(q1, false)
 	q2 := "select @@tidb_current_ts"
-	norm2, digest2 := parser.NormalizeDigest(q2)
+	norm2, digest2 := parser.NormalizeDigest(q2, false)
 	q3 := "select id, v from test_func_decode_sql_digests where id = 1 for update"
-	norm3, digest3 := parser.NormalizeDigest(q3)
+	norm3, digest3 := parser.NormalizeDigest(q3, false)
 
 	// TIDB_DECODE_SQL_DIGESTS function doesn't actually do "decoding", instead it queries `statements_summary` and it's
 	// variations for the corresponding statements.
@@ -404,11 +404,11 @@ func TestFunctionEncodeSQLDigest(t *testing.T) {
 	tk.MustExec("create table test_func_encode_sql_digest(id int primary key, v int)")
 
 	q1 := "begin"
-	digest1 := parser.DigestHash(q1)
+	digest1 := parser.DigestHash(q1, false)
 	q2 := "select @@tidb_current_ts"
-	digest2 := parser.DigestHash(q2)
+	digest2 := parser.DigestHash(q2, false)
 	q3 := "select id, v from test_func_decode_sql_digests where id = 1 for update"
-	digest3 := parser.DigestHash(q3)
+	digest3 := parser.DigestHash(q3, false)
 
 	tk.MustQuery(fmt.Sprintf("select tidb_encode_sql_digest(\"%s\")", q1)).Check(testkit.Rows(digest1.String()))
 	tk.MustQuery(fmt.Sprintf("select tidb_encode_sql_digest(\"%s\")", q2)).Check(testkit.Rows(digest2.String()))

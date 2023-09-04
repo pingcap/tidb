@@ -1001,7 +1001,7 @@ func (b *builtinTiDBEncodeSQLDigestSig) evalString(row chunk.Row) (string, bool,
 	if isNull {
 		return "", true, nil
 	}
-	return parser.DigestHash(orgSQLStr).String(), false, nil
+	return parser.DigestHash(orgSQLStr, false).String(), false, nil
 }
 
 type tidbDecodePlanFunctionClass struct {

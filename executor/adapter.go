@@ -990,7 +990,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			// This is too strict, but since the feature is not for everyone, it's the easiest way to guarantee safety.
 			stmtText := a.OriginText()
 			if sctx.GetSessionVars().EnableRedactLog {
-				stmtText = parser.Normalize(stmtText)
+				stmtText = parser.Normalize(stmtText, false)
 			}
 			logutil.Logger(ctx).Info("Transaction abort for the safety of lazy uniqueness check. "+
 				"Note this may not be a uniqueness violation.",
@@ -1941,7 +1941,7 @@ func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 	sessVars := a.Ctx.GetSessionVars()
 	if sessVars.EnableRedactLog {
 		if keepHint {
-			sql = parser.NormalizeKeepHint(sessVars.StmtCtx.OriginalSQL)
+			sql = parser.NormalizeKeepHint(sessVars.StmtCtx.OriginalSQL, false)
 		} else {
 			sql, _ = sessVars.StmtCtx.SQLDigest()
 		}

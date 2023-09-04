@@ -90,7 +90,7 @@ func setWatchOption(ctx context.Context,
 			case model.WatchExact:
 				record.WatchText = sql
 			case model.WatchSimilar:
-				_, digest := parser.NormalizeDigest(sql)
+				_, digest := parser.NormalizeDigest(sql, false)
 				record.WatchText = digest.String()
 			case model.WatchPlan:
 				sqlExecutor := newSctx.(sqlexec.SQLExecutor)

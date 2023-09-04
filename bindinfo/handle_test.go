@@ -67,7 +67,7 @@ func TestBindingLastUpdateTime(t *testing.T) {
 	bindHandle := bindinfo.NewBindHandle(tk.Session())
 	err := bindHandle.Update(true)
 	require.NoError(t, err)
-	sql, hash := parser.NormalizeDigest("select * from test . t0")
+	sql, hash := parser.NormalizeDigest("select * from test . t0", false)
 	bindData := bindHandle.GetBindRecord(hash.String(), sql, "test")
 	require.Equal(t, 1, len(bindData.Bindings))
 	bind := bindData.Bindings[0]
@@ -132,7 +132,7 @@ func TestBindParse(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, bindHandle.Size())
 
-	sql, hash := parser.NormalizeDigest("select * from test . t")
+	sql, hash := parser.NormalizeDigest("select * from test . t", false)
 	bindData := bindHandle.GetBindRecord(hash.String(), sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t`", bindData.OriginalSQL)
@@ -229,7 +229,7 @@ func TestEvolveInvalidBindings(t *testing.T) {
 	require.Equal(t, "SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10", rows[1][1])
 	status = rows[1][3].(string)
 	require.True(t, status == bindinfo.Enabled || status == bindinfo.Rejected)
-	_, sqlDigestWithDB := parser.NormalizeDigest("select * from test.t where a > 10") // test sqlDigest if exists after add columns to mysql.bind_info
+	_, sqlDigestWithDB := parser.NormalizeDigest("select * from test.t where a > 10", false) // test sqlDigest if exists after add columns to mysql.bind_info
 	require.Equal(t, rows[0][9], sqlDigestWithDB.String())
 }
 

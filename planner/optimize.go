@@ -571,7 +571,7 @@ func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Nod
 }
 
 // ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
-func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error) {
+func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string, forBinding bool) (ast.StmtNode, string, string, error) {
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
 		// This function is only used to find bind record.
@@ -584,7 +584,7 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 		}
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-			normalizeSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
+			normalizeSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()), forBinding)
 			normalizeSQL = core.EraseLastSemicolonInSQL(normalizeSQL)
 			hash := parser.DigestNormalized(normalizeSQL)
 			return x.Stmt, normalizeSQL, hash.String(), nil
@@ -592,9 +592,9 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 			core.EraseLastSemicolon(x)
 			var normalizeExplainSQL string
 			if specifiledDB != "" {
-				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
+				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()), forBinding)
 			} else {
-				normalizeExplainSQL = parser.Normalize(x.Text())
+				normalizeExplainSQL = parser.Normalize(x.Text(), forBinding)
 			}
 			idx := strings.Index(normalizeExplainSQL, "select")
 			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")
@@ -615,58 +615,7 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 		if len(x.Text()) == 0 {
 			return x, "", "", nil
 		}
-		normalizedSQL, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
-		return x, normalizedSQL, hash.String(), nil
-	}
-	return nil, "", "", nil
-}
-
-// ExtractSelectAndNormalizeDigestForBinding extract the select statement and normalize it with additional binding specific rules
-func ExtractSelectAndNormalizeDigestForBinding(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error) {
-	switch x := stmtNode.(type) {
-	case *ast.ExplainStmt:
-		// This function is only used to find bind record.
-		// For some SQLs, such as `explain select * from t`, they will be entered here many times,
-		// but some of them do not want to obtain bind record.
-		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
-		// For these cases, we need return "" as normalize SQL and hash.
-		if len(x.Text()) == 0 {
-			return x.Stmt, "", "", nil
-		}
-		switch x.Stmt.(type) {
-		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-			normalizeSQL := parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
-			normalizeSQL = core.EraseLastSemicolonInSQL(normalizeSQL)
-			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt, normalizeSQL, hash.String(), nil
-		case *ast.SetOprStmt:
-			core.EraseLastSemicolon(x)
-			var normalizeExplainSQL string
-			if specifiledDB != "" {
-				normalizeExplainSQL = parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
-			} else {
-				normalizeExplainSQL = parser.NormalizeForBinding(x.Text())
-			}
-			idx := strings.Index(normalizeExplainSQL, "select")
-			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")
-			if parenthesesIdx != -1 && parenthesesIdx < idx {
-				idx = parenthesesIdx
-			}
-			normalizeSQL := normalizeExplainSQL[idx:]
-			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt, normalizeSQL, hash.String(), nil
-		}
-	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-		core.EraseLastSemicolon(x)
-		// This function is only used to find bind record.
-		// For some SQLs, such as `explain select * from t`, they will be entered here many times,
-		// but some of them do not want to obtain bind record.
-		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
-		// For these cases, we need return "" as normalize SQL and hash.
-		if len(x.Text()) == 0 {
-			return x, "", "", nil
-		}
-		normalizedSQL, hash := parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
+		normalizedSQL, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()), forBinding)
 		return x, normalizedSQL, hash.String(), nil
 	}
 	return nil, "", "", nil
@@ -677,7 +626,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, "", nil
 	}
-	stmtNode, normalizedSQL, hash, err := ExtractSelectAndNormalizeDigestForBinding(stmt, ctx.GetSessionVars().CurrentDB)
+	stmtNode, normalizedSQL, hash, err := ExtractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB, true)
 	if err != nil || stmtNode == nil {
 		return nil, "", err
 	}
@@ -717,7 +666,7 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 		return
 	}
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmtNode, br.Db, br.OriginalSQL))
+	_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmtNode, br.Db, br.OriginalSQL), false)
 	binding := bindinfo.Binding{
 		BindSQL:   bindSQL,
 		Status:    bindinfo.PendingVerify,

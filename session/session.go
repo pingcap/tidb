@@ -1758,7 +1758,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
 	if topsqlstate.TopSQLEnabled() {
-		normalized, digest := parser.NormalizeDigest(sql)
+		normalized, digest := parser.NormalizeDigest(sql, false)
 		if digest != nil {
 			// Reset the goroutine label when internal sql execute finish.
 			// Specifically reset in ExecRestrictedStmt function.
@@ -2234,7 +2234,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 			if !variable.ErrUnknownSystemVar.Equal(err) {
 				sql := stmtNode.Text()
 				if s.sessionVars.EnableRedactLog {
-					sql = parser.Normalize(sql)
+					sql = parser.Normalize(sql, false)
 				}
 				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err),
 					zap.String("SQL", sql))
