@@ -212,6 +212,7 @@ func (s *LFU) Copy() internal.StatsCacheInner {
 // SetCapacity implements statsCacheInner
 func (s *LFU) SetCapacity(maxCost int64) {
 	s.cache.UpdateMaxCost(maxCost)
+	s.triggerEvict()
 	metrics.CapacityGauge.Set(float64(maxCost))
 }
 
