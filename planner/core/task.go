@@ -15,10 +15,6 @@
 package core
 
 import (
-	"fmt"
-	"math"
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
@@ -43,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"math"
 )
 
 var (
@@ -821,9 +818,10 @@ func (t *rootTask) MemoryUsage() (sum int64) {
 }
 
 // attach2Task attach limit to different cases.
+// For Normal Index Lookup
 // 1: attach the limit to table side or index side of normal index lookup cop task. (normal case, old code, no more
 //
-//	expanded explanation here)
+//	explanation here)
 //
 // For Index Merge:
 // 2: attach the limit to **table** side for index merge intersection case, cause intersection will invalidate the
@@ -842,9 +840,6 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
 	for _, expr := range p.GetPartitionBy() {
 		newPartitionBy = append(newPartitionBy, expr.Clone())
-	}
-	if strings.HasPrefix(p.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 and c=1 limit 1") {
-		fmt.Println(1)
 	}
 	sunk := false
 	if cop, ok := t.(*copTask); ok {
@@ -903,11 +898,14 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 				sunk = p.sinkIntoIndexMerge(t)
 			}
 		} else if cop.idxMergeIsIntersection {
-			// In the index merge with intersection case, only the limit can be pushed down to the probe side.
-			// Note:
+			// In the index merge with intersection case, only the limit can be pushed down to the index merge table side.
+			// Note Difference:
 			// IndexMerge.PushedLimit is applied before table scan fetching, limiting the indexPartialPlan rows returned (it maybe ordered if orderBy items not empty)
 			// TableProbeSide sink limit is applied on the top of table plan, which will quickly shut down the both fetch-back and read-back process.
-			if cop.indexPlanFinished && len(cop.rootTaskConds) == 0 {
+			if len(cop.rootTaskConds) == 0 {
+				// mock the flag here and always sink the limit to the table side.
+				origin := cop.indexPlanFinished
+				cop.indexPlanFinished = true
 				newCount := p.Offset + p.Count
 				childProfile := cop.plan().StatsInfo()
 				// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
@@ -918,6 +916,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 				// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
 				pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 				sunk = true
+				cop.indexPlanFinished = origin
 			}
 			t = cop.convertToRootTask(p.SCtx())
 		} else {

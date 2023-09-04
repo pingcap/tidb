@@ -8681,5 +8681,67 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIndexMergeSinkLimit",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 or b=1 and c=1 limit 2; -- test sink limit to table side of union index merge case, because of table side selection",
+        "Plan": [
+          "IndexMerge 0.00 root  type: union",
+          "├─IndexRangeScan(Build) 2.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 2.00 cop[tikv] table:t2, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "└─Limit(Probe) 0.00 cop[tikv]  offset:0, count:2",
+          "  └─Selection 0.00 cop[tikv]  or(eq(test.t2.a, 1), and(eq(test.t2.b, 1), eq(test.t2.c, 1)))",
+          "    └─TableRowIDScan 3.99 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 and c=1 limit 2; -- test sink limit to table side of intersection index merge case, because of table side selection",
+        "Plan": [
+          "IndexMerge 0.01 root  type: intersection",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "└─Limit(Probe) 0.01 cop[tikv]  offset:0, count:2",
+          "  └─Selection 0.01 cop[tikv]  eq(test.t2.c, 1)",
+          "    └─TableRowIDScan 0.01 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 and c=1 limit 2",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 or b=1 limit 2; -- test sink limit to index side of union index merge case, because of table side is pure table scan",
+        "Plan": [
+          "IndexMerge 2.00 root  type: union, limit embedded(offset:0, count:2)",
+          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:2",
+          "│ └─IndexRangeScan 1.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:2",
+          "│ └─IndexRangeScan 1.00 cop[tikv] table:t2, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 2.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 limit 2; -- test sink limit to table side of intersection index merge case, because of intersection case special",
+        "Plan": [
+          "IndexMerge 0.01 root  type: intersection",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "└─Limit(Probe) 0.01 cop[tikv]  offset:0, count:2",
+          "  └─TableRowIDScan 0.01 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 limit 2",
+        "Plan": null,
+        "Warning": null
+      }
+    ]
   }
 ]
