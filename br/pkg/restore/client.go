@@ -2323,34 +2323,11 @@ func (rc *Client) RestoreMetaKVFiles(
 		}
 	}
 
-<<<<<<< HEAD
-=======
-	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
-	})
-
 	log.Info("start to restore meta files",
 		zap.Int("total files", len(files)),
 		zap.Int("default files", len(filesInDefaultCF)),
 		zap.Int("write files", len(filesInWriteCF)))
 
-	if schemasReplace.NeedConstructIdMap() {
-		// Preconstruct the map and save it into external storage.
-		if err := rc.PreConstructAndSaveIDMap(
-			ctx,
-			filesInWriteCF,
-			filesInDefaultCF,
-			schemasReplace,
-		); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	failpoint.Inject("failed-after-id-maps-saved", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("failpoint: failed after id maps saved"))
-	})
-
-	// run the rewrite and restore meta-kv into TiKV cluster.
->>>>>>> 5319cf7d8a8 (br: fix restore metakv without default cf files (#46589))
 	if err := rc.RestoreMetaKVFilesWithBatchMethod(
 		ctx,
 		SortMetaKVFiles(filesInDefaultCF),
