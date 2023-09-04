@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -33,12 +32,15 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/util"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -234,16 +236,16 @@ func setBackoffWeight(se sessionctx.Context, taskMeta *TaskMeta, logger *zap.Log
 }
 
 type autoIDRequirement struct {
-	store kv.Storage
+	store   kv.Storage
 	etcdCli *clientv3.Client
 }
 
 func (r *autoIDRequirement) Store() kv.Storage {
-       return r.store
+	return r.store
 }
 
 func (r *autoIDRequirement) GetEtcdClient() *clientv3.Client {
-       return r.etcdCli
+	return r.etcdCli
 }
 
 func rebaseAllocatorBases(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
@@ -274,10 +276,19 @@ func rebaseAllocatorBases(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *
 	if err2 != nil {
 		return errors.Trace(err2)
 	}
-	// TODO
-	r := autoIDRequirement{store: kvStore}
-	return errors.Trace(common.RebaseTableAllocators(ctx, subtaskMeta.MaxIDs,
-		&r, taskMeta.Plan.DBID, taskMeta.Plan.DesiredTableInfo))
+	etcdCli, err := clientv3.New(clientv3.Config{
+		Endpoints:        []string{tidbCfg.Path},
+		AutoSyncInterval: 30 * time.Second,
+		TLS:              tls.TLSConfig(),
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(kvStore.GetCodec()))
+	r := autoIDRequirement{store: kvStore, etcdCli: etcdCli}
+	err = common.RebaseTableAllocators(ctx, subtaskMeta.MaxIDs, &r, taskMeta.Plan.DBID, taskMeta.Plan.DesiredTableInfo)
+	etcdCli.Close()
+	return errors.Trace(err)
 }
 
 func init() {

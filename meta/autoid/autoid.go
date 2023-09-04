@@ -605,7 +605,7 @@ func newSinglePointAlloc(r Requirement, dbID, tblID int64, isUnsigned bool) *sin
 	// 	spa.clientDiscover = clientDiscover{}
 	// 	spa.mu.AutoIDAllocClient = MockForTest(store)
 	// }
-	spa.clientDiscover = clientDiscover{ etcdCli: r.GetEtcdClient() }
+	spa.clientDiscover = clientDiscover{etcdCli: r.GetEtcdClient()}
 
 	// mockAutoIDChange failpoint is not implemented in this allocator, so fallback to use the default one.
 	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
