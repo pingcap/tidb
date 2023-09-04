@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -974,11 +973,13 @@ const (
 	//   create table `mysql.tidb_runaway_watch` and table `mysql.tidb_runaway_watch_done`
 	//   to persist runaway watch and deletion of runaway watch at 7.3.
 	version172 = 172
+	// version 173 add column `summary` to `mysql.tidb_background_subtask`.
+	version173 = 173
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version172
+var currentBootstrapVersion int64 = version173
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1119,6 +1120,7 @@ var (
 		upgradeToVer170,
 		upgradeToVer171,
 		upgradeToVer172,
+		upgradeToVer173,
 	}
 )
 
@@ -2557,8 +2559,8 @@ func upgradeToVer136(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, CreateGlobalTask)
-	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s DROP INDEX namespace", ddl.BackgroundSubtaskTable), dbterror.ErrCantDropFieldOrKey)
-	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s ADD INDEX idx_task_key(task_key)", ddl.BackgroundSubtaskTable), dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask DROP INDEX namespace", dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_task_key(task_key)", dbterror.ErrDupKeyName)
 }
 
 func upgradeToVer137(_ Session, _ int64) {
@@ -2710,6 +2712,13 @@ func upgradeToVer172(s Session, ver int64) {
 	mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_quarantined_watch")
 	mustExecute(s, CreateRunawayWatchTable)
 	mustExecute(s, CreateDoneRunawayWatchTable)
+}
+
+func upgradeToVer173(s Session, ver int64) {
+	if ver >= version173 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s Session) {
