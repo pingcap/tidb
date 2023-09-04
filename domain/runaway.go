@@ -176,8 +176,18 @@ func (do *Domain) runawayWatchSyncLoop() {
 }
 
 // AddRunawayWatch is used to add runaway watch item manually.
-func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) error {
-	return do.handleRunawayWatch(record)
+func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) (uint64, error) {
+	if err := do.handleRunawayWatch(record); err != nil {
+		return 0, err
+	}
+	if err := do.TryToUpdateRunawayWatch(); err != nil {
+		return 0, err
+	}
+	r := do.runawayManager.GetWatchByKey(record.GetRecordKey())
+	if r != nil {
+		return uint64(r.ID), nil
+	}
+	return 0, nil
 }
 
 // GetRunawayWatchList is used to get all items from runaway watch list.
