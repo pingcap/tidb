@@ -31,6 +31,7 @@ go_library(
         "//domain/infosync",
         "//errno",
         "//infoschema",
+        "//infoschema/metrics",
         "//infoschema/perfschema",
         "//kv",
         "//meta",
