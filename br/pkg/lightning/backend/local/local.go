@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
@@ -454,7 +456,8 @@ func (c *BackendConfig) adjust() {
 
 // Backend is a local backend.
 type Backend struct {
-	engines sync.Map // sync version of map[uuid.UUID]*Engine
+	engines        sync.Map // sync version of map[uuid.UUID]*Engine
+	externalEngine map[uuid.UUID]common.Engine
 
 	pdCtl            *pdutil.PdController
 	splitCli         split.SplitClient
@@ -735,12 +738,21 @@ func (local *Backend) lockAllEnginesUnless(newState, ignoreStateMask importMutex
 
 // Close the local backend.
 func (local *Backend) Close() {
-	allEngines := local.lockAllEnginesUnless(importMutexStateClose, 0)
+	allEngines := make([]common.Engine, 0, 8)
+	for _, e := range local.externalEngine {
+		allEngines = append(allEngines, e)
+	}
+	allLocalEngines := local.lockAllEnginesUnless(importMutexStateClose, 0)
+	for _, e := range allLocalEngines {
+		allEngines = append(allEngines, e)
+	}
+	for _, e := range allEngines {
+		_ = e.Close()
+	}
 	local.engines = sync.Map{}
 
-	for _, engine := range allEngines {
-		_ = engine.Close()
-		engine.unlock()
+	for _, e := range allLocalEngines {
+		e.unlock()
 	}
 
 	local.importClientFactory.Close()
@@ -923,6 +935,33 @@ func (local *Backend) allocateTSIfNotExists(ctx context.Context, engine *Engine)
 
 // CloseEngine closes backend engine by uuid.
 func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
+	if externalCfg := cfg.External; externalCfg != nil {
+		storeBackend, err := storage.ParseBackend(externalCfg.StorageURI, nil)
+		if err != nil {
+			return err
+		}
+		store, err := storage.New(ctx, storeBackend, nil)
+		if err != nil {
+			return err
+		}
+		externalEngine := external.NewExternalEngine(
+			store,
+			externalCfg.DataFiles,
+			externalCfg.StatFiles,
+			externalCfg.MinKey,
+			externalCfg.MaxKey,
+			local.keyAdapter,
+			local.DupeDetectEnabled,
+			local.duplicateDB,
+			local.DuplicateDetectOpt,
+			123, // TODO(lance6716): get TS
+			0,   // TODO(lance6716): no need?
+			0,
+		)
+		local.externalEngine[engineUUID] = externalEngine
+		return nil
+	}
+
 	// flush mem table to storage, to free memory,
 	// ask others' advise, looks like unnecessary, but with this we can control memory precisely.
 	engineI, ok := local.engines.Load(engineUUID)
@@ -1015,11 +1054,11 @@ func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, si
 
 func readAndSplitIntoRange(
 	ctx context.Context,
-	engine *Engine,
+	engine common.Engine,
 	sizeLimit int64,
 	keysLimit int64,
 ) ([]common.Range, error) {
-	firstKey, lastKey, err := engine.GetFirstAndLastKey(nil, nil)
+	firstKey, lastKey, err := engine.GetKeyRange()
 	if err != nil {
 		return nil, err
 	}
@@ -1038,7 +1077,7 @@ func readAndSplitIntoRange(
 
 	logger := log.FromContext(ctx).With(zap.String("engine", engine.ID()))
 	ranges, err := engine.SplitRanges(firstKey, endKey, sizeLimit, keysLimit, logger)
-	logger.Info("split local engine key ranges",
+	logger.Info("split engine key ranges",
 		zap.Int64("totalSize", engineFileTotalSize), zap.Int64("totalCount", engineFileLength),
 		logutil.Key("firstKey", firstKey), logutil.Key("lastKey", lastKey),
 		zap.Int("ranges", len(ranges)), zap.Error(err))
@@ -1399,15 +1438,24 @@ func (local *Backend) executeJob(
 }
 
 // ImportEngine imports an engine to TiKV.
-func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
-	lf := local.lockEngine(engineUUID, importMutexStateImport)
-	if lf == nil {
-		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
-		return nil
+func (local *Backend) ImportEngine(
+	ctx context.Context,
+	engineUUID uuid.UUID,
+	regionSplitSize, regionSplitKeys int64,
+) error {
+	var e common.Engine
+	if externalEngine, ok := local.externalEngine[engineUUID]; ok {
+		e = externalEngine
+	} else {
+		localEngine := local.lockEngine(engineUUID, importMutexStateImport)
+		if localEngine == nil {
+			// skip if engine not exist. See the comment of `CloseEngine` for more detail.
+			return nil
+		}
+		defer localEngine.unlock()
 	}
-	defer lf.unlock()
 
-	lfTotalSize, lfLength := lf.KVStatistics()
+	lfTotalSize, lfLength := e.KVStatistics()
 	if lfTotalSize == 0 {
 		// engine is empty, this is likes because it's a index engine but the table contains no index
 		log.FromContext(ctx).Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
@@ -1426,7 +1474,7 @@ func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, re
 	}
 
 	// split sorted file into range about regionSplitSize per file
-	regionRanges, err := readAndSplitIntoRange(ctx, lf, regionSplitSize, regionSplitKeys)
+	regionRanges, err := readAndSplitIntoRange(ctx, e, regionSplitSize, regionSplitKeys)
 	if err != nil {
 		return err
 	}
@@ -1478,9 +1526,9 @@ func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, re
 
 	failpoint.Inject("ReadyForImportEngine", func() {})
 
-	err = local.doImport(ctx, lf, regionRanges, regionSplitSize, regionSplitKeys)
+	err = local.doImport(ctx, e, regionRanges, regionSplitSize, regionSplitKeys)
 	if err == nil {
-		importedSize, importedLength := lf.ImportedStatistics()
+		importedSize, importedLength := e.ImportedStatistics()
 		log.FromContext(ctx).Info("import engine success",
 			zap.Stringer("uuid", engineUUID),
 			zap.Int64("size", lfTotalSize),
