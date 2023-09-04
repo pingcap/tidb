@@ -277,7 +277,17 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 
 func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Service {
 	l := owner.NewOwnerManager(context.Background(), cli, "autoid", selfAddr, autoIDLeaderPath)
+<<<<<<< HEAD
 	err := l.CampaignOwner()
+=======
+	l.SetBeOwnerHook(func() {
+		logutil.BgLogger().Info("leader change of autoid service, this node become owner",
+			zap.String("addr", selfAddr),
+			zap.String("category", "autoid service"))
+	})
+	// 10 means that autoid service's etcd lease is 10s.
+	err := l.CampaignOwner(10)
+>>>>>>> 18ecfba603c (autoid_service,owner: change autoid service's etcd lease to 10s (#46455))
 	if err != nil {
 		panic(err)
 	}
