@@ -71,7 +71,9 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 			}
 		}
 		for _, def := range t.PartInfo.Definitions {
-			h.resetTableStats2KVForDrop(def.ID)
+			if err := h.resetTableStats2KVForDrop(def.ID); err != nil {
+				return err
+			}
 		}
 	case model.ActionReorganizePartition:
 		for _, def := range t.PartInfo.Definitions {
