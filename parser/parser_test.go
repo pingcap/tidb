@@ -6330,6 +6330,7 @@ func TestWindowFunctions(t *testing.T) {
 
 		// For TSO functions
 		{`select tidb_parse_tso(1)`, true, "SELECT TIDB_PARSE_TSO(1)"},
+		{`select tidb_parse_tso_logical(1)`, true, "SELECT TIDB_PARSE_TSO_LOGICAL(1)"},
 		{`select tidb_bounded_staleness('2015-09-21 00:07:01', NOW())`, true, "SELECT TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', NOW())"},
 		{`select tidb_bounded_staleness(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())`, true, "SELECT TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())"},
 		{`select tidb_bounded_staleness('2015-09-21 00:07:01', '2021-04-27 11:26:13')`, true, "SELECT TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', _UTF8MB4'2021-04-27 11:26:13')"},

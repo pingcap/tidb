@@ -3065,6 +3065,43 @@ func TestTidbParseTso(t *testing.T) {
 	}
 }
 
+func TestTidbParseTsoLogical(t *testing.T) {
+	ctx := createContext(t)
+	tests := []struct {
+		param  int64
+		expect string
+	}{
+		{404411537129996288, "0"},
+		{404411537129996289, "1"},
+		{404411537129996290, "2"},
+	}
+
+	fc := funcs[ast.TiDBParseTsoLogical]
+	for _, test := range tests {
+		dat := []types.Datum{types.NewDatum(test.param)}
+		f, err := fc.getFunction(ctx, datumsToConstants(dat))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, test.expect, result)
+	}
+
+	testsNull := []interface{}{
+		0,
+		-1,
+		"-1"}
+
+	for _, i := range testsNull {
+		dat := []types.Datum{types.NewDatum(i)}
+		f, err := fc.getFunction(ctx, datumsToConstants(dat))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		require.True(t, d.IsNull())
+	}
+}
+
 func TestTiDBBoundedStaleness(t *testing.T) {
 	ctx := createContext(t)
 	t1, err := time.Parse(types.TimeFormat, "2015-09-21 09:53:04")

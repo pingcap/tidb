@@ -6546,6 +6546,45 @@ func (b *builtinTidbParseTsoSig) evalTime(row chunk.Row) (types.Time, bool, erro
 	return result, false, nil
 }
 
+// tidbParseTsoFunctionClass extracts logical time from a tso
+type tidbParseTsoLogicalFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbParseTsoLogicalFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+
+	sig := &builtinTidbParseTsoLogicalSig{bf}
+	return sig, nil
+}
+
+type builtinTidbParseTsoLogicalSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTidbParseTsoLogicalSig) Clone() builtinFunc {
+	newSig := &builtinTidbParseTsoLogicalSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalTime evals a builtinTidbParseTsoLogicalSig.
+func (b *builtinTidbParseTsoLogicalSig) evalInt(row chunk.Row) (int64, bool, error) {
+	arg, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil || arg <= 0 {
+		return 0, true, err
+	}
+
+	t := oracle.ExtractLogical(uint64(arg))
+	return t, false, nil
+}
+
 // tidbBoundedStalenessFunctionClass reads a time window [a, b] and compares it with the latest SafeTS
 // to determine which TS to use in a read only transaction.
 type tidbBoundedStalenessFunctionClass struct {
