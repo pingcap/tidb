@@ -123,9 +123,7 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	y, err = br.readNBytes(3)
 	require.NoError(t, err)
 	// Pollute mockExtStore to verify if the slice is not affected.
-	for i, b := range []byte{'x', 'y', 'z'} {
-		ms.src[i] = b
-	}
+	copy(ms.src, []byte("xyz"))
 	x = *y
 	require.Equal(t, 3, len(x))
 	require.Equal(t, byte('c'), x[2])
@@ -137,9 +135,7 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	y, err = br.readNBytes(2)
 	require.NoError(t, err)
 	// Pollute mockExtStore to verify if the slice is not affected.
-	for i, b := range []byte{'x', 'y', 'z'} {
-		ms.src[i] = b
-	}
+	copy(ms.src, []byte("xyz"))
 	x = *y
 	require.Equal(t, 2, len(x))
 	require.Equal(t, byte('b'), x[1])

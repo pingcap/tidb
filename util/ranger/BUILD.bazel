@@ -50,6 +50,7 @@ go_test(
     deps = [
         ":ranger",
         "//config",
+        "//domain",
         "//expression",
         "//parser/ast",
         "//parser/model",

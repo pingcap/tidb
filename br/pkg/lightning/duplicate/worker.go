@@ -17,13 +17,13 @@ package duplicate
 import (
 	"bytes"
 	"context"
+	"slices"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/util/extsort"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 type task struct {

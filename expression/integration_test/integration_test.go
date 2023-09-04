@@ -119,7 +119,7 @@ func TestFuncREPEAT(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec("USE test;")
+	tk.MustExec("USE test")
 	tk.MustExec("DROP TABLE IF EXISTS table_string;")
 	tk.MustExec("CREATE TABLE table_string(a CHAR(20), b VARCHAR(20), c TINYTEXT, d TEXT(20), e MEDIUMTEXT, f LONGTEXT, g BIGINT);")
 	tk.MustExec("INSERT INTO table_string (a, b, c, d, e, f, g) VALUES ('a', 'b', 'c', 'd', 'e', 'f', 2);")
@@ -163,14 +163,6 @@ func TestFuncLpadAndRpad(t *testing.T) {
 	result.Check(testkit.Rows("a中文\x00\x00\x00\x00 ab"))
 	result = tk.MustQuery(`SELECT RPAD(a, 11, "a"), RPAD(b, 2, "xx") FROM t;`)
 	result.Check(testkit.Rows("中文\x00\x00\x00\x00a ab"))
-	result = tk.MustQuery(`SELECT LPAD("中文", 5, "字符"), LPAD("中文", 1, "a");`)
-	result.Check(testkit.Rows("字符字中文 中"))
-	result = tk.MustQuery(`SELECT RPAD("中文", 5, "字符"), RPAD("中文", 1, "a");`)
-	result.Check(testkit.Rows("中文字符字 中"))
-	result = tk.MustQuery(`SELECT RPAD("中文", -5, "字符"), RPAD("中文", 10, "");`)
-	result.Check(testkit.Rows("<nil> <nil>"))
-	result = tk.MustQuery(`SELECT LPAD("中文", -5, "字符"), LPAD("中文", 10, "");`)
-	result.Check(testkit.Rows("<nil> <nil>"))
 }
 
 func TestBuiltinFuncJsonPretty(t *testing.T) {
@@ -3847,13 +3839,6 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	tk.MustExec("admin reload expr_pushdown_blacklist")
 }
 
-func TestOptRuleBlacklist(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery(`select * from mysql.opt_rule_blacklist`).Check(testkit.Rows())
-}
-
 func TestIssue10804(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -3864,37 +3849,6 @@ func TestIssue10804(t *testing.T) {
 	tk.MustQuery(`SELECT @@GLOBAL.information_schema_stats_expiry`).Check(testkit.Rows(`86400`))
 	tk.MustExec("/*!80000 SET GLOBAL information_schema_stats_expiry=0 */")
 	tk.MustQuery(`SELECT @@GLOBAL.information_schema_stats_expiry`).Check(testkit.Rows(`0`))
-}
-
-func TestInvalidEndingStatement(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	parseErrMsg := "[parser:1064]"
-	errMsgLen := len(parseErrMsg)
-
-	assertParseErr := func(sql string) {
-		err := tk.ExecToErr(sql)
-		require.Error(t, err)
-		require.Equal(t, err.Error()[:errMsgLen], parseErrMsg)
-	}
-
-	assertParseErr("drop table if exists t'xyz")
-	assertParseErr("drop table if exists t'")
-	assertParseErr("drop table if exists t`")
-	assertParseErr(`drop table if exists t'`)
-	assertParseErr(`drop table if exists t"`)
-}
-
-func TestIssue15613(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("select sec_to_time(1e-4)").Check(testkit.Rows("00:00:00.000100"))
-	tk.MustQuery("select sec_to_time(1e-5)").Check(testkit.Rows("00:00:00.000010"))
-	tk.MustQuery("select sec_to_time(1e-6)").Check(testkit.Rows("00:00:00.000001"))
-	tk.MustQuery("select sec_to_time(1e-7)").Check(testkit.Rows("00:00:00.000000"))
 }
 
 func TestIssue10675(t *testing.T) {
@@ -4110,14 +4064,6 @@ func TestIssue11594(t *testing.T) {
 	tk.MustQuery("SELECT sum(IFNULL(cast(null+rand() as unsigned), -v)) FROM t1;").Check(testkit.Rows("-3"))
 	tk.MustQuery("SELECT sum(COALESCE(cast(null+rand() as unsigned), -v)) FROM t1;").Check(testkit.Rows("-3"))
 	tk.MustQuery("SELECT sum(COALESCE(cast(null+rand() as unsigned), v)) FROM t1;").Check(testkit.Rows("3"))
-}
-
-func TestDefEnableVectorizedEvaluation(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use mysql")
-	tk.MustQuery(`select @@tidb_enable_vectorized_expression`).Check(testkit.Rows("1"))
 }
 
 func TestIssue11309And11319(t *testing.T) {
@@ -5093,22 +5039,6 @@ func TestIssue17476(t *testing.T) {
  IS NULL WHERE col_int_6=0;`).Check(testkit.Rows("14"))
 	tk.MustQuery(`SELECT count(*) FROM (table_float JOIN table_int_float_varchar AS tmp3 ON (tmp3.col_varchar_6 AND NULL) IS NULL);`).Check(testkit.Rows("154"))
 	tk.MustQuery(`SELECT * FROM (table_int_float_varchar AS tmp3) WHERE (col_varchar_6 AND NULL) IS NULL AND col_int_6=0;`).Check(testkit.Rows("13 0 -0.1 <nil>"))
-}
-
-func TestIssue11645(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery(`SELECT DATE_ADD('1000-01-01 00:00:00', INTERVAL -2 HOUR);`).Check(testkit.Rows("0999-12-31 22:00:00"))
-	tk.MustQuery(`SELECT DATE_ADD('1000-01-01 00:00:00', INTERVAL -200 HOUR);`).Check(testkit.Rows("0999-12-23 16:00:00"))
-	tk.MustQuery(`SELECT DATE_ADD('0001-01-01 00:00:00', INTERVAL -2 HOUR);`).Check(testkit.Rows("0000-00-00 22:00:00"))
-	tk.MustQuery(`SELECT DATE_ADD('0001-01-01 00:00:00', INTERVAL -25 HOUR);`).Check(testkit.Rows("0000-00-00 23:00:00"))
-	tk.MustQuery(`SELECT DATE_ADD('0001-01-01 00:00:00', INTERVAL -8784 HOUR);`).Check(testkit.Rows("0000-00-00 00:00:00"))
-	tk.MustQuery(`SELECT DATE_ADD('0001-01-01 00:00:00', INTERVAL -8785 HOUR);`).Check(testkit.Rows("<nil>"))
-	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -2 HOUR);`).Check(testkit.Rows("0001-01-01 22:00:00"))
-	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -24 HOUR);`).Check(testkit.Rows("0001-01-01 00:00:00"))
-	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -25 HOUR);`).Check(testkit.Rows("0000-00-00 23:00:00"))
-	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -8785 HOUR);`).Check(testkit.Rows("0000-00-00 23:00:00"))
 }
 
 func TestIssue14349(t *testing.T) {
@@ -6577,22 +6507,6 @@ func TestIssue25526(t *testing.T) {
 	rows.Check(testkit.Rows())
 }
 
-func TestTimestampIssue25093(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(col decimal(45,8) default 13.654 not null);")
-	tk.MustExec("insert  into t set col = 0.4352;")
-	tk.MustQuery("select timestamp(0.123)").Check(testkit.Rows("0000-00-00 00:00:00.123"))
-	tk.MustQuery("select timestamp(col) from t;").Check(testkit.Rows("0000-00-00 00:00:00.435200"))
-	tk.MustQuery("select timestamp(1.234) from t;").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select timestamp(0.12345678) from t;").Check(testkit.Rows("0000-00-00 00:00:00.123457"))
-	tk.MustQuery("select timestamp(0.9999999) from t;").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select timestamp(101.234) from t;").Check(testkit.Rows("2000-01-01 00:00:00.000"))
-}
-
 func TestIssue24953(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -7056,16 +6970,6 @@ func TestIssue28739(t *testing.T) {
 		"<nil> <nil>"))
 }
 
-func TestIssue30081(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`USE test`)
-	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 2:00:00','US/Eastern','US/Central');`).
-		Check(testkit.Rows(`2007-03-11 01:00:00`))
-	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 3:00:00','US/Eastern','US/Central');`).
-		Check(testkit.Rows(`2007-03-11 01:00:00`))
-}
-
 func TestIssue30326(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -7186,23 +7090,6 @@ func TestIssue29708(t *testing.T) {
 		{"a"},
 		{"b"},
 	})
-}
-
-func TestIssue22206(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tz := tk.Session().GetSessionVars().StmtCtx.TimeZone
-	result := tk.MustQuery("select from_unixtime(32536771199.999999)")
-	unixTime := time.Unix(32536771199, 999999000).In(tz).String()[:26]
-	result.Check(testkit.Rows(unixTime))
-	result = tk.MustQuery("select from_unixtime('32536771200.000000')")
-	result.Check(testkit.Rows("<nil>"))
-	result = tk.MustQuery("select from_unixtime(5000000000);")
-	unixTime = time.Unix(5000000000, 0).In(tz).String()[:19]
-	result.Check(testkit.Rows(unixTime))
 }
 
 func TestIssue32488(t *testing.T) {
@@ -7489,34 +7376,6 @@ func TestDateAddForNonExistingTimestamp(t *testing.T) {
 		{"2022-10-30 03:30:00"},
 	})
 	tk.MustExec("drop table t")
-}
-
-func TestImcompleteDateFunc(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustQuery("select to_seconds('1998-10-00')").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select to_seconds('1998-00-11')").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("SELECT CONVERT_TZ('2004-10-00 12:00:00','GMT','MET');").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("SELECT CONVERT_TZ('2004-00-01 12:00:00','GMT','MET');").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("SELECT DATE_ADD('1998-10-00',INTERVAL 1 DAY);").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("SELECT DATE_ADD('2004-00-01',INTERVAL 1 DAY);").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("SELECT DATE_SUB('1998-10-00', INTERVAL 31 DAY);").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("SELECT DATE_SUB('2004-00-01', INTERVAL 31 DAY);").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("SELECT DAYOFYEAR('2007-00-03');").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("SELECT DAYOFYEAR('2007-02-00');;").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("SELECT TIMESTAMPDIFF(MONTH,'2003-00-01','2003-05-01');").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-00');;").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select to_days('1998-10-00')").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select to_days('1998-10-00')").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select week('1998-10-00')").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select week('1998-00-11')").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select WEEKDAY('1998-10-00')").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select WEEKDAY('1998-00-11')").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select WEEKOFYEAR('1998-10-00')").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select WEEKOFYEAR('1998-00-11')").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select YEARWEEK('1998-10-00')").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select YEARWEEK('1998-00-11')").Check(testkit.Rows("<nil>"))
 }
 
 func TestIssue31640(t *testing.T) {

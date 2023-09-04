@@ -15,6 +15,7 @@
 package errormanager
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -25,11 +26,19 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/parser/mysql"
+	tidbtbl "github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -125,11 +134,18 @@ const (
 
 	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?)"
 
-	selectConflictKeys = `
+	selectConflictKeysRemove = `
 		SELECT _tidb_rowid, raw_handle, raw_row
 		FROM %s.` + ConflictErrorTableName + `
 		WHERE table_name = ? AND _tidb_rowid >= ? and _tidb_rowid < ?
 		ORDER BY _tidb_rowid LIMIT ?;
+	`
+
+	selectIndexConflictKeysReplace = `
+		SELECT raw_key, index_name, raw_value, raw_handle
+		FROM %s.` + ConflictErrorTableName + `
+		WHERE table_name = ? AND index_name <> 'PRIMARY'
+		ORDER BY raw_key;
 	`
 
 	insertIntoDupRecord = `
@@ -424,9 +440,9 @@ func (em *ErrorManager) RecordIndexConflictError(
 	return gerr
 }
 
-// ResolveAllConflictKeys query all conflicting rows (handle and their
-// values) from the current error report and resolve them concurrently.
-func (em *ErrorManager) ResolveAllConflictKeys(
+// RemoveAllConflictKeys query all conflicting rows (handle and their
+// values) from the current error report and resolve them concurrently by removing all of them.
+func (em *ErrorManager) RemoveAllConflictKeys(
 	ctx context.Context,
 	tableName string,
 	pool *utils.WorkerPool,
@@ -458,7 +474,7 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 			var handleRows [][2][]byte
 			for start < end {
 				rows, err := em.db.QueryContext(
-					gCtx, fmt.Sprintf(selectConflictKeys, em.schemaEscaped),
+					gCtx, fmt.Sprintf(selectConflictKeysRemove, em.schemaEscaped),
 					tableName, start, end, rowLimit)
 				if err != nil {
 					return errors.Trace(err)
@@ -504,8 +520,142 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 	return errors.Trace(g.Wait())
 }
 
+// ReplaceConflictKeys query all conflicting rows (handle and their
+// values) from the current error report and resolve them
+// by replacing the necessary rows and reserving the others.
+func (em *ErrorManager) ReplaceConflictKeys(
+	ctx context.Context,
+	tbl tidbtbl.Table,
+	tableName string,
+	pool *utils.WorkerPool,
+	fnGetLatest func(ctx context.Context, key []byte) ([]byte, error),
+	fnDeleteKey func(ctx context.Context, key []byte) error,
+) error {
+	if em.db == nil {
+		return nil
+	}
+
+	sessionOpts := encode.SessionOptions{
+		// TODO: need to find the correct value for SQLMode
+		SQLMode: mysql.ModeStrictAllTables,
+	}
+	encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
+		Table:          tbl,
+		SessionOptions: sessionOpts,
+		Logger:         em.logger,
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	g, gCtx := errgroup.WithContext(ctx)
+	pool.ApplyOnErrorGroup(g, func() error {
+		// TODO: provide a detailed document to explain the algorithm and link it here
+		// demo for "replace" algorithm: https://github.com/lyzx2001/tidb-conflict-replace
+		// check index KV first
+		rawKeyRows, err := em.db.QueryContext(
+			gCtx, fmt.Sprintf(selectIndexConflictKeysReplace, em.schemaEscaped),
+			tableName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer rawKeyRows.Close()
+		for rawKeyRows.Next() {
+			var rawKey, rawValue, rawHandle []byte
+			var indexName string
+			if err := rawKeyRows.Scan(&rawKey, &indexName, &rawValue, &rawHandle); err != nil {
+				return errors.Trace(err)
+			}
+			em.logger.Debug("got raw_key, index_name, raw_value, raw_handle from table",
+				zap.Binary("raw_key", rawKey),
+				zap.String("index_name", indexName),
+				zap.Binary("raw_value", rawValue),
+				zap.Binary("raw_handle", rawHandle))
+
+			// get the latest value of rawKey from downstream TiDB
+			value, err := fnGetLatest(gCtx, rawKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			// if the latest value of rawKey equals to rawValue, that means this index KV is maintained in downstream TiDB
+			// if not, that means this index KV has been overwritten, and its corresponding data KV needs to be deleted
+			if bytes.Equal(rawValue, value) {
+				continue
+			}
+
+			// rawHandle is the row key of the data KV that needs to be deleted
+			// get the latest value of the row key of the data KV that needs to be deleted
+			overwritten, err := fnGetLatest(gCtx, rawHandle)
+			// if the latest value cannot be found, that means the data KV has been deleted
+			if tikverr.IsErrNotFound(err) || overwritten == nil {
+				continue
+			}
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			overwrittenHandle, err := tablecodec.DecodeRowKey(rawHandle)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
+				tbl.Meta(), overwrittenHandle, tbl.Cols(), overwritten)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// find out all the KV pairs that are contained in the data KV
+			kvPairs := encoder.SessionCtx.TakeKvPairs()
+			for _, kvPair := range kvPairs.Pairs {
+				em.logger.Debug("got encoded KV",
+					logutil.Key("key", kvPair.Key),
+					zap.Binary("value", kvPair.Val),
+					logutil.Key("rawKey", rawKey),
+					zap.Binary("rawValue", rawValue))
+
+				// If rawKey equals to KV pair's key and rawValue equals to KV pair's value,
+				// this latest data KV of the index KV needs to be deleted;
+				// if not, this latest data KV of the index KV was inserted by other rows,
+				// so it is unrelated to the index KV that needs to be deleted, we cannot delete it.
+
+				// An example is:
+				// (pk, uk)
+				// (1, a)
+				// (1, b)
+				// (2, a)
+
+				// (1, a) is overwritten by (2, a). We found a->1 is an overwritten index KV,
+				// and we are considering if its data KV with key "1" can be deleted.
+				// We got the latest value of key "1" which is (1, b),
+				// and encode it to get all KV pairs which is [1->b, b->1].
+				// Only if there is a->1 we dare to delete data KV with key "1".
+
+				if bytes.Equal(kvPair.Key, rawKey) && bytes.Equal(kvPair.Val, rawValue) {
+					if err := fnDeleteKey(gCtx, rawHandle); err != nil {
+						return errors.Trace(err)
+					}
+					break
+				}
+			}
+		}
+		if err := rawKeyRows.Err(); err != nil {
+			return errors.Trace(err)
+		}
+
+		// TODO: check data KV
+
+		return nil
+	})
+
+	return errors.Trace(g.Wait())
+}
+
 // RecordDuplicateCount reduce the counter of "duplicate entry" errors.
-// Currently the count will not be shared for multiple lightning instances.
+// Currently, the count will not be shared for multiple lightning instances.
 func (em *ErrorManager) RecordDuplicateCount(cnt int64) error {
 	if em.conflictErrRemain.Sub(cnt) < 0 {
 		threshold := em.configConflict.Threshold
@@ -517,7 +667,7 @@ func (em *ErrorManager) RecordDuplicateCount(cnt int64) error {
 }
 
 // RecordDuplicate records a "duplicate entry" error so user can query them later.
-// Currently the error will not be shared for multiple lightning instances.
+// Currently, the error will not be shared for multiple lightning instances.
 func (em *ErrorManager) RecordDuplicate(
 	ctx context.Context,
 	logger log.Logger,

@@ -34,6 +34,7 @@ go_test(
         "//testkit",
         "//testkit/testsetup",
         "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
