@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -185,4 +186,48 @@ func MockExternalEngine(
 		return nil, nil, err
 	}
 	return GetAllFileNames(ctx, storage, "/mock-test")
+}
+
+// EndpointTp is the type of Endpoint.Key.
+type EndpointTp int
+
+const (
+	ExclusiveEnd EndpointTp = iota
+	InclusiveStart
+	InclusiveEnd
+)
+
+// Endpoint represents an endpoint of an interval which can be used by GetMaxOverlapping.
+type Endpoint struct {
+	Key    []byte
+	Tp     EndpointTp
+	Weight uint64 // all EndpointTp use positive weight
+}
+
+// GetMaxOverlapping returns the maximum overlapping weight treating given
+// `points` as endpoints of intervals. `points` are not required to be sorted,
+// and will be sorted in-place in this function.
+func GetMaxOverlapping(points []Endpoint) int {
+	slices.SortFunc(points, func(i, j Endpoint) int {
+		if bytes.Compare(i.Key, j.Key) != 0 {
+			return bytes.Compare(i.Key, j.Key)
+		}
+		return int(i.Tp) - int(j.Tp)
+	})
+	var maxWeight uint64
+	var curWeight uint64
+	for _, p := range points {
+		switch p.Tp {
+		case InclusiveStart:
+			curWeight += p.Weight
+		case ExclusiveEnd:
+			curWeight -= p.Weight
+		case InclusiveEnd:
+			curWeight -= p.Weight
+		}
+		if curWeight > maxWeight {
+			maxWeight = curWeight
+		}
+	}
+	return int(maxWeight)
 }

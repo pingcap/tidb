@@ -209,3 +209,34 @@ func TestCleanUpFiles(t *testing.T) {
 	require.Equal(t, []string(nil), statFiles)
 	require.Equal(t, []string(nil), dataFiles)
 }
+
+func TestGetMaxOverlapping(t *testing.T) {
+	// [1, 3), [2, 4)
+	points := []Endpoint{
+		{Key: []byte{1}, Tp: InclusiveStart, Weight: 1},
+		{Key: []byte{3}, Tp: ExclusiveEnd, Weight: 1},
+		{Key: []byte{2}, Tp: InclusiveStart, Weight: 1},
+		{Key: []byte{4}, Tp: ExclusiveEnd, Weight: 1},
+	}
+	require.Equal(t, 2, GetMaxOverlapping(points))
+	// [1, 3), [2, 4), [3, 5)
+	points = []Endpoint{
+		{Key: []byte{1}, Tp: InclusiveStart, Weight: 1},
+		{Key: []byte{3}, Tp: ExclusiveEnd, Weight: 1},
+		{Key: []byte{2}, Tp: InclusiveStart, Weight: 1},
+		{Key: []byte{4}, Tp: ExclusiveEnd, Weight: 1},
+		{Key: []byte{3}, Tp: InclusiveStart, Weight: 1},
+		{Key: []byte{5}, Tp: ExclusiveEnd, Weight: 1},
+	}
+	require.Equal(t, 2, GetMaxOverlapping(points))
+	// [1, 3], [2, 4], [3, 5]
+	points = []Endpoint{
+		{Key: []byte{1}, Tp: InclusiveStart, Weight: 1},
+		{Key: []byte{3}, Tp: InclusiveEnd, Weight: 1},
+		{Key: []byte{2}, Tp: InclusiveStart, Weight: 1},
+		{Key: []byte{4}, Tp: InclusiveEnd, Weight: 1},
+		{Key: []byte{3}, Tp: InclusiveStart, Weight: 1},
+		{Key: []byte{5}, Tp: InclusiveEnd, Weight: 1},
+	}
+	require.Equal(t, 3, GetMaxOverlapping(points))
+}
