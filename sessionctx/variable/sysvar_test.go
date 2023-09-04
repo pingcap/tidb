@@ -129,6 +129,47 @@ func TestTiFlashMaxBytes(t *testing.T) {
 	}
 }
 
+func TestTiFlashMemQuotaQueryPerNode(t *testing.T) {
+	// test TiFlash query memory threshold
+	sv := GetSysVar(TiFlashMemQuotaQueryPerNode)
+	vars := NewSessionVars(nil)
+	val, err := sv.Validate(vars, "-10", ScopeSession)
+	require.NoError(t, err) // it has been auto converted if out of range
+	require.Equal(t, "-1", val)
+	val, err = sv.Validate(vars, "-10", ScopeGlobal)
+	require.NoError(t, err) // it has been auto converted if out of range
+	require.Equal(t, "-1", val)
+	val, err = sv.Validate(vars, "100", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "100", val)
+	_, err = sv.Validate(vars, strconv.FormatUint(uint64(math.MaxInt64)+1, 10), ScopeSession)
+	// can not autoconvert because the input is out of the range of Int64
+	require.Error(t, err)
+	require.Nil(t, sv.SetSessionFromHook(vars, "10000")) // sets
+	require.Equal(t, int64(10000), vars.TiFlashMaxQueryMemoryPerNode)
+}
+
+func TestTiFlashQuerySpillRatio(t *testing.T) {
+	// test TiFlash auto spill ratio
+	sv := GetSysVar(TiFlashQuerySpillRatio)
+	vars := NewSessionVars(nil)
+	val, err := sv.Validate(vars, "-10", ScopeSession)
+	require.NoError(t, err) // it has been auto converted if out of range
+	require.Equal(t, "0", val)
+	val, err = sv.Validate(vars, "-10", ScopeGlobal)
+	require.NoError(t, err) // it has been auto converted if out of range
+	require.Equal(t, "0", val)
+	_, err = sv.Validate(vars, "100", ScopeSession)
+	require.Error(t, err)
+	_, err = sv.Validate(vars, "0.9", ScopeSession)
+	require.Error(t, err)
+	val, err = sv.Validate(vars, "0.85", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "0.85", val)
+	require.Nil(t, sv.SetSessionFromHook(vars, "0.75")) // sets
+	require.Equal(t, 0.75, vars.TiFlashQuerySpillRatio)
+}
+
 func TestCollationServer(t *testing.T) {
 	sv := GetSysVar(CollationServer)
 	vars := NewSessionVars(nil)
