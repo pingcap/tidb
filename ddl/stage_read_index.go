@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
@@ -38,8 +39,8 @@ type readIndexToLocalStage struct {
 	ptbl  table.PhysicalTable
 	jc    *JobContext
 
-	bc       ingest.BackendCtx
-	rowCount int64
+	bc      ingest.BackendCtx
+	summary *scheduler.Summary
 }
 
 func newReadIndexToLocalStage(
@@ -49,15 +50,16 @@ func newReadIndexToLocalStage(
 	ptbl table.PhysicalTable,
 	jc *JobContext,
 	bc ingest.BackendCtx,
+	summary *scheduler.Summary,
 ) *readIndexToLocalStage {
 	return &readIndexToLocalStage{
-		d:        d,
-		job:      job,
-		index:    index,
-		ptbl:     ptbl,
-		jc:       jc,
-		bc:       bc,
-		rowCount: 0,
+		d:       d,
+		job:     job,
+		index:   index,
+		ptbl:    ptbl,
+		jc:      jc,
+		bc:      bc,
+		summary: summary,
 	}
 }
 
@@ -67,13 +69,13 @@ func (*readIndexToLocalStage) InitSubtaskExecEnv(_ context.Context) error {
 	return nil
 }
 
-func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error) {
+func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error) {
 	logutil.BgLogger().Info("read index stage run subtask",
 		zap.String("category", "ddl"))
 
 	d := r.d
 	sm := &BackfillSubTaskMeta{}
-	err := json.Unmarshal(subtask, sm)
+	err := json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
 		logutil.BgLogger().Error("unmarshal error",
 			zap.String("category", "ddl"),
@@ -133,7 +135,8 @@ func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask []byte
 	if err != nil {
 		return nil, err
 	}
-	r.rowCount = totalRowCount.Load()
+
+	r.summary.UpdateRowCount(subtask.ID, totalRowCount.Load())
 	return nil, nil
 }
 
@@ -156,17 +159,7 @@ func (r *readIndexToLocalStage) OnSubtaskFinished(_ context.Context, subtask []b
 			MockDMLExecutionAddIndexSubTaskFinish()
 		}
 	})
-	sm := &BackfillSubTaskMeta{}
-	err := json.Unmarshal(subtask, sm)
-	if err != nil {
-		logutil.BgLogger().Error("unmarshal error",
-			zap.String("category", "ddl"),
-			zap.Error(err))
-		return nil, err
-	}
-	sm.RowCount = r.rowCount
-	subtask, err = json.Marshal(sm)
-	return subtask, err
+	return subtask, nil
 }
 
 func (r *readIndexToLocalStage) Rollback(_ context.Context) error {

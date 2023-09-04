@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/disttask/framework/handle"
+	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -1943,24 +1944,12 @@ func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
 		logutil.BgLogger().Warn("cannot get global task", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
-	metas, err := taskMgr.GetSucceedSubtaskMeta(gTask.ID)
+	rowCount, err := taskMgr.GetSubtaskRowCount(gTask.ID, proto.StepOne)
 	if err != nil {
-		logutil.BgLogger().Warn("cannot get subtasks", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+		logutil.BgLogger().Warn("cannot get subtask row count", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
-	var total int64
-	for _, m := range metas {
-		sm := &BackfillSubTaskMeta{}
-		err := json.Unmarshal(m, sm)
-		if err != nil {
-			logutil.BgLogger().Warn("unmarshal error",
-				zap.String("category", "ddl"),
-				zap.Error(err))
-			return
-		}
-		total += sm.RowCount
-	}
-	w.getReorgCtx(jobID).setRowCount(total)
+	w.getReorgCtx(jobID).setRowCount(rowCount)
 }
 
 func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {

@@ -62,7 +62,7 @@ func (i *ingestIndexStage) InitSubtaskExecEnv(_ context.Context) error {
 	return err
 }
 
-func (*ingestIndexStage) SplitSubtask(_ context.Context, _ []byte) ([]proto.MinimalTask, error) {
+func (*ingestIndexStage) SplitSubtask(_ context.Context, _ *proto.Subtask) ([]proto.MinimalTask, error) {
 	logutil.BgLogger().Info("ingest index stage split subtask", zap.String("category", "ddl"))
 	return nil, nil
 }

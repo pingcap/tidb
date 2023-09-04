@@ -388,10 +388,12 @@ func (stm *TaskManager) GetSucceedSubtasksByStep(taskID int64, step int64) ([]*p
 	return subtasks, nil
 }
 
-func (stm *TaskManager) GetSucceedSubtaskRowCount(taskID int64, step int64) (int64, error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select sum(json_extract(summary, '$.row_count')) from mysql.tidb_background_subtask
-		where task_key = %? and state = %? and step = %?`,
-		taskID, proto.TaskStateSucceed, step)
+// GetSubtaskRowCount gets the subtask row count.
+func (stm *TaskManager) GetSubtaskRowCount(taskID int64, step int64) (int64, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select
+    	cast(sum(json_extract(summary, '$.row_count')) as signed) as row_count
+		from mysql.tidb_background_subtask where task_key = %? and step = %?`,
+		taskID, step)
 	if err != nil {
 		return 0, err
 	}
@@ -401,22 +403,12 @@ func (stm *TaskManager) GetSucceedSubtaskRowCount(taskID int64, step int64) (int
 	return rs[0].GetInt64(0), nil
 }
 
-// GetSucceedSubtaskMeta gets the subtask meta in the success state.
-func (stm *TaskManager) GetSucceedSubtaskMeta(taskID int64) ([][]byte, error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select meta from mysql.tidb_background_subtask
-		where task_key = %? and state = %?`,
-		taskID, proto.TaskStateSucceed)
-	if err != nil {
-		return nil, err
-	}
-	if len(rs) == 0 {
-		return nil, nil
-	}
-	subtaskMetas := make([][]byte, 0, len(rs))
-	for _, r := range rs {
-		subtaskMetas = append(subtaskMetas, r.GetBytes(0))
-	}
-	return subtaskMetas, nil
+// UpdateSubtaskRowCount updates the subtask row count.
+func (stm *TaskManager) UpdateSubtaskRowCount(subtaskID int64, rowCount int64) error {
+	_, err := stm.executeSQLWithNewSession(stm.ctx, `update mysql.tidb_background_subtask
+		set summary = json_set(summary, '$.row_count', %?) where id = %?`,
+		rowCount, subtaskID)
+	return err
 }
 
 // GetSubtaskInStatesCnt gets the subtask count in the states.

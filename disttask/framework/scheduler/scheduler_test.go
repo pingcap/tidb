@@ -83,7 +83,7 @@ func TestSchedulerRun(t *testing.T) {
 	err := scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
 	require.EqualError(t, err, schedulerRegisterErr.Error())
 
-	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ context.Context, _ int64, task []byte, step int64) (Scheduler, error) {
+	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ context.Context, _ *proto.Task, _ *Summary) (Scheduler, error) {
 		return mockScheduler, nil
 	})
 
@@ -169,7 +169,7 @@ func TestSchedulerRun(t *testing.T) {
 	require.NoError(t, err)
 
 	// 9. run subtask one by one
-	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ context.Context, _ int64, task []byte, step int64) (Scheduler, error) {
+	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ context.Context, _ *proto.Task, _ *Summary) (Scheduler, error) {
 		return mockScheduler, nil
 	})
 	mockScheduler.EXPECT().InitSubtaskExecEnv(gomock.Any()).Return(nil)
@@ -280,7 +280,7 @@ func TestSchedulerRollback(t *testing.T) {
 	err := scheduler.Rollback(runCtx, &proto.Task{Step: proto.StepOne, ID: 1, Type: tp})
 	require.EqualError(t, err, schedulerRegisterErr.Error())
 
-	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ context.Context, _ int64, task []byte, step int64) (Scheduler, error) {
+	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ context.Context, _ *proto.Task, _ *Summary) (Scheduler, error) {
 		return mockScheduler, nil
 	})
 
@@ -357,7 +357,7 @@ func TestScheduler(t *testing.T) {
 	mockScheduler := mock.NewMockScheduler(ctrl)
 	mockSubtaskExecutor := mock.NewMockSubtaskExecutor(ctrl)
 
-	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ context.Context, _ int64, task []byte, step int64) (Scheduler, error) {
+	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ context.Context, _ *proto.Task, _ *Summary) (Scheduler, error) {
 		return mockScheduler, nil
 	})
 	RegisterSubtaskExectorConstructor(tp, proto.StepOne, func(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error) {
