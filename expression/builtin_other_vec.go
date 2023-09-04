@@ -231,7 +231,7 @@ func (b *builtinSetIntVarSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	return nil
 }
 
-func (b *builtinSetRealVarSig) vectorized() bool {
+func (*builtinSetRealVarSig) vectorized() bool {
 	return true
 }
 
@@ -269,7 +269,7 @@ func (b *builtinSetRealVarSig) vecEvalReal(input *chunk.Chunk, result *chunk.Col
 	return nil
 }
 
-func (b *builtinSetDecimalVarSig) vectorized() bool {
+func (*builtinSetDecimalVarSig) vectorized() bool {
 	return true
 }
 
@@ -382,7 +382,7 @@ func (b *builtinGetIntVarSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	return nil
 }
 
-func (b *builtinGetRealVarSig) vectorized() bool {
+func (*builtinGetRealVarSig) vectorized() bool {
 	return true
 }
 
@@ -414,7 +414,7 @@ func (b *builtinGetRealVarSig) vecEvalReal(input *chunk.Chunk, result *chunk.Col
 	return nil
 }
 
-func (b *builtinGetDecimalVarSig) vectorized() bool {
+func (*builtinGetDecimalVarSig) vectorized() bool {
 	return true
 }
 
