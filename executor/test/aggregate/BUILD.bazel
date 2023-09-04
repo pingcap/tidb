@@ -12,7 +12,7 @@ go_test(
     shard_count = 39,
     deps = [
         "//config",
-        "//executor",
+        "//executor/aggregate",
         "//executor/internal",
         "//parser/terror",
         "//planner/core",

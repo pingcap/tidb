@@ -16,15 +16,19 @@ package importinto
 
 import (
 	"context"
+	"net"
 	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
+	tidb "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/disttask/framework/storage"
@@ -91,7 +95,14 @@ func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProce
 		<-TestSyncChan
 	})
 
-	logger.Info("post process")
+	callLog := log.BeginTask(logger, "post process")
+	defer func() {
+		callLog.End(zap.ErrorLevel, err)
+	}()
+
+	if err = rebaseAllocatorBases(ctx, taskMeta, subtaskMeta, logger); err != nil {
+		return err
+	}
 
 	// TODO: create table indexes depends on the option.
 	// create table indexes even if the post process is failed.
@@ -220,6 +231,53 @@ func setBackoffWeight(se sessionctx.Context, taskMeta *TaskMeta, logger *zap.Log
 	}
 	logger.Info("set backoff weight", zap.Int("weight", backoffWeight))
 	return se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
+}
+
+type autoIDRequirement struct {
+	store kv.Storage
+	etcdCli *clientv3.Client
+}
+
+func (r *autoIDRequirement) Store() kv.Storage {
+       return r.store
+}
+
+func (r *autoIDRequirement) GetEtcdClient() *clientv3.Client {
+       return r.etcdCli
+}
+
+func rebaseAllocatorBases(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
+	callLog := log.BeginTask(logger, "rebase allocators")
+	defer func() {
+		callLog.End(zap.ErrorLevel, err)
+	}()
+
+	if !common.TableHasAutoID(taskMeta.Plan.DesiredTableInfo) {
+		return nil
+	}
+
+	tidbCfg := tidb.GetGlobalConfig()
+	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
+	tls, err2 := common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		hostPort,
+		nil, nil, nil,
+	)
+	if err2 != nil {
+		return err2
+	}
+
+	// no need to close kvStore, since it's a cached store.
+	kvStore, err2 := importer.GetCachedKVStoreFrom(tidbCfg.Path, tls)
+	if err2 != nil {
+		return errors.Trace(err2)
+	}
+	// TODO
+	r := autoIDRequirement{store: kvStore}
+	return errors.Trace(common.RebaseTableAllocators(ctx, subtaskMeta.MaxIDs,
+		&r, taskMeta.Plan.DBID, taskMeta.Plan.DesiredTableInfo))
 }
 
 func init() {

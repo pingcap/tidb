@@ -581,10 +581,13 @@ func newSinglePointAlloc(r Requirement, dbID, tblID int64, isUnsigned bool) *sin
 	// if err != nil {
 	// 	panic(err)
 	// }
+
+	keyspaceID := uint32(r.Store().GetCodec().GetKeyspaceID())
 	spa := &singlePointAlloc{
 		dbID:       dbID,
 		tblID:      tblID,
 		isUnsigned: isUnsigned,
+		keyspaceID: keyspaceID,
 	}
 	// if len(addrs) > 0 {
 	// 	etcdCli, err := clientv3.New(clientv3.Config{

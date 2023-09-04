@@ -21,7 +21,7 @@ import (
 
 // task state machine
 //  1. succeed:			pending -> running -> succeed
-//  2. failed:			pending -> running -> reverting -> reverted/revert_failed
+//  2. failed:			pending -> running -> reverting -> reverted/revert_failed, pending -> failed
 //  3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
 //  3. pause/resume:	pending -> running -> pausing -> paused -> running
 //
@@ -94,6 +94,7 @@ type Subtask struct {
 	// it's 0 if it hasn't started yet.
 	UpdateTime time.Time
 	Meta       []byte
+	Summary    string
 }
 
 // NewSubtask create a new subtask.
