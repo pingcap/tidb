@@ -42,7 +42,7 @@ import (
 type constantPropagationSolver struct {
 }
 
-func (cp *constantPropagationSolver) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (cp *constantPropagationSolver) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	// constant propagation root plan
 	newRoot := p.constantPropagation(nil, 0, opt)
 
@@ -75,7 +75,7 @@ func (*constantPropagationSolver) name() string {
 	return "constant_propagation"
 }
 
-func (*baseLogicalPlan) constantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *logicalOptimizeOp) (newRoot LogicalPlan) {
+func (*baseLogicalPlan) constantPropagation(_ LogicalPlan, _ int, _ *logicalOptimizeOp) (newRoot LogicalPlan) {
 	// Only LogicalJoin can apply constant propagation
 	// Other Logical plan do nothing
 	return nil
@@ -147,7 +147,7 @@ func (projection *LogicalProjection) recursiveGetConstantPredicates() []expressi
 	for i, expr := range projection.Exprs {
 		replace[string(expr.HashCode(nil))] = projection.Schema().Columns[i]
 	}
-	var result []expression.Expression
+	result := make([]expression.Expression, 0, len(candidateConstantPredicates))
 	for _, predicate := range candidateConstantPredicates {
 		// The column of predicate must exist in projection exprs
 		columns := expression.ExtractColumns(predicate)
