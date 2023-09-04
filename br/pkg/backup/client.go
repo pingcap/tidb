@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
@@ -535,7 +536,46 @@ func BuildBackupRangeAndSchema(
 			continue
 		}
 
+<<<<<<< HEAD
 		tables, err := m.ListTables(dbInfo.ID)
+=======
+		hasTable := false
+		err = m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
+			if tableInfo.Version > version.CURRENT_BACKUP_SUPPORT_TABLE_INFO_VERSION {
+				// normally this shouldn't happen in a production env.
+				// because we had a unit test to avoid table info version update silencly.
+				// and had version check before run backup.
+				return errors.Errorf("backup doesn't not support table %s with version %d, maybe try a new version of br",
+					tableInfo.Name.String(),
+					tableInfo.Version,
+				)
+			}
+			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
+				// Skip tables other than the given table.
+				return nil
+			}
+
+			schemasNum += 1
+			hasTable = true
+			if buildRange {
+				tableRanges, err := BuildTableRanges(tableInfo)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				for _, r := range tableRanges {
+					// Add keyspace prefix to BackupRequest
+					startKey, endKey := storage.GetCodec().EncodeRange(r.StartKey, r.EndKey)
+					ranges = append(ranges, rtree.Range{
+						StartKey: startKey,
+						EndKey:   endKey,
+					})
+				}
+			}
+
+			return nil
+		})
+
+>>>>>>> e82519e79da (restore: rewrite auto increment id after pitr (#46521))
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}

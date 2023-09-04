@@ -82,7 +82,89 @@ func TestRewriteValueForDB(t *testing.T) {
 	require.Equal(t, newId, sr.DbMap[dbID].NewDBID)
 }
 
+<<<<<<< HEAD
 func TestRewriteValueForTable(t *testing.T) {
+=======
+func TestRewriteKeyForTable(t *testing.T) {
+	var (
+		dbID    int64  = 1
+		tableID int64  = 57
+		ts      uint64 = 400036290571534337
+	)
+	cases := []struct {
+		encodeTableFn func(int64) []byte
+		decodeTableFn func([]byte) (int64, error)
+	}{
+		{
+			meta.TableKey,
+			meta.ParseTableKey,
+		},
+		{
+			meta.AutoIncrementIDKey,
+			meta.ParseAutoIncrementIDKey,
+		},
+		{
+			meta.AutoTableIDKey,
+			meta.ParseAutoTableIDKey,
+		},
+		{
+			meta.AutoRandomTableIDKey,
+			meta.ParseAutoRandomTableIDKey,
+		},
+		{
+			meta.SequenceKey,
+			meta.ParseSequenceKey,
+		},
+	}
+
+	for _, ca := range cases {
+		encodedKey := encodeTxnMetaKey(meta.DBkey(dbID), ca.encodeTableFn(tableID), ts)
+		// create schemasReplace.
+		sr := MockEmptySchemasReplace(nil)
+
+		// set preConstruct status and construct map information.
+		sr.SetPreConstructMapStatus()
+		newKey, err := sr.rewriteKeyForTable(encodedKey, WriteCF, ca.decodeTableFn, ca.encodeTableFn)
+		require.Nil(t, err)
+		require.Nil(t, newKey)
+		require.Equal(t, len(sr.DbMap), 1)
+		require.Equal(t, len(sr.DbMap[dbID].TableMap), 1)
+		downStreamDbID := sr.DbMap[dbID].DbID
+		downStreamTblID := sr.DbMap[dbID].TableMap[tableID].TableID
+
+		// set restoreKV status and rewrite it.
+		sr.SetRestoreKVStatus()
+		newKey, err = sr.rewriteKeyForTable(encodedKey, DefaultCF, ca.decodeTableFn, ca.encodeTableFn)
+		require.Nil(t, err)
+		decodedKey, err := ParseTxnMetaKeyFrom(newKey)
+		require.Nil(t, err)
+		require.Equal(t, decodedKey.Ts, ts)
+
+		newDbID, err := meta.ParseDBKey(decodedKey.Key)
+		require.Nil(t, err)
+		require.Equal(t, newDbID, downStreamDbID)
+		newTblID, err := ca.decodeTableFn(decodedKey.Field)
+		require.Nil(t, err)
+		require.Equal(t, newTblID, downStreamTblID)
+
+		// rewrite it again, and get the same result.
+		newKey, err = sr.rewriteKeyForTable(encodedKey, WriteCF, ca.decodeTableFn, ca.encodeTableFn)
+		require.Nil(t, err)
+		decodedKey, err = ParseTxnMetaKeyFrom(newKey)
+		require.Nil(t, err)
+		require.Equal(t, decodedKey.Ts, sr.RewriteTS)
+
+		newDbID, err = meta.ParseDBKey(decodedKey.Key)
+		require.Nil(t, err)
+		require.Equal(t, newDbID, downStreamDbID)
+		newTblID, err = ca.decodeTableFn(decodedKey.Field)
+		require.Nil(t, err)
+		require.Equal(t, newTblID, downStreamTblID)
+	}
+}
+
+func TestRewriteTableInfo(t *testing.T) {
+>>>>>>> e82519e79da (restore: rewrite auto increment id after pitr (#46521))
 	var (
 		dbId      int64 = 40
 		tableID   int64 = 100
