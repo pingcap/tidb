@@ -189,8 +189,6 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 			logutil.Logger(m.logCtx).Error("unknown task type", zap.String("type", task.Type))
 			continue
 		}
-		logutil.BgLogger().Info("ywq test print table", zap.Any("step", task.Step))
-		m.taskTable.PrintSubtaskInfo(task.ID)
 		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRevertPending)
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("check subtask exist failed", zap.Error(err))
