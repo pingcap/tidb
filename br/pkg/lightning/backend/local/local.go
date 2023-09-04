@@ -955,8 +955,8 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 			local.duplicateDB,
 			local.DuplicateDetectOpt,
 			123, // TODO(lance6716): get TS
-			0,   // TODO(lance6716): no need?
-			0,
+			externalCfg.TotalFileSize,
+			externalCfg.TotalKVCount,
 		)
 		local.externalEngine[engineUUID] = externalEngine
 		return nil
