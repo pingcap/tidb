@@ -286,40 +286,7 @@ func (d *dispatcher) dispatchSubTask4Revert(task *proto.Task, meta []byte) error
 
 func (d *dispatcher) onNextStage() error {
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
-	if d.task.EnableDynamicDispatch {
-		// dynamic dispatch subtasks.
-		if d.task.SubState != proto.TaskSubStateDispatching {
-			d.task.Step++
-			d.task.SubState = proto.TaskSubStateDispatching
-		}
-		err := d.updateTask(proto.TaskStateRunning, nil, retrySQLTimes)
-		if err != nil {
-			return err
-		}
-		firstTime := true
-		for {
-			metas, err := d.impl.OnNextStageBatch(d.ctx, d, d.task)
-			if len(metas) == 0 {
-				d.task.SubState = proto.TaskSubStateNormal
-				// When firstTime == true,
-				// mark the task as finished since all subtasks are processed.
-				if firstTime == true {
-					logutil.Logger(d.logCtx).Info("finish the task")
-					return d.updateTask(proto.TaskStateSucceed, nil, retrySQLTimes)
-				}
-				return d.updateTask(proto.TaskStateRunning, nil, retrySQLTimes)
-			}
-			firstTime = false
-			// dispatch batch of subtasks to EligibleInstances.
-			err = d.dispatchSubTask(d.task, metas)
-			failpoint.Inject("mockDynamicDispatchErr", func() {
-				err = errors.New("mockDynamicDispatchErr")
-			})
-			if err != nil {
-				return err
-			}
-		}
-	} else {
+	if !d.task.EnableDynamicDispatch {
 		// dispatch all subtasks.
 		metas, err := d.impl.OnNextStage(d.ctx, d, d.task)
 		if err != nil {
@@ -327,6 +294,38 @@ func (d *dispatcher) onNextStage() error {
 		}
 		// 2. dispatch dist-plan to EligibleInstances.
 		return d.dispatchSubTask(d.task, metas)
+	}
+	/// dynamic dispatch subtasks.
+	if d.task.SubState != proto.TaskSubStateDispatching {
+		d.task.Step++
+		d.task.SubState = proto.TaskSubStateDispatching
+	}
+	err := d.updateTask(proto.TaskStateRunning, nil, retrySQLTimes)
+	if err != nil {
+		return err
+	}
+	firstTime := true
+	for {
+		metas, err := d.impl.OnNextStageBatch(d.ctx, d, d.task)
+		if len(metas) == 0 {
+			d.task.SubState = proto.TaskSubStateNormal
+			// When firstTime == true,
+			// mark the task as finished since all subtasks are processed.
+			if firstTime {
+				logutil.Logger(d.logCtx).Info("finish the task")
+				return d.updateTask(proto.TaskStateSucceed, nil, retrySQLTimes)
+			}
+			return d.updateTask(proto.TaskStateRunning, nil, retrySQLTimes)
+		}
+		firstTime = false
+		// dispatch batch of subtasks to EligibleInstances.
+		err = d.dispatchSubTask(d.task, metas)
+		failpoint.Inject("mockDynamicDispatchErr", func() {
+			err = errors.New("mockDynamicDispatchErr")
+		})
+		if err != nil {
+			return err
+		}
 	}
 }
 
