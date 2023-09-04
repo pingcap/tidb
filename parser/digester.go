@@ -90,7 +90,7 @@ func Normalize(sql string) (result string) {
 	return
 }
 
-// Normalize generates the normalized statements for binding
+// NormalizeForBinding generates the normalized statements with additional binding rules
 // it will get normalized form of statement text
 // which removes general property of a statement but keeps specific property.
 //
