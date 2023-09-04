@@ -841,9 +841,9 @@ func TestRestoreMetaKVFilesWithBatchMethod2_write_empty_2(t *testing.T) {
 					require.Equal(t, uint64(100), files[0].MinTs)
 					require.Equal(t, uint64(110), filterTS)
 					return nil, nil
-				} else {
-					require.Equal(t, 0, len(entries))
 				}
+				
+				require.Equal(t, 0, len(entries))
 			}
 			return nil, nil
 		},
@@ -909,9 +909,10 @@ func TestRestoreMetaKVFilesWithBatchMethod_with_entries(t *testing.T) {
 					require.Equal(t, uint64(100), files[0].MinTs)
 					require.Equal(t, uint64(110), filterTS)
 					return nil, nil
-				} else {
-					require.Equal(t, 0, len(entries))
 				}
+				
+				require.Equal(t, 0, len(entries))
+				
 			}
 			return nil, nil
 		},
