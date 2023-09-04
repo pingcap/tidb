@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
+	"golang.org/x/exp/rand"
 )
 
 // LFU is a LFU based on the ristretto.Cache
@@ -58,7 +59,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 	bufferItems := int64(64)
 
 	cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters:        mathutil.Max(mathutil.Min(totalMemCost/128*2, 2_000_000), 10), // assume the cost per table stats is 128
+		NumCounters:        mathutil.Max(mathutil.Min(totalMemCost/128, 1_000_000), 10), // assume the cost per table stats is 128
 		MaxCost:            totalMemCost,
 		BufferItems:        bufferItems,
 		OnEvict:            result.onEvict,
@@ -170,6 +171,16 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	s.addCost(after)
 }
 
+func (s *LFU) triggerEvict() {
+	// When the memory usage of the cache exceeds the maximum value, Many item need to evict. But
+	// ristretto'c cache execute the evict operation when to write the cache. for we can evict as soon as possible,
+	// we will write some fake item to the cache. fake item have a negative key, and the value is nil.
+	if s.Cost() > s.cache.MaxCost() {
+		//nolint: gosec
+		s.cache.Set(-rand.Int(), nil, 0)
+	}
+}
+
 func (s *LFU) onExit(val any) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -201,6 +212,7 @@ func (s *LFU) Copy() internal.StatsCacheInner {
 // SetCapacity implements statsCacheInner
 func (s *LFU) SetCapacity(maxCost int64) {
 	s.cache.UpdateMaxCost(maxCost)
+	s.triggerEvict()
 	metrics.CapacityGauge.Set(float64(maxCost))
 }
 
