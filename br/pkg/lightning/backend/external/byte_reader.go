@@ -17,6 +17,7 @@ package external
 import (
 	"context"
 	"io"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -38,8 +39,8 @@ type byteReader struct {
 
 	retPointers []*[]byte
 
-	useConcurrentReader bool
-	switchFunc          func() error
+	useConcurrentReaderCurrent atomic.Bool
+	useConcurrentReader        atomic.Bool
 
 	currFileOffset int64
 	conReader      *SingeFileReader
@@ -76,22 +77,13 @@ func newByteReader(ctx context.Context, storageReader storage.ReadSeekCloser, bu
 		bufOffset:     0,
 		conReader:     conReader,
 	}
-	if defaultUseConcurrency {
-		err = r.SwitchToConcurrentReader()
-		if err != nil {
-			return nil, err
-		}
-	}
+	r.SwitchReaderMode(defaultUseConcurrency)
 	return r, r.reload()
 }
 
-// SwitchToConcurrentReader switches to concurrent reader. It mustn't be called if conReader is nil.
-func (r *byteReader) SwitchToConcurrentReader() error {
-	if r.useConcurrentReader {
-		return nil
-	}
-	r.switchFunc = r.switchToConcurrentReaderImpl
-	return nil
+// SwitchReaderMode switches to concurrent reader.
+func (r *byteReader) SwitchReaderMode(useConcurrent bool) {
+	r.useConcurrentReader.Store(useConcurrent)
 }
 
 func (r *byteReader) switchToConcurrentReaderImpl() error {
@@ -106,27 +98,18 @@ func (r *byteReader) switchToConcurrentReaderImpl() error {
 	r.conReader.currentFileOffset = currOffset
 	r.conReader.bufferReadOffset = 0
 
-	r.useConcurrentReader = true
+	r.useConcurrentReaderCurrent.Store(true)
 	r.conReader.buffer = make([]byte, r.conReader.concurrency*r.conReader.readBufferSize)
-	return nil
-}
-
-// SwitchToNormalReader switches to normal reader.
-func (r *byteReader) SwitchToNormalReader() error {
-	if !r.useConcurrentReader {
-		return nil
-	}
-	r.switchFunc = r.switchToNormalReaderImpl
 	return nil
 }
 
 // UseConcurrentReader returns whether the reader is using concurrent reader.
 func (r *byteReader) UseConcurrentReader() bool {
-	return r.useConcurrentReader
+	return r.useConcurrentReader.Load()
 }
 
 func (r *byteReader) switchToNormalReaderImpl() error {
-	r.useConcurrentReader = false
+	r.useConcurrentReaderCurrent.Store(false)
 	r.currFileOffset = r.conReader.currentFileOffset
 	r.conReader.buffer = nil
 	_, err := r.storageReader.Seek(r.currFileOffset, io.SeekStart)
@@ -187,7 +170,7 @@ func (r *byteReader) cloneSlices() {
 }
 
 func (r *byteReader) next(n int) []byte {
-	if r.useConcurrentReader {
+	if r.useConcurrentReaderCurrent.Load() {
 		return r.conReader.Next(n)
 	}
 	end := mathutil.Min(r.bufOffset+n, len(r.buf))
@@ -197,14 +180,22 @@ func (r *byteReader) next(n int) []byte {
 }
 
 func (r *byteReader) reload() error {
-	if r.switchFunc != nil {
-		err := r.switchFunc()
-		if err != nil {
-			return err
+	to := r.useConcurrentReader.Load()
+	now := r.useConcurrentReaderCurrent.Load()
+	if to != now {
+		if to {
+			err := r.switchToConcurrentReaderImpl()
+			if err != nil {
+				return err
+			}
+		} else {
+			err := r.switchToNormalReaderImpl()
+			if err != nil {
+				return err
+			}
 		}
-		r.switchFunc = nil
 	}
-	if r.useConcurrentReader {
+	if to {
 		return r.conReader.Reload()
 	}
 	nBytes, err := io.ReadFull(r.storageReader, r.buf[0:])

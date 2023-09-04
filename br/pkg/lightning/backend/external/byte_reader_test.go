@@ -340,12 +340,10 @@ func TestSwitchMode(t *testing.T) {
 	for totalCnt < fileSize {
 		if rand.Intn(5) == 0 {
 			if modeUseCon {
-				err = br.SwitchToNormalReader()
-				require.NoError(t, err)
+				br.SwitchReaderMode(false)
 				modeUseCon = false
 			} else {
-				err = br.SwitchToConcurrentReader()
-				require.NoError(t, err)
+				br.SwitchReaderMode(true)
 				modeUseCon = true
 			}
 		}
