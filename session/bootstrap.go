@@ -1184,7 +1184,7 @@ var (
 	SupportUpgradeStateVer int64 = version145
 	// SupportUpgradeHTTPOpVer is exported for testing.
 	// The minimum version of the upgrade can be notified through the HTTP API.
-	SupportUpgradeHTTPOpVer int64 = version172
+	SupportUpgradeHTTPOpVer int64 = version173
 )
 
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
