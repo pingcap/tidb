@@ -337,10 +337,6 @@ func (e *tikvChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoin
 			physicalTS, logicalTS, err = e.manager.pdClient.GetTS(ctx)
 		}
 	}
-	physicalTS, logicalTS, err = e.manager.pdClient.GetTS(ctx)
-	if err != nil {
-		return nil, errors.Annotate(err, "fetch tso from pd failed")
-	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
 	if err := e.manager.addOneJob(ctx, tbl, ts); err != nil {
 		return nil, errors.Trace(err)
