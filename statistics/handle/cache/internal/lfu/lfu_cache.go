@@ -15,6 +15,7 @@
 package lfu
 
 import (
+	"math/rand"
 	"sync"
 	"sync/atomic"
 
@@ -144,13 +145,14 @@ func (s *LFU) onEvict(item *ristretto.Item) {
 }
 
 func (s *LFU) dropMemory(item *ristretto.Item) {
+	if s.closed.Load() {
+		return
+	}
+	defer s.triggerEvict()
 	if item.Value == nil {
 		// Sometimes the same key may be passed to the "onEvict/onExit"
 		// function twice, and in the second invocation, the value is empty,
 		// so it should not be processed.
-		return
-	}
-	if s.closed.Load() {
 		return
 	}
 	// We do not need to calculate the cost during onEvict,
@@ -168,11 +170,14 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	// why add before again? because the cost will be subtracted in onExit.
 	// in fact, it is after - before
 	s.addCost(after)
+}
+
+func (s *LFU) triggerEvict() {
 	// When the memory usage of the cache exceeds the maximum value, Many item need to evict. But
 	// ristretto'c cache execute the evict operation when to write the cache. for we can evict as soon as possible,
 	// we will write some fake item to the cache. fake item have a negative key, and the value is nil.
 	if s.Cost() > s.cache.MaxCost() {
-		s.cache.Set(-1*table.PhysicalID-1, nil, 0)
+		s.cache.Set(-rand.Int(), nil, 0)
 	}
 }
 

@@ -271,3 +271,23 @@ func TestLFUReject(t *testing.T) {
 		require.Equal(t, statistics.AllEvicted, i.GetEvictedStatus())
 	}
 }
+
+func TestMemoryControl(t *testing.T) {
+	testMode = true
+	capacity := int64(100000000000)
+	lfu, err := NewLFU(capacity)
+	require.NoError(t, err)
+	t1 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
+	require.Equal(t, 2*mockCMSMemoryUsage+mockCMSMemoryUsage, t1.MemoryUsage().TotalTrackingMemUsage())
+	lfu.Put(1, t1)
+	lfu.wait()
+
+	for i := 2; i < 11; i++ {
+		t1 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
+		require.Equal(t, 2*mockCMSMemoryUsage+mockCMSMemoryUsage, t1.MemoryUsage().TotalTrackingMemUsage())
+		lfu.Put(int64(i), t1)
+	}
+	require.Equal(t, 10*(2*mockCMSMemoryUsage+mockCMSMemoryUsage), lfu.Cost())
+
+	lfu.SetCapacity(9 * (2*mockCMSMemoryUsage + mockCMSMemoryUsage))
+}
