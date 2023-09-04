@@ -690,15 +690,20 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 			return NewBackfillSchedulerHandle(ctx, taskMeta, d, step == proto.StepTwo)
 		})
 
-	dispatcher.RegisterTaskFlowHandle(BackfillTaskType, NewLitBackfillFlowHandle(d))
-	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepOne,
-		func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
-			return &scheduler.EmptyExecutor{}, nil
-		})
-	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepTwo,
-		func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
-			return &scheduler.EmptyExecutor{}, nil
-		})
+	backFillDsp, err := NewBackfillingDispatcher(d)
+	if err != nil {
+		logutil.BgLogger().Warn("NewBackfillingDispatcher failed", zap.String("category", "ddl"), zap.Error(err))
+	} else {
+		dispatcher.RegisterTaskDispatcher(BackfillTaskType, backFillDsp)
+		scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepOne,
+			func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
+				return &scheduler.EmptyExecutor{}, nil
+			})
+		scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepTwo,
+			func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
+				return &scheduler.EmptyExecutor{}, nil
+			})
+	}
 
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL

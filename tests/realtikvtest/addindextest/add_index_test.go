@@ -150,6 +150,15 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec("split table t between (3) and (8646911284551352360) regions 50;")
 	tk.MustExec("alter table t add index idx(a);")
 	tk.MustExec("admin check index t idx;")
+
+	tk.MustExec("create table t1(a bigint auto_random primary key);")
+	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
+	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
+	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
+	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
+	tk.MustExec("split table t1 between (3) and (8646911284551352360) regions 50;")
+	tk.MustExec("alter table t1 add index idx(a);")
+	tk.MustExec("admin check index t1 idx;")
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }
 

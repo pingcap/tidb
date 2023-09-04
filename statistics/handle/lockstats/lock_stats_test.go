@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package handle
+package lockstats
 
 import (
 	"testing"
@@ -24,37 +24,55 @@ func TestGenerateDuplicateTablesMessage(t *testing.T) {
 	tests := []struct {
 		name          string
 		totalTableIDs []int64
-		dupTables     []string
+		tables        []string
+		action        string
+		status        string
 		expectedMsg   string
 	}{
 		{
-			name:          "no duplicate tables",
+			name:          "no duplicate tables when locking",
 			totalTableIDs: []int64{1, 2, 3},
+			action:        lockAction,
+			status:        lockedStatus,
 			expectedMsg:   "",
 		},
 		{
-			name:          "one duplicate table",
+			name:          "one duplicate table when locking",
 			totalTableIDs: []int64{1},
-			dupTables:     []string{"t1"},
+			tables:        []string{"t1"},
+			action:        lockAction,
+			status:        lockedStatus,
 			expectedMsg:   "skip locking locked table: t1",
 		},
 		{
-			name:          "multiple duplicate tables",
+			name:          "multiple duplicate tables when locking",
 			totalTableIDs: []int64{1, 2, 3, 4},
-			dupTables:     []string{"t1", "t2", "t3"},
+			tables:        []string{"t1", "t2", "t3"},
+			action:        lockAction,
+			status:        lockedStatus,
 			expectedMsg:   "skip locking locked tables: t1, t2, t3, other tables locked successfully",
 		},
 		{
-			name:          "all tables are duplicate",
+			name:          "all tables are duplicate when locking",
 			totalTableIDs: []int64{1, 2, 3, 4},
-			dupTables:     []string{"t1", "t2", "t3", "t4"},
+			tables:        []string{"t1", "t2", "t3", "t4"},
+			action:        lockAction,
+			status:        lockedStatus,
 			expectedMsg:   "skip locking locked tables: t1, t2, t3, t4",
+		},
+		{
+			name:          "all tables are duplicate when unlocking",
+			totalTableIDs: []int64{1, 2, 3, 4},
+			tables:        []string{"t1", "t2", "t3", "t4"},
+			action:        unlockAction,
+			status:        unlockedStatus,
+			expectedMsg:   "skip unlocking unlocked tables: t1, t2, t3, t4",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := generateDuplicateTablesMessage(tt.totalTableIDs, tt.dupTables)
+			msg := generateSkippedTablesMessage(tt.totalTableIDs, tt.tables, tt.action, tt.status)
 			require.Equal(t, tt.expectedMsg, msg)
 		})
 	}

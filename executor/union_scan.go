@@ -128,7 +128,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	us.snapshotChunkBuffer = tryNewCacheChunk(us)
+	us.snapshotChunkBuffer = exec.TryNewCacheChunk(us)
 	return nil
 }
 
@@ -141,7 +141,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// the for-loop may exit without read one single row!
 	req.GrowAndReset(us.MaxChunkSize())
 
-	mutableRow := chunk.MutRowFromTypes(retTypes(us))
+	mutableRow := chunk.MutRowFromTypes(exec.RetTypes(us))
 	for batchSize := req.Capacity(); req.NumRows() < batchSize; {
 		row, err := us.getOneRow(ctx)
 		if err != nil {
@@ -244,7 +244,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
 	for len(us.snapshotRows) == 0 {
-		err = Next(ctx, us.Children(0), us.snapshotChunkBuffer)
+		err = exec.Next(ctx, us.Children(0), us.snapshotChunkBuffer)
 		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
 			return nil, err
 		}
@@ -267,7 +267,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 				// commit, but for simplicity, we don't handle it here.
 				continue
 			}
-			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(retTypes(us.Children(0))))
+			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(exec.RetTypes(us.Children(0))))
 		}
 	}
 	return us.snapshotRows[0], nil
