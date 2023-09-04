@@ -123,6 +123,18 @@ func (mr *MockTaskTableMockRecorder) HasSubtasksInStates(arg0, arg1, arg2 interf
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HasSubtasksInStates", reflect.TypeOf((*MockTaskTable)(nil).HasSubtasksInStates), varargs...)
 }
 
+// PrintSubtaskInfo mocks base method.
+func (m *MockTaskTable) PrintSubtaskInfo(arg0 int64) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "PrintSubtaskInfo", arg0)
+}
+
+// PrintSubtaskInfo indicates an expected call of PrintSubtaskInfo.
+func (mr *MockTaskTableMockRecorder) PrintSubtaskInfo(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PrintSubtaskInfo", reflect.TypeOf((*MockTaskTable)(nil).PrintSubtaskInfo), arg0)
+}
+
 // StartSubtask mocks base method.
 func (m *MockTaskTable) StartSubtask(arg0 int64) error {
 	m.ctrl.T.Helper()
