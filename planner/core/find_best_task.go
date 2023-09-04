@@ -977,9 +977,6 @@ func (ds *DataSource) isPointGetConvertableSchema() bool {
 func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
-	if strings.HasPrefix(ds.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 and c=1 limit 1") {
-		fmt.Println(1)
-	}
 	if prop == nil {
 		planCounter.Dec(1)
 		return nil, 1, nil
