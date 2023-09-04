@@ -388,6 +388,19 @@ func (stm *TaskManager) GetSucceedSubtasksByStep(taskID int64, step int64) ([]*p
 	return subtasks, nil
 }
 
+func (stm *TaskManager) GetSucceedSubtaskRowCount(taskID int64, step int64) (int64, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select sum(json_extract(summary, '$.row_count')) from mysql.tidb_background_subtask
+		where task_key = %? and state = %? and step = %?`,
+		taskID, proto.TaskStateSucceed, step)
+	if err != nil {
+		return 0, err
+	}
+	if len(rs) == 0 {
+		return 0, nil
+	}
+	return rs[0].GetInt64(0), nil
+}
+
 // GetSucceedSubtaskMeta gets the subtask meta in the success state.
 func (stm *TaskManager) GetSucceedSubtaskMeta(taskID int64) ([][]byte, error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select meta from mysql.tidb_background_subtask
