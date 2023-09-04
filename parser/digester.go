@@ -491,17 +491,6 @@ func (d *sqlDigester) isGenericList(last2 []token) (generic bool) {
 	return
 }
 
-func (d *sqlDigester) isSingleLiteralInList(last3 []token, currToken *token) (generic bool) {
-	if len(last3) < 3 {
-		return false
-	}
-
-	if d.isInKeyword(last3[0]) && d.isLeftParen(last3[1]) && last3[2].tok == genericSymbol && d.isRightParen(*currToken) {
-		return true
-	}
-	return false
-}
-
 func (d *sqlDigester) isOrderOrGroupBy() (orderOrGroupBy bool) {
 	var (
 		last []token
