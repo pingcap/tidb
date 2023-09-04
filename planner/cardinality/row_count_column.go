@@ -282,9 +282,13 @@ func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*
 		// If the current table row count has changed, we should scale the row count accordingly.
 		cnt *= c.GetIncreaseFactor(realtimeRowCount)
 
+		histNDV := c.NDV
+		if c.StatsVer == statistics.Version2 {
+			histNDV = histNDV - int64(c.TopN.Num())
+		}
 		// handling the out-of-range part
 		if (c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal) {
-			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount)
+			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount, histNDV)
 		}
 
 		if debugTrace {
