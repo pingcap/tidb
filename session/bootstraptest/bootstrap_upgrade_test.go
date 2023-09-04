@@ -335,7 +335,7 @@ func TestUpgradeVersionForUpgradeHTTPOp(t *testing.T) {
 	seLatestV := session.CreateSessionAndSetID(t, store)
 	ver, err = session.GetBootstrapVersion(seLatestV)
 	require.NoError(t, err)
-	require.Equal(t, session.SupportUpgradeHTTPOpVer+1, ver)
+	require.Equal(t, session.CurrentBootstrapVersion+1, ver)
 	// Current cluster state is upgrading.
 	isUpgrading, err = session.IsUpgradingClusterState(seLatestV)
 	require.NoError(t, err)
@@ -825,4 +825,23 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			" PARTITION `p2` VALUES LESS THAN (3072),\n" +
 			" PARTITION `p3` VALUES LESS THAN (4096),\n" +
 			" PARTITION `p4` VALUES LESS THAN (7096))"))
+}
+
+func TestDDLBackgroundSubtaskTableSummary(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	ver, err := session.GetBootstrapVersion(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+	tk.MustExec("use mysql")
+	for i := 1; i <= 10; i++ {
+		tk.MustExec(`insert into tidb_background_subtask(id, state, checkpoint, summary) values (?, 0, "", "{}");`, i)
+	}
+	for i := 2; i <= 10; i++ {
+		tk.MustExec(`update tidb_background_subtask set summary = json_set(summary, "$.row_count", ?) where id = ?;`, i, i)
+	}
+	r := tk.MustQuery("select sum(json_extract(summary, '$.row_count')) from tidb_background_subtask;")
+	r.Check(testkit.Rows("54"))
 }
