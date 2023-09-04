@@ -103,13 +103,16 @@ type LocalEngineConfig struct {
 
 // ExternalEngineConfig is the configuration used for local backend external engine.
 type ExternalEngineConfig struct {
-	StorageURI    string
-	DataFiles     []string
-	StatFiles     []string
-	MinKey        []byte
-	MaxKey        []byte
+	StorageURI string
+	DataFiles  []string
+	StatFiles  []string
+	MinKey     []byte
+	MaxKey     []byte
+	SplitKeys  [][]byte
+	// TotalFileSize can be an estimated value.
 	TotalFileSize int64
-	TotalKVCount  int64
+	// TotalKVCount can be an estimated value.
+	TotalKVCount int64
 }
 
 // CheckCtx contains all parameters used in CheckRequirements
