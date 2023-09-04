@@ -34,18 +34,11 @@ type BackfillGlobalMeta struct {
 	EleTypeKey []byte    `json:"ele_type_key"`
 }
 
-type S3Stat struct {
-	StartKey []byte   `json:"start_key"`
-	EndKey   []byte   `json:"end_key"`
-	FileName []string `json:"file_name"`
-}
-
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
 type BackfillSubTaskMeta struct {
-	PhysicalTableID int64    `json:"physical_table_id"`
-	StartKey        []byte   `json:"start_key"`
-	EndKey          []byte   `json:"end_key"`
-	ResultStats     []S3Stat `json:"result_stats"`
+	PhysicalTableID int64  `json:"physical_table_id"`
+	StartKey        []byte `json:"start_key"`
+	EndKey          []byte `json:"end_key"`
 }
 
 // NewBackfillSchedulerHandle creates a new backfill scheduler.
