@@ -15,13 +15,14 @@
 package framework_test
 
 import (
+	"sync"
+	"testing"
+
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
-	"sync"
-	"testing"
 )
 
 func TestFrameworkDynamicBasic(t *testing.T) {
