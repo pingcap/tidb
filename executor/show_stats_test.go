@@ -53,7 +53,7 @@ func TestShowStatsLocked(t *testing.T) {
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("lock stats t, t1")
-	result := tk.MustQuery("show stats_locked")
+	result := tk.MustQuery("show stats_locked").Sort()
 	require.Len(t, result.Rows(), 2)
 	require.Equal(t, "t", result.Rows()[0][1])
 	require.Equal(t, "t1", result.Rows()[1][1])
