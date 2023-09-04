@@ -36,7 +36,56 @@ type testUnitTestSuit struct {
 	ctx sessionctx.Context
 }
 
+<<<<<<< HEAD
 func (s *testUnitTestSuit) SetUpSuite(c *C) {
+=======
+func (p *plannerSuite) GetParser() *parser.Parser {
+	return p.p
+}
+
+func (p *plannerSuite) GetIS() infoschema.InfoSchema {
+	return p.is
+}
+
+func (p *plannerSuite) GetCtx() sessionctx.Context {
+	return p.ctx
+}
+
+func CreatePlannerSuite(sctx sessionctx.Context, is infoschema.InfoSchema) (s *plannerSuite) {
+	s = new(plannerSuite)
+	s.is = is
+	s.p = parser.New()
+	s.ctx = sctx
+	return s
+}
+
+func createPlannerSuite() (s *plannerSuite) {
+	s = new(plannerSuite)
+	tblInfos := []*model.TableInfo{
+		MockSignedTable(),
+		MockUnsignedTable(),
+		MockView(),
+		MockNoPKTable(),
+		MockRangePartitionTable(),
+		MockHashPartitionTable(),
+		MockListPartitionTable(),
+		MockStateNoneColumnTable(),
+	}
+	id := int64(0)
+	for _, tblInfo := range tblInfos {
+		tblInfo.ID = id
+		id += 1
+		pi := tblInfo.GetPartitionInfo()
+		if pi == nil {
+			continue
+		}
+		for _, def := range pi.Definitions {
+			def.ID = id
+			id += 1
+		}
+	}
+	s.is = infoschema.MockInfoSchema(tblInfos)
+>>>>>>> 41c16424ac0 (planner: don't recompute the hashcode when generated column substitution doesn't happen (#46450))
 	s.ctx = MockContext()
 }
 
