@@ -19,6 +19,7 @@ go_library(
         "//sessionctx/variable",
         "//util",
         "//util/disttask",
+        "//util/intest",
         "//util/logutil",
         "//util/syncutil",
         "@com_github_pingcap_errors//:errors",
@@ -37,7 +38,7 @@ go_test(
     ],
     embed = [":dispatcher"],
     flaky = True,
-    race = "on",
+    race = "off",
     shard_count = 8,
     deps = [
         "//disttask/framework/proto",

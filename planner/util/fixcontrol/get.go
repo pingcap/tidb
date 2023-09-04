@@ -32,6 +32,8 @@ const (
 	// Fix44855 controls whether to use a more accurate upper bound when estimating row count of index
 	// range scan under inner side of index join.
 	Fix44855 uint64 = 44855
+	// Fix45132 controls whether to use access range row count to determine access path on the Skyline pruning.
+	Fix45132 uint64 = 45132
 )
 
 // GetStr fetches the given key from the fix control map as a string type.
