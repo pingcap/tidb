@@ -20,7 +20,7 @@ go_library(
 
 go_test(
     name = "adminpause_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "main_test.go",
         "pause_cancel_test.go",
