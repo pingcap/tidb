@@ -17,6 +17,7 @@ package framework_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -128,6 +129,42 @@ func (e *testSubtaskExecutor1) Run(_ context.Context) error {
 	return nil
 }
 
+type testSubtaskExecutor2 struct {
+	m *sync.Map
+}
+
+func (e *testSubtaskExecutor2) Run(_ context.Context) error {
+	e.m.Store("2", "2")
+	return nil
+}
+
+type testSubtaskExecutor3 struct {
+	m *sync.Map
+}
+
+func (e *testSubtaskExecutor3) Run(_ context.Context) error {
+	e.m.Store("3", "3")
+	return nil
+}
+
+type testSubtaskExecutor4 struct {
+	m *sync.Map
+}
+
+func (e *testSubtaskExecutor4) Run(_ context.Context) error {
+	e.m.Store("4", "4")
+	return nil
+}
+
+type testSubtaskExecutor5 struct {
+	m *sync.Map
+}
+
+func (e *testSubtaskExecutor5) Run(_ context.Context) error {
+	e.m.Store("5", "5")
+	return nil
+}
+
 func RegisterTaskMeta(m *sync.Map, dispatcherHandle dispatcher.Dispatcher) {
 	dispatcher.ClearTaskDispatcher()
 	dispatcher.RegisterTaskDispatcher(proto.TaskTypeExample, dispatcherHandle)
@@ -144,6 +181,40 @@ func RegisterTaskMeta(m *sync.Map, dispatcherHandle dispatcher.Dispatcher) {
 	})
 	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepTwo, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &testSubtaskExecutor1{m: m}, nil
+	})
+}
+
+func RegisterTaskMeta1(m *sync.Map, dispatcherHandle dispatcher.Dispatcher) {
+	dispatcher.RegisterTaskDispatcher(proto.TaskTypeExample2, dispatcherHandle)
+	scheduler.RegisterTaskType(proto.TaskTypeExample2)
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample2, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+		return &testScheduler{}, nil
+	})
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample2, proto.StepTwo, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+		return &testScheduler{}, nil
+	})
+	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample2, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
+		return &testSubtaskExecutor2{m: m}, nil
+	})
+	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample2, proto.StepTwo, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
+		return &testSubtaskExecutor3{m: m}, nil
+	})
+}
+
+func RegisterTaskMeta2(m *sync.Map, dispatcherHandle dispatcher.Dispatcher) {
+	dispatcher.RegisterTaskDispatcher(proto.TaskTypeExample3, dispatcherHandle)
+	scheduler.RegisterTaskType(proto.TaskTypeExample3)
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample3, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+		return &testScheduler{}, nil
+	})
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample3, proto.StepTwo, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+		return &testScheduler{}, nil
+	})
+	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample3, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
+		return &testSubtaskExecutor4{m: m}, nil
+	})
+	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample3, proto.StepTwo, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
+		return &testSubtaskExecutor5{m: m}, nil
 	})
 }
 
@@ -204,6 +275,66 @@ func DispatchTaskAndCheckState(taskKey string, t *testing.T, m *sync.Map, state 
 		m.Delete(key)
 		return true
 	})
+}
+func DispatchMultiTasksAndOneFail(t *testing.T, num int, m []sync.Map) []*proto.Task {
+	var tasks []*proto.Task
+	var taskID []int64
+	var start []time.Time
+	mgr, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	taskID = make([]int64, num)
+	start = make([]time.Time, num)
+	tasks = make([]*proto.Task, num)
+
+	for i := 0; i < num; i++ {
+		if i == 0 {
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)"))
+			taskID[0], err = mgr.AddNewGlobalTask("key0", "Example", 8, nil)
+			require.NoError(t, err)
+			start[0] = time.Now()
+			var task *proto.Task
+			for {
+				if time.Since(start[0]) > 2*time.Minute {
+					require.FailNow(t, "timeout")
+				}
+				time.Sleep(time.Second)
+				task, err = mgr.GetGlobalTaskByID(taskID[0])
+				tasks[0] = task
+				require.NoError(t, err)
+				require.NotNil(t, task)
+				if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting {
+					break
+				}
+			}
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
+		} else {
+			taskID[i], err = mgr.AddNewGlobalTask("key"+fmt.Sprintf("%d", i), proto.Int2Type(i+2), 8, nil)
+			require.NoError(t, err)
+			start[i] = time.Now()
+		}
+	}
+
+	for i := 1; i < num; i++ {
+		var task *proto.Task
+		for {
+			if time.Since(start[i]) > 2*time.Minute {
+				require.FailNow(t, "timeout")
+			}
+			time.Sleep(time.Second)
+			task, err = mgr.GetGlobalTaskByID(taskID[i])
+			tasks[i] = task
+			require.NoError(t, err)
+			require.NotNil(t, task)
+			if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting {
+				break
+			}
+		}
+	}
+	m[0].Range(func(key, value interface{}) bool {
+		m[0].Delete(key)
+		return true
+	})
+	return tasks
 }
 
 func TestFrameworkBasic(t *testing.T) {
@@ -392,5 +523,45 @@ func TestSchedulerDownManyNodes(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockStopManager"))
 
+	distContext.Close()
+}
+
+func TestMultiTasks(t *testing.T) {
+	defer dispatcher.ClearTaskDispatcher()
+	defer scheduler.ClearSchedulers()
+	num := 3
+
+	var m []sync.Map
+	m = make([]sync.Map, num)
+	RegisterTaskMeta(&(m[0]), &testDispatcher{})
+	RegisterTaskMeta1(&(m[1]), &testDispatcher{})
+	RegisterTaskMeta2(&(m[2]), &testDispatcher{})
+
+	distContext := testkit.NewDistExecutionContext(t, 1)
+	dispatcher.MockOwnerChange = func() {
+		distContext.SetOwner(0)
+	}
+	tasks := DispatchMultiTasksAndOneFail(t, num, m)
+	require.Equal(t, proto.TaskStateReverted, tasks[0].State)
+	v, ok := m[0].Load("0")
+	require.Equal(t, false, ok)
+	require.Equal(t, nil, v)
+	v, ok = m[0].Load("1")
+	require.Equal(t, false, ok)
+	require.Equal(t, nil, v)
+	require.Equal(t, proto.TaskStateSucceed, tasks[1].State)
+	v, ok = m[1].Load("2")
+	require.Equal(t, true, ok)
+	require.Equal(t, "2", v)
+	v, ok = m[1].Load("3")
+	require.Equal(t, true, ok)
+	require.Equal(t, "3", v)
+	require.Equal(t, proto.TaskStateSucceed, tasks[2].State)
+	v, ok = m[2].Load("4")
+	require.Equal(t, true, ok)
+	require.Equal(t, "4", v)
+	v, ok = m[2].Load("5")
+	require.Equal(t, true, ok)
+	require.Equal(t, "5", v)
 	distContext.Close()
 }
