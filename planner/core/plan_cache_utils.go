@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/codec"
@@ -478,24 +477,6 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 	return nil, ErrStmtNotFound
 }
 
-func tableStatsVersionForPlanCache(tStats *statistics.Table) (tableStatsVer uint64) {
-	if tStats == nil {
-		return 0
-	}
-	// use the max version of all columns and indices as the table stats version
-	for _, col := range tStats.Columns {
-		if col.LastUpdateVersion > tableStatsVer {
-			tableStatsVer = col.LastUpdateVersion
-		}
-	}
-	for _, idx := range tStats.Indices {
-		if idx.LastUpdateVersion > tableStatsVer {
-			tableStatsVer = idx.LastUpdateVersion
-		}
-	}
-	return tableStatsVer
-}
-
 // GetMatchOpts get options to fetch plan or generate new plan
 // we can add more options here
 func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
@@ -508,8 +489,7 @@ func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanC
 			if err != nil { // CTE in this case
 				continue
 			}
-			tStats := getStatsTable(sctx, t.Meta(), t.Meta().ID)
-			statsVerHash += tableStatsVersionForPlanCache(tStats) // use '+' as the hash function for simplicity
+			statsVerHash += getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
 		}
 
 		for _, node := range stmt.QueryFeatures.limits {

@@ -80,7 +80,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		fieldsEscapedByOption+"='', "+
 		fieldsDefinedNullByOption+"='N', "+
 		linesTerminatedByOption+"='END', "+
-		skipRowsOption+"=3, "+
+		skipRowsOption+"=1, "+
 		diskQuotaOption+"='100gib', "+
 		checksumTableOption+"='optional', "+
 		threadOption+"=100000, "+
@@ -101,7 +101,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, "", plan.FieldsEscapedBy, sql)
 	require.Equal(t, []string{"N"}, plan.FieldNullDef, sql)
 	require.Equal(t, "END", plan.LinesTerminatedBy, sql)
-	require.Equal(t, uint64(3), plan.IgnoreLines, sql)
+	require.Equal(t, uint64(1), plan.IgnoreLines, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
 	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
 	require.Equal(t, int64(runtime.GOMAXPROCS(0)), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
