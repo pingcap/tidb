@@ -34,13 +34,10 @@ const (
 )
 
 var (
-	// maxChunkSize is the max chunk size for load locked tables.
-	// We use 1024 as the default value, which is the same as the default value of session.maxChunkSize.
-	// The reason why we don't use session.maxChunkSize is that we don't want to introduce a new dependency.
-	// See: https://github.com/pingcap/tidb/pull/46478#discussion_r1308786474
-	maxChunkSize = 1024
 	// Stats logger.
 	statsLogger = logutil.BgLogger().With(zap.String("category", "stats"))
+	// useCurrentSession to make sure the sql is executed in current session.
+	useCurrentSession = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
 )
 
 // AddLockedTables add locked tables id to store.
@@ -49,10 +46,10 @@ var (
 // - pids: partition ids of which will be locked.
 // - tables: table names of which will be locked.
 // Return the message of skipped tables and error.
-func AddLockedTables(exec sqlexec.SQLExecutor, tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
+func AddLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 
-	_, err := exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+	err := startTransaction(ctx, exec)
 	if err != nil {
 		return "", err
 	}
@@ -62,7 +59,7 @@ func AddLockedTables(exec sqlexec.SQLExecutor, tids []int64, pids []int64, table
 	}()
 
 	// Load tables to check duplicate before insert.
-	lockedTables, err := QueryLockedTables(ctx, exec)
+	lockedTables, err := QueryLockedTables(exec)
 	if err != nil {
 		return "", err
 	}
@@ -116,8 +113,12 @@ func generateSkippedTablesMessage(tids []int64, dupTables []string, action, stat
 	return ""
 }
 
-func insertIntoStatsTableLocked(ctx context.Context, exec sqlexec.SQLExecutor, tid int64) error {
-	_, err := exec.ExecuteInternal(ctx, "INSERT INTO mysql.stats_table_locked (table_id) VALUES (%?) ON DUPLICATE KEY UPDATE table_id = %?", tid, tid)
+func insertIntoStatsTableLocked(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, tid int64) error {
+	_, _, err := exec.ExecRestrictedSQL(
+		ctx,
+		useCurrentSession,
+		"INSERT INTO mysql.stats_table_locked (table_id) VALUES (%?) ON DUPLICATE KEY UPDATE table_id = %?", tid, tid,
+	)
 	if err != nil {
 		logutil.BgLogger().Error("error occurred when insert mysql.stats_table_locked", zap.String("category", "stats"), zap.Error(err))
 		return err

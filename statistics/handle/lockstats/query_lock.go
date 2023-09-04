@@ -18,18 +18,16 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // QueryLockedTables loads locked tables from mysql.stats_table_locked.
 // Return it as a map for fast query.
-func QueryLockedTables(ctx context.Context, exec sqlexec.SQLExecutor) (map[int64]struct{}, error) {
-	recordSet, err := exec.ExecuteInternal(ctx, "SELECT table_id FROM mysql.stats_table_locked")
-	if err != nil {
-		return nil, err
-	}
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, maxChunkSize)
+func QueryLockedTables(exec sqlexec.RestrictedSQLExecutor) (map[int64]struct{}, error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "SELECT table_id FROM mysql.stats_table_locked")
 	if err != nil {
 		return nil, err
 	}
@@ -55,12 +53,17 @@ func GetTablesLockedStatuses(tableLocked map[int64]struct{}, tableIDs ...int64) 
 	return lockedTableStatus
 }
 
+func startTransaction(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) error {
+	_, _, err := exec.ExecRestrictedSQL(ctx, useCurrentSession, "BEGIN PESSIMISTIC")
+	return errors.Trace(err)
+}
+
 // finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
-func finishTransaction(ctx context.Context, exec sqlexec.SQLExecutor, err error) error {
+func finishTransaction(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, err error) error {
 	if err == nil {
-		_, err = exec.ExecuteInternal(ctx, "commit")
+		_, _, err = exec.ExecRestrictedSQL(ctx, useCurrentSession, "COMMIT")
 	} else {
-		_, err1 := exec.ExecuteInternal(ctx, "rollback")
+		_, _, err1 := exec.ExecRestrictedSQL(ctx, useCurrentSession, "ROLLBACK")
 		terror.Log(errors.Trace(err1))
 	}
 	return errors.Trace(err)
