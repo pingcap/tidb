@@ -25,6 +25,14 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 )
 
+// For select, insert, delete list
+// The projection eliminate in logical optimize will optimize the projection under the projection, window, agg
+// The projection eliminate in post optimize will optimize other projection
+
+// For update stmt
+// The projection eliminate in logical optimize has been forbidden.
+// The projection eliminate in post optimize will optimize the projection under the projection, window, agg (the condition is same as logical optimize)
+
 // canProjectionBeEliminatedLoose checks whether a projection can be eliminated,
 // returns true if every expression is a single column.
 func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
@@ -184,6 +192,7 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 		p.Children()[i] = pe.eliminate(child, replace, childFlag, opt)
 	}
 
+	// replace logical plan schema
 	switch x := p.(type) {
 	case *LogicalJoin:
 		x.schema = buildLogicalJoinSchema(x.JoinType, x)
@@ -194,7 +203,10 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 			resolveColumnAndReplace(dst, replace)
 		}
 	}
+	// replace all of exprs in logical plan
 	p.ReplaceExprColumns(replace)
+
+	// duplicate projection: projection with child projection
 	if isProj {
 		if child, ok := p.Children()[0].(*LogicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
 			for i := range proj.Exprs {

@@ -39,98 +39,131 @@ import (
 // When the three conditions has been matched, the following optimizations will be performed.
 // 1. The new selection will be created with the new constant predicate, such as 'b.id>1'.
 // In the future, it will remove equal join predicate if the constant predicate is equal predicate.
-// todo: flag
 type constantPropagationSolver struct {
-	parentPlan      LogicalPlan
-	currentChildIdx int
-	root            LogicalPlan
 }
 
 func (cp *constantPropagationSolver) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	// init solver, the first optimize of this query plan
-	if cp.root == nil {
-		cp.parentPlan = nil
-		cp.root = p
-		defer func() {
-			cp.parentPlan = nil
-			cp.root = nil
-		}()
-	}
-	// match conditions
-	candidateConstantPredicates := cp.matchConditions(p)
-	if len(candidateConstantPredicates) > 0 {
-		// constant propagation
-		cp.pullUpCandidateConstantPredicates(p, candidateConstantPredicates, opt)
-	}
+	// constant propagation root plan
+	newRoot := p.constantPropagation(nil, 0, opt)
+
 	// recursive optimize
 	for i, children := range p.Children() {
-		cp.currentChildIdx = i
-		cp.parentPlan = p
-		_, err := cp.optimize(ctx, children, opt)
-		if err != nil {
-			return cp.root, err
-		}
+		cp.execOptimize(children, p, i, opt)
 	}
-	return cp.root, nil
+
+	if newRoot == nil {
+		return p, nil
+	}
+	return newRoot, nil
+}
+
+// execOptimize optimize constant propagation exclude root plan node
+func (cp *constantPropagationSolver) execOptimize(currentPlan LogicalPlan, parentPlan LogicalPlan, currentChildIdx int, opt *logicalOptimizeOp) {
+	if parentPlan == nil {
+		// Attention: The function 'execOptimize' could not handle the root plan, so the parent plan could not be nil.
+		return
+	}
+	// constant propagation
+	currentPlan.constantPropagation(parentPlan, currentChildIdx, opt)
+	// recursive optimize
+	for i, children := range currentPlan.Children() {
+		cp.execOptimize(children, currentPlan, i, opt)
+	}
 }
 
 func (*constantPropagationSolver) name() string {
 	return "constant_propagation"
 }
 
-// todo
-func (*constantPropagationSolver) matchConditions(p LogicalPlan) []expression.Expression {
-	// step1: match tree condition
-	var tryToMatchTreePattern1 bool
-	var tryToMatchTreePattern2 bool
-	logicalJoin, isLogicalJoin := p.(*LogicalJoin)
-	if isLogicalJoin {
-		switch logicalJoin.JoinType {
-		case LeftOuterJoin:
-			tryToMatchTreePattern1 = true
-		case RightOuterJoin:
-			tryToMatchTreePattern2 = true
-		case InnerJoin:
-			tryToMatchTreePattern1 = true
-			tryToMatchTreePattern2 = true
-		default:
-			return nil
-		}
+func (*baseLogicalPlan) constantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *logicalOptimizeOp) (newRoot LogicalPlan) {
+	// Only LogicalJoin can apply constant propagation
+	// Other Logical plan do nothing
+	return nil
+}
+
+// 1. recursiveGetConstantPredicates
+// 2. add selection above of LogicalJoin
+// Return nil if the root of plan has not been changed
+// Return new root if the root of plan is changed to selection
+func (logicalJoin *LogicalJoin) constantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *logicalOptimizeOp) (newRoot LogicalPlan) {
+	// step1: get constant predicate from left or right according to the JoinType
+	var getConstantPredicateFromLeft bool
+	var getConstantPredicateFromRight bool
+	switch logicalJoin.JoinType {
+	case LeftOuterJoin:
+		getConstantPredicateFromLeft = true
+	case RightOuterJoin:
+		getConstantPredicateFromRight = true
+	case InnerJoin:
+		getConstantPredicateFromLeft = true
+		getConstantPredicateFromRight = true
+	default:
+		return
 	}
-	var matchTreePattern bool
-	var candidatePredicates []expression.Expression
-	// Match tree pattern 1
-	if tryToMatchTreePattern1 {
-		_, leftChildIsSelection := logicalJoin.children[0].(*LogicalSelection)
-		_, rightChildIsTableScan := logicalJoin.children[1].(*DataSource)
-		if leftChildIsSelection && rightChildIsTableScan {
-			logicalSelection, _ := logicalJoin.children[0].(*LogicalSelection)
-			candidatePredicates = logicalSelection.Conditions
-			matchTreePattern = true
-		}
+	var candidateConstantPredicates []expression.Expression
+	if getConstantPredicateFromLeft {
+		candidateConstantPredicates = logicalJoin.children[0].recursiveGetConstantPredicates()
 	}
-	// Match tree pattern 2
-	if tryToMatchTreePattern2 {
-		_, leftChildIsTableScan := logicalJoin.children[0].(*DataSource)
-		_, rightChildIsSelection := logicalJoin.children[1].(*LogicalSelection)
-		if leftChildIsTableScan && rightChildIsSelection {
-			logicalSelection, _ := logicalJoin.children[1].(*LogicalSelection)
-			candidatePredicates = logicalSelection.Conditions
-			matchTreePattern = true
-		}
+	if getConstantPredicateFromRight {
+		candidateConstantPredicates = append(candidateConstantPredicates, logicalJoin.children[1].recursiveGetConstantPredicates()...)
 	}
-	if !matchTreePattern {
-		return nil
+	if len(candidateConstantPredicates) == 0 {
+		return
 	}
 
-	// step2: match predicate condition
+	// step2: add selection above of LogicalJoin
+	return pullUpCandidateConstantPredicates(logicalJoin, currentChildIdx, parentPlan, candidateConstantPredicates, opt)
+}
+
+func (*baseLogicalPlan) recursiveGetConstantPredicates() []expression.Expression {
+	// Only LogicalProjection and LogicalSelection can get constant predicates
+	// Other Logical plan return nil
+	return nil
+}
+
+func (selection *LogicalSelection) recursiveGetConstantPredicates() []expression.Expression {
 	var result []expression.Expression
-	for _, candidatePredicate := range candidatePredicates {
+	for _, candidatePredicate := range selection.Conditions {
 		// the candidate predicate should be a constant and compare predicate
 		match := validCompareConstantPredicate(candidatePredicate)
 		if match {
 			result = append(result, candidatePredicate)
 		}
+	}
+	return result
+}
+
+func (projection *LogicalProjection) recursiveGetConstantPredicates() []expression.Expression {
+	// projection has no column expr
+	if !canProjectionBeEliminatedLoose(projection) {
+		return nil
+	}
+	candidateConstantPredicates := projection.children[0].recursiveGetConstantPredicates()
+	// replace predicate by projection expr
+	// candidate predicate : a=1
+	// projection: a as a'
+	// result predicate : a'=1
+	replace := make(map[string]*expression.Column)
+	for i, expr := range projection.Exprs {
+		replace[string(expr.HashCode(nil))] = projection.Schema().Columns[i]
+	}
+	var result []expression.Expression
+	for _, predicate := range candidateConstantPredicates {
+		// The column of predicate must exist in projection exprs
+		columns := expression.ExtractColumns(predicate)
+		// The number of columns in candidate predicate must be 1.
+		if len(columns) != 1 {
+			continue
+		}
+		if replace[string(columns[0].HashCode(nil))] == nil {
+			// The column of predicate will not appear on the upper level
+			// This means that this predicate does not apply to the constant propagation optimization rule
+			// For example: select * from t, (select b from s where s.a=1) tmp where t.b=s.b
+			continue
+		}
+		clonePredicate := predicate.Clone()
+		ResolveExprAndReplace(clonePredicate, replace)
+		result = append(result, clonePredicate)
 	}
 	return result
 }
@@ -159,15 +192,20 @@ func validCompareConstantPredicate(candidatePredicate expression.Expression) boo
 }
 
 // todo
-func (cp *constantPropagationSolver) pullUpCandidateConstantPredicates(p LogicalPlan, candidatePredicates []expression.Expression, opt *logicalOptimizeOp) {
+func pullUpCandidateConstantPredicates(currentPlan LogicalPlan, currentChildIdx int, parentPlan LogicalPlan,
+	candidatePredicates []expression.Expression, opt *logicalOptimizeOp) (newRoot LogicalPlan) {
 	// generate a new selection for candidatePredicates
-	selection := LogicalSelection{Conditions: candidatePredicates}.Init(p.SCtx(), p.SelectBlockOffset())
+	selection := LogicalSelection{Conditions: candidatePredicates}.Init(currentPlan.SCtx(), currentPlan.SelectBlockOffset())
 	// add selection above of p
-	if cp.parentPlan == nil {
-		cp.root = selection
+	if parentPlan == nil {
+		newRoot = selection
 	} else {
-		cp.parentPlan.SetChild(cp.currentChildIdx, selection)
+		parentPlan.SetChild(currentChildIdx, selection)
 	}
-	selection.SetChildren(p)
-	appendAddSelectionTraceStep(cp.parentPlan, p, selection, opt)
+	selection.SetChildren(currentPlan)
+	appendAddSelectionTraceStep(parentPlan, currentPlan, selection, opt)
+	if parentPlan == nil {
+		return newRoot
+	}
+	return nil
 }

@@ -545,7 +545,7 @@ func TestConstantPropagation(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
 	tk.MustExec("create table s (a int, b int, c int, primary key(a, b));")
 	fmt.Println("explain select t.a from t , (select * from s where s.b>=1) tmp where t.b=tmp.b;")
-	rs := tk.MustQuery("explain select t.a from t , (select b +1 as bb from s where s.b>=1) tmp where t.b=tmp.bb;")
+	rs := tk.MustQuery("explain update t, (select * from s where s.b>1) tmp set t.a=tmp.a where t.b=tmp.b ;")
 	for _, row := range rs.Rows() {
 		for j := range row {
 			fmt.Printf("`%v    ", row[j])
