@@ -94,7 +94,7 @@ type HashAggExec struct {
 	Sc               *stmtctx.StatementContext
 	PartialAggFuncs  []aggfuncs.AggFunc
 	FinalAggFuncs    []aggfuncs.AggFunc
-	partialResultMap AggPartialResultMapper
+	partialResultMap aggfuncs.AggPartialResultMapper
 	bInMap           int64 // indicate there are 2^bInMap buckets in partialResultMap
 	groupSet         set.StringSetWithMemoryUsage
 	groupKeys        []string
@@ -229,7 +229,7 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 func (e *HashAggExec) initForUnparallelExec() {
 	var setSize int64
 	e.groupSet, setSize = set.NewStringSetWithMemoryUsage()
-	e.partialResultMap = make(AggPartialResultMapper)
+	e.partialResultMap = make(aggfuncs.AggPartialResultMapper)
 	e.bInMap = 0
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice*(1<<e.bInMap) + setSize)
@@ -280,7 +280,7 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 			outputChs:         e.partialOutputChs,
 			giveBackCh:        e.inputCh,
 			globalOutputCh:    e.finalOutputCh,
-			partialResultsMap: make(AggPartialResultMapper),
+			partialResultsMap: make(aggfuncs.AggPartialResultMapper),
 			groupByItems:      e.GroupByItems,
 			chk:               exec.TryNewCacheChunk(e.Children(0)),
 			groupKey:          make([][]byte, 0, 8),
@@ -307,7 +307,7 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 		groupSet, setSize := set.NewStringSetWithMemoryUsage()
 		w := HashAggFinalWorker{
 			baseHashAggWorker:   newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
-			partialResultMap:    make(AggPartialResultMapper),
+			partialResultMap:    make(aggfuncs.AggPartialResultMapper),
 			groupSet:            groupSet,
 			inputCh:             e.partialOutputChs[i],
 			outputCh:            e.finalOutputCh,
@@ -534,7 +534,7 @@ func (e *HashAggExec) resetSpillMode() {
 	e.cursor4GroupKey, e.groupKeys = 0, e.groupKeys[:0]
 	var setSize int64
 	e.groupSet, setSize = set.NewStringSetWithMemoryUsage()
-	e.partialResultMap = make(AggPartialResultMapper)
+	e.partialResultMap = make(aggfuncs.AggPartialResultMapper)
 	e.bInMap = 0
 	e.prepared = false
 	e.executed = e.numOfSpilledChks == e.listInDisk.NumChunks() // No data is spilling again, all data have been processed.

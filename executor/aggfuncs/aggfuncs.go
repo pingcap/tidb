@@ -139,6 +139,9 @@ const (
 // to be any type.
 type PartialResult unsafe.Pointer
 
+// AggPartialResultMapper contains aggregate function results
+type AggPartialResultMapper map[string][]PartialResult
+
 // AggFunc is the interface to evaluate the aggregate functions.
 type AggFunc interface {
 	// AllocPartialResult allocates a specific data structure to store the
@@ -177,6 +180,18 @@ type AggFunc interface {
 	// partial result and then calculates the final result and append that
 	// final result to the chunk provided.
 	AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error
+
+	// SerializeToChunk will serialize meta data of aggregate function into bytes and put them into chunk.
+	SerializeToChunkForSpill(sctx sessionctx.Context, partialResults []PartialResult, chk *chunk.Chunk)
+
+	// DeserializeToChunkForSpill deserializes from bytes to PartialResult.
+	DeserializeToChunkForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error)
+
+	// serializeForSpill serializes the meta data of aggregate function to bytes.
+	serializeForSpill(pr PartialResult, buf []byte, helper *spillSerializeHelper) []byte
+
+	// deserializeForSpill deserialize from bytes to aggregate function.
+	deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error)
 }
 
 type baseAggFunc struct {

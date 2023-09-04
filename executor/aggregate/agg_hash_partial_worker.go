@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -30,7 +31,7 @@ import (
 type HashAggIntermData struct {
 	groupKeys        []string
 	cursor           int
-	partialResultMap AggPartialResultMapper
+	partialResultMap aggfuncs.AggPartialResultMapper
 }
 
 // HashAggPartialWorker indicates the partial workers of parallel hash agg execution,
@@ -42,7 +43,7 @@ type HashAggPartialWorker struct {
 	outputChs         []chan *HashAggIntermData
 	globalOutputCh    chan *AfFinalResult
 	giveBackCh        chan<- *HashAggInput
-	partialResultsMap AggPartialResultMapper
+	partialResultsMap aggfuncs.AggPartialResultMapper
 	groupByItems      []expression.Expression
 	groupKey          [][]byte
 	// chk stores the input data from child,

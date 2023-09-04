@@ -27,6 +27,7 @@ go_library(
         "func_varpop.go",
         "func_varsamp.go",
         "row_number.go",
+        "spill_deserialize_helper.go",
     ],
     importpath = "github.com/pingcap/tidb/executor/aggfuncs",
     visibility = ["//visibility:public"],

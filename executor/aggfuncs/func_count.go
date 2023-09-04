@@ -32,6 +32,8 @@ type baseCount struct {
 
 type partialResult4Count = int64
 
+const partialResult4CountByteLen = int(unsafe.Sizeof(partialResult4Count(0)))
+
 func (*baseCount) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4Count)), DefPartialResult4CountSize
 }
@@ -51,6 +53,7 @@ type countOriginal4Int struct {
 	baseCount
 }
 
+// mark
 func (e *countOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Count)(pr)
 
@@ -394,6 +397,7 @@ type countPartial struct {
 	baseCount
 }
 
+// mark
 func (e *countPartial) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Count)(pr)
 	for _, row := range rowsInGroup {
@@ -414,4 +418,46 @@ func (*countPartial) MergePartialResult(_ sessionctx.Context, src, dst PartialRe
 	p1, p2 := (*partialResult4Count)(src), (*partialResult4Count)(dst)
 	*p2 += *p1
 	return 0, nil
+}
+
+func (c *countPartial) SerializeToChunkForSpill(sctx sessionctx.Context, partialResults []PartialResult, chk *chunk.Chunk) {
+	resBuf := make([]byte, partialResult4CountByteLen)
+	spillHelper := newSpillSerializeHelper(partialResult4CountByteLen)
+	for _, pr := range partialResults {
+		resBuf = c.serializeForSpill(pr, resBuf, &spillHelper)
+		chk.AppendBytes(c.ordinal, resBuf)
+	}
+}
+
+func (c *countPartial) DeserializeToChunkForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol.GetData(), partialResult4CountByteLen)
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta, _ := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta, nil
+}
+
+func (c *countPartial) serializeForSpill(pr PartialResult, buf []byte, helper *spillSerializeHelper) []byte {
+	p := (*partialResult4Count)(pr)
+	return helper.serializeInt64(int64(*p), buf)
+}
+
+func (c *countPartial) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
+	pr, memDelta := c.AllocPartialResult()
+	p := int64(*(*partialResult4Count)(pr))
+	success := helper.readInt64(&p)
+	if !success {
+		return nil, 0, nil
+	}
+	return pr, memDelta, nil
 }
