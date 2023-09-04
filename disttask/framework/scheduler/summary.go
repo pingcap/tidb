@@ -32,6 +32,7 @@ type Summary struct {
 	}
 }
 
+// NewSummary creates a new Summary.
 func NewSummary() *Summary {
 	return &Summary{
 		mu: struct {
@@ -64,6 +65,7 @@ func (s *Summary) UpdateRowCountLoop(ctx context.Context, taskMgr *storage.TaskM
 	}
 }
 
+// PersistRowCount persists the row count of the subtask to the storage.
 func (s *Summary) PersistRowCount(ctx context.Context, taskMgr *storage.TaskManager) {
 	var copiedRowCount map[int64]int64
 	s.mu.Lock()

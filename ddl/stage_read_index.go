@@ -152,7 +152,7 @@ func (r *readIndexToLocalStage) CleanupSubtaskExecEnv(_ context.Context) error {
 // MockDMLExecutionAddIndexSubTaskFinish is used to mock DML execution during distributed add index.
 var MockDMLExecutionAddIndexSubTaskFinish func()
 
-func (r *readIndexToLocalStage) OnSubtaskFinished(_ context.Context, subtask []byte) ([]byte, error) {
+func (*readIndexToLocalStage) OnSubtaskFinished(_ context.Context, subtask []byte) ([]byte, error) {
 	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecutionAddIndexSubTaskFinish != nil {
