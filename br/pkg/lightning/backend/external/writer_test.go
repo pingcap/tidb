@@ -296,23 +296,35 @@ func TestWriterMultiFileStat(t *testing.T) {
 
 	require.Equal(t, 3, len(summary.MultipleFilesStats))
 	expected := MultipleFilesStat{
-		MinKey:            []byte("key01"),
-		MaxKey:            []byte("key06"),
-		FileNum:           3,
+		MinKey: []byte("key01"),
+		MaxKey: []byte("key06"),
+		Filenames: [][2]string{
+			{"/test/0/0", "/test/0_stat/0"},
+			{"/test/0/1", "/test/0_stat/1"},
+			{"/test/0/2", "/test/0_stat/2"},
+		},
 		MaxOverlappingNum: 1,
 	}
 	require.Equal(t, expected, summary.MultipleFilesStats[0])
 	expected = MultipleFilesStat{
-		MinKey:            []byte("key11"),
-		MaxKey:            []byte("key16"),
-		FileNum:           3,
+		MinKey: []byte("key11"),
+		MaxKey: []byte("key16"),
+		Filenames: [][2]string{
+			{"/test/0/3", "/test/0_stat/3"},
+			{"/test/0/4", "/test/0_stat/4"},
+			{"/test/0/5", "/test/0_stat/5"},
+		},
 		MaxOverlappingNum: 2,
 	}
 	require.Equal(t, expected, summary.MultipleFilesStats[1])
 	expected = MultipleFilesStat{
-		MinKey:            []byte("key20"),
-		MaxKey:            []byte("key24"),
-		FileNum:           3,
+		MinKey: []byte("key20"),
+		MaxKey: []byte("key24"),
+		Filenames: [][2]string{
+			{"/test/0/6", "/test/0_stat/6"},
+			{"/test/0/7", "/test/0_stat/7"},
+			{"/test/0/8", "/test/0_stat/8"},
+		},
 		MaxOverlappingNum: 3,
 	}
 	require.Equal(t, expected, summary.MultipleFilesStats[2])

@@ -158,7 +158,7 @@ func (b *WriterBuilder) Build(
 	if b.dupeDetectEnabled {
 		keyAdapter = common.DupDetectKeyAdapter{}
 	}
-	return &Writer{
+	ret := &Writer{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
 			currProp:     &rangeProperty{},
@@ -177,9 +177,11 @@ func (b *WriterBuilder) Build(
 		onClose:        b.onClose,
 		closed:         false,
 		multiFileStats: make([]MultipleFilesStat, 1),
-		fileMinKeys:    make([]tidbkv.Key, 0, 500),
-		fileMaxKeys:    make([]tidbkv.Key, 0, 500),
+		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
+		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
 	}
+	ret.multiFileStats[0].Filenames = make([][2]string, 0, multiFileStatNum)
+	return ret
 }
 
 // MultipleFilesStat is the statistic information of multiple files (currently
@@ -188,7 +190,7 @@ func (b *WriterBuilder) Build(
 type MultipleFilesStat struct {
 	MinKey            tidbkv.Key
 	MaxKey            tidbkv.Key
-	FileNum           int
+	Filenames         [][2]string // [dataFile, statFile]
 	MaxOverlappingNum int
 }
 
@@ -332,7 +334,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}
 
 	logger := logutil.Logger(ctx)
-	dataWriter, statWriter, err := w.createStorageWriter(ctx)
+	dataFile, statFile, dataWriter, statWriter, err := w.createStorageWriter(ctx)
 	if err != nil {
 		return err
 	}
@@ -391,12 +393,16 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	// maintain 500-batch statistics
 
 	l := len(w.multiFileStats)
-	w.multiFileStats[l-1].FileNum++
+	w.multiFileStats[l-1].Filenames = append(w.multiFileStats[l-1].Filenames,
+		[2]string{dataFile, statFile},
+	)
 	w.fileMinKeys = append(w.fileMinKeys, tidbkv.Key(w.writeBatch[0].Key).Clone())
 	w.fileMaxKeys = append(w.fileMaxKeys, tidbkv.Key(w.writeBatch[len(w.writeBatch)-1].Key).Clone())
-	if fromClose || w.multiFileStats[l-1].FileNum == multiFileStatNum {
+	if fromClose || len(w.multiFileStats[l-1].Filenames) == multiFileStatNum {
 		w.multiFileStats[l-1].build(w.fileMinKeys, w.fileMaxKeys)
-		w.multiFileStats = append(w.multiFileStats, MultipleFilesStat{})
+		w.multiFileStats = append(w.multiFileStats, MultipleFilesStat{
+			Filenames: make([][2]string, 0, multiFileStatNum),
+		})
 		w.fileMinKeys = w.fileMinKeys[:0]
 		w.fileMaxKeys = w.fileMaxKeys[:0]
 	}
@@ -409,16 +415,20 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	return nil
 }
 
-func (w *Writer) createStorageWriter(ctx context.Context) (data, stats storage.ExternalFileWriter, err error) {
+func (w *Writer) createStorageWriter(ctx context.Context) (
+	dataFile, statFile string,
+	data, stats storage.ExternalFileWriter,
+	err error,
+) {
 	dataPath := filepath.Join(w.filenamePrefix, strconv.Itoa(w.currentSeq))
 	dataWriter, err := w.store.Create(ctx, dataPath, nil)
 	if err != nil {
-		return nil, nil, err
+		return "", "", nil, nil, err
 	}
 	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(w.currentSeq))
 	statsWriter, err := w.store.Create(ctx, statPath, nil)
 	if err != nil {
-		return nil, nil, err
+		return "", "", nil, nil, err
 	}
-	return dataWriter, statsWriter, nil
+	return dataPath, statPath, dataWriter, statsWriter, nil
 }
