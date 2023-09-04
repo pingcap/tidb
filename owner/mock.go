@@ -152,7 +152,7 @@ func (m *mockManager) CampaignOwner() error {
 				time.Sleep(1 * time.Second) // Give a chance to the other owner managers to get owner.
 			default:
 				m.toBeOwner()
-				sleepContext(m.ctx, 1*time.Second) // speed up domain.Close()
+				sleepContext(m.ctx, 1*time.Second) // Speed up domain.Close()
 				logutil.BgLogger().Debug("owner manager tick", zap.String("category", "ddl"), zap.String("ID", m.id),
 					zap.String("ownerKey", m.key), zap.String("currentOwner", util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).GetOwner()))
 			}
