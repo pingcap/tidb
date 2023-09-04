@@ -2871,6 +2871,11 @@ func (rc *Client) RestoreMetaKVFiles(
 		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
 	})
 
+	log.Info("start to restore meta files",
+		zap.Int("total files", len(files)),
+		zap.Int("default files", len(filesInDefaultCF)),
+		zap.Int("write files", len(filesInWriteCF)))
+
 	if schemasReplace.NeedConstructIdMap() {
 		// Preconstruct the map and save it into external storage.
 		if err := rc.PreConstructAndSaveIDMap(
@@ -2987,6 +2992,7 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 		if i == 0 {
 			rangeMax = f.MaxTs
 			rangeMin = f.MinTs
+			batchSize = f.Length
 		} else {
 			if f.MinTs <= rangeMax && batchSize+f.Length <= MetaKVBatchSize {
 				rangeMin = mathutil.Min(rangeMin, f.MinTs)
@@ -3019,16 +3025,18 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 				writeIdx = toWriteIdx
 			}
 		}
-		if i == len(defaultFiles)-1 {
-			_, err = restoreBatch(ctx, defaultFiles[defaultIdx:], schemasReplace, defaultKvEntries, math.MaxUint64, updateStats, progressInc, stream.DefaultCF)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			_, err = restoreBatch(ctx, writeFiles[writeIdx:], schemasReplace, writeKvEntries, math.MaxUint64, updateStats, progressInc, stream.WriteCF)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
+	}
+
+	// restore the left meta kv files and entries
+	// Notice: restoreBatch needs to realize the parameter `files` and `kvEntries` might be empty
+	// Assert: defaultIdx <= len(defaultFiles) && writeIdx <= len(writeFiles)
+	_, err = restoreBatch(ctx, defaultFiles[defaultIdx:], schemasReplace, defaultKvEntries, math.MaxUint64, updateStats, progressInc, stream.DefaultCF)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = restoreBatch(ctx, writeFiles[writeIdx:], schemasReplace, writeKvEntries, math.MaxUint64, updateStats, progressInc, stream.WriteCF)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil
