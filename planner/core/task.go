@@ -820,27 +820,23 @@ func (t *rootTask) MemoryUsage() (sum int64) {
 // attach2Task attach limit to different cases.
 // For Normal Index Lookup
 // 1: attach the limit to table side or index side of normal index lookup cop task. (normal case, old code, no more
-//
-//	explanation here)
+// explanation here)
 //
 // For Index Merge:
 // 2: attach the limit to **table** side for index merge intersection case, cause intersection will invalidate the
-//
-//	fetched limit+offset rows from each partial index plan, you can not decide how many you want in advance, actually.
+// fetched limit+offset rows from each partial index plan, you can not decide how many you want in advance, actually.
 //
 // 3: attach the limit to **index** side for index merge union case, because each index plan will output the fetched
+// limit+offset (* N path) rows, you still need an embedded pushedLimit inside index merge reader to cut it down.
 //
-//	limit+offset (* N path) rows, you still need an embedded pushedLimit inside index merge reader to cut it down.
-//
-// 4: attach the limit to the TOP of root index merge operator if there is some root condition exists for index merge
-//
-//	intersection/union case.
+// 4: attach the limit to the TOP of root index merge operator if there is some root condition exists for index merge intersection/union case.
 func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
 	for _, expr := range p.GetPartitionBy() {
 		newPartitionBy = append(newPartitionBy, expr.Clone())
 	}
+
 	sunk := false
 	if cop, ok := t.(*copTask); ok {
 		if len(cop.idxMergePartPlans) == 0 {
