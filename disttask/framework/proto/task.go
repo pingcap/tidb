@@ -48,7 +48,7 @@ const (
 
 // TaskStep is the step of task.
 const (
-	StepInit int64 = -1
+	StepInit int64 = 0
 	StepOne  int64 = 1
 	StepTwo  int64 = 2
 )

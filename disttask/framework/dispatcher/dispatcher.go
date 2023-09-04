@@ -286,6 +286,7 @@ func (d *dispatcher) onNextStage() error {
 	if d.task.EnableDynamic {
 		// dynamic dispatch subtasks.
 		d.task.Dispatching = true
+		d.task.Step++
 		err := d.updateTask(proto.TaskStateRunning, nil, retrySQLTimes)
 		if err != nil {
 			return err
