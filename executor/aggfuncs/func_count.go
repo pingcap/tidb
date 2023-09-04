@@ -429,7 +429,7 @@ func (c *countPartial) SerializeToChunkForSpill(sctx sessionctx.Context, partial
 	}
 }
 
-func (c *countPartial) DeserializeToChunkForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+func (c *countPartial) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol.GetData(), partialResult4CountByteLen)

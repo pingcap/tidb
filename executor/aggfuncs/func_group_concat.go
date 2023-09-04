@@ -270,7 +270,7 @@ func (e *groupConcatDistinct) SerializeToChunkForSpill(sctx sessionctx.Context, 
 }
 
 // TODO implement it
-func (e *groupConcatDistinct) DeserializeToChunkForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+func (e *groupConcatDistinct) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
 	return make([]PartialResult, 0), -1, nil
 }
 

@@ -81,7 +81,7 @@ func (e *countOriginalWithDistinct4Int) SerializeToChunkForSpill(sctx sessionctx
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4Int) DeserializeToChunkForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+func (e *countOriginalWithDistinct4Int) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
 	return make([]PartialResult, 0), -1, nil
 }
 
@@ -166,7 +166,7 @@ func (e *countOriginalWithDistinct4Real) SerializeToChunkForSpill(sctx sessionct
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4Real) DeserializeToChunkForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+func (e *countOriginalWithDistinct4Real) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
 	return make([]PartialResult, 0), -1, nil
 }
 
@@ -237,7 +237,7 @@ func (e *countOriginalWithDistinct4Decimal) SerializeToChunkForSpill(sctx sessio
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4Decimal) DeserializeToChunkForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+func (e *countOriginalWithDistinct4Decimal) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
 	return make([]PartialResult, 0), -1, nil
 }
 
@@ -303,7 +303,7 @@ func (e *countOriginalWithDistinct4Duration) SerializeToChunkForSpill(sctx sessi
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4Duration) DeserializeToChunkForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+func (e *countOriginalWithDistinct4Duration) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
 	return make([]PartialResult, 0), -1, nil
 }
 
@@ -373,7 +373,7 @@ func (e *countOriginalWithDistinct4String) SerializeToChunkForSpill(sctx session
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4String) DeserializeToChunkForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+func (e *countOriginalWithDistinct4String) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
 	return make([]PartialResult, 0), -1, nil
 }
 
@@ -455,7 +455,7 @@ func (e *countOriginalWithDistinct) SerializeToChunkForSpill(sctx sessionctx.Con
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct) DeserializeToChunkForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+func (e *countOriginalWithDistinct) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
 	return make([]PartialResult, 0), -1, nil
 }
 
@@ -888,7 +888,7 @@ func (e *baseApproxCountDistinct) SerializeToChunkForSpill(sctx sessionctx.Conte
 }
 
 // TODO implement it
-func (e *baseApproxCountDistinct) DeserializeToChunkForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+func (e *baseApproxCountDistinct) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
 	return make([]PartialResult, 0), -1, nil
 }
 

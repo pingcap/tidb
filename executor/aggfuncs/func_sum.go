@@ -326,7 +326,7 @@ func (e *sum4DistinctFloat64) SerializeToChunkForSpill(sctx sessionctx.Context, 
 }
 
 // TODO implement it
-func (e *sum4DistinctFloat64) DeserializeToChunkForSpill(sctx sessionctx.Context, src *chunk.Chunk) []PartialResult {
+func (e *sum4DistinctFloat64) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) []PartialResult {
 	return make([]PartialResult, 0)
 }
 
@@ -407,7 +407,7 @@ func (e *sum4DistinctDecimal) SerializeToChunkForSpill(sctx sessionctx.Context, 
 }
 
 // TODO implement it
-func (e *sum4DistinctDecimal) DeserializeToChunkForSpill(sctx sessionctx.Context, src *chunk.Chunk) []PartialResult {
+func (e *sum4DistinctDecimal) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) []PartialResult {
 	return make([]PartialResult, 0)
 }
 

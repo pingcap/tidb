@@ -184,8 +184,8 @@ type AggFunc interface {
 	// SerializeToChunk will serialize meta data of aggregate function into bytes and put them into chunk.
 	SerializeToChunkForSpill(sctx sessionctx.Context, partialResults []PartialResult, chk *chunk.Chunk)
 
-	// DeserializeToChunkForSpill deserializes from bytes to PartialResult.
-	DeserializeToChunkForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error)
+	// DeserializeToPartialResultForSpill deserializes from bytes to PartialResult.
+	DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error)
 
 	// serializeForSpill serializes the meta data of aggregate function to bytes.
 	serializeForSpill(pr PartialResult, buf []byte, helper *spillSerializeHelper) []byte
