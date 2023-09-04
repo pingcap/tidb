@@ -104,8 +104,7 @@ func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error
 	s.resetError()
 	logutil.Logger(s.logCtx).Info("scheduler run a step", zap.Any("step", task.Step), zap.Any("concurrency", task.Concurrency))
 
-	// TODO(tangenta): refine TaskTable interface and remove this type conversion.
-	summary, cleanup, err := runSummaryCollectLoop(ctx, task, s.taskTable.(*storage.TaskManager))
+	summary, cleanup, err := runSummaryCollectLoop(ctx, task, s.taskTable)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -339,8 +338,12 @@ func createScheduler(ctx context.Context, task *proto.Task, summary *Summary) (S
 func runSummaryCollectLoop(
 	ctx context.Context,
 	task *proto.Task,
-	taskMgr *storage.TaskManager,
+	taskTable TaskTable,
 ) (summary *Summary, cleanup func(), err error) {
+	taskMgr, ok := taskTable.(*storage.TaskManager)
+	if !ok {
+		return nil, func() {}, nil
+	}
 	key := getKey(task.Type, task.Step)
 	opt, ok := schedulerOptions[key]
 	if !ok {
