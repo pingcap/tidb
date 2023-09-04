@@ -193,7 +193,6 @@ func TestHAReplacedButRunningManyNodes(t *testing.T) {
 	defer dispatcher.ClearTaskDispatcher()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
-
 	RegisterHATaskMeta(&m)
 	distContext := testkit.NewDistExecutionContext(t, 30)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBPartitionThenResume", "30*return(true)"))

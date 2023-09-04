@@ -977,7 +977,7 @@ const (
 	version172 = 172
 	// version 173 add column `summary` to `mysql.tidb_background_subtask`.
 	version173 = 173
-	// version 174 add column `dispatching` to `mysql.tidb_global_task`.
+	// version 174 add column `substate` to `mysql.tidb_global_task`.
 	version174 = 174
 )
 
