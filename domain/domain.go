@@ -2391,7 +2391,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	lease := do.statsLease
 	deltaUpdateTicker := time.NewTicker(20 * lease)
 	gcStatsTicker := time.NewTicker(100 * lease)
-	loadLockedTablesTicker := time.NewTicker(5 * lease)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
 	readMemTricker := time.NewTicker(memory.ReadMemInterval)
 	statsHandle := do.StatsHandle()
@@ -2420,11 +2419,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
 			if err != nil {
 				logutil.BgLogger().Debug("dump stats delta failed", zap.Error(err))
-			}
-		case <-loadLockedTablesTicker.C:
-			err := statsHandle.LoadLockedTables()
-			if err != nil {
-				logutil.BgLogger().Debug("load locked table failed", zap.Error(err))
 			}
 		case <-gcStatsTicker.C:
 			if !owner.IsOwner() {
