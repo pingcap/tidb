@@ -148,7 +148,6 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	if s.closed.Load() {
 		return
 	}
-	defer s.triggerEvict()
 	if item.Value == nil {
 		// Sometimes the same key may be passed to the "onEvict/onExit"
 		// function twice, and in the second invocation, the value is empty,
