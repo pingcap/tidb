@@ -47,7 +47,7 @@ func (*haTestFlowHandle) OnNextStage(_ context.Context, _ dispatcher.TaskHandle,
 			[]byte("task6"),
 			[]byte("task7"),
 			[]byte("task8"),
-		[]byte("task9"),
+			[]byte("task9"),
 			[]byte("task10"),
 		}, nil
 	}
