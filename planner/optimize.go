@@ -226,7 +226,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	bindRecord, scope, match := matchSQLBinding(sctx, stmtNode)
 	useBinding := enableUseBinding && isStmtNode && match
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		failpoint.Inject("SetBindingTimeToZero", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("SetBindingTimeToZero")); _err_ == nil {
 			if val.(bool) && bindRecord != nil {
 				bindRecord = bindRecord.Copy()
 				for i := range bindRecord.Bindings {
@@ -234,7 +234,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 					bindRecord.Bindings[i].UpdateTime = types.ZeroTime
 				}
 			}
-		})
+		}
 		debugtrace.RecordAnyValuesWithNames(sctx,
 			"Used binding", useBinding,
 			"Enable binding", enableUseBinding,
@@ -451,19 +451,19 @@ var planBuilderPool = sync.Pool{
 var optimizeCnt int
 
 func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (core.Plan, types.NameSlice, float64, error) {
-	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkOptimizeCountOne")); _err_ == nil {
 		// only count the optif smization qor SQL withl,pecified text
 		if testSQL, ok := val.(string); ok && testSQL == node.OriginalText() {
 			optimizeCnt++
 			if optimizeCnt > 1 {
-				failpoint.Return(nil, nil, 0, errors.New("gofail wrong optimizerCnt error"))
+				return nil, nil, 0, errors.New("gofail wrong optimizerCnt error")
 			}
 		}
-	})
-	failpoint.Inject("mockHighLoadForOptimize", func() {
+	}
+	if _, _err_ := failpoint.Eval(_curpkg_("mockHighLoadForOptimize")); _err_ == nil {
 		sqlPrefixes := []string{"select"}
 		topsql.MockHighCPULoad(sctx.GetSessionVars().StmtCtx.OriginalSQL, sqlPrefixes, 10)
-	})
+	}
 	sessVars := sctx.GetSessionVars()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -550,9 +550,9 @@ func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Nod
 	sctx.GetSessionVars().MapScalarSubQ = nil
 	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 
-	failpoint.Inject("mockRandomPlanID", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockRandomPlanID")); _err_ == nil {
 		sctx.GetSessionVars().PlanID.Store(rand.Int31n(1000)) // nolint:gosec
-	})
+	}
 
 	// reset fields about rewrite
 	sctx.GetSessionVars().RewritePhaseInfo.Reset()
@@ -621,12 +621,63 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 	return nil, "", "", nil
 }
 
+// ExtractSelectAndNormalizeDigestForBinding extract the select statement and normalize it with additional binding specific rules
+func ExtractSelectAndNormalizeDigestForBinding(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error) {
+	switch x := stmtNode.(type) {
+	case *ast.ExplainStmt:
+		// This function is only used to find bind record.
+		// For some SQLs, such as `explain select * from t`, they will be entered here many times,
+		// but some of them do not want to obtain bind record.
+		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
+		// For these cases, we need return "" as normalize SQL and hash.
+		if len(x.Text()) == 0 {
+			return x.Stmt, "", "", nil
+		}
+		switch x.Stmt.(type) {
+		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
+			normalizeSQL := parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
+			normalizeSQL = core.EraseLastSemicolonInSQL(normalizeSQL)
+			hash := parser.DigestNormalized(normalizeSQL)
+			return x.Stmt, normalizeSQL, hash.String(), nil
+		case *ast.SetOprStmt:
+			core.EraseLastSemicolon(x)
+			var normalizeExplainSQL string
+			if specifiledDB != "" {
+				normalizeExplainSQL = parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
+			} else {
+				normalizeExplainSQL = parser.NormalizeForBinding(x.Text())
+			}
+			idx := strings.Index(normalizeExplainSQL, "select")
+			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")
+			if parenthesesIdx != -1 && parenthesesIdx < idx {
+				idx = parenthesesIdx
+			}
+			normalizeSQL := normalizeExplainSQL[idx:]
+			hash := parser.DigestNormalized(normalizeSQL)
+			return x.Stmt, normalizeSQL, hash.String(), nil
+		}
+	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
+		core.EraseLastSemicolon(x)
+		// This function is only used to find bind record.
+		// For some SQLs, such as `explain select * from t`, they will be entered here many times,
+		// but some of them do not want to obtain bind record.
+		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
+		// For these cases, we need return "" as normalize SQL and hash.
+		if len(x.Text()) == 0 {
+			return x, "", "", nil
+		}
+		normalizedSQL, hash := parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
+		return x, normalizedSQL, hash.String(), nil
+	}
+	return nil, "", "", nil
+}
+
 func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRecord, string, error) {
 	// When the domain is initializing, the bind will be nil.
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, "", nil
 	}
-	stmtNode, normalizedSQL, hash, err := ExtractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB)
+	stmtNode, normalizedSQL, hash, err := ExtractSelectAndNormalizeDigestForBinding(stmt, ctx.GetSessionVars().CurrentDB)
 	if err != nil || stmtNode == nil {
 		return nil, "", err
 	}

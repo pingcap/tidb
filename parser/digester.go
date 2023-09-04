@@ -90,6 +90,18 @@ func Normalize(sql string) (result string) {
 	return
 }
 
+// Normalize generates the normalized statements for binding
+// it will get normalized form of statement text
+// which removes general property of a statement but keeps specific property.
+//
+// for example: Normalize('select 1 from b where a = 1') => 'select ? from b where a = ?'
+func NormalizeForBinding(sql string) (result string) {
+	d := digesterPool.Get().(*sqlDigester)
+	result = d.doNormalizeForBinding(sql, false)
+	digesterPool.Put(d)
+	return
+}
+
 // NormalizeKeepHint generates the normalized statements, but keep the hints.
 // it will get normalized form of statement text with hints.
 // which removes general property of a statement but keeps specific property.
@@ -106,6 +118,14 @@ func NormalizeKeepHint(sql string) (result string) {
 func NormalizeDigest(sql string) (normalized string, digest *Digest) {
 	d := digesterPool.Get().(*sqlDigester)
 	normalized, digest = d.doNormalizeDigest(sql)
+	digesterPool.Put(d)
+	return
+}
+
+// NormalizeDigestForBinding combines Normalize and DigestNormalized into one method, with additional binding rules
+func NormalizeDigestForBinding(sql string) (normalized string, digest *Digest) {
+	d := digesterPool.Get().(*sqlDigester)
+	normalized, digest = d.doNormalizeDigestForBinding(sql)
 	digesterPool.Put(d)
 	return
 }
@@ -156,8 +176,26 @@ func (d *sqlDigester) doNormalize(sql string, keepHint bool) (result string) {
 	return
 }
 
+func (d *sqlDigester) doNormalizeForBinding(sql string, keepHint bool) (result string) {
+	d.normalizeForBinding(sql, keepHint)
+	result = d.buffer.String()
+	d.buffer.Reset()
+	return
+}
+
 func (d *sqlDigester) doNormalizeDigest(sql string) (normalized string, digest *Digest) {
 	d.normalize(sql, false)
+	normalized = d.buffer.String()
+	d.hasher.Write(d.buffer.Bytes())
+	d.buffer.Reset()
+	digest = NewDigest(d.hasher.Sum(nil))
+	d.hasher.Reset()
+	return
+}
+
+// doNormalizeDigestForBinding generate digest for normalized string with additional binding rules
+func (d *sqlDigester) doNormalizeDigestForBinding(sql string) (normalized string, digest *Digest) {
+	d.normalizeForBinding(sql, false)
 	normalized = d.buffer.String()
 	d.hasher.Write(d.buffer.Bytes())
 	d.buffer.Reset()
@@ -193,6 +231,64 @@ func (d *sqlDigester) normalize(sql string, keepHint bool) {
 		}
 
 		d.reduceLit(&currTok)
+
+		if currTok.tok == identifier {
+			if strings.HasPrefix(currTok.lit, "_") {
+				_, err := charset.GetCharsetInfo(currTok.lit[1:])
+				if err == nil {
+					currTok.tok = underscoreCS
+					goto APPEND
+				}
+			}
+
+			if tok1 := d.lexer.isTokenIdentifier(currTok.lit, pos.Offset); tok1 != 0 {
+				currTok.tok = tok1
+			}
+		}
+	APPEND:
+		d.tokens.pushBack(currTok)
+	}
+	d.lexer.reset("")
+	for i, token := range d.tokens {
+		if i > 0 {
+			d.buffer.WriteRune(' ')
+		}
+		if token.tok == singleAtIdentifier {
+			d.buffer.WriteString("@")
+			d.buffer.WriteString(token.lit)
+		} else if token.tok == underscoreCS {
+			d.buffer.WriteString("(_charset)")
+		} else if token.tok == identifier || token.tok == quotedIdentifier {
+			d.buffer.WriteByte('`')
+			d.buffer.WriteString(token.lit)
+			d.buffer.WriteByte('`')
+		} else {
+			d.buffer.WriteString(token.lit)
+		}
+	}
+	d.tokens.reset()
+}
+
+// Normalize the sql command with additional binding specific rules
+func (d *sqlDigester) normalizeForBinding(sql string, keepHint bool) {
+	d.lexer.reset(sql)
+	d.lexer.setKeepHint(keepHint)
+	for {
+		tok, pos, lit := d.lexer.scan()
+		if tok == invalid {
+			break
+		}
+		if pos.Offset == len(sql) || (pos.Offset == len(sql)-1 && sql[pos.Offset] == ';') {
+			break
+		}
+		currTok := token{tok, strings.ToLower(lit)}
+
+		if !keepHint && d.reduceOptimizerHint(&currTok) {
+			continue
+		}
+
+		d.reduceLit(&currTok)
+		// Binding specific rules: IN (Lit) => IN ( ... ) #44298
 		d.reduceInListWithSingleLiteral(&currTok)
 
 		if currTok.tok == identifier {
@@ -335,10 +431,14 @@ func (d *sqlDigester) isGenericLists(last4 []token) bool {
 	return true
 }
 
+// IN (lit) => IN (...) Issue: #44298
 func (d *sqlDigester) reduceInListWithSingleLiteral(currTok *token) {
-	// IN (lit) => IN (...)
 	last3 := d.tokens.back(3)
-	if d.isSingleLiteralInList(last3, currTok) {
+	if len(last3) == 3 &&
+		d.isInKeyword(last3[0]) &&
+		d.isLeftParen(last3[1]) &&
+		last3[2].tok == genericSymbol &&
+		d.isRightParen(*currTok) {
 		d.tokens.popBack(1)
 		d.tokens.pushBack(token{genericSymbolList, "..."})
 		return

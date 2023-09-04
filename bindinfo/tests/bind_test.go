@@ -455,8 +455,16 @@ func TestBindingInListWithSingleLiteral(t *testing.T) {
 	require.Equal(t, "t:ib", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	require.True(t, tk.MustUseIndex(sqlcmd, "ib(b)"))
 
+	rs, err := tk.Exec("select @@last_plan_from_binding")
+	require.NoError(t, err)
+	chk := rs.NewChunk(nil)
+	err = rs.Next(context.TODO(), chk)
+	require.NoError(t, err)
+	useBindingFlag := chk.Column(0).GetInt64(0)
+	require.Equal(t, int64(1), useBindingFlag)
+
 	// Normalize
-	sql, hash := parser.NormalizeDigest("select a, b from test . t where a in (1)")
+	sql, hash := parser.NormalizeDigestForBinding("select a, b from test . t where a in (1)")
 
 	bindData := dom.BindHandle().GetBindRecord(hash.String(), sql, "test")
 	require.NotNil(t, bindData)
