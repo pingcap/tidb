@@ -519,6 +519,20 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 	return &kv.Entry{Key: newKey, Value: result.NewValue}, nil
 }
 
+func (sr *SchemasReplace) rewriteEntryForAutoIncrementIDKey(e *kv.Entry, cf string) (*kv.Entry, error) {
+	newKey, err := sr.rewriteKeyForTable(
+		e.Key,
+		cf,
+		meta.ParseAutoIncrementIDKey,
+		meta.AutoIncrementIDKey,
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return &kv.Entry{Key: newKey, Value: e.Value}, nil
+}
+
 func (sr *SchemasReplace) rewriteEntryForAutoTableIDKey(e *kv.Entry, cf string) (*kv.Entry, error) {
 	newKey, err := sr.rewriteKeyForTable(
 		e.Key,
@@ -652,6 +666,8 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 	}
 	if meta.IsTableKey(rawKey.Field) {
 		return sr.rewriteEntryForTable(e, cf)
+	} else if meta.IsAutoIncrementIDKey(rawKey.Field) {
+		return sr.rewriteEntryForAutoIncrementIDKey(e, cf)
 	} else if meta.IsAutoTableIDKey(rawKey.Field) {
 		return sr.rewriteEntryForAutoTableIDKey(e, cf)
 	} else if meta.IsSequenceKey(rawKey.Field) {

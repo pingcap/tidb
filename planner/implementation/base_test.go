@@ -17,6 +17,7 @@ package implementation
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/stretchr/testify/require"
@@ -26,6 +27,9 @@ import (
 func TestBaseImplementation(t *testing.T) {
 	defer view.Stop()
 	sctx := plannercore.MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
 	p := plannercore.PhysicalLimit{}.Init(sctx, nil, 0, nil)
 	impl := &baseImpl{plan: p}
 	require.Equal(t, p, impl.GetPlan())

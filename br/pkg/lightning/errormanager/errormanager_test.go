@@ -15,18 +15,26 @@
 package errormanager
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/base64"
+	"fmt"
 	"io"
 	"math/rand"
 	"strconv"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	tidbkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
@@ -149,7 +157,7 @@ func (c mockConn) QueryContext(_ context.Context, query string, args []driver.Na
 	return &mockRows{start: start, end: end}, nil
 }
 
-func TestResolveAllConflictKeys(t *testing.T) {
+func TestRemoveAllConflictKeys(t *testing.T) {
 	const totalRows = int64(1 << 18)
 	driverName := "errmgr-mock-" + strconv.Itoa(rand.Int())
 	sql.Register(driverName, mockDriver{totalRows: totalRows})
@@ -166,8 +174,8 @@ func TestResolveAllConflictKeys(t *testing.T) {
 	require.NoError(t, err)
 
 	resolved := atomic.NewInt64(0)
-	pool := utils.NewWorkerPool(16, "resolve duplicate rows")
-	err = em.ResolveAllConflictKeys(
+	pool := utils.NewWorkerPool(16, "resolve duplicate rows by remove")
+	err = em.RemoveAllConflictKeys(
 		ctx, "test", pool,
 		func(ctx context.Context, handleRows [][2][]byte) error {
 			resolved.Add(int64(len(handleRows)))
@@ -176,6 +184,142 @@ func TestResolveAllConflictKeys(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, totalRows, resolved.Load())
+}
+
+func TestReplaceConflictKeysIndexKvChecking(t *testing.T) {
+	column1 := &model.ColumnInfo{
+		ID:           1,
+		Name:         model.NewCIStr("a"),
+		Offset:       0,
+		DefaultValue: 0,
+		FieldType:    *types.NewFieldType(mysql.TypeLong),
+		Hidden:       true,
+		State:        model.StatePublic,
+	}
+	column1.AddFlag(mysql.PriKeyFlag)
+
+	column2 := &model.ColumnInfo{
+		ID:           2,
+		Name:         model.NewCIStr("b"),
+		Offset:       1,
+		DefaultValue: 0,
+		FieldType:    *types.NewFieldType(mysql.TypeLong),
+		Hidden:       true,
+		State:        model.StatePublic,
+	}
+	column2.AddFlag(mysql.UniqueKeyFlag)
+
+	column3 := &model.ColumnInfo{
+		ID:           3,
+		Name:         model.NewCIStr("c"),
+		Offset:       2,
+		DefaultValue: 0,
+		FieldType:    *types.NewFieldType(mysql.TypeBlob),
+		Hidden:       true,
+		State:        model.StatePublic,
+	}
+
+	index := &model.IndexInfo{
+		ID:    1,
+		Name:  model.NewCIStr("uni_b"),
+		Table: model.NewCIStr(""),
+		Columns: []*model.IndexColumn{
+			{
+				Name:   model.NewCIStr("b"),
+				Offset: 1,
+				Length: -1,
+			}},
+		Unique:  true,
+		Primary: false,
+		State:   model.StatePublic,
+	}
+
+	table := &model.TableInfo{
+		ID:         75,
+		Name:       model.NewCIStr("a"),
+		Charset:    "utf8mb4",
+		Collate:    "utf8mb4_bin",
+		Columns:    []*model.ColumnInfo{column1, column2, column3},
+		Indices:    []*model.IndexInfo{index},
+		PKIsHandle: true,
+		State:      model.StatePublic,
+	}
+
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), table)
+	require.NoError(t, err)
+
+	db, mockDB, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mockDB.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_task_info`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v1.*").
+		WillReturnResult(sqlmock.NewResult(2, 1))
+	rawKeyBase64 := "dIAAAAAAAABLX2mAAAAAAAAAAQOAAAAAAAAABg=="
+	rawKey, err := base64.StdEncoding.DecodeString(rawKeyBase64)
+	require.NoError(t, err)
+	rawValue1Base64 := "AAAAAAAAAAE="
+	rawValue1, err := base64.StdEncoding.DecodeString(rawValue1Base64)
+	require.NoError(t, err)
+	rawValue2Base64 := "AAAAAAAAAAI="
+	rawValue2, err := base64.StdEncoding.DecodeString(rawValue2Base64)
+	require.NoError(t, err)
+	rawHandle1Base64 := "dIAAAAAAAABLX3KAAAAAAAAAAQ=="
+	rawHandle1, err := base64.StdEncoding.DecodeString(rawHandle1Base64)
+	require.NoError(t, err)
+	rawHandle2Base64 := "dIAAAAAAAABLX3KAAAAAAAAAAg=="
+	rawHandle2, err := base64.StdEncoding.DecodeString(rawHandle2Base64)
+	require.NoError(t, err)
+	mockDB.ExpectQuery("\\QSELECT raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v1 WHERE table_name = ? AND index_name <> 'PRIMARY' ORDER BY raw_key\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "index_name", "raw_value", "raw_handle"}).
+			AddRow(rawKey, "uni_b", rawValue1, rawHandle1).
+			AddRow(rawKey, "uni_b", rawValue2, rawHandle2))
+	rawRowBase64 := "gAACAAAAAgMBAAYABjIuY3N2"
+	rawRow, err := base64.StdEncoding.DecodeString(rawRowBase64)
+	require.NoError(t, err)
+
+	cfg := config.NewConfig()
+	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
+	cfg.App.TaskInfoSchemaName = "lightning_task_info"
+	em := New(db, cfg, log.L())
+	err = em.Init(ctx)
+	require.NoError(t, err)
+
+	fnGetLatestCount := atomic.NewInt32(0)
+	fnDeleteKeyCount := atomic.NewInt32(0)
+	pool := utils.NewWorkerPool(16, "resolve duplicate rows by replace")
+	err = em.ReplaceConflictKeys(
+		ctx, tbl, "test", pool,
+		func(ctx context.Context, key []byte) ([]byte, error) {
+			fnGetLatestCount.Add(1)
+			switch {
+			case bytes.Equal(key, rawKey):
+				return rawValue1, nil
+			case bytes.Equal(key, rawHandle2):
+				return rawRow, nil
+			default:
+				return nil, fmt.Errorf("key %v is not expected", key)
+			}
+		},
+		func(ctx context.Context, key []byte) error {
+			fnDeleteKeyCount.Add(1)
+			if !bytes.Equal(key, rawHandle2) {
+				return fmt.Errorf("key %v is not expected", key)
+			}
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, int32(3), fnGetLatestCount.Load())
+	require.Equal(t, int32(1), fnDeleteKeyCount.Load())
+	err = mockDB.ExpectationsWereMet()
+	require.NoError(t, err)
 }
 
 func TestErrorMgrHasError(t *testing.T) {

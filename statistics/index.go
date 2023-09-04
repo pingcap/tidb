@@ -33,9 +33,40 @@ type Index struct {
 	Info           *model.IndexInfo
 	Histogram
 	StatsLoadedStatus
-	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
-	Flag       int64
+	StatsVer int64 // StatsVer is the version of the current stats, used to maintain compatibility
+	Flag     int64
+	// PhysicalID is the physical table id,
+	// or it could possibly be -1, which means "stats not available".
+	// The -1 case could happen in a pseudo stats table, and in this case, this stats should not trigger stats loading.
 	PhysicalID int64
+}
+
+// Copy copies the index.
+func (idx *Index) Copy() *Index {
+	if idx == nil {
+		return nil
+	}
+	nc := &Index{
+		PhysicalID: idx.PhysicalID,
+		Flag:       idx.Flag,
+		StatsVer:   idx.StatsVer,
+	}
+	idx.LastAnalyzePos.Copy(&nc.LastAnalyzePos)
+	if idx.CMSketch != nil {
+		nc.CMSketch = idx.CMSketch.Copy()
+	}
+	if idx.TopN != nil {
+		nc.TopN = idx.TopN.Copy()
+	}
+	if idx.FMSketch != nil {
+		nc.FMSketch = idx.FMSketch.Copy()
+	}
+	if idx.Info != nil {
+		nc.Info = idx.Info.Clone()
+	}
+	nc.Histogram = *idx.Histogram.Copy()
+	nc.StatsLoadedStatus = idx.StatsLoadedStatus.Copy()
+	return nc
 }
 
 // ItemID implements TableCacheItem
@@ -99,9 +130,7 @@ func (idx *Index) TotalRowCount() float64 {
 
 // IsInvalid checks if this index is invalid.
 func (idx *Index) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) {
-	if !collPseudo {
-		idx.CheckStats()
-	}
+	idx.CheckStats()
 	var totalCount float64
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)

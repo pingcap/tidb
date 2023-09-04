@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
@@ -65,7 +66,9 @@ func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 
 func TestParseErrorWarn(t *testing.T) {
 	ctx := core.MockContext()
-
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
 	nodes, err := Parse(ctx, "select /*+ adf */ 1")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)

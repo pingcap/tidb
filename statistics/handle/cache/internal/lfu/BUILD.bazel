@@ -19,6 +19,7 @@ go_library(
         "//util/memory",
         "@com_github_dgraph_io_ristretto//:ristretto",
         "@org_golang_x_exp//maps",
+        "@org_golang_x_exp//rand",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -30,7 +31,7 @@ go_test(
     embed = [":lfu"],
     flaky = True,
     race = "on",
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         "//statistics",
         "//statistics/handle/cache/internal/testutil",

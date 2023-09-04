@@ -1,5 +1,4 @@
 set tidb_cost_model_version=1;
-use test;
 drop table if exists t1, t2;
 create table t1 (c1 int primary key, c2 int, index c2 (c2));
 create table t2 (c1 int unique, c2 int);
