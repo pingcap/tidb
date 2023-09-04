@@ -5,4 +5,8 @@ go_library(
     srcs = ["agg_spill_util.go"],
     importpath = "github.com/pingcap/tidb/util/agg_spill",
     visibility = ["//visibility:public"],
+    deps = [
+        "//parser/mysql",
+        "//util/dbterror",
+    ],
 )

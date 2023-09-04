@@ -50,6 +50,7 @@ go_library(
         "//parser/terror",
         "//parser/types",
         "//sessionctx/stmtctx",
+        "//util/agg_spill",
         "//util/collate",
         "//util/dbterror",
         "//util/hack",
