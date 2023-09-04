@@ -114,7 +114,7 @@ func TestPlanErr(t *testing.T) {
 
 	RegisterTaskMeta(&m, &planErrDispatcher{0})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", t, &m)
+	DispatchTaskAndCheckSuccess("key1", false, t, &m)
 	distContext.Close()
 }
 
@@ -125,7 +125,7 @@ func TestRevertPlanErr(t *testing.T) {
 
 	RegisterTaskMeta(&m, &planErrDispatcher{0})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", t, &m)
+	DispatchTaskAndCheckSuccess("key1", false, t, &m)
 	distContext.Close()
 }
 
@@ -136,6 +136,6 @@ func TestPlanNotRetryableErr(t *testing.T) {
 
 	RegisterTaskMeta(&m, &planNotRetryableErrDispatcher{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateFailed)
+	DispatchTaskAndCheckState("key1", false, t, &m, proto.TaskStateFailed)
 	distContext.Close()
 }

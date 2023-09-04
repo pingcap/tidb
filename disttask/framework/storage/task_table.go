@@ -104,17 +104,19 @@ func ExecSQL(ctx context.Context, se sessionctx.Context, sql string, args ...int
 // row2GlobeTask converts a row to a global task.
 func row2GlobeTask(r chunk.Row) *proto.Task {
 	task := &proto.Task{
-		ID:           r.GetInt64(0),
-		Key:          r.GetString(1),
-		Type:         r.GetString(2),
-		DispatcherID: r.GetString(3),
-		State:        r.GetString(4),
-		Meta:         r.GetBytes(7),
-		Concurrency:  uint64(r.GetInt64(8)),
-		Step:         r.GetInt64(9),
+		ID:                    r.GetInt64(0),
+		Key:                   r.GetString(1),
+		Type:                  r.GetString(2),
+		DispatcherID:          r.GetString(3),
+		State:                 r.GetString(4),
+		Meta:                  r.GetBytes(7),
+		Concurrency:           uint64(r.GetInt64(8)),
+		Step:                  r.GetInt64(9),
+		SubState:              r.GetString(10),
+		EnableDynamicDispatch: r.GetInt64(11) == 1,
 	}
-	if !r.IsNull(10) {
-		errBytes := r.GetBytes(10)
+	if !r.IsNull(12) {
+		errBytes := r.GetBytes(12)
 		stdErr := errors.Normalize("")
 		err := stdErr.UnmarshalJSON(errBytes)
 		if err != nil {
@@ -184,21 +186,21 @@ func (stm *TaskManager) executeSQLWithNewSession(ctx context.Context, sql string
 }
 
 // AddNewGlobalTask adds a new task to global task table.
-func (stm *TaskManager) AddNewGlobalTask(key, tp string, concurrency int, meta []byte) (taskID int64, err error) {
+func (stm *TaskManager) AddNewGlobalTask(key, tp string, concurrency int, meta []byte, enableDynamicDispatch bool) (taskID int64, err error) {
 	err = stm.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
-		taskID, err2 = stm.AddGlobalTaskWithSession(se, key, tp, concurrency, meta)
+		taskID, err2 = stm.AddGlobalTaskWithSession(se, key, tp, concurrency, meta, enableDynamicDispatch)
 		return err2
 	})
 	return
 }
 
 // AddGlobalTaskWithSession adds a new task to global task table with session.
-func (stm *TaskManager) AddGlobalTaskWithSession(se sessionctx.Context, key, tp string, concurrency int, meta []byte) (taskID int64, err error) {
+func (stm *TaskManager) AddGlobalTaskWithSession(se sessionctx.Context, key, tp string, concurrency int, meta []byte, enableDynamic bool) (taskID int64, err error) {
 	_, err = ExecSQL(stm.ctx, se,
-		`insert into mysql.tidb_global_task(task_key, type, state, concurrency, step, meta, state_update_time)
-		values (%?, %?, %?, %?, %?, %?, %?)`,
-		key, tp, proto.TaskStatePending, concurrency, proto.StepInit, meta, time.Now().UTC().String())
+		`insert into mysql.tidb_global_task(task_key, type, state, concurrency, step, meta, state_update_time, substate, enable_dynamic_dispatch)
+		values (%?, %?, %?, %?, %?, %?, %?, %?, %?)`,
+		key, tp, proto.TaskStatePending, concurrency, proto.StepInit, meta, time.Now().UTC().String(), proto.TaskSubStateNormal, enableDynamic)
 	if err != nil {
 		return 0, err
 	}
@@ -216,7 +218,7 @@ func (stm *TaskManager) AddGlobalTaskWithSession(se sessionctx.Context, key, tp 
 
 // GetNewGlobalTask get a new task from global task table, it's used by dispatcher only.
 func (stm *TaskManager) GetNewGlobalTask() (task *proto.Task, err error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where state = %? limit 1", proto.TaskStatePending)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, substate, enable_dynamic_dispatch, error from mysql.tidb_global_task where state = %? limit 1", proto.TaskStatePending)
 	if err != nil {
 		return task, err
 	}
@@ -234,7 +236,7 @@ func (stm *TaskManager) GetGlobalTasksInStates(states ...interface{}) (task []*p
 		return task, nil
 	}
 
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", states...)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, substate, enable_dynamic_dispatch, error from mysql.tidb_global_task where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", states...)
 	if err != nil {
 		return task, err
 	}
@@ -247,7 +249,7 @@ func (stm *TaskManager) GetGlobalTasksInStates(states ...interface{}) (task []*p
 
 // GetGlobalTaskByID gets the task by the global task ID.
 func (stm *TaskManager) GetGlobalTaskByID(taskID int64) (task *proto.Task, err error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where id = %?", taskID)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, substate, enable_dynamic_dispatch, error from mysql.tidb_global_task where id = %?", taskID)
 	if err != nil {
 		return task, err
 	}
@@ -260,7 +262,7 @@ func (stm *TaskManager) GetGlobalTaskByID(taskID int64) (task *proto.Task, err e
 
 // GetGlobalTaskByKey gets the task by the task key
 func (stm *TaskManager) GetGlobalTaskByKey(key string) (task *proto.Task, err error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where task_key = %?", key)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, substate, enable_dynamic_dispatch, error from mysql.tidb_global_task where task_key = %?", key)
 	if err != nil {
 		return task, err
 	}
@@ -515,13 +517,12 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, prevState string) (bool, error) {
 	retryable := true
 	err := stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
-		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %?, dispatching = %? where id = %? and state = %?",
-			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Meta, serializeErr(gTask.Error), gTask.Dispatching, gTask.ID, prevState)
+		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %?, substate = %?, enable_dynamic_dispatch = %? where id = %? and state = %?",
+			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Meta, serializeErr(gTask.Error), gTask.SubState, gTask.EnableDynamicDispatch, gTask.ID, prevState)
 		if err != nil {
 			return err
 		}
-
-		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 && !gTask.Dispatching {
+		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 && gTask.SubState != proto.TaskSubStateDispatching {
 			retryable = false
 			return errors.New("invalid task state transform, state already changed")
 		}

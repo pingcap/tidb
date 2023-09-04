@@ -15,9 +15,11 @@
 package framework_test
 
 import (
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 	"sync"
 	"testing"
 )
@@ -28,6 +30,18 @@ func TestFrameworkDynamicBasic(t *testing.T) {
 	var m sync.Map
 	RegisterTaskMeta(&m, &testDispatcher{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", t, &m)
+	DispatchTaskAndCheckSuccess("key1", true, t, &m)
+	distContext.Close()
+}
+
+func TestFrameworkDynamicHA(t *testing.T) {
+	defer dispatcher.ClearTaskDispatcher()
+	defer scheduler.ClearSchedulers()
+	var m sync.Map
+	RegisterTaskMeta(&m, &testDispatcher{})
+	distContext := testkit.NewDistExecutionContext(t, 2)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockDynamicDispatchErr", "5*return()"))
+	DispatchTaskAndCheckSuccess("key1", true, t, &m)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockDynamicDispatchErr"))
 	distContext.Close()
 }

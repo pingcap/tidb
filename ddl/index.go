@@ -1897,7 +1897,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 
 	g.Go(func() error {
 		defer close(done)
-		return handle.SubmitAndRunGlobalTask(ctx, taskKey, taskType, distPhysicalTableConcurrency, metaData)
+		return handle.SubmitAndRunGlobalTask(ctx, taskKey, taskType, distPhysicalTableConcurrency, metaData, false)
 	})
 
 	g.Go(func() error {

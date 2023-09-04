@@ -46,6 +46,14 @@ const (
 	TaskStateReverted      = "reverted"
 )
 
+// task substate
+// when global task start to dispatch subtasks to every nodes,
+// the substate will transfer to dispatching.
+const (
+	TaskSubStateDispatching = "dispatching"
+	TaskSubStateNormal      = "normal"
+)
+
 // TaskStep is the step of task.
 const (
 	StepInit int64 = 0
@@ -55,13 +63,13 @@ const (
 
 // Task represents the task of distributed framework.
 type Task struct {
-	ID            int64
-	Key           string
-	Type          string
-	State         string
-	Step          int64
-	EnableDynamic bool
-	Dispatching   bool
+	ID                    int64
+	Key                   string
+	Type                  string
+	State                 string
+	Step                  int64
+	EnableDynamicDispatch bool
+	SubState              string
 	// DispatcherID is not used now.
 	DispatcherID    string
 	Concurrency     uint64
