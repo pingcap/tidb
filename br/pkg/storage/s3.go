@@ -37,6 +37,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var HardcodedS3ChunkSize = 50 * 1024 * 1024
+
 const (
 	s3EndpointOption     = "s3.endpoint"
 	s3RegionOption       = "s3.region"
@@ -57,9 +59,7 @@ const (
 	// the maximum number of byte to read for seek.
 	maxSkipOffsetByRead = 1 << 16 // 64KB
 
-	// TODO make this configurable, 5 mb is a good minimum size but on low latency/high bandwidth network you can go a lot bigger
-	hardcodedS3ChunkSize = 5 * 1024 * 1024
-	defaultRegion        = "us-east-1"
+	defaultRegion = "us-east-1"
 	// to check the cloud type by endpoint tag.
 	domainAliyun = "aliyuncs.com"
 )
@@ -946,7 +946,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 	} else {
 		up := s3manager.NewUploaderWithClient(rs.svc, func(u *s3manager.Uploader) {
 			u.Concurrency = option.Concurrency
-			u.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * 8 * 1024 * 1024)
+			u.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * HardcodedS3ChunkSize)
 		})
 		rd, wd := io.Pipe()
 		upParams := &s3manager.UploadInput{
@@ -967,7 +967,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 		}()
 		uploader = s3Writer
 	}
-	uploaderWriter := newBufferedWriter(uploader, hardcodedS3ChunkSize, NoCompression)
+	uploaderWriter := newBufferedWriter(uploader, WriteBuffersize, NoCompression)
 	return uploaderWriter, nil
 }
 

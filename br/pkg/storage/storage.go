@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/request"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -215,4 +217,34 @@ func GetDefaultHttpClient(concurrency uint) *http.Client {
 func CloneDefaultHttpTransport() (*http.Transport, bool) {
 	transport, ok := http.DefaultTransport.(*http.Transport)
 	return transport.Clone(), ok
+}
+
+// GetMaxOffset returns the max offset of the file.
+func GetMaxOffset(ctx context.Context, storage ExternalStorage, name string) (n int, err error) {
+	s3storage, ok := storage.(*S3Storage)
+	if !ok {
+		return 0, errors.New("only support s3 storage")
+	}
+	output, err := s3storage.svc.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(s3storage.options.Bucket),
+		Key:    aws.String(s3storage.options.Prefix + name),
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(*output.ContentLength), nil
+}
+
+// ReadDataInRange reads data from storage in range [start, end).
+func ReadDataInRange(ctx context.Context, storage ExternalStorage, name string, start, end int64, p []byte) (n int, err error) {
+	s3storage, ok := storage.(*S3Storage)
+	if !ok {
+		return 0, errors.New("only support s3 storage")
+	}
+	rd, _, err := s3storage.open(ctx, name, start, end)
+	if err != nil {
+		return 0, err
+	}
+	defer rd.Close()
+	return io.ReadFull(rd, p)
 }

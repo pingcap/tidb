@@ -37,7 +37,7 @@ func (w *withCompression) Create(ctx context.Context, name string, _ *WriterOpti
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	compressedWriter := newBufferedWriter(writer, hardcodedS3ChunkSize, w.compressType)
+	compressedWriter := newBufferedWriter(writer, HardcodedS3ChunkSize, w.compressType)
 	return compressedWriter, nil
 }
 
