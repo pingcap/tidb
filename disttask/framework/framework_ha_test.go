@@ -30,12 +30,12 @@ import (
 
 type haTestFlowHandle struct{}
 
-var _ dispatcher.TaskFlowHandle = (*haTestFlowHandle)(nil)
+var _ dispatcher.Dispatcher = (*haTestFlowHandle)(nil)
 
-func (*haTestFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
+func (*haTestFlowHandle) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (*haTestFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (*haTestFlowHandle) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State == proto.TaskStatePending {
 		gTask.Step = proto.StepOne
 		return [][]byte{
@@ -47,7 +47,7 @@ func (*haTestFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskH
 			[]byte("task6"),
 			[]byte("task7"),
 			[]byte("task8"),
-			[]byte("task9"),
+		[]byte("task9"),
 			[]byte("task10"),
 		}, nil
 	}
@@ -64,7 +64,7 @@ func (*haTestFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskH
 	return nil, nil
 }
 
-func (*haTestFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+func (*haTestFlowHandle) OnErrStage(ctx context.Context, h dispatcher.TaskHandle, gTask *proto.Task, receiveErr []error) (subtaskMeta []byte, err error) {
 	return nil, nil
 }
 
@@ -77,8 +77,8 @@ func (*haTestFlowHandle) IsRetryableErr(error) bool {
 }
 
 func RegisterHATaskMeta(m *sync.Map) {
-	dispatcher.ClearTaskFlowHandle()
-	dispatcher.RegisterTaskFlowHandle(proto.TaskTypeExample, &haTestFlowHandle{})
+	dispatcher.ClearTaskDispatcher()
+	dispatcher.RegisterTaskDispatcher(proto.TaskTypeExample, &haTestFlowHandle{})
 	scheduler.ClearSchedulers()
 	scheduler.RegisterTaskType(proto.TaskTypeExample)
 	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
@@ -96,7 +96,7 @@ func RegisterHATaskMeta(m *sync.Map) {
 }
 
 func TestHABasic(t *testing.T) {
-	defer dispatcher.ClearTaskFlowHandle()
+	defer dispatcher.ClearTaskDispatcher()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 	RegisterHATaskMeta(&m)
@@ -112,7 +112,7 @@ func TestHABasic(t *testing.T) {
 }
 
 func TestHAManyNodes(t *testing.T) {
-	defer dispatcher.ClearTaskFlowHandle()
+	defer dispatcher.ClearTaskDispatcher()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 
@@ -129,7 +129,7 @@ func TestHAManyNodes(t *testing.T) {
 }
 
 func TestHAFailInDifferentStage(t *testing.T) {
-	defer dispatcher.ClearTaskFlowHandle()
+	defer dispatcher.ClearTaskDispatcher()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 
@@ -151,7 +151,7 @@ func TestHAFailInDifferentStage(t *testing.T) {
 }
 
 func TestHAFailInDifferentStageManyNodes(t *testing.T) {
-	defer dispatcher.ClearTaskFlowHandle()
+	defer dispatcher.ClearTaskDispatcher()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 
@@ -173,7 +173,7 @@ func TestHAFailInDifferentStageManyNodes(t *testing.T) {
 }
 
 func TestHAReplacedButRunning(t *testing.T) {
-	defer dispatcher.ClearTaskFlowHandle()
+	defer dispatcher.ClearTaskDispatcher()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 
@@ -186,7 +186,7 @@ func TestHAReplacedButRunning(t *testing.T) {
 }
 
 func TestHAReplacedButRunningManyNodes(t *testing.T) {
-	defer dispatcher.ClearTaskFlowHandle()
+	defer dispatcher.ClearTaskDispatcher()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 
