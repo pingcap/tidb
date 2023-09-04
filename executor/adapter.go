@@ -1564,7 +1564,7 @@ func (a *ExecStmt) LogHistoricalStats() {
 					estRows := plannercore.GetPhysicalPlanEstRowCount(pp)
 					actualRows := GetResultRowsCountV2(stmtCtx, pp.ID())
 					var Thres float64 = 1.0
-					if math.Abs(float64(actualRows)-estRows) > 2*Thres {
+					if actualRows >= 0 && math.Abs(float64(actualRows)-estRows) > 2*Thres {
 						succ, hashCode := SortAndGenMD5HashForConds(stmtCtx, x.Conditions)
 						if !succ {
 							break
@@ -1791,14 +1791,10 @@ func GetResultRowsCountV2(stmtCtx *stmtctx.StatementContext, planID int) int64 {
 	if runtimeStatsColl == nil {
 		return -1
 	}
-	if !runtimeStatsColl.ExistsCopStats(planID) {
-		return -1
-	}
 	copStats := runtimeStatsColl.GetCopStats(planID)
 	if copStats != nil {
 		return copStats.GetActRows()
 	} else {
-		logutil.BgLogger().Info("copStats is nil now")
 		return -1
 	}
 }
