@@ -181,10 +181,10 @@ func (e *AddExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	id, err := do.AddRunawayWatch(record)
-	req.AppendUint64(0, id)
 	if err != nil {
 		return err
 	}
+	req.AppendUint64(0, id)
 	return nil
 }
 
