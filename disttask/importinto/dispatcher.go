@@ -25,22 +25,19 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/disttask/framework/planner"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor/importer"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -220,6 +217,7 @@ func (dsp *importDispatcher) OnNextStage(ctx context.Context, handle dispatcher.
 		}
 	}()
 
+	var nextStep int64
 	switch gTask.Step {
 	case proto.StepInit:
 		if err := preProcess(ctx, handle, gTask, taskMeta, logger); err != nil {
@@ -228,49 +226,50 @@ func (dsp *importDispatcher) OnNextStage(ctx context.Context, handle dispatcher.
 		if err = startJob(ctx, handle, taskMeta); err != nil {
 			return nil, err
 		}
-		subtaskMetas, err := generateImportStepMetas(ctx, taskMeta)
-		if err != nil {
-			return nil, err
-		}
-		logger.Info("move to import step", zap.Any("subtask-count", len(subtaskMetas)))
-		metaBytes := make([][]byte, 0, len(subtaskMetas))
-		for _, subtaskMeta := range subtaskMetas {
-			bs, err := json.Marshal(subtaskMeta)
-			if err != nil {
-				return nil, err
-			}
-			metaBytes = append(metaBytes, bs)
-		}
-		gTask.Step = StepImport
-		return metaBytes, nil
+		logger.Info("move to import step")
+		nextStep = StepImport
 	case StepImport:
 		dsp.switchTiKV2NormalMode(ctx, gTask, logger)
 		failpoint.Inject("clearLastSwitchTime", func() {
 			dsp.lastSwitchTime.Store(time.Time{})
 		})
-		stepMeta, err2 := toPostProcessStep(handle, gTask, taskMeta)
-		if err2 != nil {
-			return nil, err2
-		}
 		if err = job2Step(ctx, taskMeta, importer.JobStepValidating); err != nil {
-			return nil, err
-		}
-		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result),
-			zap.Any("step-meta", stepMeta))
-		bs, err := json.Marshal(stepMeta)
-		if err != nil {
 			return nil, err
 		}
 		failpoint.Inject("failWhenDispatchPostProcessSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error after StepImport"))
 		})
-		gTask.Step = StepPostProcess
-		return [][]byte{bs}, nil
+		if err := updateResult(handle, gTask, taskMeta); err != nil {
+			return nil, err
+		}
+		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result))
+		nextStep = StepPostProcess
 	case StepPostProcess:
 		return nil, nil
 	default:
 		return nil, errors.Errorf("unknown step %d", gTask.Step)
 	}
+
+	previousSubtaskMetas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
+	if err != nil {
+		return nil, err
+	}
+	planCtx := planner.PlanCtx{Ctx: ctx, PreviousSubtaskMetas: previousSubtaskMetas}
+	logicalPlan := &LogicalPlan{}
+	if err := logicalPlan.FromTaskMeta(gTask.Meta); err != nil {
+		return nil, err
+	}
+	physicalPlan, err := logicalPlan.ToPhysicalPlan(planCtx)
+	if err != nil {
+		return nil, err
+	}
+	metaBytes, err := physicalPlan.ToSubtaskMetas(planCtx, nextStep)
+	if err != nil {
+		return nil, err
+	}
+	gTask.Step = nextStep
+	logger.Info("generate subtasks", zap.Int64("step", nextStep), zap.Int("subtask-count", len(metaBytes)))
+	return metaBytes, nil
 }
 
 func (dsp *importDispatcher) OnErrStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) ([]byte, error) {
@@ -446,24 +445,6 @@ func updateMeta(gTask *proto.Task, taskMeta *TaskMeta) error {
 	return nil
 }
 
-func buildController(taskMeta *TaskMeta) (*importer.LoadDataController, error) {
-	idAlloc := kv.NewPanickingAllocators(0)
-	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
-	if err != nil {
-		return nil, err
-	}
-
-	astArgs, err := importer.ASTArgsFromStmt(taskMeta.Stmt)
-	if err != nil {
-		return nil, err
-	}
-	controller, err := importer.NewLoadDataController(&taskMeta.Plan, tbl, astArgs)
-	if err != nil {
-		return nil, err
-	}
-	return controller, nil
-}
-
 // todo: converting back and forth, we should unify struct and remove this function later.
 func toChunkMap(engineCheckpoints map[int32]*checkpoints.EngineCheckpoint) map[int32][]Chunk {
 	chunkMap := make(map[int32][]Chunk, len(engineCheckpoints))
@@ -476,66 +457,23 @@ func toChunkMap(engineCheckpoints map[int32]*checkpoints.EngineCheckpoint) map[i
 	return chunkMap
 }
 
-func generateImportStepMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas []*ImportStepMeta, err error) {
-	var chunkMap map[int32][]Chunk
-	if len(taskMeta.ChunkMap) > 0 {
-		chunkMap = taskMeta.ChunkMap
-	} else {
-		controller, err2 := buildController(taskMeta)
-		if err2 != nil {
-			return nil, err2
-		}
-		if err2 = controller.InitDataFiles(ctx); err2 != nil {
-			return nil, err2
-		}
-
-		engineCheckpoints, err2 := controller.PopulateChunks(ctx)
-		if err2 != nil {
-			return nil, err2
-		}
-		chunkMap = toChunkMap(engineCheckpoints)
-	}
-	for id := range chunkMap {
-		if id == common.IndexEngineID {
-			continue
-		}
-		subtaskMeta := &ImportStepMeta{
-			ID:     id,
-			Chunks: chunkMap[id],
-		}
-		subtaskMetas = append(subtaskMetas, subtaskMeta)
-	}
-	return subtaskMetas, nil
-}
-
 // we will update taskMeta in place and make gTask.Meta point to the new taskMeta.
-func toPostProcessStep(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) (*PostProcessStepMeta, error) {
+func updateResult(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
 	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	subtaskMetas := make([]*ImportStepMeta, 0, len(metas))
 	for _, bs := range metas {
 		var subtaskMeta ImportStepMeta
 		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
-			return nil, err
+			return err
 		}
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
-	var localChecksum verify.KVChecksum
-	maxIDs := make(map[autoid.AllocatorType]int64, 3)
 	columnSizeMap := make(map[int64]int64)
 	for _, subtaskMeta := range subtaskMetas {
-		checksum := verify.MakeKVChecksum(subtaskMeta.Checksum.Size, subtaskMeta.Checksum.KVs, subtaskMeta.Checksum.Sum)
-		localChecksum.Add(&checksum)
-
-		for key, val := range subtaskMeta.MaxIDs {
-			if maxIDs[key] < val {
-				maxIDs[key] = val
-			}
-		}
-
 		taskMeta.Result.ReadRowCnt += subtaskMeta.Result.ReadRowCnt
 		taskMeta.Result.LoadedRowCnt += subtaskMeta.Result.LoadedRowCnt
 		for key, val := range subtaskMeta.Result.ColSizeMap {
@@ -543,17 +481,7 @@ func toPostProcessStep(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta
 		}
 	}
 	taskMeta.Result.ColSizeMap = columnSizeMap
-	if err2 := updateMeta(gTask, taskMeta); err2 != nil {
-		return nil, err2
-	}
-	return &PostProcessStepMeta{
-		Checksum: Checksum{
-			Size: localChecksum.SumSize(),
-			KVs:  localChecksum.SumKVS(),
-			Sum:  localChecksum.Sum(),
-		},
-		MaxIDs: maxIDs,
-	}, nil
+	return updateMeta(gTask, taskMeta)
 }
 
 func startJob(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta) error {
