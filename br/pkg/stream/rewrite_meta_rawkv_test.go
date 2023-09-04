@@ -82,9 +82,6 @@ func TestRewriteValueForDB(t *testing.T) {
 	require.Equal(t, newId, sr.DbMap[dbID].NewDBID)
 }
 
-<<<<<<< HEAD
-func TestRewriteValueForTable(t *testing.T) {
-=======
 func TestRewriteKeyForTable(t *testing.T) {
 	var (
 		dbID    int64  = 1
@@ -164,7 +161,6 @@ func TestRewriteKeyForTable(t *testing.T) {
 }
 
 func TestRewriteTableInfo(t *testing.T) {
->>>>>>> e82519e79da (restore: rewrite auto increment id after pitr (#46521))
 	var (
 		dbId      int64 = 40
 		tableID   int64 = 100
