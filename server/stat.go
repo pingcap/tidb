@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/server/handler/tikvhandler"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -36,20 +37,20 @@ var defaultStatus = map[string]*variable.StatusVal{
 	upTime:          {Scope: variable.ScopeGlobal, Value: 0},
 }
 
-// GetScope gets the status variables scope.
-func (s *Server) GetScope(status string) variable.ScopeFlag {
+// GetScope gets the Status variables scope.
+func (*Server) GetScope(_ string) variable.ScopeFlag {
 	return variable.DefaultStatusVarScopeFlag
 }
 
 // Stats returns the server statistics.
-func (s *Server) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
+func (s *Server) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{}, len(defaultStatus))
 
 	for name, v := range defaultStatus {
 		m[name] = v.Value
 	}
 
-	tlsConfig := s.getTLSConfig()
+	tlsConfig := s.GetTLSConfig()
 	if tlsConfig != nil {
 		if len(tlsConfig.Certificates) == 1 {
 			pc, err := x509.ParseCertificate(tlsConfig.Certificates[0].Certificate[0])
@@ -63,7 +64,7 @@ func (s *Server) Stats(vars *variable.SessionVars) (map[string]interface{}, erro
 	}
 
 	var err error
-	info := serverInfo{}
+	info := tikvhandler.ServerInfo{}
 	info.ServerInfo, err = infosync.GetServerInfo()
 	if err != nil {
 		logutil.BgLogger().Error("Failed to get ServerInfo for uptime status", zap.Error(err))

@@ -35,11 +35,13 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/atomic"
+	"google.golang.org/grpc"
 )
 
 var testKitIDGenerator atomic.Uint64
@@ -147,6 +149,22 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 		}
 	}()
 	return tk.MustQueryWithContext(context.Background(), sql, args...)
+}
+
+// EventuallyMustQueryAndCheck query the statements and assert that
+// result rows.lt will equal the expected results in waitFor time, periodically checking equality each tick.
+// Note: retry can't ignore error of the statements. If statements returns error, it will break out.
+func (tk *TestKit) EventuallyMustQueryAndCheck(sql string, args []interface{},
+	expected [][]interface{}, waitFor time.Duration, tick time.Duration) {
+	defer func() {
+		if tk.alloc != nil {
+			tk.alloc.Reset()
+		}
+	}()
+	tk.require.Eventually(func() bool {
+		res := tk.MustQueryWithContext(context.Background(), sql, args...)
+		return res.Equal(expected)
+	}, waitFor, tick)
 }
 
 // MustQueryWithContext query the statements and returns result rows.
@@ -514,6 +532,21 @@ func (tk *TestKit) CheckLastMessage(msg string) {
 	tk.require.Equal(tk.Session().LastMessage(), msg)
 }
 
+// RequireEqual checks if actual is equal to the expected
+func (tk *TestKit) RequireEqual(expected interface{}, actual interface{}, msgAndArgs ...interface{}) {
+	tk.require.Equal(expected, actual, msgAndArgs...)
+}
+
+// RequireNotEqual checks if actual is not equal to the expected
+func (tk *TestKit) RequireNotEqual(expected interface{}, actual interface{}, msgAndArgs ...interface{}) {
+	tk.require.NotEqual(expected, actual, msgAndArgs...)
+}
+
+// RequireNoError checks if error happens
+func (tk *TestKit) RequireNoError(err error, msgAndArgs ...interface{}) {
+	tk.require.NoError(err, msgAndArgs)
+}
+
 // RegionProperityClient is to get region properties.
 type RegionProperityClient struct {
 	tikv.Client
@@ -537,4 +570,17 @@ func (c *RegionProperityClient) SendRequest(ctx context.Context, addr string, re
 		}
 	}
 	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+// MockPumpClient is a mock pump client.
+type MockPumpClient struct{}
+
+// WriteBinlog is a mock method.
+func (m MockPumpClient) WriteBinlog(ctx context.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
+	return &binlog.WriteBinlogResp{}, nil
+}
+
+// PullBinlogs is a mock method.
+func (m MockPumpClient) PullBinlogs(ctx context.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
+	return nil, nil
 }

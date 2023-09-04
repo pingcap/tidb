@@ -16,7 +16,6 @@ package importer
 
 import (
 	"fmt"
-	"math"
 	"runtime"
 	"testing"
 
@@ -35,21 +34,22 @@ import (
 
 func TestInitDefaultOptions(t *testing.T) {
 	plan := &Plan{}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/importer/mockNumCpu", "return(1)"))
 	plan.initDefaultOptions()
 	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
 	require.Equal(t, config.OpLevelRequired, plan.Checksum)
-	require.Equal(t, config.OpLevelOptional, plan.Analyze)
-	require.Equal(t, int64(runtime.NumCPU()), plan.ThreadCnt)
+	require.Equal(t, int64(1), plan.ThreadCnt)
 	require.Equal(t, unlimitedWriteSpeed, plan.MaxWriteSpeed)
 	require.Equal(t, false, plan.SplitFile)
 	require.Equal(t, int64(100), plan.MaxRecordedErrors)
 	require.Equal(t, false, plan.Detached)
 	require.Equal(t, "utf8mb4", *plan.Charset)
+	require.Equal(t, false, plan.DisableTiKVImportMode)
+	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
 
-	plan = &Plan{Format: DataFormatParquet}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/importer/mockNumCpu", "return(10)"))
 	plan.initDefaultOptions()
-	require.Greater(t, plan.ThreadCnt, int64(0))
-	require.Equal(t, int64(math.Max(1, float64(runtime.NumCPU())*0.75)), plan.ThreadCnt)
+	require.Equal(t, int64(5), plan.ThreadCnt)
 }
 
 // for negative case see TestImportIntoOptionsNegativeCase
@@ -80,15 +80,17 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		fieldsEscapedByOption+"='', "+
 		fieldsDefinedNullByOption+"='N', "+
 		linesTerminatedByOption+"='END', "+
-		skipRowsOption+"=3, "+
+		skipRowsOption+"=1, "+
 		diskQuotaOption+"='100gib', "+
 		checksumTableOption+"='optional', "+
-		analyzeTableOption+"='required', "+
 		threadOption+"=100000, "+
 		maxWriteSpeedOption+"='200mib', "+
 		splitFileOption+", "+
 		recordErrorsOption+"=123, "+
-		detachedOption)
+		detachedOption+", "+
+		disableTiKVImportModeOption+", "+
+		maxEngineSizeOption+"='100gib'",
+	)
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
 	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
@@ -99,15 +101,16 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, "", plan.FieldsEscapedBy, sql)
 	require.Equal(t, []string{"N"}, plan.FieldNullDef, sql)
 	require.Equal(t, "END", plan.LinesTerminatedBy, sql)
-	require.Equal(t, uint64(3), plan.IgnoreLines, sql)
+	require.Equal(t, uint64(1), plan.IgnoreLines, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
 	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
-	require.Equal(t, config.OpLevelRequired, plan.Analyze, sql)
-	require.Equal(t, int64(runtime.NumCPU()), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
+	require.Equal(t, int64(runtime.GOMAXPROCS(0)), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
 	require.Equal(t, config.ByteSize(200<<20), plan.MaxWriteSpeed, sql)
 	require.True(t, plan.SplitFile, sql)
 	require.Equal(t, int64(123), plan.MaxRecordedErrors, sql)
 	require.True(t, plan.Detached, sql)
+	require.True(t, plan.DisableTiKVImportMode, sql)
+	require.Equal(t, config.ByteSize(100<<30), plan.MaxEngineSize, sql)
 }
 
 func TestAdjustOptions(t *testing.T) {
@@ -117,7 +120,7 @@ func TestAdjustOptions(t *testing.T) {
 		MaxWriteSpeed: 10,
 	}
 	plan.adjustOptions()
-	require.Equal(t, int64(runtime.NumCPU()), plan.ThreadCnt)
+	require.Equal(t, int64(runtime.GOMAXPROCS(0)), plan.ThreadCnt)
 	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
 }
 

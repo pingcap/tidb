@@ -130,12 +130,15 @@ func TestPlanCostDetail(t *testing.T) {
 	}
 }
 
-func optimize(t *testing.T, sql string, p *parser.Parser, ctx sessionctx.Context, dom *domain.Domain) map[int]*tracing.PhysicalPlanCostDetail {
+func optimize(t *testing.T, sql string, p *parser.Parser, ctx sessionctx.Context, dom *domain.Domain) map[string]*tracing.PhysicalPlanCostDetail {
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 	err = plannercore.Preprocess(context.Background(), ctx, stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
 	sctx := plannercore.MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
 	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
 	sctx.GetSessionVars().EnableNewCostInterface = true
 	sctx.GetSessionVars().CostModelVersion = 1

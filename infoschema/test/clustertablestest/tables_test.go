@@ -482,6 +482,7 @@ func TestSlowQuery(t *testing.T) {
 			"root",
 			"localhost",
 			"6",
+			"",
 			"57",
 			"0.12",
 			"4.895492",
@@ -556,6 +557,7 @@ func TestSlowQuery(t *testing.T) {
 			"root",
 			"172.16.0.0",
 			"40507",
+			"alias123",
 			"0",
 			"0",
 			"25.571605962",
@@ -775,28 +777,31 @@ func TestSelectHiddenColumn(t *testing.T) {
 
 func TestFormatVersion(t *testing.T) {
 	// Test for defaultVersions.
-	defaultVersions := []string{
-		"5.7.25-TiDB-None",
-		"5.7.25-TiDB-8.0.18",
-		"5.7.25-TiDB-8.0.18-beta.1",
-		"5.7.25-TiDB-v4.0.0-beta-446-g5268094af",
-		"5.7.25-TiDB-",
-		"5.7.25-TiDB-v4.0.0-TiDB-446"}
-	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta", "", "4.0.0-TiDB"}
-	for i, v := range defaultVersions {
-		version := infoschema.FormatTiDBVersion(v, true)
-		require.Equal(t, defaultRes[i], version)
+	versions := []struct {
+		version  string
+		expected string
+		userset  bool
+	}{
+		// default versions
+		{"5.7.25-TiDB-None", "None", true},
+		{"5.7.25-TiDB-8.0.18", "8.0.18", true},
+		{"5.7.25-TiDB-8.0.18-beta.1", "8.0.18-beta.1", true},
+		{"5.7.25-TiDB-v4.0.0-beta-446-g5268094af", "4.0.0-beta-446-g5268094af", true},
+		{"5.7.25-TiDB-", "", true},
+		{"5.7.25-TiDB-v4.0.0-TiDB-446", "4.0.0-TiDB-446", true},
+		// userset
+		{"8.0.18", "8.0.18", false},
+		{"5.7.25-TiDB", "5.7.25-TiDB", false},
+		{"8.0.18-TiDB-4.0.0-beta.1", "8.0.18-TiDB-4.0.0-beta.1", false},
 	}
-
-	// Test for versions user set.
-	versions := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
-	res := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
-	for i, v := range versions {
-		version := infoschema.FormatTiDBVersion(v, false)
-		require.Equal(t, res[i], version)
+	for _, tt := range versions {
+		version := infoschema.FormatTiDBVersion(tt.version, tt.userset)
+		require.Equal(t, tt.expected, version)
 	}
+}
 
-	versions = []string{"v4.0.12", "4.0.12", "v5.0.1"}
+func TestFormatStoreServerVersion(t *testing.T) {
+	versions := []string{"v4.0.12", "4.0.12", "v5.0.1"}
 	resultVersion := []string{"4.0.12", "4.0.12", "5.0.1"}
 
 	for i, versionString := range versions {
@@ -1366,7 +1371,7 @@ func TestStmtSummaryTableOther(t *testing.T) {
 		Check(testkit.Rows(
 			// digest in cache
 			// "show databases ;"
-			"show databases ; dcd020298c5f79e8dc9d63b3098083601614a04a52db458738347d15ea5712a1",
+			"show databases 0e247706bf6e791fbf4af8c8e7658af5ffc45c63179871202d8f91551ee03161",
 			// digest evicted
 			" <nil>",
 		))
@@ -1402,7 +1407,7 @@ func TestStmtSummaryHistoryTableOther(t *testing.T) {
 		Check(testkit.Rows(
 			// digest in cache
 			// "show databases ;"
-			"show databases ; dcd020298c5f79e8dc9d63b3098083601614a04a52db458738347d15ea5712a1",
+			"show databases 0e247706bf6e791fbf4af8c8e7658af5ffc45c63179871202d8f91551ee03161",
 			// digest evicted
 			" <nil>",
 		))

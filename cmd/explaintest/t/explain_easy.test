@@ -1,5 +1,5 @@
 set tidb_cost_model_version=1;
-use test;
+set @@sql_mode = 'strict_trans_tables';
 drop table if exists t1, t2, t3, t4;
 create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2));
 create table t2 (c1 int unique, c2 int);
@@ -240,3 +240,4 @@ explain format = 'brief' select avg(t1.e) from t t1 join t t2 on t1.e=t2.e;
 drop table if exists t;
 delete from mysql.opt_rule_blacklist where name="aggregation_push_down";
 admin reload opt_rule_blacklist;
+set @@sql_mode = default;

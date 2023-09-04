@@ -852,7 +852,7 @@ func TestModifyColumnTypeWithWarnings(t *testing.T) {
 // TestModifyColumnTypeWhenInterception is to test modifying column type with warnings intercepted by
 // reorg timeout, not owner error and so on.
 func TestModifyColumnTypeWhenInterception(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -879,4 +879,14 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 	}()
 	tk.MustExec("alter table t modify column b decimal(3,1)")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 4096 warnings with this error code, first warning: Truncated incorrect DECIMAL value: '11.22'"))
+}
+
+func TestModifyColumnAutoIncrementWithDefaultValue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a bigint auto_increment primary key)")
+
+	tk.MustGetErrMsg("alter table t modify column a bigint auto_increment default 3", "[ddl:1067]Invalid default value for 'a'")
 }

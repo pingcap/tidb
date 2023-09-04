@@ -19,11 +19,11 @@ package testkit
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 )
 
 // Result is the result returned by MustQuery.
@@ -49,6 +49,21 @@ func (res *Result) Check(expected [][]interface{}) {
 	res.require.Equal(needBuff.String(), resBuff.String(), res.comment)
 }
 
+// Equal check whether the result equals the expected results.
+func (res *Result) Equal(expected [][]interface{}) bool {
+	resBuff := bytes.NewBufferString("")
+	for _, row := range res.rows {
+		_, _ = fmt.Fprintf(resBuff, "%s\n", row)
+	}
+
+	needBuff := bytes.NewBufferString("")
+	for _, row := range expected {
+		_, _ = fmt.Fprintf(needBuff, "%s\n", row)
+	}
+
+	return bytes.Equal(needBuff.Bytes(), resBuff.Bytes())
+}
+
 // AddComment adds the extra comment for the Result's output.
 func (res *Result) AddComment(c string) {
 	res.comment += "\n" + c
@@ -71,15 +86,8 @@ func Rows(args ...string) [][]interface{} {
 
 // Sort sorts and return the result.
 func (res *Result) Sort() *Result {
-	slices.SortFunc(res.rows, func(a, b []string) bool {
-		for i := range a {
-			if a[i] < b[i] {
-				return true
-			} else if a[i] > b[i] {
-				return false
-			}
-		}
-		return false
+	slices.SortFunc(res.rows, func(a, b []string) int {
+		return slices.Compare(a, b)
 	})
 	return res
 }

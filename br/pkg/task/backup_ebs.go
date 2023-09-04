@@ -216,6 +216,19 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 			return errors.Trace(err)
 		}
 
+		// Step.3 save backup meta file to s3.
+		// NOTE: maybe define the meta file in kvproto in the future.
+		// but for now json is enough.
+		backupInfo.SetClusterVersion(normalizedVer.String())
+		backupInfo.SetFullBackupType(string(cfg.FullBackupType))
+		backupInfo.SetResolvedTS(resolvedTs)
+		backupInfo.SetSnapshotIDs(snapIDMap)
+		backupInfo.SetVolumeAZs(volAZs)
+		err = saveMetaFile(c, backupInfo, client.GetStorage())
+		if err != nil {
+			return err
+		}
+
 		if !cfg.SkipPauseGCAndScheduler {
 			log.Info("snapshot started, restore schedule")
 			if restoreE := restoreFunc(ctx); restoreE != nil {
@@ -247,18 +260,6 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	}
 	progress.Close()
 
-	// Step.3 save backup meta file to s3.
-	// NOTE: maybe define the meta file in kvproto in the future.
-	// but for now json is enough.
-	backupInfo.SetClusterVersion(normalizedVer.String())
-	backupInfo.SetFullBackupType(string(cfg.FullBackupType))
-	backupInfo.SetResolvedTS(resolvedTs)
-	backupInfo.SetSnapshotIDs(snapIDMap)
-	backupInfo.SetVolumeAZs(volAZs)
-	err = saveMetaFile(c, backupInfo, client.GetStorage())
-	if err != nil {
-		return err
-	}
 	finished = true
 	return nil
 }
@@ -294,13 +295,13 @@ func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr 
 			} else {
 				log.Warn("failed to wait schedule, will retry later", zap.Error(err2))
 			}
-			continue
-		}
+		} else {
+			log.Info("all leader regions got, start checking hole", zap.Int("len", len(allRegions)))
 
-		log.Info("all leader regions got, start checking hole", zap.Int("len", len(allRegions)))
-
-		if !isRegionsHasHole(allRegions) {
-			return nil
+			if !isRegionsHasHole(allRegions) {
+				return nil
+			}
+			log.Info("Regions has hole, needs sleep and retry")
 		}
 		time.Sleep(backoffer.ExponentialBackoff())
 	}

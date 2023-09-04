@@ -71,7 +71,7 @@ type Mgr struct {
 }
 
 func GetAllTiKVStoresWithRetry(ctx context.Context,
-	pdClient pd.Client,
+	pdClient util.StoreMeta,
 	storeBehavior util.StoreBehavior,
 ) ([]*metapb.Store, error) {
 	stores := make([]*metapb.Store, 0)

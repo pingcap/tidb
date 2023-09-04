@@ -682,7 +682,7 @@ func getTableInfo(t *meta.Meta, tableID, schemaID int64) (*model.TableInfo, erro
 // onTruncateTable delete old table meta, and creates a new table identical to old table except for table ID.
 // As all the old data is encoded with old table ID, it can not be accessed anymore.
 // A background job will be created to delete old data.
-func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tableID := job.TableID
 	var newTableID int64
@@ -813,6 +813,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 			failpoint.Return(ver, errors.New("mock update version error"))
 		}
 	})
+
+	var partitions []model.PartitionDefinition
+	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		partitions = tblInfo.GetPartitionInfo().Definitions
+	}
+	preSplitAndScatter(w.sess.Context, d.store, tblInfo, partitions)
 
 	ver, err = updateSchemaVersion(d, t, job)
 	if err != nil {

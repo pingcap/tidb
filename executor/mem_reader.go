@@ -16,14 +16,15 @@ package executor
 
 import (
 	"context"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	transaction "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/table"
@@ -53,15 +54,14 @@ type memIndexReader struct {
 	index         *model.IndexInfo
 	table         *model.TableInfo
 	kvRanges      []kv.KeyRange
-	desc          bool
 	conditions    []expression.Expression
 	addedRows     [][]types.Datum
 	addedRowsLen  int
 	retFieldTypes []*types.FieldType
 	outputOffset  []int
-	// belowHandleCols is the handle's position of the below scan plan.
-	belowHandleCols plannercore.HandleCols
-	cacheTable      kv.MemBuffer
+	cacheTable    kv.MemBuffer
+	keepOrder     bool
+	compareExec
 }
 
 func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *IndexReaderExecutor) *memIndexReader {
@@ -71,18 +71,31 @@ func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *Inde
 	for _, col := range idxReader.outputColumns {
 		outputOffset = append(outputOffset, col.Index)
 	}
-	return &memIndexReader{
-		ctx:             us.ctx,
-		index:           idxReader.index,
-		table:           idxReader.table.Meta(),
-		kvRanges:        kvRanges,
-		desc:            us.desc,
-		conditions:      us.conditions,
-		retFieldTypes:   retTypes(us),
-		outputOffset:    outputOffset,
-		belowHandleCols: us.belowHandleCols,
-		cacheTable:      us.cacheTable,
+	if us.desc {
+		for i, j := 0, len(kvRanges)-1; i < j; i, j = i+1, j-1 {
+			kvRanges[i], kvRanges[j] = kvRanges[j], kvRanges[i]
+		}
 	}
+	return &memIndexReader{
+		ctx:           us.Ctx(),
+		index:         idxReader.index,
+		table:         idxReader.table.Meta(),
+		kvRanges:      kvRanges,
+		conditions:    us.conditions,
+		retFieldTypes: exec.RetTypes(us),
+		outputOffset:  outputOffset,
+		cacheTable:    us.cacheTable,
+		keepOrder:     us.keepOrder,
+		compareExec:   us.compareExec,
+	}
+}
+
+func (m *memIndexReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
+	data, err := m.getMemRows(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &defaultRowsIter{data: data}, nil
 }
 
 func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
@@ -111,7 +124,7 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	}
 
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
-	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, func(key, value []byte) error {
+	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, m.desc, func(key, value []byte) error {
 		data, err := m.decodeIndexKeyValue(key, value, tps)
 		if err != nil {
 			return err
@@ -129,9 +142,16 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	if err != nil {
 		return nil, err
 	}
-	// TODO: After refine `IterReverse`, remove below logic and use `IterReverse` when do reverse scan.
-	if m.desc {
-		reverseDatumSlice(m.addedRows)
+
+	if m.keepOrder && m.table.GetPartitionInfo() != nil {
+		slices.SortFunc(m.addedRows, func(a, b []types.Datum) int {
+			ret, err1 := m.compare(m.ctx.GetSessionVars().StmtCtx, a, b)
+			if err1 != nil {
+				err = err1
+			}
+			return ret
+		})
+		return m.addedRows, err
 	}
 	return m.addedRows, nil
 }
@@ -164,7 +184,6 @@ type memTableReader struct {
 	table         *model.TableInfo
 	columns       []*model.ColumnInfo
 	kvRanges      []kv.KeyRange
-	desc          bool
 	conditions    []expression.Expression
 	addedRows     [][]types.Datum
 	retFieldTypes []*types.FieldType
@@ -173,15 +192,18 @@ type memTableReader struct {
 	pkColIDs      []int64
 	cacheTable    kv.MemBuffer
 	offsets       []int
+	keepOrder     bool
+	compareExec
 }
 
 type allocBuf struct {
 	// cache for decode handle.
 	handleBytes []byte
 	rd          *rowcodec.BytesDecoder
+	cd          *rowcodec.ChunkDecoder
 }
 
-func buildMemTableReader(ctx context.Context, us *UnionScanExec, tblReader *TableReaderExecutor) *memTableReader {
+func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.KeyRange) *memTableReader {
 	defer tracing.StartRegion(ctx, "buildMemTableReader").End()
 	colIDs := make(map[int64]int, len(us.columns))
 	for i, col := range us.columns {
@@ -204,29 +226,170 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, tblReader *Tabl
 	}
 
 	defVal := func(i int) ([]byte, error) {
-		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(us.ctx, us.columns[i])
+		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(us.Ctx(), us.columns[i])
 		if err != nil {
 			return nil, err
 		}
-		return tablecodec.EncodeValue(us.ctx.GetSessionVars().StmtCtx, nil, d)
+		return tablecodec.EncodeValue(us.Ctx().GetSessionVars().StmtCtx, nil, d)
 	}
-	rd := rowcodec.NewByteDecoder(colInfo, pkColIDs, defVal, us.ctx.GetSessionVars().Location())
+	cd := NewRowDecoder(us.Ctx(), us.Schema(), us.table.Meta())
+	rd := rowcodec.NewByteDecoder(colInfo, pkColIDs, defVal, us.Ctx().GetSessionVars().Location())
+	if us.desc {
+		for i, j := 0, len(kvRanges)-1; i < j; i, j = i+1, j-1 {
+			kvRanges[i], kvRanges[j] = kvRanges[j], kvRanges[i]
+		}
+	}
 	return &memTableReader{
-		ctx:           us.ctx,
+		ctx:           us.Ctx(),
 		table:         us.table.Meta(),
 		columns:       us.columns,
-		kvRanges:      tblReader.kvRanges,
-		desc:          us.desc,
+		kvRanges:      kvRanges,
 		conditions:    us.conditions,
-		retFieldTypes: retTypes(us),
+		retFieldTypes: exec.RetTypes(us),
 		colIDs:        colIDs,
 		buffer: allocBuf{
 			handleBytes: make([]byte, 0, 16),
 			rd:          rd,
+			cd:          cd,
 		},
-		pkColIDs:   pkColIDs,
-		cacheTable: us.cacheTable,
+		pkColIDs:    pkColIDs,
+		cacheTable:  us.cacheTable,
+		keepOrder:   us.keepOrder,
+		compareExec: us.compareExec,
 	}
+}
+
+type txnMemBufferIter struct {
+	*memTableReader
+	txn  kv.Transaction
+	idx  int
+	curr kv.Iterator
+
+	reverse  bool
+	cd       *rowcodec.ChunkDecoder
+	chk      *chunk.Chunk
+	datumRow []types.Datum
+}
+
+func (iter *txnMemBufferIter) Next() ([]types.Datum, error) {
+	var ret []types.Datum
+	for iter.idx < len(iter.kvRanges) {
+		if iter.curr == nil {
+			rg := iter.kvRanges[iter.idx]
+			var tmp kv.Iterator
+			if !iter.reverse {
+				tmp = iter.txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
+			} else {
+				tmp = iter.txn.GetMemBuffer().SnapshotIterReverse(rg.EndKey, rg.StartKey)
+			}
+			snapCacheIter, err := getSnapIter(iter.ctx, iter.cacheTable, rg, iter.reverse)
+			if err != nil {
+				return nil, err
+			}
+			if snapCacheIter != nil {
+				tmp, err = transaction.NewUnionIter(tmp, snapCacheIter, iter.reverse)
+				if err != nil {
+					return nil, err
+				}
+			}
+			iter.curr = tmp
+		} else {
+			var err error
+			ret, err = iter.next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if ret != nil {
+				break
+			}
+			iter.idx++
+			iter.curr = nil
+		}
+	}
+	return ret, nil
+}
+
+func (iter *txnMemBufferIter) next() ([]types.Datum, error) {
+	var err error
+	curr := iter.curr
+	for ; err == nil && curr.Valid(); err = curr.Next() {
+		// check whether the key was been deleted.
+		if len(curr.Value()) == 0 {
+			continue
+		}
+
+		handle, err := tablecodec.DecodeRowKey(curr.Key())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		iter.chk.Reset()
+
+		if !rowcodec.IsNewFormat(curr.Value()) {
+			// TODO: remove the legacy code!
+			// fallback to the old way.
+			iter.datumRow, err = iter.decodeRecordKeyValue(curr.Key(), curr.Value(), &iter.datumRow)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
+			mutableRow.SetDatums(iter.datumRow...)
+			matched, _, err := expression.EvalBool(iter.ctx, iter.conditions, mutableRow.ToRow())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !matched {
+				continue
+			}
+			return iter.datumRow, curr.Next()
+		}
+
+		err = iter.cd.DecodeToChunk(curr.Value(), handle, iter.chk)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		row := iter.chk.GetRow(0)
+		matched, _, err := expression.EvalBool(iter.ctx, iter.conditions, row)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !matched {
+			continue
+		}
+		ret := row.GetDatumRowWithBuffer(iter.retFieldTypes, iter.datumRow)
+		return ret, curr.Next()
+	}
+	return nil, err
+}
+
+func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
+	// txnMemBufferIter not supports keepOrder + partitionTable.
+	if m.keepOrder && m.table.GetPartitionInfo() != nil {
+		data, err := m.getMemRows(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &defaultRowsIter{data: data}, nil
+	}
+
+	m.offsets = make([]int, len(m.columns))
+	for i, col := range m.columns {
+		m.offsets[i] = m.colIDs[col.ID]
+	}
+	txn, err := m.ctx.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+
+	return &txnMemBufferIter{
+		memTableReader: m,
+		txn:            txn,
+		cd:             m.buffer.cd,
+		chk:            chunk.New(m.retFieldTypes, 1, 1),
+		datumRow:       make([]types.Datum, len(m.retFieldTypes)),
+		reverse:        m.desc,
+	}, nil
 }
 
 // TODO: Try to make memXXXReader lazy, There is no need to decode many rows when parent operator only need 1 row.
@@ -238,7 +401,7 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	for i, col := range m.columns {
 		m.offsets[i] = m.colIDs[col.ID]
 	}
-	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, func(key, value []byte) error {
+	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, m.desc, func(key, value []byte) error {
 		var err error
 		resultRows, err = m.decodeRecordKeyValue(key, value, &resultRows)
 		if err != nil {
@@ -258,9 +421,15 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 		return nil, err
 	}
 
-	// TODO: After refine `IterReverse`, remove below logic and use `IterReverse` when do reverse scan.
-	if m.desc {
-		reverseDatumSlice(m.addedRows)
+	if m.keepOrder && m.table.GetPartitionInfo() != nil {
+		slices.SortFunc(m.addedRows, func(a, b []types.Datum) int {
+			ret, err1 := m.compare(m.ctx.GetSessionVars().StmtCtx, a, b)
+			if err1 != nil {
+				err = err1
+			}
+			return ret
+		})
+		return m.addedRows, err
 	}
 	return m.addedRows, nil
 }
@@ -350,7 +519,7 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 // getMemRowsHandle is called when memIndexMergeReader.partialPlans[i] is TableScan.
 func (m *memTableReader) getMemRowsHandle() ([]kv.Handle, error) {
 	handles := make([]kv.Handle, 0, 16)
-	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, func(key, value []byte) error {
+	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, m.desc, func(key, value []byte) error {
 		handle, err := tablecodec.DecodeRowKey(key)
 		if err != nil {
 			return err
@@ -360,12 +529,6 @@ func (m *memTableReader) getMemRowsHandle() ([]kv.Handle, error) {
 	})
 	if err != nil {
 		return nil, err
-	}
-
-	if m.desc {
-		for i, j := 0, len(handles)-1; i < j; i, j = i+1, j-1 {
-			handles[i], handles[j] = handles[j], handles[i]
-		}
 	}
 	return handles, nil
 }
@@ -380,20 +543,25 @@ func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 
 type processKVFunc func(key, value []byte) error
 
-func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges []kv.KeyRange, fn processKVFunc) error {
+func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges []kv.KeyRange, reverse bool, fn processKVFunc) error {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
 	}
 
 	for _, rg := range kvRanges {
-		iter := txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
-		snapCacheIter, err := getSnapIter(ctx, cacheTable, rg)
+		var iter kv.Iterator
+		if !reverse {
+			iter = txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
+		} else {
+			iter = txn.GetMemBuffer().SnapshotIterReverse(rg.EndKey, rg.StartKey)
+		}
+		snapCacheIter, err := getSnapIter(ctx, cacheTable, rg, reverse)
 		if err != nil {
 			return err
 		}
 		if snapCacheIter != nil {
-			iter, err = transaction.NewUnionIter(iter, snapCacheIter, false)
+			iter, err = transaction.NewUnionIter(iter, snapCacheIter, reverse)
 			if err != nil {
 				return err
 			}
@@ -415,17 +583,25 @@ func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges 
 	return nil
 }
 
-func getSnapIter(ctx sessionctx.Context, cacheTable kv.MemBuffer, rg kv.KeyRange) (kv.Iterator, error) {
-	var snapCacheIter kv.Iterator
+func getSnapIter(ctx sessionctx.Context, cacheTable kv.MemBuffer, rg kv.KeyRange, reverse bool) (snapCacheIter kv.Iterator, err error) {
+	var cacheIter, snapIter kv.Iterator
 	tempTableData := ctx.GetSessionVars().TemporaryTableData
 	if tempTableData != nil {
-		snapIter, err := tempTableData.Iter(rg.StartKey, rg.EndKey)
+		if !reverse {
+			snapIter, err = tempTableData.Iter(rg.StartKey, rg.EndKey)
+		} else {
+			snapIter, err = tempTableData.IterReverse(rg.EndKey, rg.StartKey)
+		}
 		if err != nil {
 			return nil, err
 		}
 		snapCacheIter = snapIter
 	} else if cacheTable != nil {
-		cacheIter, err := cacheTable.Iter(rg.StartKey, rg.EndKey)
+		if !reverse {
+			cacheIter, err = cacheTable.Iter(rg.StartKey, rg.EndKey)
+		} else {
+			cacheIter, err = cacheTable.IterReverse(rg.EndKey, rg.StartKey)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -434,30 +610,30 @@ func getSnapIter(ctx sessionctx.Context, cacheTable kv.MemBuffer, rg kv.KeyRange
 	return snapCacheIter, nil
 }
 
-func reverseDatumSlice(rows [][]types.Datum) {
-	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
-		rows[i], rows[j] = rows[j], rows[i]
-	}
-}
-
 func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
 	handles := make([]kv.Handle, 0, m.addedRowsLen)
-	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, func(key, value []byte) error {
+	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, m.desc, func(key, value []byte) error {
 		handle, err := tablecodec.DecodeIndexHandle(key, value, len(m.index.Columns))
 		if err != nil {
 			return err
+		}
+		// For https://github.com/pingcap/tidb/issues/41827,
+		// When handle type is year, tablecodec.DecodeIndexHandle will convert it to IntHandle instead of CommonHandle
+		if m.table.IsCommonHandle && handle.IsInt() {
+			b, err := codec.EncodeKey(m.ctx.GetSessionVars().StmtCtx, nil, types.NewDatum(handle.IntValue()))
+			if err != nil {
+				return err
+			}
+			handle, err = kv.NewCommonHandle(b)
+			if err != nil {
+				return err
+			}
 		}
 		handles = append(handles, handle)
 		return nil
 	})
 	if err != nil {
 		return nil, err
-	}
-
-	if m.desc {
-		for i, j := 0, len(handles)-1; i < j; i, j = i+1, j-1 {
-			handles[i], handles[j] = handles[j], handles[i]
-		}
 	}
 	return handles, nil
 }
@@ -467,7 +643,6 @@ type memIndexLookUpReader struct {
 	index         *model.IndexInfo
 	columns       []*model.ColumnInfo
 	table         table.Table
-	desc          bool
 	conditions    []expression.Expression
 	retFieldTypes []*types.FieldType
 
@@ -479,6 +654,9 @@ type memIndexLookUpReader struct {
 	partitionKVRanges [][]kv.KeyRange       // kv ranges for these partition tables
 
 	cacheTable kv.MemBuffer
+
+	keepOrder bool
+	compareExec
 }
 
 func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUpReader *IndexLookUpExecutor) *memIndexLookUpReader {
@@ -487,32 +665,40 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 	kvRanges := idxLookUpReader.kvRanges
 	outputOffset := []int{len(idxLookUpReader.index.Columns)}
 	memIdxReader := &memIndexReader{
-		ctx:             us.ctx,
-		index:           idxLookUpReader.index,
-		table:           idxLookUpReader.table.Meta(),
-		kvRanges:        kvRanges,
-		desc:            idxLookUpReader.desc,
-		retFieldTypes:   retTypes(us),
-		outputOffset:    outputOffset,
-		belowHandleCols: us.belowHandleCols,
-		cacheTable:      us.cacheTable,
+		ctx:           us.Ctx(),
+		index:         idxLookUpReader.index,
+		table:         idxLookUpReader.table.Meta(),
+		kvRanges:      kvRanges,
+		retFieldTypes: exec.RetTypes(us),
+		outputOffset:  outputOffset,
+		cacheTable:    us.cacheTable,
 	}
 
 	return &memIndexLookUpReader{
-		ctx:           us.ctx,
+		ctx:           us.Ctx(),
 		index:         idxLookUpReader.index,
 		columns:       idxLookUpReader.columns,
 		table:         idxLookUpReader.table,
-		desc:          idxLookUpReader.desc,
 		conditions:    us.conditions,
-		retFieldTypes: retTypes(us),
+		retFieldTypes: exec.RetTypes(us),
 		idxReader:     memIdxReader,
 
 		partitionMode:     idxLookUpReader.partitionTableMode,
 		partitionKVRanges: idxLookUpReader.partitionKVRanges,
 		partitionTables:   idxLookUpReader.prunedPartitions,
 		cacheTable:        us.cacheTable,
+
+		keepOrder:   idxLookUpReader.keepOrder,
+		compareExec: us.compareExec,
 	}
+}
+
+func (m *memIndexLookUpReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
+	data, err := m.getMemRows(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &defaultRowsIter{data: data}, nil
 }
 
 func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
@@ -522,7 +708,6 @@ func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum,
 	kvRanges := [][]kv.KeyRange{m.idxReader.kvRanges}
 	tbls := []table.Table{m.table}
 	if m.partitionMode {
-		m.idxReader.desc = false // keep-order if always false for IndexLookUp reading partitions so this parameter makes no sense
 		kvRanges = m.partitionKVRanges
 		tbls = tbls[:0]
 		for _, p := range m.partitionTables {
@@ -549,6 +734,12 @@ func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum,
 		return nil, nil
 	}
 
+	if m.desc {
+		for i, j := 0, len(tblKVRanges)-1; i < j; i, j = i+1, j-1 {
+			tblKVRanges[i], tblKVRanges[j] = tblKVRanges[j], tblKVRanges[i]
+		}
+	}
+
 	colIDs, pkColIDs, rd := getColIDAndPkColIDs(m.ctx, m.table, m.columns)
 	memTblReader := &memTableReader{
 		ctx:           m.ctx,
@@ -564,13 +755,15 @@ func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum,
 			handleBytes: make([]byte, 0, 16),
 			rd:          rd,
 		},
-		cacheTable: m.cacheTable,
+		cacheTable:  m.cacheTable,
+		keepOrder:   m.keepOrder,
+		compareExec: m.compareExec,
 	}
 
 	return memTblReader.getMemRows(ctx)
 }
 
-func (m *memIndexLookUpReader) getMemRowsHandle() ([]kv.Handle, error) {
+func (*memIndexLookUpReader) getMemRowsHandle() ([]kv.Handle, error) {
 	return nil, errors.New("getMemRowsHandle has not been implemented for memIndexLookUpReader")
 }
 
@@ -588,6 +781,9 @@ type memIndexMergeReader struct {
 	partitionMode     bool                  // if it is accessing a partition table
 	partitionTables   []table.PhysicalTable // partition tables to access
 	partitionKVRanges [][][]kv.KeyRange     // kv ranges for these partition tables
+
+	keepOrder bool
+	compareExec
 }
 
 func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMergeReader *IndexMergeReaderExecutor) *memIndexMergeReader {
@@ -596,15 +792,15 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 	memReaders := make([]memReader, 0, indexCount)
 	for i := 0; i < indexCount; i++ {
 		if indexMergeReader.indexes[i] == nil {
-			colIDs, pkColIDs, rd := getColIDAndPkColIDs(indexMergeReader.ctx, indexMergeReader.table, indexMergeReader.columns)
+			colIDs, pkColIDs, rd := getColIDAndPkColIDs(indexMergeReader.Ctx(), indexMergeReader.table, indexMergeReader.columns)
 			memReaders = append(memReaders, &memTableReader{
-				ctx:           us.ctx,
+				ctx:           us.Ctx(),
 				table:         indexMergeReader.table.Meta(),
 				columns:       indexMergeReader.columns,
 				kvRanges:      nil,
 				conditions:    us.conditions,
 				addedRows:     make([][]types.Datum, 0),
-				retFieldTypes: retTypes(us),
+				retFieldTypes: exec.RetTypes(us),
 				colIDs:        colIDs,
 				pkColIDs:      pkColIDs,
 				buffer: allocBuf{
@@ -615,24 +811,23 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 		} else {
 			outputOffset := []int{len(indexMergeReader.indexes[i].Columns)}
 			memReaders = append(memReaders, &memIndexReader{
-				ctx:             us.ctx,
-				index:           indexMergeReader.indexes[i],
-				table:           indexMergeReader.table.Meta(),
-				kvRanges:        nil,
-				desc:            indexMergeReader.descs[i],
-				retFieldTypes:   retTypes(us),
-				outputOffset:    outputOffset,
-				belowHandleCols: us.belowHandleCols,
+				ctx:           us.Ctx(),
+				index:         indexMergeReader.indexes[i],
+				table:         indexMergeReader.table.Meta(),
+				kvRanges:      nil,
+				compareExec:   compareExec{desc: indexMergeReader.descs[i]},
+				retFieldTypes: exec.RetTypes(us),
+				outputOffset:  outputOffset,
 			})
 		}
 	}
 
 	return &memIndexMergeReader{
-		ctx:              us.ctx,
+		ctx:              us.Ctx(),
 		table:            indexMergeReader.table,
 		columns:          indexMergeReader.columns,
 		conditions:       us.conditions,
-		retFieldTypes:    retTypes(us),
+		retFieldTypes:    exec.RetTypes(us),
 		indexMergeReader: indexMergeReader,
 		memReaders:       memReaders,
 		isIntersection:   indexMergeReader.isIntersection,
@@ -640,7 +835,36 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 		partitionMode:     indexMergeReader.partitionTableMode,
 		partitionTables:   indexMergeReader.prunedPartitions,
 		partitionKVRanges: indexMergeReader.partitionKeyRanges,
+
+		keepOrder:   us.keepOrder,
+		compareExec: us.compareExec,
 	}
+}
+
+type memRowsIter interface {
+	Next() ([]types.Datum, error)
+}
+
+type defaultRowsIter struct {
+	data   [][]types.Datum
+	cursor int
+}
+
+func (iter *defaultRowsIter) Next() ([]types.Datum, error) {
+	if iter.cursor < len(iter.data) {
+		ret := iter.data[iter.cursor]
+		iter.cursor++
+		return ret, nil
+	}
+	return nil, nil
+}
+
+func (m *memIndexMergeReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
+	data, err := m.getMemRows(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &defaultRowsIter{data: data}, nil
 }
 
 func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
@@ -704,7 +928,24 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 		},
 	}
 
-	return memTblReader.getMemRows(ctx)
+	rows, err := memTblReader.getMemRows(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Didn't set keepOrder = true for memTblReader,
+	// In indexMerge, non-partitioned tables are also need reordered.
+	if m.keepOrder {
+		slices.SortFunc(rows, func(a, b []types.Datum) int {
+			ret, err1 := m.compare(m.ctx.GetSessionVars().StmtCtx, a, b)
+			if err1 != nil {
+				err = err1
+			}
+			return ret
+		})
+	}
+
+	return rows, err
 }
 
 // Union all handles of all partial paths.
@@ -763,7 +1004,7 @@ func (m *memIndexMergeReader) intersectionHandles(kvRanges [][]kv.KeyRange) (fin
 				cnt := 1
 				hMap.Set(h, &cnt)
 			} else {
-				*(cntPtr.(*int)) += 1
+				*(cntPtr.(*int))++
 			}
 		}
 	}
@@ -776,7 +1017,7 @@ func (m *memIndexMergeReader) intersectionHandles(kvRanges [][]kv.KeyRange) (fin
 	return finalHandles, nil
 }
 
-func (m *memIndexMergeReader) getMemRowsHandle() ([]kv.Handle, error) {
+func (*memIndexMergeReader) getMemRowsHandle() ([]kv.Handle, error) {
 	return nil, errors.New("getMemRowsHandle has not been implemented for memIndexMergeReader")
 }
 

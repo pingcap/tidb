@@ -17,6 +17,7 @@ package helper
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -25,6 +26,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -47,7 +49,6 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // Storage represents a storage that connects TiKV.
@@ -582,10 +583,12 @@ type ReplicationStatus struct {
 
 // TableInfo stores the information of a table or an index
 type TableInfo struct {
-	DB      *model.DBInfo
-	Table   *model.TableInfo
-	IsIndex bool
-	Index   *model.IndexInfo
+	DB          *model.DBInfo
+	Table       *model.TableInfo
+	IsPartition bool
+	Partition   *model.PartitionDefinition
+	IsIndex     bool
+	Index       *model.IndexInfo
 }
 
 type withKeyRange interface {
@@ -633,60 +636,12 @@ func (t TableInfoWithKeyRange) getEndKey() string   { return t.EndKey }
 
 // NewTableWithKeyRange constructs TableInfoWithKeyRange for given table, it is exported only for test.
 func NewTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWithKeyRange {
-	return newTableWithKeyRange(db, table)
-}
-
-func newTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWithKeyRange {
-	sk, ek := tablecodec.GetTableHandleKeyRange(table.ID)
-	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
-	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
-	return TableInfoWithKeyRange{
-		&TableInfo{
-			DB:      db,
-			Table:   table,
-			IsIndex: false,
-			Index:   nil,
-		},
-		startKey,
-		endKey,
-	}
+	return newTableInfoWithKeyRange(db, table, nil, nil)
 }
 
 // NewIndexWithKeyRange constructs TableInfoWithKeyRange for given index, it is exported only for test.
 func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
-	return newIndexWithKeyRange(db, table, index, table.ID)
-}
-
-func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo, physicalID int64) TableInfoWithKeyRange {
-	sk, ek := tablecodec.GetTableIndexKeyRange(physicalID, index.ID)
-	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
-	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
-	return TableInfoWithKeyRange{
-		&TableInfo{
-			DB:      db,
-			Table:   table,
-			IsIndex: true,
-			Index:   index,
-		},
-		startKey,
-		endKey,
-	}
-}
-
-func newPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitionID int64) TableInfoWithKeyRange {
-	sk, ek := tablecodec.GetTableHandleKeyRange(partitionID)
-	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
-	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
-	return TableInfoWithKeyRange{
-		&TableInfo{
-			DB:      db,
-			Table:   table,
-			IsIndex: false,
-			Index:   nil,
-		},
-		startKey,
-		endKey,
-	}
+	return newTableInfoWithKeyRange(db, table, nil, index)
 }
 
 // FilterMemDBs filters memory databases in the input schemas.
@@ -715,31 +670,58 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *RegionsInfo, schemas []*model.
 	return tableInfos
 }
 
+func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partition *model.PartitionDefinition, index *model.IndexInfo) TableInfoWithKeyRange {
+	var sk, ek []byte
+	if partition == nil && index == nil {
+		sk, ek = tablecodec.GetTableHandleKeyRange(table.ID)
+	} else if partition != nil && index == nil {
+		sk, ek = tablecodec.GetTableHandleKeyRange(partition.ID)
+	} else if partition == nil && index != nil {
+		sk, ek = tablecodec.GetTableIndexKeyRange(table.ID, index.ID)
+	} else {
+		sk, ek = tablecodec.GetTableIndexKeyRange(partition.ID, index.ID)
+	}
+	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
+	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
+	return TableInfoWithKeyRange{
+		&TableInfo{
+			DB:          db,
+			Table:       table,
+			IsPartition: partition != nil,
+			Partition:   partition,
+			IsIndex:     index != nil,
+			Index:       index,
+		},
+		startKey,
+		endKey,
+	}
+}
+
 // GetTablesInfoWithKeyRange returns a slice containing tableInfos with key ranges of all tables in schemas.
 func (*Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoWithKeyRange {
 	tables := []TableInfoWithKeyRange{}
 	for _, db := range schemas {
 		for _, table := range db.Tables {
 			if table.Partition != nil {
-				for _, partition := range table.Partition.Definitions {
-					tables = append(tables, newPartitionTableWithKeyRange(db, table, partition.ID))
+				for i := range table.Partition.Definitions {
+					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], nil))
 				}
 			} else {
-				tables = append(tables, newTableWithKeyRange(db, table))
+				tables = append(tables, newTableInfoWithKeyRange(db, table, nil, nil))
 			}
 			for _, index := range table.Indices {
 				if table.Partition == nil || index.Global {
-					tables = append(tables, newIndexWithKeyRange(db, table, index, table.ID))
+					tables = append(tables, newTableInfoWithKeyRange(db, table, nil, index))
 					continue
 				}
-				for _, partition := range table.Partition.Definitions {
-					tables = append(tables, newIndexWithKeyRange(db, table, index, partition.ID))
+				for i := range table.Partition.Definitions {
+					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], index))
 				}
 			}
 		}
 	}
-	slices.SortFunc(tables, func(i, j TableInfoWithKeyRange) bool {
-		return i.getStartKey() < j.getStartKey()
+	slices.SortFunc(tables, func(i, j TableInfoWithKeyRange) int {
+		return cmp.Compare(i.getStartKey(), j.getStartKey())
 	})
 	return tables
 }
@@ -752,8 +734,8 @@ func (*Helper) ParseRegionsTableInfos(regionsInfo []*RegionInfo, tables []TableI
 		return tableInfos
 	}
 	// tables is sorted in GetTablesInfoWithKeyRange func
-	slices.SortFunc(regionsInfo, func(i, j *RegionInfo) bool {
-		return i.getStartKey() < j.getStartKey()
+	slices.SortFunc(regionsInfo, func(i, j *RegionInfo) int {
+		return cmp.Compare(i.getStartKey(), j.getStartKey())
 	})
 
 	idx := 0
@@ -773,11 +755,6 @@ OutLoop:
 	}
 
 	return tableInfos
-}
-
-// BytesKeyToHex converts bytes key to hex key, it is exported only for test.
-func BytesKeyToHex(key []byte) string {
-	return bytesKeyToHex(key)
 }
 
 func bytesKeyToHex(key []byte) string {
@@ -808,7 +785,7 @@ func (h *Helper) GetRegionInfoByID(regionID uint64) (*RegionInfo, error) {
 // GetRegionsInfoByRange scans region by key range
 func (h *Helper) GetRegionsInfoByRange(sk, ek []byte) (*RegionsInfo, error) {
 	var regionsInfo RegionsInfo
-	err := h.requestPD("GetRegionByRange", "GET", fmt.Sprintf("%v?key=%s&end_key=%s", pdapi.ScanRegions,
+	err := h.requestPD("GetRegionByRange", "GET", fmt.Sprintf("%v?key=%s&end_key=%s&limit=-1", pdapi.ScanRegions,
 		url.QueryEscape(string(sk)), url.QueryEscape(string(ek))), nil, &regionsInfo)
 	return &regionsInfo, err
 }

@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
@@ -29,14 +30,14 @@ import (
 
 // IndexAdviseExec represents a index advise executor.
 type IndexAdviseExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	IsLocal         bool
 	indexAdviseInfo *IndexAdviseInfo
 }
 
 // Next implements the Executor Next interface.
-func (e *IndexAdviseExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *IndexAdviseExec) Next(context.Context, *chunk.Chunk) error {
 	if !e.IsLocal {
 		return errors.New("Index Advise: don't support load file without local field")
 	}
@@ -47,21 +48,21 @@ func (e *IndexAdviseExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return errors.New("Index Advise: don't support advise index for SQL terminated by nil")
 	}
 
-	if val := e.ctx.Value(IndexAdviseVarKey); val != nil {
-		e.ctx.SetValue(IndexAdviseVarKey, nil)
+	if val := e.Ctx().Value(IndexAdviseVarKey); val != nil {
+		e.Ctx().SetValue(IndexAdviseVarKey, nil)
 		return errors.New("Index Advise: previous index advise option isn't closed normally")
 	}
-	e.ctx.SetValue(IndexAdviseVarKey, e.indexAdviseInfo)
+	e.Ctx().SetValue(IndexAdviseVarKey, e.indexAdviseInfo)
 	return nil
 }
 
 // Close implements the Executor Close interface.
-func (e *IndexAdviseExec) Close() error {
+func (*IndexAdviseExec) Close() error {
 	return nil
 }
 
 // Open implements the Executor Open interface.
-func (e *IndexAdviseExec) Open(ctx context.Context) error {
+func (*IndexAdviseExec) Open(context.Context) error {
 	return nil
 }
 
@@ -120,7 +121,7 @@ func (e *IndexAdviseInfo) prepareInfo(data []byte) error {
 }
 
 // GetIndexAdvice gets the index advice by workload file.
-func (e *IndexAdviseInfo) GetIndexAdvice(ctx context.Context, data []byte) error {
+func (e *IndexAdviseInfo) GetIndexAdvice(data []byte) error {
 	if err := e.prepareInfo(data); err != nil {
 		return err
 	}
@@ -137,7 +138,7 @@ type IndexAdvice struct {
 type IndexAdviseVarKeyType int
 
 // String defines a Stringer function for debugging and pretty printing.
-func (k IndexAdviseVarKeyType) String() string {
+func (IndexAdviseVarKeyType) String() string {
 	return "index_advise_var"
 }
 

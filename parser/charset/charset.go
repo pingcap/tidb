@@ -14,6 +14,8 @@
 package charset
 
 import (
+	"cmp"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -21,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 var (
@@ -91,8 +92,8 @@ func GetSupportedCharsets() []*Charset {
 	}
 
 	// sort charset by name.
-	slices.SortFunc(charsets, func(i, j *Charset) bool {
-		return i.Name < j.Name
+	slices.SortFunc(charsets, func(i, j *Charset) int {
+		return cmp.Compare(i.Name, j.Name)
 	})
 	return charsets
 }
@@ -106,8 +107,8 @@ func GetSupportedCollations() []*Collation {
 // and returns a boolean.
 func ValidCharsetAndCollation(cs string, co string) bool {
 	// We will use utf8 as a default charset.
-	if cs == "" {
-		cs = "utf8"
+	if cs == "" || cs == CharsetUTF8MB3 {
+		cs = CharsetUTF8
 	}
 	chs, err := GetCharsetInfo(cs)
 	if err != nil {
@@ -117,7 +118,7 @@ func ValidCharsetAndCollation(cs string, co string) bool {
 	if co == "" {
 		return true
 	}
-	co = strings.ToLower(co)
+	co = utf8Alias(strings.ToLower(co))
 	_, ok := chs.Collations[co]
 	return ok
 }
@@ -125,6 +126,8 @@ func ValidCharsetAndCollation(cs string, co string) bool {
 // GetDefaultCollationLegacy is compatible with the charset support in old version parser.
 func GetDefaultCollationLegacy(charset string) (string, error) {
 	switch strings.ToLower(charset) {
+	case CharsetUTF8MB3:
+		return GetDefaultCollation(CharsetUTF8)
 	case CharsetUTF8, CharsetUTF8MB4, CharsetASCII, CharsetLatin1, CharsetBin:
 		return GetDefaultCollation(charset)
 	default:
@@ -148,6 +151,10 @@ func GetDefaultCharsetAndCollate() (defaultCharset string, defaultCollationName 
 
 // GetCharsetInfo returns charset and collation for cs as name.
 func GetCharsetInfo(cs string) (*Charset, error) {
+	if strings.ToLower(cs) == CharsetUTF8MB3 {
+		cs = CharsetUTF8
+	}
+
 	if c, ok := CharacterSetInfos[strings.ToLower(cs)]; ok {
 		return c, nil
 	}
@@ -180,9 +187,23 @@ func GetCollations() []*Collation {
 	return collations
 }
 
+func utf8Alias(csname string) string {
+	switch csname {
+	case "utf8mb3_bin":
+		csname = "utf8_bin"
+	case "utf8mb3_unicode_ci":
+		csname = "utf8_unicode_ci"
+	case "utf8mb3_general_ci":
+		csname = "utf8_general_ci"
+	default:
+	}
+	return csname
+}
+
 // GetCollationByName returns the collation by name.
 func GetCollationByName(name string) (*Collation, error) {
-	collation, ok := collationsNameMap[strings.ToLower(name)]
+	csname := utf8Alias(strings.ToLower(name))
+	collation, ok := collationsNameMap[csname]
 	if !ok {
 		return nil, ErrUnknownCollation.GenWithStackByArgs(name)
 	}
@@ -225,6 +246,8 @@ const (
 	CharsetLatin1 = "latin1"
 	// CharsetUTF8 is the default charset for string types.
 	CharsetUTF8 = "utf8"
+	// CharsetUTF8MB3 is 3 bytes utf8, a MySQL legacy encoding. "utf8" and "utf8mb3" are aliases.
+	CharsetUTF8MB3 = "utf8mb3"
 	// CharsetUTF8MB4 represents 4 bytes utf8, which works the same way as utf8 in Go.
 	CharsetUTF8MB4 = "utf8mb4"
 	//revive:disable:exported

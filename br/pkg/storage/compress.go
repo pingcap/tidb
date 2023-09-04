@@ -13,18 +13,23 @@ import (
 
 type withCompression struct {
 	ExternalStorage
-	compressType CompressType
+	compressType  CompressType
+	decompressCfg DecompressConfig
 }
 
 // WithCompression returns an ExternalStorage with compress option
-func WithCompression(inner ExternalStorage, compressionType CompressType) ExternalStorage {
+func WithCompression(inner ExternalStorage, compressionType CompressType, cfg DecompressConfig) ExternalStorage {
 	if compressionType == NoCompression {
 		return inner
 	}
-	return &withCompression{ExternalStorage: inner, compressType: compressionType}
+	return &withCompression{
+		ExternalStorage: inner,
+		compressType:    compressionType,
+		decompressCfg:   cfg,
+	}
 }
 
-func (w *withCompression) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
+func (w *withCompression) Create(ctx context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
 	var (
 		writer ExternalFileWriter
 		err    error
@@ -32,7 +37,7 @@ func (w *withCompression) Create(ctx context.Context, name string) (ExternalFile
 	if s3Storage, ok := w.ExternalStorage.(*S3Storage); ok {
 		writer, err = s3Storage.CreateUploader(ctx, name)
 	} else {
-		writer, err = w.ExternalStorage.Create(ctx, name)
+		writer, err = w.ExternalStorage.Create(ctx, name, nil)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -46,7 +51,7 @@ func (w *withCompression) Open(ctx context.Context, path string) (ExternalFileRe
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	uncompressReader, err := InterceptDecompressReader(fileReader, w.compressType)
+	uncompressReader, err := InterceptDecompressReader(fileReader, w.compressType, w.decompressCfg)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -73,7 +78,7 @@ func (w *withCompression) ReadFile(ctx context.Context, name string) ([]byte, er
 		return data, errors.Trace(err)
 	}
 	bf := bytes.NewBuffer(data)
-	compressBf, err := newCompressReader(w.compressType, bf)
+	compressBf, err := newCompressReader(w.compressType, w.decompressCfg, bf)
 	if err != nil {
 		return nil, err
 	}
@@ -91,11 +96,12 @@ type compressReader struct {
 // reader on the given io.ReadSeekCloser. Note that the returned
 // io.ReadSeekCloser does not have the property that Seek(0, io.SeekCurrent)
 // equals total bytes Read() if the decompress reader is used.
-func InterceptDecompressReader(fileReader io.ReadSeekCloser, compressType CompressType) (io.ReadSeekCloser, error) {
+func InterceptDecompressReader(fileReader io.ReadSeekCloser, compressType CompressType,
+	cfg DecompressConfig) (io.ReadSeekCloser, error) {
 	if compressType == NoCompression {
 		return fileReader, nil
 	}
-	r, err := newCompressReader(compressType, fileReader)
+	r, err := newCompressReader(compressType, cfg, fileReader)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -106,7 +112,7 @@ func InterceptDecompressReader(fileReader io.ReadSeekCloser, compressType Compre
 	}, nil
 }
 
-func NewLimitedInterceptReader(fileReader ExternalFileReader, compressType CompressType, n int64) (ExternalFileReader, error) {
+func NewLimitedInterceptReader(fileReader ExternalFileReader, compressType CompressType, cfg DecompressConfig, n int64) (ExternalFileReader, error) {
 	newFileReader := fileReader
 	if n < 0 {
 		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "compressReader doesn't support negative limit, n: %d", n)
@@ -117,7 +123,7 @@ func NewLimitedInterceptReader(fileReader ExternalFileReader, compressType Compr
 			Closer: fileReader,
 		}
 	}
-	return InterceptDecompressReader(newFileReader, compressType)
+	return InterceptDecompressReader(newFileReader, compressType, cfg)
 }
 
 func (c *compressReader) Seek(offset int64, whence int) (int64, error) {

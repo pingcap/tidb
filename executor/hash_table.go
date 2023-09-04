@@ -198,7 +198,7 @@ func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *hashContext, probeSideRo
 	}
 	var mayMatchedRow chunk.Row
 	for _, ptr := range innerPtrs {
-		mayMatchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunk(ptr, c.chkBuf)
+		mayMatchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunkIfInDisk(ptr, c.chkBuf)
 		if err != nil {
 			return nil, err
 		}
@@ -242,10 +242,10 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 
 	// Some variables used for memTracker.
 	var (
-		matchedDataSize                  = int64(cap(matched))*rowSize + int64(cap(matchedPtrs))*rowPtrSize
-		lastChunkBufPointer *chunk.Chunk = nil
-		memDelta            int64        = 0
-		needTrackMemUsage                = cap(innerPtrs) > signalCheckpointForJoinMask
+		matchedDataSize     = int64(cap(matched))*rowSize + int64(cap(matchedPtrs))*rowPtrSize
+		needTrackMemUsage   = cap(innerPtrs) > signalCheckpointForJoinMask
+		lastChunkBufPointer *chunk.Chunk
+		memDelta            int64
 	)
 	c.chkBuf = nil
 	c.memTracker.Consume(-c.chkBufSizeForOneProbe)
@@ -256,7 +256,7 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 	c.chkBufSizeForOneProbe = 0
 
 	for i, ptr := range innerPtrs {
-		matchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunk(ptr, c.chkBuf)
+		matchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunkIfInDisk(ptr, c.chkBuf)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -299,7 +299,7 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 	)
 	matched = matched[:0]
 	for _, nullEntry := range c.hashNANullBucket.entries {
-		mayMatchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunk(nullEntry.ptr, c.chkBuf)
+		mayMatchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunkIfInDisk(nullEntry.ptr, c.chkBuf)
 		if err != nil {
 			return nil, err
 		}

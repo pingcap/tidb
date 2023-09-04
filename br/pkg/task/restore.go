@@ -59,6 +59,9 @@ const (
 	// FlagKeyspaceName corresponds to tidb config keyspace-name
 	FlagKeyspaceName = "keyspace-name"
 
+	// FlagWaitTiFlashReady represents whether wait tiflash replica ready after table restored and checksumed.
+	FlagWaitTiFlashReady = "wait-tiflash-ready"
+
 	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
 	FlagStreamStartTS   = "start-ts"
 	FlagStreamRestoreTS = "restored-ts"
@@ -202,6 +205,7 @@ type RestoreConfig struct {
 	checkpointSnapshotRestoreTaskName string `json:"-" toml:"-"`
 	checkpointLogRestoreTaskName      string `json:"-" toml:"-"`
 	checkpointTaskInfoClusterID       uint64 `json:"-" toml:"-"`
+	WaitTiflashReady                  bool   `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
 
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
@@ -226,6 +230,8 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 
 	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
 	_ = flags.MarkHidden(flagUseCheckpoint)
+
+	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -327,6 +333,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.UseCheckpoint, err = flags.GetBool(flagUseCheckpoint)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagUseCheckpoint)
+	}
+
+	cfg.WaitTiflashReady, err = flags.GetBool(FlagWaitTiFlashReady)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagWaitTiFlashReady)
 	}
 
 	if flags.Lookup(flagFullBackupType) != nil {
@@ -697,22 +708,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
-	// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
-	// to avoid import cycle problem which we won't do it in this pr, then refactor this
-	//
-	// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
-	if cmdName == FullRestoreCmd && cfg.WithSysTable {
-		client.InitFullClusterRestore(cfg.ExplicitFilter)
-	}
-	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
-		if err = client.CheckTargetClusterFresh(ctx); err != nil {
-			return errors.Trace(err)
-		}
-		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	if client.IsIncremental() {
 		// don't support checkpoint for the ddl restore
 		log.Info("the incremental snapshot restore doesn't support checkpoint mode, so unuse checkpoint.")
@@ -756,6 +751,28 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			log.Info("wait for flush checkpoint...")
 			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !schedulersRemovable)
 		}()
+	}
+
+	if isFullRestore(cmdName) {
+		// we need check cluster is fresh every time. except restore from a checkpoint.
+		if client.IsFull() && len(checkpointSetWithTableID) == 0 {
+			if err = client.CheckTargetClusterFresh(ctx); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
+		// to avoid import cycle problem which we won't do it in this pr, then refactor this
+		//
+		// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
+		if cfg.WithSysTable {
+			client.InitFullClusterRestore(cfg.ExplicitFilter)
+		}
+	}
+
+	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
+		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	sp := utils.BRServiceSafePoint{
@@ -917,12 +934,19 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		batchSize = v.(int)
 	})
 
+	// Split/Scatter + Download/Ingest
+	progressLen := int64(rangeSize + len(files))
+	if cfg.Checksum {
+		progressLen += int64(len(tables))
+	}
+	if cfg.WaitTiflashReady {
+		progressLen += int64(len(tables))
+	}
 	// Redirect to log if there is no log file to avoid unreadable output.
 	updateCh := g.StartProgress(
 		ctx,
 		cmdName,
-		// Split/Scatter + Download/Ingest + Checksum
-		int64(rangeSize+len(files)+len(tables)),
+		progressLen,
 		!cfg.LogProgress)
 	defer updateCh.Close()
 	sender, err := restore.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency)
@@ -930,21 +954,29 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 	manager := restore.NewBRContextManager(client)
-	batcher, afterRestoreStream := restore.NewBatcher(ctx, sender, manager, errCh, updateCh)
+	batcher, afterTableRestoredCh := restore.NewBatcher(ctx, sender, manager, errCh, updateCh)
 	batcher.SetCheckpoint(checkpointSetWithTableID)
 	batcher.SetThreshold(batchSize)
 	batcher.EnableAutoCommit(ctx, cfg.BatchFlushInterval)
 	go restoreTableStream(ctx, rangeStream, batcher, errCh)
 
 	var finish <-chan struct{}
-	// Checksum
+	postHandleCh := afterTableRestoredCh
+
+	// pipeline checksum and load stats
 	if cfg.Checksum {
-		finish = client.GoValidateChecksum(
-			ctx, afterRestoreStream, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
-	} else {
-		// when user skip checksum, just collect tables, and drop them.
-		finish = dropToBlackhole(ctx, afterRestoreStream, errCh, updateCh)
+		afterTableCheckesumedCh := client.GoValidateChecksum(
+			ctx, afterTableRestoredCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
+		afterTableLoadStatsCh := client.GoUpdateMetaAndLoadStats(ctx, afterTableCheckesumedCh, errCh)
+		postHandleCh = afterTableLoadStatsCh
 	}
+
+	// pipeline wait Tiflash synced
+	if cfg.WaitTiflashReady {
+		postHandleCh = client.GoWaitTiFlashReady(ctx, postHandleCh, updateCh, errCh)
+	}
+
+	finish = dropToBlackhole(ctx, postHandleCh, errCh)
 
 	// Reset speed limit. ResetSpeedLimit must be called after client.InitBackupMeta has been called.
 	defer func() {
@@ -991,9 +1023,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 // i.e. don't execute checksum, just increase the process anyhow.
 func dropToBlackhole(
 	ctx context.Context,
-	tableStream <-chan restore.CreatedTable,
+	inCh <-chan *restore.CreatedTable,
 	errCh chan<- error,
-	updateCh glue.Progress,
 ) <-chan struct{} {
 	outCh := make(chan struct{}, 1)
 	go func() {
@@ -1005,11 +1036,10 @@ func dropToBlackhole(
 			case <-ctx.Done():
 				errCh <- ctx.Err()
 				return
-			case _, ok := <-tableStream:
+			case _, ok := <-inCh:
 				if !ok {
 					return
 				}
-				updateCh.Inc()
 			}
 		}
 	}()
@@ -1087,6 +1117,10 @@ func enableTiDBConfig() func() {
 		// when upstream and downstream both set this value greater than default(3072)
 		conf.MaxIndexLength = config.DefMaxOfMaxIndexLength
 		log.Warn("set max-index-length to max(3072*4) to skip check index length in DDL")
+		conf.IndexLimit = config.DefMaxOfIndexLimit
+		log.Warn("set index-limit to max(64*8) to skip check index count in DDL")
+		conf.TableColumnCountLimit = config.DefMaxOfTableColumnCountLimit
+		log.Warn("set table-column-count to max(4096) to skip check column count in DDL")
 	})
 	return restoreConfig
 }

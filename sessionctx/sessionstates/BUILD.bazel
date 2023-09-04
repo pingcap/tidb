@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//errno",
+        "//parser/model",
         "//parser/types",
         "//sessionctx/stmtctx",
         "//types",
@@ -30,11 +31,12 @@ go_test(
     ],
     embed = [":sessionstates"],
     flaky = True,
-    shard_count = 14,
+    shard_count = 15,
     deps = [
         "//config",
         "//errno",
         "//expression",
+        "//parser/auth",
         "//parser/mysql",
         "//parser/terror",
         "//server",

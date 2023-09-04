@@ -22,18 +22,15 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"io/ioutil"
+	"os"
 	osuser "os/user"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -49,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/tables"
+	timertable "github.com/pingcap/tidb/timer/tablestore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -271,6 +269,7 @@ const (
 	);`
 
 	// CreateStatsFeedbackTable stores the feedback info which is used to update stats.
+	// NOTE: Feedback is deprecated, but we still need to create this table for compatibility.
 	CreateStatsFeedbackTable = `CREATE TABLE IF NOT EXISTS mysql.stats_feedback (
 		table_id 	BIGINT(64) NOT NULL,
 		is_index 	TINYINT(2) NOT NULL,
@@ -603,7 +602,72 @@ const (
        PRIMARY KEY (job_id),
        KEY (create_time),
        KEY (create_user));`
+
+	// CreateRunawayTable stores the query which is identified as runaway or quarantined because of in watch list.
+	CreateRunawayTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_queries (
+		resource_group_name varchar(32) not null,
+		time TIMESTAMP NOT NULL,
+		match_type varchar(12) NOT NULL,
+		action varchar(12) NOT NULL,
+		original_sql TEXT NOT NULL,
+		plan_digest TEXT NOT NULL,
+		tidb_server varchar(512),
+		INDEX plan_index(plan_digest(64)) COMMENT "accelerate the speed when select runaway query",
+		INDEX time_index(time) COMMENT "accelerate the speed when querying with active watch"
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
+
+	// CreateRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
+	CreateRunawayWatchTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_watch (
+		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		resource_group_name varchar(32) not null,
+		start_time datetime(6) NOT NULL,
+		end_time datetime(6),
+		watch bigint(10) NOT NULL,
+		watch_text TEXT NOT NULL,
+		source varchar(512) NOT NULL,
+		action bigint(10),
+		INDEX sql_index(resource_group_name,watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
+		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
+
+	// CreateDoneRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
+	CreateDoneRunawayWatchTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_watch_done (
+		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		record_id BIGINT(20) not null,
+		resource_group_name varchar(32) not null,
+		start_time datetime(6) NOT NULL,
+		end_time datetime(6),
+		watch bigint(10) NOT NULL,
+		watch_text TEXT NOT NULL,
+		source varchar(512) NOT NULL,
+		action bigint(10),
+		done_time TIMESTAMP(6) NOT NULL
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
+
+	// CreateImportJobs is a table that IMPORT INTO uses.
+	CreateImportJobs = `CREATE TABLE IF NOT EXISTS mysql.tidb_import_jobs (
+		id bigint(64) NOT NULL AUTO_INCREMENT,
+		create_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+		start_time TIMESTAMP(6) NULL DEFAULT NULL,
+		update_time TIMESTAMP(6) NULL DEFAULT NULL,
+		end_time TIMESTAMP(6) NULL DEFAULT NULL,
+		table_schema VARCHAR(64) NOT NULL,
+		table_name VARCHAR(64) NOT NULL,
+		table_id bigint(64) NOT NULL,
+		created_by VARCHAR(300) NOT NULL,
+		parameters text NOT NULL,
+		source_file_size bigint(64) NOT NULL,
+		status VARCHAR(64) NOT NULL,
+		step VARCHAR(64) NOT NULL,
+		summary text DEFAULT NULL,
+		error_message TEXT DEFAULT NULL,
+		PRIMARY KEY (id),
+		KEY (created_by),
+		KEY (status));`
 )
+
+// CreateTimers is a table to store all timers for tidb
+var CreateTimers = timertable.CreateTimerTableSQL("mysql", "tidb_timers")
 
 // bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
@@ -894,11 +958,28 @@ const (
 	// ...
 	// version 167 add column `step` to `mysql.tidb_background_subtask`
 	version167 = 167
+	version168 = 168
+	// version 169
+	// 	 create table `mysql.tidb_runaway_quarantined_watch` and table `mysql.tidb_runaway_queries`
+	//   to save runaway query records and persist runaway watch at 7.2 version.
+	//   but due to ver171 recreate `mysql.tidb_runaway_watch`,
+	//   no need to create table `mysql.tidb_runaway_quarantined_watch`, so delete it.
+	version169 = 169
+	version170 = 170
+	// version 171
+	//   keep the tidb_server length same as instance in other tables.
+	version171 = 171
+	// version 172
+	//   create table `mysql.tidb_runaway_watch` and table `mysql.tidb_runaway_watch_done`
+	//   to persist runaway watch and deletion of runaway watch at 7.3.
+	version172 = 172
+	// version 173 add column `summary` to `mysql.tidb_background_subtask`.
+	version173 = 173
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version167
+var currentBootstrapVersion int64 = version173
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1034,6 +1115,12 @@ var (
 		// We will only use Ver145 to differentiate versions, so it is skipped here.
 		upgradeToVer146,
 		upgradeToVer167,
+		upgradeToVer168,
+		upgradeToVer169,
+		upgradeToVer170,
+		upgradeToVer171,
+		upgradeToVer172,
+		upgradeToVer173,
 	}
 )
 
@@ -1091,8 +1178,14 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	return row.GetString(0), false, nil
 }
 
-// SupportUpgradeStateVer is exported for testing.
-var SupportUpgradeStateVer = version145
+var (
+	// SupportUpgradeStateVer is exported for testing.
+	// The minimum version that can be upgraded by paused user DDL.
+	SupportUpgradeStateVer int64 = version145
+	// SupportUpgradeHTTPOpVer is exported for testing.
+	// The minimum version of the upgrade can be notified through the HTTP API.
+	SupportUpgradeHTTPOpVer int64 = version172
+)
 
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
@@ -1103,6 +1196,10 @@ func upgrade(s Session) {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
+	if ver >= SupportUpgradeStateVer {
+		checkOrSyncUpgrade(s, ver)
+	}
+
 	// Only upgrade from under version92 and this TiDB is not owner set.
 	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
 	if ver < version92 {
@@ -1122,9 +1219,6 @@ func upgrade(s Session) {
 		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
 	}
 
-	if ver >= int64(SupportUpgradeStateVer) {
-		syncUpgradeState(s)
-	}
 	if isNull {
 		upgradeToVer99Before(s)
 	}
@@ -1136,9 +1230,6 @@ func upgrade(s Session) {
 	}
 	if isNull {
 		upgradeToVer99After(s)
-	}
-	if ver >= int64(SupportUpgradeStateVer) {
-		syncNormalRunning(s)
 	}
 
 	variable.DDLForce2Queue.Store(false)
@@ -1165,87 +1256,6 @@ func upgrade(s Session) {
 			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
 	}
-}
-
-func syncUpgradeState(s Session) {
-	totalInterval := time.Duration(internalSQLTimeout) * time.Second
-	ctx, cancelFunc := context.WithTimeout(context.Background(), totalInterval)
-	defer cancelFunc()
-	dom := domain.GetDomain(s)
-	err := dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateUpgrading))
-	if err != nil {
-		logutil.BgLogger().Fatal("[upgrading] update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
-	}
-
-	interval := 200 * time.Millisecond
-	retryTimes := int(totalInterval / interval)
-	for i := 0; i < retryTimes; i++ {
-		op, err := owner.GetOwnerOpValue(ctx, dom.EtcdClient(), ddl.DDLOwnerKey, "upgrade bootstrap")
-		if err == nil && op.String() == owner.OpGetUpgradingState.String() {
-			break
-		}
-		if i == retryTimes-1 {
-			logutil.BgLogger().Fatal("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
-		}
-		if i%10 == 0 {
-			logutil.BgLogger().Warn("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
-		}
-		time.Sleep(interval)
-	}
-
-	retryTimes = 60
-	interval = 500 * time.Millisecond
-	for i := 0; i < retryTimes; i++ {
-		jobErrs, err := ddl.PauseAllJobsBySystem(s)
-		if err == nil && len(jobErrs) == 0 {
-			break
-		}
-		jobErrStrs := make([]string, 0, len(jobErrs))
-		for _, jobErr := range jobErrs {
-			if dbterror.ErrPausedDDLJob.Equal(jobErr) {
-				continue
-			}
-			jobErrStrs = append(jobErrStrs, jobErr.Error())
-		}
-		if err == nil && len(jobErrStrs) == 0 {
-			break
-		}
-
-		if i == retryTimes-1 {
-			logutil.BgLogger().Fatal("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
-		}
-		logutil.BgLogger().Warn("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
-		time.Sleep(interval)
-	}
-	logutil.BgLogger().Info("[upgrading] update global state to upgrading", zap.String("state", syncer.StateUpgrading))
-}
-
-func syncNormalRunning(s Session) {
-	failpoint.Inject("mockResumeAllJobsFailed", func(val failpoint.Value) {
-		if val.(bool) {
-			dom := domain.GetDomain(s)
-			//nolint: errcheck
-			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), syncer.NewStateInfo(syncer.StateNormalRunning))
-			failpoint.Return()
-		}
-	})
-
-	jobErrs, err := ddl.ResumeAllJobsBySystem(s)
-	if err != nil {
-		logutil.BgLogger().Warn("[upgrading] resume all paused jobs failed", zap.Error(err))
-	}
-	for _, e := range jobErrs {
-		logutil.BgLogger().Warn("[upgrading] resume the job failed ", zap.Error(e))
-	}
-
-	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancelFunc()
-	dom := domain.GetDomain(s)
-	err = dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateNormalRunning))
-	if err != nil {
-		logutil.BgLogger().Fatal("[upgrading] update global state to normal failed", zap.Error(err))
-	}
-	logutil.BgLogger().Info("[upgrading] update global state to normal running finished")
 }
 
 // checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.
@@ -1515,6 +1525,7 @@ func upgradeToVer20(s Session, ver int64) {
 	if ver >= version20 {
 		return
 	}
+	// NOTE: Feedback is deprecated, but we still need to create this table for compatibility.
 	doReentrantDDL(s, CreateStatsFeedbackTable)
 }
 
@@ -2548,8 +2559,8 @@ func upgradeToVer136(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, CreateGlobalTask)
-	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s DROP INDEX namespace", ddl.BackgroundSubtaskTable), dbterror.ErrCantDropFieldOrKey)
-	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s ADD INDEX idx_task_key(task_key)", ddl.BackgroundSubtaskTable), dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask DROP INDEX namespace", dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_task_key(task_key)", dbterror.ErrDupKeyName)
 }
 
 func upgradeToVer137(_ Session, _ int64) {
@@ -2666,6 +2677,50 @@ func upgradeToVer167(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer168(s Session, ver int64) {
+	if ver >= version168 {
+		return
+	}
+	mustExecute(s, CreateImportJobs)
+}
+
+func upgradeToVer169(s Session, ver int64) {
+	if ver >= version169 {
+		return
+	}
+	mustExecute(s, CreateRunawayTable)
+}
+
+func upgradeToVer170(s Session, ver int64) {
+	if ver >= version170 {
+		return
+	}
+	mustExecute(s, CreateTimers)
+}
+
+func upgradeToVer171(s Session, ver int64) {
+	if ver >= version171 {
+		return
+	}
+	mustExecute(s, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `tidb_server` `tidb_server` varchar(512)")
+}
+
+func upgradeToVer172(s Session, ver int64) {
+	if ver >= version172 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_quarantined_watch")
+	mustExecute(s, CreateRunawayWatchTable)
+	mustExecute(s, CreateDoneRunawayWatchTable)
+}
+
+func upgradeToVer173(s Session, ver int64) {
+	if ver >= version173 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2725,6 +2780,7 @@ func doDDLWorks(s Session) {
 	// Create gc_delete_range_done table.
 	mustExecute(s, CreateGCDeleteRangeDoneTable)
 	// Create stats_feedback table.
+	// NOTE: Feedback is deprecated, but we still need to create this table for compatibility.
 	mustExecute(s, CreateStatsFeedbackTable)
 	// Create role_edges table.
 	mustExecute(s, CreateRoleEdgesTable)
@@ -2780,6 +2836,16 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGlobalTask)
 	// Create load_data_jobs
 	mustExecute(s, CreateLoadDataJobs)
+	// Create tidb_import_jobs
+	mustExecute(s, CreateImportJobs)
+	// create runaway_watch
+	mustExecute(s, CreateRunawayWatchTable)
+	// create runaway_queries
+	mustExecute(s, CreateRunawayTable)
+	// create tidb_timers
+	mustExecute(s, CreateTimers)
+	// create runaway_watch done
+	mustExecute(s, CreateDoneRunawayWatchTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
@@ -2791,7 +2857,7 @@ func doBootstrapSQLFile(s Session) error {
 		return nil
 	}
 	logutil.BgLogger().Info("executing -initialize-sql-file", zap.String("file", sqlFile))
-	b, err := ioutil.ReadFile(sqlFile) //nolint:gosec
+	b, err := os.ReadFile(sqlFile) //nolint:gosec
 	if err != nil {
 		if intest.InTest {
 			return err

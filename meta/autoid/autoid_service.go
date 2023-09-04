@@ -41,6 +41,7 @@ type singlePointAlloc struct {
 	lastAllocated int64
 	isUnsigned    bool
 	clientDiscover
+	keyspaceID uint32
 }
 
 type clientDiscover struct {
@@ -94,7 +95,7 @@ func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 		}
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
-	logutil.BgLogger().Info("[autoid client] connect to leader", zap.String("addr", addr))
+	logutil.BgLogger().Info("connect to leader", zap.String("category", "autoid client"), zap.String("addr", addr))
 	grpcConn, err := grpc.Dial(addr, opt)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -133,6 +134,7 @@ retry:
 		Increment:  increment,
 		Offset:     offset,
 		IsUnsigned: sp.isUnsigned,
+		KeyspaceID: sp.keyspaceID,
 	})
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
 	if err != nil {
@@ -156,7 +158,7 @@ retry:
 const backoffDuration = 200 * time.Millisecond
 
 func (sp *singlePointAlloc) resetConn(reason error) {
-	logutil.BgLogger().Info("[autoid client] reset grpc connection",
+	logutil.BgLogger().Info("reset grpc connection", zap.String("category", "autoid client"),
 		zap.String("reason", reason.Error()))
 	var grpcConn *grpc.ClientConn
 	sp.mu.Lock()
@@ -168,7 +170,7 @@ func (sp *singlePointAlloc) resetConn(reason error) {
 	if grpcConn != nil {
 		err := grpcConn.Close()
 		if err != nil {
-			logutil.BgLogger().Warn("[autoid client] close grpc connection error", zap.Error(err))
+			logutil.BgLogger().Warn("close grpc connection error", zap.String("category", "autoid client"), zap.Error(err))
 		}
 	}
 }

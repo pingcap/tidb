@@ -15,9 +15,11 @@
 package perfschema
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -35,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/profile"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -69,6 +70,7 @@ const (
 	tableNamePDProfileAllocs                 = "pd_profile_allocs"
 	tableNamePDProfileBlock                  = "pd_profile_block"
 	tableNamePDProfileGoroutines             = "pd_profile_goroutines"
+	tableNameSessionConnectAttrs             = "session_connect_attrs"
 	tableNameSessionVariables                = "session_variables"
 )
 
@@ -104,6 +106,7 @@ var tableIDMap = map[string]int64{
 	tableNamePDProfileBlock:                  autoid.PerformanceSchemaDBID + 29,
 	tableNamePDProfileGoroutines:             autoid.PerformanceSchemaDBID + 30,
 	tableNameSessionVariables:                autoid.PerformanceSchemaDBID + 31,
+	tableNameSessionConnectAttrs:             autoid.PerformanceSchemaDBID + 32,
 }
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
@@ -121,13 +124,6 @@ var pluginTable = make(map[string]func(autoid.Allocators, *model.TableInfo) (tab
 func IsPredefinedTable(tableName string) bool {
 	_, ok := tableIDMap[strings.ToLower(tableName)]
 	return ok
-}
-
-// RegisterTable registers a new table into TiDB.
-func RegisterTable(tableName, sql string,
-	tableFromMeta func(autoid.Allocators, *model.TableInfo) (table.Table, error)) {
-	perfSchemaTables = append(perfSchemaTables, sql)
-	pluginTable[tableName] = tableFromMeta
 }
 
 func tableFromMeta(allocs autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -257,6 +253,8 @@ func (vt *perfSchemaTable) getRows(ctx context.Context, sctx sessionctx.Context,
 		fullRows, err = dataForRemoteProfile(sctx, "pd", "/pd/api/v1/debug/pprof/goroutine?debug=2", true)
 	case tableNameSessionVariables:
 		fullRows, err = infoschema.GetDataFromSessionVariables(ctx, sctx)
+	case tableNameSessionConnectAttrs:
+		fullRows, err = infoschema.GetDataFromSessionConnectAttrs(sctx)
 	}
 	if err != nil {
 		return
@@ -399,7 +397,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 		}
 		results = append(results, result)
 	}
-	slices.SortFunc(results, func(i, j result) bool { return i.addr < j.addr })
+	slices.SortFunc(results, func(i, j result) int { return cmp.Compare(i.addr, j.addr) })
 	var finalRows [][]types.Datum
 	for _, result := range results {
 		addr := types.NewStringDatum(result.addr)

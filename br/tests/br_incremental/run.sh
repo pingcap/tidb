@@ -19,10 +19,11 @@ DB="$TEST_NAME"
 TABLE="usertable"
 AUTO_ID_TABLE="a"
 ROW_COUNT=10
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 run_sql "CREATE DATABASE $DB;"
 
-go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
+go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
 row_count_ori_full=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE;" | awk '/COUNT/{print $2}')
 
 run_sql "CREATE TABLE IF NOT EXISTS ${DB}.${AUTO_ID_TABLE} (c1 INT);"
@@ -31,7 +32,7 @@ run_sql "CREATE TABLE IF NOT EXISTS ${DB}.${AUTO_ID_TABLE} (c1 INT);"
 echo "full backup start..."
 run_br --pd $PD_ADDR backup db -s "local://$TEST_DIR/$DB/full" --db $DB
 
-go-ycsb run mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
+go-ycsb run mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
 
 for i in $(seq $ROW_COUNT); do
     run_sql "INSERT INTO ${DB}.${AUTO_ID_TABLE}(c1) VALUES ($i);"

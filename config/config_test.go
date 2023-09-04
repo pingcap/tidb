@@ -25,6 +25,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
@@ -655,7 +656,8 @@ engines = ["tikv", "tiflash", "tidb"]
 
 	for _, test := range configTest {
 		conf := new(Config)
-		configFile := "config.toml"
+		storeDir := t.TempDir()
+		configFile := filepath.Join(storeDir, "config.toml")
 		f, err := os.Create(configFile)
 		require.NoError(t, err)
 		// Write the sample config file
@@ -690,7 +692,8 @@ func TestConfig(t *testing.T) {
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
 	conf.Instance.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
-	configFile := "config.toml"
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
 	defer func(configFile string) {
@@ -750,6 +753,7 @@ region-cache-ttl=6000
 store-limit=0
 ttl-refreshed-txn-size=8192
 resolve-lock-lite-threshold = 16
+copr-req-timeout = "120s"
 [tikv-client.async-commit]
 keys-limit=123
 total-key-size-limit=1024
@@ -806,6 +810,7 @@ max_connections = 200
 	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)
 	require.True(t, conf.RepairMode)
 	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
+	require.Equal(t, 120*time.Second, conf.TiKVClient.CoprReqTimeout)
 	require.Equal(t, uint32(200), conf.Instance.MaxConnections)
 	require.Equal(t, uint32(10), conf.TiDBMaxReuseChunk)
 	require.Equal(t, uint32(20), conf.TiDBMaxReuseColumn)
@@ -1021,7 +1026,8 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 func TestConflictInstanceConfig(t *testing.T) {
 	var expectedNewName string
 	conf := new(Config)
-	configFile := "config.toml"
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
 
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
@@ -1077,7 +1083,8 @@ func TestConflictInstanceConfig(t *testing.T) {
 func TestDeprecatedConfig(t *testing.T) {
 	var expectedNewName string
 	conf := new(Config)
-	configFile := "config.toml"
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
 
 	f, err := os.Create(configFile)
 	require.NoError(t, err)

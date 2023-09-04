@@ -146,6 +146,7 @@
       "/rules_go_work-*": "ignore generated code",
       "GOROOT/": "ignore code",
       "/parser/": "ignore code",
+      "server/internal/testserverclient/server_client.go": "ignore code",
       ".*_/testmain\\.go$": "ignore code"
     }
   },
@@ -160,6 +161,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
+      ".cgo/": "no need to cgo code",
       ".*_generated\\.go$": "ignore generated code",
       ".*_/testmain\\.go$": "ignore code"
     }
@@ -173,7 +175,7 @@
       ".*_test\\.go$": "ignore test code"
     },
     "only_files": {
-      "statistics/handle": "statistics/handle code",
+      "statistics/": "statistics/ code",
       "util/checksum": "util/checksum code",
       "util/processinfo.go": "util/processinfo.go code",
       "util/cpuprofile/": "util/cpuprofile/ code",
@@ -207,7 +209,10 @@
       "util/watcher/": "util/watcher/ code",
       "util/gctuner": "util/gctuner",
       "store/mockstore/unistore/util": "store/mockstore/unistore/util code",
-      "ddl/util/": "ddl/util code"
+      "ddl/util/": "ddl/util code",
+      "server/internal": "server/internal code",
+      "planner/core/internal": "planner/core/internal code",
+      "executor/internal": "executor/internal code"
     }
   },
   "findcall": {
@@ -220,6 +225,7 @@
   "forcetypeassert": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
+      ".*test_/testmain\\.go$": "ignore generated code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     },
@@ -277,11 +283,13 @@
       "/cgo/": "ignore cgo code",
       "/rules_go_work-*": "ignore generated code",
       "tools/check/ut.go": "ignore tools/check code",
+      "cmd/mirror": "ignore cmd/mirror code",
       "tools/check/xprog.go": "ignore tools/check code",
       "cmd/pluginpkg/pluginpkg.go": "ignore cmd/pluginpkg code",
       "tools/check/xprog.go:": "ignore tools/check code",
       "cmd/explaintest/main.go": "ignore cmd/explaintest code",
       "GOROOT/": "ignore code",
+      "server/internal/testserverclient/server_client.go": "ignore server_client code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
@@ -330,6 +338,7 @@
   },
   "lll": {
     "exclude_files": {
+      ".*_test\\.go$": "ignore test code",
       "/cgo/": "ignore cgo code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
@@ -402,6 +411,7 @@
       "planner/core/": "ignore core code",
       "planner/optimize.go": "ignore optimize code",
       "planner/cascades/": "ignore cascades code",
+      "planner/cardinality/": "ignore cardinality code",
       "planner/funcdep/extract_fd_test.go": "ignore extract_fd code",
       "planner/funcdep/only_full_group_by_test.go": "ignore only_full_group_by code",
       "dumpling/export": "ignore export code",
@@ -438,6 +448,7 @@
       "parser/parser.go": "parser/parser.go code",
       "/cgo/": "ignore cgo code",
       "external/": "no need to vet third party code",
+      "$GOROOT/": "ignore GOROOT code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
@@ -492,45 +503,28 @@
       "dumpling/export/sql_type.go": "please fix it",
       ".*_test\\.go$": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code",
-      "planner/core/resolve_indices.go": "planner/core/resolve_indices.go",
-      "planner/core/rule_aggregation_push_down.go": "planner/core/rule_aggregation_push_down.go",
-      "planner/core/rule_max_min_eliminate.go": "planner/core/rule_max_min_eliminate.go",
-      "planner/core/indexmerge_path.go": "planner/core/indexmerge_path.go",
-      "planner/core/rule_join_reorder.go": "planner/core/rule_join_reorder.go",
-      "planner/core/plan_cacheable_checker.go": "planner/core/plan_cacheable_checker.go",
-      "planner/core/rule_decorrelate.go": "planner/core/rule_decorrelate.go",
-      "planner/core/plan_cache_utils.go": "planner/core/plan_cache_utils.go",
-      "planner/core/rule_aggregation_skew_rewrite.go": "planner/core/rule_aggregation_skew_rewrite.go",
-      "planner/core/rule_topn_push_down.go": "planner/core/rule_topn_push_down.go",
-      "planner/core/expression_rewriter.go": "planner/core/expression_rewriter.go",
-      "planner/core/task.go": "planner/core/task.go",
-      "planner/core/preprocess.go": "planner/core/preprocess.go",
-      "planner/core/plan_cache_lru.go": "planner/core/plan_cache_lru.go",
-      "planner/core/common_plans.go": "planner/core/common_plans.go",
       "plugin/conn_ip_example/": "plugin/conn_ip_example/"
     },
     "only_files": {
       "autoid_service/": "autoid_service",
       "bindinfo/": "bindinfo",
       "br/pkg/lightning/": "br/pkg/lightning/",
-      "executor/aggregate.go": "executor/aggregate.go",
-      "executor/analyze_utils.go": "executor/analyze_utils.go",
-      "executor/internal/": "executor/internal/",
+      "executor/": "executor/",
       "types/json_binary_functions.go": "types/json_binary_functions.go",
       "types/json_binary_test.go": "types/json_binary_test.go",
       "ddl/": "ddl",
+      "expression/a": "expression/a code",
+      "expression/builtin.go": "expression/builtin code",
       "expression/builtin_cast.go": "expression/builtin_cast code",
-      "server/conn.go": "server/conn.go",
-      "server/conn_stmt.go": "server/conn_stmt.go",
-      "server/conn_test.go": "server/conn_test.go",
-      "planner/core/rule_partition_eliminate.go": "planner/core/rule_partition_eliminate code",
-      "distsql/": "ignore distsql code",
+      "server/": "server/ code",
+      "distsql/": "distsql code",
       "disttask": "disttask code",
       "dumpling/export": "dumpling/export code",
       "lock/": "lock file",
       "errno/": "errno code",
       "session/": "session code",
       "structure/": "structure code",
+      "statistics/": "statistics/ code",
       "telemetry/": "telemetry code",
       "parser/": "parser code",
       "planner/": "planner code",
@@ -593,6 +587,93 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "toomanytests": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "/cgo/": "ignore cgo code",
+      "/rules_go_work-*": "ignore generated code",
+      ".*test_/testmain\\.go$": "ignore generated code",
+      ".*failpoint_binding__.go$": "ignore generated code",
+      "util/chunk": "ignore util/chunk",
+      "br/pkg/lightning/mydump/": "more than 50",
+      "br/pkg/lightning/importer/": "more than 50",
+      "br/pkg/lightning/backend/local/": "more than 50",
+      "br/pkg/restore/": "more than 50",
+      "ddl/tests/partition/": "more than 50"
+    },
+    "only_files": {
+      "br/pkg/version/": "br/pkg/version/ coded",
+      "br/pkg/utils/storewatch/": "br/pkg/utils/storewatch/ coded",
+      "br/pkg/utils/iter/": "br/pkg/utils/iter/ coded",
+      "br/pkg/utils/": "br/pkg/utils/ coded",
+      "br/pkg/task/show/": "br/pkg/task/show/ coded",
+      "br/pkg/task/": "br/pkg/task/ coded",
+      "br/pkg/streamhelper/spans/": "br/pkg/streamhelper/spans/ coded",
+      "br/pkg/streamhelper/": "br/pkg/streamhelper/ coded",
+      "br/pkg/stream/": "br/pkg/stream/ coded",
+      "br/pkg/storage/": "br/pkg/storage/ coded",
+      "br/pkg/rtree/": "br/pkg/rtree/ coded",
+      "br/pkg/restore/tiflashrec/": "br/pkg/restore/tiflashrec/ coded",
+      "br/pkg/restore/split/": "br/pkg/restore/split/ coded",
+      "br/pkg/restore/ingestrec/": "br/pkg/restore/ingestrec/ coded",
+      "br/pkg/pdutil/": "br/pkg/pdutil/ coded",
+      "br/pkg/metautil/": "br/pkg/metautil/ coded",
+      "br/pkg/logutil/": "br/pkg/logutil/ coded",
+      "br/pkg/gluetidb/": "br/pkg/gluetidb/ coded",
+      "br/pkg/conn/": "br/pkg/conn/ coded",
+      "br/pkg/checkpoint/": "br/pkg/checkpoint/ coded",
+      "br/pkg/backup/": "br/pkg/backup/ coded",
+      "planer/core/casetest/binaryplan": "planer/core/casetest/binaryplan",
+      "planer/core/casetest/cbotest": "planer/core/casetest/cbotest",
+      "planer/core/casetest/enforcempp": "planer/core/casetest/enforcempp",
+      "planer/core/casetest/flatplan": "planer/core/casetest/flatplan",
+      "planer/core/casetest/hint": "planer/core/casetest/hint",
+      "planer/core/casetest/mpp": "planer/core/casetest/mpp",
+      "planer/core/casetest/partition": "planer/core/casetest/partition",
+      "planer/core/casetest/pushdown": "planer/core/casetest/pushdown",
+      "planer/core/casetest/rule": "planer/core/casetest/rule",
+      "planer/core/casetest/scalarsubquery": "planer/core/casetest/scalarsubquery",
+      "planer/core/casetest/testdata": "planer/core/casetest/testdata",
+      "planer/core/casetest/windows": "planer/core/casetest/windows",
+      "planer/core/tests/": "planer/core/tests/",
+      "executor/test/admintest": "executor/test/admintest",
+      "executor/test/aggregate": "executor/test/aggregate",
+      "executor/test/autoidtest": "executor/test/autoidtest",
+      "executor/test/distsqltest": "executor/test/distsqltest",
+      "executor/test/fktest": "executor/test/fktest",
+      "executor/test/indexmergereadtest": "executor/test/indexmergereadtest",
+      "executor/test/jointest": "executor/test/jointest",
+      "executor/test/kvtest": "executor/test/kvtest",
+      "executor/test/loaddatatest": "executor/test/loaddatatest",
+      "executor/test/loadremotetest": "executor/test/loadremotetest",
+      "executor/test/memtest": "executor/test/memtest",
+      "executor/test/oomtest": "executor/test/oomtest",
+      "executor/test/partitiontest": "executor/test/partitiontest",
+      "executor/test/passwordtest": "executor/test/passwordtest",
+      "executor/test/seqtest": "executor/test/seqtest",
+      "executor/test/showtest": "executor/test/showtest",
+      "executor/test/simpletest": "executor/test/simpletest",
+      "executor/test/splittest": "executor/test/splittest",
+      "executor/test/tiflashtest": "executor/test/tiflashtest",
+      "executor/test/unstabletest": "executor/test/unstabletest",
+      "br/": "br code",
+      "session/test": "session/test code",
+      "ddl/tests": "ddl/tests code",
+      "disttask/": "disttask code",
+      "timer/": "timer code",
+      "util/": "util code",
+      "br/pkg/lightning/config/": "br/pkg/lightning/config code",
+      "br/pkg/storage": "br/pkg/storage code",
+      "br/pkg/utils": "br/pkg/utils code",
+      "planner/cascades": "planner/cascades code",
+      "store/": "store code",
+      "ttl/": "ttl code",
+      "bindinfo/": "bindinfo code",
+      "domain/": "domain code"
+    }
+  },
   "unconvert": {
     "exclude_files": {
       "external/": "no need to vet third party code",
@@ -634,11 +715,17 @@
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "server/tidb_test.go": "ignore test code",
+      "server/tests/tidb_test.go": "ignore test code",
+      "server/tests/tidb_serial_test.go": "ignore test code",
       "server/tidb_serial_test.go": "ignore test code",
       "server/statistics_handler_test.go": "ignore test code",
+      "server/handler/optimizor/optimize_trace_test.go": "ignore test code",
+      "server/handler/optimizor/plan_replayer_test.go": "ignore test code",
+      "server/handler/optimizor/statistics_handler_test.go": "ignore test code",
       "server/server_test.go": "ignore test code",
       "server/optimize_trace_test.go": "ignore test code",
-      "server/plan_replayer_test.go": "ignore test code"
+      "server/plan_replayer_test.go": "ignore test code",
+      "server/internal/testserverclient/server_client.go": "ignore test code"
     }
   },
   "S1000": {
@@ -941,7 +1028,8 @@
       "br/pkg/lightning/checkpoints/checkpoints.go": "cfg.TikvImporter.Addr is deprecated",
       "br/pkg/lightning/checkpoints/glue_checkpoint.go": "cfg.TikvImporter.Addr is deprecated",
       "br/pkg/lightning/backend/local/local.go": "grpc Compressor/Decompressor is deprecated",
-      "br/pkg/lightning/backend/local/compress.go": "grpc Compressor/Decompressor is deprecated"
+      "br/pkg/lightning/backend/local/compress.go": "grpc Compressor/Decompressor is deprecated",
+      "domain/infosync/resource_manager_client.go": "github.com/golang/protobuf deprecated"
     },
     "only_files": {
       "expression/bench_test.go": "expression/bench_test.go",
@@ -1145,6 +1233,7 @@
   "prealloc": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
+      "cmd/mirror": "cmd/mirror code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "parser/yy_parser.go": "ignore generated code",
@@ -1154,6 +1243,7 @@
   "predeclared": {
     "exclude_files": {
       "external/": "no need to vet third party code",
+      "cmd/mirror": "no need to mirror",
       ".*_generated\\.go$": "ignore generated code",
       "parser/yy_parser.go": "ignore generated code",
       "parser/parser.go": "ignore generated code",
@@ -1171,6 +1261,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1178,6 +1269,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1185,6 +1277,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1193,6 +1286,7 @@
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   },
@@ -1201,6 +1295,7 @@
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   }

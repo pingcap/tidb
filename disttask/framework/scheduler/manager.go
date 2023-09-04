@@ -17,10 +17,13 @@ package scheduler
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -30,7 +33,8 @@ import (
 var (
 	schedulerPoolSize       int32 = 4
 	subtaskExecutorPoolSize int32 = 10
-	checkTime                     = time.Second
+	// same as dispatcher
+	checkTime = 300 * time.Millisecond
 )
 
 // ManagerBuilder is used to build a Manager.
@@ -64,13 +68,15 @@ type Manager struct {
 	taskTable     TaskTable
 	schedulerPool Pool
 	// taskType -> subtaskExecutorPool
+	// shared by subtasks of all task steps
 	subtaskExecutorPools map[string]Pool
 	mu                   struct {
 		sync.RWMutex
-		// taskID -> cancelFunc
-		// cancelFunc is used to fast cancel the scheduler.Run
+		// taskID -> cancelFunc.
+		// cancelFunc is used to fast cancel the scheduler.Run.
 		handlingTasks map[int64]context.CancelFunc
 	}
+	// id, it's the same as server id now, i.e. host:port.
 	id           string
 	wg           sync.WaitGroup
 	ctx          context.Context
@@ -99,9 +105,9 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 	}
 	m.schedulerPool = schedulerPool
 
-	for taskType := range subtaskExecutorConstructors {
+	for taskType, opt := range taskTypes {
 		poolSize := subtaskExecutorPoolSize
-		if opt, ok := subtaskExecutorOptions[taskType]; ok && opt.PoolSize > 0 {
+		if opt.PoolSize > 0 {
 			poolSize = opt.PoolSize
 		}
 		subtaskExecutorPool, err := m.newPool(taskType+"_pool", poolSize, util.DistTask)
@@ -115,6 +121,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 
 // Start starts the Manager.
 func (m *Manager) Start() {
+	logutil.Logger(m.logCtx).Debug("manager start")
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
@@ -185,7 +192,7 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 			logutil.Logger(m.logCtx).Error("unknown task type", zap.String("type", task.Type))
 			continue
 		}
-		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStatePending, proto.TaskStateRevertPending)
+		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRevertPending)
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("check subtask exist failed", zap.Error(err))
 			m.onError(err)
@@ -194,14 +201,14 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 		if !exist {
 			continue
 		}
-		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Any("id", task.ID))
+		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Any("task_id", task.ID))
 		m.addHandlingTask(task.ID)
 		t := task
 		err = m.schedulerPool.Run(func() {
 			m.onRunnableTask(ctx, t.ID, t.Type)
-			m.removeHandlingTask(t.ID)
+			m.removeHandlingTask(task.ID)
 		})
-		// pool closed
+		// pool closed.
 		if err != nil {
 			m.removeHandlingTask(task.ID)
 			m.onError(err)
@@ -215,7 +222,7 @@ func (m *Manager) onCanceledTasks(_ context.Context, tasks []*proto.Task) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, task := range tasks {
-		logutil.Logger(m.logCtx).Info("onCanceledTasks", zap.Any("id", task.ID))
+		logutil.Logger(m.logCtx).Info("onCanceledTasks", zap.Any("task_id", task.ID))
 		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
 			cancel()
 		}
@@ -227,7 +234,7 @@ func (m *Manager) cancelAllRunningTasks() {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for id, cancel := range m.mu.handlingTasks {
-		logutil.Logger(m.logCtx).Info("cancelAllRunningTasks", zap.Any("id", id))
+		logutil.Logger(m.logCtx).Info("cancelAllRunningTasks", zap.Any("task_id", id))
 		if cancel != nil {
 			cancel()
 		}
@@ -249,34 +256,50 @@ func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) []*proto.Task 
 	return tasks[:i]
 }
 
+// TestContext only used in tests.
+type TestContext struct {
+	TestSyncSubtaskRun chan struct{}
+	mockDown           atomic.Bool
+}
+
+var testContexts sync.Map
+
 // onRunnableTask handles a runnable task.
 func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType string) {
-	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Any("id", taskID), zap.Any("type", taskType))
+	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Any("task_id", taskID), zap.Any("type", taskType))
 	if _, ok := m.subtaskExecutorPools[taskType]; !ok {
 		m.onError(errors.Errorf("task type %s not found", taskType))
 		return
 	}
-	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks
+	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks.
 	scheduler := m.newScheduler(ctx, m.id, taskID, m.taskTable, m.subtaskExecutorPools[taskType])
-	scheduler.Start()
-	defer scheduler.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(checkTime):
 		}
+		failpoint.Inject("mockStopManager", func() {
+			testContexts.Store(m.id, &TestContext{make(chan struct{}), atomic.Bool{}})
+			go func() {
+				v, ok := testContexts.Load(m.id)
+				if ok {
+					<-v.(*TestContext).TestSyncSubtaskRun
+					m.Stop()
+					_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(m.id)
+				}
+			}()
+		})
 		task, err := m.taskTable.GetGlobalTaskByID(taskID)
 		if err != nil {
 			m.onError(err)
 			return
 		}
 		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {
-			logutil.Logger(m.logCtx).Info("onRunnableTask exit", zap.Any("id", taskID), zap.Any("state", task.State))
+			logutil.Logger(m.logCtx).Info("onRunnableTask exit", zap.Any("task_id", taskID), zap.Int64("step", task.Step), zap.Any("state", task.State))
 			return
 		}
-		// TODO: intergrate with heartbeat mechanism
-		if exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStatePending, proto.TaskStateRevertPending); err != nil {
+		if exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRevertPending); err != nil {
 			m.onError(err)
 			return
 		} else if !exist {

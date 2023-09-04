@@ -40,7 +40,7 @@ func (m *mockErrInterceptor) OnIter(_ kv.Snapshot, _ kv.Key, _ kv.Key) (kv.Itera
 	return nil, m.err
 }
 
-func (m *mockErrInterceptor) OnIterReverse(_ kv.Snapshot, _ kv.Key) (kv.Iterator, error) {
+func (m *mockErrInterceptor) OnIterReverse(_ kv.Snapshot, _ kv.Key, _ kv.Key) (kv.Iterator, error) {
 	return nil, m.err
 }
 
@@ -186,9 +186,13 @@ func TestTxnScan(t *testing.T) {
 	require.NoError(t, err)
 	checkIter(t, iter, [][]interface{}{{"k3", "v3"}, {"k5", "v5"}, {"k7", "v7"}})
 
-	iter, err = txn.IterReverse(kv.Key("k9"))
+	iter, err = txn.IterReverse(kv.Key("k9"), nil)
 	require.NoError(t, err)
 	checkIter(t, iter, [][]interface{}{{"k7", "v7"}, {"k5", "v5"}, {"k3", "v3"}, {"k1", "v1"}})
+
+	iter, err = txn.IterReverse(kv.Key("k9"), kv.Key("k3"))
+	require.NoError(t, err)
+	checkIter(t, iter, [][]interface{}{{"k7", "v7"}, {"k5", "v5"}, {"k3", "v3"}})
 
 	// make some dirty data
 	err = txn.Set(kv.Key("k1"), []byte("v1+"))
@@ -204,7 +208,7 @@ func TestTxnScan(t *testing.T) {
 	require.NoError(t, err)
 	checkIter(t, iter, [][]interface{}{{"k3", "v3+"}, {"k31", "v31+"}, {"k7", "v7"}})
 
-	iter, err = txn.IterReverse(kv.Key("k9"))
+	iter, err = txn.IterReverse(kv.Key("k9"), nil)
 	require.NoError(t, err)
 	checkIter(t, iter, [][]interface{}{{"k7", "v7"}, {"k31", "v31+"}, {"k3", "v3+"}, {"k1", "v1+"}})
 

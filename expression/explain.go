@@ -17,12 +17,12 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"golang.org/x/exp/slices"
 )
 
 // ExplainInfo implements the Expression interface.
@@ -110,6 +110,11 @@ func ExplainExpressionList(exprs []Expression, schema *Schema) string {
 		switch expr.(type) {
 		case *Column, *CorrelatedColumn:
 			builder.WriteString(expr.String())
+			if expr.String() != schema.Columns[i].String() {
+				// simple col projected again with another uniqueID without origin name.
+				builder.WriteString("->")
+				builder.WriteString(schema.Columns[i].String())
+			}
 		case *Constant:
 			v := expr.String()
 			length := 64

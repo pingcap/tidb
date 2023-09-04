@@ -24,6 +24,7 @@ import (
 	"math"
 	"math/rand"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +33,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
@@ -56,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -63,7 +66,6 @@ import (
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 )
 
 var (
@@ -742,6 +744,9 @@ type SessionVars struct {
 	// PlanColumnID is the unique id for column when building plan.
 	PlanColumnID atomic.Int64
 
+	// MapScalarSubQ maps the scalar sub queries from its ID to its struct.
+	MapScalarSubQ []interface{}
+
 	// MapHashCode2UniqueID4ExtendedCol map the expr's hash code to specified unique ID.
 	MapHashCode2UniqueID4ExtendedCol map[string]int
 
@@ -820,6 +825,8 @@ type SessionVars struct {
 	// Enable3StageMultiDistinctAgg indicates whether to allow 3 stage multi distinct aggregate
 	Enable3StageMultiDistinctAgg bool
 
+	ExplainNonEvaledSubQuery bool
+
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
 
@@ -837,6 +844,11 @@ type SessionVars struct {
 	// Default value is `true`, means to be determined by the optimizer.
 	// Value set to `false` means never use mpp.
 	allowMPPExecution bool
+
+	// allowTiFlashCop means if we must use mpp way to execute query.
+	// Default value is `false`, means to be determined by the optimizer.
+	// Value set to `true` means we may fall back to TiFlash cop if possible.
+	allowTiFlashCop bool
 
 	// HashExchangeWithNewCollation means if we support hash exchange when new collation is enabled.
 	// Default value is `true`, means support hash exchange when new collation is enabled.
@@ -873,7 +885,7 @@ type SessionVars struct {
 	TiFlashMaxBytesBeforeExternalSort int64
 
 	// TiFlashEnablePipelineMode means if we should use pipeline model to execute query or not in tiflash.
-	// Default value is `false`, means never use pipeline model in tiflash.
+	// Default value is `true`, means never use pipeline model in tiflash.
 	// Value set to `true` means try to execute query with pipeline model in tiflash.
 	TiFlashEnablePipelineMode bool
 
@@ -1057,6 +1069,10 @@ type SessionVars struct {
 	// If the value is 0, timeouts are not enabled.
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
+
+	// TidbKvReadTimeout is the timeout for readonly kv request in milliseconds, 0 means using default value
+	// See https://github.com/pingcap/tidb/blob/7105505a78fc886c33258caa5813baf197b15247/docs/design/2023-06-30-configurable-kv-timeout.md?plain=1#L14-L15
+	TidbKvReadTimeout uint64
 
 	// Killed is a flag to indicate that this query is killed.
 	Killed uint32
@@ -1317,6 +1333,8 @@ type SessionVars struct {
 
 	// RequestSourceType is the type of inner request.
 	RequestSourceType string
+	// ExplicitRequestSourceType is the type of origin external request.
+	ExplicitRequestSourceType string
 
 	// MemoryDebugModeMinHeapInUse indicated the minimum heapInUse threshold that triggers the memoryDebugMode.
 	MemoryDebugModeMinHeapInUse int64
@@ -1486,8 +1504,15 @@ type SessionVars struct {
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
 
+	// FastCheckTable is used to control whether fast check table is enabled.
+	FastCheckTable bool
+
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+
+	// TiFlashReplicaRead indicates the policy of TiFlash node selection when the query needs the TiFlash engine.
+	TiFlashReplicaRead tiflash.ReplicaRead
+
 	// HypoTiFlashReplicas are for the Index Advisor.
 	HypoTiFlashReplicas map[string]map[string]struct{} // dbName -> tblName -> whether to have replicas
 
@@ -1497,24 +1522,32 @@ type SessionVars struct {
 	runtimeFilterTypes []RuntimeFilterType
 	// Runtime filter mode: only support OFF, LOCAL now
 	runtimeFilterMode RuntimeFilterMode
+
+	// Whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
+	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
+	LockUnchangedKeys bool
+
+	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
+	AnalyzeSkipColumnTypes map[string]struct{}
+
+	// SkipMissingPartitionStats controls how to handle missing partition stats when merging partition stats to global stats.
+	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
+	// When set to false, give up merging partition stats to global stats.
+	SkipMissingPartitionStats bool
+
+	// SessionAlias is the identifier of the session
+	SessionAlias string
+
+	// OptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
+	// For now, the possible values and corresponding behaviors are:
+	// OptObjectiveModerate: The default value. The optimizer considers the real-time stats (real-time row count, modify count).
+	// OptObjectiveDeterminate: The optimizer doesn't consider the real-time stats.
+	OptObjective string
 }
 
-var (
-	// variables below are for the optimizer fix control.
-
-	// TiDBOptFixControl44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
-	TiDBOptFixControl44262 uint64 = 44262
-	// TiDBOptFixControl44389 controls whether to consider non-point ranges of some CNF item when building ranges.
-	TiDBOptFixControl44389 uint64 = 44389
-)
-
-// GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
-func (s *SessionVars) GetOptimizerFixControlValue(key uint64) (value string, exist bool) {
-	if s.OptimizerFixControl == nil {
-		return "", false
-	}
-	value, exist = s.OptimizerFixControl[key]
-	return
+// GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
+func (s *SessionVars) GetOptimizerFixControlMap() map[uint64]string {
+	return s.OptimizerFixControl
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1643,6 +1676,11 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 // IsMPPAllowed returns whether mpp execution is allowed.
 func (s *SessionVars) IsMPPAllowed() bool {
 	return s.allowMPPExecution
+}
+
+// IsTiFlashCopBanned returns whether cop execution is allowed.
+func (s *SessionVars) IsTiFlashCopBanned() bool {
+	return !s.allowTiFlashCop
 }
 
 // IsMPPEnforced returns whether mpp execution is enforced.
@@ -1966,6 +2004,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		mppVersion:                    kv.MppVersionUnspecified,
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
+		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -2131,6 +2170,11 @@ func (s *SessionVars) CleanBuffers() {
 // AllocPlanColumnID allocates column id for plan.
 func (s *SessionVars) AllocPlanColumnID() int64 {
 	return s.PlanColumnID.Add(1)
+}
+
+// RegisterScalarSubQ register a scalar sub query into the map. This will be used for EXPLAIN.
+func (s *SessionVars) RegisterScalarSubQ(scalarSubQ interface{}) {
+	s.MapScalarSubQ = append(s.MapScalarSubQ, scalarSubQ)
 }
 
 // GetCharsetInfo gets charset and collation for current context.
@@ -2582,6 +2626,8 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
 	sessionStates.ResourceGroupName = s.ResourceGroupName
+	sessionStates.HypoIndexes = s.HypoIndexes
+	sessionStates.HypoTiFlashReplicas = s.HypoTiFlashReplicas
 
 	// Encode StatementContext. We encode it here to avoid circle dependency.
 	sessionStates.LastAffectedRows = s.StmtCtx.PrevAffectedRows
@@ -2616,6 +2662,8 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
 	s.ResourceGroupName = sessionStates.ResourceGroupName
+	s.HypoIndexes = sessionStates.HypoIndexes
+	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
 
 	// Decode StatementContext.
 	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
@@ -2913,6 +2961,8 @@ const (
 	SlowLogHostStr = "Host"
 	// SlowLogConnIDStr is slow log field name.
 	SlowLogConnIDStr = "Conn_ID"
+	// SlowLogSessAliasStr is the session alias set by user
+	SlowLogSessAliasStr = "Session_alias"
 	// SlowLogQueryTimeStr is slow log field name.
 	SlowLogQueryTimeStr = "Query_time"
 	// SlowLogParseTimeStr is the parse sql time.
@@ -3114,6 +3164,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if s.ConnectionID != 0 {
 		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
+	}
+	if s.SessionAlias != "" {
+		writeSlowLogItem(&buf, SlowLogSessAliasStr, s.SessionAlias)
 	}
 	if logItems.ExecRetryCount > 0 {
 		buf.WriteString(SlowLogRowPrefixStr)
@@ -3465,6 +3518,14 @@ func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 	return s.runtimeFilterMode
 }
 
+// GetTidbKvReadTimeout returns readonly kv request timeout, prefer query hint over session variable
+func (s *SessionVars) GetTidbKvReadTimeout() uint64 {
+	if s.StmtCtx.HasTidbKvReadTimeout {
+		return s.StmtCtx.TidbKvReadTimeout
+	}
+	return s.TidbKvReadTimeout
+}
+
 // RuntimeFilterType type of runtime filter "IN"
 type RuntimeFilterType int64
 
@@ -3565,4 +3626,18 @@ func RuntimeFilterModeStringToMode(name string) (RuntimeFilterMode, bool) {
 	default:
 		return -1, false
 	}
+}
+
+const (
+	// OptObjectiveModerate is a possible value and the default value for TiDBOptObjective.
+	// Please see comments of SessionVars.OptObjective for details.
+	OptObjectiveModerate string = "moderate"
+	// OptObjectiveDeterminate is a possible value for TiDBOptObjective.
+	OptObjectiveDeterminate = "determinate"
+)
+
+// GetOptObjective return the session variable "tidb_opt_objective".
+// Please see comments of SessionVars.OptObjective for details.
+func (s *SessionVars) GetOptObjective() string {
+	return s.OptObjective
 }

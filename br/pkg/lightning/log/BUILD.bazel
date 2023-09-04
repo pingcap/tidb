@@ -33,6 +33,8 @@ go_test(
     shard_count = 4,
     deps = [
         ":log",
+        "//util/logutil",
+        "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",

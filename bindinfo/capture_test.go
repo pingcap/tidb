@@ -18,8 +18,10 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/bindinfo/internal"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser"
@@ -81,13 +83,13 @@ func TestDMLCapturePlanBaseline(t *testing.T) {
 	rows = tk.MustQuery("show global bindings").Sort().Rows()
 	require.Len(t, rows, 4)
 	require.Equal(t, "delete from `test` . `t` where `b` = ? and `c` > ?", rows[0][0])
-	require.Equal(t, "DELETE /*+ use_index(@`del_1` `test`.`t` `idx_b`)*/ FROM `test`.`t` WHERE `b` = 1 AND `c` > 1", rows[0][1])
+	require.Equal(t, "DELETE /*+ use_index(@`del_1` `test`.`t` `idx_b`), no_order_index(@`del_1` `test`.`t` `idx_b`)*/ FROM `test`.`t` WHERE `b` = 1 AND `c` > 1", rows[0][1])
 	require.Equal(t, "insert into `test` . `t1` select * from `test` . `t` where `t` . `b` = ? and `t` . `c` > ?", rows[1][0])
-	require.Equal(t, "INSERT INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1", rows[1][1])
+	require.Equal(t, "INSERT INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`), no_order_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1", rows[1][1])
 	require.Equal(t, "replace into `test` . `t1` select * from `test` . `t` where `t` . `b` = ? and `t` . `c` > ?", rows[2][0])
-	require.Equal(t, "REPLACE INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1", rows[2][1])
+	require.Equal(t, "REPLACE INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`), no_order_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1", rows[2][1])
 	require.Equal(t, "update `test` . `t` set `a` = ? where `b` = ? and `c` > ?", rows[3][0])
-	require.Equal(t, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx_b`)*/ `test`.`t` SET `a`=1 WHERE `b` = 1 AND `c` > 1", rows[3][1])
+	require.Equal(t, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx_b`), no_order_index(@`upd_1` `test`.`t` `idx_b`)*/ `test`.`t` SET `a`=1 WHERE `b` = 1 AND `c` > 1", rows[3][1])
 }
 
 func TestCapturePlanBaseline(t *testing.T) {
@@ -126,7 +128,7 @@ func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
 	defer func() {
@@ -177,7 +179,7 @@ func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 }
 
 func TestCaptureDBCaseSensitivity(t *testing.T) {
@@ -259,7 +261,7 @@ func TestCapturePreparedStmt(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `b` = ? and `c` > ?", rows[0][0])
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?", rows[0][1])
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), no_order_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?", rows[0][1])
 
 	require.True(t, tk.MustUseIndex("select /*+ use_index(t,idx_b) */ * from t where b = 1 and c > 1", "idx_c(c)"))
 	tk.MustExec("admin flush bindings")
@@ -267,7 +269,7 @@ func TestCapturePreparedStmt(t *testing.T) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `b` = ? and `c` > ?", rows[0][0])
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?", rows[0][1])
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), no_order_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?", rows[0][1])
 }
 
 func TestCapturePlanBaselineIgnoreTiFlash(t *testing.T) {
@@ -326,7 +328,7 @@ func TestBindingSource(t *testing.T) {
 	// Test Source for SQL created sql
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t ignore index(idx_a) where a > 10")
 	bindHandle := dom.BindHandle()
-	sql, hash := utilNormalizeWithDefaultDB(t, "select * from t where a > ?", "test")
+	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
 	bindData := bindHandle.GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
@@ -338,7 +340,7 @@ func TestBindingSource(t *testing.T) {
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
 	tk.MustQuery("select * from t where a > 10")
 	bindHandle.SaveEvolveTasksToStore()
-	sql, hash = utilNormalizeWithDefaultDB(t, "select * from t where a > ?", "test")
+	sql, hash = internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
@@ -359,7 +361,7 @@ func TestBindingSource(t *testing.T) {
 	tk.MustExec("select * from t ignore index(idx_a) where a < 10")
 	tk.MustExec("admin capture bindings")
 	bindHandle.CaptureBaselines()
-	sql, hash = utilNormalizeWithDefaultDB(t, "select * from t where a < ?", "test")
+	sql, hash = internal.UtilNormalizeWithDefaultDB(t, "select * from t where a < ?")
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` < ?", bindData.OriginalSQL)
@@ -386,7 +388,7 @@ func TestCapturedBindingCharset(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "update `test` . `t` set `name` = ? where `name` <= ?", rows[0][0])
-	require.Equal(t, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx`)*/ `test`.`t` SET `name`='hello' WHERE `name` <= 'abc'", rows[0][1])
+	require.Equal(t, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx`), no_order_index(@`upd_1` `test`.`t` `idx`)*/ `test`.`t` SET `name`='hello' WHERE `name` <= 'abc'", rows[0][1])
 	require.Equal(t, "utf8mb4", rows[0][6])
 	require.Equal(t, "utf8mb4_bin", rows[0][7])
 }
@@ -433,7 +435,7 @@ func TestUpdateSubqueryCapture(t *testing.T) {
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
-	bindSQL := "UPDATE /*+ hash_join(@`upd_1` `test`.`t1`), use_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_2` `test`.`t2` )*/ `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
+	bindSQL := "UPDATE /*+ hash_join(@`upd_1` `test`.`t1`), use_index(@`upd_1` `test`.`t1` `idx_b`), no_order_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_2` `test`.`t2` )*/ `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
 	originSQL := "UPDATE `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
 	require.Equal(t, bindSQL, rows[0][1])
 	tk.MustExec(originSQL)
@@ -463,7 +465,7 @@ func TestIssue20417(t *testing.T) {
 		)`)
 
 	// Test for create binding
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t using select /*+ use_index(t, idxb) */ * from t")
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
@@ -477,7 +479,7 @@ func TestIssue20417(t *testing.T) {
 	require.True(t, tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"))
 
 	// Test for capture baseline
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
 	dom.BindHandle().CaptureBaselines()
@@ -488,11 +490,11 @@ func TestIssue20417(t *testing.T) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `b` = ? and `c` = ?", rows[0][0])
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxb`)*/ * FROM `test`.`t` WHERE `b` = 2 AND `c` = 213124", rows[0][1])
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxb`), no_order_index(@`sel_1` `test`.`t` `idxb`)*/ * FROM `test`.`t` WHERE `b` = 2 AND `c` = 213124", rows[0][1])
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
 
 	// Test for evolve baseline
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
 	tk.MustExec("create global binding for select * from t WHERE c=3924541 using select /*+ use_index(@sel_1 test.t idxb) */ * from t WHERE c=3924541")
 	rows = tk.MustQuery("show global bindings").Rows()
@@ -505,13 +507,13 @@ func TestIssue20417(t *testing.T) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 2)
 	require.Equal(t, "select * from `test` . `t` where `c` = ?", rows[0][0])
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541", rows[0][1])
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`), no_order_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541", rows[0][1])
 	require.Equal(t, "pending verify", rows[0][3])
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 2)
 	require.Equal(t, "select * from `test` . `t` where `c` = ?", rows[0][0])
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541", rows[0][1])
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`), no_order_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541", rows[0][1])
 	status := rows[0][3].(string)
 	require.True(t, status == bindinfo.Enabled || status == bindinfo.Rejected)
 	tk.MustExec("set @@tidb_evolve_plan_baselines=0")
@@ -556,7 +558,7 @@ func TestIssue25505(t *testing.T) {
 
 	spmMap := map[string]string{}
 	spmMap["with recursive `cte` ( `a` ) as ( select ? union select `a` + ? from `test` . `t1` where `a` < ? ) select * from `cte`"] =
-		"WITH RECURSIVE `cte` (`a`) AS (SELECT 2 UNION SELECT `a` + 1 FROM `test`.`t1` WHERE `a` < 5) SELECT /*+ hash_agg(@`sel_1`), use_index(@`sel_3` `test`.`t1` `idx_ab`)*/ * FROM `cte`"
+		"WITH RECURSIVE `cte` (`a`) AS (SELECT 2 UNION SELECT `a` + 1 FROM `test`.`t1` WHERE `a` < 5) SELECT /*+ hash_agg(@`sel_1`), use_index(@`sel_3` `test`.`t1` `idx_ab`), no_order_index(@`sel_3` `test`.`t1` `idx_ab`)*/ * FROM `cte`"
 	spmMap["with recursive `cte1` ( `a` , `b` ) as ( select * from `test` . `t` where `b` = ? union select `a` + ? , `b` + ? from `cte1` where `a` < ? ) select * from `test` . `t`"] =
 		"WITH RECURSIVE `cte1` (`a`, `b`) AS (SELECT * FROM `test`.`t` WHERE `b` = 1 UNION SELECT `a` + 1,`b` + 1 FROM `cte1` WHERE `a` < 2) SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t`"
 	spmMap["with `cte1` as ( select * from `test` . `t` ) , `cte2` as ( select ? ) select * from `test` . `t`"] =
@@ -564,11 +566,11 @@ func TestIssue25505(t *testing.T) {
 	spmMap["with `cte` as ( select * from `test` . `t` where `b` = ? ) select * from `test` . `t`"] =
 		"WITH `cte` AS (SELECT * FROM `test`.`t` WHERE `b` = 6) SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t`"
 	spmMap["with recursive `cte` ( `a` ) as ( select ? union select `a` + ? from `test` . `t1` where `a` > ? ) select * from `cte`"] =
-		"WITH RECURSIVE `cte` (`a`) AS (SELECT 2 UNION SELECT `a` + 1 FROM `test`.`t1` WHERE `a` > 5) SELECT /*+ hash_agg(@`sel_1`), use_index(@`sel_3` `test`.`t1` `idx_b`)*/ * FROM `cte`"
+		"WITH RECURSIVE `cte` (`a`) AS (SELECT 2 UNION SELECT `a` + 1 FROM `test`.`t1` WHERE `a` > 5) SELECT /*+ hash_agg(@`sel_1`), use_index(@`sel_3` `test`.`t1` `idx_b`), no_order_index(@`sel_3` `test`.`t1` `idx_b`)*/ * FROM `cte`"
 	spmMap["with `cte` as ( with `cte1` as ( select * from `test` . `t2` where `a` > ? and `b` > ? ) select * from `cte1` ) select * from `cte` join `test` . `t1` on `t1` . `a` = `cte` . `a`"] =
-		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` > 1 AND `b` > 1) SELECT * FROM `cte1`) SELECT /*+ use_index(@`sel_3` `test`.`t2` `idx_ab`), use_index(@`sel_1` `test`.`t1` `idx_ab`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
+		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` > 1 AND `b` > 1) SELECT * FROM `cte1`) SELECT /*+ use_index(@`sel_3` `test`.`t2` `idx_ab`), order_index(@`sel_3` `test`.`t2` `idx_ab`), use_index(@`sel_1` `test`.`t1` `idx_ab`), order_index(@`sel_1` `test`.`t1` `idx_ab`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
 	spmMap["with `cte` as ( with `cte1` as ( select * from `test` . `t2` where `a` = ? and `b` = ? ) select * from `cte1` ) select * from `cte` join `test` . `t1` on `t1` . `a` = `cte` . `a`"] =
-		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` = 1 AND `b` = 1) SELECT * FROM `cte1`) SELECT /*+ use_index(@`sel_3` `test`.`t2` `idx_a`), use_index(@`sel_1` `test`.`t1` `idx_a`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
+		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` = 1 AND `b` = 1) SELECT * FROM `cte1`) SELECT /*+ use_index(@`sel_3` `test`.`t2` `idx_a`), no_order_index(@`sel_3` `test`.`t2` `idx_a`), use_index(@`sel_1` `test`.`t1` `idx_a`), no_order_index(@`sel_1` `test`.`t1` `idx_a`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
 
 	tk.MustExec("with cte as (with cte1 as (select /*+use_index(t2 idx_a)*/ * from t2 where a = 1 and b = 1) select * from cte1) select /*+use_index(t1 idx_a)*/ * from cte join t1 on t1.a=cte.a;")
 	tk.MustExec("with cte as (with cte1 as (select /*+use_index(t2 idx_a)*/ * from t2 where a = 1 and b = 1) select * from cte1) select /*+use_index(t1 idx_a)*/ * from cte join t1 on t1.a=cte.a;")
@@ -628,7 +630,7 @@ func TestCaptureUserFilter(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", rows[0][0])
 
 	// test user filter
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('user', 'root')")
 	tk.MustExec("select * from t where a > 10")
@@ -650,7 +652,7 @@ func TestCaptureUserFilter(t *testing.T) {
 	require.Len(t, rows, 1) // can capture the stmt
 
 	// use user-filter with other types of filter together
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('user', 'root')")
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'test.t')")
@@ -735,8 +737,11 @@ func TestCaptureWildcardFilter(t *testing.T) {
 		}
 
 		tk.MustExec("admin capture bindings")
-		rows := tk.MustQuery("show global bindings").Sort().Rows()
-		require.Len(t, rows, len(dbTbls))
+		var rows [][]interface{}
+		require.Eventually(t, func() bool {
+			rows = tk.MustQuery("show global bindings").Sort().Rows()
+			return len(rows) == len(dbTbls)
+		}, time.Second*2, time.Millisecond*100)
 		for _, r := range rows {
 			q := r[0].(string)
 			if _, exist := m[q]; !exist { // encounter an unexpected binding
@@ -751,48 +756,48 @@ func TestCaptureWildcardFilter(t *testing.T) {
 		}
 	}
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'db11.t1*')`)
 	mustExecTwice()
 	checkBindings("db11.t2", "db12.t11", "db12.t12", "db12.t2", "db2.t11", "db2.t12", "db2.t2") // db11.t11 and db11.t12 are filtered
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'db1*.t11')`)
 	mustExecTwice()
 	checkBindings("db11.t12", "db11.t2", "db12.t12", "db12.t2", "db2.t11", "db2.t12", "db2.t2") // db11.t11 and db12.t11 are filtered
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'db1*.t1*')`)
 	mustExecTwice()
 	checkBindings("db11.t2", "db12.t2", "db2.t11", "db2.t12", "db2.t2") // db11.t11 / db12.t11 / db11.t12 / db12.t12 are filtered
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'db1*.*')`)
 	mustExecTwice()
 	checkBindings("db2.t11", "db2.t12", "db2.t2") // db11.* / db12.* are filtered
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', '*.t1*')`)
 	mustExecTwice()
 	checkBindings("db11.t2", "db12.t2", "db2.t2") // *.t11 and *.t12 are filtered
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'db*.t*')`)
 	mustExecTwice()
 	checkBindings() // all are filtered
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 	mustExecTwice()
@@ -822,7 +827,7 @@ func TestCaptureFilter(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", rows[0][0])
 
 	// Valid table filter.
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'test.t')")
 	tk.MustExec("select * from t where a > 10")
@@ -845,7 +850,7 @@ func TestCaptureFilter(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", rows[1][0])
 
 	// Invalid table filter.
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 't')")
 	tk.MustExec("select * from t where a > 10")
@@ -856,7 +861,7 @@ func TestCaptureFilter(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", rows[0][0])
 
 	// Valid database filter.
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'mysql.*')")
 	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
@@ -879,7 +884,7 @@ func TestCaptureFilter(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", rows[1][0])
 
 	// Valid frequency filter.
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('frequency', '2')")
 	tk.MustExec("select * from t where a > 10")
@@ -896,7 +901,7 @@ func TestCaptureFilter(t *testing.T) {
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 
 	// Invalid frequency filter.
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('frequency', '0')")
 	tk.MustExec("select * from t where a > 10")
@@ -912,7 +917,7 @@ func TestCaptureFilter(t *testing.T) {
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 
 	// Invalid filter type.
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('unknown', 'xx')")
 	tk.MustExec("select * from t where a > 10")
@@ -924,7 +929,7 @@ func TestCaptureFilter(t *testing.T) {
 	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
 
 	// Case sensitivity.
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('tABle', 'tESt.T')")
 	tk.MustExec("select * from t where a > 10")
@@ -939,7 +944,7 @@ func TestCaptureFilter(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", rows[0][0])
 
-	utilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'mySQl.*')")
 	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
@@ -992,14 +997,15 @@ func TestCaptureHints(t *testing.T) {
 		{"select /*+ use_index_merge(t, a, b) */ a, b from t where a=1 or b=1", "use_index_merge(@`sel_1` `t` `a`, `b`)"},
 		{"select /*+ ignore_index(t, a) */ * from t where a=1", "ignore_index(`t` `a`)"},
 		// push-down hints
-		{"select /*+ limit_to_cop() */ * from t limit 10", "limit_to_cop()"},
-		{"select /*+ agg_to_cop() */ a, count(*) from t group by a", "agg_to_cop()"},
+		{"select /*+ limit_to_cop() */ * from t limit 10", "limit_to_cop(@`sel_1`)"},
+		{"select /*+ agg_to_cop() */ a, count(*) from t group by a", "agg_to_cop(@`sel_1`)"},
 		// index-merge hints
 		{"select /*+ no_index_merge() */ a, b from t where a>1 or b>1", "no_index_merge()"},
 		{"select /*+ use_index_merge(t, a, b) */ a, b from t where a>1 or b>1", "use_index_merge(@`sel_1` `t` `a`, `b`)"},
 		// runtime hints
 		{"select /*+ memory_quota(1024 MB) */ * from t", "memory_quota(1024 mb)"},
 		{"select /*+ max_execution_time(1000) */ * from t", "max_execution_time(1000)"},
+		{"select /*+ tidb_kv_read_timeout(1000) */ * from t", "tidb_kv_read_timeout(1000)"},
 		// storage hints
 		{"select /*+ read_from_storage(tikv[t]) */ * from t", "read_from_storage(tikv[`t`])"},
 		// others
@@ -1007,13 +1013,13 @@ func TestCaptureHints(t *testing.T) {
 	}
 	for _, capCase := range captureCases {
 		stmtsummary.StmtSummaryByDigestMap.Clear()
-		utilCleanBindingEnv(tk, dom)
+		internal.UtilCleanBindingEnv(tk, dom)
 		tk.MustExec(capCase.query)
 		tk.MustExec(capCase.query)
 		tk.MustExec("admin capture bindings")
 		res := tk.MustQuery(`show global bindings`).Rows()
-		require.Equal(t, len(res), 1)                                       // this query is captured, and
-		require.True(t, strings.Contains(res[0][1].(string), capCase.hint)) // the binding contains the expected hint
+		require.Equal(t, len(res), 1)                                                                                       // this query is captured, and
+		require.True(t, strings.Contains(res[0][1].(string), capCase.hint), fmt.Sprintf("%v:%v", capCase.query, res[0][1])) // the binding contains the expected hint
 		// test sql digest
 		parser4binding := parser.New()
 		originNode, err := parser4binding.ParseOneStmt(capCase.query, "utf8mb4", "utf8mb4_general_ci")

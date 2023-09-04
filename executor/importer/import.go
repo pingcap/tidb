@@ -21,22 +21,26 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/expression"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	pformat "github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -55,7 +59,6 @@ import (
 	kvconfig "github.com/tikv/client-go/v2/config"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"k8s.io/utils/strings/slices"
 )
 
 const (
@@ -74,41 +77,44 @@ const (
 	// 0 means no limit
 	unlimitedWriteSpeed = config.ByteSize(0)
 
-	characterSetOption        = "character_set"
-	fieldsTerminatedByOption  = "fields_terminated_by"
-	fieldsEnclosedByOption    = "fields_enclosed_by"
-	fieldsEscapedByOption     = "fields_escaped_by"
-	fieldsDefinedNullByOption = "fields_defined_null_by"
-	linesTerminatedByOption   = "lines_terminated_by"
-	skipRowsOption            = "skip_rows"
-	splitFileOption           = "split_file"
-	diskQuotaOption           = "disk_quota"
-	threadOption              = "thread"
-	maxWriteSpeedOption       = "max_write_speed"
-	checksumTableOption       = "checksum_table"
-	analyzeTableOption        = "analyze_table"
-	recordErrorsOption        = "record_errors"
-	detachedOption            = plannercore.DetachedOption
+	characterSetOption          = "character_set"
+	fieldsTerminatedByOption    = "fields_terminated_by"
+	fieldsEnclosedByOption      = "fields_enclosed_by"
+	fieldsEscapedByOption       = "fields_escaped_by"
+	fieldsDefinedNullByOption   = "fields_defined_null_by"
+	linesTerminatedByOption     = "lines_terminated_by"
+	skipRowsOption              = "skip_rows"
+	splitFileOption             = "split_file"
+	diskQuotaOption             = "disk_quota"
+	threadOption                = "thread"
+	maxWriteSpeedOption         = "max_write_speed"
+	checksumTableOption         = "checksum_table"
+	recordErrorsOption          = "record_errors"
+	detachedOption              = "detached"
+	disableTiKVImportModeOption = "disable_tikv_import_mode"
+	// used for test
+	maxEngineSizeOption = "__max_engine_size"
 )
 
 var (
 	// name -> whether the option has value
 	supportedOptions = map[string]bool{
-		characterSetOption:        true,
-		fieldsTerminatedByOption:  true,
-		fieldsEnclosedByOption:    true,
-		fieldsEscapedByOption:     true,
-		fieldsDefinedNullByOption: true,
-		linesTerminatedByOption:   true,
-		skipRowsOption:            true,
-		splitFileOption:           false,
-		diskQuotaOption:           true,
-		threadOption:              true,
-		maxWriteSpeedOption:       true,
-		checksumTableOption:       true,
-		analyzeTableOption:        true,
-		recordErrorsOption:        true,
-		detachedOption:            false,
+		characterSetOption:          true,
+		fieldsTerminatedByOption:    true,
+		fieldsEnclosedByOption:      true,
+		fieldsEscapedByOption:       true,
+		fieldsDefinedNullByOption:   true,
+		linesTerminatedByOption:     true,
+		skipRowsOption:              true,
+		splitFileOption:             false,
+		diskQuotaOption:             true,
+		threadOption:                true,
+		maxWriteSpeedOption:         true,
+		checksumTableOption:         true,
+		recordErrorsOption:          true,
+		detachedOption:              false,
+		disableTiKVImportModeOption: false,
+		maxEngineSizeOption:         true,
 	}
 
 	csvOnlyOptions = map[string]struct{}{
@@ -145,11 +151,15 @@ type LoadDataReaderInfo struct {
 	Remote *mydump.SourceFileMeta
 }
 
-// Plan describes the plan of LOAD DATA.
+// Plan describes the plan of LOAD DATA and IMPORT INTO.
 type Plan struct {
-	DBName           string
-	DBID             int64
-	TableInfo        *model.TableInfo
+	DBName string
+	DBID   int64
+	// TableInfo is the table info we used during import, we might change it
+	// if add index by SQL is enabled(it's disabled now).
+	TableInfo *model.TableInfo
+	// DesiredTableInfo is the table info before import, and the desired table info
+	// after import.
 	DesiredTableInfo *model.TableInfo
 
 	Path   string
@@ -160,7 +170,10 @@ type Plan struct {
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
 	Restrictive bool
 
-	SQLMode          mysql.SQLMode
+	SQLMode mysql.SQLMode
+	// Charset is the charset of the data file when file is CSV or TSV.
+	// it might be nil when using LOAD DATA and no charset is specified.
+	// for IMPORT INTO, it is always non-nil.
 	Charset          *string
 	ImportantSysVars map[string]string
 
@@ -173,20 +186,28 @@ type Plan struct {
 	plannercore.LineFieldsInfo
 	IgnoreLines uint64
 
-	DiskQuota         config.ByteSize
-	Checksum          config.PostOpLevel
-	Analyze           config.PostOpLevel
-	ThreadCnt         int64
-	MaxWriteSpeed     config.ByteSize
-	SplitFile         bool
-	MaxRecordedErrors int64
-	Detached          bool
+	DiskQuota             config.ByteSize
+	Checksum              config.PostOpLevel
+	ThreadCnt             int64
+	MaxWriteSpeed         config.ByteSize
+	SplitFile             bool
+	MaxRecordedErrors     int64
+	Detached              bool
+	DisableTiKVImportMode bool
+	MaxEngineSize         config.ByteSize
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
 
 	// todo: remove it when load data code is reverted.
 	InImportInto bool
+	// only initialized for IMPORT INTO, used when creating job.
+	Parameters *ImportParameters `json:"-"`
+	// the user who executes the statement, in the form of user@host
+	// only initialized for IMPORT INTO
+	User string `json:"-"`
+
+	IsRaftKV2 bool
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -212,11 +233,11 @@ type LoadDataController struct {
 	Table table.Table
 
 	// how input field(or input column) from data file is mapped, either to a column or variable.
-	// if there's NO column list clause in load data statement, then it's table's columns
+	// if there's NO column list clause in SQL statement, then it's table's columns
 	// else it's user defined list.
 	FieldMappings []*FieldMapping
 	// see InsertValues.InsertColumns
-	// todo: our behavior is different with mysql. such as for table t(a,b)
+	// Note: our behavior is different with mysql. such as for table t(a,b)
 	// - "...(a,a) set a=100" is allowed in mysql, but not in tidb
 	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
 	// - ref columns in set clause is allowed in mysql, but not in tidb
@@ -347,11 +368,25 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
 		InImportInto:           true,
+		User:                   userSctx.GetSessionVars().User.String(),
 	}
 	if err := p.initOptions(userSctx, plan.Options); err != nil {
 		return nil, err
 	}
+	if err := p.initParameters(plan); err != nil {
+		return nil, err
+	}
 	return p, nil
+}
+
+// InitTiKVConfigs initializes some TiKV related configs.
+func (p *Plan) InitTiKVConfigs(ctx context.Context, sctx sessionctx.Context) error {
+	isRaftKV2, err := util.IsRaftKv2(ctx, sctx)
+	if err != nil {
+		return err
+	}
+	p.IsRaftKV2 = isRaftKV2
+	return nil
 }
 
 // ASTArgsFromPlan creates ASTArgs from plan.
@@ -431,7 +466,6 @@ func (e *LoadDataController) checkFieldParams() error {
 		}
 		// NOTE: IMPORT INTO also don't support user set empty LinesTerminatedBy or FieldsTerminatedBy,
 		// but it's check in initOptions.
-		// TODO: support lines terminated is "".
 		if len(e.LinesTerminatedBy) == 0 {
 			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty")
 		}
@@ -449,18 +483,20 @@ func (e *LoadDataController) checkFieldParams() error {
 }
 
 func (p *Plan) initDefaultOptions() {
-	threadCnt := runtime.NumCPU()
-	if p.Format == DataFormatParquet {
-		threadCnt = int(math.Max(1, float64(threadCnt)*0.75))
-	}
+	threadCnt := runtime.GOMAXPROCS(0)
+	failpoint.Inject("mockNumCpu", func(val failpoint.Value) {
+		threadCnt = val.(int)
+	})
+	threadCnt = int(math.Max(1, float64(threadCnt)*0.5))
 
 	p.Checksum = config.OpLevelRequired
-	p.Analyze = config.OpLevelOptional
 	p.ThreadCnt = int64(threadCnt)
 	p.MaxWriteSpeed = unlimitedWriteSpeed
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
 	p.Detached = false
+	p.DisableTiKVImportMode = false
+	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
 
 	v := "utf8mb4"
 	p.Charset = &v
@@ -604,15 +640,6 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
-	if opt, ok := specifiedOptions[analyzeTableOption]; ok {
-		v, err := optAsString(opt)
-		if err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		if err = p.Analyze.FromStringValue(v); err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-	}
 	if opt, ok := specifiedOptions[recordErrorsOption]; ok {
 		vInt, err := optAsInt64(opt)
 		if err != nil || vInt < -1 {
@@ -624,6 +651,27 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 	if _, ok := specifiedOptions[detachedOption]; ok {
 		p.Detached = true
 	}
+	if _, ok := specifiedOptions[disableTiKVImportModeOption]; ok {
+		p.DisableTiKVImportMode = true
+	}
+	if opt, ok := specifiedOptions[maxEngineSizeOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if err = p.MaxEngineSize.UnmarshalText([]byte(v)); err != nil || p.MaxEngineSize < 0 {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
+
+	// when split-file is set, data file will be split into chunks of 256 MiB.
+	// skip_rows should be 0 or 1, we add this restriction to simplify skip_rows
+	// logic, so we only need to skip on the first chunk for each data file.
+	// CSV parser limit each row size to LargestEntryLimit(120M), the first row
+	// will NOT cross file chunk.
+	if p.SplitFile && p.IgnoreLines > 1 {
+		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("skip_rows, should be <= 1 when split-file is enabled")
+	}
 
 	p.adjustOptions()
 	return nil
@@ -631,11 +679,55 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 
 func (p *Plan) adjustOptions() {
 	// max value is cpu-count
-	numCPU := int64(runtime.NumCPU())
+	numCPU := int64(runtime.GOMAXPROCS(0))
 	if p.ThreadCnt > numCPU {
 		log.L().Info("IMPORT INTO thread count is larger than cpu-count, set to cpu-count")
 		p.ThreadCnt = numCPU
 	}
+}
+
+func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
+	redactURL := ast.RedactURL(p.Path)
+	var columnsAndVars, setClause string
+	var sb strings.Builder
+	formatCtx := pformat.NewRestoreCtx(pformat.DefaultRestoreFlags, &sb)
+	if len(plan.ColumnsAndUserVars) > 0 {
+		sb.WriteString("(")
+		for i, col := range plan.ColumnsAndUserVars {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			_ = col.Restore(formatCtx)
+		}
+		sb.WriteString(")")
+		columnsAndVars = sb.String()
+	}
+	if len(plan.ColumnAssignments) > 0 {
+		sb.Reset()
+		for i, assign := range plan.ColumnAssignments {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			_ = assign.Restore(formatCtx)
+		}
+		setClause = sb.String()
+	}
+	optionMap := make(map[string]interface{}, len(plan.Options))
+	for _, opt := range plan.Options {
+		if opt.Value != nil {
+			optionMap[opt.Name] = opt.Value.String()
+		} else {
+			optionMap[opt.Name] = nil
+		}
+	}
+	p.Parameters = &ImportParameters{
+		ColumnsAndVars: columnsAndVars,
+		SetClause:      setClause,
+		FileLocation:   redactURL,
+		Format:         p.Format,
+		Options:        optionMap,
+	}
+	return nil
 }
 
 // initFieldMappings make a field mapping slice to implicitly map input field to table column or user defined variable
@@ -771,7 +863,7 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 	return csvConfig
 }
 
-// InitDataFiles initializes the data store and load data files.
+// InitDataFiles initializes the data store and files.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	u, err2 := storage.ParseRawURL(e.Path)
 	if err2 != nil {
@@ -913,7 +1005,7 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 		f := e.dataFiles[i]
 		result = append(result, LoadDataReaderInfo{
 			Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore)
+				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore, storage.DecompressConfig{})
 				if err2 != nil {
 					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the INFILE path is correct")
 				}
@@ -982,6 +1074,11 @@ func (e *LoadDataController) GetParser(
 	}
 	parser.SetLogger(litlog.Logger{Logger: logutil.Logger(ctx)})
 
+	return parser, nil
+}
+
+// HandleSkipNRows skips the first N rows of the data file.
+func (e *LoadDataController) HandleSkipNRows(parser mydump.Parser) error {
 	// handle IGNORE N LINES
 	ignoreOneLineFn := parser.ReadRow
 	if csvParser, ok := parser.(*mydump.CSVParser); ok {
@@ -993,17 +1090,17 @@ func (e *LoadDataController) GetParser(
 
 	ignoreLineCnt := e.IgnoreLines
 	for ignoreLineCnt > 0 {
-		err = ignoreOneLineFn()
+		err := ignoreOneLineFn()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
-				return parser, nil
+				return nil
 			}
-			return nil, err
+			return err
 		}
 
 		ignoreLineCnt--
 	}
-	return parser, nil
+	return nil
 }
 
 func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
@@ -1056,10 +1153,10 @@ type JobImportParam struct {
 
 // JobImportResult is the result of the job import.
 type JobImportResult struct {
-	Msg          string
-	LastInsertID uint64
-	Affected     uint64
-	Warnings     []stmtctx.SQLWarn
+	Msg        string
+	Affected   uint64
+	Warnings   []stmtctx.SQLWarn
+	ColSizeMap map[int64]int64
 }
 
 // JobImporter is the interface for importing a job.
@@ -1093,5 +1190,5 @@ func GetMsgFromBRError(err error) string {
 	return raw[:len(raw)-len(berrMsg)-len(": ")]
 }
 
-// TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
+// TestSyncCh is used in unit test to synchronize the execution.
 var TestSyncCh = make(chan struct{})

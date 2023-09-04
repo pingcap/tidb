@@ -15,12 +15,10 @@
 package loaddatatest
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/testkit"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
@@ -48,13 +46,4 @@ func TestMain(m *testing.M) {
 	}
 
 	goleak.VerifyTestMain(m, opts...)
-}
-
-func fillData(tk *testkit.TestKit, table string) {
-	tk.MustExec("use test")
-	tk.MustExec(fmt.Sprintf("create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));", table))
-
-	// insert data
-	tk.MustExec(fmt.Sprintf("insert INTO %s VALUES (1, \"hello\");", table))
-	tk.MustExec(fmt.Sprintf("insert into %s values (2, \"hello\");", table))
 }

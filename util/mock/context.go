@@ -331,9 +331,6 @@ func (c *Context) GoCtx() context.Context {
 	return c.ctx
 }
 
-// StoreQueryFeedback stores the query feedback.
-func (*Context) StoreQueryFeedback(_ interface{}) {}
-
 // UpdateColStatsUsage updates the column stats usage.
 func (*Context) UpdateColStatsUsage(_ []model.TableItemID) {}
 
@@ -411,6 +408,11 @@ func (*Context) GetStmtStats() *stmtstats.StatementStats {
 // GetAdvisoryLock acquires an advisory lock
 func (*Context) GetAdvisoryLock(_ string, _ int64) error {
 	return nil
+}
+
+// IsUsedAdvisoryLock check if a lock name is in use
+func (*Context) IsUsedAdvisoryLock(_ string) uint64 {
+	return 0
 }
 
 // ReleaseAdvisoryLock releases an advisory lock

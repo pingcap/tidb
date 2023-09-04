@@ -9,10 +9,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 7,
+    shard_count = 9,
     deps = [
         "//config",
         "//parser/model",
+        "//planner/cardinality",
         "//statistics/handle/internal",
         "//testkit",
         "//testkit/testsetup",

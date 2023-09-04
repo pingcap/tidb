@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/resourcegroup"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
+	rg "github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -70,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
+	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -89,8 +92,6 @@ const (
 	// Once tiflashCheckPendingTablesLimit is reached, we trigger a limiter detection.
 	tiflashCheckPendingTablesLimit = 100
 	tiflashCheckPendingTablesRetry = 7
-	// DefaultResourceGroupName is the default resource group name.
-	DefaultResourceGroupName = "default"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
@@ -1157,17 +1158,21 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionFulltext:
 				ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt.GenWithStackByArgs())
 			case ast.ColumnOptionCheck:
-				// Check the column CHECK constraint dependency lazily, after fill all the name.
-				// Extract column constraint from column option.
-				constraint := &ast.Constraint{
-					Tp:           ast.ConstraintCheck,
-					Expr:         v.Expr,
-					Enforced:     v.Enforced,
-					Name:         v.ConstraintName,
-					InColumn:     true,
-					InColumnName: colDef.Name.Name.O,
+				if !variable.EnableCheckConstraint.Load() {
+					ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
+				} else {
+					// Check the column CHECK constraint dependency lazily, after fill all the name.
+					// Extract column constraint from column option.
+					constraint := &ast.Constraint{
+						Tp:           ast.ConstraintCheck,
+						Expr:         v.Expr,
+						Enforced:     v.Enforced,
+						Name:         v.ConstraintName,
+						InColumn:     true,
+						InColumnName: colDef.Name.Name.O,
+					}
+					constraints = append(constraints, constraint)
 				}
-				constraints = append(constraints, constraint)
 			}
 		}
 	}
@@ -1978,6 +1983,10 @@ func BuildTableInfo(
 
 		// check constraint
 		if constr.Tp == ast.ConstraintCheck {
+			if !variable.EnableCheckConstraint.Load() {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
+				continue
+			}
 			// Since column check constraint dependency has been done in columnDefToCol.
 			// Here do the table check constraint dependency check, table constraint
 			// can only refer the columns in defined columns of the table.
@@ -1998,13 +2007,20 @@ func BuildTableInfo(
 				}
 			} else {
 				// Check the column-type constraint dependency.
-				if len(dependedColsMap) != 1 {
+				if len(dependedColsMap) > 1 {
 					return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
+				} else if len(dependedColsMap) == 0 {
+					// If dependedCols is empty, the expression must be true/false.
+					valExpr, ok := constr.Expr.(*driver.ValueExpr)
+					if !ok || !mysql.HasIsBooleanFlag(valExpr.GetType().GetFlag()) {
+						return nil, errors.Trace(errors.New("unsupported expression in check constraint"))
+					}
+				} else {
+					if _, ok := dependedColsMap[constr.InColumnName]; !ok {
+						return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
+					}
+					dependedCols = []model.CIStr{model.NewCIStr(constr.InColumnName)}
 				}
-				if _, ok := dependedColsMap[constr.InColumnName]; !ok {
-					return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
-				}
-				dependedCols = []model.CIStr{model.NewCIStr(constr.InColumnName)}
 			}
 			// check auto-increment column
 			if table.ContainsAutoIncrementCol(dependedCols, tbInfo) {
@@ -2593,7 +2609,11 @@ func (d *ddl) createTableWithInfoPost(
 	schemaID int64,
 ) error {
 	var err error
-	d.preSplitAndScatter(ctx, tbInfo, tbInfo.GetPartitionInfo())
+	var partitions []model.PartitionDefinition
+	if pi := tbInfo.GetPartitionInfo(); pi != nil {
+		partitions = pi.Definitions
+	}
+	preSplitAndScatter(ctx, d.store, tbInfo, partitions)
 	if tbInfo.AutoIncID > 1 {
 		// Default tableAutoIncID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
@@ -2605,6 +2625,12 @@ func (d *ddl) createTableWithInfoPost(
 			allocType = autoid.RowIDAllocType
 		}
 		if err = d.handleAutoIncID(tbInfo, schemaID, newEnd, allocType); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	// For issue https://github.com/pingcap/tidb/issues/46093
+	if tbInfo.AutoIncIDExtra != 0 {
+		if err = d.handleAutoIncID(tbInfo, schemaID, tbInfo.AutoIncIDExtra-1, autoid.RowIDAllocType); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -2803,11 +2829,11 @@ func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *mode
 
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
 // If `pi` is not nil, will only split region for `pi`, this is used when add partition.
-func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo) {
+func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.TableInfo, parts []model.PartitionDefinition) {
 	if tbInfo.TempTableType != model.TempTableNone {
 		return
 	}
-	sp, ok := d.store.(kv.SplittableStore)
+	sp, ok := store.(kv.SplittableStore)
 	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
 		return
 	}
@@ -2817,12 +2843,12 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 	)
 	val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBScatterRegion)
 	if err != nil {
-		logutil.BgLogger().Warn("[ddl] won't scatter region", zap.Error(err))
+		logutil.BgLogger().Warn("won't scatter region", zap.String("category", "ddl"), zap.Error(err))
 	} else {
 		scatterRegion = variable.TiDBOptOn(val)
 	}
-	if pi != nil {
-		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, pi, scatterRegion) }
+	if len(parts) > 0 {
+		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scatterRegion) }
 	} else {
 		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion) }
 	}
@@ -2834,7 +2860,7 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 }
 
 func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error {
-	logutil.BgLogger().Info("[ddl] get flashback cluster job", zap.String("flashbackTS", oracle.GetTimeFromTS(flashbackTS).String()))
+	logutil.BgLogger().Info("get flashback cluster job", zap.String("category", "ddl"), zap.String("flashbackTS", oracle.GetTimeFromTS(flashbackTS).String()))
 	nowTS, err := ctx.GetStore().GetOracle().GetTimestamp(d.ctx, &oracle.Option{})
 	if err != nil {
 		return errors.Trace(err)
@@ -3151,8 +3177,9 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 	return nil
 }
 
-// SetDirectResourceGroupUnit tries to set the ResourceGroupSettings.
-func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupOption) error {
+// SetDirectResourceGroupSettings tries to set the ResourceGroupSettings.
+func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast.ResourceGroupOption) error {
+	resourceGroupSettings := groupInfo.ResourceGroupSettings
 	switch opt.Tp {
 	case ast.ResourceRURate:
 		resourceGroupSettings.RURate = opt.UintValue
@@ -3175,9 +3202,24 @@ func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettin
 		}
 		resourceGroupSettings.BurstLimit = limit
 	case ast.ResourceGroupRunaway:
-		for _, opt := range opt.ResourceGroupRunawayOptionList {
-			err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt.Tp, opt.StrValue, opt.IntValue)
-			if err != nil {
+		if len(opt.RunawayOptionList) == 0 {
+			resourceGroupSettings.Runaway = nil
+		}
+		for _, opt := range opt.RunawayOptionList {
+			if err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt.Tp, opt.StrValue, opt.IntValue); err != nil {
+				return err
+			}
+		}
+	case ast.ResourceGroupBackground:
+		if groupInfo.Name.L != rg.DefaultResourceGroupName {
+			// FIXME: this is a temporary restriction, so we don't add a error-code for it.
+			return errors.New("unsupported operation. Currently, only the default resource group support change background settings")
+		}
+		if len(opt.BackgroundOptions) == 0 {
+			resourceGroupSettings.Background = nil
+		}
+		for _, opt := range opt.BackgroundOptions {
+			if err := SetDirectResourceGroupBackgroundOption(resourceGroupSettings, opt); err != nil {
 				return err
 			}
 		}
@@ -3205,15 +3247,56 @@ func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGr
 		settings.Action = model.RunawayActionType(intVal)
 	case ast.RunawayWatch:
 		settings.WatchType = model.RunawayWatchType(intVal)
-		dur, err := time.ParseDuration(stringVal)
-		if err != nil {
-			return err
+		if len(stringVal) > 0 {
+			dur, err := time.ParseDuration(stringVal)
+			if err != nil {
+				return err
+			}
+			settings.WatchDurationMs = dur.Milliseconds()
+		} else {
+			settings.WatchDurationMs = 0
 		}
-		settings.WatchDurationMs = uint64(dur.Milliseconds())
 	default:
 		return errors.Trace(errors.New("unknown runaway option type"))
 	}
 	return nil
+}
+
+// SetDirectResourceGroupBackgroundOption set background configs of the ResourceGroupSettings.
+func SetDirectResourceGroupBackgroundOption(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupBackgroundOption) error {
+	if resourceGroupSettings.Background == nil {
+		resourceGroupSettings.Background = &model.ResourceGroupBackgroundSettings{}
+	}
+	switch opt.Type {
+	case ast.BackgroundOptionTaskNames:
+		jobTypes, err := parseBackgroundJobTypes(opt.StrValue)
+		if err != nil {
+			return err
+		}
+		resourceGroupSettings.Background.JobTypes = jobTypes
+	default:
+		return errors.Trace(errors.New("unknown background option type"))
+	}
+	return nil
+}
+
+func parseBackgroundJobTypes(t string) ([]string, error) {
+	if len(t) == 0 {
+		return []string{}, nil
+	}
+
+	segs := strings.Split(t, ",")
+	res := make([]string, 0, len(segs))
+	for _, s := range segs {
+		ty := strings.ToLower(strings.TrimSpace(s))
+		if len(ty) > 0 {
+			if !slices.Contains(kvutil.ExplicitTypeList, ty) {
+				return nil, infoschema.ErrResourceGroupInvalidBackgroundTaskName.GenWithStackByArgs(ty)
+			}
+			res = append(res, ty)
+		}
+	}
+	return res, nil
 }
 
 // handleTableOptions updates tableInfo according to table options.
@@ -3419,6 +3502,7 @@ func ResolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 		} else {
 			validSpecs = append(validSpecs, spec)
 		}
+		// TODO: Only allow REMOVE PARTITIONING as a single ALTER TABLE statement?
 	}
 
 	// Verify whether the algorithm is supported.
@@ -3511,15 +3595,15 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		case ast.AlterTableOptimizePartition:
 			err = errors.Trace(dbterror.ErrUnsupportedOptimizePartition)
 		case ast.AlterTableRemovePartitioning:
-			err = errors.Trace(dbterror.ErrUnsupportedRemovePartition)
+			err = d.RemovePartitioning(sctx, ident, spec)
 		case ast.AlterTableRepairPartition:
 			err = errors.Trace(dbterror.ErrUnsupportedRepairPartition)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(sctx, ident, spec)
 		case ast.AlterTableDropIndex:
-			err = d.dropIndex(sctx, ident, model.NewCIStr(spec.Name), spec.IfExists)
+			err = d.dropIndex(sctx, ident, model.NewCIStr(spec.Name), spec.IfExists, false)
 		case ast.AlterTableDropPrimaryKey:
-			err = d.dropIndex(sctx, ident, model.NewCIStr(mysql.PrimaryKeyName), spec.IfExists)
+			err = d.dropIndex(sctx, ident, model.NewCIStr(mysql.PrimaryKeyName), spec.IfExists, false)
 		case ast.AlterTableRenameIndex:
 			err = d.RenameIndex(sctx, ident, spec)
 		case ast.AlterTableDropPartition, ast.AlterTableDropFirstPartition:
@@ -3564,7 +3648,11 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			case ast.ConstraintFulltext:
 				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
 			case ast.ConstraintCheck:
-				err = d.CreateCheckConstraint(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint)
+				if !variable.EnableCheckConstraint.Load() {
+					sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
+				} else {
+					err = d.CreateCheckConstraint(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint)
+				}
 			default:
 				// Nothing to do now.
 			}
@@ -3584,8 +3672,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			isAlterTable := true
 			err = d.renameTable(sctx, ident, newIdent, isAlterTable)
 		case ast.AlterTablePartition:
-			// Prevent silent succeed if user executes ALTER TABLE x PARTITION BY ...
-			err = errors.New("alter table partition is unsupported")
+			err = d.AlterTablePartitioning(sctx, ident, spec)
 		case ast.AlterTableOption:
 			var placementPolicyRef *model.PolicyRefInfo
 			for i, opt := range spec.Options {
@@ -3661,9 +3748,17 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		case ast.AlterTableIndexInvisible:
 			err = d.AlterIndexVisibility(sctx, ident, spec.IndexName, spec.Visibility)
 		case ast.AlterTableAlterCheck:
-			err = d.AlterCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
+			if !variable.EnableCheckConstraint.Load() {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
+			} else {
+				err = d.AlterCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
+			}
 		case ast.AlterTableDropCheck:
-			err = d.DropCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name))
+			if !variable.EnableCheckConstraint.Load() {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
+			} else {
+				err = d.DropCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name))
+			}
 		case ast.AlterTableWithValidation:
 			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedAlterTableWithValidation)
 		case ast.AlterTableWithoutValidation:
@@ -4030,6 +4125,13 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if pi.Type == model.PartitionTypeList {
+		// TODO: make sure that checks in ddl_api and ddl_worker is the same.
+		err = checkAddListPartitions(meta)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	if err := d.assignPartitionIDs(partInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
@@ -4081,9 +4183,6 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	if err == nil {
-		d.preSplitAndScatter(ctx, meta, partInfo)
-	}
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
@@ -4118,11 +4217,12 @@ func getReorganizedDefinitions(pi *model.PartitionInfo, firstPartIdx, lastPartId
 	return tmpDefs
 }
 
-func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (firstPartIdx int, lastPartIdx int, idMap map[int]struct{}, err error) {
+func getReplacedPartitionIDs(names []string, pi *model.PartitionInfo) (firstPartIdx int, lastPartIdx int, idMap map[int]struct{}, err error) {
 	idMap = make(map[int]struct{})
 	firstPartIdx, lastPartIdx = -1, -1
 	for _, name := range names {
-		partIdx := pi.FindPartitionDefinitionByName(name.L)
+		nameL := strings.ToLower(name)
+		partIdx := pi.FindPartitionDefinitionByName(nameL)
 		if partIdx == -1 {
 			return 0, 0, nil, errors.Trace(dbterror.ErrWrongPartitionName)
 		}
@@ -4157,6 +4257,86 @@ func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (firs
 	return firstPartIdx, lastPartIdx, idMap, nil
 }
 
+func getPartitionInfoTypeNone() *model.PartitionInfo {
+	return &model.PartitionInfo{
+		Type:   model.PartitionTypeNone,
+		Enable: true,
+		Definitions: []model.PartitionDefinition{{
+			Name:    model.NewCIStr("pFullTable"),
+			Comment: "Intermediate partition during ALTER TABLE ... PARTITION BY ...",
+		}},
+		Num: 1,
+	}
+}
+
+// AlterTablePartitioning reorganize one set of partitions to a new set of partitions.
+func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
+	}
+
+	meta := t.Meta().Clone()
+	piOld := meta.GetPartitionInfo()
+	var partNames []string
+	if piOld != nil {
+		partNames = make([]string, 0, len(piOld.Definitions))
+		for i := range piOld.Definitions {
+			partNames = append(partNames, piOld.Definitions[i].Name.L)
+		}
+	} else {
+		piOld = getPartitionInfoTypeNone()
+		meta.Partition = piOld
+		partNames = append(partNames, piOld.Definitions[0].Name.L)
+	}
+	newMeta := meta.Clone()
+	err = buildTablePartitionInfo(ctx, spec.Partition, newMeta)
+	if err != nil {
+		return err
+	}
+	newPartInfo := newMeta.Partition
+
+	if err = d.assignPartitionIDs(newPartInfo.Definitions); err != nil {
+		return errors.Trace(err)
+	}
+	// A new table ID would be needed for
+	// the global index, which cannot be the same as the current table id,
+	// since this table id will be removed in the final state when removing
+	// all the data with this table id.
+	var newID []int64
+	newID, err = d.genGlobalIDs(1)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newPartInfo.NewTableID = newID[0]
+	newPartInfo.DDLType = piOld.Type
+
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		TableName:  t.Meta().Name.L,
+		Type:       model.ActionAlterTablePartitioning,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{partNames, newPartInfo},
+		ReorgMeta: &model.DDLReorgMeta{
+			SQLMode:       ctx.GetSessionVars().SQLMode,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
+		},
+	}
+
+	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	if err == nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("The statistics of new partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
+	}
+	return errors.Trace(err)
+}
+
 // ReorganizePartitions reorganize one set of partitions to a new set of partitions.
 func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
@@ -4179,7 +4359,11 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	default:
 		return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
 	}
-	firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(spec.PartitionNames, pi)
+	partNames := make([]string, 0, len(spec.PartitionNames))
+	for _, name := range spec.PartitionNames {
+		partNames = append(partNames, name.L)
+	}
+	firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(partNames, pi)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4190,7 +4374,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	if err = d.assignPartitionIDs(partInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkReorgPartitionDefs(ctx, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
+	if err = checkReorgPartitionDefs(ctx, model.ActionReorganizePartition, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
 		return errors.Trace(err)
 	}
 	if err = handlePartitionPlacement(ctx, partInfo); err != nil {
@@ -4205,7 +4389,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionReorganizePartition,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{spec.PartitionNames, partInfo},
+		Args:       []interface{}{partNames, partInfo},
 		ReorgMeta: &model.DDLReorgMeta{
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
@@ -4223,55 +4407,137 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	return errors.Trace(err)
 }
 
-func checkReorgPartitionDefs(ctx sessionctx.Context, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) error {
+// RemovePartitioning removes partitioning from a table.
+func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
+	}
+
+	meta := t.Meta().Clone()
+	pi := meta.GetPartitionInfo()
+	if pi == nil {
+		return dbterror.ErrPartitionMgmtOnNonpartitioned
+	}
+	// TODO: Optimize for remove partitioning with a single partition
+	// TODO: Add the support for this in onReorganizePartition
+	// skip if only one partition
+	// If there are only one partition, then we can do:
+	// change the table id to the partition id
+	// and keep the statistics for the partition id (which should be similar to the global statistics)
+	// and it let the GC clean up the old table metadata including possible global index.
+
+	newSpec := &ast.AlterTableSpec{}
+	newSpec.Tp = spec.Tp
+	defs := make([]*ast.PartitionDefinition, 1)
+	defs[0] = &ast.PartitionDefinition{}
+	defs[0].Name = model.NewCIStr("CollapsedPartitions")
+	newSpec.PartDefinitions = defs
+	partNames := make([]string, len(pi.Definitions))
+	for i := range pi.Definitions {
+		partNames[i] = pi.Definitions[i].Name.L
+	}
+	meta.Partition.Type = model.PartitionTypeNone
+	partInfo, err := BuildAddedPartitionInfo(ctx, meta, newSpec)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = d.assignPartitionIDs(partInfo.Definitions); err != nil {
+		return errors.Trace(err)
+	}
+	// TODO: check where the default placement comes from (i.e. table level)
+	if err = handlePartitionPlacement(ctx, partInfo); err != nil {
+		return errors.Trace(err)
+	}
+	partInfo.NewTableID = partInfo.Definitions[0].ID
+
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		TableName:  meta.Name.L,
+		Type:       model.ActionRemovePartitioning,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{partNames, partInfo},
+		ReorgMeta: &model.DDLReorgMeta{
+			SQLMode:       ctx.GetSessionVars().SQLMode,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
+		},
+	}
+
+	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
+func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) error {
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
 	pi := tblInfo.Partition
 	clonedMeta := tblInfo.Clone()
-	clonedMeta.Partition.AddingDefinitions = partInfo.Definitions
-	clonedMeta.Partition.Definitions = getReorganizedDefinitions(clonedMeta.Partition, firstPartIdx, lastPartIdx, idMap)
+	switch action {
+	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
+		clonedMeta.Partition = partInfo
+		clonedMeta.ID = partInfo.NewTableID
+	case model.ActionReorganizePartition:
+		clonedMeta.Partition.AddingDefinitions = partInfo.Definitions
+		clonedMeta.Partition.Definitions = getReorganizedDefinitions(clonedMeta.Partition, firstPartIdx, lastPartIdx, idMap)
+	default:
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("partition type")
+	}
 	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
 		return errors.Trace(err)
 	}
-	if pi.Type == model.PartitionTypeRange {
-		if lastPartIdx == len(pi.Definitions)-1 {
-			// Last partition dropped, OK to change the end range
-			// Also includes MAXVALUE
-			return nil
-		}
-		// Check if the replaced end range is the same as before
-		lastAddingPartition := partInfo.Definitions[len(partInfo.Definitions)-1]
-		lastOldPartition := pi.Definitions[lastPartIdx]
-		if len(pi.Columns) > 0 {
-			newGtOld, err := checkTwoRangeColumns(ctx, &lastAddingPartition, &lastOldPartition, pi, tblInfo)
+	if action == model.ActionReorganizePartition {
+		if pi.Type == model.PartitionTypeRange {
+			if lastPartIdx == len(pi.Definitions)-1 {
+				// Last partition dropped, OK to change the end range
+				// Also includes MAXVALUE
+				return nil
+			}
+			// Check if the replaced end range is the same as before
+			lastAddingPartition := partInfo.Definitions[len(partInfo.Definitions)-1]
+			lastOldPartition := pi.Definitions[lastPartIdx]
+			if len(pi.Columns) > 0 {
+				newGtOld, err := checkTwoRangeColumns(ctx, &lastAddingPartition, &lastOldPartition, pi, tblInfo)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if newGtOld {
+					return errors.Trace(dbterror.ErrRangeNotIncreasing)
+				}
+				oldGtNew, err := checkTwoRangeColumns(ctx, &lastOldPartition, &lastAddingPartition, pi, tblInfo)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if oldGtNew {
+					return errors.Trace(dbterror.ErrRangeNotIncreasing)
+				}
+				return nil
+			}
+
+			isUnsigned := isPartExprUnsigned(tblInfo)
+			currentRangeValue, _, err := getRangeValue(ctx, pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if newGtOld {
-				return errors.Trace(dbterror.ErrRangeNotIncreasing)
-			}
-			oldGtNew, err := checkTwoRangeColumns(ctx, &lastOldPartition, &lastAddingPartition, pi, tblInfo)
+			newRangeValue, _, err := getRangeValue(ctx, partInfo.Definitions[len(partInfo.Definitions)-1].LessThan[0], isUnsigned)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if oldGtNew {
+
+			if currentRangeValue != newRangeValue {
 				return errors.Trace(dbterror.ErrRangeNotIncreasing)
 			}
-			return nil
 		}
-
-		isUnsigned := isPartExprUnsigned(tblInfo)
-		currentRangeValue, _, err := getRangeValue(ctx, pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		newRangeValue, _, err := getRangeValue(ctx, partInfo.Definitions[len(partInfo.Definitions)-1].LessThan[0], isUnsigned)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		if currentRangeValue != newRangeValue {
-			return errors.Trace(dbterror.ErrRangeNotIncreasing)
+	} else {
+		if len(pi.Definitions) != (lastPartIdx - firstPartIdx + 1) {
+			// if not ActionReorganizePartition, require all partitions to be changed.
+			return errors.Trace(dbterror.ErrAlterOperationNotSupported)
 		}
 	}
 	return nil
@@ -4393,25 +4659,26 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		pids = append(pids, pi.Definitions[i].ID)
 	}
 
+	genIDs, err := d.genGlobalIDs(len(pids))
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    meta.ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionTruncateTablePartition,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{pids},
+		SchemaID:    schema.ID,
+		TableID:     meta.ID,
+		SchemaName:  schema.Name.L,
+		SchemaState: model.StatePublic,
+		TableName:   t.Meta().Name.L,
+		Type:        model.ActionTruncateTablePartition,
+		BinlogInfo:  &model.HistoryInfo{},
+		Args:        []interface{}{pids, genIDs},
 	}
 
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if _, tb, err := d.getSchemaAndTableByIdent(ctx, ident); err == nil {
-		if p, err := getTruncatedParts(tb.Meta().GetPartitionInfo()); err == nil {
-			d.preSplitAndScatter(ctx, tb.Meta(), p)
-		}
 	}
 	return nil
 }
@@ -4602,6 +4869,9 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		return errors.Trace(dbterror.ErrTablesDifferentMetadata)
 	}
 	for _, sourceIdx := range source.Indices {
+		if sourceIdx.Global {
+			return dbterror.ErrPartitionExchangeDifferentOption.GenWithStackByArgs(fmt.Sprintf("global index: %s", sourceIdx.Name))
+		}
 		var compatIdx *model.IndexInfo
 		for _, targetIdx := range target.Indices {
 			if strings.EqualFold(sourceIdx.Name.L, targetIdx.Name.L) {
@@ -4652,7 +4922,6 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 		return errors.Trace(dbterror.ErrPartitionExchangeForeignKey.GenWithStackByArgs(nt.Name))
 	}
 
-	// NOTE: if nt is temporary table, it should be checked
 	return nil
 }
 
@@ -5298,6 +5567,10 @@ func GetModifiableColumnJob(
 	// We don't support modifying column from not_auto_increment to auto_increment.
 	if !mysql.HasAutoIncrementFlag(col.GetFlag()) && mysql.HasAutoIncrementFlag(newCol.GetFlag()) {
 		return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't set auto_increment")
+	}
+	// Not support auto id with default value.
+	if mysql.HasAutoIncrementFlag(newCol.GetFlag()) && newCol.GetDefaultValue() != nil {
+		return nil, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(newCol.Name)
 	}
 	// Disallow modifying column from auto_increment to not auto_increment if the session variable `AllowRemoveAutoInc` is false.
 	if !sctx.GetSessionVars().AllowRemoveAutoInc && mysql.HasAutoIncrementFlag(col.GetFlag()) && !mysql.HasAutoIncrementFlag(newCol.GetFlag()) {
@@ -6454,9 +6727,6 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		}
 		return errors.Trace(err)
 	}
-	if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
-		d.preSplitAndScatter(ctx, tb.Meta(), tb.Meta().GetPartitionInfo())
-	}
 
 	if !config.TableLockEnabled() {
 		return nil
@@ -7220,7 +7490,7 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 
 func (d *ddl) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
 	ti := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
-	err := d.dropIndex(ctx, ti, model.NewCIStr(stmt.IndexName), stmt.IfExists)
+	err := d.dropIndex(ctx, ti, model.NewCIStr(stmt.IndexName), stmt.IfExists, stmt.IsHypo)
 	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && stmt.IfExists {
 		err = nil
 	}
@@ -7228,19 +7498,24 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
 }
 
 // dropHypoIndexFromCtx drops this hypo-index from this ctx.
-func (*ddl) dropHypoIndexFromCtx(ctx sessionctx.Context, schema, table, index model.CIStr) bool {
+func (*ddl) dropHypoIndexFromCtx(ctx sessionctx.Context, schema, table, index model.CIStr, ifExists bool) error {
 	sctx := ctx.GetSessionVars()
 	if sctx.HypoIndexes != nil &&
 		sctx.HypoIndexes[schema.L] != nil &&
 		sctx.HypoIndexes[schema.L][table.L] != nil &&
 		sctx.HypoIndexes[schema.L][table.L][index.L] != nil {
 		delete(sctx.HypoIndexes[schema.L][table.L], index.L)
-		return true
+		return nil
 	}
-	return false
+	if !ifExists {
+		return dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", index)
+	}
+	return nil
 }
 
-func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists bool) error {
+// dropIndex drops the specified index.
+// isHypo is used to indicate whether this operation is for a hypo-index.
+func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists, isHypo bool) error {
 	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -7254,9 +7529,8 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Index"))
 	}
 
-	// try hypo-index first
-	if d.dropHypoIndexFromCtx(ctx, ti.Schema, ti.Name, indexName) {
-		return nil
+	if isHypo {
+		return d.dropHypoIndexFromCtx(ctx, ti.Schema, ti.Name, indexName, ifExists)
 	}
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
@@ -7383,10 +7657,17 @@ func validateCommentLength(vars *variable.SessionVars, name string, comment *str
 func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
 	numParts := uint64(0)
 	switch meta.Partition.Type {
+	case model.PartitionTypeNone:
+		// OK
 	case model.PartitionTypeList:
 		if len(spec.PartDefinitions) == 0 {
 			return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
 		}
+		err := checkListPartitions(spec.PartDefinitions)
+		if err != nil {
+			return nil, err
+		}
+
 	case model.PartitionTypeRange:
 		if spec.Tp == ast.AlterTableAddLastPartition {
 			err := buildAddedPartitionDefs(ctx, meta, spec)
@@ -7401,6 +7682,10 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 		}
 	case model.PartitionTypeHash, model.PartitionTypeKey:
 		switch spec.Tp {
+		case ast.AlterTableRemovePartitioning:
+			numParts = 1
+		default:
+			return nil, errors.Trace(dbterror.ErrUnsupportedAddPartition)
 		case ast.AlterTableCoalescePartitions:
 			if int(spec.Num) >= len(meta.Partition.Definitions) {
 				return nil, dbterror.ErrDropLastPartition
@@ -7431,6 +7716,7 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 	}
 
 	part.Definitions = defs
+	part.Num = uint64(len(defs))
 	return part, nil
 }
 
@@ -7461,6 +7747,12 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx sessionctx.Context, colTypes []typ
 	for i, colExpr := range exprs {
 		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
 			valStrings = append(valStrings, partitionMaxValue)
+			continue
+		}
+		if d, ok := colExpr.(*ast.DefaultExpr); ok {
+			if d.Name != nil {
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
 			continue
 		}
 		colType := colTypes[i]
@@ -7733,7 +8025,8 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStm
 			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Column " + newOne.Name.L + " type should be the same")
 		}
 		if newOne.GetFlen() != old.GetFlen() {
-			logutil.BgLogger().Warn("[ddl] admin repair table : Column " + newOne.Name.L + " flen is not equal to the old one")
+			logutil.BgLogger().Warn("admin repair table : Column "+newOne.Name.L+" flen is not equal to the old one",
+				zap.String("category", "ddl"))
 		}
 		newTableInfo.Columns[i].ID = old.ID
 	}
@@ -8196,7 +8489,7 @@ func (*ddl) checkResourceGroupValidation(groupInfo *model.ResourceGroupInfo) err
 // DropResourceGroup implements the DDL interface.
 func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
-	if groupName.L == DefaultResourceGroupName {
+	if groupName.L == rg.DefaultResourceGroupName {
 		return resourcegroup.ErrDroppingInternalResourceGroup
 	}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
@@ -8236,8 +8529,11 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 
 func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
 	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: model.NewResourceGroupSettings()}
+	if oldGroup.ResourceGroupSettings != nil {
+		*groupInfo.ResourceGroupSettings = *oldGroup.ResourceGroupSettings
+	}
 	for _, opt := range options {
-		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt)
+		err := SetDirectResourceGroupSettings(groupInfo, opt)
 		if err != nil {
 			return nil, err
 		}

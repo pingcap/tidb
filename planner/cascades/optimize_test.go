@@ -33,6 +33,9 @@ import (
 func TestImplGroupZeroCost(t *testing.T) {
 	p := parser.New()
 	ctx := plannercore.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 
@@ -57,6 +60,9 @@ func TestImplGroupZeroCost(t *testing.T) {
 func TestInitGroupSchema(t *testing.T) {
 	p := parser.New()
 	ctx := plannercore.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 
@@ -79,6 +85,9 @@ func TestInitGroupSchema(t *testing.T) {
 func TestFillGroupStats(t *testing.T) {
 	p := parser.New()
 	ctx := plannercore.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 
@@ -100,6 +109,9 @@ func TestFillGroupStats(t *testing.T) {
 func TestPreparePossibleProperties(t *testing.T) {
 	p := parser.New()
 	ctx := plannercore.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 	optimizer := NewOptimizer()
@@ -192,6 +204,9 @@ func (rule *fakeTransformation) OnTransform(old *memo.ExprIter) (newExprs []*mem
 func TestAppliedRuleSet(t *testing.T) {
 	p := parser.New()
 	ctx := plannercore.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 	optimizer := NewOptimizer()

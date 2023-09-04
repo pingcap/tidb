@@ -27,17 +27,13 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-func SetBatchInsertDeleteRangeSize(i int) {
-	batchInsertDeleteRangeSize = i
-}
-
-var NewCopContext4Test = newCopContext
+var NewCopContext4Test = NewCopContext
 
 type resultChanForTest struct {
-	ch chan idxRecResult
+	ch chan IndexRecordChunk
 }
 
-func (r *resultChanForTest) AddTask(rs idxRecResult) {
+func (r *resultChanForTest) AddTask(rs IndexRecordChunk) {
 	r.ch <- rs
 }
 
@@ -51,7 +47,7 @@ func FetchChunk4Test(copCtx *copContext, tbl table.PhysicalTable, startKey, endK
 		physicalTable: tbl,
 	}
 	taskCh := make(chan *reorgBackfillTask, 5)
-	resultCh := make(chan idxRecResult, 5)
+	resultCh := make(chan IndexRecordChunk, 5)
 	sessPool := session.NewSessionPool(nil, store)
 	pool := newCopReqSenderPool(context.Background(), copCtx, store, taskCh, sessPool, nil)
 	pool.chunkSender = &resultChanForTest{ch: resultCh}
@@ -60,7 +56,7 @@ func FetchChunk4Test(copCtx *copContext, tbl table.PhysicalTable, startKey, endK
 	rs := <-resultCh
 	close(taskCh)
 	pool.close(false)
-	return rs.chunk
+	return rs.Chunk
 }
 
 func ConvertRowToHandleAndIndexDatum(row chunk.Row, copCtx *copContext) (kv.Handle, []types.Datum, error) {

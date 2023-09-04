@@ -17,6 +17,7 @@ package infoschema
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/set"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -49,6 +49,8 @@ func init() {
 		tableInfo.Comment = def.Comment
 		tableID++
 		metricTables = append(metricTables, tableInfo)
+		tableInfo.MaxColumnID = int64(len(tableInfo.Columns))
+		tableInfo.MaxIndexID = int64(len(tableInfo.Indices))
 	}
 	dbInfo := &model.DBInfo{
 		ID:      dbID,

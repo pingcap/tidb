@@ -122,11 +122,7 @@ type Context interface {
 	// GetSessionPlanCache returns the session-level cache of the physical plan.
 	GetSessionPlanCache() PlanCache
 
-	// StoreQueryFeedback stores the query feedback.
-	StoreQueryFeedback(feedback interface{})
-
 	// UpdateColStatsUsage updates the column stats usage.
-	// TODO: maybe we can use a method called GetSessionStatsCollector to replace both StoreQueryFeedback and UpdateColStatsUsage but we need to deal with import circle if we do so.
 	UpdateColStatsUsage(predicateColumns []model.TableItemID)
 
 	// HasDirtyContent checks whether there's dirty update on the given table.
@@ -176,6 +172,8 @@ type Context interface {
 	ShowProcess() *util.ProcessInfo
 	// GetAdvisoryLock acquires an advisory lock (aka GET_LOCK()).
 	GetAdvisoryLock(string, int64) error
+	// IsUsedAdvisoryLock checks for existing locks (aka IS_USED_LOCK()).
+	IsUsedAdvisoryLock(string) uint64
 	// ReleaseAdvisoryLock releases an advisory lock (aka RELEASE_LOCK()).
 	ReleaseAdvisoryLock(string) bool
 	// ReleaseAllAdvisoryLocks releases all advisory locks that this session holds.

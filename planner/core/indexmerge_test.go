@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
@@ -62,6 +63,9 @@ func TestIndexMergePathGeneration(t *testing.T) {
 	indexMergeSuiteData.LoadTestCases(t, &input, &output)
 	ctx := context.TODO()
 	sctx := MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockView()})
 
 	parser := parser.New()
@@ -71,7 +75,8 @@ func TestIndexMergePathGeneration(t *testing.T) {
 		require.NoErrorf(t, err, "case:%v sql:%s", i, tc)
 		err = Preprocess(context.Background(), sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
-		builder, _ := NewPlanBuilder().Init(MockContext(), is, &hint.BlockHintProcessor{})
+		sctx := MockContext()
+		builder, _ := NewPlanBuilder().Init(sctx, is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
 			testdata.OnRecord(func() {
@@ -93,7 +98,7 @@ func TestIndexMergePathGeneration(t *testing.T) {
 				lp = lp.Children()[0]
 			}
 		}
-		ds.ctx.GetSessionVars().SetEnableIndexMerge(true)
+		ds.SCtx().GetSessionVars().SetEnableIndexMerge(true)
 		idxMergeStartIndex := len(ds.possibleAccessPaths)
 		_, err = lp.recursiveDeriveStats(nil)
 		require.NoError(t, err)
@@ -102,5 +107,6 @@ func TestIndexMergePathGeneration(t *testing.T) {
 			output[i] = result
 		})
 		require.Equalf(t, output[i], result, "case:%v sql:%s", i, tc)
+		domain.GetDomain(sctx).StatsHandle().Close()
 	}
 }

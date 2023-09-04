@@ -28,7 +28,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 // HandleDDLEvent begins to process a ddl task.
@@ -67,8 +69,23 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 			if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
 				return err
 			}
+			// Do not update global stats, since the data have not changed!
 		}
-		// Do not update global stats, since the data have not changed!
+	case model.ActionAlterTablePartitioning:
+		// Add partitioning
+		for _, def := range t.PartInfo.Definitions {
+			// TODO: Should we trigger analyze instead of adding 0s?
+			if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
+				return err
+			}
+		}
+		fallthrough
+	case model.ActionRemovePartitioning:
+		// Change id for global stats, since the data has not changed!
+		// Note that t.TableInfo is the current (new) table info
+		// and t.PartInfo.NewTableID is actually the old table ID!
+		// (see onReorganizePartition)
+		return h.changeGlobalStatsID(t.PartInfo.NewTableID, t.TableInfo.ID)
 	case model.ActionFlashbackCluster:
 		return h.updateStatsVersion()
 	}
@@ -161,8 +178,16 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 	if err != nil {
 		return err
 	}
+	if len(newColGlobalStats.MissingPartitionStats) > 0 {
+		logutil.BgLogger().Warn("missing partition stats when merging global stats", zap.String("table", tblInfo.Name.L),
+			zap.String("item", "columns"), zap.Strings("missing", newColGlobalStats.MissingPartitionStats))
+	}
 	for i := 0; i < newColGlobalStats.Num; i++ {
 		hg, cms, topN := newColGlobalStats.Hg[i], newColGlobalStats.Cms[i], newColGlobalStats.TopN[i]
+		if hg == nil {
+			// All partitions have no stats so global stats are not created.
+			continue
+		}
 		// fms for global stats doesn't need to dump to kv.
 		err = h.SaveStatsToStorage(tableID, newColGlobalStats.Count, newColGlobalStats.ModifyCount,
 			0, hg, cms, topN, 2, 1, false, StatsMetaHistorySourceSchemaChange)
@@ -192,13 +217,42 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		if err != nil {
 			return err
 		}
+		if len(newIndexGlobalStats.MissingPartitionStats) > 0 {
+			logutil.BgLogger().Warn("missing partition stats when merging global stats", zap.String("table", tblInfo.Name.L),
+				zap.String("item", "index "+idx.Name.L), zap.Strings("missing", newIndexGlobalStats.MissingPartitionStats))
+		}
 		for i := 0; i < newIndexGlobalStats.Num; i++ {
 			hg, cms, topN := newIndexGlobalStats.Hg[i], newIndexGlobalStats.Cms[i], newIndexGlobalStats.TopN[i]
+			if hg == nil {
+				// All partitions have no stats so global stats are not created.
+				continue
+			}
 			// fms for global stats doesn't need to dump to kv.
 			err = h.SaveStatsToStorage(tableID, newIndexGlobalStats.Count, newIndexGlobalStats.ModifyCount, 1, hg, cms, topN, 2, 1, false, StatsMetaHistorySourceSchemaChange)
 			if err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func (h *Handle) changeGlobalStatsID(from, to int64) (err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	for _, table := range []string{"stats_meta", "stats_top_n", "stats_fm_sketch", "stats_buckets", "stats_histograms", "column_stats_usage"} {
+		_, err = exec.ExecuteInternal(ctx, "update mysql."+table+" set table_id = %? where table_id = %?", to, from)
+		if err != nil {
+			return err
 		}
 	}
 	return nil

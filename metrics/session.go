@@ -268,6 +268,7 @@ const (
 	LblModule         = "module"
 	LblRCReadCheckTS  = "read_check"
 	LblRCWriteCheckTS = "write_check"
+	LblResourceGroup  = "resource_group"
 
 	LblName = "name"
 

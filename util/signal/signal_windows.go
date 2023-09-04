@@ -25,7 +25,7 @@ import (
 )
 
 // SetupSignalHandler setup signal handler for TiDB Server
-func SetupSignalHandler(shutdownFunc func(bool)) {
+func SetupSignalHandler(shutdownFunc func()) {
 	//todo deal with dump goroutine stack on windows
 	closeSignalChan := make(chan os.Signal, 1)
 	signal.Notify(closeSignalChan,
@@ -37,6 +37,6 @@ func SetupSignalHandler(shutdownFunc func(bool)) {
 	go func() {
 		sig := <-closeSignalChan
 		logutil.BgLogger().Info("got signal to exit", zap.Stringer("signal", sig))
-		shutdownFunc(sig != syscall.SIGHUP)
+		shutdownFunc()
 	}()
 }

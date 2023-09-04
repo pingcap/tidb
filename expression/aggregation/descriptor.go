@@ -57,11 +57,11 @@ func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expre
 }
 
 // NewAggFuncDescForWindowFunc creates an aggregation function from window functions, where baseFuncDesc may be ready.
-func NewAggFuncDescForWindowFunc(ctx sessionctx.Context, Desc *WindowFuncDesc, hasDistinct bool) (*AggFuncDesc, error) {
-	if Desc.RetTp == nil { // safety check
-		return NewAggFuncDesc(ctx, Desc.Name, Desc.Args, hasDistinct)
+func NewAggFuncDescForWindowFunc(ctx sessionctx.Context, desc *WindowFuncDesc, hasDistinct bool) (*AggFuncDesc, error) {
+	if desc.RetTp == nil { // safety check
+		return NewAggFuncDesc(ctx, desc.Name, desc.Args, hasDistinct)
 	}
-	return &AggFuncDesc{baseFuncDesc: baseFuncDesc{Desc.Name, Desc.Args, Desc.RetTp}, HasDistinct: hasDistinct}, nil
+	return &AggFuncDesc{baseFuncDesc: baseFuncDesc{desc.Name, desc.Args, desc.RetTp}, HasDistinct: hasDistinct}, nil
 }
 
 // String implements the fmt.Stringer interface.

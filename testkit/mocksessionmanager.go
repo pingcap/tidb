@@ -29,13 +29,14 @@ import (
 
 // MockSessionManager is a mocked session manager which is used for test.
 type MockSessionManager struct {
-	PS      []*util.ProcessInfo
-	PSMu    sync.RWMutex
-	SerID   uint64
-	TxnInfo []*txninfo.TxnInfo
-	Dom     *domain.Domain
-	Conn    map[uint64]session.Session
-	mu      sync.Mutex
+	PS       []*util.ProcessInfo
+	PSMu     sync.RWMutex
+	SerID    uint64
+	TxnInfo  []*txninfo.TxnInfo
+	Dom      *domain.Domain
+	Conn     map[uint64]session.Session
+	mu       sync.Mutex
+	ConAttrs map[uint64]map[string]string
 
 	internalSessions map[interface{}]struct{}
 }
@@ -101,6 +102,11 @@ func (msm *MockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 		}
 	}
 	return &util.ProcessInfo{}, false
+}
+
+// GetConAttrs returns the connection attributes of all connections
+func (msm *MockSessionManager) GetConAttrs() map[uint64]map[string]string {
+	return msm.ConAttrs
 }
 
 // Kill implements the SessionManager.Kill interface.

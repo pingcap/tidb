@@ -13,6 +13,7 @@ go_test(
         "//br/pkg/lightning/mydump",
         "//config",
         "//executor",
+        "//executor/internal",
         "//kv",
         "//meta/autoid",
         "//parser/model",

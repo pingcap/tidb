@@ -1613,8 +1613,7 @@ func TestAlterColumn(t *testing.T) {
 	colC = tblInfo.Columns[2]
 	hasNoDefault = mysql.HasNoDefaultValueFlag(colC.GetFlag())
 	require.False(t, hasNoDefault)
-	// TODO: After fix issue 2606.
-	// tk.MustExec( "alter table test_alter_column alter column d set default null")
+	tk.MustExec("alter table test_alter_column alter column d set default null")
 	tk.MustExec("alter table test_alter_column alter column a drop default")
 	tk.MustGetErrCode("insert into test_alter_column set b = 'd', c = 'dd'", errno.ErrNoDefaultForField)
 	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123"))
@@ -3176,7 +3175,7 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=1 */"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=201 /*T![auto_id_cache] AUTO_ID_CACHE=1 */"))
 	tk.MustExec("alter table t auto_increment=100;")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Can't reset AUTO_INCREMENT to 100 without FORCE option, using 201 instead"))
 	tk.MustExec("insert into t values ()")
@@ -3185,7 +3184,7 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=1 */"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=212 /*T![auto_id_cache] AUTO_ID_CACHE=1 */"))
 	tk.MustExec("drop table t")
 }
 

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -35,9 +36,15 @@ func GetPlanCost(p PhysicalPlan, taskType property.TaskType, option *PlanCostOpt
 	return getPlanCost(p, taskType, option)
 }
 
+// GenPlanCostTrace define a hook function to customize the cost calculation.
+var GenPlanCostTrace func(p PhysicalPlan, costV *costVer2, taskType property.TaskType, option *PlanCostOption)
+
 func getPlanCost(p PhysicalPlan, taskType property.TaskType, option *PlanCostOption) (float64, error) {
 	if p.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
 		planCost, err := p.getPlanCostVer2(taskType, option)
+		if traceCost(option) && GenPlanCostTrace != nil {
+			GenPlanCostTrace(p, &planCost, taskType, option)
+		}
 		return planCost.cost, err
 	}
 	return p.getPlanCostVer1(taskType, option)
@@ -97,7 +104,7 @@ func (p *PhysicalProjection) getPlanCostVer2(taskType property.TaskType, option 
 
 	inputRows := getCardinality(p.children[0], option.CostFlag)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
-	concurrency := float64(p.ctx.GetSessionVars().ProjectionConcurrency())
+	concurrency := float64(p.SCtx().GetSessionVars().ProjectionConcurrency())
 	if concurrency == 0 {
 		concurrency = 1 // un-parallel execution
 	}
@@ -123,7 +130,7 @@ func (p *PhysicalIndexScan) getPlanCostVer2(taskType property.TaskType, option *
 	}
 
 	rows := getCardinality(p, option.CostFlag)
-	rowSize := math.Max(getAvgRowSize(p.stats, p.schema.Columns), 2.0) // consider all index columns
+	rowSize := math.Max(getAvgRowSize(p.StatsInfo(), p.schema.Columns), 2.0) // consider all index columns
 	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
 
 	p.planCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
@@ -142,9 +149,9 @@ func (p *PhysicalTableScan) getPlanCostVer2(taskType property.TaskType, option *
 	rows := getCardinality(p, option.CostFlag)
 	var rowSize float64
 	if p.StoreType == kv.TiKV {
-		rowSize = getAvgRowSize(p.stats, p.tblCols) // consider all columns if TiKV
+		rowSize = getAvgRowSize(p.StatsInfo(), p.tblCols) // consider all columns if TiKV
 	} else { // TiFlash
-		rowSize = getAvgRowSize(p.stats, p.schema.Columns)
+		rowSize = getAvgRowSize(p.StatsInfo(), p.schema.Columns)
 	}
 	rowSize = math.Max(rowSize, 2.0)
 	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
@@ -169,9 +176,9 @@ func (p *PhysicalIndexReader) getPlanCostVer2(taskType property.TaskType, option
 	}
 
 	rows := getCardinality(p.indexPlan, option.CostFlag)
-	rowSize := getAvgRowSize(p.stats, p.schema.Columns)
+	rowSize := getAvgRowSize(p.StatsInfo(), p.schema.Columns)
 	netFactor := getTaskNetFactorVer2(p, taskType)
-	concurrency := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
 
 	netCost := netCostVer2(option, rows, rowSize, netFactor)
 
@@ -194,9 +201,9 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 	}
 
 	rows := getCardinality(p.tablePlan, option.CostFlag)
-	rowSize := getAvgRowSize(p.stats, p.schema.Columns)
+	rowSize := getAvgRowSize(p.StatsInfo(), p.schema.Columns)
 	netFactor := getTaskNetFactorVer2(p, taskType)
-	concurrency := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
 	childType := property.CopSingleReadTaskType
 	if p.StoreType == kv.TiFlash { // mpp protocol
 		childType = property.MppTaskType
@@ -213,7 +220,7 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 	p.planCostInit = true
 
 	// consider tidb_enforce_mpp
-	if p.StoreType == kv.TiFlash && p.ctx.GetSessionVars().IsMPPEnforced() &&
+	if p.StoreType == kv.TiFlash && p.SCtx().GetSessionVars().IsMPPEnforced() &&
 		!hasCostFlag(option.CostFlag, CostFlagRecalculate) { // show the real cost in explain-statements
 		p.planCostVer2 = divCostVer2(p.planCostVer2, 1000000000)
 	}
@@ -235,13 +242,13 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 
 	indexRows := getCardinality(p.indexPlan, option.CostFlag)
 	tableRows := getCardinality(p.indexPlan, option.CostFlag)
-	indexRowSize := getTblStats(p.indexPlan).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
-	tableRowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+	indexRowSize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.indexPlan), p.indexPlan.Schema().Columns, true, false)
+	tableRowSize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	requestFactor := getTaskRequestFactorVer2(p, taskType)
-	distConcurrency := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
-	doubleReadConcurrency := float64(p.ctx.GetSessionVars().IndexLookupConcurrency())
+	distConcurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
+	doubleReadConcurrency := float64(p.SCtx().GetSessionVars().IndexLookupConcurrency())
 
 	// index-side
 	indexNetCost := netCostVer2(option, indexRows, indexRowSize, netFactor)
@@ -263,7 +270,7 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 	doubleReadCPUCost := newCostVer2(option, cpuFactor,
 		indexRows*cpuFactor.Value,
 		func() string { return fmt.Sprintf("double-read-cpu(%v*%v)", doubleReadRows, cpuFactor) })
-	batchSize := float64(p.ctx.GetSessionVars().IndexLookupSize)
+	batchSize := float64(p.SCtx().GetSessionVars().IndexLookupSize)
 	taskPerBatch := 32.0 // TODO: remove this magic number
 	doubleReadTasks := doubleReadRows / batchSize * taskPerBatch
 	doubleReadRequestCost := doubleReadCostVer2(option, doubleReadTasks, requestFactor)
@@ -271,7 +278,7 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 
 	p.planCostVer2 = sumCostVer2(indexSideCost, divCostVer2(sumCostVer2(tableSideCost, doubleReadCost), doubleReadConcurrency))
 
-	if p.ctx.GetSessionVars().EnablePaging && p.expectedCnt > 0 && p.expectedCnt <= paging.Threshold {
+	if p.SCtx().GetSessionVars().EnablePaging && p.expectedCnt > 0 && p.expectedCnt <= paging.Threshold {
 		// if the expectCnt is below the paging threshold, using paging API
 		p.Paging = true // TODO: move this operation from cost model to physical optimization
 		p.planCostVer2 = mulCostVer2(p.planCostVer2, 0.6)
@@ -291,12 +298,12 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer2(taskType property.TaskType, o
 	}
 
 	netFactor := getTaskNetFactorVer2(p, taskType)
-	distConcurrency := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+	distConcurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
 
 	var tableSideCost costVer2
 	if tablePath := p.tablePlan; tablePath != nil {
 		rows := getCardinality(tablePath, option.CostFlag)
-		rowSize := getAvgRowSize(tablePath.Stats(), tablePath.Schema().Columns)
+		rowSize := getAvgRowSize(tablePath.StatsInfo(), tablePath.Schema().Columns)
 
 		tableNetCost := netCostVer2(option, rows, rowSize, netFactor)
 		tableChildCost, err := tablePath.getPlanCostVer2(taskType, option)
@@ -309,7 +316,7 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer2(taskType property.TaskType, o
 	indexSideCost := make([]costVer2, 0, len(p.partialPlans))
 	for _, indexPath := range p.partialPlans {
 		rows := getCardinality(indexPath, option.CostFlag)
-		rowSize := getAvgRowSize(indexPath.Stats(), indexPath.Schema().Columns)
+		rowSize := getAvgRowSize(indexPath.StatsInfo(), indexPath.Schema().Columns)
 
 		indexNetCost := netCostVer2(option, rows, rowSize, netFactor)
 		indexChildCost, err := indexPath.getPlanCostVer2(taskType, option)
@@ -341,12 +348,12 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 	}
 
 	rows := math.Max(getCardinality(p.children[0], option.CostFlag), 1)
-	rowSize := getAvgRowSize(p.statsInfo(), p.Schema().Columns)
+	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	diskFactor := defaultVer2Factors.TiDBDisk
 	oomUseTmpStorage := variable.EnableTmpStorageOnOOM.Load()
-	memQuota := p.ctx.GetSessionVars().MemTracker.GetBytesLimit()
+	memQuota := p.SCtx().GetSessionVars().MemTracker.GetBytesLimit()
 	spill := taskType == property.RootTaskType && // only TiDB can spill
 		oomUseTmpStorage && // spill is enabled
 		memQuota > 0 && // mem-quota is set
@@ -389,8 +396,13 @@ func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanC
 	}
 
 	rows := getCardinality(p.children[0], option.CostFlag)
-	n := math.Max(1, float64(p.Count+p.Offset))
-	rowSize := getAvgRowSize(p.statsInfo(), p.Schema().Columns)
+	n := max(1, float64(p.Count+p.Offset))
+	if n > 10000 {
+		// It's only used to prevent some extreme cases, e.g. `select * from t order by a limit 18446744073709551615`.
+		// For normal cases, considering that `rows` may be under-estimated, better to keep `n` unchanged.
+		n = min(n, rows)
+	}
+	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 
@@ -441,10 +453,10 @@ func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *Pl
 
 	inputRows := getCardinality(p.children[0], option.CostFlag)
 	outputRows := getCardinality(p, option.CostFlag)
-	outputRowSize := getAvgRowSize(p.Stats(), p.Schema().Columns)
+	outputRowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
-	concurrency := float64(p.ctx.GetSessionVars().HashAggFinalConcurrency())
+	concurrency := float64(p.SCtx().GetSessionVars().HashAggFinalConcurrency())
 
 	aggCost := aggCostVer2(option, inputRows, p.AggFuncs, cpuFactor)
 	groupCost := groupCostVer2(option, inputRows, p.GroupByItems, cpuFactor)
@@ -512,7 +524,7 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 	}
 	buildRows := getCardinality(build, option.CostFlag)
 	probeRows := getCardinality(probe, option.CostFlag)
-	buildRowSize := getAvgRowSize(build.Stats(), build.Schema().Columns)
+	buildRowSize := getAvgRowSize(build.StatsInfo(), build.Schema().Columns)
 	tidbConcurrency := float64(p.Concurrency)
 	mppConcurrency := float64(3) // TODO: remove this empirical value
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
@@ -554,12 +566,12 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 
 	build, probe := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
 	buildRows := getCardinality(build, option.CostFlag)
-	buildRowSize := getAvgRowSize(build.Stats(), build.Schema().Columns)
+	buildRowSize := getAvgRowSize(build.StatsInfo(), build.Schema().Columns)
 	probeRowsOne := getCardinality(probe, option.CostFlag)
 	probeRowsTot := probeRowsOne * buildRows
-	probeRowSize := getAvgRowSize(probe.Stats(), probe.Schema().Columns)
+	probeRowSize := getAvgRowSize(probe.StatsInfo(), probe.Schema().Columns)
 	buildFilters, probeFilters := p.LeftConditions, p.RightConditions
-	probeConcurrency := float64(p.ctx.GetSessionVars().IndexLookupJoinConcurrency())
+	probeConcurrency := float64(p.SCtx().GetSessionVars().IndexLookupJoinConcurrency())
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	requestFactor := getTaskRequestFactorVer2(p, taskType)
@@ -601,12 +613,12 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 
 	// Double Read Cost
 	doubleReadCost := newZeroCostVer2(traceCost(option))
-	if p.ctx.GetSessionVars().IndexJoinDoubleReadPenaltyCostRate > 0 {
-		batchSize := float64(p.ctx.GetSessionVars().IndexJoinBatchSize)
+	if p.SCtx().GetSessionVars().IndexJoinDoubleReadPenaltyCostRate > 0 {
+		batchSize := float64(p.SCtx().GetSessionVars().IndexJoinBatchSize)
 		taskPerBatch := 1024.0 // TODO: remove this magic number
 		doubleReadTasks := buildRows / batchSize * taskPerBatch
 		doubleReadCost = doubleReadCostVer2(option, doubleReadTasks, requestFactor)
-		doubleReadCost = mulCostVer2(doubleReadCost, p.ctx.GetSessionVars().IndexJoinDoubleReadPenaltyCostRate)
+		doubleReadCost = mulCostVer2(doubleReadCost, p.SCtx().GetSessionVars().IndexJoinDoubleReadPenaltyCostRate)
 	}
 
 	p.planCostVer2 = sumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, divCostVer2(sumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
@@ -668,7 +680,7 @@ func (p *PhysicalUnionAll) getPlanCostVer2(taskType property.TaskType, option *P
 		return p.planCostVer2, nil
 	}
 
-	concurrency := float64(p.ctx.GetSessionVars().UnionConcurrency())
+	concurrency := float64(p.SCtx().GetSessionVars().UnionConcurrency())
 	childCosts := make([]costVer2, 0, len(p.children))
 	for _, child := range p.children {
 		childCost, err := child.getPlanCostVer2(taskType, option)
@@ -690,7 +702,7 @@ func (p *PhysicalExchangeReceiver) getPlanCostVer2(taskType property.TaskType, o
 	}
 
 	rows := getCardinality(p, option.CostFlag)
-	rowSize := getAvgRowSize(p.stats, p.Schema().Columns)
+	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	isBCast := false
 	if sender, ok := p.children[0].(*PhysicalExchangeSender); ok {
@@ -723,7 +735,7 @@ func (p *PointGetPlan) getPlanCostVer2(taskType property.TaskType, option *PlanC
 		p.planCostInit = true
 		return zeroCostVer2, nil
 	}
-	rowSize := getAvgRowSize(p.stats, p.schema.Columns)
+	rowSize := getAvgRowSize(p.StatsInfo(), p.schema.Columns)
 	netFactor := getTaskNetFactorVer2(p, taskType)
 
 	p.planCostVer2 = netCostVer2(option, 1, rowSize, netFactor)
@@ -743,7 +755,7 @@ func (p *BatchPointGetPlan) getPlanCostVer2(taskType property.TaskType, option *
 		return zeroCostVer2, nil
 	}
 	rows := getCardinality(p, option.CostFlag)
-	rowSize := getAvgRowSize(p.stats, p.schema.Columns)
+	rowSize := getAvgRowSize(p.StatsInfo(), p.schema.Columns)
 	netFactor := getTaskNetFactorVer2(p, taskType)
 
 	p.planCostVer2 = netCostVer2(option, rows, rowSize, netFactor)
@@ -1058,10 +1070,10 @@ func sumCostVer2(costs ...costVer2) (ret costVer2) {
 	if len(costs) == 0 {
 		return
 	}
-	for i, c := range costs {
+	for _, c := range costs {
 		ret.cost += c.cost
 		if c.trace != nil {
-			if i == 0 { // init
+			if ret.trace == nil { // init
 				ret.trace = &costTrace{make(map[string]float64), ""}
 			}
 			for factor, factorCost := range c.trace.factorCosts {

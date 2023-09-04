@@ -27,10 +27,10 @@ import (
 
 // FMSketch is used to count the number of distinct elements in a set.
 type FMSketch struct {
+	hashFunc hash.Hash64
 	hashset  map[uint64]bool
 	mask     uint64
 	maxSize  int
-	hashFunc hash.Hash64
 }
 
 // NewFMSketch returns a new FM sketch.

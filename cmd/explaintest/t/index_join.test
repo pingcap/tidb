@@ -1,5 +1,4 @@
 set tidb_cost_model_version=1;
-use test;
 drop table if exists t1, t2;
 create table t1(a bigint, b bigint, index idx(a));
 create table t2(a bigint, b bigint, index idx(a));
@@ -10,12 +9,12 @@ analyze table t1, t2;
 set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
 
--- Test https://github.com/pingcap/tidb/issues/9577
--- we expect the following two SQL chose t2 as the outer table
+# Test https://github.com/pingcap/tidb/issues/9577
+# we expect the following two SQL chose t2 as the outer table
 explain format = 'brief' select /*+ TIDB_INLJ(t1, t2) */ * from t1 join t2 on t1.a=t2.a;
 explain format = 'brief' select * from t1 join t2 on t1.a=t2.a;
 
--- Test https://github.com/pingcap/tidb/issues/10516
+# Test https://github.com/pingcap/tidb/issues/10516
 drop table if exists t1, t2;
 create table t1(a int not null, b int not null);
 create table t2(a int not null, b int not null, key a(a));

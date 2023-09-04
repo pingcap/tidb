@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/server/internal"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
@@ -45,6 +46,8 @@ type MockConn interface {
 	Close()
 	// ID returns the connection ID.
 	ID() uint64
+	// GetOutbound replaces the internal outbound endpoint with a empty buffer, and return it
+	GetOutput() *bytes.Buffer
 }
 
 type mockConn struct {
@@ -75,6 +78,14 @@ func (mc *mockConn) Close() {
 // ID implements MockConn.ID
 func (mc *mockConn) ID() uint64 {
 	return mc.clientConn.connectionID
+}
+
+// GetOutput implements MockConn.GetOutbound
+func (mc *mockConn) GetOutput() *bytes.Buffer {
+	buf := bytes.NewBuffer([]byte{})
+	mc.clientConn.pkt.SetBufWriter(bufio.NewWriter(buf))
+
+	return buf
 }
 
 // CreateMockServer creates a mock server.
@@ -113,12 +124,10 @@ func CreateMockConn(t *testing.T, server *Server) MockConn {
 		collation:    tmysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(1024),
 		chunkAlloc:   chunk.NewAllocator(),
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		extensions: tc.GetExtensions(),
+		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		extensions:   tc.GetExtensions(),
 	}
-	cc.setCtx(tc)
+	cc.SetCtx(tc)
 	cc.server.rwlock.Lock()
 	server.clients[cc.connectionID] = cc
 	cc.server.rwlock.Unlock()

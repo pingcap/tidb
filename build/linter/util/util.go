@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"io/ioutil"
+	"os"
 	"reflect"
 	"strings"
 
@@ -172,7 +172,7 @@ func MakeFakeLoaderPackageInfo(pass *analysis.Pass) *loader.PackageInfo {
 // so that we can report errors against it using lineStart.
 func ReadFile(fset *token.FileSet, filename string) ([]byte, *token.File, error) {
 	//nolint: gosec
-	content, err := ioutil.ReadFile(filename)
+	content, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, nil, err
 	}

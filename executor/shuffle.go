@@ -20,6 +20,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/aggregate"
+	"github.com/pingcap/tidb/executor/internal/exec"
+	"github.com/pingcap/tidb/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/channel"
@@ -79,7 +82,7 @@ import (
 //     +---------->  |    fetch data from DataSource   |
 //     +---------------------------------+
 type ShuffleExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	concurrency int
 	workers     []*shuffleWorker
 
@@ -88,7 +91,7 @@ type ShuffleExec struct {
 
 	// each dataSource has a corresponding spliter
 	splitters   []partitionSplitter
-	dataSources []Executor
+	dataSources []exec.Executor
 
 	finishCh chan struct{}
 	outputCh chan *shuffleOutput
@@ -107,7 +110,7 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 
@@ -131,9 +134,9 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 		}
 
 		for i, r := range w.receivers {
-			r.inputHolderCh <- newFirstChunk(e.dataSources[i])
+			r.inputHolderCh <- exec.NewFirstChunk(e.dataSources[i])
 		}
-		w.outputHolderCh <- newFirstChunk(e)
+		w.outputHolderCh <- exec.NewFirstChunk(e)
 	}
 
 	return nil
@@ -179,10 +182,10 @@ func (e *ShuffleExec) Close() error {
 	}
 	e.executed = false
 
-	if e.runtimeStats != nil {
+	if e.RuntimeStats() != nil {
 		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("ShuffleConcurrency", e.concurrency))
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
+		e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), runtimeStats)
 	}
 
 	// close dataSources
@@ -192,7 +195,7 @@ func (e *ShuffleExec) Close() error {
 		}
 	}
 	// close baseExecutor
-	if err := e.baseExecutor.Close(); err != nil && firstErr == nil {
+	if err := e.BaseExecutor.Close(); err != nil && firstErr == nil {
 		firstErr = err
 	}
 	return errors.Trace(firstErr)
@@ -262,7 +265,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 		workerIndices []int
 	)
 	results := make([]*chunk.Chunk, len(e.workers))
-	chk := tryNewCacheChunk(e.dataSources[dataSourceIndex])
+	chk := exec.TryNewCacheChunk(e.dataSources[dataSourceIndex])
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -274,7 +277,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 	}()
 
 	for {
-		err = Next(ctx, e.dataSources[dataSourceIndex], chk)
+		err = exec.Next(ctx, e.dataSources[dataSourceIndex], chk)
 		if err != nil {
 			e.outputCh <- &shuffleOutput{err: err}
 			return
@@ -283,7 +286,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 			break
 		}
 
-		workerIndices, err = e.splitters[dataSourceIndex].split(e.ctx, chk, workerIndices)
+		workerIndices, err = e.splitters[dataSourceIndex].split(e.Ctx(), chk, workerIndices)
 		if err != nil {
 			e.outputCh <- &shuffleOutput{err: err}
 			return
@@ -298,6 +301,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 				case <-e.finishCh:
 					return
 				case results[workerIdx] = <-w.receivers[dataSourceIndex].inputHolderCh:
+					//nolint: revive
 					break
 				}
 			}
@@ -316,11 +320,11 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 	}
 }
 
-var _ Executor = &shuffleReceiver{}
+var _ exec.Executor = &shuffleReceiver{}
 
 // shuffleReceiver receives chunk from dataSource through inputCh
 type shuffleReceiver struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	finishCh <-chan struct{}
 	executed bool
@@ -331,7 +335,7 @@ type shuffleReceiver struct {
 
 // Open implements the Executor Open interface.
 func (e *shuffleReceiver) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 	e.executed = false
@@ -340,12 +344,12 @@ func (e *shuffleReceiver) Open(ctx context.Context) error {
 
 // Close implements the Executor Close interface.
 func (e *shuffleReceiver) Close() error {
-	return errors.Trace(e.baseExecutor.Close())
+	return errors.Trace(e.BaseExecutor.Close())
 }
 
 // Next implements the Executor Next interface.
 // It is called by `Tail` executor within "shuffle", to fetch data from `DataSource` by `inputCh`.
-func (e *shuffleReceiver) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *shuffleReceiver) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.executed {
 		return nil
@@ -367,7 +371,7 @@ func (e *shuffleReceiver) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // shuffleWorker is the multi-thread worker executing child executors within "partition".
 type shuffleWorker struct {
-	childExec Executor
+	childExec exec.Executor
 
 	finishCh <-chan struct{}
 
@@ -391,7 +395,7 @@ func (e *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 		case <-e.finishCh:
 			return
 		case chk := <-e.outputHolderCh:
-			if err := Next(ctx, e.childExec, chk); err != nil {
+			if err := exec.Next(ctx, e.childExec, chk); err != nil {
 				e.outputCh <- &shuffleOutput{err: err}
 				return
 			}
@@ -420,7 +424,7 @@ type partitionHashSplitter struct {
 
 func (s *partitionHashSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
 	var err error
-	s.hashKeys, err = getGroupKey(ctx, input, s.hashKeys, s.byItems)
+	s.hashKeys, err = aggregate.GetGroupKey(ctx, input, s.hashKeys, s.byItems)
 	if err != nil {
 		return workerIndices, err
 	}
@@ -442,7 +446,7 @@ func buildPartitionHashSplitter(concurrency int, byItems []expression.Expression
 type partitionRangeSplitter struct {
 	byItems      []expression.Expression
 	numWorkers   int
-	groupChecker *vecGroupChecker
+	groupChecker *vecgroupchecker.VecGroupChecker
 	idx          int
 }
 
@@ -450,7 +454,7 @@ func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItem
 	return &partitionRangeSplitter{
 		byItems:      byItems,
 		numWorkers:   concurrency,
-		groupChecker: newVecGroupChecker(ctx, byItems),
+		groupChecker: vecgroupchecker.NewVecGroupChecker(ctx, byItems),
 		idx:          0,
 	}
 }
@@ -458,15 +462,15 @@ func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItem
 // This method is supposed to be used for shuffle with sorted `dataSource`
 // the caller of this method should guarantee that `input` is grouped,
 // which means that rows with the same byItems should be continuous, the order does not matter.
-func (s *partitionRangeSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
-	_, err := s.groupChecker.splitIntoGroups(input)
+func (s *partitionRangeSplitter) split(_ sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
+	_, err := s.groupChecker.SplitIntoGroups(input)
 	if err != nil {
 		return workerIndices, err
 	}
 
 	workerIndices = workerIndices[:0]
-	for !s.groupChecker.isExhausted() {
-		begin, end := s.groupChecker.getNextGroup()
+	for !s.groupChecker.IsExhausted() {
+		begin, end := s.groupChecker.GetNextGroup()
 		for i := begin; i < end; i++ {
 			workerIndices = append(workerIndices, s.idx)
 		}

@@ -14,8 +14,10 @@
 package ast_test
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/parser"
 	. "github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/stretchr/testify/require"
@@ -226,8 +228,7 @@ func TestJoinRestore(t *testing.T) {
 		{"(select * from t) t1 natural join t2", "(SELECT * FROM `t`) AS `t1` NATURAL JOIN `t2`"},
 		{"(select * from t) t1 cross join t2 on t1.a>t2.a", "(SELECT * FROM `t`) AS `t1` JOIN `t2` ON `t1`.`a`>`t2`.`a`"},
 		{"(select * from t union select * from t1) tb1, t2;", "(SELECT * FROM `t` UNION SELECT * FROM `t1`) AS `tb1`, `t2`"},
-		//todo: uncomment this after https://github.com/pingcap/parser/issues/1127 fixed
-		//{"(select a from t) t1 join t t2, t3;", "((SELECT `a` FROM `t`) AS `t1` JOIN `t` AS `t2`) JOIN `t3`"},
+		{"(select a from t) t1 join t t2, t3;", "((SELECT `a` FROM `t`) AS `t1` JOIN `t` AS `t2`) JOIN `t3`"},
 	}
 	testChangedCases := []NodeRestoreTestCase{
 		{"(a al left join b bl on al.a1 > bl.b1) join (a ar right join b br on ar.a1 > br.b1)", "(`a` AS `al` LEFT JOIN `b` AS `bl` ON `al`.`a1`>`bl`.`b1`) JOIN (`a` AS `ar` RIGHT JOIN `b` AS `br` ON `ar`.`a1`>`br`.`b1`)"},
@@ -508,20 +509,33 @@ func TestLoadDataRestore(t *testing.T) {
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
-func TestLoadDataActions(t *testing.T) {
+func TestImportActions(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{
-			sourceSQL: "show load data jobs",
-			expectSQL: "SHOW LOAD DATA JOBS",
+			sourceSQL: "cancel import job 123",
+			expectSQL: "CANCEL IMPORT JOB 123",
 		},
 		{
-			sourceSQL: "show load data job 123",
-			expectSQL: "SHOW LOAD DATA JOB 123",
+			sourceSQL: "show import jobs",
+			expectSQL: "SHOW IMPORT JOBS",
 		},
 		{
-			sourceSQL: "show load data jobs where aa > 1",
-			expectSQL: "SHOW LOAD DATA JOBS WHERE `aa`>1",
+			sourceSQL: "show import job 123",
+			expectSQL: "SHOW IMPORT JOB 123",
 		},
+		{
+			sourceSQL: "show import jobs where aa > 1",
+			expectSQL: "SHOW IMPORT JOBS WHERE `aa`>1",
+		},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
+func TestLoadDataActions(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
 		{
 			sourceSQL: "pause load data job 123",
 			expectSQL: "PAUSE LOAD DATA JOB 123",
@@ -529,10 +543,6 @@ func TestLoadDataActions(t *testing.T) {
 		{
 			sourceSQL: "resume load data job 123",
 			expectSQL: "RESUME LOAD DATA JOB 123",
-		},
-		{
-			sourceSQL: "Cancel load data job 123",
-			expectSQL: "CANCEL LOAD DATA JOB 123",
 		},
 		{
 			sourceSQL: "drop   load data job 123",
@@ -595,4 +605,30 @@ func TestFulltextSearchModifier(t *testing.T) {
 	require.False(t, FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).IsBooleanMode())
 	require.True(t, FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).IsNaturalLanguageMode())
 	require.False(t, FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).WithQueryExpansion())
+}
+
+func TestImportIntoSecureText(t *testing.T) {
+	testCases := []struct {
+		input   string
+		secured string
+	}{
+		{
+			input:   "import into t from 's3://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'",
+			secured: `^IMPORT INTO .t. FROM \Q's3://bucket/prefix?\E((access-key=xxxxxx|secret-access-key=xxxxxx)(&|'$)){2}`,
+		},
+		{
+			input:   "import into t from 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'",
+			secured: "\\QIMPORT INTO `t` FROM 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'\\E",
+		},
+	}
+
+	p := parser.New()
+	for _, tc := range testCases {
+		comment := fmt.Sprintf("input = %s", tc.input)
+		node, err := p.ParseOneStmt(tc.input, "", "")
+		require.NoError(t, err, comment)
+		n, ok := node.(SensitiveStmtNode)
+		require.True(t, ok, comment)
+		require.Regexp(t, tc.secured, n.SecureText(), comment)
+	}
 }

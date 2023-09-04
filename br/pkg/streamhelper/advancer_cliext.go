@@ -117,7 +117,8 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 	handleResponse := func(resp clientv3.WatchResponse) bool {
 		events, err := t.eventFromWatch(ctx, resp)
 		if err != nil {
-			log.Warn("[log backup advancer] Meet error during receiving the task event.", logutil.ShortError(err))
+			log.Warn("Meet error during receiving the task event.",
+				zap.String("category", "log backup advancer"), logutil.ShortError(err))
 			ch <- errorEvent(err)
 			return false
 		}
@@ -127,9 +128,9 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 		return true
 	}
 	collectRemaining := func() {
-		log.Info("[log backup advancer] Start collecting remaining events in the channel.",
+		log.Info("Start collecting remaining events in the channel.", zap.String("category", "log backup advancer"),
 			zap.Int("remained", len(c)))
-		defer log.Info("[log backup advancer] Finish collecting remaining events in the channel.")
+		defer log.Info("Finish collecting remaining events in the channel.", zap.String("category", "log backup advancer"))
 		for {
 			select {
 			case resp, ok := <-c:
@@ -237,7 +238,7 @@ func (t AdvancerExt) UploadV3GlobalCheckpointForTask(ctx context.Context, taskNa
 	}
 
 	if checkpoint < oldValue {
-		log.Warn("[log backup advancer] skipping upload global checkpoint",
+		log.Warn("skipping upload global checkpoint", zap.String("category", "log backup advancer"),
 			zap.Uint64("old", oldValue), zap.Uint64("new", checkpoint))
 		return nil
 	}

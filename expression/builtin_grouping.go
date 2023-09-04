@@ -15,12 +15,15 @@
 package expression
 
 import (
+	"context"
+
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -47,6 +50,7 @@ func (c *groupingImplFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 	// grouping(x,y,z) is a singed UInt64 (while MySQL is Int64 which is unreasonable)
 	bf.tp.SetFlag(bf.tp.GetFlag() | mysql.UnsignedFlag)
+	// default filled meta is invalid for grouping evaluation, so the initialized flag is false.
 	sig := &BuiltinGroupingImplSig{bf, 0, []map[uint64]struct{}{}, false}
 	sig.setPbCode(tipb.ScalarFuncSig_GroupingSig)
 	return sig, nil
@@ -73,6 +77,7 @@ func (b *BuiltinGroupingImplSig) SetMetadata(mode tipb.GroupingMode, groupingMar
 	b.isMetaInited = true
 	err := b.checkMetadata()
 	if err != nil {
+		logutil.Logger(context.Background()).Error("grouping meta check err: " + err.Error())
 		b.isMetaInited = false
 		return err
 	}
@@ -95,6 +100,7 @@ func (b *BuiltinGroupingImplSig) getGroupingMode() tipb.GroupingMode {
 func (b *BuiltinGroupingImplSig) metadata() proto.Message {
 	err := b.checkMetadata()
 	if err != nil {
+		logutil.Logger(context.Background()).Error("grouping meta check err: " + err.Error())
 		return &tipb.GroupingFunctionMetadata{}
 	}
 	args := &tipb.GroupingFunctionMetadata{}
@@ -117,6 +123,9 @@ func (b *BuiltinGroupingImplSig) Clone() builtinFunc {
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	newSig.mode = b.mode
 	newSig.groupingMarks = b.groupingMarks
+	// mpp task generation will clone whole plan tree, including every expression related.
+	// if grouping function missed cloning this field, the ToPB check will errors.
+	newSig.isMetaInited = b.isMetaInited
 	return newSig
 }
 
@@ -220,7 +229,7 @@ func (b *BuiltinGroupingImplSig) grouping(groupingID uint64) int64 {
 // evalInt evals a builtinGroupingSig.
 func (b *BuiltinGroupingImplSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if !b.isMetaInited {
-		return 0, false, errors.Errorf("Meta data is not initialzied")
+		return 0, false, errors.Errorf("Meta data is not initialized")
 	}
 	// grouping function should be rewritten from raw column ref to built gid column and groupingMarks meta.
 	groupingID, isNull, err := b.args[0].EvalInt(b.ctx, row)
@@ -252,7 +261,7 @@ func (b *BuiltinGroupingImplSig) groupingVec(groupingIds *chunk.Column, rowNum i
 
 func (b *BuiltinGroupingImplSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	if !b.isMetaInited {
-		return errors.Errorf("Meta data is not initialzied")
+		return errors.Errorf("Meta data is not initialized")
 	}
 	rowNum := input.NumRows()
 

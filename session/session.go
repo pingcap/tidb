@@ -76,7 +76,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/txn"
@@ -446,30 +445,6 @@ func (s *session) GetSessionManager() util.SessionManager {
 	return s.sessionManager
 }
 
-func (s *session) StoreQueryFeedback(feedback interface{}) {
-	if variable.FeedbackProbability.Load() <= 0 {
-		return
-	}
-	if fb, ok := feedback.(*statistics.QueryFeedback); !ok || fb == nil || !fb.Valid.Load() {
-		return
-	}
-	if s.statsCollector != nil {
-		do, err := GetDomain(s.store)
-		if err != nil {
-			logutil.BgLogger().Debug("domain not found", zap.Error(err))
-			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
-			return
-		}
-		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle(), s.GetSessionVars().GetEnablePseudoForOutdatedStats())
-		if err != nil {
-			logutil.BgLogger().Debug("store query feedback", zap.Error(err))
-			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
-			return
-		}
-		metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Inc()
-	}
-}
-
 func (s *session) UpdateColStatsUsage(predicateColumns []model.TableItemID) {
 	if s.statsCollector == nil {
 		return
@@ -644,7 +619,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
 	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
-	s.txn.SetOption(kv.ResourceGroupName, sessVars.ResourceGroupName)
+	s.txn.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
 	if sessVars.StmtCtx.KvExecCounter != nil {
 		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
 		s.txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
@@ -1579,6 +1554,8 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		DiskTracker:           s.sessionVars.DiskTracker,
 		StatsInfo:             plannercore.GetStatsInfo,
 		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
+		TableIDs:              s.sessionVars.StmtCtx.TableIDs,
+		IndexNames:            s.sessionVars.StmtCtx.IndexNames,
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
 		ResourceGroupName:     s.sessionVars.ResourceGroupName,
@@ -1808,13 +1785,35 @@ func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
 		return err
 	}
 	infosync.StoreInternalSession(sess)
-	lock := &advisoryLock{session: sess, ctx: context.TODO()}
+	lock := &advisoryLock{session: sess, ctx: context.TODO(), owner: s.ShowProcess().ID}
 	err = lock.GetLock(lockName, timeout)
 	if err != nil {
 		return err
 	}
 	s.advisoryLocks[lockName] = lock
 	return nil
+}
+
+// IsUsedAdvisoryLock checks if a lockName is already in use
+func (s *session) IsUsedAdvisoryLock(lockName string) uint64 {
+	// Same session
+	if lock, ok := s.advisoryLocks[lockName]; ok {
+		return lock.owner
+	}
+
+	// Check for transaction on advisory_locks table
+	sess, err := createSession(s.store)
+	if err != nil {
+		return 0
+	}
+	lock := &advisoryLock{session: sess, ctx: context.TODO(), owner: s.ShowProcess().ID}
+	err = lock.IsUsedLock(lockName)
+	if err != nil {
+		// TODO: Return actual owner pid
+		// TODO: Check for mysql.ErrLockWaitTimeout and DeadLock
+		return 1
+	}
+	return 0
 }
 
 // ReleaseAdvisoryLock releases an advisory locks held by the session.
@@ -1925,8 +1924,9 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 		return nil, nil, err
 	}
 
-	for _, dbName := range GetDBNames(se.GetSessionVars()) {
-		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
+	vars := se.GetSessionVars()
+	for _, dbName := range GetDBNames(vars) {
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.ResourceGroupName).Observe(time.Since(startTime).Seconds())
 	}
 	return rows, rs.Fields(), err
 }
@@ -2100,8 +2100,9 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 			return nil, nil, err
 		}
 
-		for _, dbName := range GetDBNames(se.GetSessionVars()) {
-			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
+		vars := se.GetSessionVars()
+		for _, dbName := range GetDBNames(vars) {
+			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.ResourceGroupName).Observe(time.Since(startTime).Seconds())
 		}
 		return rows, rs.Fields(), err
 	})
@@ -2188,7 +2189,16 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 	})
 
-	stmtLabel := ast.GetStmtLabel(stmtNode)
+	var stmtLabel string
+	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, s.sessionVars)
+		if err == nil && prepareStmt.PreparedAst != nil {
+			stmtLabel = ast.GetStmtLabel(prepareStmt.PreparedAst.Stmt)
+		}
+	}
+	if stmtLabel == "" {
+		stmtLabel = ast.GetStmtLabel(stmtNode)
+	}
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
 	// Backup the original resource group name since sql hint might change it during optimization
@@ -2199,11 +2209,21 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	stmt, err := compiler.Compile(ctx, stmtNode)
 	// session resource-group might be changed by query hint, ensure restore it back when
 	// the execution finished.
-	if s.GetSessionVars().ResourceGroupName != originalResourceGroup {
-		defer func() {
-			// Restore the resource group for the session
-			s.GetSessionVars().ResourceGroupName = originalResourceGroup
-		}()
+	if sessVars.ResourceGroupName != originalResourceGroup {
+		// if target resource group doesn't exist, fallback to the origin resource group.
+		if _, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(model.NewCIStr(sessVars.ResourceGroupName)); !ok {
+			logutil.Logger(ctx).Warn("Unknown resource group from hint", zap.String("name", sessVars.ResourceGroupName))
+			sessVars.ResourceGroupName = originalResourceGroup
+			// if we are in a txn, should also reset the txn resource group.
+			if txn, err := s.Txn(false); err == nil && txn != nil && txn.Valid() {
+				kv.SetTxnResourceGroup(txn, originalResourceGroup)
+			}
+		} else {
+			defer func() {
+				// Restore the resource group for the session
+				sessVars.ResourceGroupName = originalResourceGroup
+			}()
+		}
 	}
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -2466,6 +2486,11 @@ func (s *session) rollbackOnError(ctx context.Context) {
 
 // PrepareStmt is used for executing prepare statement in binary protocol
 func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
+	defer func() {
+		if s.sessionVars.StmtCtx != nil {
+			s.sessionVars.StmtCtx.DetachMemDiskTracker()
+		}
+	}()
 	if s.sessionVars.TxnCtx.InfoSchema == nil {
 		// We don't need to create a transaction for prepare statement, just get information schema will do.
 		s.sessionVars.TxnCtx.InfoSchema = domain.GetDomain(s).InfoSchema()
@@ -2695,11 +2720,8 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 		return err
 	}
 
-	// If tidb_resource_control_enable is disabled, set resource group to empty
-	if variable.EnableResourceControl.Load() {
+	if variable.EnableResourceControl.Load() && info.ResourceGroupName != "" {
 		s.sessionVars.ResourceGroupName = strings.ToLower(info.ResourceGroupName)
-	} else {
-		s.sessionVars.ResourceGroupName = ""
 	}
 
 	if info.InSandBoxMode {
@@ -3110,7 +3132,7 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 		ctxWithTimeout, cancel := context.WithTimeout(context.Background(), variable.DefWaitSplitRegionTimeout*time.Second)
 		var regionIDs []uint64
 		for _, id := range tableIDs {
-			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, id, variable.DefTiDBScatterRegion))
+			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, id, id, variable.DefTiDBScatterRegion))
 		}
 		if variable.DefTiDBScatterRegion {
 			ddl.WaitScatterRegionFinish(ctxWithTimeout, s, regionIDs...)
@@ -3263,8 +3285,17 @@ func InitMDLVariable(store kv.Storage) error {
 	return err
 }
 
-// BootstrapSession runs the first time when the TiDB server start.
+// BootstrapSession bootstrap session and domain.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
+	return bootstrapSessionImpl(store, createSessions)
+}
+
+// BootstrapSession4DistExecution bootstrap session and dom for Distributed execution test, only for unit testing.
+func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
+	return bootstrapSessionImpl(store, createSessions4DistExecution)
+}
+
+func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	cfg := config.GetGlobalConfig()
 	if len(cfg.Instance.PluginLoad) > 0 {
@@ -3302,7 +3333,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
-	ses, err := createSessions(store, 10)
+	ses, err := createSessionsImpl(store, 10)
 	if err != nil {
 		return nil, err
 	}
@@ -3488,7 +3519,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		dom.Close()
 		return nil, err
 	}
-
 	err = dom.InitDistTaskLoop(ctx)
 	if err != nil {
 		return nil, err
@@ -3521,13 +3551,27 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 
 	dom := domain.GetDomain(s)
 	dom.Close()
+	if intest.InTest {
+		infosync.MockGlobalServerInfoManagerEntry.Close()
+	}
 	domap.Delete(store)
 }
 
 func createSessions(store kv.Storage, cnt int) ([]*session, error) {
+	return createSessionsImpl(store, cnt, createSession)
+}
+
+func createSessions4DistExecution(store kv.Storage, cnt int) ([]*session, error) {
+	domap.Delete(store)
+
+	return createSessionsImpl(store, cnt, createSession4DistExecution)
+}
+
+func createSessionsImpl(store kv.Storage, cnt int, createSessionImpl func(kv.Storage) (*session, error)) ([]*session, error) {
+	// Then we can create new dom
 	ses := make([]*session, cnt)
 	for i := 0; i < cnt; i++ {
-		se, err := createSession(store)
+		se, err := createSessionImpl(store)
 		if err != nil {
 			return nil, err
 		}
@@ -3542,6 +3586,10 @@ func createSessions(store kv.Storage, cnt int) ([]*session, error) {
 // This means the min ts reporter is not aware of it and may report a wrong min start ts.
 // In most cases you should use a session pool in domain instead.
 func createSession(store kv.Storage) (*session, error) {
+	return createSessionWithOpt(store, nil)
+}
+
+func createSession4DistExecution(store kv.Storage) (*session, error) {
 	return createSessionWithOpt(store, nil)
 }
 
@@ -3583,8 +3631,10 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 // attachStatsCollector attaches the stats collector in the dom for the session
 func attachStatsCollector(s *session, dom *domain.Domain) *session {
 	if dom.StatsHandle() != nil && dom.StatsUpdating() {
-		s.statsCollector = dom.StatsHandle().NewSessionStatsCollector()
-		if GetIndexUsageSyncLease() > 0 {
+		if s.statsCollector == nil {
+			s.statsCollector = dom.StatsHandle().NewSessionStatsCollector()
+		}
+		if s.idxUsageCollector == nil && GetIndexUsageSyncLease() > 0 {
 			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector()
 		}
 	}
@@ -3594,9 +3644,14 @@ func attachStatsCollector(s *session, dom *domain.Domain) *session {
 
 // detachStatsCollector removes the stats collector in the session
 func detachStatsCollector(s *session) *session {
-	s.statsCollector = nil
-	s.idxUsageCollector = nil
-
+	if s.statsCollector != nil {
+		s.statsCollector.Delete()
+		s.statsCollector = nil
+	}
+	if s.idxUsageCollector != nil {
+		s.idxUsageCollector.Delete()
+		s.idxUsageCollector = nil
+	}
 	return s
 }
 
@@ -3655,7 +3710,8 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 		storeBootstrapped[store.UUID()] = true
 	}
 
-	return modifyBootstrapVersionForTest(store, ver)
+	modifyBootstrapVersionForTest(ver)
+	return ver
 }
 
 func finishBootstrap(store kv.Storage) {
@@ -3828,11 +3884,26 @@ func GetStartTSFromSession(se interface{}) (startTS, processInfoID uint64) {
 // if variable.ProcessGeneralLog is set.
 func logStmt(execStmt *executor.ExecStmt, s *session) {
 	vars := s.GetSessionVars()
+	isCrucial := false
 	switch stmt := execStmt.StmtNode.(type) {
+	case *ast.DropIndexStmt:
+		isCrucial = true
+		if stmt.IsHypo {
+			isCrucial = false
+		}
+	case *ast.CreateIndexStmt:
+		isCrucial = true
+		if stmt.IndexOption != nil && stmt.IndexOption.Tp == model.IndexTypeHypo {
+			isCrucial = false
+		}
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
-		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
-		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt,
+		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateTableStmt,
+		*ast.DropDatabaseStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt,
 		*ast.RenameUserStmt:
+		isCrucial = true
+	}
+
+	if isCrucial {
 		user := vars.User
 		schemaVersion := s.GetInfoSchema().SchemaMetaVersion()
 		if ss, ok := execStmt.StmtNode.(ast.SensitiveStmtNode); ok {
@@ -3846,10 +3917,10 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 				zap.Uint64("conn", vars.ConnectionID),
 				zap.Int64("schemaVersion", schemaVersion),
 				zap.String("cur_db", vars.CurrentDB),
-				zap.String("sql", stmt.Text()),
+				zap.String("sql", execStmt.StmtNode.Text()),
 				zap.Stringer("user", user))
 		}
-	default:
+	} else {
 		logGeneralQuery(execStmt, s, false)
 	}
 }
@@ -3870,6 +3941,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
+			zap.String("session_alias", vars.SessionAlias),
 			zap.String("user", vars.User.LoginString()),
 			zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
@@ -4209,27 +4281,48 @@ func (s *session) EncodeSessionStates(ctx context.Context,
 		return err
 	}
 
+	hasRestrictVarPriv := false
+	checker := privilege.GetPrivilegeManager(s)
+	if checker == nil || checker.RequestDynamicVerification(s.sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
+		hasRestrictVarPriv = true
+	}
 	// Encode session variables. We put it here instead of SessionVars to avoid cycle import.
 	sessionStates.SystemVars = make(map[string]string)
 	for _, sv := range variable.GetSysVars() {
 		switch {
-		case sv.HasNoneScope(), sv.HasInstanceScope(), !sv.HasSessionScope():
+		case sv.HasNoneScope(), !sv.HasSessionScope():
 			// Hidden attribute is deprecated.
 			// None-scoped variables cannot be modified.
-			// Instance-scoped variables don't need to be encoded.
 			// Noop variables should also be migrated even if they are noop.
 			continue
 		case sv.ReadOnly:
 			// Skip read-only variables here. We encode them into SessionStates manually.
 			continue
-		case sem.IsEnabled() && sem.IsInvisibleSysVar(sv.Name):
-			// If they are shown, there will be a security issue.
-			continue
 		}
 		// Get all session variables because the default values may change between versions.
-		if val, keep, err := s.sessionVars.GetSessionStatesSystemVar(sv.Name); err != nil {
+		val, keep, err := s.sessionVars.GetSessionStatesSystemVar(sv.Name)
+		switch {
+		case err != nil:
 			return err
-		} else if keep {
+		case !keep:
+			continue
+		case !hasRestrictVarPriv && sem.IsEnabled() && sem.IsInvisibleSysVar(sv.Name):
+			// If the variable has a global scope, it should be the same with the global one.
+			// Otherwise, it should be the same with the default value.
+			defaultVal := sv.Value
+			if sv.HasGlobalScope() {
+				// If the session value is the same with the global one, skip it.
+				if defaultVal, err = sv.GetGlobalFromHook(ctx, s.sessionVars); err != nil {
+					return err
+				}
+			}
+			if val != defaultVal {
+				// Case 1: the RESTRICTED_VARIABLES_ADMIN is revoked after setting the session variable.
+				// Case 2: the global variable is updated after the session is created.
+				// In any case, the variable can't be set in the new session, so give up.
+				return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs(fmt.Sprintf("session has set invisible variable '%s'", sv.Name))
+			}
+		default:
 			sessionStates.SystemVars[sv.Name] = val
 		}
 	}
@@ -4254,7 +4347,10 @@ func (s *session) DecodeSessionStates(ctx context.Context,
 	}
 
 	// Decode session variables.
-	for name, val := range sessionStates.SystemVars {
+	names := variable.OrderByDependency(sessionStates.SystemVars)
+	// Some variables must be set before others, e.g. tidb_enable_noop_functions should be before noop variables.
+	for _, name := range names {
+		val := sessionStates.SystemVars[name]
 		// Experimental system variables may change scope, data types, or even be removed.
 		// We just ignore the errors and continue.
 		if err := s.sessionVars.SetSystemVar(name, val); err != nil {
@@ -4272,9 +4368,8 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 	if !s.isInternal() {
 		if txn, _ := s.Txn(false); txn != nil && txn.Valid() {
 			txn.SetOption(kv.RequestSourceType, stmtLabel)
-		} else {
-			s.sessionVars.RequestSourceType = stmtLabel
 		}
+		s.sessionVars.RequestSourceType = stmtLabel
 		return
 	}
 	if source := ctx.Value(kv.RequestSourceKey); source != nil {

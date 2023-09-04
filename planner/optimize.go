@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -97,7 +98,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		return nil, nil, false, nil
 	}
 
-	paramSQL, paramsVals, err := core.GetParamSQLFromAST(sctx, stmt)
+	paramSQL, paramsVals, err := core.GetParamSQLFromAST(stmt)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -138,7 +139,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
-func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (core.Plan, types.NameSlice, error) {
+func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plan core.Plan, slice types.NameSlice, retErr error) {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -176,6 +177,25 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	for _, warn := range warns {
 		sessVars.StmtCtx.AppendWarning(warn)
 	}
+
+	defer func() {
+		// Override the resource group if necessary
+		// TODO: we didn't check the existence of the hinted resource group now to save the cost per query
+		if retErr == nil && sessVars.StmtCtx.StmtHints.HasResourceGroup {
+			if variable.EnableResourceControl.Load() {
+				sessVars.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
+				// if we are in a txn, should update the txn resource name to let the txn
+				// commit with the hint resource group.
+				if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
+					kv.SetTxnResourceGroup(txn, sessVars.ResourceGroupName)
+				}
+			} else {
+				err := infoschema.ErrResourceGroupSupportDisabled
+				sessVars.StmtCtx.AppendWarning(err)
+			}
+		}
+	}()
+
 	warns = warns[:0]
 	for name, val := range originStmtHints.SetVars {
 		err := sessVars.SetStmtVar(name, val)
@@ -307,17 +327,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 		// Restore the hint to avoid changing the stmt node.
 		hint.BindHint(stmtNode, originHints)
-	}
-
-	// Override the resource group if necessary
-	// TODO: we didn't check the existence of the hinted resource group now to save the cost per query
-	if sessVars.StmtCtx.StmtHints.HasResourceGroup {
-		if variable.EnableResourceControl.Load() {
-			sessVars.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
-		} else {
-			err := infoschema.ErrResourceGroupSupportDisabled
-			sessVars.StmtCtx.AppendWarning(err)
-		}
 	}
 
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace && bestPlanFromBind != nil {
@@ -538,6 +547,7 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, builder *core.PlanBuilder) (core.Plan, error) {
 	sctx.GetSessionVars().PlanID.Store(0)
 	sctx.GetSessionVars().PlanColumnID.Store(0)
+	sctx.GetSessionVars().MapScalarSubQ = nil
 	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 
 	failpoint.Inject("mockRandomPlanID", func() {
@@ -675,7 +685,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	}
 	hintOffs := make(map[string]int, len(hints))
 	var forceNthPlan *ast.TableOptimizerHint
-	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt, resourceGroupHintCnt int
+	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, tidbKvReadTimeoutCnt, forceNthPlanCnt, straightJoinHintCnt, resourceGroupHintCnt int
 	setVars := make(map[string]string)
 	setVarsOffs := make([]int, 0, len(hints))
 	for i, hint := range hints {
@@ -701,6 +711,9 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		case "max_execution_time":
 			hintOffs[hint.HintName.L] = i
 			maxExecutionTimeCnt++
+		case "tidb_kv_read_timeout":
+			hintOffs[hint.HintName.L] = i
+			tidbKvReadTimeoutCnt++
 		case "nth_plan":
 			forceNthPlanCnt++
 			forceNthPlan = hint
@@ -809,6 +822,16 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		stmtHints.HasMaxExecutionTime = true
 		stmtHints.MaxExecutionTime = maxExecutionTime.HintData.(uint64)
 	}
+	// Handle TIDB_KV_READ_TIMEOUT
+	if tidbKvReadTimeoutCnt != 0 {
+		tidbKvReadTimeout := hints[hintOffs["tidb_kv_read_timeout"]]
+		if tidbKvReadTimeoutCnt > 1 {
+			warn := errors.Errorf("TIDB_KV_READ_TIMEOUT() is defined more than once, only the last definition takes effect: TIDB_KV_READ_TIMEOUT(%v)", tidbKvReadTimeout.HintData.(uint64))
+			warns = append(warns, warn)
+		}
+		stmtHints.HasTidbKvReadTimeout = true
+		stmtHints.TidbKvReadTimeout = tidbKvReadTimeout.HintData.(uint64)
+	}
 	// Handle RESOURCE_GROUP
 	if resourceGroupHintCnt != 0 {
 		resourceGroup := hints[hintOffs["resource_group"]]
@@ -838,6 +861,8 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		offs = append(offs, off)
 	}
 	offs = append(offs, setVarsOffs...)
+	// let hint is always ordered, it is convenient to human compare and test.
+	sort.Ints(offs)
 	return
 }
 

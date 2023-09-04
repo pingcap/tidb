@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -58,7 +59,7 @@ func (c *batchCopTask) GetAddress() string {
 }
 
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
-func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, ttl time.Duration, dispatchPolicy tiflashcompute.DispatchPolicy) ([]kv.MPPTaskMeta, error) {
+func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, ttl time.Duration, dispatchPolicy tiflashcompute.DispatchPolicy, tiflashReplicaReadPolicy tiflash.ReplicaRead, appendWarning func(error)) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	var tasks []*batchCopTask
@@ -70,13 +71,13 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 			rangesForEachPartition[i] = NewKeyRanges(p.KeyRanges)
 			partitionIDs[i] = p.ID
 		}
-		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store, rangesForEachPartition, kv.TiFlash, true, ttl, true, 20, partitionIDs, dispatchPolicy)
+		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store, rangesForEachPartition, kv.TiFlash, true, ttl, true, 20, partitionIDs, dispatchPolicy, tiflashReplicaReadPolicy, appendWarning)
 	} else {
 		if req.KeyRanges == nil {
 			return nil, errors.New("KeyRanges in MPPBuildTasksRequest is nil")
 		}
 		ranges := NewKeyRanges(req.KeyRanges)
-		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store, ranges, kv.TiFlash, true, ttl, true, 20, dispatchPolicy)
+		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store, ranges, kv.TiFlash, true, ttl, true, 20, dispatchPolicy, tiflashReplicaReadPolicy, appendWarning)
 	}
 
 	if err != nil {
@@ -102,8 +103,11 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 
 	// meta for current task.
 	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, QueryTs: req.MppQueryID.QueryTs, LocalQueryId: req.MppQueryID.LocalQueryID, TaskId: req.ID, ServerId: req.MppQueryID.ServerID,
-		Address:    req.Meta.GetAddress(),
-		MppVersion: req.MppVersion.ToInt64(),
+		GatherId:               req.GatherID,
+		Address:                req.Meta.GetAddress(),
+		CoordinatorAddress:     req.CoordinatorAddress,
+		ReportExecutionSummary: req.ReportExecutionSummary,
+		MppVersion:             req.MppVersion.ToInt64(),
 	}
 
 	mppReq := &mpp.DispatchTaskRequest{
@@ -185,29 +189,19 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 // NOTE: We do not retry here, because retry is helpless when errors result from TiFlash or Network. If errors occur, the execution on TiFlash will finally stop after some minutes.
 // This function is exclusively called, and only the first call succeeds sending tasks and setting all tasks as cancelled, while others will not work.
 func (c *MPPClient) CancelMPPTasks(param kv.CancelMPPTasksParam) {
+	usedStoreAddrs := param.StoreAddr
 	reqs := param.Reqs
-	if len(reqs) == 0 {
+	if len(usedStoreAddrs) == 0 || len(reqs) == 0 {
 		return
 	}
 
 	firstReq := reqs[0]
 	killReq := &mpp.CancelTaskRequest{
-		Meta: &mpp.TaskMeta{StartTs: firstReq.StartTs, QueryTs: firstReq.MppQueryID.QueryTs, LocalQueryId: firstReq.MppQueryID.LocalQueryID, ServerId: firstReq.MppQueryID.ServerID, MppVersion: firstReq.MppVersion.ToInt64()},
+		Meta: &mpp.TaskMeta{StartTs: firstReq.StartTs, GatherId: firstReq.GatherID, QueryTs: firstReq.MppQueryID.QueryTs, LocalQueryId: firstReq.MppQueryID.LocalQueryID, ServerId: firstReq.MppQueryID.ServerID, MppVersion: firstReq.MppVersion.ToInt64()},
 	}
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPCancel, killReq, kvrpcpb.Context{})
 	wrappedReq.StoreTp = getEndPointType(kv.TiFlash)
-
-	usedStoreAddrs := make(map[string]bool)
-	for _, task := range reqs {
-		// get the store address of running tasks
-		if task.State == kv.MppTaskRunning && !usedStoreAddrs[task.Meta.GetAddress()] {
-			usedStoreAddrs[task.Meta.GetAddress()] = true
-		} else if task.State == kv.MppTaskCancelled {
-			return
-		}
-		task.State = kv.MppTaskCancelled
-	}
 
 	// send cancel cmd to all stores where tasks run
 	invalidPDCache := config.GetGlobalConfig().DisaggregatedTiFlash && !config.GetGlobalConfig().UseAutoScaler
@@ -240,6 +234,7 @@ func (c *MPPClient) EstablishMPPConns(param kv.EstablishMPPConnsParam) (*tikvrpc
 		SenderMeta: taskMeta,
 		ReceiverMeta: &mpp.TaskMeta{
 			StartTs:      req.StartTs,
+			GatherId:     req.GatherID,
 			QueryTs:      req.MppQueryID.QueryTs,
 			LocalQueryId: req.MppQueryID.LocalQueryID,
 			ServerId:     req.MppQueryID.ServerID,
@@ -255,7 +250,7 @@ func (c *MPPClient) EstablishMPPConns(param kv.EstablishMPPConnsParam) (*tikvrpc
 
 	// Drain results from root task.
 	// We don't need to process any special error. When we meet errors, just let it fail.
-	rpcResp, err := c.store.GetTiKVClient().SendRequest(param.Ctx, req.Meta.GetAddress(), wrappedReq, readTimeoutUltraLong)
+	rpcResp, err := c.store.GetTiKVClient().SendRequest(param.Ctx, req.Meta.GetAddress(), wrappedReq, TiFlashReadTimeoutUltraLong)
 
 	if err != nil {
 		logutil.BgLogger().Warn("establish mpp connection meet error and cannot retry", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))

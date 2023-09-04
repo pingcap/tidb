@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "statslock_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "stats_lcok_test.go",
+    ],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//config",
+        "//domain",
+        "//parser/model",
+        "//testkit",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

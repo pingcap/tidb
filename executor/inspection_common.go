@@ -16,11 +16,11 @@ package executor
 
 import (
 	"context"
+	"slices"
 
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"golang.org/x/exp/slices"
 )
 
 type inspectionRuleRetriever struct {
@@ -34,7 +34,7 @@ const (
 	inspectionRuleTypeSummary    string = "summary"
 )
 
-func (e *inspectionRuleRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *inspectionRuleRetriever) retrieve(context.Context, sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved || e.extractor.SkipRequest {
 		return nil, nil
 	}

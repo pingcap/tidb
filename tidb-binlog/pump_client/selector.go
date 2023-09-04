@@ -89,7 +89,7 @@ func (h *HashSelector) Select(binlog *pb.Binlog, retryTime int) *PumpStatus {
 		}
 
 		// this should never happened
-		log.Warn("[pumps client] binlog don't have matched prewrite binlog", zap.Stringer("binlog type", binlog.Tp), zap.Int64("startTs", binlog.StartTs))
+		log.Warn("binlog don't have matched prewrite binlog", zap.String("category", "pumps client"), zap.Stringer("binlog type", binlog.Tp), zap.Int64("startTs", binlog.StartTs))
 		return nil
 	}
 
@@ -144,7 +144,7 @@ func (r *RangeSelector) Select(binlog *pb.Binlog, _ int) *PumpStatus {
 		}
 
 		// this should never happened
-		log.Warn("[pumps client] binlog don't have matched prewrite binlog", zap.Stringer("binlog type", binlog.Tp), zap.Int64("startTs", binlog.StartTs))
+		log.Warn("binlog don't have matched prewrite binlog", zap.String("category", "pumps client"), zap.Stringer("binlog type", binlog.Tp), zap.Int64("startTs", binlog.StartTs))
 		return nil
 	}
 
@@ -236,7 +236,7 @@ func NewSelector(strategy string) PumpSelector {
 	case LocalUnix:
 		return NewLocalUnixSelector()
 	default:
-		log.Warn("[pumps client] unknown strategy, use range as default", zap.String("strategy", strategy))
+		log.Warn("unknown strategy, use range as default", zap.String("category", "pumps client"), zap.String("strategy", strategy))
 		return NewRangeSelector()
 	}
 }

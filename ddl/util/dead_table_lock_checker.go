@@ -59,7 +59,7 @@ func (d *DeadTableLockChecker) getAliveServers(ctx context.Context) (map[string]
 		resp, err = d.etcdCli.Get(childCtx, DDLAllSchemaVersions, clientv3.WithPrefix())
 		cancel()
 		if err != nil {
-			logutil.BgLogger().Info("[ddl] clean dead table lock get alive servers failed.", zap.Error(err))
+			logutil.BgLogger().Info("clean dead table lock get alive servers failed.", zap.String("category", "ddl"), zap.Error(err))
 			time.Sleep(defaultRetryInterval)
 			continue
 		}

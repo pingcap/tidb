@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -82,7 +83,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		TableRowStatsCache.Invalidate(physicalID)
+		cache.TableRowStatsCache.Invalidate(physicalID)
 	}
 	tbl, ok := h.getTableByPhysicalID(is, physicalID)
 	if !ok {
@@ -287,9 +288,6 @@ func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 			return err
 		}
 		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_top_n where table_id = %?", statsID); err != nil {
-			return err
-		}
-		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_feedback where table_id = %?", statsID); err != nil {
 			return err
 		}
 		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_extended set version = %?, status = %? where table_id = %? and status in (%?, %?)", startTS, statistics.ExtendedStatsDeleted, statsID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited); err != nil {

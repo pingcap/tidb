@@ -171,7 +171,7 @@
         "SQL": "select count(c3) from (select a as c1, b as c2, a+1 as c3 from t1) as tmp group by c2, c1",
         "Plan": [
           "StreamAgg 4.00 root  group by:Column#10, Column#11, funcs:count(Column#9)->Column#5",
-          "└─Projection 4.00 root  plus(test.t1.a, 1)->Column#9, test.t1.b, test.t1.a",
+          "└─Projection 4.00 root  plus(test.t1.a, 1)->Column#9, test.t1.b->Column#10, test.t1.a->Column#11",
           "  └─IndexReader 4.00 root  index:IndexFullScan",
           "    └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true"
         ]
@@ -180,7 +180,7 @@
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b > (select t2.b from t2 where t2.a = t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
         "Plan": [
           "StreamAgg 4.00 root  group by:Column#14, Column#15, funcs:count(Column#13)->Column#11",
-          "└─Projection 4.00 root  gt(test.t1.b, test.t2.b)->Column#13, test.t1.a, test.t1.b",
+          "└─Projection 4.00 root  gt(test.t1.b, test.t2.b)->Column#13, test.t1.a->Column#14, test.t1.b->Column#15",
           "  └─Apply 4.00 root  CARTESIAN left outer join",
           "    ├─IndexReader(Build) 4.00 root  index:IndexFullScan",
           "    │ └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true",

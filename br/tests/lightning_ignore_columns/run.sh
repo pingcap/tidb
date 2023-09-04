@@ -4,6 +4,8 @@
 
 set -eux
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 for BACKEND in tidb local; do
   run_sql 'DROP DATABASE IF EXISTS routes_a0;'
   run_sql 'DROP DATABASE IF EXISTS routes_a1;'
@@ -12,7 +14,7 @@ for BACKEND in tidb local; do
   run_sql 'CREATE DATABASE routes_b;'
   run_sql 'CREATE TABLE routes_b.u (a int primary key, b int, c int, c_source varchar(11), c_schema varchar(11) not null, c_table varchar(11) not null);'
 
-  run_lightning --config "tests/$TEST_NAME/config.toml" --backend $BACKEND
+  run_lightning --config "$CUR/config.toml" --backend $BACKEND
   echo Import using $BACKEND finished
 
   run_sql 'SELECT count(1), sum(a), sum(b), sum(c) FROM routes_b.u;'

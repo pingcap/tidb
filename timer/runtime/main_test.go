@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/timer/api"
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/mock"
 	"go.uber.org/goleak"
 )
@@ -36,6 +37,28 @@ type mockHook struct {
 	mock.Mock
 	started chan struct{}
 	stopped chan struct{}
+}
+
+type newHookFn struct {
+	mock.Mock
+}
+
+func (n *newHookFn) OnFuncCall() *mock.Call {
+	return n.On("Func")
+}
+
+func (n *newHookFn) Func() api.Hook {
+	args := n.Called()
+	if v := args.Get(0); v != nil {
+		return v.(api.Hook)
+	}
+	return nil
+}
+
+func onlyOnceNewHook(hook api.Hook) func() api.Hook {
+	n := newHookFn{}
+	n.OnFuncCall().Return(hook).Once()
+	return n.Func
 }
 
 func newMockHook() *mockHook {
@@ -108,6 +131,9 @@ func (s *mockStoreCore) Watch(ctx context.Context) api.WatchTimerChan {
 	return args.Get(0).(api.WatchTimerChan)
 }
 
+func (s *mockStoreCore) Close() {
+}
+
 func waitDone(obj any, timeout time.Duration) {
 	var ch <-chan struct{}
 	switch o := obj.(type) {
@@ -115,6 +141,14 @@ func waitDone(obj any, timeout time.Duration) {
 		ch = o
 	case <-chan struct{}:
 		ch = o
+	case *util.WaitGroupWrapper:
+		newCh := make(chan struct{})
+		ch = newCh
+
+		go func() {
+			o.Wait()
+			close(newCh)
+		}()
 	case *sync.WaitGroup:
 		newCh := make(chan struct{})
 		ch = newCh

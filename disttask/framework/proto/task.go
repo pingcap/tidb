@@ -15,12 +15,13 @@
 package proto
 
 import (
+	"fmt"
 	"time"
 )
 
 // task state machine
 //  1. succeed:			pending -> running -> succeed
-//  2. failed:			pending -> running -> reverting -> reverted/revert_failed
+//  2. failed:			pending -> running -> reverting -> reverted/revert_failed, pending -> failed
 //  3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
 //  3. pause/resume:	pending -> running -> pausing -> paused -> running
 //
@@ -40,6 +41,7 @@ const (
 	TaskStateCanceled      = "canceled"
 	TaskStatePausing       = "pausing"
 	TaskStatePaused        = "paused"
+	TaskStateResuming      = "resuming"
 	TaskStateRevertPending = "revert_pending"
 	TaskStateReverted      = "reverted"
 )
@@ -64,7 +66,7 @@ type Task struct {
 	StartTime       time.Time
 	StateUpdateTime time.Time
 	Meta            []byte
-	Error           []byte
+	Error           error
 }
 
 // IsFinished checks if the task is finished.
@@ -84,9 +86,15 @@ type Subtask struct {
 	// SchedulerID is the ID of scheduler, right now it's the same as instance_id, exec_id.
 	// its value is IP:PORT, see GenerateExecID
 	SchedulerID string
-	StartTime   uint64
-	EndTime     time.Time
-	Meta        []byte
+	// StartTime is the time when the subtask is started.
+	// it's 0 if it hasn't started yet.
+	StartTime time.Time
+	// UpdateTime is the time when the subtask is updated.
+	// it can be used as subtask end time if the subtask is finished.
+	// it's 0 if it hasn't started yet.
+	UpdateTime time.Time
+	Meta       []byte
+	Summary    string
 }
 
 // NewSubtask create a new subtask.
@@ -104,13 +112,14 @@ func NewSubtask(taskID int64, tp, schedulerID string, meta []byte) *Subtask {
 type MinimalTask interface {
 	// IsMinimalTask is a marker to check if it is a minimal task for compiler.
 	IsMinimalTask()
+	fmt.Stringer
 }
 
 const (
 	// TaskTypeExample is TaskType of Example.
 	TaskTypeExample = "Example"
-	// LoadData is TaskType of LoadData.
-	LoadData = "LoadData"
+	// ImportInto is TaskType of ImportInto.
+	ImportInto = "ImportInto"
 )
 
 // Type2Int converts task type to int.
@@ -118,7 +127,7 @@ func Type2Int(t string) int {
 	switch t {
 	case TaskTypeExample:
 		return 1
-	case LoadData:
+	case ImportInto:
 		return 2
 	default:
 		return 0
@@ -131,7 +140,7 @@ func Int2Type(i int) string {
 	case 1:
 		return TaskTypeExample
 	case 2:
-		return LoadData
+		return ImportInto
 	default:
 		return ""
 	}

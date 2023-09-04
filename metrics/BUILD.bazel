@@ -27,6 +27,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//parser/terror",
+        "//timer/metrics",
         "//util/logutil",
         "//util/mathutil",
         "@com_github_pingcap_errors//:errors",
@@ -43,6 +44,7 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "metrics_internal_test.go",
         "metrics_test.go",
     ],
     embed = [":metrics"],
@@ -50,6 +52,7 @@ go_test(
     shard_count = 4,
     deps = [
         "//parser/terror",
+        "//statistics/handle/cache",
         "//testkit/testsetup",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",

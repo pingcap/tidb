@@ -15,22 +15,31 @@
 package errormanager
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
 	"math"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/parser/mysql"
+	tidbtbl "github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
+	tikverr "github.com/tikv/client-go/v2/error"
+	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -44,8 +53,9 @@ const (
 	syntaxErrorTableName = "syntax_error_v1"
 	typeErrorTableName   = "type_error_v1"
 	// ConflictErrorTableName is the table name for duplicate detection.
-	ConflictErrorTableName   = "conflict_error_v1"
-	conflictErrorV2TableName = "conflict_error_v2"
+	ConflictErrorTableName = "conflict_error_v1"
+	// DupRecordTable is the table name to record duplicate data that displayed to user.
+	DupRecordTable = "conflict_records"
 
 	createSyntaxErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + syntaxErrorTableName + ` (
@@ -83,12 +93,13 @@ const (
 			raw_value   mediumblob NOT NULL COMMENT 'the value of the conflicted key',
 			raw_handle  mediumblob NOT NULL COMMENT 'the data handle derived from the conflicted key or value',
 			raw_row     mediumblob NOT NULL COMMENT 'the data retrieved from the handle',
-			KEY (task_id, table_name)
+			KEY (task_id, table_name),
+			INDEX (index_name)
 		);
 	`
 
-	createConflictErrorV2Table = `
-		CREATE TABLE IF NOT EXISTS %s.` + conflictErrorV2TableName + ` (
+	createDupRecordTable = `
+		CREATE TABLE IF NOT EXISTS %s.` + DupRecordTable + ` (
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
@@ -123,15 +134,22 @@ const (
 
 	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?)"
 
-	selectConflictKeys = `
+	selectConflictKeysRemove = `
 		SELECT _tidb_rowid, raw_handle, raw_row
 		FROM %s.` + ConflictErrorTableName + `
 		WHERE table_name = ? AND _tidb_rowid >= ? and _tidb_rowid < ?
 		ORDER BY _tidb_rowid LIMIT ?;
 	`
 
-	insertIntoConflictErrorV2 = `
-		INSERT INTO %s.` + conflictErrorV2TableName + `
+	selectIndexConflictKeysReplace = `
+		SELECT raw_key, index_name, raw_value, raw_handle
+		FROM %s.` + ConflictErrorTableName + `
+		WHERE table_name = ? AND index_name <> 'PRIMARY'
+		ORDER BY raw_key;
+	`
+
+	insertIntoDupRecord = `
+		INSERT INTO %s.` + DupRecordTable + `
 		(task_id, table_name, path, offset, error, row_id, row_data)
 		VALUES (?, ?, ?, ?, ?, ?, ?);
 	`
@@ -144,11 +162,14 @@ type ErrorManager struct {
 	schemaEscaped  string
 	configError    *config.MaxError
 	remainingError config.MaxError
-	maxErrRecords  *atomic.Int64
-	// conflictV1Enabled and conflictV2Enabled are mutually exclusive.
-	conflictV1Enabled bool
-	conflictV2Enabled bool
-	logger            log.Logger
+
+	configConflict        *config.Conflict
+	conflictErrRemain     *atomic.Int64
+	conflictRecordsRemain *atomic.Int64
+	conflictV1Enabled     bool
+	conflictV2Enabled     bool
+	logger                log.Logger
+	recordErrorOnce       *atomic.Bool
 }
 
 // TypeErrorsRemain returns the number of type errors that can be recorded.
@@ -156,24 +177,44 @@ func (em *ErrorManager) TypeErrorsRemain() int64 {
 	return em.remainingError.Type.Load()
 }
 
-// RemainRecord returns the number of errors that need be recorded.
-func (em *ErrorManager) RemainRecord() int64 {
-	return em.maxErrRecords.Load()
+// ConflictErrorsRemain returns the number of conflict errors that can be recorded.
+func (em *ErrorManager) ConflictErrorsRemain() int64 {
+	return em.conflictErrRemain.Load()
+}
+
+// ConflictRecordsRemain returns the number of errors that need be recorded.
+func (em *ErrorManager) ConflictRecordsRemain() int64 {
+	return em.conflictRecordsRemain.Load()
+}
+
+// RecordErrorOnce returns if RecordDuplicateOnce has been called. Not that this
+// method is not atomic with RecordDuplicateOnce.
+func (em *ErrorManager) RecordErrorOnce() bool {
+	return em.recordErrorOnce.Load()
 }
 
 // New creates a new error manager.
 func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
-	maxErrRecords := &atomic.Int64{}
-	maxErrRecords.Store(cfg.App.MaxErrorRecords)
+	conflictErrRemain := atomic.NewInt64(cfg.Conflict.Threshold)
+	conflictRecordsRemain := atomic.NewInt64(cfg.Conflict.MaxRecordRows)
 	em := &ErrorManager{
-		taskID:            cfg.TaskID,
-		configError:       &cfg.App.MaxError,
-		remainingError:    cfg.App.MaxError,
-		conflictV1Enabled: cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
-		// Currently, we only support local backend recording conflict errors.
-		conflictV2Enabled: cfg.TikvImporter.OnDuplicate != "" && cfg.TikvImporter.Backend == config.BackendLocal,
-		maxErrRecords:     maxErrRecords,
-		logger:            logger,
+		taskID:                cfg.TaskID,
+		configError:           &cfg.App.MaxError,
+		remainingError:        cfg.App.MaxError,
+		conflictV1Enabled:     cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
+		configConflict:        &cfg.Conflict,
+		conflictErrRemain:     conflictErrRemain,
+		conflictRecordsRemain: conflictRecordsRemain,
+		logger:                logger,
+		recordErrorOnce:       atomic.NewBool(false),
+	}
+	switch cfg.TikvImporter.Backend {
+	case config.BackendLocal:
+		if cfg.Conflict.Strategy != "" {
+			em.conflictV2Enabled = true
+		}
+	case config.BackendTiDB:
+		em.conflictV2Enabled = true
 	}
 	if len(cfg.App.TaskInfoSchemaName) != 0 {
 		em.db = db
@@ -184,7 +225,7 @@ func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
 
 // Init creates the schemas and tables to store the task information.
 func (em *ErrorManager) Init(ctx context.Context) error {
-	if em.db == nil || em.maxErrRecords.Load() == 0 {
+	if em.db == nil {
 		return nil
 	}
 
@@ -201,11 +242,11 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 	if em.remainingError.Type.Load() > 0 {
 		sqls = append(sqls, [2]string{"create type error table", createTypeErrorTable})
 	}
-	if em.conflictV1Enabled && em.remainingError.Conflict.Load() > 0 {
+	if em.conflictV1Enabled {
 		sqls = append(sqls, [2]string{"create conflict error v1 table", createConflictErrorTable})
 	}
-	if em.conflictV2Enabled && em.remainingError.Conflict.Load() > 0 {
-		sqls = append(sqls, [2]string{"create conflict error v2 table", createConflictErrorV2Table})
+	if em.conflictV2Enabled {
+		sqls = append(sqls, [2]string{"create duplicate records table", createDupRecordTable})
 	}
 
 	// No need to create task info schema if no error is allowed.
@@ -244,9 +285,6 @@ func (em *ErrorManager) RecordTypeError(
 				em.configError.Type.Load())
 		}
 		return encodeErr
-	}
-	if em.maxErrRecords.Add(-1) < 0 {
-		return nil
 	}
 
 	if em.db != nil {
@@ -297,12 +335,12 @@ func (em *ErrorManager) RecordDataConflictError(
 		return nil
 	}
 
-	if em.remainingError.Conflict.Sub(int64(len(conflictInfos))) < 0 {
-		threshold := em.configError.Conflict.Load()
+	if em.conflictErrRemain.Sub(int64(len(conflictInfos))) < 0 {
+		threshold := em.configConflict.Threshold
 		// Still need to record this batch of conflict records, and then return this error at last.
-		// Otherwise, if the max-error.conflict is set a very small value, non of the conflict errors will be recorded
+		// Otherwise, if the max-error.conflict is set a very small value, none of the conflict errors will be recorded
 		gerr = errors.Errorf(
-			"The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'",
+			"The number of conflict errors exceeds the threshold configured by `conflict.threshold`: '%d'",
 			threshold)
 	}
 
@@ -355,12 +393,12 @@ func (em *ErrorManager) RecordIndexConflictError(
 		return nil
 	}
 
-	if em.remainingError.Conflict.Sub(int64(len(conflictInfos))) < 0 {
-		threshold := em.configError.Conflict.Load()
+	if em.conflictErrRemain.Sub(int64(len(conflictInfos))) < 0 {
+		threshold := em.configConflict.Threshold
 		// Still need to record this batch of conflict records, and then return this error at last.
 		// Otherwise, if the max-error.conflict is set a very small value, non of the conflict errors will be recorded
 		gerr = errors.Errorf(
-			"The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'",
+			"The number of conflict errors exceeds the threshold configured by `conflict.threshold`: '%d'",
 			threshold)
 	}
 
@@ -402,9 +440,9 @@ func (em *ErrorManager) RecordIndexConflictError(
 	return gerr
 }
 
-// ResolveAllConflictKeys query all conflicting rows (handle and their
-// values) from the current error report and resolve them concurrently.
-func (em *ErrorManager) ResolveAllConflictKeys(
+// RemoveAllConflictKeys query all conflicting rows (handle and their
+// values) from the current error report and resolve them concurrently by removing all of them.
+func (em *ErrorManager) RemoveAllConflictKeys(
 	ctx context.Context,
 	tableName string,
 	pool *utils.WorkerPool,
@@ -436,7 +474,7 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 			var handleRows [][2][]byte
 			for start < end {
 				rows, err := em.db.QueryContext(
-					gCtx, fmt.Sprintf(selectConflictKeys, em.schemaEscaped),
+					gCtx, fmt.Sprintf(selectConflictKeysRemove, em.schemaEscaped),
 					tableName, start, end, rowLimit)
 				if err != nil {
 					return errors.Trace(err)
@@ -482,8 +520,155 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 	return errors.Trace(g.Wait())
 }
 
-// RecordConflictErrorV2 records a conflict error detected by the new conflict detector.
-func (em *ErrorManager) RecordConflictErrorV2(
+// ReplaceConflictKeys query all conflicting rows (handle and their
+// values) from the current error report and resolve them
+// by replacing the necessary rows and reserving the others.
+func (em *ErrorManager) ReplaceConflictKeys(
+	ctx context.Context,
+	tbl tidbtbl.Table,
+	tableName string,
+	pool *utils.WorkerPool,
+	fnGetLatest func(ctx context.Context, key []byte) ([]byte, error),
+	fnDeleteKey func(ctx context.Context, key []byte) error,
+) error {
+	if em.db == nil {
+		return nil
+	}
+
+	sessionOpts := encode.SessionOptions{
+		// TODO: need to find the correct value for SQLMode
+		SQLMode: mysql.ModeStrictAllTables,
+	}
+	encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
+		Table:          tbl,
+		SessionOptions: sessionOpts,
+		Logger:         em.logger,
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	g, gCtx := errgroup.WithContext(ctx)
+	pool.ApplyOnErrorGroup(g, func() error {
+		// TODO: provide a detailed document to explain the algorithm and link it here
+		// demo for "replace" algorithm: https://github.com/lyzx2001/tidb-conflict-replace
+		// check index KV first
+		rawKeyRows, err := em.db.QueryContext(
+			gCtx, fmt.Sprintf(selectIndexConflictKeysReplace, em.schemaEscaped),
+			tableName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer rawKeyRows.Close()
+		for rawKeyRows.Next() {
+			var rawKey, rawValue, rawHandle []byte
+			var indexName string
+			if err := rawKeyRows.Scan(&rawKey, &indexName, &rawValue, &rawHandle); err != nil {
+				return errors.Trace(err)
+			}
+			em.logger.Debug("got raw_key, index_name, raw_value, raw_handle from table",
+				zap.Binary("raw_key", rawKey),
+				zap.String("index_name", indexName),
+				zap.Binary("raw_value", rawValue),
+				zap.Binary("raw_handle", rawHandle))
+
+			// get the latest value of rawKey from downstream TiDB
+			value, err := fnGetLatest(gCtx, rawKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			// if the latest value of rawKey equals to rawValue, that means this index KV is maintained in downstream TiDB
+			// if not, that means this index KV has been overwritten, and its corresponding data KV needs to be deleted
+			if bytes.Equal(rawValue, value) {
+				continue
+			}
+
+			// rawHandle is the row key of the data KV that needs to be deleted
+			// get the latest value of the row key of the data KV that needs to be deleted
+			overwritten, err := fnGetLatest(gCtx, rawHandle)
+			// if the latest value cannot be found, that means the data KV has been deleted
+			if tikverr.IsErrNotFound(err) || overwritten == nil {
+				continue
+			}
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			overwrittenHandle, err := tablecodec.DecodeRowKey(rawHandle)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
+				tbl.Meta(), overwrittenHandle, tbl.Cols(), overwritten)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// find out all the KV pairs that are contained in the data KV
+			kvPairs := encoder.SessionCtx.TakeKvPairs()
+			for _, kvPair := range kvPairs.Pairs {
+				em.logger.Debug("got encoded KV",
+					logutil.Key("key", kvPair.Key),
+					zap.Binary("value", kvPair.Val),
+					logutil.Key("rawKey", rawKey),
+					zap.Binary("rawValue", rawValue))
+
+				// If rawKey equals to KV pair's key and rawValue equals to KV pair's value,
+				// this latest data KV of the index KV needs to be deleted;
+				// if not, this latest data KV of the index KV was inserted by other rows,
+				// so it is unrelated to the index KV that needs to be deleted, we cannot delete it.
+
+				// An example is:
+				// (pk, uk)
+				// (1, a)
+				// (1, b)
+				// (2, a)
+
+				// (1, a) is overwritten by (2, a). We found a->1 is an overwritten index KV,
+				// and we are considering if its data KV with key "1" can be deleted.
+				// We got the latest value of key "1" which is (1, b),
+				// and encode it to get all KV pairs which is [1->b, b->1].
+				// Only if there is a->1 we dare to delete data KV with key "1".
+
+				if bytes.Equal(kvPair.Key, rawKey) && bytes.Equal(kvPair.Val, rawValue) {
+					if err := fnDeleteKey(gCtx, rawHandle); err != nil {
+						return errors.Trace(err)
+					}
+					break
+				}
+			}
+		}
+		if err := rawKeyRows.Err(); err != nil {
+			return errors.Trace(err)
+		}
+
+		// TODO: check data KV
+
+		return nil
+	})
+
+	return errors.Trace(g.Wait())
+}
+
+// RecordDuplicateCount reduce the counter of "duplicate entry" errors.
+// Currently, the count will not be shared for multiple lightning instances.
+func (em *ErrorManager) RecordDuplicateCount(cnt int64) error {
+	if em.conflictErrRemain.Sub(cnt) < 0 {
+		threshold := em.configConflict.Threshold
+		return errors.Errorf(
+			"The number of conflict errors exceeds the threshold configured by `conflict.threshold`: '%d'",
+			threshold)
+	}
+	return nil
+}
+
+// RecordDuplicate records a "duplicate entry" error so user can query them later.
+// Currently, the error will not be shared for multiple lightning instances.
+func (em *ErrorManager) RecordDuplicate(
 	ctx context.Context,
 	logger log.Logger,
 	tableName string,
@@ -493,26 +678,39 @@ func (em *ErrorManager) RecordConflictErrorV2(
 	rowID int64,
 	rowData string,
 ) error {
-	if em.remainingError.Conflict.Dec() < 0 {
-		threshold := em.configError.Conflict.Load()
+	if em.conflictErrRemain.Dec() < 0 {
+		threshold := em.configConflict.Threshold
 		return errors.Errorf(
-			"The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'",
+			"The number of conflict errors exceeds the threshold configured by `conflict.threshold`: '%d'",
 			threshold)
 	}
 	if em.db == nil {
 		return nil
 	}
-	if em.maxErrRecords.Add(-1) < 0 {
+	if em.conflictRecordsRemain.Add(-1) < 0 {
 		return nil
 	}
 
+	return em.recordDuplicate(ctx, logger, tableName, path, offset, errMsg, rowID, rowData)
+}
+
+func (em *ErrorManager) recordDuplicate(
+	ctx context.Context,
+	logger log.Logger,
+	tableName string,
+	path string,
+	offset int64,
+	errMsg string,
+	rowID int64,
+	rowData string,
+) error {
 	exec := common.SQLWithRetry{
 		DB:           em.db,
 		Logger:       logger,
 		HideQueryLog: redact.NeedRedact(),
 	}
-	return exec.Exec(ctx, "insert conflict error record",
-		fmt.Sprintf(insertIntoConflictErrorV2, em.schemaEscaped),
+	return exec.Exec(ctx, "insert duplicate record",
+		fmt.Sprintf(insertIntoDupRecord, em.schemaEscaped),
 		em.taskID,
 		tableName,
 		path,
@@ -521,6 +719,30 @@ func (em *ErrorManager) RecordConflictErrorV2(
 		rowID,
 		rowData,
 	)
+}
+
+// RecordDuplicateOnce records a "duplicate entry" error so user can query them later.
+// Currently the error will not be shared for multiple lightning instances.
+// Different from RecordDuplicate, this function is used when conflict.strategy
+// is "error" and will only write the first conflict error to the table.
+func (em *ErrorManager) RecordDuplicateOnce(
+	ctx context.Context,
+	logger log.Logger,
+	tableName string,
+	path string,
+	offset int64,
+	errMsg string,
+	rowID int64,
+	rowData string,
+) {
+	ok := em.recordErrorOnce.CompareAndSwap(false, true)
+	if !ok {
+		return
+	}
+	err := em.recordDuplicate(ctx, logger, tableName, path, offset, errMsg, rowID, rowData)
+	if err != nil {
+		logger.Warn("meet error when record duplicate entry error", zap.Error(err))
+	}
 }
 
 func (em *ErrorManager) errorCount(typeVal func(*config.MaxError) int64) int64 {
@@ -545,9 +767,11 @@ func (em *ErrorManager) syntaxError() int64 {
 }
 
 func (em *ErrorManager) conflictError() int64 {
-	return em.errorCount(func(maxError *config.MaxError) int64 {
-		return maxError.Conflict.Load()
-	})
+	val := em.conflictErrRemain.Load()
+	if val < 0 {
+		val = 0
+	}
+	return em.configConflict.Threshold - val
 }
 
 func (em *ErrorManager) charsetError() int64 {
@@ -582,7 +806,7 @@ func (em *ErrorManager) LogErrorDetails() {
 		if em.conflictV1Enabled {
 			em.logger.Warn(fmtErrMsg(errCnt, "data conflict", ConflictErrorTableName))
 		} else {
-			em.logger.Warn(fmtErrMsg(errCnt, "data conflict", conflictErrorV2TableName))
+			em.logger.Warn(fmtErrMsg(errCnt, "data conflict", DupRecordTable))
 		}
 	}
 }
@@ -628,7 +852,7 @@ func (em *ErrorManager) Output() string {
 		if em.conflictV1Enabled {
 			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(ConflictErrorTableName)})
 		} else {
-			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(conflictErrorV2TableName)})
+			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(DupRecordTable)})
 		}
 	}
 

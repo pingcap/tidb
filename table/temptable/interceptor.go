@@ -158,14 +158,14 @@ func (i *TemporaryTableSnapshotInterceptor) OnIter(snap kv.Snapshot, k kv.Key, u
 }
 
 // OnIterReverse intercepts IterReverse operation for Snapshot
-func (i *TemporaryTableSnapshotInterceptor) OnIterReverse(snap kv.Snapshot, k kv.Key) (kv.Iterator, error) {
+func (i *TemporaryTableSnapshotInterceptor) OnIterReverse(snap kv.Snapshot, k kv.Key, lowerBound kv.Key) (kv.Iterator, error) {
 	if notTableRange(nil, k) {
 		// scan range has no intersect with table data
-		return snap.IterReverse(k)
+		return snap.IterReverse(k, lowerBound)
 	}
 
-	// because lower bound is nil, so the range cannot be located in one table
-	return createUnionIter(i.sessionData, snap, nil, k, true)
+	// lower bound always be nil here, so the range cannot be located in one table
+	return createUnionIter(i.sessionData, snap, lowerBound, k, true)
 }
 
 func (i *TemporaryTableSnapshotInterceptor) iterTable(tblID int64, snap kv.Snapshot, k, upperBound kv.Key) (kv.Iterator, error) {
@@ -194,16 +194,12 @@ func (i *TemporaryTableSnapshotInterceptor) temporaryTableInfoByID(tblID int64) 
 }
 
 func createUnionIter(sessionData kv.Retriever, snap kv.Snapshot, k, upperBound kv.Key, reverse bool) (iter kv.Iterator, err error) {
-	if reverse && k != nil {
-		return nil, errors.New("k should be nil for iter reverse")
-	}
-
 	var snapIter kv.Iterator
 	if snap == nil {
 		snapIter = &kv.EmptyIterator{}
 	} else {
 		if reverse {
-			snapIter, err = snap.IterReverse(upperBound)
+			snapIter, err = snap.IterReverse(upperBound, k)
 		} else {
 			snapIter, err = snap.Iter(k, upperBound)
 		}
@@ -219,7 +215,7 @@ func createUnionIter(sessionData kv.Retriever, snap kv.Snapshot, k, upperBound k
 
 	var sessionIter kv.Iterator
 	if reverse {
-		sessionIter, err = sessionData.IterReverse(upperBound)
+		sessionIter, err = sessionData.IterReverse(upperBound, k)
 	} else {
 		sessionIter, err = sessionData.Iter(k, upperBound)
 	}

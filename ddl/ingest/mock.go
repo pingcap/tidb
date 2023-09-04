@@ -83,6 +83,13 @@ func (m *MockBackendCtxMgr) Load(jobID int64) (BackendCtx, bool) {
 	return nil, false
 }
 
+// ResetSessCtx is only used for mocking test.
+func (m *MockBackendCtxMgr) ResetSessCtx() {
+	for _, mockCtx := range m.runningJobs {
+		mockCtx.sessCtx = m.sessCtxProvider()
+	}
+}
+
 // MockBackendCtx is a mock backend context.
 type MockBackendCtx struct {
 	sessCtx       sessionctx.Context
@@ -141,10 +148,23 @@ func (m *MockBackendCtx) GetCheckpointManager() *CheckpointManager {
 	return m.checkpointMgr
 }
 
+// MockWriteHook the hook for write in mock engine.
+type MockWriteHook func(key, val []byte)
+
 // MockEngineInfo is a mock engine info.
 type MockEngineInfo struct {
 	sessCtx sessionctx.Context
 	mu      *sync.Mutex
+
+	onWrite MockWriteHook
+}
+
+// NewMockEngineInfo creates a new mock engine info.
+func NewMockEngineInfo(sessCtx sessionctx.Context) *MockEngineInfo {
+	return &MockEngineInfo{
+		sessCtx: sessCtx,
+		mu:      &sync.Mutex{},
+	}
 }
 
 // Flush implements Engine.Flush interface.
@@ -161,16 +181,22 @@ func (*MockEngineInfo) ImportAndClean() error {
 func (*MockEngineInfo) Clean() {
 }
 
+// SetHook set the write hook.
+func (m *MockEngineInfo) SetHook(onWrite func(key, val []byte)) {
+	m.onWrite = onWrite
+}
+
 // CreateWriter implements Engine.CreateWriter interface.
 func (m *MockEngineInfo) CreateWriter(id int, _ bool) (Writer, error) {
 	logutil.BgLogger().Info("mock engine info create writer", zap.Int("id", id))
-	return &MockWriter{sessCtx: m.sessCtx, mu: m.mu}, nil
+	return &MockWriter{sessCtx: m.sessCtx, mu: m.mu, onWrite: m.onWrite}, nil
 }
 
 // MockWriter is a mock writer.
 type MockWriter struct {
 	sessCtx sessionctx.Context
 	mu      *sync.Mutex
+	onWrite MockWriteHook
 }
 
 // WriteRow implements Writer.WriteRow interface.
@@ -180,6 +206,10 @@ func (m *MockWriter) WriteRow(key, idxVal []byte, _ kv.Handle) error {
 		zap.String("idxVal", hex.EncodeToString(idxVal)))
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.onWrite != nil {
+		m.onWrite(key, idxVal)
+		return nil
+	}
 	txn, err := m.sessCtx.Txn(true)
 	if err != nil {
 		return err

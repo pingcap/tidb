@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/timer/api"
+	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,16 +34,17 @@ func newTestTimer(id string, policyExpr string, watermark time.Time) *api.TimerR
 			SchedPolicyType: api.SchedEventInterval,
 			SchedPolicyExpr: policyExpr,
 			HookClass:       "hook1",
+			Watermark:       watermark,
 			Enable:          true,
 		},
+		Location:    watermark.Location(),
 		EventStatus: api.SchedEventIdle,
-		Watermark:   watermark,
 		Version:     1,
 	}
 }
 
 func TestCacheUpdate(t *testing.T) {
-	now := time.Now()
+	now := time.Now().In(time.UTC)
 	nowFunc := func() time.Time {
 		return now
 	}
@@ -57,20 +60,39 @@ func TestCacheUpdate(t *testing.T) {
 	require.Equal(t, 1, len(cache.items))
 
 	// dup update with same version
-	require.False(t, cache.updateTimer(t1))
+	require.False(t, cache.updateTimer(t1.Clone()))
 	checkSortedCache(t, cache, [][]any{{t1, now.Add(10 * time.Minute)}})
 	require.Equal(t, 1, len(cache.items))
 
+	// policy changed
+	t1.SchedPolicyType = api.SchedEventCron
+	t1.SchedPolicyExpr = "* 1 * * *"
+	t1.Version++
+	require.True(t, cache.updateTimer(t1))
+	require.NotSame(t, t1, cache.items[t1.ID].timer)
+	c, err := cron.ParseStandard(t1.SchedPolicyExpr)
+	require.NoError(t, err)
+	checkSortedCache(t, cache, [][]any{{t1, c.Next(now)}})
+	require.Equal(t, 1, len(cache.items))
+
+	// update with same version but loc changed
+	t1.Location = time.FixedZone("name1", 2*60*60)
+	require.True(t, cache.updateTimer(t1))
+	checkSortedCache(t, cache, [][]any{{t1, c.Next(now.In(t1.Location))}})
+	require.Equal(t, 1, len(cache.items))
+
 	// invalid policy
+	t1.Location = now.Location()
+	t1.SchedPolicyType = api.SchedEventInterval
 	t1.SchedPolicyExpr = "invalid"
 	t1.Version++
 	require.True(t, cache.updateTimer(t1))
-	checkSortedCache(t, cache, [][]any{{t1, now.Add(time.Hour)}})
+	checkSortedCache(t, cache, [][]any{{t1, time.Date(2999, 1, 1, 0, 0, 0, 0, time.UTC)}})
 	require.Equal(t, 1, len(cache.items))
 
-	// manual set next try trigger time
+	// manual set next try trigger time for invalid timer
 	cache.updateNextTryTriggerTime(t1.ID, now.Add(7*time.Second))
-	checkSortedCache(t, cache, [][]any{{t1, now.Add(7 * time.Second)}})
+	checkSortedCache(t, cache, [][]any{{t1, time.Date(2999, 1, 1, 0, 0, 0, 0, time.UTC)}})
 	require.Equal(t, 1, len(cache.items))
 
 	// not enable
@@ -78,8 +100,20 @@ func TestCacheUpdate(t *testing.T) {
 	t1.Enable = false
 	t1.Version++
 	require.True(t, cache.updateTimer(t1))
-	checkSortedCache(t, cache, [][]any{{t1, now.Add(time.Hour)}})
+	checkSortedCache(t, cache, [][]any{{t1, time.Date(2999, 1, 1, 0, 0, 0, 0, time.UTC)}})
 	require.Equal(t, 1, len(cache.items))
+
+	// manual set next try trigger time but before nextEventTime
+	t1.Enable = true
+	t1.Version++
+	require.True(t, cache.updateTimer(t1))
+	checkSortedCache(t, cache, [][]any{{t1, now.Add(time.Minute)}})
+	cache.updateNextTryTriggerTime(t1.ID, now.Add(time.Minute-time.Second))
+	checkSortedCache(t, cache, [][]any{{t1, now.Add(time.Minute)}})
+
+	// manual set next try trigger
+	cache.updateNextTryTriggerTime(t1.ID, now.Add(time.Minute+time.Second))
+	checkSortedCache(t, cache, [][]any{{t1, now.Add(time.Minute + time.Second)}})
 
 	// should not change procTriggering state
 	t1.Enable = true
@@ -125,10 +159,35 @@ func TestCacheUpdate(t *testing.T) {
 	require.Equal(t, "", cache.items[t1.ID].triggerEventID)
 	require.Equal(t, 0, len(cache.waitCloseTimerIDs))
 	require.NotContains(t, cache.waitCloseTimerIDs, t1.ID)
+
+	t1.Version++
+	t1.ManualRequest = api.ManualRequest{
+		ManualRequestID:   "req1",
+		ManualRequestTime: now,
+		ManualTimeout:     time.Minute,
+		ManualProcessed:   true,
+	}
+	require.True(t, cache.updateTimer(t1))
+	require.Equal(t, procIdle, cache.items[t1.ID].procStatus)
+	require.Equal(t, "", cache.items[t1.ID].triggerEventID)
+	require.Equal(t, 0, len(cache.waitCloseTimerIDs))
+	checkSortedCache(t, cache, [][]any{{t1, now.Add(time.Minute)}})
+
+	t1.Version++
+	t1.ManualRequest = api.ManualRequest{
+		ManualRequestID:   "req2",
+		ManualRequestTime: now,
+		ManualTimeout:     time.Minute,
+	}
+	require.True(t, cache.updateTimer(t1))
+	require.Equal(t, procIdle, cache.items[t1.ID].procStatus)
+	require.Equal(t, "", cache.items[t1.ID].triggerEventID)
+	require.Equal(t, 0, len(cache.waitCloseTimerIDs))
+	checkSortedCache(t, cache, [][]any{{t1, now}})
 }
 
 func TestCacheSort(t *testing.T) {
-	now := time.Now()
+	now := time.Now().In(time.UTC)
 	nowFunc := func() time.Time {
 		return now
 	}
@@ -244,43 +303,43 @@ func TestCacheSort(t *testing.T) {
 	})
 
 	// test updateNextTryTriggerTime
-	cache.updateNextTryTriggerTime(t3.ID, now.Add(8*time.Minute))
+	cache.updateNextTryTriggerTime(t2.ID, now.Add(20*time.Minute))
 	checkSortedCache(t, cache, [][]any{
-		{t2, now.Add(1 * time.Minute)},
-		{t3, now.Add(8 * time.Minute)},
 		{t1, now.Add(11 * time.Minute)},
+		{t3, now.Add(12 * time.Minute)},
+		{t4, now.Add(16 * time.Minute)},
+		{t2, now.Add(20 * time.Minute)},
+	})
+
+	cache.updateNextTryTriggerTime(t2.ID, now.Add(14*time.Minute))
+	checkSortedCache(t, cache, [][]any{
+		{t1, now.Add(11 * time.Minute)},
+		{t3, now.Add(12 * time.Minute)},
+		{t2, now.Add(14 * time.Minute)},
 		{t4, now.Add(16 * time.Minute)},
 	})
 
-	cache.updateNextTryTriggerTime(t4.ID, now.Add(9*time.Minute))
+	cache.updateNextTryTriggerTime(t3.ID, now.Add(15*time.Minute))
 	checkSortedCache(t, cache, [][]any{
-		{t2, now.Add(1 * time.Minute)},
-		{t3, now.Add(8 * time.Minute)},
-		{t4, now.Add(9 * time.Minute)},
 		{t1, now.Add(11 * time.Minute)},
-	})
-
-	cache.updateNextTryTriggerTime(t2.ID, now.Add(15*time.Minute))
-	checkSortedCache(t, cache, [][]any{
-		{t3, now.Add(8 * time.Minute)},
-		{t4, now.Add(9 * time.Minute)},
-		{t1, now.Add(11 * time.Minute)},
-		{t2, now.Add(15 * time.Minute)},
+		{t2, now.Add(14 * time.Minute)},
+		{t3, now.Add(15 * time.Minute)},
+		{t4, now.Add(16 * time.Minute)},
 	})
 
 	// test version update should reset updateNextTryTriggerTime
 	t3.Version++
 	require.True(t, cache.updateTimer(t3))
 	checkSortedCache(t, cache, [][]any{
-		{t4, now.Add(9 * time.Minute)},
 		{t1, now.Add(11 * time.Minute)},
 		{t3, now.Add(12 * time.Minute)},
-		{t2, now.Add(15 * time.Minute)},
+		{t2, now.Add(14 * time.Minute)},
+		{t4, now.Add(16 * time.Minute)},
 	})
 }
 
 func TestFullUpdateCache(t *testing.T) {
-	now := time.Now()
+	now := time.Now().In(time.UTC)
 	cache := newTimersCache()
 	cache.nowFunc = func() time.Time {
 		return now
@@ -326,20 +385,93 @@ func checkSortedCache(t *testing.T, cache *timersCache, sorted [][]any) {
 		require.True(t, ok)
 		require.Equal(t, *expectedTimer, *item.timer)
 
-		if p, err := timer.CreateSchedEventPolicy(); err == nil && timer.Enable {
-			require.NotNil(t, nextEventTime)
-			tm, ok := p.NextEventTime(timer.Watermark)
-			if !ok {
-				require.Nil(t, nextEventTime)
-			} else {
-				require.Equal(t, tm, *nextEventTime)
-			}
+		if timer.IsManualRequesting() {
+			require.Equal(t, tryTriggerTime, *nextEventTime)
 		} else {
-			require.Nil(t, nextEventTime)
+			if tm, ok, err := timer.NextEventTime(); err == nil {
+				if !timer.Enable {
+					require.True(t, tm.IsZero())
+					require.False(t, ok)
+				} else {
+					require.True(t, ok)
+					require.NotNil(t, nextEventTime)
+					require.Equal(t, tm, *nextEventTime)
+				}
+			} else {
+				require.Nil(t, nextEventTime)
+			}
 		}
+
 		require.Equal(t, sorted[i][1].(time.Time), tryTriggerTime)
 		i++
 		return true
 	})
 	require.Equal(t, len(sorted), i)
+}
+
+func TestLocationChanged(t *testing.T) {
+	loc1, _ := time.LoadLocation("America/New_York")
+	loc2, _ := time.LoadLocation("America/Los_Angeles")
+	loc3, _ := time.LoadLocation("America/New_York")
+	loc4 := time.FixedZone("name1", 2*60*60)
+	loc5 := time.FixedZone("name2", 2*60*60)
+	loc6 := time.FixedZone("name1", 60*60)
+
+	testCases := []struct {
+		a       *time.Location
+		b       *time.Location
+		changed bool
+	}{
+		{
+			a:       nil,
+			b:       nil,
+			changed: false,
+		},
+		{
+			a:       loc1,
+			b:       nil,
+			changed: true,
+		},
+		{
+			a:       nil,
+			b:       loc1,
+			changed: true,
+		},
+		{
+			a:       loc1,
+			b:       loc2,
+			changed: true,
+		},
+		{
+			a:       loc1,
+			b:       loc3,
+			changed: false,
+		},
+		{
+			a:       loc4,
+			b:       loc5,
+			changed: false,
+		},
+		{
+			a:       loc4,
+			b:       loc6,
+			changed: true,
+		},
+	}
+
+	for i, tc := range testCases {
+		result := locationChanged(tc.a, tc.b)
+		a, b := "<nil>", "<nil>"
+		if tc.a != nil {
+			n, offset := timeutil.Zone(tc.a)
+			a = fmt.Sprintf("%s(%d)", n, offset)
+		}
+
+		if tc.b != nil {
+			n, offset := timeutil.Zone(tc.b)
+			b = fmt.Sprintf("%s(%d)", n, offset)
+		}
+
+		require.Equalf(t, tc.changed, result, "%d: compare %q and %q", i, a, b)
+	}
 }

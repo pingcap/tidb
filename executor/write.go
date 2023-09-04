@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -37,11 +38,11 @@ import (
 )
 
 var (
-	_ Executor = &UpdateExec{}
-	_ Executor = &DeleteExec{}
-	_ Executor = &InsertExec{}
-	_ Executor = &ReplaceExec{}
-	_ Executor = &LoadDataExec{}
+	_ exec.Executor = &UpdateExec{}
+	_ exec.Executor = &DeleteExec{}
+	_ exec.Executor = &InsertExec{}
+	_ exec.Executor = &ReplaceExec{}
+	_ exec.Executor = &LoadDataExec{}
 )
 
 // updateRecord updates the row specified by the handle `h`, from `oldData` to `newData`.
@@ -50,8 +51,11 @@ var (
 // The return values:
 //  1. changed (bool) : does the update really change the row values. e.g. update set i = 1 where i = 1;
 //  2. err (error) : error in the update.
-func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, modified []bool, t table.Table,
-	onDup bool, memTracker *memory.Tracker, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec) (bool, error) {
+func updateRecord(
+	ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, modified []bool,
+	t table.Table,
+	onDup bool, _ *memory.Tracker, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec,
+) (bool, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "executor.updateRecord")
 	defer r.End()
 
@@ -75,7 +79,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 
 	// Handle exchange partition
 	tbl := t.Meta()
-	if tbl.ExchangePartitionInfo != nil && tbl.ExchangePartitionInfo.ExchangePartitionFlag {
+	if tbl.ExchangePartitionInfo != nil {
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
 		if !tableFound {
@@ -85,7 +89,12 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		if !ok {
 			return false, errors.Errorf("exchange partition process assert table partition failed")
 		}
-		err := p.CheckForExchangePartition(sctx, pt.Meta().Partition, newData, tbl.ExchangePartitionInfo.ExchangePartitionDefID)
+		err := p.CheckForExchangePartition(
+			sctx,
+			pt.Meta().Partition,
+			newData,
+			tbl.ExchangePartitionInfo.ExchangePartitionDefID,
+		)
 		if err != nil {
 			return false, err
 		}
@@ -137,7 +146,11 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		if sctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
-		_, err := addUnchangedKeysForLockByRow(sctx, t, h, oldData, lockRowKey|lockUniqueKeys)
+		keySet := lockRowKey
+		if sctx.GetSessionVars().LockUnchangedKeys {
+			keySet |= lockUniqueKeys
+		}
+		_, err := addUnchangedKeysForLockByRow(sctx, t, h, oldData, keySet)
 		return false, err
 	}
 
@@ -199,9 +212,11 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			}
 			return false, err
 		}
-		// Lock unique keys when handle unchanged
-		if _, err := addUnchangedKeysForLockByRow(sctx, t, h, oldData, lockUniqueKeys); err != nil {
-			return false, err
+		if sctx.GetSessionVars().LockUnchangedKeys {
+			// Lock unique keys when handle unchanged
+			if _, err := addUnchangedKeysForLockByRow(sctx, t, h, oldData, lockUniqueKeys); err != nil {
+				return false, err
+			}
 		}
 	}
 	for _, fkt := range fkChecks {
@@ -232,9 +247,11 @@ const (
 	lockUniqueKeys
 )
 
-func addUnchangedKeysForLockByRow(sctx sessionctx.Context, t table.Table, h kv.Handle, row []types.Datum, keyset int) (int, error) {
+func addUnchangedKeysForLockByRow(
+	sctx sessionctx.Context, t table.Table, h kv.Handle, row []types.Datum, keySet int,
+) (int, error) {
 	txnCtx := sctx.GetSessionVars().TxnCtx
-	if !txnCtx.IsPessimistic || keyset == 0 {
+	if !txnCtx.IsPessimistic || keySet == 0 {
 		return 0, nil
 	}
 	count := 0
@@ -246,12 +263,12 @@ func addUnchangedKeysForLockByRow(sctx sessionctx.Context, t table.Table, h kv.H
 		}
 		physicalID = p.GetPhysicalID()
 	}
-	if keyset&lockRowKey > 0 {
+	if keySet&lockRowKey > 0 {
 		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
 		txnCtx.AddUnchangedKeyForLock(unchangedRowKey)
 		count++
 	}
-	if keyset&lockUniqueKeys > 0 {
+	if keySet&lockUniqueKeys > 0 {
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		clustered := t.Meta().HasClusteredIndex()
 		for _, idx := range t.Indices() {
@@ -263,7 +280,15 @@ func addUnchangedKeysForLockByRow(sctx sessionctx.Context, t table.Table, h kv.H
 			if err != nil {
 				return count, err
 			}
-			unchangedUniqueKey, _, err := tablecodec.GenIndexKey(stmtCtx, idx.TableMeta(), meta, physicalID, ukVals, h, nil)
+			unchangedUniqueKey, _, err := tablecodec.GenIndexKey(
+				stmtCtx,
+				idx.TableMeta(),
+				meta,
+				physicalID,
+				ukVals,
+				h,
+				nil,
+			)
 			if err != nil {
 				return count, err
 			}
@@ -274,7 +299,9 @@ func addUnchangedKeysForLockByRow(sctx sessionctx.Context, t table.Table, h kv.H
 	return count, nil
 }
 
-func rebaseAutoRandomValue(ctx context.Context, sctx sessionctx.Context, t table.Table, newData *types.Datum, col *table.Column) error {
+func rebaseAutoRandomValue(
+	ctx context.Context, sctx sessionctx.Context, t table.Table, newData *types.Datum, col *table.Column,
+) error {
 	tableInfo := t.Meta()
 	if !tableInfo.ContainsAutoRandomBits() {
 		return nil
@@ -295,7 +322,7 @@ func rebaseAutoRandomValue(ctx context.Context, sctx sessionctx.Context, t table
 // resetErrDataTooLong reset ErrDataTooLong error msg.
 // types.ErrDataTooLong is produced in types.ProduceStrWithSpecifiedTp, there is no column info in there,
 // so we reset the error msg here, and wrap old err with errors.Wrap.
-func resetErrDataTooLong(colName string, rowIdx int, err error) error {
+func resetErrDataTooLong(colName string, rowIdx int, _ error) error {
 	newErr := types.ErrDataTooLong.GenWithStack("Data too long for column '%v' at row %v", colName, rowIdx)
 	return newErr
 }

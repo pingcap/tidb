@@ -16,19 +16,20 @@
 
 set -eu
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/AddIndexFail=return()"
 
 LOG_FILE1="$TEST_DIR/lightning-add-index1.log"
 LOG_FILE2="$TEST_DIR/lightning-add-index2.log"
 
-run_lightning --config "tests/$TEST_NAME/config1.toml" --log-file "$LOG_FILE1"
+run_lightning --config "$CUR/config1.toml" --log-file "$LOG_FILE1"
 multi_indexes_kvs=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Total_kvs" | awk '{print $2}')
 multi_indexes_cksum=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Checksum_crc64_xor" | awk '{print $2}')
 non_pk_auto_inc_kvs=$(run_sql "ADMIN CHECKSUM TABLE add_index.non_pk_auto_inc;" | grep "Total_kvs" | awk '{print $2}')
 non_pk_auto_inc_cksum=$(run_sql "ADMIN CHECKSUM TABLE add_index.non_pk_auto_inc;" | grep "Checksum_crc64_xor" | awk '{print $2}')
 
 run_sql "DROP DATABASE add_index;"
-run_lightning --config "tests/$TEST_NAME/config2.toml" --log-file "$LOG_FILE2"
+run_lightning --config "$CUR/config2.toml" --log-file "$LOG_FILE2"
 actual_multi_indexes_kvs=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Total_kvs" | awk '{print $2}')
 actual_multi_indexes_cksum=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Checksum_crc64_xor" | awk '{print $2}')
 actual_non_pk_auto_inc_kvs=$(run_sql "ADMIN CHECKSUM TABLE add_index.non_pk_auto_inc;" | grep "Total_kvs" | awk '{print $2}')
@@ -83,11 +84,11 @@ grep -Fq "ALTER TABLE \`add_index\`.\`non_pk_auto_inc\` ADD PRIMARY KEY (\`pk\`)
 # 3. Check for recovering from checkpoint
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/AddIndexCrash=return()"
 run_sql "DROP DATABASE add_index;"
-run_lightning --enable-checkpoint=1 --config "tests/$TEST_NAME/config2.toml" --log-file "$LOG_FILE2"
+run_lightning --enable-checkpoint=1 --config "$CUR/config2.toml" --log-file "$LOG_FILE2"
 grep -Fq "task canceled" "$LOG_FILE2"
 
 unset GO_FAILPOINTS
-run_lightning --enable-checkpoint=1 --config "tests/$TEST_NAME/config2.toml" --log-file "$LOG_FILE2"
+run_lightning --enable-checkpoint=1 --config "$CUR/config2.toml" --log-file "$LOG_FILE2"
 actual_multi_indexes_kvs=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Total_kvs" | awk '{print $2}')
 actual_multi_indexes_cksum=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Checksum_crc64_xor" | awk '{print $2}')
 actual_non_pk_auto_inc_kvs=$(run_sql "ADMIN CHECKSUM TABLE add_index.non_pk_auto_inc;" | grep "Total_kvs" | awk '{print $2}')

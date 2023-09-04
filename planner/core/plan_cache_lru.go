@@ -64,7 +64,7 @@ type LRUPlanCache struct {
 
 // NewLRUPlanCache creates a PCLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
-func NewLRUPlanCache(capacity uint, guard float64, quota uint64, sctx sessionctx.Context, isNonPrepared bool) *LRUPlanCache {
+func NewLRUPlanCache(capacity uint, guard float64, quota uint64, sctx sessionctx.Context, _ bool) *LRUPlanCache {
 	if capacity < 1 {
 		capacity = 100
 		logutil.BgLogger().Info("capacity of LRU cache is less than 1, will use default value(100) init cache")

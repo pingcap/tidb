@@ -16,6 +16,7 @@
 
 set -eux
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 mkdir -p "$TEST_DIR/data"
 
 run_sql "DROP DATABASE IF EXISTS test;"
@@ -40,7 +41,7 @@ set -x
 # send-kv-pairs is deprecated, will not takes effect
 rm -rf $TEST_DIR/lightning.log
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/local/afterFlushKVs=return(true)"
-run_lightning --backend local -d "$TEST_DIR/data" --config "tests/$TEST_NAME/kv-count.toml"
+run_lightning --backend local -d "$TEST_DIR/data" --config "$CUR/kv-count.toml"
 check_contains 'afterFlushKVs count=100,' $TEST_DIR/lightning.log
 check_not_contains 'afterFlushKVs count=20,' $TEST_DIR/lightning.log
 check_contains 'send-kv-pairs\":20,' $TEST_DIR/lightning.log
@@ -59,7 +60,7 @@ set -x
 
 rm -rf $TEST_DIR/lightning.log
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/local/afterFlushKVs=return(true)"
-run_lightning --backend local -d "$TEST_DIR/data" --config "tests/$TEST_NAME/kv-size.toml"
+run_lightning --backend local -d "$TEST_DIR/data" --config "$CUR/kv-size.toml"
 # each kv is 64b, so each kv is a batch
 check_contains 'afterFlushKVs count=1,' $TEST_DIR/lightning.log
 check_not_contains 'afterFlushKVs count=20,' $TEST_DIR/lightning.log

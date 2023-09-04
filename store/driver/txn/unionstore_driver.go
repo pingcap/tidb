@@ -107,15 +107,19 @@ func (m *memBuffer) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 // The returned iterator will iterate from greater key to smaller key.
 // If k is nil, the returned iterator will be positioned at the last key.
-// TODO: Add lower bound limit
-func (m *memBuffer) IterReverse(k kv.Key) (kv.Iterator, error) {
-	it, err := m.MemDB.IterReverse(k)
+func (m *memBuffer) IterReverse(k, lowerBound kv.Key) (kv.Iterator, error) {
+	it, err := m.MemDB.IterReverse(k, lowerBound)
 	return &tikvIterator{Iterator: it}, derr.ToTiDBErr(err)
 }
 
 // SnapshotIter returns a Iterator for a snapshot of MemBuffer.
 func (m *memBuffer) SnapshotIter(k, upperbound kv.Key) kv.Iterator {
 	it := m.MemDB.SnapshotIter(k, upperbound)
+	return &tikvIterator{Iterator: it}
+}
+
+func (m *memBuffer) SnapshotIterReverse(k, lowerBound kv.Key) kv.Iterator {
+	it := m.MemDB.SnapshotIterReverse(k, lowerBound)
 	return &tikvIterator{Iterator: it}
 }
 

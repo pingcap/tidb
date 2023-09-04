@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -30,9 +31,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
-	"golang.org/x/exp/slices"
 )
 
 // secondsPerYear represents seconds in a normal year. Leap year is not considered here.
@@ -349,42 +348,6 @@ func tidbOptFloat64(opt string, defaultVal float64) float64 {
 	return val
 }
 
-func parseTimeZone(s string) (*time.Location, error) {
-	if strings.EqualFold(s, "SYSTEM") {
-		return timeutil.SystemLocation(), nil
-	}
-
-	loc, err := time.LoadLocation(s)
-	if err == nil {
-		return loc, nil
-	}
-
-	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
-	// The time zone's value should in [-12:59,+14:00].
-	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
-		d, _, err := types.ParseDuration(nil, s[1:], 0)
-		if err == nil {
-			if s[0] == '-' {
-				if d.Duration > 12*time.Hour+59*time.Minute {
-					return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
-				}
-			} else {
-				if d.Duration > 14*time.Hour {
-					return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
-				}
-			}
-
-			ofst := int(d.Duration / time.Second)
-			if s[0] == '-' {
-				ofst = -ofst
-			}
-			return time.FixedZone("", ofst), nil
-		}
-	}
-
-	return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
-}
-
 func parseMemoryLimit(s *SessionVars, normalizedValue string, originalValue string) (byteSize uint64, normalizedStr string, err error) {
 	defer func() {
 		if err == nil && byteSize > 0 && byteSize < (512<<20) {
@@ -573,4 +536,42 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.JSONDepth:         {},
 	ast.JSONKeys:          {},
 	ast.JSONLength:        {},
+}
+
+var analyzeSkipAllowedTypes = map[string]struct{}{
+	"json":       {},
+	"text":       {},
+	"mediumtext": {},
+	"longtext":   {},
+	"blob":       {},
+	"mediumblob": {},
+	"longblob":   {},
+}
+
+// ValidAnalyzeSkipColumnTypes makes validation for tidb_analyze_skip_column_types.
+func ValidAnalyzeSkipColumnTypes(val string) (string, error) {
+	if val == "" {
+		return "", nil
+	}
+	items := strings.Split(strings.ToLower(val), ",")
+	columnTypes := make([]string, 0, len(items))
+	for _, item := range items {
+		columnType := strings.TrimSpace(item)
+		if _, ok := analyzeSkipAllowedTypes[columnType]; !ok {
+			return val, ErrWrongValueForVar.GenWithStackByArgs(TiDBAnalyzeSkipColumnTypes, val)
+		}
+		columnTypes = append(columnTypes, columnType)
+	}
+	return strings.Join(columnTypes, ","), nil
+}
+
+// ParseAnalyzeSkipColumnTypes converts tidb_analyze_skip_column_types to the map form.
+func ParseAnalyzeSkipColumnTypes(val string) map[string]struct{} {
+	skipTypes := make(map[string]struct{})
+	for _, columnType := range strings.Split(strings.ToLower(val), ",") {
+		if _, ok := analyzeSkipAllowedTypes[columnType]; ok {
+			skipTypes[columnType] = struct{}{}
+		}
+	}
+	return skipTypes
 }

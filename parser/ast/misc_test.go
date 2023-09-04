@@ -271,6 +271,8 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"LEADING(t1@sel1, c1, t2)", "LEADING(`t1`@`sel1`, `c1`, `t2`)"},
 		{"MAX_EXECUTION_TIME(3000)", "MAX_EXECUTION_TIME(3000)"},
 		{"MAX_EXECUTION_TIME(@sel1 3000)", "MAX_EXECUTION_TIME(@`sel1` 3000)"},
+		{"TIDB_KV_READ_TIMEOUT(3000)", "TIDB_KV_READ_TIMEOUT(3000)"},
+		{"TIDB_KV_READ_TIMEOUT(@sel1 3000)", "TIDB_KV_READ_TIMEOUT(@`sel1` 3000)"},
 		{"USE_INDEX_MERGE(t1 c1)", "USE_INDEX_MERGE(`t1` `c1`)"},
 		{"USE_INDEX_MERGE(@sel1 t1 c1)", "USE_INDEX_MERGE(@`sel1` `t1` `c1`)"},
 		{"USE_INDEX_MERGE(t1@sel1 c1)", "USE_INDEX_MERGE(`t1`@`sel1` `c1`)"},
@@ -371,4 +373,56 @@ func TestCompactTableStmtRestore(t *testing.T) {
 		return node.(*ast.CompactTableStmt)
 	}
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
+func TestPlanReplayerStmtRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{"plan replayer dump with stats as of timestamp '2023-06-28 12:34:00' explain select * from t where a > 10",
+			"PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP _UTF8MB4'2023-06-28 12:34:00' EXPLAIN SELECT * FROM `t` WHERE `a`>10"},
+		{"plan replayer dump explain analyze select * from t where a > 10",
+			"PLAN REPLAYER DUMP EXPLAIN ANALYZE SELECT * FROM `t` WHERE `a`>10"},
+		{"plan replayer dump with stats as of timestamp 12345 explain analyze select * from t where a > 10",
+			"PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP 12345 EXPLAIN ANALYZE SELECT * FROM `t` WHERE `a`>10"},
+		{"plan replayer dump explain analyze 'test'",
+			"PLAN REPLAYER DUMP EXPLAIN ANALYZE 'test'"},
+		{"plan replayer dump with stats as of timestamp '12345' explain analyze 'test2'",
+			"PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP _UTF8MB4'12345' EXPLAIN ANALYZE 'test2'"},
+	}
+	extractNodeFunc := func(node ast.Node) ast.Node {
+		return node.(*ast.PlanReplayerStmt)
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
+func TestRedactURL(t *testing.T) {
+	type args struct {
+		str string
+	}
+	tests := []struct {
+		args args
+		want string
+	}{
+		{args{""}, ""},
+		{args{":"}, ":"},
+		{args{"~/file"}, "~/file"},
+		{args{"gs://bucket/file"}, "gs://bucket/file"},
+		// gs don't have access-key/secret-access-key, so it will NOT be redacted
+		{args{"gs://bucket/file?access-key=123"}, "gs://bucket/file?access-key=123"},
+		{args{"gs://bucket/file?secret-access-key=123"}, "gs://bucket/file?secret-access-key=123"},
+		{args{"s3://bucket/file"}, "s3://bucket/file"},
+		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file?other-key=123"},
+		{args{"s3://bucket/file?access-key=123"}, "s3://bucket/file?access-key=xxxxxx"},
+		{args{"s3://bucket/file?secret-access-key=123"}, "s3://bucket/file?secret-access-key=xxxxxx"},
+		// underline
+		{args{"s3://bucket/file?access_key=123"}, "s3://bucket/file?access_key=xxxxxx"},
+		{args{"s3://bucket/file?secret_access_key=123"}, "s3://bucket/file?secret_access_key=xxxxxx"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.args.str, func(t *testing.T) {
+			got := ast.RedactURL(tt.args.str)
+			if got != tt.want {
+				t.Errorf("RedactURL() got = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }

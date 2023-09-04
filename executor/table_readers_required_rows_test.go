@@ -22,13 +22,13 @@ import (
 
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/executor/internal/builder"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -113,7 +113,7 @@ func mockDistsqlSelectCtxGet(ctx context.Context) (totalRows int, expectedRowsRe
 }
 
 func mockSelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int) (distsql.SelectResult, error) {
+	fieldTypes []*types.FieldType, copPlanIDs []int) (distsql.SelectResult, error) {
 	totalRows, expectedRowsRet := mockDistsqlSelectCtxGet(ctx)
 	return &requiredRowsSelectResult{
 		retTypes:        fieldTypes,
@@ -122,9 +122,9 @@ func mockSelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Re
 	}, nil
 }
 
-func buildTableReader(sctx sessionctx.Context) Executor {
+func buildTableReader(sctx sessionctx.Context) exec.Executor {
 	e := &TableReaderExecutor{
-		baseExecutor:     buildMockBaseExec(sctx),
+		BaseExecutor:     buildMockBaseExec(sctx),
 		table:            &tables.TableCommon{},
 		dagPB:            buildMockDAGRequest(sctx),
 		selectResultHook: selectResultHook{mockSelectResult},
@@ -144,14 +144,14 @@ func buildMockDAGRequest(sctx sessionctx.Context) *tipb.DAGRequest {
 	return req
 }
 
-func buildMockBaseExec(sctx sessionctx.Context) baseExecutor {
+func buildMockBaseExec(sctx sessionctx.Context) exec.BaseExecutor {
 	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLonglong)}
 	cols := make([]*expression.Column, len(retTypes))
 	for i := range retTypes {
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
 	}
 	schema := expression.NewSchema(cols...)
-	baseExec := newBaseExecutor(sctx, schema, 0)
+	baseExec := exec.NewBaseExecutor(sctx, schema, 0)
 	return baseExec
 }
 
@@ -185,21 +185,21 @@ func TestTableReaderRequiredRows(t *testing.T) {
 	for _, testCase := range testCases {
 		sctx := defaultCtx()
 		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
-		exec := buildTableReader(sctx)
-		require.NoError(t, exec.Open(ctx))
-		chk := newFirstChunk(exec)
+		executor := buildTableReader(sctx)
+		require.NoError(t, executor.Open(ctx))
+		chk := exec.NewFirstChunk(executor)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.NoError(t, exec.Next(ctx, chk))
+			require.NoError(t, executor.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.NoError(t, exec.Close())
+		require.NoError(t, executor.Close())
 	}
 }
 
-func buildIndexReader(sctx sessionctx.Context) Executor {
+func buildIndexReader(sctx sessionctx.Context) exec.Executor {
 	e := &IndexReaderExecutor{
-		baseExecutor:     buildMockBaseExec(sctx),
+		BaseExecutor:     buildMockBaseExec(sctx),
 		dagPB:            buildMockDAGRequest(sctx),
 		index:            &model.IndexInfo{},
 		selectResultHook: selectResultHook{mockSelectResult},
@@ -237,14 +237,14 @@ func TestIndexReaderRequiredRows(t *testing.T) {
 	for _, testCase := range testCases {
 		sctx := defaultCtx()
 		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
-		exec := buildIndexReader(sctx)
-		require.NoError(t, exec.Open(ctx))
-		chk := newFirstChunk(exec)
+		executor := buildIndexReader(sctx)
+		require.NoError(t, executor.Open(ctx))
+		chk := exec.NewFirstChunk(executor)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.NoError(t, exec.Next(ctx, chk))
+			require.NoError(t, executor.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.NoError(t, exec.Close())
+		require.NoError(t, executor.Close())
 	}
 }

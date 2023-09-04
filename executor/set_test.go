@@ -852,6 +852,34 @@ func TestSetVar(t *testing.T) {
 	require.Equal(t, uint64(2), tk.Session().GetSessionVars().CDCWriteSource)
 	tk.MustExec("set @@session.tidb_cdc_write_source = 0")
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().CDCWriteSource)
+
+	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows("json,blob,mediumblob,longblob"))
+	tk.MustExec("set @@session.tidb_analyze_skip_column_types = 'json, text, blob'")
+	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows("json,text,blob"))
+	tk.MustExec("set @@session.tidb_analyze_skip_column_types = ''")
+	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows(""))
+	tk.MustGetErrMsg("set @@session.tidb_analyze_skip_column_types = 'int,json'", "[variable:1231]Variable 'tidb_analyze_skip_column_types' can't be set to the value of 'int,json'")
+
+	tk.MustQuery("select @@global.tidb_analyze_skip_column_types").Check(testkit.Rows("json,blob,mediumblob,longblob"))
+	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json, text, blob'")
+	tk.MustQuery("select @@global.tidb_analyze_skip_column_types").Check(testkit.Rows("json,text,blob"))
+	tk.MustExec("set @@global.tidb_analyze_skip_column_types = ''")
+	tk.MustQuery("select @@global.tidb_analyze_skip_column_types").Check(testkit.Rows(""))
+	tk.MustGetErrMsg("set @@global.tidb_analyze_skip_column_types = 'int,json'", "[variable:1231]Variable 'tidb_analyze_skip_column_types' can't be set to the value of 'int,json'")
+
+	// test tidb_skip_missing_partition_stats
+	// global scope
+	tk.MustQuery("select @@global.tidb_skip_missing_partition_stats").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set global tidb_skip_missing_partition_stats = 0")
+	tk.MustQuery("select @@global.tidb_skip_missing_partition_stats").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_skip_missing_partition_stats = 1")
+	tk.MustQuery("select @@global.tidb_skip_missing_partition_stats").Check(testkit.Rows("1"))
+	// session scope
+	tk.MustQuery("select @@session.tidb_skip_missing_partition_stats").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set session tidb_skip_missing_partition_stats = 0")
+	tk.MustQuery("select @@session.tidb_skip_missing_partition_stats").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_skip_missing_partition_stats = 1")
+	tk.MustQuery("select @@session.tidb_skip_missing_partition_stats").Check(testkit.Rows("1"))
 }
 
 func TestGetSetNoopVars(t *testing.T) {
@@ -2065,10 +2093,12 @@ func TestSetMppVersionVariable(t *testing.T) {
 	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("0"))
 	tk.MustExec("SET SESSION mpp_version = 1")
 	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("1"))
+	tk.MustExec("SET SESSION mpp_version = 2")
+	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("2"))
 	tk.MustExec("SET SESSION mpp_version = unspecified")
 	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("unspecified"))
 	{
-		tk.MustGetErrMsg("SET SESSION mpp_version = 2", "incorrect value: 2. mpp_version options: -1 (unspecified), 0, 1")
+		tk.MustGetErrMsg("SET SESSION mpp_version = 3", "incorrect value: 3. mpp_version options: -1 (unspecified), 0, 1, 2")
 	}
 	{
 		tk.MustExec("SET GLOBAL mpp_version = 1")

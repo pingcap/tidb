@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -41,8 +42,8 @@ func (mj mockLogicalJoin) init(ctx sessionctx.Context) *mockLogicalJoin {
 }
 
 func (mj *mockLogicalJoin) recursiveDeriveStats(_ [][]*expression.Column) (*property.StatsInfo, error) {
-	if mj.stats == nil {
-		mj.stats = mj.statsMap[mj.involvedNodeSet]
+	if mj.StatsInfo() == nil {
+		mj.SetStats(mj.statsMap[mj.involvedNodeSet])
 	}
 	return mj.statsMap[mj.involvedNodeSet], nil
 }
@@ -142,9 +143,9 @@ func newDataSource(ctx sessionctx.Context, name string, count int) LogicalPlan {
 		UniqueID: ctx.GetSessionVars().PlanColumnID.Add(1),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
-	ds.stats = &property.StatsInfo{
+	ds.SetStats(&property.StatsInfo{
 		RowCount: float64(count),
-	}
+	})
 	return ds
 }
 
@@ -162,6 +163,10 @@ func TestDPReorderTPCHQ5(t *testing.T) {
 	statsMap := makeStatsMapForTPCHQ5()
 
 	ctx := MockContext()
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
 	ctx.GetSessionVars().PlanID.Store(-1)
 	joinGroups := make([]LogicalPlan, 0, 6)
 	joinGroups = append(joinGroups, newDataSource(ctx, "lineitem", 59986052))
@@ -207,6 +212,9 @@ func TestDPReorderAllCartesian(t *testing.T) {
 	statsMap := makeStatsMapForTPCHQ5()
 
 	ctx := MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
 	ctx.GetSessionVars().PlanID.Store(-1)
 
 	joinGroup := make([]LogicalPlan, 0, 4)

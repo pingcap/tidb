@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -41,7 +42,10 @@ func TestDropAndTruncatePartition(t *testing.T) {
 	ctx := testkit.NewTestKit(t, store).Session()
 	testCreateTable(t, ctx, d, dbInfo, tblInfo)
 	testDropPartition(t, ctx, d, dbInfo, tblInfo, []string{"p0", "p1"})
-	testTruncatePartition(t, ctx, d, dbInfo, tblInfo, []int64{partIDs[3], partIDs[4]})
+
+	newIDs, err := genGlobalIDs(store, 2)
+	require.NoError(t, err)
+	testTruncatePartition(t, ctx, d, dbInfo, tblInfo, []int64{partIDs[3], partIDs[4]}, newIDs)
 }
 
 func buildTableInfoWithPartition(t *testing.T, store kv.Storage) (*model.TableInfo, []int64) {
@@ -122,18 +126,19 @@ func testDropPartition(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *
 	return job
 }
 
-func buildTruncatePartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64) *model.Job {
+func buildTruncatePartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64, newIDs []int64) *model.Job {
 	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionTruncateTablePartition,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{pids},
+		SchemaID:    dbInfo.ID,
+		TableID:     tblInfo.ID,
+		Type:        model.ActionTruncateTablePartition,
+		SchemaState: model.StatePublic,
+		BinlogInfo:  &model.HistoryInfo{},
+		Args:        []interface{}{pids, newIDs},
 	}
 }
 
-func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64) *model.Job {
-	job := buildTruncatePartitionJob(dbInfo, tblInfo, pids)
+func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64, newIDs []int64) *model.Job {
+	job := buildTruncatePartitionJob(dbInfo, tblInfo, pids, newIDs)
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
@@ -241,4 +246,103 @@ func TestReorganizePartitionRollback(t *testing.T) {
 
 	// test then add index should success
 	tk.MustExec("alter table t1 add index idx_kc (k, c)")
+}
+
+func TestAlterPartitionBy(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create schema AlterPartitionBy")
+	tk.MustExec("use AlterPartitionBy")
+	// Just for debug...
+	//tk.MustExec(`create table t (a int primary key, b varchar(255), key (b)) partition by range (a) (partition p0 values less than (10))`)
+	// First easy example non-partitioned -> partitioned
+	tk.MustExec(`create table t (a int primary key, b varchar(255), key (b))`)
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values (%d,'filler%d')`, i, i/3))
+	}
+	tk.MustExec(`alter table t partition by range (a) (partition p0 values less than (1000000), partition p1 values less than (2000000), partition pMax values less than (maxvalue))`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 The statistics of new partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (1000000),\n" +
+		" PARTITION `p1` VALUES LESS THAN (2000000),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`alter table t partition by hash(a) partitions 7`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`a`) PARTITIONS 7"))
+	tk.MustExec(`alter table t partition by key(a) partitions 5`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY KEY (`a`) PARTITIONS 5"))
+}
+
+func TestReorgRangeTimestampMaxvalue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create schema AlterPartitionBy")
+	tk.MustExec("use AlterPartitionBy")
+	tk.MustExec(`CREATE TABLE t1 (
+a timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+b varchar(10),
+PRIMARY KEY (a)
+)
+PARTITION BY RANGE (UNIX_TIMESTAMP(a)) (
+PARTITION p1 VALUES LESS THAN (1199134800),
+PARTITION pmax VALUES LESS THAN MAXVALUE
+)`)
+
+	tk.MustExec(`ALTER TABLE t1 REORGANIZE PARTITION pmax INTO (
+PARTITION p3 VALUES LESS THAN (1247688000),
+PARTITION pmax VALUES LESS THAN MAXVALUE)`)
+}
+
+func TestRemovePartitioningSinglePartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	dbName := "RemovePartitioning"
+	tk.MustExec("create schema " + dbName)
+	tk.MustExec("use " + dbName)
+	tk.MustExec(`CREATE TABLE t (
+a int NOT NULL primary key ,
+b varchar(100),
+key (b)
+)
+PARTITION BY hash (a) PARTITIONS 1`)
+	tk.MustExec(`insert into t values (1,"a"),(2,"bye"),(3,"Hi")`)
+
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(100) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`a`) PARTITIONS 1"))
+
+	tk.MustExec(`ALTER TABLE t REMOVE PARTITIONING`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(100) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 a", "2 bye", "3 Hi"))
 }

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/timer/api"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 type runtimeProcStatus int8
@@ -39,21 +40,30 @@ type timerCacheItem struct {
 }
 
 func (c *timerCacheItem) update(timer *api.TimerRecord, nowFunc func() time.Time) bool {
-	if c.timer != nil && timer.Version <= c.timer.Version {
-		return false
+	if c.timer != nil {
+		if timer.Version < c.timer.Version {
+			return false
+		}
+
+		if timer.Version == c.timer.Version && !locationChanged(timer.Location, c.timer.Location) {
+			return false
+		}
 	}
 
 	timer = timer.Clone()
 	c.timer = timer
 	c.nextEventTime = nil
-	c.nextTryTriggerTime = nowFunc().Add(time.Hour)
+	c.nextTryTriggerTime = time.Date(2999, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	if timer.Enable {
-		p, err := timer.CreateSchedEventPolicy()
-		if err == nil {
-			if t, ok := p.NextEventTime(c.timer.Watermark); ok {
-				c.nextEventTime = &t
-			}
+		t, ok, err := timer.NextEventTime()
+		if err == nil && ok {
+			c.nextEventTime = &t
+		}
+
+		if timer.IsManualRequesting() {
+			now := nowFunc()
+			c.nextEventTime = &now
 		}
 	}
 
@@ -162,10 +172,17 @@ func (c *timersCache) setTimerProcStatus(timerID string, status runtimeProcStatu
 
 func (c *timersCache) updateNextTryTriggerTime(timerID string, time time.Time) {
 	item, ok := c.items[timerID]
-	if ok {
-		item.nextTryTriggerTime = time
-		c.resort(item)
+	if !ok {
+		return
 	}
+
+	// to make sure try trigger time is always after next event time
+	if item.timer.EventStatus == api.SchedEventIdle && (item.nextEventTime == nil || time.Before(*item.nextEventTime)) {
+		return
+	}
+
+	item.nextTryTriggerTime = time
+	c.resort(item)
 }
 
 func (c *timersCache) iterTryTriggerTimers(fn func(timer *api.TimerRecord, tryTriggerTime time.Time, nextEventTime *time.Time) bool) {
@@ -209,4 +226,18 @@ func (c *timersCache) resort(item *timerCacheItem) {
 		c.sorted.MoveAfter(ele, cur)
 		return
 	}
+}
+
+func locationChanged(a *time.Location, b *time.Location) bool {
+	if a == b {
+		return false
+	}
+
+	if a == nil || b == nil {
+		return true
+	}
+
+	_, offset1 := timeutil.Zone(a)
+	_, offset2 := timeutil.Zone(b)
+	return offset1 != offset2
 }

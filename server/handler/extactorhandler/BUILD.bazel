@@ -1,0 +1,48 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "extactorhandler",
+    srcs = ["extactor.go"],
+    importpath = "github.com/pingcap/tidb/server/handler/extactorhandler",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//domain",
+        "//server/handler",
+        "//types",
+        "//util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "extactorhandler_test",
+    timeout = "short",
+    srcs = [
+        "extract_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    deps = [
+        ":extactorhandler",
+        "//config",
+        "//metrics",
+        "//server",
+        "//server/internal/testserverclient",
+        "//server/internal/testutil",
+        "//server/internal/util",
+        "//session",
+        "//store/mockstore/unistore",
+        "//testkit",
+        "//testkit/testsetup",
+        "//types",
+        "//util/stmtsummary/v2:stmtsummary",
+        "//util/topsql/state",
+        "@com_github_gorilla_mux//:mux",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

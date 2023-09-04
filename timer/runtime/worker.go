@@ -16,20 +16,32 @@ package runtime
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/timer/api"
+	"github.com/pingcap/tidb/timer/metrics"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
+type hookWorkerRetryLoopKeyType struct{}
+type hookWorkerRetryRequestKeyType struct{}
+
+// keys for to set retry interval
+// only used for test
+var (
+	hookWorkerRetryLoopKey    = hookWorkerRetryLoopKeyType{}
+	hookWorkerRetryRequestKey = hookWorkerRetryRequestKeyType{}
+)
+
 const (
-	workerRecvChanCap               = 8
+	workerRecvChanCap               = 128
 	workerRespChanCap               = 128
 	workerEventDefaultRetryInterval = 10 * time.Second
-	chanBlockInterval               = time.Second
+	chanBlockInterval               = time.Minute
 )
 
 type triggerEventRequest struct {
@@ -39,12 +51,50 @@ type triggerEventRequest struct {
 	resp    chan<- *triggerEventResponse
 }
 
+func (r *triggerEventRequest) DoneResponse() *triggerEventResponse {
+	return &triggerEventResponse{
+		timerID: r.timer.ID,
+		eventID: r.eventID,
+		success: true,
+	}
+}
+
+func (r *triggerEventRequest) RetryDefaultResponse() *triggerEventResponse {
+	return &triggerEventResponse{
+		timerID:    r.timer.ID,
+		eventID:    r.eventID,
+		retryAfter: api.NewOptionalVal(workerEventDefaultRetryInterval),
+		success:    false,
+	}
+}
+
+func (r *triggerEventRequest) TimerMetaChangedResponse(t *api.TimerRecord) *triggerEventResponse {
+	return r.RetryDefaultResponse().
+		WithNewTimerRecord(t).
+		WithRetryImmediately()
+}
+
 type triggerEventResponse struct {
 	success        bool
 	timerID        string
 	eventID        string
 	newTimerRecord api.OptionalVal[*api.TimerRecord]
 	retryAfter     api.OptionalVal[time.Duration]
+}
+
+func (r *triggerEventResponse) WithRetryImmediately() *triggerEventResponse {
+	r.retryAfter.Clear()
+	return r
+}
+
+func (r *triggerEventResponse) WithRetryAfter(d time.Duration) *triggerEventResponse {
+	r.retryAfter.Set(d)
+	return r
+}
+
+func (r *triggerEventResponse) WithNewTimerRecord(timer *api.TimerRecord) *triggerEventResponse {
+	r.newTimerRecord.Set(timer)
+	return r
 }
 
 type timerEvent struct {
@@ -62,82 +112,213 @@ func (e *timerEvent) Timer() *api.TimerRecord {
 
 type hookWorker struct {
 	ctx       context.Context
-	wg        *sync.WaitGroup
+	groupID   string
 	hookClass string
-	hook      api.Hook
+	hookFn    func() api.Hook
 	ch        chan *triggerEventRequest
 	logger    *zap.Logger
 	nowFunc   func() time.Time
+	// metrics for worker
+	triggerRequestCounter       prometheus.Counter
+	onPreSchedEventCounter      prometheus.Counter
+	onPreSchedEventErrCounter   prometheus.Counter
+	onPreSchedEventDelayCounter prometheus.Counter
+	onSchedEventCounter         prometheus.Counter
+	onSchedEventErrCounter      prometheus.Counter
+	// retryLoopWait/retryRequestWait indicates the wait time before restarting the loop after panic.
+	retryLoopWait    time.Duration
+	retryRequestWait time.Duration
 }
 
-func newHookWorker(ctx context.Context, wg *sync.WaitGroup, groupID string, hookClass string, hook api.Hook, nowFunc func() time.Time) *hookWorker {
+func newHookWorker(ctx context.Context, wg *util.WaitGroupWrapper, groupID string, hookClass string, hookFn func() api.Hook, nowFunc func() time.Time) *hookWorker {
 	if nowFunc == nil {
 		nowFunc = time.Now
 	}
 
 	w := &hookWorker{
 		ctx:       ctx,
-		wg:        wg,
+		groupID:   groupID,
 		hookClass: hookClass,
-		hook:      hook,
+		hookFn:    hookFn,
 		ch:        make(chan *triggerEventRequest, workerRecvChanCap),
 		logger: logutil.BgLogger().With(
 			zap.String("groupID", groupID),
 			zap.String("hookClass", hookClass),
 		),
-		nowFunc: nowFunc,
+		nowFunc:                     nowFunc,
+		triggerRequestCounter:       metrics.TimerHookWorkerCounter(hookClass, "trigger"),
+		onPreSchedEventCounter:      metrics.TimerHookWorkerCounter(hookClass, "OnPreSchedEvent"),
+		onPreSchedEventErrCounter:   metrics.TimerHookWorkerCounter(hookClass, "OnPreSchedEvent_error"),
+		onPreSchedEventDelayCounter: metrics.TimerHookWorkerCounter(hookClass, "OnPreSchedEvent_delay"),
+		onSchedEventCounter:         metrics.TimerHookWorkerCounter(hookClass, "OnSchedEvent"),
+		onSchedEventErrCounter:      metrics.TimerHookWorkerCounter(hookClass, "OnSchedEvent_error"),
+		retryLoopWait:               10 * time.Second,
+		retryRequestWait:            5 * time.Second,
 	}
 
-	wg.Add(1)
-	go w.loop()
+	if v, ok := ctx.Value(hookWorkerRetryLoopKey).(time.Duration); ok {
+		w.retryLoopWait = v
+	}
+
+	if v, ok := ctx.Value(hookWorkerRetryRequestKey).(time.Duration); ok {
+		w.retryRequestWait = v
+	}
+
+	wg.Run(func() {
+		withRecoverUntil(w.ctx, w.loop)
+	})
 	return w
 }
 
-func (w *hookWorker) loop() {
-	w.logger.Info("timer hookWorker loop started")
-	if w.hook != nil {
-		w.hook.Start()
+func (w *hookWorker) loop(totalPanic uint64) {
+	if totalPanic > 0 {
+		sleep(w.ctx, w.retryLoopWait)
+		w.logger.Info("timer hookWorker loop resumed from panic",
+			zap.Uint64("totalPanic", totalPanic),
+			zap.Duration("delay", w.retryLoopWait))
+	} else {
+		w.logger.Info("timer hookWorker loop started")
+	}
+	defer w.logger.Info("timer hookWorker loop exited")
+
+	var hook api.Hook
+	if w.hookFn != nil {
+		hook = w.hookFn()
 	}
 
-	defer func() {
-		if w.hook != nil {
-			w.hook.Stop()
-		}
-		w.logger.Info("timer hookWorker loop exited")
-		w.wg.Done()
-	}()
-
-	for {
-		select {
-		case <-w.ctx.Done():
-			return
-		case req := <-w.ch:
-			logger := w.logger.With(
-				zap.String("timerID", req.timer.ID),
-				zap.String("timerNamespace", req.timer.Namespace),
-				zap.String("timerKey", req.timer.Key),
-				zap.String("eventID", req.eventID),
-			)
-			resp := w.triggerEvent(req, logger)
-			if !w.responseChan(req.resp, resp, logger) {
-				return
-			}
-		}
+	if hook != nil {
+		defer hook.Stop()
+		hook.Start()
 	}
+
+	// TODO: we can have multiple `handleRequestLoop` goroutines running concurrently.
+	w.handleRequestLoop(hook)
 }
 
-func (w *hookWorker) triggerEvent(req *triggerEventRequest, logger *zap.Logger) *triggerEventResponse {
+type unhandledRequest struct {
+	req   *triggerEventRequest
+	retry int
+}
+
+func (w *hookWorker) handleRequestLoop(hook api.Hook) {
+	var unhandled *unhandledRequest
+	withRecoverUntil(w.ctx, func(totalPanic uint64) {
+		wait := w.retryRequestWait
+		if totalPanic == 0 || (unhandled != nil && unhandled.retry == 0) {
+			// when retry a request, it will send a response to runtime without calling hook.
+			// So we can do the first retry immediately to assumption that it will succeed.
+			wait = 0
+		}
+
+		if totalPanic > 0 {
+			time.Sleep(wait)
+			w.logger.Info("handleRequestLoop resumed from panic",
+				zap.Uint64("totalPanic", totalPanic),
+				zap.Duration("delay", wait))
+		}
+
+		if unhandled != nil {
+			unhandled.retry++
+			w.handleRequestOnce(hook, unhandled)
+			unhandled = nil
+		}
+
+		for {
+			select {
+			case <-w.ctx.Done():
+				return
+			case req := <-w.ch:
+				unhandled = &unhandledRequest{
+					req: req,
+				}
+				w.handleRequestOnce(hook, unhandled)
+				unhandled = nil
+			}
+		}
+	})
+}
+
+func (w *hookWorker) handleRequestOnce(hook api.Hook, u *unhandledRequest) {
+	if u == nil || u.req == nil {
+		return
+	}
+
+	if u.req.timer == nil {
+		w.logger.Warn("invalid triggerEventRequest, timer is nil")
+		return
+	}
+
+	req := u.req
+	logger := w.logger.With(
+		zap.String("timerID", req.timer.ID),
+		zap.String("timerNamespace", req.timer.Namespace),
+		zap.String("timerKey", req.timer.Key),
+		zap.String("eventID", req.eventID),
+		zap.Int("requestRetry", u.retry),
+	)
+
+	if req.resp == nil {
+		logger.Warn("invalid triggerEventRequest, resp chan is nil")
+		return
+	}
+
+	var resp *triggerEventResponse
+	if u.retry > 0 {
+		logger.Info("retry triggerEventRequest")
+		resp = req.RetryDefaultResponse()
+	} else {
+		resp = w.triggerEvent(hook, req, logger)
+	}
+	w.responseChan(req.resp, resp, logger)
+}
+
+func (w *hookWorker) triggerEvent(hook api.Hook, req *triggerEventRequest, logger *zap.Logger) *triggerEventResponse {
+	w.triggerRequestCounter.Inc()
 	timer := req.timer
-	resp := &triggerEventResponse{
-		timerID: timer.ID,
-		eventID: req.eventID,
+
+	if timer.IsManualRequesting() {
+		logger.Info("manual trigger request detected",
+			zap.String("requestID", timer.ManualRequestID),
+			zap.Time("requestTime", timer.ManualRequestTime),
+			zap.Duration("timeout", timer.ManualTimeout),
+		)
+		timeout := timer.ManualRequestTime.Add(timer.ManualTimeout)
+		if w.nowFunc().After(timeout) {
+			logger.Warn(
+				"cancel manual trigger for timer is disabled for request timeout",
+				zap.String("requestID", timer.ManualRequestID),
+				zap.Bool("timerEnable", timer.Enable),
+			)
+
+			processed := timer.ManualRequest.SetProcessed("")
+			err := req.store.Update(w.ctx, timer.ID, &api.TimerUpdate{
+				ManualRequest: api.NewOptionalVal(processed),
+				CheckVersion:  api.NewOptionalVal(timer.Version),
+			})
+
+			if err == nil {
+				timer, err = req.store.GetByID(w.ctx, timer.ID)
+			}
+
+			if err == nil || errors.ErrorEqual(err, api.ErrTimerNotExist) {
+				return req.TimerMetaChangedResponse(timer)
+			}
+
+			logger.Error(
+				"error occurs when close manual request",
+				zap.Error(err),
+				zap.Duration("retryAfter", workerEventDefaultRetryInterval),
+			)
+			return req.RetryDefaultResponse()
+		}
 	}
 
 	if timer.EventStatus == api.SchedEventIdle {
 		var preResult api.PreSchedEventResult
-		if w.hook != nil {
+		if hook != nil {
 			logger.Debug("call OnPreSchedEvent")
-			result, err := w.hook.OnPreSchedEvent(w.ctx, &timerEvent{
+			w.onPreSchedEventCounter.Inc()
+			result, err := hook.OnPreSchedEvent(w.ctx, &timerEvent{
 				eventID: req.eventID,
 				record:  timer,
 			})
@@ -148,56 +329,47 @@ func (w *hookWorker) triggerEvent(req *triggerEventRequest, logger *zap.Logger) 
 					zap.Error(err),
 					zap.Duration("retryAfter", workerEventDefaultRetryInterval),
 				)
-				resp.retryAfter.Set(workerEventDefaultRetryInterval)
-				return resp
+				w.onPreSchedEventErrCounter.Inc()
+				return req.RetryDefaultResponse()
 			}
 
 			if result.Delay > 0 {
-				resp.retryAfter.Set(result.Delay)
-				return resp
+				w.onPreSchedEventDelayCounter.Inc()
+				return req.RetryDefaultResponse().WithRetryAfter(result.Delay)
 			}
-
 			preResult = result
 		}
 
 		update := buildEventUpdate(req, preResult, w.nowFunc)
 		if err := req.store.Update(w.ctx, timer.ID, update); err != nil {
 			if errors.ErrorEqual(err, api.ErrVersionNotMatch) {
-				newTimer, getErr := req.store.GetByID(w.ctx, timer.ID)
-				if getErr != nil {
-					err = getErr
-				} else {
-					resp.newTimerRecord.Set(newTimer)
+				logger.Info("cannot change timer to trigger state, timer version not match",
+					zap.Uint64("timerVersion", timer.Version),
+				)
+				var newTimer *api.TimerRecord
+				newTimer, err = req.store.GetByID(w.ctx, timer.ID)
+				if err == nil {
+					return req.TimerMetaChangedResponse(newTimer)
 				}
 			}
 
 			if errors.ErrorEqual(err, api.ErrTimerNotExist) {
 				logger.Info("cannot change timer to trigger state, timer deleted")
-				resp.newTimerRecord.Set(nil)
-			} else if errors.ErrorEqual(err, api.ErrVersionNotMatch) {
-				logger.Info("cannot change timer to trigger state, timer version not match",
-					zap.Uint64("timerVersion", timer.Version),
-				)
-				if newTimer, err := req.store.GetByID(w.ctx, timer.ID); err == nil {
-					resp.newTimerRecord.Set(newTimer)
-				}
-			} else {
-				logger.Error("error occurs to change timer to trigger state,",
-					zap.Error(err),
-					zap.Duration("retryAfter", workerEventDefaultRetryInterval),
-				)
-				resp.retryAfter.Set(workerEventDefaultRetryInterval)
+				return req.TimerMetaChangedResponse(nil)
 			}
 
-			return resp
+			logger.Error("error occurs to change timer to trigger state,",
+				zap.Error(err),
+				zap.Duration("retryAfter", workerEventDefaultRetryInterval),
+			)
+			return req.RetryDefaultResponse()
 		}
 	}
 
 	timer, err := req.store.GetByID(w.ctx, timer.ID)
 	if errors.ErrorEqual(err, api.ErrTimerNotExist) {
 		logger.Info("cannot trigger timer event, timer deleted")
-		resp.newTimerRecord.Set(nil)
-		return resp
+		return req.TimerMetaChangedResponse(timer)
 	}
 
 	if err != nil {
@@ -205,42 +377,40 @@ func (w *hookWorker) triggerEvent(req *triggerEventRequest, logger *zap.Logger) 
 			"error occurs when getting timer record to trigger timer event",
 			zap.Duration("retryAfter", workerEventDefaultRetryInterval),
 		)
-		resp.retryAfter.Set(workerEventDefaultRetryInterval)
-		return resp
+		return req.RetryDefaultResponse()
 	}
 
-	resp.newTimerRecord.Set(timer)
 	if timer.EventID != req.eventID {
 		logger.Info("cannot trigger timer event, timer event closed")
-		return resp
+		return req.TimerMetaChangedResponse(timer)
 	}
 
-	if w.hook != nil {
+	if hook != nil {
 		logger.Debug("call OnSchedEvent")
-		err = w.hook.OnSchedEvent(w.ctx, &timerEvent{
+		w.onSchedEventCounter.Inc()
+		err = hook.OnSchedEvent(w.ctx, &timerEvent{
 			eventID: req.eventID,
 			record:  timer,
 		})
 
 		if err != nil {
+			w.onSchedEventErrCounter.Inc()
 			logger.Error(
 				"error occurs when invoking hook OnTimerEvent",
 				zap.Error(err),
 				zap.Duration("retryAfter", workerEventDefaultRetryInterval),
 			)
-			resp.retryAfter.Set(workerEventDefaultRetryInterval)
-			return resp
+			return req.RetryDefaultResponse().WithNewTimerRecord(timer)
 		}
 	}
 
-	resp.success = true
-	return resp
+	return req.DoneResponse().WithNewTimerRecord(timer)
 }
 
 func (w *hookWorker) responseChan(ch chan<- *triggerEventResponse, resp *triggerEventResponse, logger *zap.Logger) bool {
 	sendStart := time.Now()
-	timeout := time.NewTimer(chanBlockInterval)
-	defer timeout.Stop()
+	ticker := time.NewTicker(chanBlockInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-w.ctx.Done():
@@ -249,7 +419,7 @@ func (w *hookWorker) responseChan(ch chan<- *triggerEventResponse, resp *trigger
 			return false
 		case ch <- resp:
 			return true
-		case <-timeout.C:
+		case <-ticker.C:
 			logger.Warn(
 				"sending resp to chan is blocked for a long time",
 				zap.Duration("totalBlock", time.Since(sendStart)),
@@ -265,5 +435,16 @@ func buildEventUpdate(req *triggerEventRequest, result api.PreSchedEventResult, 
 	update.EventStart.Set(nowFunc())
 	update.EventData.Set(result.EventData)
 	update.CheckVersion.Set(req.timer.Version)
+
+	eventExtra := api.EventExtra{
+		EventWatermark: req.timer.Watermark,
+	}
+
+	if manual := req.timer.ManualRequest; manual.IsManualRequesting() {
+		eventExtra.EventManualRequestID = manual.ManualRequestID
+		update.ManualRequest.Set(manual.SetProcessed(req.eventID))
+	}
+
+	update.EventExtra.Set(eventExtra)
 	return &update
 }

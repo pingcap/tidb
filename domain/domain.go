@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/globalconfigsync"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
@@ -86,6 +87,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
@@ -147,17 +149,26 @@ type Domain struct {
 	memoryUsageAlarmHandle  *memoryusagealarm.Handle
 	serverMemoryLimitHandle *servermemorylimit.Handle
 	// TODO: use Run for each process in future pr
-	wg                    *util.WaitGroupEnhancedWrapper
-	statsUpdating         atomicutil.Int32
-	cancel                context.CancelFunc
-	indexUsageSyncLease   time.Duration
-	dumpFileGcChecker     *dumpFileGcChecker
-	planReplayerHandle    *planReplayerHandle
-	extractTaskHandle     *ExtractHandle
-	expiredTimeStamp4PC   types.Time
-	logBackupAdvancer     *daemon.OwnerDaemon
-	historicalStatsWorker *HistoricalStatsWorker
-	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
+	wg                  *util.WaitGroupEnhancedWrapper
+	statsUpdating       atomicutil.Int32
+	cancel              context.CancelFunc
+	indexUsageSyncLease time.Duration
+	dumpFileGcChecker   *dumpFileGcChecker
+	planReplayerHandle  *planReplayerHandle
+	extractTaskHandle   *ExtractHandle
+	expiredTimeStamp4PC struct {
+		// let `expiredTimeStamp4PC` use its own lock to avoid any block across domain.Reload()
+		// and compiler.Compile(), see issue https://github.com/pingcap/tidb/issues/45400
+		sync.RWMutex
+		expiredTimeStamp types.Time
+	}
+
+	logBackupAdvancer        *daemon.OwnerDaemon
+	historicalStatsWorker    *HistoricalStatsWorker
+	ttlJobManager            atomic.Pointer[ttlworker.JobManager]
+	runawayManager           *resourcegroup.RunawayManager
+	runawaySyncer            *runawaySyncer
+	resourceGroupsController *rmclient.ResourceGroupsController
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -178,7 +189,6 @@ type Domain struct {
 
 	mdlCheckCh      chan struct{}
 	stopAutoAnalyze atomicutil.Bool
-	resourcePool    *pools.ResourcePool
 }
 
 type mdlCheckTableInfo struct {
@@ -220,6 +230,9 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	}
 
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
+		// try to insert here as well to correct the schemaTs if previous is wrong
+		// the insert method check if schemaTs is zero
+		do.infoCache.Insert(is, uint64(schemaTs))
 		return is, true, 0, nil, nil
 	}
 
@@ -475,18 +488,18 @@ func (do *Domain) GetSnapshotMeta(startTS uint64) (*meta.Meta, error) {
 
 // ExpiredTimeStamp4PC gets expiredTimeStamp4PC from domain.
 func (do *Domain) ExpiredTimeStamp4PC() types.Time {
-	do.m.Lock()
-	defer do.m.Unlock()
+	do.expiredTimeStamp4PC.RLock()
+	defer do.expiredTimeStamp4PC.RUnlock()
 
-	return do.expiredTimeStamp4PC
+	return do.expiredTimeStamp4PC.expiredTimeStamp
 }
 
 // SetExpiredTimeStamp4PC sets the expiredTimeStamp4PC from domain.
 func (do *Domain) SetExpiredTimeStamp4PC(time types.Time) {
-	do.m.Lock()
-	defer do.m.Unlock()
+	do.expiredTimeStamp4PC.Lock()
+	defer do.expiredTimeStamp4PC.Unlock()
 
-	do.expiredTimeStamp4PC = time
+	do.expiredTimeStamp4PC.expiredTimeStamp = time
 }
 
 // DDL gets DDL from domain.
@@ -986,9 +999,13 @@ func (do *Domain) Close() {
 			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
 		}
 	}
+	do.releaseServerID(context.Background())
 	close(do.exit)
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
+	}
+	if rm := do.RunawayManager(); rm != nil {
+		rm.Stop()
 	}
 
 	if do.unprefixedEtcdCli != nil {
@@ -1007,6 +1024,15 @@ func (do *Domain) Close() {
 	}
 	gctuner.WaitMemoryLimitTunerExitInTest()
 	close(do.mdlCheckCh)
+
+	// close MockGlobalServerInfoManagerEntry in order to refresh mock server info.
+	if intest.InTest {
+		infosync.MockGlobalServerInfoManagerEntry.Close()
+	}
+	if handle := do.statsHandle.Load(); handle != nil {
+		handle.Close()
+	}
+
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -1021,10 +1047,9 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		sysSessionPool:      newSessionPool(capacity, factory),
 		statsLease:          statsLease,
 		infoCache:           infoschema.NewCache(16),
-		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
+		slowQuery:           newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		indexUsageSyncLease: idxUsageSyncLease,
 		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
-		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 		mdlCheckTableInfo: &mdlCheckTableInfo{
 			mu:         sync.Mutex{},
 			jobsVerMap: make(map[int64]int64),
@@ -1040,6 +1065,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
 	do.initDomainSysVars()
+	do.expiredTimeStamp4PC.expiredTimeStamp = types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
 	return do
 }
 
@@ -1112,7 +1138,6 @@ func (do *Domain) Init(
 		return sysExecutorFactory(do)
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 128, 128, resourceIdleTimeout)
-	do.resourcePool = sysCtxPool
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancel = cancelFunc
 	var callback ddl.Callback
@@ -1142,28 +1167,6 @@ func (do *Domain) Init(
 		do.ddl = checker
 	}
 
-	if config.GetGlobalConfig().EnableGlobalKill {
-		do.connIDAllocator = globalconn.NewGlobalAllocator(do.ServerID)
-
-		if do.etcdClient != nil {
-			err := do.acquireServerID(ctx)
-			if err != nil {
-				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
-				do.isLostConnectionToPD.Store(1) // will retry in `do.serverIDKeeper`
-			} else {
-				do.isLostConnectionToPD.Store(0)
-			}
-
-			do.wg.Add(1)
-			go do.serverIDKeeper()
-		} else {
-			// set serverID for standalone deployment to enable 'KILL'.
-			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
-		}
-	} else {
-		do.connIDAllocator = globalconn.NewSimpleAllocator()
-	}
-
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	pdCli := do.GetPDClient()
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
@@ -1178,13 +1181,47 @@ func (do *Domain) Init(
 	if err != nil {
 		return err
 	}
-	// step 2: domain reload the infoSchema.
+
+	// step 2: initialize the global kill, which depends on `globalInfoSyncer`.`
+	if config.GetGlobalConfig().EnableGlobalKill {
+		do.connIDAllocator = globalconn.NewGlobalAllocator(do.ServerID, config.GetGlobalConfig().Enable32BitsConnectionID)
+
+		if do.etcdClient != nil {
+			err := do.acquireServerID(ctx)
+			if err != nil {
+				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
+				do.isLostConnectionToPD.Store(1) // will retry in `do.serverIDKeeper`
+			} else {
+				if err := do.info.StoreServerInfo(context.Background()); err != nil {
+					return errors.Trace(err)
+				}
+				do.isLostConnectionToPD.Store(0)
+			}
+
+			do.wg.Add(1)
+			go do.serverIDKeeper()
+		} else {
+			// set serverID for standalone deployment to enable 'KILL'.
+			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
+		}
+	} else {
+		do.connIDAllocator = globalconn.NewSimpleAllocator()
+	}
+
+	// should put `initResourceGroupsController` after fetching server ID
+	err = do.initResourceGroupsController(ctx, pdCli, do.ServerID())
+	if err != nil {
+		return err
+	}
+
+	startReloadTime := time.Now()
+	// step 3: domain reload the infoSchema.
 	err = do.Reload()
 	if err != nil {
 		return err
 	}
 
-	// step 3: start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
+	// step 4: start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
 	err = do.ddl.Start(sysCtxPool)
 	if err != nil {
 		return err
@@ -1193,6 +1230,17 @@ func (do *Domain) Init(
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop.
 	if ddlLease > 0 {
+		sub := time.Since(startReloadTime)
+		// The reload(in step 2) operation takes more than ddlLease and a new reload operation was not performed,
+		// the next query will respond by ErrInfoSchemaExpired error. So we do a new reload to update schemaValidator.latestSchemaExpire.
+		if sub > (ddlLease / 2) {
+			logutil.BgLogger().Warn("loading schema takes a long time, we do a new reload", zap.Duration("take time", sub))
+			err = do.Reload()
+			if err != nil {
+				return err
+			}
+		}
+
 		// Local store needs to get the change information for every DDL state in each session.
 		do.wg.Run(func() {
 			do.loadSchemaInLoop(ctx, ddlLease)
@@ -1202,6 +1250,8 @@ func (do *Domain) Init(
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(do.infoSyncerKeeper, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
+	do.wg.Run(do.runawayRecordFlushLoop, "runawayRecordFlushLoop")
+	do.wg.Run(do.runawayWatchSyncLoop, "runawayWatchSyncLoop")
 	if !skipRegisterToDashboard {
 		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
 	}
@@ -1217,6 +1267,11 @@ func (do *Domain) Init(
 	}
 
 	return nil
+}
+
+// InitInfo4Test init infosync for distributed execution test.
+func (do *Domain) InitInfo4Test() {
+	infosync.MockGlobalServerInfoManagerEntry.Add(do.ddl.GetID(), do.ServerID)
 }
 
 // SetOnClose used to set do.onClose func.
@@ -1379,8 +1434,15 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		}
 	})
 
-	taskManager := storage.NewTaskManager(ctx, do.resourcePool)
-	serverID := generateSubtaskExecID(ctx, do.ddl.GetID())
+	taskManager := storage.NewTaskManager(ctx, do.sysSessionPool)
+	var serverID string
+	if intest.InTest {
+		do.InitInfo4Test()
+		serverID = disttaskutil.GenerateSubtaskExecID4Test(do.ddl.GetID())
+	} else {
+		serverID = disttaskutil.GenerateSubtaskExecID(ctx, do.ddl.GetID())
+	}
+
 	if serverID == "" {
 		errMsg := fmt.Sprintf("TiDB node ID( = %s ) not found in available TiDB nodes list", do.ddl.GetID())
 		return errors.New(errMsg)
@@ -1395,23 +1457,12 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		defer func() {
 			storage.SetTaskManager(nil)
 		}()
-		do.distTaskFrameworkLoop(ctx, taskManager, schedulerManager)
+		do.distTaskFrameworkLoop(ctx, taskManager, schedulerManager, serverID)
 	}, "distTaskFrameworkLoop")
 	return nil
 }
 
-func generateSubtaskExecID(ctx context.Context, ID string) string {
-	serverInfos, err := infosync.GetAllServerInfo(ctx)
-	if err != nil || len(serverInfos) == 0 {
-		return ""
-	}
-	if serverNode, ok := serverInfos[ID]; ok {
-		return disttaskutil.GenerateExecID(serverNode.IP, serverNode.Port)
-	}
-	return ""
-}
-
-func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager) {
+func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager, serverID string) {
 	schedulerManager.Start()
 	logutil.BgLogger().Info("dist task scheduler started")
 	defer func() {
@@ -1420,37 +1471,34 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		logutil.BgLogger().Info("dist task scheduler stopped")
 	}()
 
-	var dispatch dispatcher.Dispatch
+	var dispatcherManager *dispatcher.Manager
 	startDispatchIfNeeded := func() {
-		if dispatch != nil {
+		if dispatcherManager != nil && dispatcherManager.Inited() {
 			return
 		}
-
-		newDispatch, err := dispatcher.NewDispatcher(ctx, taskManager)
+		var err error
+		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager, serverID)
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
 			return
 		}
-		dispatch = newDispatch
-		dispatch.Start()
-		logutil.BgLogger().Info("a new dist task dispatcher started for current node becomes the DDL owner")
+		dispatcherManager.Start()
 	}
 	stopDispatchIfNeeded := func() {
-		if dispatch != nil {
-			logutil.BgLogger().Info("stopping dist task dispatcher because the current node is not DDL owner anymore")
-			dispatch.Stop()
-			dispatch = nil
-			logutil.BgLogger().Info("dist task dispatcher stopped")
+		if dispatcherManager != nil && dispatcherManager.Inited() {
+			logutil.BgLogger().Info("stopping dist task dispatcher because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
+			dispatcherManager.Stop()
+			logutil.BgLogger().Info("dist task dispatcher stopped", zap.String("id", do.ddl.GetID()))
 		}
 	}
 
-	ticker := time.Tick(time.Second)
+	ticker := time.NewTicker(time.Second)
 	for {
 		select {
 		case <-do.exit:
 			stopDispatchIfNeeded()
 			return
-		case <-ticker:
+		case <-ticker.C:
 			if do.ddl.OwnerManager().IsOwner() {
 				startDispatchIfNeeded()
 			} else {
@@ -1912,6 +1960,21 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 	}
 }
 
+// RunawayManager returns the runaway manager.
+func (do *Domain) RunawayManager() *resourcegroup.RunawayManager {
+	return do.runawayManager
+}
+
+// ResourceGroupsController returns the resource groups controller.
+func (do *Domain) ResourceGroupsController() *rmclient.ResourceGroupsController {
+	return do.resourceGroupsController
+}
+
+// SetResourceGroupsController is only used in test.
+func (do *Domain) SetResourceGroupsController(controller *rmclient.ResourceGroupsController) {
+	do.resourceGroupsController = controller
+}
+
 // SetupHistoricalStatsWorker setups worker
 func (do *Domain) SetupHistoricalStatsWorker(ctx sessionctx.Context) {
 	do.historicalStatsWorker = &HistoricalStatsWorker{
@@ -2290,7 +2353,7 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 				continue
 			}
 			if err := handle.GCIndexUsage(); err != nil {
-				logutil.BgLogger().Error("[stats] gc index usage failed", zap.Error(err))
+				logutil.BgLogger().Error("gc index usage failed", zap.String("category", "stats"), zap.Error(err))
 			}
 		}
 	}
@@ -2323,16 +2386,11 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	lease := do.statsLease
 	deltaUpdateTicker := time.NewTicker(20 * lease)
 	gcStatsTicker := time.NewTicker(100 * lease)
-	dumpFeedbackTicker := time.NewTicker(200 * lease)
-	loadFeedbackTicker := time.NewTicker(5 * lease)
-	loadLockedTablesTicker := time.NewTicker(5 * lease)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
 	readMemTricker := time.NewTicker(memory.ReadMemInterval)
 	statsHandle := do.StatsHandle()
 	defer func() {
 		dumpColStatsUsageTicker.Stop()
-		loadFeedbackTicker.Stop()
-		dumpFeedbackTicker.Stop()
 		gcStatsTicker.Stop()
 		deltaUpdateTicker.Stop()
 		readMemTricker.Stop()
@@ -2356,26 +2414,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
 			if err != nil {
 				logutil.BgLogger().Debug("dump stats delta failed", zap.Error(err))
-			}
-			statsHandle.UpdateErrorRate(do.InfoSchema())
-		case <-loadFeedbackTicker.C:
-			statsHandle.UpdateStatsByLocalFeedback(do.InfoSchema())
-			if !owner.IsOwner() {
-				continue
-			}
-			err := statsHandle.HandleUpdateStats(do.InfoSchema())
-			if err != nil {
-				logutil.BgLogger().Debug("update stats using feedback failed", zap.Error(err))
-			}
-		case <-loadLockedTablesTicker.C:
-			err := statsHandle.LoadLockedTables()
-			if err != nil {
-				logutil.BgLogger().Debug("load locked table failed", zap.Error(err))
-			}
-		case <-dumpFeedbackTicker.C:
-			err := statsHandle.DumpStatsFeedbackToKV()
-			if err != nil {
-				logutil.BgLogger().Debug("dump stats feedback failed", zap.Error(err))
 			}
 		case <-gcStatsTicker.C:
 			if !owner.IsOwner() {
@@ -2569,6 +2607,8 @@ const (
 	acquireServerIDTimeout         = 10 * time.Second
 	retrieveServerIDSessionTimeout = 10 * time.Second
 
+	acquire32BitsServerIDRetryCnt = 3
+
 	// reservedConnXXX must be within [0, globalconn.ReservedCount)
 	reservedConnAnalyze = 0
 )
@@ -2663,10 +2703,20 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 		return err
 	}
 
+	conflictCnt := 0
 	for {
-		// get a random serverID: [1, MaxServerID64]
-		randServerID := rand.Int63n(int64(globalconn.MaxServerID64)) + 1 // #nosec G404
-		key := fmt.Sprintf("%s/%v", serverIDEtcdPath, randServerID)
+		var proposeServerID uint64
+		if config.GetGlobalConfig().Enable32BitsConnectionID {
+			proposeServerID, err = do.proposeServerID(ctx, conflictCnt)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			// get a random serverID: [1, MaxServerID64]
+			proposeServerID = uint64(rand.Int63n(int64(globalconn.MaxServerID64)) + 1) // #nosec G404
+		}
+
+		key := fmt.Sprintf("%s/%v", serverIDEtcdPath, proposeServerID)
 		cmp := clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
 		value := "0"
 
@@ -2679,16 +2729,75 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 			return err
 		}
 		if !resp.Succeeded {
-			logutil.BgLogger().Info("proposed random serverID exists, will randomize again", zap.Int64("randServerID", randServerID))
+			logutil.BgLogger().Info("propose serverID exists, try again", zap.Uint64("proposeServerID", proposeServerID))
 			time.Sleep(acquireServerIDRetryInterval)
+			conflictCnt++
 			continue
 		}
 
-		atomic.StoreUint64(&do.serverID, uint64(randServerID))
+		atomic.StoreUint64(&do.serverID, proposeServerID)
 		logutil.BgLogger().Info("acquireServerID", zap.Uint64("serverID", do.ServerID()),
 			zap.String("lease id", strconv.FormatInt(int64(session.Lease()), 16)))
 		return nil
 	}
+}
+
+func (do *Domain) releaseServerID(ctx context.Context) {
+	serverID := do.ServerID()
+	if serverID == 0 {
+		return
+	}
+	atomic.StoreUint64(&do.serverID, 0)
+
+	if do.etcdClient == nil {
+		return
+	}
+	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, serverID)
+	err := ddlutil.DeleteKeyFromEtcd(key, do.etcdClient, refreshServerIDRetryCnt, acquireServerIDTimeout)
+	if err != nil {
+		logutil.BgLogger().Error("releaseServerID fail", zap.Uint64("serverID", serverID), zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("releaseServerID succeed", zap.Uint64("serverID", serverID))
+	}
+}
+
+// propose server ID by random.
+func (do *Domain) proposeServerID(ctx context.Context, conflictCnt int) (uint64, error) {
+	// get a random server ID in range [min, max]
+	randomServerID := func(min uint64, max uint64) uint64 {
+		return uint64(rand.Int63n(int64(max-min+1)) + int64(min)) // #nosec G404
+	}
+
+	if conflictCnt < acquire32BitsServerIDRetryCnt {
+		// get existing server IDs.
+		allServerInfo, err := infosync.GetAllServerInfo(ctx)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		// `allServerInfo` contains current TiDB.
+		if float32(len(allServerInfo)) <= 0.9*float32(globalconn.MaxServerID32) {
+			serverIDs := make(map[uint64]struct{}, len(allServerInfo))
+			for _, info := range allServerInfo {
+				serverID := info.ServerIDGetter()
+				if serverID <= globalconn.MaxServerID32 {
+					serverIDs[serverID] = struct{}{}
+				}
+			}
+
+			for retry := 0; retry < 15; retry++ {
+				randServerID := randomServerID(1, globalconn.MaxServerID32)
+				if _, ok := serverIDs[randServerID]; !ok {
+					return randServerID, nil
+				}
+			}
+		}
+		logutil.BgLogger().Info("upgrade to 64 bits server ID due to used up", zap.Int("len(allServerInfo)", len(allServerInfo)))
+	} else {
+		logutil.BgLogger().Info("upgrade to 64 bits server ID due to conflict", zap.Int("conflictCnt", conflictCnt))
+	}
+
+	// upgrade to 64 bits.
+	return randomServerID(globalconn.MaxServerID32+1, globalconn.MaxServerID64), nil
 }
 
 func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
@@ -2795,7 +2904,7 @@ func (do *Domain) StartTTLJobManager() {
 			logutil.BgLogger().Info("ttlJobManager exited.")
 		}()
 
-		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient)
+		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
 		do.ttlJobManager.Store(ttlJobManager)
 		ttlJobManager.Start()
 

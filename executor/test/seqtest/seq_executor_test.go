@@ -666,8 +666,9 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	require.NoError(t, err)
 	keyword := "pickAndExecTask"
 	require.NoError(t, rs.Close())
-	time.Sleep(time.Millisecond * 10)
-	require.False(t, checkGoroutineExists(keyword))
+	require.Eventually(t, func() bool {
+		return !checkGoroutineExists(keyword)
+	}, time.Millisecond*100, time.Millisecond*10)
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
 }
 
@@ -711,9 +712,9 @@ func TestParallelHashAggClose(t *testing.T) {
 	//     └─TableFullScan_10   | 3.00  | cop[tikv]  | table:t, keep order:fa$se, stats:pseudo |
 
 	// Goroutine should not leak when error happen.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/parallelHashAggError", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/aggregate/parallelHashAggError", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/parallelHashAggError"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/aggregate/parallelHashAggError"))
 	}()
 	ctx := context.Background()
 	rss, err := tk.Session().Execute(ctx, "select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
@@ -733,9 +734,9 @@ func TestUnparallelHashAggClose(t *testing.T) {
 	tk.MustExec("insert into t values(1,1),(2,2)")
 
 	// Goroutine should not leak when error happen.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/unparallelHashAggError", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/aggregate/unparallelHashAggError", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/unparallelHashAggError"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/aggregate/unparallelHashAggError"))
 	}()
 	ctx := context.Background()
 	rss, err := tk.Session().Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
@@ -1201,6 +1202,8 @@ func TestShowForNewCollations(t *testing.T) {
 		"utf8_bin utf8 83 Yes Yes 1",
 		"utf8_general_ci utf8 33  Yes 1",
 		"utf8_unicode_ci utf8 192  Yes 1",
+		"utf8mb4_0900_ai_ci utf8mb4 255  Yes 1",
+		"utf8mb4_0900_bin utf8mb4 309  Yes 1",
 		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
 		"utf8mb4_general_ci utf8mb4 45  Yes 1",
 		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",

@@ -18,20 +18,23 @@ import (
 	"fmt"
 )
 
+// NonPartitionTableID is the partition id for non-partition table.
+const NonPartitionTableID = -1
+
 // AnalyzeTableID is hybrid table id used to analyze table.
 type AnalyzeTableID struct {
 	TableID int64
 	// PartitionID is used for the construction of partition table statistics. It indicate the ID of the partition.
-	// If the table is not the partition table, the PartitionID will be equal to -1.
+	// If the table is not the partition table, the PartitionID will be equal to NonPartitionTableID.
 	PartitionID int64
 }
 
 // GetStatisticsID is used to obtain the table ID to build statistics.
-// If the 'PartitionID == -1', we use the TableID to build the statistics for non-partition tables.
+// If the 'PartitionID == NonPartitionTableID', we use the TableID to build the statistics for non-partition tables.
 // Otherwise, we use the PartitionID to build the statistics of the partitions in the partition tables.
 func (h *AnalyzeTableID) GetStatisticsID() int64 {
 	statisticsID := h.TableID
-	if h.PartitionID != -1 {
+	if h.PartitionID != NonPartitionTableID {
 		statisticsID = h.PartitionID
 	}
 	return statisticsID
@@ -39,7 +42,7 @@ func (h *AnalyzeTableID) GetStatisticsID() int64 {
 
 // IsPartitionTable indicates whether the table is partition table.
 func (h *AnalyzeTableID) IsPartitionTable() bool {
-	return h.PartitionID != -1
+	return h.PartitionID != NonPartitionTableID
 }
 
 func (h *AnalyzeTableID) String() string {
@@ -68,12 +71,12 @@ type AnalyzeResult struct {
 
 // AnalyzeResults represents the analyze results of a task.
 type AnalyzeResults struct {
-	TableID  AnalyzeTableID
-	Ars      []*AnalyzeResult
-	Count    int64
-	ExtStats *ExtendedStatsColl
 	Err      error
+	ExtStats *ExtendedStatsColl
 	Job      *AnalyzeJob
+	Ars      []*AnalyzeResult
+	TableID  AnalyzeTableID
+	Count    int64
 	StatsVer int
 	Snapshot uint64
 	// BaseCount is the original count in mysql.stats_meta at the beginning of analyze.

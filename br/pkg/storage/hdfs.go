@@ -123,7 +123,7 @@ func (s *HDFSStorage) URI() string {
 }
 
 // Create opens a file writer by path. path is relative path to storage base path
-func (*HDFSStorage) Create(_ context.Context, _ string) (ExternalFileWriter, error) {
+func (*HDFSStorage) Create(_ context.Context, _ string, _ *WriterOption) (ExternalFileWriter, error) {
 	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 

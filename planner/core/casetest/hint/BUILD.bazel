@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "hint_test",
+    timeout = "short",
+    srcs = [
+        "hint_test.go",
+        "main_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    shard_count = 15,
+    deps = [
+        "//config",
+        "//domain",
+        "//parser/model",
+        "//parser/terror",
+        "//planner/core",
+        "//planner/core/internal",
+        "//sessionctx/stmtctx",
+        "//sessionctx/variable",
+        "//testkit",
+        "//testkit/testdata",
+        "//testkit/testmain",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

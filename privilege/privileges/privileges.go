@@ -515,8 +515,6 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	if SkipWithGrant {
 		p.user = authUser
 		p.host = authHost
-		// special handling to existing users or root user initialized with insecure
-		info.ResourceGroupName = "default"
 		return
 	}
 
@@ -634,9 +632,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	}
 
 	// special handling to existing users or root user initialized with insecure
-	if record.ResourceGroup == "" {
-		info.ResourceGroupName = "default"
-	} else {
+	if record.ResourceGroup != "" {
 		info.ResourceGroupName = record.ResourceGroup
 	}
 	// Skip checking password expiration if the session is migrated from another session.

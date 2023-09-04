@@ -17,6 +17,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/timer/api"
+	mockutil "github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -32,6 +34,7 @@ func TestRuntimeStartStop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	store := api.NewMemoryTimerStore()
+	defer store.Close()
 	cli := api.NewDefaultTimerClient(store)
 	_, err := cli.CreateTimer(ctx, api.TimerSpec{
 		Namespace:       "n1",
@@ -64,11 +67,15 @@ func TestRuntimeStartStop(t *testing.T) {
 	runtime := NewTimerRuntimeBuilder("g1", store).
 		RegisterHookFactory("hook1", hookFactory).
 		Build()
+	require.NotNil(t, runtime.fullRefreshTimerCounter)
+	require.NotNil(t, runtime.partialRefreshTimerCounter)
 
 	runtime.Start()
+	require.True(t, runtime.Running())
 	waitDone(timerProcessed, time.Minute)
 	go func() {
 		runtime.Stop()
+		require.False(t, runtime.Running())
 		cancel()
 	}()
 	waitDone(ctx.Done(), time.Minute)
@@ -78,6 +85,7 @@ func TestRuntimeStartStop(t *testing.T) {
 
 func TestEnsureWorker(t *testing.T) {
 	store := api.NewMemoryTimerStore()
+	defer store.Close()
 	cli := api.NewDefaultTimerClient(store)
 
 	var factoryMock mock.Mock
@@ -112,24 +120,32 @@ func TestEnsureWorker(t *testing.T) {
 
 func TestTryTriggerTimer(t *testing.T) {
 	now := time.Now()
-	runtime := NewTimerRuntimeBuilder("g1", api.NewMemoryTimerStore()).Build()
+	store := api.NewMemoryTimerStore()
+	defer store.Close()
+	runtime := NewTimerRuntimeBuilder("g1", store).Build()
 	runtime.setNowFunc(func() time.Time {
 		return now
 	})
 	runtime.initCtx()
+
+	// t1: idle timer
 	t1 := newTestTimer("t1", "1m", now.Add(-time.Hour))
 	runtime.cache.updateTimer(t1)
 
-	t2 := newTestTimer("t2", "2m", now.Add(-time.Hour))
+	// t2: not idle timer, it will be triggered event timer disabled
+	t2 := newTestTimer("t2", "1h", now)
 	t2.EventStatus = api.SchedEventTrigger
 	t2.EventID = "event2"
 	t2.EventStart = now.Add(-time.Hour)
+	t2.Enable = false
 	runtime.cache.updateTimer(t2)
 
+	// t3: next event time after now
 	t3 := newTestTimer("t3", "10m", now)
 	runtime.cache.updateTimer(t3)
 	runtime.cache.updateNextTryTriggerTime(t3.ID, now.Add(-10*time.Minute))
 
+	// t4: next try trigger time after now
 	t4 := newTestTimer("t4", "1m", now.Add(-time.Hour))
 	runtime.cache.updateTimer(t4)
 	runtime.cache.updateNextTryTriggerTime(t4.ID, now.Add(time.Second))
@@ -137,21 +153,25 @@ func TestTryTriggerTimer(t *testing.T) {
 	t5 := newTestTimer("t5", "5m", now.Add(-10*time.Minute))
 	runtime.cache.updateTimer(t5)
 
+	// t6: worker chan will full when emit t6
 	t6 := newTestTimer("t6", "6m", now.Add(-10*time.Minute))
 	runtime.cache.updateTimer(t6)
 
+	// t6: worker chan will full when emit t7
 	t7 := newTestTimer("t7", "6m", now.Add(-10*time.Minute))
 	runtime.cache.updateTimer(t7)
 
+	// t8: triggering
 	t8 := newTestTimer("t8", "1m", now.Add(-2*time.Hour))
 	runtime.cache.updateTimer(t8)
 	runtime.cache.setTimerProcStatus(t8.ID, procTriggering, "event8")
 
+	// t9: wait close
 	t9 := newTestTimer("t9", "1m", now.Add(-2*time.Hour))
-	runtime.cache.updateTimer(t9)
 	t9.EventStatus = api.SchedEventTrigger
 	t9.EventID = "event9"
 	t9.EventStart = now.Add(-2 * time.Hour)
+	runtime.cache.updateTimer(t9)
 	runtime.cache.setTimerProcStatus(t9.ID, procWaitTriggerClose, "event9")
 
 	ch := make(chan *triggerEventRequest, 3)
@@ -207,11 +227,48 @@ func TestTryTriggerTimer(t *testing.T) {
 	consumeAndVerify(t1)
 	consumeAndVerify(t5)
 	consumeAndVerify(nil)
+
+	// t3: has a processed manual request
+	t3 = t3.Clone()
+	t3.Version++
+	t3.ManualRequest = api.ManualRequest{
+		ManualRequestID:   "req1",
+		ManualRequestTime: now,
+		ManualTimeout:     time.Minute,
+		ManualProcessed:   true,
+		ManualEventID:     "event1",
+	}
+	runtime.cache.updateTimer(t3)
+	runtime.tryTriggerTimerEvents()
+	consumeAndVerify(nil)
+
+	// t3: has a not processed manual request but timer is disabled
+	t3 = t3.Clone()
+	t3.Enable = false
+	t3.ManualRequest = api.ManualRequest{
+		ManualRequestID:   "req2",
+		ManualRequestTime: now,
+		ManualTimeout:     time.Minute,
+	}
+	t3.Version++
+	runtime.cache.updateTimer(t3)
+	runtime.tryTriggerTimerEvents()
+	consumeAndVerify(nil)
+
+	// t3: has a not processed manual request
+	t3 = t3.Clone()
+	t3.Enable = true
+	t3.Version++
+	runtime.cache.updateTimer(t3)
+	runtime.tryTriggerTimerEvents()
+	consumeAndVerify(t3)
 }
 
 func TestHandleHookWorkerResponse(t *testing.T) {
 	now := time.Now()
-	runtime := NewTimerRuntimeBuilder("g1", api.NewMemoryTimerStore()).Build()
+	store := api.NewMemoryTimerStore()
+	defer store.Close()
+	runtime := NewTimerRuntimeBuilder("g1", store).Build()
 	runtime.setNowFunc(func() time.Time {
 		return now
 	})
@@ -294,7 +351,9 @@ func TestHandleHookWorkerResponse(t *testing.T) {
 
 func TestNextTryTriggerDuration(t *testing.T) {
 	now := time.Now()
-	runtime := NewTimerRuntimeBuilder("g1", api.NewMemoryTimerStore()).Build()
+	store := api.NewMemoryTimerStore()
+	defer store.Close()
+	runtime := NewTimerRuntimeBuilder("g1", store).Build()
 	runtime.setNowFunc(func() time.Time {
 		return now
 	})
@@ -325,12 +384,19 @@ func TestNextTryTriggerDuration(t *testing.T) {
 	require.Equal(t, time.Second, interval)
 
 	interval = runtime.getNextTryTriggerDuration(now.Add(100 * time.Millisecond))
-	require.Equal(t, 1100*time.Millisecond, interval)
+	require.Equal(t, time.Second, interval)
+
+	now = now.Add(time.Hour)
+	interval = runtime.getNextTryTriggerDuration(time.UnixMilli(0))
+	require.Equal(t, time.Duration(0), interval)
 }
 
 func TestFullRefreshTimers(t *testing.T) {
+	fullRefreshCounter := &mockutil.MetricsCounter{}
 	mockCore, mockStore := newMockStore()
 	runtime := NewTimerRuntimeBuilder("g1", mockStore).Build()
+	require.NotNil(t, runtime.fullRefreshTimerCounter)
+	runtime.fullRefreshTimerCounter = fullRefreshCounter
 	runtime.cond = &api.TimerCond{Namespace: api.NewOptionalVal("n1")}
 	runtime.initCtx()
 
@@ -369,11 +435,14 @@ func TestFullRefreshTimers(t *testing.T) {
 	t6New.Version++
 
 	mockCore.On("List", mock.Anything, runtime.cond).Return(timers[0:], errors.New("mockErr")).Once()
+	require.Equal(t, float64(0), fullRefreshCounter.Val())
 	runtime.fullRefreshTimers()
+	require.Equal(t, float64(1), fullRefreshCounter.Val())
 	require.Equal(t, 7, len(runtime.cache.items))
 
 	mockCore.On("List", mock.Anything, runtime.cond).Return([]*api.TimerRecord{t0New, timers[1], t2New, t4New, t6New}, nil).Once()
 	runtime.fullRefreshTimers()
+	require.Equal(t, float64(2), fullRefreshCounter.Val())
 	mockCore.AssertExpectations(t)
 	require.Equal(t, 5, len(runtime.cache.items))
 	require.Equal(t, t0New, runtime.cache.items["t0"].timer)
@@ -387,10 +456,13 @@ func TestFullRefreshTimers(t *testing.T) {
 }
 
 func TestBatchHandlerWatchResponses(t *testing.T) {
+	partialRefreshCounter := &mockutil.MetricsCounter{}
 	mockCore, mockStore := newMockStore()
 	runtime := NewTimerRuntimeBuilder("g1", mockStore).Build()
+	require.NotNil(t, runtime.partialRefreshTimerCounter)
 	runtime.cond = &api.TimerCond{Namespace: api.NewOptionalVal("n1")}
 	runtime.initCtx()
+	runtime.partialRefreshTimerCounter = partialRefreshCounter
 
 	timers := make([]*api.TimerRecord, 7)
 	for i := 0; i < len(timers); i++ {
@@ -450,6 +522,7 @@ func TestBatchHandlerWatchResponses(t *testing.T) {
 			require.Contains(t, condIDs, "t2")
 		})
 
+	require.Equal(t, float64(0), partialRefreshCounter.Val())
 	runtime.batchHandleWatchResponses([]api.WatchTimerResponse{
 		{
 			Events: []*api.WatchTimerEvent{
@@ -476,6 +549,7 @@ func TestBatchHandlerWatchResponses(t *testing.T) {
 			},
 		},
 	})
+	require.Equal(t, float64(1), partialRefreshCounter.Val())
 
 	mockCore.AssertExpectations(t)
 	require.Equal(t, 6, len(runtime.cache.items))
@@ -581,7 +655,7 @@ func TestCreateWatchTimerChan(t *testing.T) {
 	mockCore.On("Watch", mock.Anything).Return(retCh).Once()
 	mockCore.On("WatchSupported").Return(true).Once()
 
-	got := runtime.createWatchTimerChan()
+	got := runtime.createWatchTimerChan(context.Background())
 	require.True(t, got != idleWatchChan)
 	select {
 	case resp, ok := <-got:
@@ -594,7 +668,7 @@ func TestCreateWatchTimerChan(t *testing.T) {
 	mockCore.AssertExpectations(t)
 
 	mockCore.On("WatchSupported").Return(false).Once()
-	got = runtime.createWatchTimerChan()
+	got = runtime.createWatchTimerChan(context.Background())
 	require.True(t, got == idleWatchChan)
 	select {
 	case <-got:
@@ -667,6 +741,7 @@ func TestTimerFullProcess(t *testing.T) {
 	setNow(time.UnixMilli(0))
 	var zeroTime time.Time
 	store := api.NewMemoryTimerStore()
+	defer store.Close()
 	cli := api.NewDefaultTimerClient(store)
 	hook := newMockHook()
 	runtime := NewTimerRuntimeBuilder("g1", store).
@@ -804,4 +879,71 @@ func TestTimerFullProcess(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, onSchedTimer.Load(), timer)
 	onSchedTimer.Store(nil)
+}
+
+func TestTimerRuntimeLoopPanicRecover(t *testing.T) {
+	mockCore, mockStore := newMockStore()
+	rt := NewTimerRuntimeBuilder("g1", mockStore).Build()
+
+	// start and panic two times, then normal
+	started := make(chan struct{})
+	mockCore.On("WatchSupported").Return(false).Times(3)
+	mockCore.On("List", mock.Anything, mock.Anything).Panic("store panic").Twice()
+	mockCore.On("List", mock.Anything, mock.Anything).Return([]*api.TimerRecord(nil), nil).Once().Run(func(args mock.Arguments) {
+		close(started)
+	})
+	rt.retryLoopWait = time.Millisecond
+	rt.Start()
+	waitDone(started, 5*time.Second)
+	mockCore.AssertExpectations(t)
+
+	// normal stop
+	stopped := make(chan struct{})
+	go func() {
+		rt.Stop()
+		close(stopped)
+	}()
+	waitDone(stopped, 5*time.Second)
+	mockCore.AssertExpectations(t)
+
+	// start and panic always
+	rt = NewTimerRuntimeBuilder("g1", mockStore).Build()
+	mockCore.On("WatchSupported").Return(false)
+	mockCore.On("List", mock.Anything, mock.Anything).Panic("store panic")
+	rt.retryLoopWait = time.Millisecond
+	rt.Start()
+	time.Sleep(10 * time.Millisecond)
+
+	// can also stop
+	stopped = make(chan struct{})
+	go func() {
+		rt.Stop()
+		close(stopped)
+	}()
+	waitDone(stopped, 5*time.Second)
+	mockCore.AssertExpectations(t)
+
+	// stop should stop immediately
+	mockCore, mockStore = newMockStore()
+	rt = NewTimerRuntimeBuilder("g1", mockStore).Build()
+	started = make(chan struct{})
+	var once sync.Once
+	mockCore.On("WatchSupported").Return(false).Once()
+	mockCore.On("List", mock.Anything, mock.Anything).Once().Run(func(args mock.Arguments) {
+		once.Do(func() {
+			close(started)
+		})
+		panic("store panic")
+	})
+	rt.retryLoopWait = time.Minute
+	rt.Start()
+	waitDone(started, 5*time.Second)
+	time.Sleep(time.Millisecond)
+	stopped = make(chan struct{})
+	go func() {
+		rt.Stop()
+		close(stopped)
+	}()
+	waitDone(stopped, 5*time.Second)
+	mockCore.AssertExpectations(t)
 }

@@ -82,7 +82,7 @@ func newEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.Engin
 func (ei *engineInfo) Flush() error {
 	err := ei.openedEngine.Flush(ei.ctx)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrFlushEngineErr, zap.Error(err),
+		logutil.Logger(ei.ctx).Error(LitErrFlushEngineErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return err
 	}
@@ -97,20 +97,20 @@ func (ei *engineInfo) Clean() {
 	indexEngine := ei.openedEngine
 	closedEngine, err := indexEngine.Close(ei.ctx)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Error(err),
+		logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return
 	}
 	ei.openedEngine = nil
 	err = ei.closeWriters()
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCloseWriterErr, zap.Error(err),
+		logutil.Logger(ei.ctx).Error(LitErrCloseWriterErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	}
 	// Here the local intermediate files will be removed.
 	err = closedEngine.Cleanup(ei.ctx)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCleanEngineErr, zap.Error(err),
+		logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	}
 }
@@ -118,24 +118,24 @@ func (ei *engineInfo) Clean() {
 // ImportAndClean imports the engine data to TiKV and cleans up the local intermediate files.
 func (ei *engineInfo) ImportAndClean() error {
 	// Close engine and finish local tasks of lightning.
-	logutil.BgLogger().Info(LitInfoCloseEngine, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+	logutil.Logger(ei.ctx).Info(LitInfoCloseEngine, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	indexEngine := ei.openedEngine
 	closeEngine, err1 := indexEngine.Close(ei.ctx)
 	if err1 != nil {
-		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Error(err1),
+		logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err1),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return err1
 	}
 	ei.openedEngine = nil
 	err := ei.closeWriters()
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCloseWriterErr, zap.Error(err),
+		logutil.Logger(ei.ctx).Error(LitErrCloseWriterErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return err
 	}
 
 	// Ingest data to TiKV.
-	logutil.BgLogger().Info(LitInfoStartImport, zap.Int64("job ID", ei.jobID),
+	logutil.Logger(ei.ctx).Info(LitInfoStartImport, zap.Int64("job ID", ei.jobID),
 		zap.Int64("index ID", ei.indexID),
 		zap.String("split region size", strconv.FormatInt(int64(config.SplitRegionSize), 10)))
 	err = closeEngine.Import(ei.ctx, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
@@ -144,7 +144,7 @@ func (ei *engineInfo) ImportAndClean() error {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			logLevel = zap.WarnLevel
 		}
-		logutil.BgLogger().Log(logLevel, LitErrIngestDataErr, zap.Error(err),
+		logutil.Logger(ei.ctx).Log(logLevel, LitErrIngestDataErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return err
 	}
@@ -152,7 +152,7 @@ func (ei *engineInfo) ImportAndClean() error {
 	// Clean up the engine local workspace.
 	err = closeEngine.Cleanup(ei.ctx)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Error(err),
+		logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return err
 	}
@@ -172,19 +172,19 @@ func (ei *engineInfo) CreateWriter(id int, unique bool) (Writer, error) {
 	ei.memRoot.RefreshConsumption()
 	ok := ei.memRoot.CheckConsume(StructSizeWriterCtx)
 	if !ok {
-		return nil, genEngineAllocMemFailedErr(ei.memRoot, ei.jobID, ei.indexID)
+		return nil, genEngineAllocMemFailedErr(ei.ctx, ei.memRoot, ei.jobID, ei.indexID)
 	}
 
 	wCtx, err := ei.newWriterContext(id, unique)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCreateContextFail, zap.Error(err),
+		logutil.Logger(ei.ctx).Error(LitErrCreateContextFail, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID),
 			zap.Int("worker ID", id))
 		return nil, err
 	}
 
 	ei.memRoot.Consume(StructSizeWriterCtx)
-	logutil.BgLogger().Info(LitInfoCreateWrite, zap.Int64("job ID", ei.jobID),
+	logutil.Logger(ei.ctx).Info(LitInfoCreateWrite, zap.Int64("job ID", ei.jobID),
 		zap.Int64("index ID", ei.indexID), zap.Int("worker ID", id),
 		zap.Int64("allocate memory", StructSizeWriterCtx),
 		zap.Int64("current memory usage", ei.memRoot.CurrentUsage()),

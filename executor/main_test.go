@@ -15,12 +15,11 @@
 package executor_test
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/testkit/testsetup"
@@ -30,19 +29,16 @@ import (
 
 var testDataMap = make(testdata.BookKeeper)
 var prepareMergeSuiteData testdata.TestData
-var aggMergeSuiteData testdata.TestData
 var executorSuiteData testdata.TestData
 var pointGetSuiteData testdata.TestData
 var slowQuerySuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
-	testDataMap.LoadTestSuiteData("testdata", "agg_suite")
 	testDataMap.LoadTestSuiteData("testdata", "executor_suite")
 	testDataMap.LoadTestSuiteData("testdata", "prepare_suite")
 	testDataMap.LoadTestSuiteData("testdata", "point_get_suite")
 	testDataMap.LoadTestSuiteData("testdata", "slow_query_suite")
-	aggMergeSuiteData = testDataMap["agg_suite"]
 	executorSuiteData = testDataMap["executor_suite"]
 	prepareMergeSuiteData = testDataMap["prepare_suite"]
 	pointGetSuiteData = testDataMap["point_get_suite"]
@@ -56,6 +52,7 @@ func TestMain(m *testing.M) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
 	tikv.EnableFailpoints()
+	variable.StatsCacheMemQuota.Store(5000)
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
@@ -74,13 +71,4 @@ func TestMain(m *testing.M) {
 	}
 
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
-}
-
-func fillData(tk *testkit.TestKit, table string) {
-	tk.MustExec("use test")
-	tk.MustExec(fmt.Sprintf("create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));", table))
-
-	// insert data
-	tk.MustExec(fmt.Sprintf("insert INTO %s VALUES (1, \"hello\");", table))
-	tk.MustExec(fmt.Sprintf("insert into %s values (2, \"hello\");", table))
 }

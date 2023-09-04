@@ -4,7 +4,6 @@ go_library(
     name = "scheduler",
     srcs = [
         "interface.go",
-        "interface_mock.go",
         "manager.go",
         "register.go",
         "scheduler.go",
@@ -13,11 +12,13 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//disttask/framework/proto",
+        "//disttask/framework/storage",
+        "//domain/infosync",
         "//resourcemanager/pool/spool",
         "//resourcemanager/util",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_stretchr_testify//mock",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -33,13 +34,15 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "on",
-    shard_count = 8,
+    shard_count = 9,
     deps = [
+        "//disttask/framework/mock",
         "//disttask/framework/proto",
         "//resourcemanager/pool/spool",
         "//resourcemanager/util",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pkg_errors//:errors",
-        "@com_github_stretchr_testify//mock",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
     ],
 )

@@ -84,7 +84,7 @@ func openParser(
 	tblInfo *model.TableInfo,
 ) (mydump.Parser, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
-	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store)
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{})
 	if err != nil {
 		return nil, err
 	}
@@ -422,7 +422,7 @@ func (cr *chunkProcessor) encodeLoop(
 					lastOffset := curOffset
 					curOffset = newOffset
 
-					if rc.errorMgr.RemainRecord() <= 0 {
+					if rc.errorMgr.ConflictRecordsRemain() <= 0 {
 						continue
 					}
 
@@ -435,7 +435,7 @@ func (cr *chunkProcessor) encodeLoop(
 						logger,
 					)
 					rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
-					err = rc.errorMgr.RecordConflictErrorV2(
+					err = rc.errorMgr.RecordDuplicate(
 						ctx,
 						logger,
 						t.tableName,

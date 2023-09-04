@@ -783,6 +783,8 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`set tidb_cost_model_version=2`)
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
+
 	testSQL := `create table if not exists show_warnings_expr_pushdown (a int, value date)`
 	tk.MustExec(testSQL)
 
@@ -2079,4 +2081,48 @@ func TestShowBindingDigestField(t *testing.T) {
 	tk.MustExec("drop global binding for select * from t1, t2 where t1.id = t2.id")
 	result = tk.MustQuery("show global bindings;")
 	require.Equal(t, len(result.Rows()), 0)
+}
+
+func TestShowPasswordVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("SET GLOBAL authentication_ldap_sasl_bind_root_pwd = ''")
+	rs, err := tk.Exec("show variables like 'authentication_ldap_sasl_bind_root_pwd'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], "")
+	rs, err = tk.Exec("SELECT current_value FROM information_schema.variables_info WHERE VARIABLE_NAME LIKE 'authentication_ldap_sasl_bind_root_pwd'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "")
+
+	tk.MustExec("SET GLOBAL authentication_ldap_sasl_bind_root_pwd = password")
+	defer func() {
+		tk.MustExec("SET GLOBAL authentication_ldap_sasl_bind_root_pwd = ''")
+	}()
+	rs, err = tk.Exec("show variables like 'authentication_ldap_sasl_bind_root_pwd'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.MaskPwd)
+	rs, err = tk.Exec("SELECT current_value FROM information_schema.variables_info WHERE VARIABLE_NAME LIKE 'authentication_ldap_sasl_bind_root_pwd'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], variable.MaskPwd)
+
+	tk.MustExec("SET GLOBAL authentication_ldap_simple_bind_root_pwd = ''")
+	rs, err = tk.Exec("show variables like 'authentication_ldap_simple_bind_root_pwd'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], "")
+	rs, err = tk.Exec("SELECT current_value FROM information_schema.variables_info WHERE VARIABLE_NAME LIKE 'authentication_ldap_simple_bind_root_pwd'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "")
+
+	tk.MustExec("SET GLOBAL authentication_ldap_simple_bind_root_pwd = password")
+	defer func() {
+		tk.MustExec("SET GLOBAL authentication_ldap_simple_bind_root_pwd = ''")
+	}()
+
+	rs, err = tk.Exec("show variables like 'authentication_ldap_simple_bind_root_pwd'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.MaskPwd)
+	rs, err = tk.Exec("SELECT current_value FROM information_schema.variables_info WHERE VARIABLE_NAME LIKE 'authentication_ldap_simple_bind_root_pwd'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], variable.MaskPwd)
 }

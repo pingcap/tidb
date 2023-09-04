@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/keyspace"
+	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/stretchr/testify/require"
@@ -51,7 +52,7 @@ func TestUptime(t *testing.T) {
 	require.NoError(t, err)
 
 	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
+	cfg := util.NewTestConfig()
 	cfg.Socket = ""
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0

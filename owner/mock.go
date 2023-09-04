@@ -17,9 +17,11 @@ package owner
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
@@ -43,6 +45,8 @@ type mockManager struct {
 	resignDone   chan struct{}
 }
 
+var mockOwnerOpValue atomic.Pointer[OpType]
+
 // NewMockManager creates a new mock Manager.
 func NewMockManager(ctx context.Context, id string, store kv.Storage, ownerKey string) Manager {
 	cancelCtx, cancelFunc := context.WithCancel(ctx)
@@ -50,6 +54,10 @@ func NewMockManager(ctx context.Context, id string, store kv.Storage, ownerKey s
 	if store != nil {
 		storeID = store.UUID()
 	}
+
+	// Make sure the mockOwnerOpValue is initialized before GetOwnerOpValue in bootstrap.
+	op := OpNone
+	mockOwnerOpValue.Store(&op)
 	return &mockManager{
 		id:           id,
 		storeID:      storeID,
@@ -68,7 +76,7 @@ func (m *mockManager) ID() string {
 
 // IsOwner implements Manager.IsOwner interface.
 func (m *mockManager) IsOwner() bool {
-	logutil.BgLogger().Debug("[ddl] owner manager checks owner",
+	logutil.BgLogger().Debug("owner manager checks owner", zap.String("category", "ddl"),
 		zap.String("ID", m.id), zap.String("ownerKey", m.key))
 	return util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).IsOwner(m.id)
 }
@@ -76,7 +84,7 @@ func (m *mockManager) IsOwner() bool {
 func (m *mockManager) toBeOwner() {
 	ok := util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).SetOwner(m.id)
 	if ok {
-		logutil.BgLogger().Debug("[ddl] owner manager gets owner",
+		logutil.BgLogger().Debug("owner manager gets owner", zap.String("category", "ddl"),
 			zap.String("ID", m.id), zap.String("ownerKey", m.key))
 		if m.beOwnerHook != nil {
 			m.beOwnerHook()
@@ -93,7 +101,7 @@ func (m *mockManager) RetireOwner() {
 func (m *mockManager) Cancel() {
 	m.cancel()
 	m.wg.Wait()
-	logutil.BgLogger().Info("[ddl] owner manager is canceled",
+	logutil.BgLogger().Info("owner manager is canceled", zap.String("category", "ddl"),
 		zap.String("ID", m.id), zap.String("ownerKey", m.key))
 }
 
@@ -105,37 +113,47 @@ func (m *mockManager) GetOwnerID(_ context.Context) (string, error) {
 	return "", errors.New("no owner")
 }
 
-var mockOwnerOpValue = OpNone
-
 func (*mockManager) SetOwnerOpValue(_ context.Context, op OpType) error {
-	mockOwnerOpValue = op
+	failpoint.Inject("MockNotSetOwnerOp", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil)
+		}
+	})
+	mockOwnerOpValue.Store(&op)
 	return nil
+}
+
+func sleepContext(ctx context.Context, delay time.Duration) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(delay):
+	}
 }
 
 // CampaignOwner implements Manager.CampaignOwner interface.
 func (m *mockManager) CampaignOwner() error {
 	m.wg.Add(1)
 	go func() {
-		logutil.BgLogger().Debug("[ddl] owner manager campaign owner",
+		logutil.BgLogger().Debug("owner manager campaign owner", zap.String("category", "ddl"),
 			zap.String("ID", m.id), zap.String("ownerKey", m.key))
 		defer m.wg.Done()
 		for {
 			select {
 			case <-m.campaignDone:
 				m.RetireOwner()
-				logutil.BgLogger().Debug("[ddl] owner manager campaign done", zap.String("ID", m.id))
+				logutil.BgLogger().Debug("owner manager campaign done", zap.String("category", "ddl"), zap.String("ID", m.id))
 				return
 			case <-m.ctx.Done():
 				m.RetireOwner()
-				logutil.BgLogger().Debug("[ddl] owner manager is cancelled", zap.String("ID", m.id))
+				logutil.BgLogger().Debug("owner manager is cancelled", zap.String("category", "ddl"), zap.String("ID", m.id))
 				return
 			case <-m.resignDone:
 				m.RetireOwner()
-				time.Sleep(1 * time.Second) // Give a chance to the other owner managers to get owner.
+				sleepContext(m.ctx, 1*time.Second) // Give a chance to the other owner managers to get owner.
 			default:
 				m.toBeOwner()
-				time.Sleep(1 * time.Second)
-				logutil.BgLogger().Debug("[ddl] owner manager tick", zap.String("ID", m.id),
+				sleepContext(m.ctx, 1*time.Second) // Speed up domain.Close()
+				logutil.BgLogger().Debug("owner manager tick", zap.String("category", "ddl"), zap.String("ID", m.id),
 					zap.String("ownerKey", m.key), zap.String("currentOwner", util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).GetOwner()))
 			}
 		}

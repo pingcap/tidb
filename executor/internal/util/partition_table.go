@@ -62,6 +62,8 @@ func UpdateExecutorTableID(ctx context.Context, exec *tipb.Executor, recursive b
 		child = exec.Sort.Child
 	case tipb.ExecType_TypeExpand:
 		child = exec.Expand.Child
+	case tipb.ExecType_TypeExpand2:
+		child = exec.Expand2.Child
 	default:
 		return errors.Trace(fmt.Errorf("unknown new tipb protocol %d", exec.Tp))
 	}

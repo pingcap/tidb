@@ -16,7 +16,7 @@ package executor_test
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -273,8 +273,6 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 }
 
 func TestAnalyzeIndexExtractTopN(t *testing.T) {
-	_ = checkHistogram
-	t.Skip("unstable, skip it and fix it before 20210618")
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -328,7 +326,7 @@ func TestAnalyzePartitionTableForFloat(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t1 ( id bigint(20) unsigned NOT NULL AUTO_INCREMENT, num float(9,8) DEFAULT NULL, PRIMARY KEY (id)  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH (id) PARTITIONS 128;")
 	// To reproduce the error we meet in https://github.com/pingcap/tidb/issues/35910, we should use the data provided in this issue
-	b, err := ioutil.ReadFile("testdata/analyze_test_data.sql")
+	b, err := os.ReadFile("testdata/analyze_test_data.sql")
 	require.NoError(t, err)
 	sqls := strings.Split(string(b), ";")
 	for _, sql := range sqls {
@@ -433,8 +431,8 @@ func TestMergeGlobalStatsWithUnAnalyzedPartition(t *testing.T) {
 	tk.MustExec("analyze table t partition p2 index idxc;")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p2"))
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p2, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\""))
 	tk.MustExec("analyze table t partition p0;")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0"))
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/2) as the sample-rate=1\""))
 }

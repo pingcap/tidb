@@ -152,7 +152,7 @@ func TestGetReservedConnID(t *testing.T) {
 		return 1001
 	}
 
-	globalAlloc := globalconn.NewGlobalAllocator(serverID)
+	globalAlloc := globalconn.NewGlobalAllocator(serverID, true)
 	var maxLocalConnID uint64 = 1<<40 - 1
 	assert.Equal(uint64(1001)<<41|(maxLocalConnID)<<1|1, globalAlloc.GetReservedConnID(0))
 	assert.Equal(uint64(1001)<<41|(maxLocalConnID-1)<<1|1, globalAlloc.GetReservedConnID(1))
@@ -202,7 +202,7 @@ func BenchmarkLocalConnIDAllocator(b *testing.B) {
 
 		b.Run(fmt.Sprintf("Allocator 32(LockBased) x%v", concurrency), func(b *testing.B) {
 			pool := LockBasedCircularPool{}
-			pool.InitExt(globalconn.LocalConnIDBits32, math.MaxUint32)
+			pool.InitExt(1<<globalconn.LocalConnIDBits32, math.MaxUint32)
 
 			b.SetParallelism(concurrency)
 			b.ResetTimer()

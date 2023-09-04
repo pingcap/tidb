@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -25,7 +26,9 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"unicode/utf8"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -36,10 +39,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/config"
 	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
@@ -55,39 +58,61 @@ var NewTiKVModeSwitcher = local.NewTiKVModeSwitcher
 var (
 	// CheckDiskQuotaInterval is the default time interval to check disk quota.
 	// TODO: make it dynamically adjusting according to the speed of import and the disk size.
-	CheckDiskQuotaInterval = time.Minute
+	CheckDiskQuotaInterval = 10 * time.Second
+
+	// defaultMaxEngineSize is the default max engine size in bytes.
+	// we make it 5 times larger than lightning default engine size to reduce range overlap, especially for index,
+	// since we have an index engine per distributed subtask.
+	// for 1TiB data, we can divide it into 2 engines that runs on 2 TiDB. it can have a good balance between
+	// range overlap and sort speed in one of our test of:
+	// 	- 10 columns, PK + 6 secondary index 2 of which is mv index
+	//	- 1.05 KiB per row, 527 MiB per file, 1024000000 rows, 1 TiB total
+	//
+	// it might not be the optimal value for other cases.
+	defaultMaxEngineSize = int64(5 * config.DefaultBatchSize)
 )
 
-func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
-	tidbCfg := tidb.GetGlobalConfig()
+// prepareSortDir creates a new directory for import, remove previous sort directory if exists.
+func prepareSortDir(e *LoadDataController, taskID int64, tidbCfg *tidb.Config) (string, error) {
 	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
-	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix, strconv.FormatInt(jobID, 10))
+	importDir := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
+	sortDir := filepath.Join(importDir, strconv.FormatInt(taskID, 10))
 
-	if info, err := os.Stat(sortPath); err != nil {
-		if !os.IsNotExist(err) {
-			e.logger.Error("stat sort dir failed", zap.String("path", sortPath), zap.Error(err))
+	if info, err := os.Stat(importDir); err != nil || !info.IsDir() {
+		if err != nil && !os.IsNotExist(err) {
+			e.logger.Error("stat import dir failed", zap.String("import_dir", importDir), zap.Error(err))
 			return "", errors.Trace(err)
 		}
-	} else if info.IsDir() {
-		// Currently remove all dir to clean garbage data.
-		// TODO: when do checkpoint should change follow logic.
-		err := os.RemoveAll(sortPath)
-		if err != nil {
-			e.logger.Error("remove sort dir failed", zap.String("path", sortPath), zap.Error(err))
+		if info != nil && !info.IsDir() {
+			e.logger.Warn("import dir is not a dir, remove it", zap.String("import_dir", importDir))
+			if err := os.RemoveAll(importDir); err != nil {
+				return "", errors.Trace(err)
+			}
+		}
+		e.logger.Info("import dir not exists, create it", zap.String("import_dir", importDir))
+		if err := os.MkdirAll(importDir, 0o700); err != nil {
+			e.logger.Error("failed to make dir", zap.String("import_dir", importDir), zap.Error(err))
+			return "", errors.Trace(err)
 		}
 	}
 
-	err := os.MkdirAll(sortPath, 0o700)
-	if err != nil {
-		e.logger.Error("failed to make sort dir", zap.String("path", sortPath), zap.Error(err))
-		return "", errors.Trace(err)
+	// todo: remove this after we support checkpoint
+	if _, err := os.Stat(sortDir); err != nil {
+		if !os.IsNotExist(err) {
+			e.logger.Error("stat sort dir failed", zap.String("sort_dir", sortDir), zap.Error(err))
+			return "", errors.Trace(err)
+		}
+	} else {
+		e.logger.Warn("sort dir already exists, remove it", zap.String("sort_dir", sortDir))
+		if err := os.RemoveAll(sortDir); err != nil {
+			return "", errors.Trace(err)
+		}
 	}
-	e.logger.Info("sort dir prepared", zap.String("path", sortPath))
-	return sortPath, nil
+	return sortDir, nil
 }
 
-// GetTiKVModeSwitcher creates a new TiKV mode switcher.
-func GetTiKVModeSwitcher(logger *zap.Logger) (local.TiKVModeSwitcher, error) {
+// GetTiKVModeSwitcherWithPDClient creates a new TiKV mode switcher with its pd Client.
+func GetTiKVModeSwitcherWithPDClient(ctx context.Context, logger *zap.Logger) (pd.Client, local.TiKVModeSwitcher, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
 	tls, err := common.NewTLS(
@@ -98,12 +123,20 @@ func GetTiKVModeSwitcher(logger *zap.Logger) (local.TiKVModeSwitcher, error) {
 		nil, nil, nil,
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return NewTiKVModeSwitcher(tls, tidbCfg.Path, logger), nil
+	tlsOpt := tls.ToPDSecurityOption()
+	pdCli, err := pd.NewClientWithContext(ctx, []string{tidbCfg.Path}, tlsOpt)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	return pdCli, NewTiKVModeSwitcher(tls, pdCli, logger), nil
 }
 
-func getCachedKVStoreFrom(pdAddr string, tls *common.TLS) (tidbkv.Storage, error) {
+// GetCachedKVStoreFrom gets a cached kv store from PD address.
+// Callers should NOT close the kv store.
+func GetCachedKVStoreFrom(pdAddr string, tls *common.TLS) (tidbkv.Storage, error) {
 	// Disable GC because TiDB enables GC already.
 	keySpaceName := tidb.GetGlobalKeyspaceName()
 	// the kv store we get is a cached store, so we can't close it.
@@ -124,7 +157,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 
 	tidbCfg := tidb.GetGlobalConfig()
 	// todo: we only need to prepare this once on each node(we might call it 3 times in distribution framework)
-	dir, err := prepareSortDir(e, taskID)
+	dir, err := prepareSortDir(e, taskID, tidbCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +175,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 	}
 
 	// no need to close kvStore, since it's a cached store.
-	kvStore, err := getCachedKVStoreFrom(tidbCfg.Path, tls)
+	kvStore, err := GetCachedKVStoreFrom(tidbCfg.Path, tls)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -156,18 +189,20 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
-		// todo: local backend report error when the sort-dir already exists & checkpoint disabled.
-		// set to false when we fix it.
-		CheckpointEnabled:       true,
+		// enable after we support checkpoint
+		CheckpointEnabled:       false,
 		MemTableSize:            config.DefaultEngineMemCacheSize,
 		LocalWriterMemCacheSize: int64(config.DefaultLocalWriterMemCacheSize),
 		ShouldCheckTiKV:         true,
 		DupeDetectEnabled:       false,
-		DuplicateDetectOpt:      local.DupDetectOpt{ReportErrOnDup: false},
+		DuplicateDetectOpt:      common.DupDetectOpt{ReportErrOnDup: false},
 		StoreWriteBWLimit:       int(e.MaxWriteSpeed),
 		MaxOpenFiles:            int(util.GenRLimit("table_import")),
 		KeyspaceName:            tidb.GetGlobalKeyspaceName(),
 		PausePDSchedulerScope:   config.PausePDSchedulerScopeTable,
+	}
+	if e.IsRaftKV2 {
+		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
 	}
 
 	// todo: use a real region size getter
@@ -186,13 +221,16 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 			Name: e.Table.Meta().Name.O,
 			Core: e.Table.Meta(),
 		},
-		encTable:        tbl,
-		dbID:            e.DBID,
-		store:           e.dataStore,
-		kvStore:         kvStore,
-		logger:          e.logger,
-		regionSplitSize: int64(config.SplitRegionSize),
-		regionSplitKeys: int64(config.SplitRegionKeys),
+		encTable: tbl,
+		dbID:     e.DBID,
+		store:    e.dataStore,
+		kvStore:  kvStore,
+		logger:   e.logger,
+		// this is the value we use for 50TiB data parallel import.
+		// this might not be the optimal value.
+		// todo: use different default for single-node import and distributed import.
+		regionSplitSize: 2 * int64(config.SplitRegionSize),
+		regionSplitKeys: 2 * int64(config.SplitRegionKeys),
 		diskQuota:       adjustDiskQuota(int64(e.DiskQuota), dir, e.logger),
 		diskQuotaLock:   new(syncutil.RWMutex),
 	}, nil
@@ -214,17 +252,14 @@ type TableImporter struct {
 	logger          *zap.Logger
 	regionSplitSize int64
 	regionSplitKeys int64
-	// the smallest auto-generated ID in current import.
-	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
-	lastInsertID  uint64
-	diskQuota     int64
-	diskQuotaLock *syncutil.RWMutex
+	diskQuota       int64
+	diskQuotaLock   *syncutil.RWMutex
 }
 
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, ti.dataStore)
+			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, ti.dataStore, storage.DecompressConfig{})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -236,9 +271,19 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 	if err != nil {
 		return nil, err
 	}
-	// todo: when support checkpoint, we should set pos too.
-	// WARN: parser.SetPos can only be set before we read anything now. should fix it before set pos.
-	parser.SetRowID(chunk.Chunk.PrevRowIDMax)
+	if chunk.Chunk.Offset == 0 {
+		// if data file is split, only the first chunk need to do skip.
+		// see check in initOptions.
+		if err = ti.LoadDataController.HandleSkipNRows(parser); err != nil {
+			return nil, err
+		}
+		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
+	} else {
+		// if we reached here, the file must be an uncompressed CSV file.
+		if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
+			return nil, err
+		}
+	}
 	return parser, nil
 }
 
@@ -257,60 +302,29 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEnc
 	return newTableKVEncoder(cfg, ti)
 }
 
-// VerifyChecksum verify the checksum of the table.
-func (e *LoadDataController) VerifyChecksum(ctx context.Context, localChecksum verify.KVChecksum) (err error) {
-	task := log.BeginTask(e.logger, "verify checksum")
-	defer func() {
-		task.End(zap.ErrorLevel, err)
-	}()
-	tidbCfg := tidb.GetGlobalConfig()
-	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
-	tls, err2 := common.NewTLS(
-		tidbCfg.Security.ClusterSSLCA,
-		tidbCfg.Security.ClusterSSLCert,
-		tidbCfg.Security.ClusterSSLKey,
-		hostPort,
-		nil, nil, nil,
-	)
-	if err2 != nil {
-		return errors.Trace(err2)
+func (e *LoadDataController) getAdjustedMaxEngineSize() int64 {
+	// we want to split data files into subtask of size close to MaxEngineSize to reduce range overlap,
+	// and evenly distribute them to subtasks.
+	// so we adjust MaxEngineSize to make sure each subtask has a similar amount of data to import.
+	// we calculate subtask count first by round(TotalFileSize / maxEngineSize), then adjust maxEngineSize
+	//
+	// AllocateEngineIDs is using ceil() to calculate subtask count, engine size might be too small in some case,
+	// such as 501G data, maxEngineSize will be about 250G, so we don't relay on it.
+	// see https://github.com/pingcap/tidb/blob/b4183e1dc9bb01fb81d3aa79ca4b5b74387c6c2a/br/pkg/lightning/mydump/region.go#L109
+	//
+	// for default e.MaxEngineSize = 500GiB, we have:
+	// data size range(G)   cnt    adjusted-engine-size range(G)
+	// [0, 750)               1    [0, 750)
+	// [750, 1250)            2    [375, 625)
+	// [1250, 1750)           3    [416, 583)
+	// [1750, 2250)           4    [437, 562)
+	maxEngineSize := int64(e.MaxEngineSize)
+	if e.TotalFileSize <= maxEngineSize {
+		return e.TotalFileSize
 	}
-
-	// no need to close kvStore, since it's a cached store.
-	kvStore, err2 := getCachedKVStoreFrom(tidbCfg.Path, tls)
-	if err2 != nil {
-		return errors.Trace(err2)
-	}
-	pdCli, err2 := pd.NewClientWithContext(ctx, []string{tidbCfg.Path}, tls.ToPDSecurityOption())
-	if err2 != nil {
-		return errors.Trace(err2)
-	}
-	defer pdCli.Close()
-
-	tableInfo := &checkpoints.TidbTableInfo{
-		ID:   e.Table.Meta().ID,
-		Name: e.Table.Meta().Name.O,
-		Core: e.Table.Meta(),
-	}
-	manager := local.NewTiKVChecksumManager(kvStore.GetClient(), pdCli, uint(e.DistSQLScanConcurrency))
-	remoteChecksum, err2 := manager.Checksum(ctx, tableInfo)
-	if err2 != nil {
-		return err2
-	}
-	if !remoteChecksum.IsEqual(&localChecksum) {
-		err3 := common.ErrChecksumMismatch.GenWithStackByArgs(
-			remoteChecksum.Checksum, localChecksum.Sum(),
-			remoteChecksum.TotalKVs, localChecksum.SumKVS(),
-			remoteChecksum.TotalBytes, localChecksum.SumSize(),
-		)
-		if e.Checksum == config.OpLevelOptional {
-			e.logger.Warn("verify checksum failed, but checksum is optional, will skip it", log.ShortError(err3))
-			err3 = nil
-		}
-		return err3
-	}
-	e.logger.Info("checksum pass", zap.Object("local", &localChecksum))
-	return nil
+	subtaskCount := math.Round(float64(e.TotalFileSize) / float64(maxEngineSize))
+	adjusted := math.Ceil(float64(e.TotalFileSize) / subtaskCount)
+	return int64(adjusted)
 }
 
 // PopulateChunks populates chunks from table regions.
@@ -327,15 +341,23 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 		Name:      e.Table.Meta().Name.O,
 		DataFiles: e.toMyDumpFiles(),
 	}
+	adjustedMaxEngineSize := e.getAdjustedMaxEngineSize()
+	e.logger.Info("adjust max engine size", zap.Int64("before", int64(e.MaxEngineSize)),
+		zap.Int64("after", adjustedMaxEngineSize))
 	dataDivideCfg := &mydump.DataDivideConfig{
-		ColumnCnt:         len(e.Table.Meta().Columns),
-		EngineDataSize:    int64(config.DefaultBatchSize),
-		MaxChunkSize:      int64(config.MaxRegionSize),
-		Concurrency:       int(e.ThreadCnt),
-		EngineConcurrency: config.DefaultTableConcurrency,
-		IOWorkers:         nil,
-		Store:             e.dataStore,
-		TableMeta:         tableMeta,
+		ColumnCnt:      len(e.Table.Meta().Columns),
+		EngineDataSize: adjustedMaxEngineSize,
+		MaxChunkSize:   int64(config.MaxRegionSize),
+		Concurrency:    int(e.ThreadCnt),
+		IOWorkers:      nil,
+		Store:          e.dataStore,
+		TableMeta:      tableMeta,
+
+		StrictFormat:           e.SplitFile,
+		DataCharacterSet:       *e.Charset,
+		DataInvalidCharReplace: string(utf8.RuneError),
+		ReadBlockSize:          LoadDataReadBlockSize,
+		CSV:                    *e.GenerateCSVConfig(),
 	}
 	tableRegions, err2 := mydump.MakeTableRegions(ctx, dataDivideCfg)
 
@@ -373,50 +395,9 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 		}
 	}
 
-	if common.TableHasAutoID(e.Table.Meta()) {
-		tidbCfg := tidb.GetGlobalConfig()
-		hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
-		tls, err4 := common.NewTLS(
-			tidbCfg.Security.ClusterSSLCA,
-			tidbCfg.Security.ClusterSSLCert,
-			tidbCfg.Security.ClusterSSLKey,
-			hostPort,
-			nil, nil, nil,
-		)
-		if err4 != nil {
-			return nil, err4
-		}
-
-		// no need to close kvStore, since it's a cached store.
-		kvStore, err4 := getCachedKVStoreFrom(tidbCfg.Path, tls)
-		if err4 != nil {
-			return nil, errors.Trace(err4)
-		}
-		if err3 := common.RebaseGlobalAutoID(ctx, 0, kvStore, e.DBID, e.Table.Meta()); err3 != nil {
-			return nil, errors.Trace(err3)
-		}
-		newMinRowID, _, err3 := common.AllocGlobalAutoID(ctx, maxRowID, kvStore, e.DBID, e.Table.Meta())
-		if err3 != nil {
-			return nil, errors.Trace(err3)
-		}
-		e.rebaseChunkRowID(newMinRowID, tableCp.Engines)
-	}
-
 	// Add index engine checkpoint
 	tableCp.Engines[common.IndexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
 	return tableCp.Engines, nil
-}
-
-func (*LoadDataController) rebaseChunkRowID(rowIDBase int64, engines map[int32]*checkpoints.EngineCheckpoint) {
-	if rowIDBase == 0 {
-		return
-	}
-	for _, engine := range engines {
-		for _, chunk := range engine.Chunks {
-			chunk.Chunk.PrevRowIDMax += rowIDBase
-			chunk.Chunk.RowIDMax += rowIDBase
-		}
-	}
 }
 
 // a simplified version of EstimateCompactionThreshold
@@ -498,14 +479,9 @@ func (ti *TableImporter) Close() error {
 	return nil
 }
 
-func (ti *TableImporter) setLastInsertID(id uint64) {
-	// todo: if we run concurrently, we should use atomic operation here.
-	if id == 0 {
-		return
-	}
-	if ti.lastInsertID == 0 || id < ti.lastInsertID {
-		ti.lastInsertID = id
-	}
+// Allocators returns allocators used to record max used ID, i.e. PanickingAllocators.
+func (ti *TableImporter) Allocators() autoid.Allocators {
+	return ti.encTable.Allocators(nil)
 }
 
 // CheckDiskQuota checks disk quota.
@@ -568,8 +544,8 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 			if err := ti.backend.UnsafeImportAndReset(
 				ctx,
 				engine,
-				ti.regionSplitSize*int64(config.MaxSplitRegionSizeRatio),
-				ti.regionSplitKeys*int64(config.MaxSplitRegionSizeRatio),
+				int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio),
+				int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio),
 			); err != nil {
 				importErr = multierr.Append(importErr, err)
 			}
@@ -596,10 +572,12 @@ func adjustDiskQuota(diskQuota int64, sortDir string, logger *zap.Logger) int64 
 	maxDiskQuota := int64(float64(sz.Capacity) * 0.8)
 	switch {
 	case diskQuota == 0:
-		logger.Info("use 0.8 of the storage size as default disk quota", zap.Int64("quota", maxDiskQuota))
+		logger.Info("use 0.8 of the storage size as default disk quota",
+			zap.String("quota", units.HumanSize(float64(maxDiskQuota))))
 		return maxDiskQuota
 	case diskQuota > maxDiskQuota:
-		logger.Warn("disk quota is larger than 0.8 of the storage size, use 0.8 of the storage size instead", zap.Int64("quota", maxDiskQuota))
+		logger.Warn("disk quota is larger than 0.8 of the storage size, use 0.8 of the storage size instead",
+			zap.String("quota", units.HumanSize(float64(maxDiskQuota))))
 		return maxDiskQuota
 	default:
 		return diskQuota

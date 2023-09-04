@@ -17,18 +17,18 @@ FROM hub.pingcap.net/jenkins/centos7_jenkins
 USER root
 WORKDIR /root
 
-ENV GOLANG_VERSION 1.20.5
+ENV GOLANG_VERSION 1.21.0
 ENV GOLANG_DOWNLOAD_URL https://dl.google.com/go/go$GOLANG_VERSION.linux-amd64.tar.gz
-ENV GOLANG_DOWNLOAD_SHA256 000a5b1fca4f75895f78befeb2eecf10bfff3c428597f3f1e69133b63b911b02
+ENV GOLANG_DOWNLOAD_SHA256 d0398903a16ba2232b389fb31032ddf57cac34efda306a0eebac34f0965a0742
 ENV GOPATH /go
 ENV GOROOT /usr/local/go
 ENV PATH $GOPATH/bin:$GOROOT/bin:$PATH
-ADD https://github.com/bazelbuild/bazel/releases/download/6.0.0/bazel-6.0.0-linux-x86_64 /usr/bin/bazel
+ADD https://github.com/bazelbuild/bazel/releases/download/6.3.2/bazel-6.3.2-linux-x86_64 /usr/bin/bazel
 ADD https://uploader.codecov.io/latest/linux/codecov /usr/bin/codecov
 RUN curl https://setup.ius.io | sh || true && \
     chmod u+x /usr/bin/bazel && yum update -y && \
     yum install -y supervisor tree libcurl-devel gettext autoconf python-pip python3-pip patch git wget gcc python autoconf make curl-devel expat-devel gettext-devel openssl-devel zlib-devel perl-CPAN perl-devel && \
-    git clone --depth=1 --branch=v2.37.2 https://github.com/git/git && cd git && yum remove -y git && make configure && ./configure --prefix=/usr/local &&  make -j16 install && cd .. && rm -rf git && \
+    git clone --depth=1 --branch=v2.37.2 https://github.com/git/git && cd git && yum remove -y git && make configure && ./configure --prefix=/usr/local CFLAGS="-std=gnu99" &&  make -j16 install && cd .. && rm -rf git && \
     pip3 install s3cmd requests && pip3 install requests && \
     curl -fsSL "$GOLANG_DOWNLOAD_URL" -o golang.tar.gz \
 	&& echo "$GOLANG_DOWNLOAD_SHA256  golang.tar.gz" | sha256sum -c - \

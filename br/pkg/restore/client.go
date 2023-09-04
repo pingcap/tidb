@@ -4,12 +4,14 @@ package restore
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,11 +48,13 @@ import (
 	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -59,10 +63,10 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
+	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -819,8 +823,8 @@ func (rc *Client) CreateTables(
 		newTables = append(newTables, et.Table)
 	}
 	// Let's ensure that it won't break the original order.
-	slices.SortFunc(newTables, func(i, j *model.TableInfo) bool {
-		return tbMapping[i.Name.String()] < tbMapping[j.Name.String()]
+	slices.SortFunc(newTables, func(i, j *model.TableInfo) int {
+		return cmp.Compare(tbMapping[i.Name.String()], tbMapping[j.Name.String()])
 	})
 
 	select {
@@ -1190,8 +1194,8 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 // ExecDDLs executes the queries of the ddl jobs.
 func (rc *Client) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error {
 	// Sort the ddl jobs by schema version in ascending order.
-	slices.SortFunc(ddlJobs, func(i, j *model.Job) bool {
-		return i.BinlogInfo.SchemaVersion < j.BinlogInfo.SchemaVersion
+	slices.SortFunc(ddlJobs, func(i, j *model.Job) int {
+		return cmp.Compare(i.BinlogInfo.SchemaVersion, j.BinlogInfo.SchemaVersion)
 	})
 
 	for _, job := range ddlJobs {
@@ -1603,77 +1607,83 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 	return nil
 }
 
+func concurrentHandleTablesCh(
+	ctx context.Context,
+	inCh <-chan *CreatedTable,
+	outCh chan<- *CreatedTable,
+	errCh chan<- error,
+	workers *utils.WorkerPool,
+	processFun func(context.Context, *CreatedTable) error,
+	deferFun func()) {
+	eg, ectx := errgroup.WithContext(ctx)
+	defer func() {
+		if err := eg.Wait(); err != nil {
+			errCh <- err
+		}
+		close(outCh)
+		deferFun()
+	}()
+
+	for {
+		select {
+		// if we use ectx here, maybe canceled will mask real error.
+		case <-ctx.Done():
+			errCh <- ctx.Err()
+		case tbl, ok := <-inCh:
+			if !ok {
+				return
+			}
+			cloneTable := tbl
+			worker := workers.ApplyWorker()
+			eg.Go(func() error {
+				defer workers.RecycleWorker(worker)
+				err := processFun(ectx, cloneTable)
+				if err != nil {
+					return err
+				}
+				outCh <- cloneTable
+				return nil
+			})
+		}
+	}
+}
+
 // GoValidateChecksum forks a goroutine to validate checksum after restore.
 // it returns a channel fires a struct{} when all things get done.
 func (rc *Client) GoValidateChecksum(
 	ctx context.Context,
-	tableStream <-chan CreatedTable,
+	inCh <-chan *CreatedTable,
 	kvClient kv.Client,
 	errCh chan<- error,
 	updateCh glue.Progress,
 	concurrency uint,
-) <-chan struct{} {
+) <-chan *CreatedTable {
 	log.Info("Start to validate checksum")
-	outCh := make(chan struct{}, 1)
-	wg := new(sync.WaitGroup)
-	wg.Add(2)
-	loadStatCh := make(chan *CreatedTable, 1024)
-	// run the stat loader
-	go func() {
-		defer wg.Done()
-		rc.updateMetaAndLoadStats(ctx, loadStatCh)
-	}()
+	outCh := DefaultOutputTableChan()
 	workers := utils.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
-	go func() {
-		eg, ectx := errgroup.WithContext(ctx)
+	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+		start := time.Now()
 		defer func() {
-			if err := eg.Wait(); err != nil {
-				errCh <- err
-			}
-			close(loadStatCh)
-			wg.Done()
+			elapsed := time.Since(start)
+			summary.CollectSuccessUnit("table checksum", 1, elapsed)
 		}()
-
-		for {
-			select {
-			// if we use ectx here, maybe canceled will mask real error.
-			case <-ctx.Done():
-				errCh <- ctx.Err()
-			case tbl, ok := <-tableStream:
-				if !ok {
-					return
-				}
-
-				workers.ApplyOnErrorGroup(eg, func() error {
-					start := time.Now()
-					defer func() {
-						elapsed := time.Since(start)
-						summary.CollectSuccessUnit("table checksum", 1, elapsed)
-					}()
-					err := rc.execChecksum(ectx, tbl, kvClient, concurrency, loadStatCh)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					updateCh.Inc()
-					return nil
-				})
-			}
+		err := rc.execChecksum(c, tbl, kvClient, concurrency)
+		if err != nil {
+			return errors.Trace(err)
 		}
-	}()
-	go func() {
-		wg.Wait()
+		updateCh.Inc()
+		return nil
+	}, func() {
 		log.Info("all checksum ended")
-		close(outCh)
-	}()
+	})
 	return outCh
 }
 
 func (rc *Client) execChecksum(
 	ctx context.Context,
-	tbl CreatedTable,
+	tbl *CreatedTable,
 	kvClient kv.Client,
 	concurrency uint,
-	loadStatCh chan<- *CreatedTable,
 ) error {
 	logger := log.L().With(
 		zap.String("db", tbl.OldTable.DB.Name.O),
@@ -1702,6 +1712,7 @@ func (rc *Client) execChecksum(
 			SetConcurrency(concurrency).
 			SetOldKeyspace(tbl.RewriteRule.OldKeyspace).
 			SetNewKeyspace(tbl.RewriteRule.NewKeyspace).
+			SetExplicitRequestSourceType(kvutil.ExplicitTypeBR).
 			Build()
 		if err != nil {
 			return errors.Trace(err)
@@ -1740,48 +1751,125 @@ func (rc *Client) execChecksum(
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
 	logger.Info("success in validate checksum")
-	loadStatCh <- &tbl
 	return nil
 }
 
-func (rc *Client) updateMetaAndLoadStats(ctx context.Context, input <-chan *CreatedTable) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case tbl, ok := <-input:
-			if !ok {
-				return
-			}
-
-			// Not need to return err when failed because of update analysis-meta
-			restoreTS, err := rc.GetTSWithRetry(ctx)
+func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<- error) chan *CreatedTable {
+	log.Info("Start to update meta then load stats")
+	outCh := DefaultOutputTableChan()
+	workers := utils.NewWorkerPool(1, "UpdateStats")
+	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+		oldTable := tbl.OldTable
+		// Not need to return err when failed because of update analysis-meta
+		restoreTS, err := rc.GetTSWithRetry(ctx)
+		if err != nil {
+			log.Error("getTS failed", zap.Error(err))
+		} else {
+			log.Info("start update metas",
+				zap.Stringer("table", oldTable.Info.Name),
+				zap.Stringer("db", oldTable.DB.Name))
+			err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, oldTable.TotalKvs)
 			if err != nil {
-				log.Error("getTS failed", zap.Error(err))
-			} else {
-				err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, tbl.OldTable.TotalKvs)
-				if err != nil {
-					log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
-				}
+				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
 			}
+		}
 
-			table := tbl.OldTable
-			if table.Stats != nil {
-				log.Info("start loads analyze after validate checksum",
-					zap.Int64("old id", tbl.OldTable.Info.ID),
-					zap.Int64("new id", tbl.Table.ID),
-				)
-				start := time.Now()
-				if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), table.Stats); err != nil {
-					log.Error("analyze table failed", zap.Any("table", table.Stats), zap.Error(err))
-				}
-				log.Info("restore stat done",
-					zap.String("table", table.Info.Name.L),
-					zap.String("db", table.DB.Name.L),
-					zap.Duration("cost", time.Since(start)))
+		if oldTable.Stats != nil {
+			log.Info("start loads analyze after validate checksum",
+				zap.Int64("old id", oldTable.Info.ID),
+				zap.Int64("new id", tbl.Table.ID),
+			)
+			start := time.Now()
+			if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), oldTable.Stats); err != nil {
+				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(err))
+			}
+			log.Info("restore stat done",
+				zap.Stringer("table", oldTable.Info.Name),
+				zap.Stringer("db", oldTable.DB.Name),
+				zap.Duration("cost", time.Since(start)))
+		}
+		return nil
+	}, func() {
+		log.Info("all stats updated")
+	})
+	return outCh
+}
+
+func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTable, updateCh glue.Progress, errCh chan<- error) chan *CreatedTable {
+	log.Info("Start to wait tiflash replica sync")
+	outCh := DefaultOutputTableChan()
+	workers := utils.NewWorkerPool(4, "WaitForTiflashReady")
+	// TODO support tiflash store changes
+	tikvStats, err := infosync.GetTiFlashStoresStat(context.Background())
+	if err != nil {
+		errCh <- err
+	}
+	tiFlashStores := make(map[int64]helper.StoreStat)
+	for _, store := range tikvStats.Stores {
+		for _, l := range store.Store.Labels {
+			if l.Key == "engine" && l.Value == "tiflash" {
+				tiFlashStores[store.Store.ID] = store
 			}
 		}
 	}
+	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+		if tbl.Table != nil && tbl.Table.TiFlashReplica == nil {
+			log.Info("table has no tiflash replica",
+				zap.Stringer("table", tbl.OldTable.Info.Name),
+				zap.Stringer("db", tbl.OldTable.DB.Name))
+			updateCh.Inc()
+			return nil
+		}
+		if rc.dom != nil {
+			log.Info("table has tiflash replica, start sync..",
+				zap.Stringer("table", tbl.OldTable.Info.Name),
+				zap.Stringer("db", tbl.OldTable.DB.Name))
+			for {
+				var progress float64
+				if pi := tbl.Table.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+					for _, p := range pi.Definitions {
+						progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+						if err != nil {
+							log.Warn("failed to get progress for tiflash partition replica, retry it",
+								zap.Int64("tableID", tbl.Table.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
+							time.Sleep(time.Second)
+							continue
+						}
+						progress += progressOfPartition
+					}
+					progress = progress / float64(len(pi.Definitions))
+				} else {
+					var err error
+					progress, err = infosync.MustGetTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+					if err != nil {
+						log.Warn("failed to get progress for tiflash replica, retry it",
+							zap.Int64("tableID", tbl.Table.ID), zap.Error(err))
+						time.Sleep(time.Second)
+						continue
+					}
+				}
+				// check until progress is 1
+				if progress == 1 {
+					log.Info("tiflash replica synced",
+						zap.Stringer("table", tbl.OldTable.Info.Name),
+						zap.Stringer("db", tbl.OldTable.DB.Name))
+					break
+				}
+				// just wait for next check
+				// tiflash check the progress every 2s
+				// we can wait 2.5x times
+				time.Sleep(5 * time.Second)
+			}
+		} else {
+			// unreachable, current we have initial domain in mgr.
+			log.Fatal("unreachable, domain is nil")
+		}
+		updateCh.Inc()
+		return nil
+	}, func() {
+		log.Info("all tiflash replica synced")
+	})
+	return outCh
 }
 
 // called by failpoint, only used for test
@@ -1871,6 +1959,7 @@ func (rc *Client) FailpointDoChecksumForLogRestore(
 				SetConcurrency(4).
 				SetOldKeyspace(rewriteRule.OldKeyspace).
 				SetNewKeyspace(rewriteRule.NewKeyspace).
+				SetExplicitRequestSourceType(kvutil.ExplicitTypeBR).
 				Build()
 			if err != nil {
 				return errors.Trace(err)
@@ -2119,6 +2208,10 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 	}
 	for _, table := range tables {
 		if table.Info.TiFlashReplica != nil {
+			// we should not set available to true. because we cannot guarantee the raft log lag of tiflash when restore finished.
+			// just let tiflash ticker set it by checking lag of all related regions.
+			table.Info.TiFlashReplica.Available = false
+			table.Info.TiFlashReplica.AvailablePartitionIDs = nil
 			if recorder != nil {
 				recorder.AddTable(table.Info.ID, *table.Info.TiFlashReplica)
 				log.Info("record tiflash replica for table, to reset it by ddl later",
@@ -2184,11 +2277,13 @@ func (rc *Client) PreCheckTableClusterIndex(
 	return nil
 }
 
-func (rc *Client) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64) error {
+func (rc *Client) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint) error {
 	init := LogFileManagerInit{
 		StartTS:   startTS,
 		RestoreTS: restoreTS,
 		Storage:   rc.storage,
+
+		MetadataDownloadBatchSize: metadataDownloadBatchSize,
 	}
 	var err error
 	rc.logFileManager, err = CreateLogFileManager(ctx, init)
@@ -2728,26 +2823,14 @@ func (rc *Client) InitSchemasReplaceForDDL(
 }
 
 func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
-	slices.SortFunc(files, func(i, j *backuppb.DataFileInfo) bool {
-		if i.GetMinTs() < j.GetMinTs() {
-			return true
-		} else if i.GetMinTs() > j.GetMinTs() {
-			return false
+	slices.SortFunc(files, func(i, j *backuppb.DataFileInfo) int {
+		if c := cmp.Compare(i.GetMinTs(), j.GetMinTs()); c != 0 {
+			return c
 		}
-
-		if i.GetMaxTs() < j.GetMaxTs() {
-			return true
-		} else if i.GetMaxTs() > j.GetMaxTs() {
-			return false
+		if c := cmp.Compare(i.GetMaxTs(), j.GetMaxTs()); c != 0 {
+			return c
 		}
-
-		if i.GetResolvedTs() < j.GetResolvedTs() {
-			return true
-		} else if i.GetResolvedTs() > j.GetResolvedTs() {
-			return false
-		}
-
-		return true
+		return cmp.Compare(i.GetResolvedTs(), j.GetResolvedTs())
 	})
 	return files
 }
@@ -2994,8 +3077,8 @@ func (rc *Client) RestoreBatchMetaKVFiles(
 	}
 
 	// sort these entries.
-	slices.SortFunc(curKvEntries, func(i, j *KvEntryWithTS) bool {
-		return i.ts < j.ts
+	slices.SortFunc(curKvEntries, func(i, j *KvEntryWithTS) int {
+		return cmp.Compare(i.ts, j.ts)
 	})
 
 	// restore these entries with rawPut() method.
@@ -3180,7 +3263,7 @@ func (rc *Client) generateRepairIngestIndexSQLs(
 				return sqls, false, errors.Trace(err)
 			}
 			sqls = checkpointSQLs.SQLs
-			log.Info("[ingest] load ingest index repair sqls from checkpoint", zap.Reflect("sqls", sqls))
+			log.Info("load ingest index repair sqls from checkpoint", zap.String("category", "ingest"), zap.Reflect("sqls", sqls))
 			return sqls, true, nil
 		}
 	}
@@ -3612,12 +3695,12 @@ func CheckNewCollationEnable(
 	if backupNewCollationEnable == "" {
 		if CheckRequirements {
 			return errors.Annotatef(berrors.ErrUnknown,
-				"the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
-					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
-					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
-					"use --check-requirements=false to skip this check")
+				"the value '%s' not found in backupmeta. "+
+					"you can use \"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';\" to manually check the config. "+
+					"if you ensure the value '%s' in backup cluster is as same as restore cluster, use --check-requirements=false to skip this check",
+				utils.TidbNewCollationEnabled, utils.TidbNewCollationEnabled, utils.TidbNewCollationEnabled)
 		}
-		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
+		log.Warn(fmt.Sprintf("the config '%s' is not in backupmeta", utils.TidbNewCollationEnabled))
 		return nil
 	}
 
@@ -3633,8 +3716,8 @@ func CheckNewCollationEnable(
 
 	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
 		return errors.Annotatef(berrors.ErrUnknown,
-			"the config 'new_collations_enabled_on_first_bootstrap' not match, upstream:%v, downstream: %v",
-			backupNewCollationEnable, newCollationEnable)
+			"the config '%s' not match, upstream:%v, downstream: %v",
+			utils.TidbNewCollationEnabled, backupNewCollationEnable, newCollationEnable)
 	}
 
 	// collate.newCollationEnabled is set to 1 when the collate package is initialized,
@@ -3643,7 +3726,7 @@ func CheckNewCollationEnable(
 	enabled := newCollationEnable == "True"
 	// modify collate.newCollationEnabled according to the config of the cluster
 	collate.SetNewCollationEnabledForTest(enabled)
-	log.Info("set new_collation_enabled", zap.Bool("new_collation_enabled", enabled))
+	log.Info(fmt.Sprintf("set %s", utils.TidbNewCollationEnabled), zap.Bool("new_collation_enabled", enabled))
 	return nil
 }
 

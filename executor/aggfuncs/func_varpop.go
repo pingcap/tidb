@@ -44,18 +44,18 @@ type partialResult4VarPopFloat64 struct {
 	variance float64
 }
 
-func (e *varPop4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*varPop4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4VarPopFloat64{}), DefPartialResult4VarPopFloat64Size
 }
 
-func (e *varPop4Float64) ResetPartialResult(pr PartialResult) {
+func (*varPop4Float64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4VarPopFloat64)(pr)
 	p.count = 0
 	p.sum = 0
 	p.variance = 0
 }
 
-func (e *varPop4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *varPop4Float64) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4VarPopFloat64)(pr)
 	if p.count == 0 {
 		chk.AppendNull(e.ordinal)
@@ -100,7 +100,7 @@ func calculateMerge(srcCount, dstCount int64, srcSum, dstSum, srcVariance, dstVa
 	return dstVariance
 }
 
-func (e *varPop4Float64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*varPop4Float64) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4VarPopFloat64)(src), (*partialResult4VarPopFloat64)(dst)
 	if p1.count == 0 {
 		return 0, nil
@@ -130,7 +130,7 @@ type partialResult4VarPopDistinctFloat64 struct {
 	valSet   set.Float64SetWithMemoryUsage
 }
 
-func (e *varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4VarPopDistinctFloat64)
 	p.count = 0
 	p.sum = 0
@@ -140,7 +140,7 @@ func (e *varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelt
 	return PartialResult(p), DefPartialResult4VarPopDistinctFloat64Size + setSize
 }
 
-func (e *varPop4DistinctFloat64) ResetPartialResult(pr PartialResult) {
+func (*varPop4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
 	p.count = 0
 	p.sum = 0
@@ -148,7 +148,7 @@ func (e *varPop4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p.valSet, _ = set.NewFloat64SetWithMemoryUsage()
 }
 
-func (e *varPop4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *varPop4DistinctFloat64) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
 	if p.count == 0 {
 		chk.AppendNull(e.ordinal)

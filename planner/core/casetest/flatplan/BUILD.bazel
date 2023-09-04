@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "flatplan_test",
+    timeout = "short",
+    srcs = [
+        "flat_plan_test.go",
+        "main_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    deps = [
+        "//config",
+        "//infoschema",
+        "//kv",
+        "//parser",
+        "//parser/model",
+        "//planner",
+        "//planner/core",
+        "//testkit",
+        "//testkit/testdata",
+        "//testkit/testmain",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -15,7 +15,9 @@
 package core
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -37,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // Fragment is cut from the whole pushed-down plan by network communication.
@@ -94,24 +95,37 @@ type tasksAndFrags struct {
 type mppTaskGenerator struct {
 	ctx        sessionctx.Context
 	startTS    uint64
+	gatherID   uint64
 	mppQueryID kv.MPPQueryID
 	is         infoschema.InfoSchema
 	frags      []*Fragment
 	cache      map[int]tasksAndFrags
 
 	CTEGroups map[int]*cteGroupInFragment
+
+	// For MPPGather under UnionScan, need keyRange to scan MemBuffer.
+	KVRanges []kv.KeyRange
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppQueryID kv.MPPQueryID, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, error) {
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppGatherID uint64, mppQueryID kv.MPPQueryID, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, []kv.KeyRange, error) {
 	g := &mppTaskGenerator{
 		ctx:        ctx,
+		gatherID:   mppGatherID,
 		startTS:    startTs,
 		mppQueryID: mppQueryID,
 		is:         is,
 		cache:      make(map[int]tasksAndFrags),
+		KVRanges:   make([]kv.KeyRange, 0),
 	}
-	return g.generateMPPTasks(sender)
+	frags, err := g.generateMPPTasks(sender)
+	if err != nil {
+		return frags, nil, err
+	}
+	if len(g.KVRanges) == 0 {
+		err = errors.New("kvRanges for MPPTask should not be empty")
+	}
+	return frags, g.KVRanges, err
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id when the query finished.
@@ -131,6 +145,7 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragm
 	mppVersion := e.ctx.GetSessionVars().ChooseMppVersion()
 	tidbTask := &kv.MPPTask{
 		StartTs:    e.startTS,
+		GatherID:   e.gatherID,
 		MppQueryID: e.mppQueryID,
 		ID:         -1,
 		MppVersion: mppVersion,
@@ -180,6 +195,7 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask,
 			mppTask := &kv.MPPTask{
 				Meta:       &mppAddr{addr: addr},
 				ID:         AllocMPPTaskID(e.ctx),
+				GatherID:   e.gatherID,
 				MppQueryID: e.mppQueryID,
 				StartTs:    e.startTS,
 				TableID:    -1,
@@ -445,7 +461,7 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 		for i, col := range cols {
 			col.Index = i
 		}
-		proj := PhysicalProjection{Exprs: expression.Column2Exprs(cols)}.Init(cteReader.ctx, cteReader.stats, 0, nil)
+		proj := PhysicalProjection{Exprs: expression.Column2Exprs(cols)}.Init(cteReader.SCtx(), cteReader.StatsInfo(), 0, nil)
 		proj.SetSchema(cteReader.schema.Clone())
 		proj.SetChildren(receiver)
 		cteReader.SetChildren(proj)
@@ -517,29 +533,32 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	var err error
 	splitedRanges, _ := distsql.SplitRangesAcrossInt64Boundary(ts.Ranges, false, false, ts.Table.IsCommonHandle)
 	// True when:
-	// 0. Is disaggregated tiflash. because in non-disaggregated tiflash, we dont use mpp for static pruning.
 	// 1. Is partition table.
 	// 2. Dynamic prune is not used.
-	var isDisaggregatedTiFlashStaticPrune bool
+	var tiFlashStaticPrune bool
 	if ts.Table.GetPartitionInfo() != nil {
-		isDisaggregatedTiFlashStaticPrune = config.GetGlobalConfig().DisaggregatedTiFlash &&
-			!e.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune()
+		tiFlashStaticPrune = !e.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune()
 
 		tmp, _ := e.is.TableByID(ts.Table.ID)
 		tbl := tmp.(table.PartitionedTable)
-		if !isDisaggregatedTiFlashStaticPrune {
+		if !tiFlashStaticPrune {
 			var partitions []table.PhysicalTable
 			partitions, err = partitionPruning(e.ctx, tbl, ts.PartitionInfo.PruningConds, ts.PartitionInfo.PartitionNames, ts.PartitionInfo.Columns, ts.PartitionInfo.ColumnNames)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			req, allPartitionsIDs, err = e.constructMPPBuildTaskReqForPartitionedTable(ts, splitedRanges, partitions)
+			for _, partitionKVRanges := range req.PartitionIDAndRanges {
+				e.KVRanges = append(e.KVRanges, partitionKVRanges.KeyRanges...)
+			}
 		} else {
 			singlePartTbl := tbl.GetPartition(ts.physicalTableID)
 			req, err = e.constructMPPBuildTaskForNonPartitionTable(singlePartTbl.GetPhysicalID(), ts.Table.IsCommonHandle, splitedRanges)
+			e.KVRanges = append(e.KVRanges, req.KeyRanges...)
 		}
 	} else {
 		req, err = e.constructMPPBuildTaskForNonPartitionTable(ts.Table.ID, ts.Table.IsCommonHandle, splitedRanges)
+		e.KVRanges = append(e.KVRanges, req.KeyRanges...)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -555,7 +574,8 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		dispatchPolicy = e.ctx.GetSessionVars().TiFlashComputeDispatchPolicy
 		ttl = time.Duration(0)
 	}
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl, dispatchPolicy)
+	tiflashReplicaRead := e.ctx.GetSessionVars().TiFlashReplicaRead
+	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl, dispatchPolicy, tiflashReplicaRead, e.ctx.GetSessionVars().StmtCtx.AppendWarning)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -563,14 +583,15 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	tasks := make([]*kv.MPPTask, 0, len(metas))
 	for _, meta := range metas {
 		task := &kv.MPPTask{
-			Meta:                              meta,
-			ID:                                AllocMPPTaskID(e.ctx),
-			MppVersion:                        e.ctx.GetSessionVars().ChooseMppVersion(),
-			StartTs:                           e.startTS,
-			MppQueryID:                        e.mppQueryID,
-			TableID:                           ts.Table.ID,
-			PartitionTableIDs:                 allPartitionsIDs,
-			IsDisaggregatedTiFlashStaticPrune: isDisaggregatedTiFlashStaticPrune,
+			Meta:               meta,
+			ID:                 AllocMPPTaskID(e.ctx),
+			MppVersion:         e.ctx.GetSessionVars().ChooseMppVersion(),
+			StartTs:            e.startTS,
+			GatherID:           e.gatherID,
+			MppQueryID:         e.mppQueryID,
+			TableID:            ts.Table.ID,
+			PartitionTableIDs:  allPartitionsIDs,
+			TiFlashStaticPrune: tiFlashStaticPrune,
 		}
 		tasks = append(tasks, task)
 	}
@@ -578,8 +599,8 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 }
 
 func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *PhysicalTableScan, splitedRanges []*ranger.Range, partitions []table.PhysicalTable) (*kv.MPPBuildTasksRequest, []int64, error) {
-	slices.SortFunc(partitions, func(i, j table.PhysicalTable) bool {
-		return i.GetPhysicalID() < j.GetPhysicalID()
+	slices.SortFunc(partitions, func(i, j table.PhysicalTable) int {
+		return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 	})
 	partitionIDAndRanges := make([]kv.PartitionIDAndRanges, len(partitions))
 	allPartitionsIDs := make([]int64, len(partitions))
@@ -587,7 +608,7 @@ func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *Physi
 	for i, p := range partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
-		kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && ts.Table.IsCommonHandle, splitedRanges, nil)
+		kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && ts.Table.IsCommonHandle, splitedRanges)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -599,7 +620,7 @@ func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *Physi
 }
 
 func (e *mppTaskGenerator) constructMPPBuildTaskForNonPartitionTable(tid int64, isCommonHandle bool, splitedRanges []*ranger.Range) (*kv.MPPBuildTasksRequest, error) {
-	kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{tid}, isCommonHandle, splitedRanges, nil)
+	kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{tid}, isCommonHandle, splitedRanges)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

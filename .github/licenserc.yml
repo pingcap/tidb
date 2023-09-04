@@ -15,6 +15,7 @@ header:
     - "LICENSES/"
     - "**/BUILD.bazel"
     - "WORKSPACE"
+    - "WORKSPACE.patchgo"
     - ".bazelrc"
     - "**/*.key"
     - "**/*.md"
@@ -47,4 +48,5 @@ header:
     - "build/image/.ci_bazel"
     - "**/OWNERS"
     - "OWNERS_ALIASES"
+    - "disttask/framework/mock/*_mock.go"
   comment: on-failure

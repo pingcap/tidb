@@ -587,7 +587,7 @@ func (pb *profileBuilder) formatValueByTp(value float64) string {
 }
 
 // dotColor function is copy from https://github.com/google/pprof.
-func (pb *profileBuilder) dotColor(score float64, isBackground bool) string {
+func (*profileBuilder) dotColor(score float64, isBackground bool) string {
 	// A float between 0.0 and 1.0, indicating the extent to which
 	// colors should be shifted away from grey (to make positive and
 	// negative values easier to distinguish, and to make more use of
@@ -638,7 +638,7 @@ func (pb *profileBuilder) dotColor(score float64, isBackground bool) string {
 	return fmt.Sprintf("#%02x%02x%02x", uint8(r*255.0), uint8(g*255.0), uint8(b*255.0))
 }
 
-func (pb *profileBuilder) genTiDBGCTree() *metricNode {
+func (*profileBuilder) genTiDBGCTree() *metricNode {
 	tidbGC := &metricNode{
 		table:          "tidb_gc",
 		isPartOfParent: true,
@@ -653,7 +653,7 @@ func (pb *profileBuilder) genTiDBGCTree() *metricNode {
 	return tidbGC
 }
 
-func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
+func (*profileBuilder) genTiDBQueryTree() *metricNode {
 	tidbKVRequest := &metricNode{
 		table:          "tidb_kv_request",
 		isPartOfParent: true,

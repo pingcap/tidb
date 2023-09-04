@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -371,7 +372,7 @@ func TestExplainFormatHint(t *testing.T) {
 		"/*+ use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`) */ " +
 		"count(1) from t t1 " +
 		"where c2 in (select c2 from t t2 where t2.c2 < 15 and t2.c2 > 12)").Check(testkit.Rows(
-		"hash_agg(@`sel_1`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` `idx_c2`), use_index(@`sel_1` `test`.`t1` `idx_c2`)"))
+		"hash_agg(@`sel_1`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` `idx_c2`), no_order_index(@`sel_2` `test`.`t2` `idx_c2`), agg_to_cop(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), no_order_index(@`sel_1` `test`.`t1` `idx_c2`)"))
 }
 
 func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
@@ -420,11 +421,11 @@ func TestNthPlanHint(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int, index(a), index(b), index(a,b))")
 	tk.MustQuery("explain format='hint' select * from t where a=1 and b=1").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t` `a_2`)"))
+		"use_index(@`sel_1` `test`.`t` `a_2`), no_order_index(@`sel_1` `test`.`t` `a_2`)"))
 	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) */ * from t where a=1 and b=1").Check(testkit.Rows(
 		"use_index(@`sel_1` `test`.`t` ), nth_plan(1)"))
 	tk.MustQuery("explain format='hint' select /*+ nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t` `a_2`), nth_plan(2)"))
+		"use_index(@`sel_1` `test`.`t` `a_2`), no_order_index(@`sel_1` `test`.`t` `a_2`), nth_plan(2)"))
 
 	tk.MustExec("explain format='hint' select /*+ nth_plan(3) */ * from t where a=1 and b=1")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
@@ -436,7 +437,7 @@ func TestNthPlanHint(t *testing.T) {
 
 	// Test warning for multiply hints.
 	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t` `a_2`), nth_plan(1), nth_plan(2)"))
+		"use_index(@`sel_1` `test`.`t` `a_2`), no_order_index(@`sel_1` `test`.`t` `a_2`), nth_plan(1), nth_plan(2)"))
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(2)",
 		"Warning 1105 NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(2)"))
@@ -461,6 +462,16 @@ func TestNthPlanHint(t *testing.T) {
 	tk.MustExec("select /*+ nth_plan(1000) */ count(1) from t where exists (select count(1) from t, tt);")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 The parameter of nth_plan() is out of range"))
+}
+
+func TestTiDBKvReadTimeoutHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int);")
+	tk.MustQuery("select /*+ tidb_kv_read_timeout(1) tidb_kv_read_timeout(2) */ * from t where a=1").Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 TIDB_KV_READ_TIMEOUT() is defined more than once, only the last definition takes effect: TIDB_KV_READ_TIMEOUT(2)"))
 }
 
 func BenchmarkDecodePlan(b *testing.B) {
@@ -719,7 +730,9 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	}
 
 	ctx := core.MockContext()
-
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
 	aggCol := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
@@ -977,8 +990,8 @@ func TestHypoIndexDDL(t *testing.T) {
 		"  KEY `hypo_bc` (`b`,`c`) /* HYPO INDEX */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
-	tk.MustExec(`drop index hypo_a on t`)
-	tk.MustExec(`drop index hypo_bc on t`)
+	tk.MustExec(`drop hypo index hypo_a on t`)
+	tk.MustExec(`drop hypo index hypo_bc on t`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL,\n" +
@@ -1005,7 +1018,7 @@ func TestHypoIndexPlan(t *testing.T) {
 		`IndexReader_6 10.00 root  index:IndexRangeScan_5`,
 		`└─IndexRangeScan_5 10.00 cop[tikv] table:t, index:hypo_a(a) range:[1,1], keep order:false, stats:pseudo`))
 
-	tk.MustExec(`drop index hypo_a on t`)
+	tk.MustExec(`drop hypo index hypo_a on t`)
 	tk.MustExec(`create unique index hypo_a type hypo on t (a)`)
 
 	tk.MustQuery(`explain select a from t where a = 1`).Check(testkit.Rows(
@@ -1025,9 +1038,9 @@ func TestHypoTiFlashReplica(t *testing.T) {
 	tk.MustExec(`alter table t set hypo tiflash replica 1`)
 
 	tk.MustQuery(`explain select a from t`).Check(testkit.Rows(
-		`TableReader_11 10000.00 root  MppVersion: 1, data:ExchangeSender_10`,
-		`└─ExchangeSender_10 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
-		`  └─TableFullScan_9 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo`))
+		`TableReader_12 10000.00 root  MppVersion: 2, data:ExchangeSender_11`,
+		`└─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
+		`  └─TableFullScan_10 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo`))
 
 	tk.MustExec(`alter table t set hypo tiflash replica 0`)
 

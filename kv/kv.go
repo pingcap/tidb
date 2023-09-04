@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"slices"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -25,8 +26,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/trxevents"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -35,7 +38,6 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
-	"golang.org/x/exp/slices"
 )
 
 // UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
@@ -74,8 +76,8 @@ type Retriever interface {
 	// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 	// The returned iterator will iterate from greater key to smaller key.
 	// If k is nil, the returned iterator will be positioned at the last key.
-	// TODO: Add lower bound limit
-	IterReverse(k Key) (Iterator, error)
+	// It yields only keys that >= lowerBound. If lowerBound is nil, it means the lowerBound is unbounded.
+	IterReverse(k, lowerBound Key) (Iterator, error)
 }
 
 // EmptyIterator is an iterator without any entry
@@ -108,7 +110,7 @@ func (*EmptyRetriever) Get(_ context.Context, _ Key) ([]byte, error) {
 func (*EmptyRetriever) Iter(_ Key, _ Key) (Iterator, error) { return &EmptyIterator{}, nil }
 
 // IterReverse creates a reversed Iterator. Always return EmptyIterator for this retriever
-func (*EmptyRetriever) IterReverse(_ Key) (Iterator, error) {
+func (*EmptyRetriever) IterReverse(_ Key, _ Key) (Iterator, error) {
 	return &EmptyIterator{}, nil
 }
 
@@ -174,6 +176,8 @@ type MemBuffer interface {
 	SnapshotGetter() Getter
 	// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
 	SnapshotIter(k, upperbound Key) Iterator
+	// SnapshotIterReverse returns a reverse Iterator for a snapshot of MemBuffer.
+	SnapshotIterReverse(k, lowerBound Key) Iterator
 
 	// Len returns the number of entries in the DB.
 	Len() int
@@ -307,6 +311,8 @@ type ClientSendOption struct {
 	EnabledRateLimitAction     bool
 	EventCb                    trxevents.EventCallback
 	EnableCollectExecutionInfo bool
+	TiFlashReplicaRead         tiflash.ReplicaRead
+	AppendWarning              func(warn error)
 }
 
 // ReqTypes.
@@ -421,20 +427,20 @@ func (rr *KeyRanges) AppendSelfTo(ranges []KeyRange) []KeyRange {
 
 // SortByFunc sorts each partition's ranges.
 // Since the ranges are sorted in most cases, we check it first.
-func (rr *KeyRanges) SortByFunc(sortFunc func(i, j KeyRange) bool) {
-	if !slices.IsSortedFunc(rr.ranges, func(i, j []KeyRange) bool {
+func (rr *KeyRanges) SortByFunc(sortFunc func(i, j KeyRange) int) {
+	if !slices.IsSortedFunc(rr.ranges, func(i, j []KeyRange) int {
 		// A simple short-circuit since the empty range actually won't make anything wrong.
 		if len(i) == 0 || len(j) == 0 {
-			return true
+			return -1
 		}
 		return sortFunc(i[0], j[0])
 	}) {
-		slices.SortFunc(rr.ranges, func(i, j []KeyRange) bool {
+		slices.SortFunc(rr.ranges, func(i, j []KeyRange) int {
 			if len(i) == 0 {
-				return true
+				return -1
 			}
 			if len(j) == 0 {
-				return false
+				return 1
 			}
 			return sortFunc(i[0], j[0])
 		})
@@ -475,19 +481,19 @@ func (rr *KeyRanges) PartitionNum() int {
 
 // IsFullySorted checks whether the ranges are sorted inside partition and each partition is also sorated.
 func (rr *KeyRanges) IsFullySorted() bool {
-	sortedByPartition := slices.IsSortedFunc(rr.ranges, func(i, j []KeyRange) bool {
+	sortedByPartition := slices.IsSortedFunc(rr.ranges, func(i, j []KeyRange) int {
 		// A simple short-circuit since the empty range actually won't make anything wrong.
 		if len(i) == 0 || len(j) == 0 {
-			return true
+			return -1
 		}
-		return bytes.Compare(i[0].StartKey, j[0].StartKey) < 0
+		return bytes.Compare(i[0].StartKey, j[0].StartKey)
 	})
 	if !sortedByPartition {
 		return false
 	}
 	for _, ranges := range rr.ranges {
-		if !slices.IsSortedFunc(ranges, func(i, j KeyRange) bool {
-			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		if !slices.IsSortedFunc(ranges, func(i, j KeyRange) int {
+			return bytes.Compare(i.StartKey, j.StartKey)
 		}) {
 			return false
 		}
@@ -578,6 +584,10 @@ type Request struct {
 	LimitSize uint64
 	// StoreBusyThreshold is the threshold for the store to return ServerIsBusy
 	StoreBusyThreshold time.Duration
+	// TidbKvReadTimeout is the timeout of kv read request
+	TidbKvReadTimeout uint64
+
+	RunawayChecker *resourcegroup.RunawayChecker
 
 	// ConnID stores the session connection id.
 	ConnID uint64
@@ -639,7 +649,7 @@ type SnapshotInterceptor interface {
 	// OnIter intercepts Iter operation for Snapshot
 	OnIter(snap Snapshot, k Key, upperBound Key) (Iterator, error)
 	// OnIterReverse intercepts IterReverse operation for Snapshot
-	OnIterReverse(snap Snapshot, k Key) (Iterator, error)
+	OnIterReverse(snap Snapshot, k Key, lowerBound Key) (Iterator, error)
 }
 
 // BatchGetter is the interface for BatchGet.

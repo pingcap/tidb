@@ -17,16 +17,36 @@ package logutil
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"runtime"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
+
+func TestFieldsFromTraceInfo(t *testing.T) {
+	fields := fieldsFromTraceInfo(nil)
+	require.Equal(t, 0, len(fields))
+
+	fields = fieldsFromTraceInfo(&model.TraceInfo{})
+	require.Equal(t, 0, len(fields))
+
+	fields = fieldsFromTraceInfo(&model.TraceInfo{ConnectionID: 1})
+	require.Equal(t, []zap.Field{zap.Uint64("conn", 1)}, fields)
+
+	fields = fieldsFromTraceInfo(&model.TraceInfo{SessionAlias: "alias123"})
+	require.Equal(t, []zap.Field{zap.String("session_alias", "alias123")}, fields)
+
+	fields = fieldsFromTraceInfo(&model.TraceInfo{ConnectionID: 1, SessionAlias: "alias123"})
+	require.Equal(t, []zap.Field{zap.Uint64("conn", 1), zap.String("session_alias", "alias123")}, fields)
+}
 
 func TestZapLoggerWithKeys(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -36,7 +56,7 @@ func TestZapLoggerWithKeys(t *testing.T) {
 		t.Skip("skip on windows")
 	}
 
-	fileCfg := FileLogConfig{log.FileLogConfig{Filename: "zap_log", MaxSize: 4096}}
+	fileCfg := FileLogConfig{log.FileLogConfig{Filename: fmt.Sprintf("zap_log_%s", uuid.NewString()), MaxSize: 4096}}
 	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
 	err := InitLogger(conf)
 	require.NoError(t, err)
@@ -46,11 +66,43 @@ func TestZapLoggerWithKeys(t *testing.T) {
 	err = os.Remove(fileCfg.Filename)
 	require.NoError(t, err)
 
+	conf = NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
+	err = InitLogger(conf)
+	require.NoError(t, err)
+	ctx = WithConnID(context.Background(), connID)
+	ctx = WithSessionAlias(ctx, "alias123")
+	testZapLogger(ctx, t, fileCfg.Filename, zapLogWithTraceInfoPattern)
+	err = os.Remove(fileCfg.Filename)
+	require.NoError(t, err)
+
+	err = InitLogger(conf)
+	require.NoError(t, err)
+	ctx1 := WithFields(context.Background(), zap.Int64("conn", 123), zap.String("session_alias", "alias456"))
+	testZapLogger(ctx1, t, fileCfg.Filename, zapLogWithTraceInfoPattern)
+	err = os.Remove(fileCfg.Filename)
+	require.NoError(t, err)
+
+	err = InitLogger(conf)
+	require.NoError(t, err)
+	newLogger := LoggerWithTraceInfo(log.L(), &model.TraceInfo{ConnectionID: 456, SessionAlias: "alias789"})
+	ctx1 = context.WithValue(context.Background(), CtxLogKey, newLogger)
+	testZapLogger(ctx1, t, fileCfg.Filename, zapLogWithTraceInfoPattern)
+	err = os.Remove(fileCfg.Filename)
+	require.NoError(t, err)
+
+	err = InitLogger(conf)
+	require.NoError(t, err)
+	newLogger = LoggerWithTraceInfo(log.L(), nil)
+	ctx1 = context.WithValue(context.Background(), CtxLogKey, newLogger)
+	testZapLogger(ctx1, t, fileCfg.Filename, zapLogWithoutCheckKeyPattern)
+	err = os.Remove(fileCfg.Filename)
+	require.NoError(t, err)
+
 	err = InitLogger(conf)
 	require.NoError(t, err)
 	key := "ctxKey"
 	val := "ctxValue"
-	ctx1 := WithKeyValue(context.Background(), key, val)
+	ctx1 = WithKeyValue(context.Background(), key, val)
 	testZapLogger(ctx1, t, fileCfg.Filename, zapLogWithKeyValPatternByCtx)
 	err = os.Remove(fileCfg.Filename)
 	require.NoError(t, err)

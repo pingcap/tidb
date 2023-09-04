@@ -74,7 +74,7 @@ func TestKillStmt(t *testing.T) {
 	result.Check(testkit.Rows("Warning 1105 Parse ConnectionID failed: unexpected connectionID exceeds int64"))
 
 	// local kill
-	connIDAllocator := globalconn.NewGlobalAllocator(dom.ServerID)
+	connIDAllocator := globalconn.NewGlobalAllocator(dom.ServerID, false)
 	killConnID := connIDAllocator.NextID()
 	tk.MustExec("kill " + strconv.FormatUint(killConnID, 10))
 	result = tk.MustQuery("show warnings")
@@ -85,7 +85,7 @@ func TestKillStmt(t *testing.T) {
 }
 
 func TestUserAttributes(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	rootTK := testkit.NewTestKit(t, store)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 
@@ -136,7 +136,7 @@ func TestUserAttributes(t *testing.T) {
 }
 
 func TestSetResourceGroup(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("SET GLOBAL tidb_enable_resource_control='on'")
@@ -145,7 +145,7 @@ func TestSetResourceGroup(t *testing.T) {
 
 	tk.MustExec("CREATE RESOURCE GROUP rg1 ru_per_sec = 100")
 	tk.MustExec("ALTER USER `root` RESOURCE GROUP `rg1`")
-	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows(""))
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("default"))
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg1"))
 
@@ -153,7 +153,9 @@ func TestSetResourceGroup(t *testing.T) {
 	tk.MustExec("SET RESOURCE GROUP `rg2`")
 	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg2"))
 	tk.MustExec("SET RESOURCE GROUP ``")
-	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows(""))
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("default"))
+	tk.MustExec("SET RESOURCE GROUP default")
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("default"))
 
 	tk.RefreshSession()
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))

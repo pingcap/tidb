@@ -81,6 +81,7 @@ func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.P
 	tp backfillerType, tbl table.PhysicalTable, sessCtx sessionctx.Context,
 	jobCtx *JobContext) (backfillScheduler, error) {
 	if tp == typeAddIndexWorker && info.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+		ctx = logutil.WithCategory(ctx, "ddl-ingest")
 		return newIngestBackfillScheduler(ctx, info, sessPool, tbl, false), nil
 	}
 	return newTxnBackfillScheduler(ctx, info, sessPool, tp, tbl, sessCtx, jobCtx)
@@ -176,7 +177,7 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 	job := reorgInfo.Job
 	jc := b.jobCtx
 	if err := loadDDLReorgVars(b.ctx, b.sessPool); err != nil {
-		logutil.BgLogger().Error("[ddl] load DDL reorganization variable failed", zap.Error(err))
+		logutil.BgLogger().Error("load DDL reorganization variable failed", zap.String("category", "ddl"), zap.Error(err))
 	}
 	workerCnt := b.expectedWorkerSize()
 	// Increase the worker.
@@ -267,7 +268,7 @@ type ingestBackfillScheduler struct {
 
 	copReqSenderPool *copReqSenderPool
 
-	writerPool    *workerpool.WorkerPool[idxRecResult]
+	writerPool    *workerpool.WorkerPool[IndexRecordChunk, workerpool.None]
 	writerMaxID   int
 	poolErr       chan error
 	backendCtx    ingest.BackendCtx
@@ -292,7 +293,7 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	job := b.reorgInfo.Job
 	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
 	if !ok {
-		logutil.BgLogger().Error(ingest.LitErrGetBackendFail, zap.Int64("job ID", job.ID))
+		logutil.Logger(b.ctx).Error(ingest.LitErrGetBackendFail, zap.Int64("job ID", job.ID))
 		return errors.Trace(errors.New("cannot get lightning backend"))
 	}
 	b.backendCtx = bc
@@ -307,12 +308,9 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	}
 	b.copReqSenderPool = copReqSenderPool
 	readerCnt, writerCnt := b.expectedWorkerSize()
-	skipReg := workerpool.OptionSkipRegister[idxRecResult]{}
-	writerPool, err := workerpool.NewWorkerPool[idxRecResult]("ingest_writer",
-		poolutil.DDL, writerCnt, b.createWorker, skipReg)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	writerPool := workerpool.NewWorkerPool[IndexRecordChunk]("ingest_writer",
+		poolutil.DDL, writerCnt, b.createWorker)
+	writerPool.Start(b.ctx)
 	b.writerPool = writerPool
 	b.copReqSenderPool.chunkSender = writerPool
 	b.copReqSenderPool.adjustSize(readerCnt)
@@ -381,7 +379,7 @@ func (b *ingestBackfillScheduler) adjustWorkerSize() error {
 	return nil
 }
 
-func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult] {
+func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[IndexRecordChunk, workerpool.None] {
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
 	sessCtx, err := newSessCtx(reorgInfo)
@@ -397,11 +395,11 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult]
 			b.poolErr <- err
 			return nil
 		}
-		logutil.BgLogger().Warn("[ddl-ingest] cannot create new writer", zap.Error(err),
+		logutil.Logger(b.ctx).Warn("cannot create new writer", zap.Error(err),
 			zap.Int64("job ID", reorgInfo.ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
 		return nil
 	}
-	worker, err := newAddIndexIngestWorker(b.tbl, reorgInfo.d, ei, b.resultCh, job.ID,
+	worker, err := newAddIndexIngestWorker(b.ctx, b.tbl, reorgInfo.d, ei, b.resultCh, job.ID,
 		reorgInfo.SchemaName, b.reorgInfo.currElement.ID, b.writerMaxID,
 		b.copReqSenderPool, sessCtx, b.checkpointMgr, b.distribute)
 	if err != nil {
@@ -410,7 +408,7 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult]
 			b.poolErr <- err
 			return nil
 		}
-		logutil.BgLogger().Warn("[ddl-ingest] cannot create new writer", zap.Error(err),
+		logutil.Logger(b.ctx).Warn("cannot create new writer", zap.Error(err),
 			zap.Int64("job ID", reorgInfo.ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
 		return nil
 	}
@@ -421,43 +419,47 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult]
 func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, error) {
 	indexInfo := model.FindIndexInfoByID(b.tbl.Meta().Indices, b.reorgInfo.currElement.ID)
 	if indexInfo == nil {
-		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender",
+		logutil.Logger(b.ctx).Warn("cannot init cop request sender",
 			zap.Int64("table ID", b.tbl.Meta().ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
 		return nil, errors.New("cannot find index info")
 	}
 	sessCtx, err := newSessCtx(b.reorgInfo)
 	if err != nil {
-		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
+		logutil.Logger(b.ctx).Warn("cannot init cop request sender", zap.Error(err))
 		return nil, err
 	}
-	copCtx, err := newCopContext(b.tbl.Meta(), indexInfo, sessCtx)
+	copCtx, err := NewCopContext(b.tbl.Meta(), indexInfo, sessCtx)
 	if err != nil {
-		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
+		logutil.Logger(b.ctx).Warn("cannot init cop request sender", zap.Error(err))
 		return nil, err
 	}
 	return newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), b.taskCh, b.sessPool, b.checkpointMgr), nil
 }
 
 func (*ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
-	workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	readerSize = mathutil.Min(workerCnt/2, maxBackfillWorkerSize)
-	readerSize = mathutil.Max(readerSize, 1)
-	writerSize = mathutil.Min(workerCnt/2+2, maxBackfillWorkerSize)
-	return readerSize, writerSize
+	return expectedIngestWorkerCnt()
 }
 
-func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
+func expectedIngestWorkerCnt() (readerCnt, writerCnt int) {
+	workerCnt := int(variable.GetDDLReorgWorkerCounter())
+	readerCnt = mathutil.Min(workerCnt/2, maxBackfillWorkerSize)
+	readerCnt = mathutil.Max(readerCnt, 1)
+	writerCnt = mathutil.Min(workerCnt/2+2, maxBackfillWorkerSize)
+	return readerCnt, writerCnt
+}
+
+func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool.None)) {
 	defer util.Recover(metrics.LabelDDL, "ingestWorker.HandleTask", func() {
-		w.resultCh <- &backfillResult{taskID: rs.id, err: dbterror.ErrReorgPanic}
+		w.resultCh <- &backfillResult{taskID: rs.ID, err: dbterror.ErrReorgPanic}
 	}, false)
-	defer w.copReqSenderPool.recycleChunk(rs.chunk)
+	defer w.copReqSenderPool.recycleChunk(rs.Chunk)
 	result := &backfillResult{
-		taskID: rs.id,
-		err:    rs.err,
+		taskID: rs.ID,
+		err:    rs.Err,
 	}
 	if result.err != nil {
-		logutil.BgLogger().Error("[ddl-ingest] encounter error when handle index chunk",
-			zap.Int("id", rs.id), zap.Error(rs.err))
+		logutil.Logger(w.ctx).Error("encounter error when handle index chunk",
+			zap.Int("id", rs.ID), zap.Error(rs.Err))
 		w.resultCh <- result
 		return
 	}
@@ -476,14 +478,14 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 		return
 	}
 	if count == 0 {
-		logutil.BgLogger().Info("[ddl-ingest] finish a cop-request task", zap.Int("id", rs.id))
+		logutil.Logger(w.ctx).Info("finish a cop-request task", zap.Int("id", rs.ID))
 		return
 	}
 	if w.checkpointMgr != nil {
 		cnt, nextKey := w.checkpointMgr.Status()
 		result.totalCount = cnt
 		result.nextKey = nextKey
-		result.err = w.checkpointMgr.UpdateCurrent(rs.id, count)
+		result.err = w.checkpointMgr.UpdateCurrent(rs.ID, count)
 	} else {
 		result.addedCount = count
 		result.scanCount = count

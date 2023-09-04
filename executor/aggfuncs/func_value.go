@@ -254,7 +254,7 @@ func (v *firstValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(p), DefPartialResult4FirstValueSize + veMemDelta
 }
 
-func (v *firstValue) ResetPartialResult(pr PartialResult) {
+func (*firstValue) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstValue)(pr)
 	p.gotFirstValue = false
 }
@@ -274,7 +274,7 @@ func (v *firstValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 	return memDelta, nil
 }
 
-func (v *firstValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (v *firstValue) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstValue)(pr)
 	if !p.gotFirstValue {
 		chk.AppendNull(v.ordinal)
@@ -301,7 +301,7 @@ func (v *lastValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(p), DefPartialResult4LastValueSize + veMemDelta
 }
 
-func (v *lastValue) ResetPartialResult(pr PartialResult) {
+func (*lastValue) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4LastValue)(pr)
 	p.gotLastValue = false
 }
@@ -318,7 +318,7 @@ func (v *lastValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []c
 	return memDelta, nil
 }
 
-func (v *lastValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (v *lastValue) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4LastValue)(pr)
 	if !p.gotLastValue {
 		chk.AppendNull(v.ordinal)
@@ -346,7 +346,7 @@ func (v *nthValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(p), DefPartialResult4NthValueSize + veMemDelta
 }
 
-func (v *nthValue) ResetPartialResult(pr PartialResult) {
+func (*nthValue) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4NthValue)(pr)
 	p.seenRows = 0
 }
@@ -367,7 +367,7 @@ func (v *nthValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []ch
 	return memDelta, nil
 }
 
-func (v *nthValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (v *nthValue) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4NthValue)(pr)
 	if v.nth == 0 || p.seenRows < v.nth {
 		chk.AppendNull(v.ordinal)

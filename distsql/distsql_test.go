@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -111,14 +110,16 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	basic := stmtStats.GetBasicRuntimeStats(1)
 	basic.Record(time.Second, 20)
 	s1 := &selectResultRuntimeStats{
-		copRespTime:        []time.Duration{time.Second, time.Millisecond},
-		procKeys:           []int64{100, 200},
 		backoffSleep:       map[string]time.Duration{"RegionMiss": time.Millisecond},
 		totalProcessTime:   time.Second,
 		totalWaitTime:      time.Second,
 		rpcStat:            tikv.NewRegionRequestRuntimeStats(),
 		distSQLConcurrency: 15,
 	}
+	s1.copRespTime.Add(execdetails.Duration(time.Second))
+	s1.copRespTime.Add(execdetails.Duration(time.Millisecond))
+	s1.procKeys.Add(100)
+	s1.procKeys.Add(200)
 
 	s2 := *s1
 	stmtStats.RegisterStats(1, s1)
@@ -141,13 +142,13 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	require.Equal(t, expect, stats.String())
 
 	s1 = &selectResultRuntimeStats{
-		copRespTime:      []time.Duration{time.Second},
-		procKeys:         []int64{100},
 		backoffSleep:     map[string]time.Duration{"RegionMiss": time.Millisecond},
 		totalProcessTime: time.Second,
 		totalWaitTime:    time.Second,
 		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
 	}
+	s1.copRespTime.Add(execdetails.Duration(time.Second))
+	s1.procKeys.Add(100)
 	expect = "cop_task: {num: 1, max: 1s, proc_keys: 100, tot_proc: 1s, tot_wait: 1s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 1ms}"
 	require.Equal(t, expect, s1.String())
 }
@@ -336,7 +337,7 @@ func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionctx.Cont
 
 	// Test Next.
 	var response SelectResult
-	response, _ = Select(context.TODO(), ctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
+	response, _ = Select(context.TODO(), ctx, request, colTypes)
 
 	result, _ := response.(*selectResult)
 	resp, _ := result.resp.(*mockResponse)
@@ -411,9 +412,9 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 	// Test Next.
 	var response SelectResult
 	if planIDs == nil {
-		response, err = Select(context.TODO(), sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
+		response, err = Select(context.TODO(), sctx, request, colTypes)
 	} else {
-		response, err = SelectWithRuntimeStats(context.TODO(), sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDs, 1)
+		response, err = SelectWithRuntimeStats(context.TODO(), sctx, request, colTypes, planIDs, 1)
 	}
 
 	require.NoError(t, err)

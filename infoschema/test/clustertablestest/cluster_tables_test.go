@@ -243,7 +243,8 @@ func TestSelectClusterTable(t *testing.T) {
 	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
 	// skip instance and host column because it now includes the TCP socket details (unstable)
 	tk.MustQuery("select id, user, db, command, time, state, info, digest, mem, disk, txnstart from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf("1 root <nil> Query 9223372036 %s <nil>  0 0 ", "")))
-	tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
+	tk.MustQuery("select query_time, conn_id, session_alias from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6 "))
+	tk.MustQuery("select query_time, conn_id, session_alias from `CLUSTER_SLOW_QUERY` order by time desc limit 1").Check(testkit.Rows("25.571605962 40507 alias123"))
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1", "1"))
 	tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest order by digest").Check(testkit.Rows("124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc 1", "42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
 	tk.MustQuery(`select length(query) as l,time from information_schema.cluster_slow_query where time > "2019-02-12 19:33:56" order by abs(l) desc limit 10;`).Check(testkit.Rows("21 2019-02-12 19:33:56.571953"))
@@ -899,47 +900,76 @@ func TestQuickBinding(t *testing.T) {
 		expectedHint            string
 		dmlAndSubqueryTemplates []string
 	}
-	defaultDMLAndSubqueryTemplates := []string{
-		//"select a from (%v) tx where tx.a<1", // TODO: support sub query
-		"insert into t1 %v",
-		// TODO: more templates
+	subQueryTemp := []string{
+		"select a from (?) tx where tx.c<100",
+		"select * from (?) tx1, (?) tx2 where tx1.c<100 and tx2.c<100",
 	}
 	testCases := []testCase{
 		// access path selection with use_index / ignore_index
-		{`select /*+ use_index(t1, k_a) */ * from t1 where b=?`, "use_index(@`sel_1` `test`.`t1` `k_a`)", defaultDMLAndSubqueryTemplates},
-		{`select /*+ use_index(t1, k_bc) */ * from t1 where a=?`, "use_index(@`sel_1` `test`.`t1` `k_bc`)", defaultDMLAndSubqueryTemplates},
-		{`select /*+ use_index(t1, primary) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` )", defaultDMLAndSubqueryTemplates},
-		{`select /*+ ignore_index(t1, k_a, k_bc) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` ), ignore_index(`t1` `k_a`, `k_bc`)", defaultDMLAndSubqueryTemplates},
-		{`select /*+ use_index(t1) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` )", defaultDMLAndSubqueryTemplates},
-		{`select /*+ use_index(t2) */ * from t2 where a=? and b=?`, "use_index(@`sel_1` `test`.`t2` )", nil},
+		{`select /*+ use_index(t1, k_a) */ * from t1 where b=?`, "use_index(@`sel_1` `test`.`t1` `k_a`), no_order_index(@`sel_1` `test`.`t1` `k_a`)", subQueryTemp},
+		{`select /*+ use_index(t1, k_bc) */ * from t1 where a=?`, "use_index(@`sel_1` `test`.`t1` `k_bc`), no_order_index(@`sel_1` `test`.`t1` `k_bc`)", subQueryTemp},
+		{`select /*+ use_index(t1, primary) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`)", subQueryTemp},
+		{`select /*+ ignore_index(t1, k_a, k_bc) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), ignore_index(`t1` `k_a`, `k_bc`)", subQueryTemp},
+		{`select /*+ use_index(t1) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`)", subQueryTemp},
+		{`select /*+ use_index(t2) */ * from t2 where a=? and b=?`, "use_index(@`sel_1` `test`.`t2` )", subQueryTemp},
 
 		// aggregation
-		{`select /*+ hash_agg(), use_index(t1, primary) */ count(*) from t1 where a<?`, "hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` )", nil},
-		{`select /*+ hash_agg(), use_index(t1, primary) */ count(*), b from t1 where a<? group by b`, "hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` )", nil},
-		{`select /*+ stream_agg(), use_index(t1, primary) */ count(*) from t1 where a<?`, "stream_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` )", nil},
-		{`select /*+ stream_agg(), use_index(t1, primary) */ count(*), b from t1 where a<? group by b`, "stream_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` )", nil},
-		{`select a+b+? from (select /*+ stream_agg() */ count(*) as a from t1) tt1, (select /*+ hash_agg() */ count(*) as b from t1) tt2`, "stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t1` `k_a`), hash_agg(@`sel_3`), use_index(@`sel_3` `test`.`t1` `k_a`)", nil},
+		{`select /*+ hash_agg(), use_index(t1, primary), agg_to_cop() */ count(*) from t1 where a<?`, "hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), agg_to_cop(@`sel_1`)", nil},
+		{`select /*+ hash_agg(), use_index(t1, primary), agg_to_cop() */ count(*), b from t1 where a<? group by b`, "hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), agg_to_cop(@`sel_1`)", nil},
+		{`select /*+ stream_agg(), use_index(t1, primary), agg_to_cop() */ count(*) from t1 where a<?`, "stream_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), agg_to_cop(@`sel_1`)", nil},
+		{`select /*+ stream_agg(), use_index(t1, primary), agg_to_cop() */ count(*), b from t1 where a<? group by b`, "stream_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`)", nil},
+		{`select a+b+? from (select /*+ stream_agg() */ count(*) as a from t1) tt1, (select /*+ hash_agg() */ count(*) as b from t1) tt2`, "stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t1` `k_a`), no_order_index(@`sel_2` `test`.`t1` `k_a`), agg_to_cop(@`sel_2`), hash_agg(@`sel_3`), use_index(@`sel_3` `test`.`t1` `k_a`), no_order_index(@`sel_3` `test`.`t1` `k_a`), agg_to_cop(@`sel_3`)", nil},
 
 		// 2-way hash joins
-		{`select /*+ hash_join(t1, t2), use_index(t1), use_index(t2) */ t1.* from t1, t2 where t1.a=t2.a and t1.a<?`, "hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )", nil},
+		{`select /*+ hash_join(t1, t2), use_index(t1), use_index(t2) */ t1.* from t1, t2 where t1.a=t2.a and t1.a<?`, "hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` )", nil},
 		// not support, fix them later on
 		//{`select /*+ hash_join_build(t1), use_index(t1), use_index(t2) */ * from t1, t2 where t1.a=t2.a and t1.a<?`, "hash_join_build(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )", nil},
 		//{`select /*+ hash_join_build(t2), use_index(t1), use_index(t2) */ * from t1, t2 where t1.a=t2.a and t1.a<?`, "hash_join_build(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )", nil},
 		//{`select /*+ hash_join_probe(t1), use_index(t1), use_index(t2) */ * from t1, t2 where t1.a=t2.a and t1.a<?`, "hash_join_build(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )", nil},
 		//{`select /*+ hash_join_probe(t2), use_index(t1), use_index(t2) */ * from t1, t2 where t1.a=t2.a and t1.a<?`, "hash_join_build(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )", nil},
 
+		// 2-way index join
+		{`select /*+ inl_join(t1) */ * from t1, t2 where t1.a=t2.a and t1.b<? and t2.b<?`, "inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` `k_a`), no_order_index(@`sel_1` `test`.`t1` `k_a`), use_index(@`sel_1` `test`.`t2` )", nil},
+		{`select /*+ inl_join(t2) */ * from t1, t2 where t1.a=t2.a and t1.b<? and t2.b<?`, "inl_join(@`sel_1` `test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`)", nil},
+		{`select /*+ inl_join(t1) */ * from t1, t2 where t1.b=t2.b and t1.c=t2.c and t1.a<? and t2.a<?`, "inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` `k_bc`), no_order_index(@`sel_1` `test`.`t1` `k_bc`), use_index(@`sel_1` `test`.`t2` )", nil},
+		{`select /*+ inl_join(t2) */ * from t1, t2 where t1.b=t2.b and t1.c=t2.c and t1.a<? and t2.a<?`, "inl_join(@`sel_1` `test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_bc`), no_order_index(@`sel_1` `test`.`t2` `k_bc`)", nil},
+		{`select /*+ inl_join(t1) */ * from t1, t2 where t1.a=t2.a and t1.b<? and t2.b<? order by t1.a limit 5`, "inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` `k_a`), no_order_index(@`sel_1` `test`.`t1` `k_a`), use_index(@`sel_1` `test`.`t2` )", nil},
+		{`select /*+ inl_join(t2) */ * from t1, t2 where t1.a=t2.a and t1.b<? and t2.b<? order by t1.a limit 5`, "inl_join(@`sel_1` `test`.`t2`), use_index(@`sel_1` `test`.`t1` `k_a`), order_index(@`sel_1` `test`.`t1` `k_a`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`)", nil},
+
+		// 2-way index hash join
+		{`select /*+ inl_hash_join(t1) */ * from t1, t2 where t1.a=t2.a and t1.b<? and t2.b<?`, "inl_hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` `k_a`), no_order_index(@`sel_1` `test`.`t1` `k_a`), use_index(@`sel_1` `test`.`t2` )", nil},
+		{`select /*+ inl_hash_join(t2) */ * from t1, t2 where t1.a=t2.a and t1.b<? and t2.b<?`, "inl_hash_join(@`sel_1` `test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`)", nil},
+		{`select /*+ inl_hash_join(t1) */ * from t1, t2 where t1.b=t2.b and t1.c=t2.c and t1.a<? and t2.a<?`, "inl_hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` `k_bc`), no_order_index(@`sel_1` `test`.`t1` `k_bc`), use_index(@`sel_1` `test`.`t2` )", nil},
+		{`select /*+ inl_hash_join(t2) */ * from t1, t2 where t1.b=t2.b and t1.c=t2.c and t1.a<? and t2.a<?`, "inl_hash_join(@`sel_1` `test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_bc`), no_order_index(@`sel_1` `test`.`t2` `k_bc`)", nil},
+		{`select /*+ inl_hash_join(t1) */ * from t1, t2 where t1.a=t2.a and t1.b<? and t2.b<? order by t1.a limit 5`, "inl_hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` `k_a`), no_order_index(@`sel_1` `test`.`t1` `k_a`), use_index(@`sel_1` `test`.`t2` )", nil},
+		{`select /*+ inl_hash_join(t2) */ * from t1, t2 where t1.a=t2.a and t1.b<? and t2.b<? order by t1.a limit 5`, "inl_hash_join(@`sel_1` `test`.`t2`), use_index(@`sel_1` `test`.`t1` `k_a`), order_index(@`sel_1` `test`.`t1` `k_a`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`)", nil},
+
 		// 2-way merge joins
-		{`select /*+ merge_join(t1, t2), use_index(t1), use_index(t2) */ t1.* from t1, t2 where t1.a=t2.a and t1.a<?`, "merge_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )", nil},
-		{`select /*+ merge_join(t1, t2), use_index(t1, k_a), use_index(t2, k_a) */ t1.* from t1, t2 where t1.a=t2.a and t1.a<?`, "merge_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` `k_a`), use_index(@`sel_1` `test`.`t2` `k_a`)", nil},
+		{`select /*+ merge_join(t1, t2), use_index(t1), use_index(t2) */ t1.* from t1, t2 where t1.a=t2.a and t1.a<?`, "merge_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` )", nil},
+		{`select /*+ merge_join(t1, t2), use_index(t1, k_a), use_index(t2, k_a) */ t1.* from t1, t2 where t1.a=t2.a and t1.a<?`, "merge_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` `k_a`), order_index(@`sel_1` `test`.`t1` `k_a`), use_index(@`sel_1` `test`.`t2` `k_a`), order_index(@`sel_1` `test`.`t2` `k_a`)", nil},
+
+		// limit_to_cop
+		{`select /*+ limit_to_cop(), use_index(t1, k_a) */ * from t1 where a < ? limit 100`, "use_index(@`sel_1` `test`.`t1` `k_a`), no_order_index(@`sel_1` `test`.`t1` `k_a`), limit_to_cop(@`sel_1`)", nil},
+		{`select /*+ limit_to_cop(), use_index(t1, k_a) */ * from t1 where b < ? limit 100`, "use_index(@`sel_1` `test`.`t1` `k_a`), no_order_index(@`sel_1` `test`.`t1` `k_a`), limit_to_cop(@`sel_1`)", nil},
+		{`select /*+ limit_to_cop(), use_index(t1, k_a) */ * from t1 where a < ? order by a limit 100`, "use_index(@`sel_1` `test`.`t1` `k_a`), order_index(@`sel_1` `test`.`t1` `k_a`), limit_to_cop(@`sel_1`)", nil},
+		{`select /*+ limit_to_cop(), use_index(t1, k_a) */ * from t1 where a < ? order by b limit 100`, "use_index(@`sel_1` `test`.`t1` `k_a`), no_order_index(@`sel_1` `test`.`t1` `k_a`), limit_to_cop(@`sel_1`)", nil},
+
+		// index merge
+		{`select /*+ use_index_merge(t1, primary, k_a, k_bc) */ * from t1 where pk<? and a<? and b<1`, "use_index_merge(@`sel_1` `t1` `k_a`, `k_bc`)", nil},
+		{`select /*+ use_index_merge(t1, primary, k_a, k_bc) */ * from t1 where pk<? or a<? or b<1`, "use_index_merge(@`sel_1` `t1` `primary`, `k_a`, `k_bc`)", nil},
+		{`select /*+ use_index_merge(t2, k_a, k_bc) */ * from t2 where a<? and b<1 and c<1`, "use_index_merge(@`sel_1` `t2` `k_a`, `k_bc`)", nil},
+		{`select /*+ use_index_merge(t2, k_a, k_bc) */ * from t2 where a<? or b<1 and c<1`, "use_index_merge(@`sel_1` `t2` `k_a`, `k_bc`)", nil},
 	}
 
 	removeHint := func(sql string) string {
-		b := strings.Index(sql, "/*+")
-		e := strings.Index(sql, "*/")
-		if b != -1 && e != -1 {
+		for {
+			b := strings.Index(sql, "/*+")
+			e := strings.Index(sql, "*/")
+			if b == -1 || e == -1 {
+				return sql
+			}
 			sql = sql[:b] + sql[e+2:]
 		}
-		return sql
 	}
 	randValue := func() string {
 		switch rand.Intn(4) {
@@ -1003,6 +1033,10 @@ func TestQuickBinding(t *testing.T) {
 			tk.MustExec(setStmt)
 			tk.MustExec(execStmt)
 			tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+			if strings.Contains(tc.expectedHint, "use_index_merge") {
+				continue // for safety, plan cache keeps some extra predicates upon the IndexMerge's TableScan, so the plan-digest may be different
+			}
+
 			// has the same plan-digest
 			tk.MustQuery(fmt.Sprintf(`select plan_digest from information_schema.statements_summary where digest='%v'`, sqlDigest)).Check(testkit.Rows(planDigest))
 		}
@@ -1013,7 +1047,7 @@ func TestQuickBinding(t *testing.T) {
 	// test with DML and sub-query
 	for _, tc := range testCases {
 		for _, temp := range tc.dmlAndSubqueryTemplates {
-			temp = fmt.Sprintf(temp, tc.template)
+			temp = strings.Replace(temp, "?", tc.template, -1)
 			stmtsummary.StmtSummaryByDigestMap.Clear()
 			firstSQL := fillValues(temp)
 			tk.MustExec(firstSQL)

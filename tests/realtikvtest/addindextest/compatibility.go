@@ -140,7 +140,7 @@ func testOneColFramePara(ctx *suiteContext, tableID int, colIDs [][]int, f func(
 				err = nil
 				continue
 			}
-			logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
+			logutil.BgLogger().Error("add index failed", zap.String("category", "add index test"), zap.Error(err))
 			require.NoError(ctx.t, err)
 			break
 		}
@@ -156,7 +156,7 @@ func testTwoColsFramePara(ctx *suiteContext, tableID int, iIDs [][]int, jIDs [][
 		for _, j := range jIDs[tableID] {
 			err = f(ctx, tableID, tableName, indexID, i, j)
 			if err != nil {
-				logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
+				logutil.BgLogger().Error("add index failed", zap.String("category", "add index test"), zap.Error(err))
 			}
 			require.NoError(ctx.t, err)
 			if err == nil && i != j {
@@ -175,7 +175,7 @@ func testOneIndexFramePara(ctx *suiteContext, tableID int, colID int, f func(*su
 	tableName := "addindex.t" + strconv.Itoa(tableID)
 	err = f(ctx, tableID, tableName, colID)
 	if err != nil {
-		logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
+		logutil.BgLogger().Error("add index failed", zap.String("category", "add index test"), zap.Error(err))
 	}
 	require.NoError(ctx.t, err)
 	if err == nil {

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -41,7 +40,6 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
-	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -94,26 +92,6 @@ func WithPDClientConfig(client config.PDClient) Option {
 	return func(c *TiKVDriver) {
 		c.pdConfig = client
 	}
-}
-
-// TrySetupGlobalResourceController tries to setup global resource controller.
-func TrySetupGlobalResourceController(ctx context.Context, serverID uint64, s kv.Storage) error {
-	var (
-		store *tikvStore
-		ok    bool
-	)
-	if store, ok = s.(*tikvStore); !ok {
-		return errors.New("cannot setup up resource controller, should use tikv storage")
-	}
-
-	control, err := rmclient.NewResourceGroupController(ctx, serverID, store.GetPDClient(), nil, rmclient.WithMaxWaitDuration(time.Second*30))
-	if err != nil {
-		return err
-	}
-	executor.SetResourceGroupController(control)
-	tikv.SetResourceControlInterceptor(control)
-	control.Start(ctx)
-	return nil
 }
 
 func getKVStore(path string, tls config.Security) (kv.Storage, error) {

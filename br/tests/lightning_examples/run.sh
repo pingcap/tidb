@@ -16,6 +16,8 @@
 
 set -eu
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 EXAMPLES_PATH=${EXAMPLES_PATH:-br/pkg/lightning/mydump/examples}
 
 # Because of issue JENKINS-45544 we can't use the Unicode filename in the
@@ -31,7 +33,7 @@ undo_rename() {
 trap undo_rename EXIT
 
 do_run_lightning() {
-    run_lightning -d $EXAMPLES_PATH --config "tests/$TEST_NAME/$1.toml"
+    run_lightning -d $EXAMPLES_PATH --config "$CUR/$1.toml"
 }
 
 # Perform the import

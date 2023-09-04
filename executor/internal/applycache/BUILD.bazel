@@ -1,0 +1,39 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "applycache",
+    srcs = ["apply_cache.go"],
+    importpath = "github.com/pingcap/tidb/executor/internal/applycache",
+    visibility = ["//executor:__subpackages__"],
+    deps = [
+        "//sessionctx",
+        "//util/chunk",
+        "//util/kvcache",
+        "//util/mathutil",
+        "//util/memory",
+        "//util/syncutil",
+    ],
+)
+
+go_test(
+    name = "applycache_test",
+    timeout = "short",
+    srcs = [
+        "apply_cache_test.go",
+        "main_test.go",
+    ],
+    embed = [":applycache"],
+    flaky = True,
+    deps = [
+        "//config",
+        "//meta/autoid",
+        "//parser/mysql",
+        "//testkit/testsetup",
+        "//types",
+        "//util/chunk",
+        "//util/mock",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
