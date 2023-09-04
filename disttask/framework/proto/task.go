@@ -96,6 +96,7 @@ type Subtask struct {
 	// it's 0 if it hasn't started yet.
 	UpdateTime time.Time
 	Meta       []byte
+	Summary    string
 }
 
 // NewSubtask create a new subtask.

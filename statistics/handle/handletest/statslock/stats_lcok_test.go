@@ -60,11 +60,9 @@ func TestStatsLockAndUnlockTable(t *testing.T) {
 	tblStats1 := handle.GetTableStats(tbl.Meta())
 	require.Equal(t, tblStats, tblStats1)
 
-	tableLocked1 := handle.GetTableLockedAndClearForTest()
-	err = handle.LoadLockedTables()
+	lockedTables, err := handle.GetTableLockedAndClearForTest()
 	require.Nil(t, err)
-	tableLocked2 := handle.GetTableLockedAndClearForTest()
-	require.Equal(t, tableLocked1, tableLocked2)
+	require.Equal(t, 1, len(lockedTables))
 
 	tk.MustExec("unlock stats t")
 	rows = tk.MustQuery("select count(*) from mysql.stats_table_locked").Rows()
@@ -111,16 +109,16 @@ func TestStatsLockTableAndUnlockTableRepeatedly(t *testing.T) {
 	require.Equal(t, tblStats, tblStats1)
 
 	// Lock the table again and check the warning.
-	tableLocked1 := handle.GetTableLockedAndClearForTest()
+	lockedTables1, err := handle.GetTableLockedAndClearForTest()
+	require.Nil(t, err)
 	tk.MustExec("lock stats t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 skip locking locked table: test.t",
 	))
 
-	err = handle.LoadLockedTables()
+	lockedTables2, err := handle.GetTableLockedAndClearForTest()
 	require.Nil(t, err)
-	tableLocked2 := handle.GetTableLockedAndClearForTest()
-	require.Equal(t, tableLocked1, tableLocked2)
+	require.Equal(t, lockedTables1, lockedTables2)
 
 	// Unlock the table.
 	tk.MustExec("unlock stats t")
@@ -191,11 +189,9 @@ func TestStatsLockAndUnlockTables(t *testing.T) {
 	tbl2Stats1 := handle.GetTableStats(tbl2.Meta())
 	require.Equal(t, tbl2Stats, tbl2Stats1)
 
-	tableLocked1 := handle.GetTableLockedAndClearForTest()
-	err = handle.LoadLockedTables()
+	lockedTables, err := handle.GetTableLockedAndClearForTest()
 	require.Nil(t, err)
-	tableLocked2 := handle.GetTableLockedAndClearForTest()
-	require.Equal(t, tableLocked1, tableLocked2)
+	require.Equal(t, 2, len(lockedTables))
 
 	tk.MustExec("unlock stats test.t1, test.t2")
 	rows = tk.MustQuery("select count(*) from mysql.stats_table_locked").Rows()
