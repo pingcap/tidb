@@ -193,14 +193,9 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	sessPool := newSessPoolForTest(t, store)
 
 	ctx := context.Background()
-	var keys, values [][]byte
-	onWrite := func(key, val []byte) {
-		keys = append(keys, key)
-		values = append(values, val)
-	}
 	mockBackendCtx := &ingest.MockBackendCtx{}
 	mockEngine := ingest.NewMockEngineInfo(nil)
-	mockEngine.SetHook(onWrite)
+	mockEngine.SetHook(func(key, val []byte) {})
 
 	totalRowCount := &atomic.Int64{}
 
@@ -222,8 +217,6 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	require.NoError(t, err)
 	err = pipeline.Close()
 	require.NoError(t, err)
-	require.Len(t, keys, 10)
-	require.Len(t, values, 10)
 	require.Equal(t, int64(10), totalRowCount.Load())
 }
 

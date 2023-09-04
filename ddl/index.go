@@ -1901,20 +1901,16 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	})
 
 	g.Go(func() error {
-		ticker := time.NewTicker(CheckBackfillJobFinishInterval)
-		defer ticker.Stop()
-		tickCnt := 0
+		checkFinishTk := time.NewTicker(CheckBackfillJobFinishInterval)
+		defer checkFinishTk.Stop()
+		updateRowCntTk := time.NewTicker(UpdateBackfillJobRowCountInterval)
+		defer updateRowCntTk.Stop()
 		for {
 			select {
 			case <-done:
 				w.updateJobRowCount(taskKey, reorgInfo.Job.ID)
 				return nil
-			case <-ticker.C:
-				tickCnt++
-				if tickCnt == rowCountUpdateTickInterval {
-					tickCnt = 0
-					w.updateJobRowCount(taskKey, reorgInfo.Job.ID)
-				}
+			case <-checkFinishTk.C:
 				if err = w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
 					if !dbterror.ErrCancelledDDLJob.Equal(err) {
 						return errors.Trace(err)
@@ -1926,6 +1922,8 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 						continue
 					}
 				}
+			case <-updateRowCntTk.C:
+				w.updateJobRowCount(taskKey, reorgInfo.Job.ID)
 			}
 		}
 	})
