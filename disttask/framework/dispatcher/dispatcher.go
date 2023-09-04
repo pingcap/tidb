@@ -307,6 +307,10 @@ func (d *dispatcher) onNextStage() error {
 	firstTime := true
 	for {
 		metas, err := d.impl.OnNextStageBatch(d.ctx, d, d.task)
+		if err != nil {
+			logutil.Logger(d.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
+			return err
+		}
 		if len(metas) == 0 {
 			d.task.SubState = proto.TaskSubStateNormal
 			// When firstTime == true,
@@ -320,12 +324,12 @@ func (d *dispatcher) onNextStage() error {
 		firstTime = false
 		// dispatch batch of subtasks to EligibleInstances.
 		err = d.dispatchSubTask(d.task, metas)
-		failpoint.Inject("mockDynamicDispatchErr", func() {
-			err = errors.New("mockDynamicDispatchErr")
-		})
 		if err != nil {
 			return err
 		}
+		failpoint.Inject("mockDynamicDispatchErr", func() {
+			failpoint.Return(errors.New("mockDynamicDispatchErr"))
+		})
 	}
 }
 
