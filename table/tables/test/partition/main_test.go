@@ -12,24 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dispatcher
+package partition
 
 import (
-	"context"
+	"testing"
 
-	"github.com/stretchr/testify/mock"
+	"github.com/pingcap/tidb/testkit/testsetup"
+	"go.uber.org/goleak"
 )
 
-// MockHandle is used to mock the Handle.
-type MockHandle struct {
-	mock.Mock
-}
-
-// GetAllSchedulerIDs implements the Handle.GetAllSchedulerIDs interface.
-func (m *MockHandle) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error) {
-	args := m.Called(ctx, gTaskID)
-	if args.Error(1) != nil {
-		return nil, args.Error(1)
+func TestMain(m *testing.M) {
+	testsetup.SetupForCommonTest()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-	return args.Get(0).([]string), nil
+	goleak.VerifyTestMain(m, opts...)
 }

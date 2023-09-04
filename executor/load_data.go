@@ -153,7 +153,7 @@ func (e *LoadDataWorker) LoadLocal(ctx context.Context, r io.ReadCloser) error {
 	readers := []importer.LoadDataReaderInfo{{
 		Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
 			addedSeekReader := NewSimpleSeekerOnReadCloser(r)
-			return storage.InterceptDecompressReader(addedSeekReader, compressTp2)
+			return storage.InterceptDecompressReader(addedSeekReader, compressTp2, storage.DecompressConfig{})
 		}}}
 	return e.load(ctx, readers)
 }
@@ -320,6 +320,9 @@ func (w *encodeWorker) processStream(
 			}
 			dataParser, err := w.controller.GetParser(ctx, readerInfo)
 			if err != nil {
+				return err
+			}
+			if err = w.controller.HandleSkipNRows(dataParser); err != nil {
 				return err
 			}
 			err = w.processOneStream(ctx, dataParser, outCh)

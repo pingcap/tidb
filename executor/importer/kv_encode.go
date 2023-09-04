@@ -195,7 +195,6 @@ func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 	}
 
 	if common.TableHasAutoRowID(en.Table.Meta()) {
-		// todo: we assume there's no such column in input data, will handle it later
 		rowValue := rowID
 		newRowID := en.AutoIDFn(rowID)
 		value = types.NewIntDatum(newRowID)

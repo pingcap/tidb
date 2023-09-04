@@ -38,6 +38,7 @@ type Engine struct {
 	storage    storage.ExternalStorage
 	dataFiles  []string
 	statsFiles []string
+	splitKeys  [][]byte
 	bufPool    *membuf.Pool
 
 	iter *MergeKVIter
@@ -47,6 +48,9 @@ type Engine struct {
 	duplicateDB        *pebble.DB
 	dupDetectOpt       common.DupDetectOpt
 	ts                 uint64
+
+	totalKVSize   int64
+	totalKVLength int64
 
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
@@ -62,6 +66,8 @@ func NewExternalEngine(
 	duplicateDB *pebble.DB,
 	dupDetectOpt common.DupDetectOpt,
 	ts uint64,
+	totalKVSize int64,
+	totakKVLength int64,
 ) common.Engine {
 	return &Engine{
 		storage:            storage,
@@ -73,6 +79,8 @@ func NewExternalEngine(
 		duplicateDB:        duplicateDB,
 		dupDetectOpt:       dupDetectOpt,
 		ts:                 ts,
+		totalKVSize:        totalKVSize,
+		totalKVLength:      totakKVLength,
 		importedKVSize:     atomic.NewInt64(0),
 		importedKVCount:    atomic.NewInt64(0),
 	}
@@ -167,6 +175,42 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 		return nil, errors.Trace(err)
 	}
 	return iter, nil
+}
+
+// KVStatistics returns the total kv size and total kv length.
+func (e *Engine) KVStatistics() (totalKVSize int64, totalKVLength int64) {
+	return e.totalKVSize, e.totalKVLength
+}
+
+// ImportedStatistics returns the imported kv size and imported kv length.
+func (e *Engine) ImportedStatistics() (importedKVSize int64, importedKVLength int64) {
+	return e.importedKVSize.Load(), e.importedKVCount.Load()
+}
+
+// ID is the identifier of an engine.
+func (e *Engine) ID() string {
+	return "external"
+}
+
+// SplitRanges split the ranges by split keys provided by external engine.
+func (e *Engine) SplitRanges(
+	startKey, endKey []byte,
+	_, _ int64,
+	_ log.Logger,
+) ([]common.Range, error) {
+	splitKeys := e.splitKeys
+	ranges := make([]common.Range, 0, len(splitKeys)+1)
+	ranges = append(ranges, common.Range{Start: startKey})
+	for i := 0; i < len(splitKeys); i++ {
+		ranges[len(ranges)-1].End = splitKeys[i]
+		var endK []byte
+		if i < len(splitKeys)-1 {
+			endK = splitKeys[i+1]
+		}
+		ranges = append(ranges, common.Range{Start: splitKeys[i], End: endK})
+	}
+	ranges[len(ranges)-1].End = endKey
+	return ranges, nil
 }
 
 // Close releases the resources of the engine.

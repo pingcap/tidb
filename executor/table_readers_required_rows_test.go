@@ -185,15 +185,15 @@ func TestTableReaderRequiredRows(t *testing.T) {
 	for _, testCase := range testCases {
 		sctx := defaultCtx()
 		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
-		exec := buildTableReader(sctx)
-		require.NoError(t, exec.Open(ctx))
-		chk := newFirstChunk(exec)
+		executor := buildTableReader(sctx)
+		require.NoError(t, executor.Open(ctx))
+		chk := exec.NewFirstChunk(executor)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.NoError(t, exec.Next(ctx, chk))
+			require.NoError(t, executor.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.NoError(t, exec.Close())
+		require.NoError(t, executor.Close())
 	}
 }
 
@@ -237,14 +237,14 @@ func TestIndexReaderRequiredRows(t *testing.T) {
 	for _, testCase := range testCases {
 		sctx := defaultCtx()
 		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
-		exec := buildIndexReader(sctx)
-		require.NoError(t, exec.Open(ctx))
-		chk := newFirstChunk(exec)
+		executor := buildIndexReader(sctx)
+		require.NoError(t, executor.Open(ctx))
+		chk := exec.NewFirstChunk(executor)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.NoError(t, exec.Next(ctx, chk))
+			require.NoError(t, executor.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.NoError(t, exec.Close())
+		require.NoError(t, executor.Close())
 	}
 }

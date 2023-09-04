@@ -128,12 +128,7 @@ func TestSignAlgo(t *testing.T) {
 }
 
 func TestVerifyToken(t *testing.T) {
-	tempDir := t.TempDir()
-	certPath := filepath.Join(tempDir, "test1_cert.pem")
-	keyPath := filepath.Join(tempDir, "test1_key.pem")
-	createRSACert(t, certPath, keyPath)
-	SetKeyPath(keyPath)
-	SetCertPath(certPath)
+	SetupSigningCertForTest(t)
 
 	// check succeeds
 	token, tokenBytes := createNewToken(t, "test_user")
@@ -264,4 +259,14 @@ func createNewToken(t *testing.T, username string) (*SessionToken, []byte) {
 func createRSACert(t *testing.T, certPath, keyPath string) {
 	err := util.CreateCertificates(certPath, keyPath, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
 	require.NoError(t, err)
+}
+
+// SetupSigningCertForTest sets signing cert.
+func SetupSigningCertForTest(t *testing.T) {
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "test1_cert.pem")
+	keyPath := filepath.Join(tempDir, "test1_key.pem")
+	createRSACert(t, certPath, keyPath)
+	SetKeyPath(keyPath)
+	SetCertPath(certPath)
 }
