@@ -15,6 +15,7 @@
 package infosync
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -50,6 +51,25 @@ func (m *MockGlobalServerInfoManager) Delete(idx int) error {
 	defer m.mu.Unlock()
 	if idx >= len(m.infos) || idx < 0 {
 		return errors.New("server idx out of bound")
+	}
+	m.infos = append(m.infos[:idx], m.infos[idx+1:]...)
+	return nil
+}
+
+// DeleteByID delete ServerInfo by host:port.
+func (m *MockGlobalServerInfoManager) DeleteByID(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	idx := -1
+	for i := 0; i < len(m.infos); i++ {
+		name := fmt.Sprintf("%s:%d", m.infos[i].IP, m.infos[i].Port)
+		if name == id {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return nil
 	}
 	m.infos = append(m.infos[:idx], m.infos[idx+1:]...)
 	return nil

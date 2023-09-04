@@ -123,6 +123,21 @@ func (mr *MockTaskTableMockRecorder) HasSubtasksInStates(arg0, arg1, arg2 interf
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HasSubtasksInStates", reflect.TypeOf((*MockTaskTable)(nil).HasSubtasksInStates), varargs...)
 }
 
+// IsSchedulerCanceled mocks base method.
+func (m *MockTaskTable) IsSchedulerCanceled(arg0 int64, arg1 string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsSchedulerCanceled", arg0, arg1)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// IsSchedulerCanceled indicates an expected call of IsSchedulerCanceled.
+func (mr *MockTaskTableMockRecorder) IsSchedulerCanceled(arg0, arg1 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSchedulerCanceled", reflect.TypeOf((*MockTaskTable)(nil).IsSchedulerCanceled), arg0, arg1)
+}
+
 // StartSubtask mocks base method.
 func (m *MockTaskTable) StartSubtask(arg0 int64) error {
 	m.ctrl.T.Helper()
@@ -409,28 +424,4 @@ func (m *MockInternalScheduler) Run(arg0 context.Context, arg1 *proto.Task) erro
 func (mr *MockInternalSchedulerMockRecorder) Run(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockInternalScheduler)(nil).Run), arg0, arg1)
-}
-
-// Start mocks base method.
-func (m *MockInternalScheduler) Start() {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "Start")
-}
-
-// Start indicates an expected call of Start.
-func (mr *MockInternalSchedulerMockRecorder) Start() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Start", reflect.TypeOf((*MockInternalScheduler)(nil).Start))
-}
-
-// Stop mocks base method.
-func (m *MockInternalScheduler) Stop() {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "Stop")
-}
-
-// Stop indicates an expected call of Stop.
-func (mr *MockInternalSchedulerMockRecorder) Stop() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Stop", reflect.TypeOf((*MockInternalScheduler)(nil).Stop))
 }

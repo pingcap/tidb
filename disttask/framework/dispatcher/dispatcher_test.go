@@ -106,7 +106,7 @@ func (*numberExampleDispatcher) IsRetryableErr(error) bool {
 }
 
 func MockDispatcherManager(t *testing.T, pool *pools.ResourcePool) (*dispatcher.Manager, *storage.TaskManager) {
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), "etcd", true)
 	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
 	storage.SetTaskManager(mgr)
 	dsp, err := dispatcher.NewManager(util.WithInternalSourceType(ctx, "dispatcher"), mgr, "host:port")
@@ -220,31 +220,19 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	// 3s
 	cnt := 60
 	checkGetRunningTaskCnt := func(expected int) {
-		var retCnt int
-		for i := 0; i < cnt; i++ {
-			retCnt = dsp.GetRunningTaskCnt()
-			if retCnt == expected {
-				break
-			}
-			time.Sleep(time.Millisecond * 50)
-		}
-		require.Equal(t, retCnt, expected)
+		require.Eventually(t, func() bool {
+			return dsp.GetRunningTaskCnt() == expected
+		}, time.Second, 50*time.Millisecond)
 	}
 
 	checkTaskRunningCnt := func() []*proto.Task {
-		var retCnt int
 		var tasks []*proto.Task
-		var err error
-		for i := 0; i < cnt; i++ {
+		require.Eventually(t, func() bool {
+			var err error
 			tasks, err = mgr.GetGlobalTasksInStates(proto.TaskStateRunning)
 			require.NoError(t, err)
-			retCnt = len(tasks)
-			if retCnt == taskCnt {
-				break
-			}
-			time.Sleep(time.Millisecond * 50)
-		}
-		require.Equal(t, retCnt, taskCnt)
+			return len(tasks) == taskCnt
+		}, time.Second, 50*time.Millisecond)
 		return tasks
 	}
 

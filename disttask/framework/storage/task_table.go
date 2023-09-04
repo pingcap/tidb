@@ -511,6 +511,54 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 	return instanceIDs, nil
 }
 
+// IsSchedulerCanceled checks if subtask 'execID' of task 'taskID' has been canceled somehow.
+func (stm *TaskManager) IsSchedulerCanceled(taskID int64, execID string) (bool, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select 1 from mysql.tidb_background_subtask where task_key = %? and exec_id = %?", taskID, execID)
+	if err != nil {
+		return false, err
+	}
+	return len(rs) == 0, nil
+}
+
+// UpdateFailedSchedulerIDs replace failed scheduler nodes with alive nodes.
+func (stm *TaskManager) UpdateFailedSchedulerIDs(taskID int64, replaceNodes map[string]string) error {
+	// skip
+	if len(replaceNodes) == 0 {
+		return nil
+	}
+
+	sql := new(strings.Builder)
+	if err := sqlexec.FormatSQL(sql, "update mysql.tidb_background_subtask set state = %? ,exec_id = (case ", proto.TaskStatePending); err != nil {
+		return err
+	}
+	for k, v := range replaceNodes {
+		if err := sqlexec.FormatSQL(sql, "when exec_id = %? then %? ", k, v); err != nil {
+			return err
+		}
+	}
+	if err := sqlexec.FormatSQL(sql, " end) where task_key = %? and state != \"succeed\" and exec_id in (", taskID); err != nil {
+		return err
+	}
+	i := 0
+	for k := range replaceNodes {
+		if i != 0 {
+			if err := sqlexec.FormatSQL(sql, ","); err != nil {
+				return err
+			}
+		}
+		if err := sqlexec.FormatSQL(sql, "%?", k); err != nil {
+			return err
+		}
+		i++
+	}
+	if err := sqlexec.FormatSQL(sql, ")"); err != nil {
+		return err
+	}
+
+	_, err := stm.executeSQLWithNewSession(stm.ctx, sql.String())
+	return err
+}
+
 // UpdateGlobalTaskAndAddSubTasks update the global task and add new subtasks
 func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, prevState string) (bool, error) {
 	retryable := true
