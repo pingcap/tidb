@@ -106,7 +106,7 @@ func (*numberExampleDispatcher) IsRetryableErr(error) bool {
 }
 
 func MockDispatcherManager(t *testing.T, pool *pools.ResourcePool) (*dispatcher.Manager, *storage.TaskManager) {
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), "etcd", true)
 	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
 	storage.SetTaskManager(mgr)
 	dsp, err := dispatcher.NewManager(util.WithInternalSourceType(ctx, "dispatcher"), mgr, "host:port")
