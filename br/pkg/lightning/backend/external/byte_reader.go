@@ -25,6 +25,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// ConcurrentReaderBufferSize is the buffer size for concurrent reader.
 var ConcurrentReaderBufferSize = 4 * 1024 * 1024
 
 // byteReader provides structured reading on a byte stream of external storage.

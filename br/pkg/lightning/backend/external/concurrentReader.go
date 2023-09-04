@@ -24,6 +24,7 @@ import (
 	"io"
 )
 
+// SingeFileReader is a concurrent reader for a single file.
 type SingeFileReader struct {
 	ctx               context.Context
 	concurrency       int
@@ -41,6 +42,7 @@ type SingeFileReader struct {
 	buffer  []byte
 }
 
+// NewSingeFileReader creates a new SingeFileReader.
 func NewSingeFileReader(ctx context.Context, st storage.ExternalStorage, name string, concurrency int, readBufferSize int) (*SingeFileReader, error) {
 	if st == nil {
 		return nil, nil
@@ -65,6 +67,7 @@ func NewSingeFileReader(ctx context.Context, st storage.ExternalStorage, name st
 	}, nil
 }
 
+// Reload reloads the buffer.
 func (r *SingeFileReader) Reload() error {
 	if r.currentFileOffset >= r.MaxFileOffset {
 		return io.EOF
@@ -109,6 +112,7 @@ func (r *SingeFileReader) Reload() error {
 	return nil
 }
 
+// Next returns the next n bytes.
 func (r *SingeFileReader) Next(n int) []byte {
 	end := mathutil.Min(r.bufferReadOffset+int64(n), r.bufferMaxOffset)
 	ret := r.buffer[r.bufferReadOffset:end]
