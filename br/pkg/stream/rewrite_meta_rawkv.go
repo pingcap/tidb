@@ -385,13 +385,13 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 }
 
 func (sr *SchemasReplace) rewriteEntryForAutoIncrementIDKey(e *kv.Entry, cf string) (*kv.Entry, error) {
-	newKey, err := sr.rewriteKeyForTable(
+	newKey, needWrite, err := sr.rewriteKeyForTable(
 		e.Key,
 		cf,
 		meta.ParseAutoIncrementIDKey,
 		meta.AutoIncrementIDKey,
 	)
-	if err != nil {
+	if err != nil || !needWrite {
 		return nil, errors.Trace(err)
 	}
 

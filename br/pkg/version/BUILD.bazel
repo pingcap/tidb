@@ -10,11 +10,8 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/utils",
         "//br/pkg/version/build",
-<<<<<<< HEAD
-        "//sessionctx/variable",
-=======
         "//parser/model",
->>>>>>> e82519e79da (restore: rewrite auto increment id after pitr (#46521))
+        "//sessionctx/variable",
         "//util/engine",
         "@com_github_coreos_go_semver//semver",
         "@com_github_pingcap_errors//:errors",
@@ -31,16 +28,11 @@ go_test(
     srcs = ["version_test.go"],
     embed = [":version"],
     flaky = True,
-<<<<<<< HEAD
-    deps = [
-        "//br/pkg/version/build",
-        "//sessionctx/variable",
-=======
     shard_count = 10,
     deps = [
         "//br/pkg/version/build",
         "//parser/model",
->>>>>>> e82519e79da (restore: rewrite auto increment id after pitr (#46521))
+        "//sessionctx/variable",
         "@com_github_coreos_go_semver//semver",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_pingcap_kvproto//pkg/metapb",
