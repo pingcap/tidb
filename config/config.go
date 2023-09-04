@@ -1001,7 +1001,7 @@ var defaultConf = Config{
 		StatsLoadQueueSize:                1000,
 		AnalyzePartitionConcurrencyQuota:  16,
 		PlanReplayerDumpWorkerConcurrency: 1,
-		EnableStatsCacheMemQuota:          false,
+		EnableStatsCacheMemQuota:          true,
 		RunAutoAnalyze:                    true,
 		EnableLoadFMSketch:                false,
 		LiteInitStats:                     true,

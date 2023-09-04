@@ -21,25 +21,14 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
-)
-
-const (
-	pseudoEqualRate   = 1000
-	pseudoLessRate    = 3
-	pseudoBetweenRate = 40
-	pseudoColSize     = 8.0
+	"golang.org/x/exp/maps"
 )
 
 const (
@@ -65,12 +54,6 @@ var (
 
 	// GetRowCountByColumnRanges is a function type to get row count by column ranges.
 	GetRowCountByColumnRanges func(sctx sessionctx.Context, coll *HistColl, colID int64, colRanges []*ranger.Range) (result float64, err error)
-
-	// EqualRowCountOnColumn is a function type to get the row count by equal condition on column.
-	EqualRowCountOnColumn func(sctx sessionctx.Context, c *Column, val types.Datum, encodedVal []byte, realtimeRowCount int64) (result float64, err error)
-
-	// BetweenRowCountOnColumn is a function type to get the row count by between condition on column.
-	BetweenRowCountOnColumn func(sctx sessionctx.Context, c *Column, l, r types.Datum, lowEncoded, highEncoded []byte) float64
 )
 
 // Table represents statistics for a table.
@@ -302,10 +285,10 @@ func (t *Table) Copy() *Table {
 		ModifyCount:    t.ModifyCount,
 	}
 	for id, col := range t.Columns {
-		newHistColl.Columns[id] = col
+		newHistColl.Columns[id] = col.Copy()
 	}
 	for id, idx := range t.Indices {
-		newHistColl.Indices[id] = idx
+		newHistColl.Indices[id] = idx.Copy()
 	}
 	nt := &Table{
 		HistColl:        newHistColl,
@@ -322,6 +305,29 @@ func (t *Table) Copy() *Table {
 			newExtStatsColl.Stats[name] = item
 		}
 		nt.ExtendedStats = newExtStatsColl
+	}
+	return nt
+}
+
+// ShallowCopy copies the current table.
+// It's different from Copy(). Only the struct Table (and also the embedded HistColl) is copied here.
+// The internal containers, like t.Columns and t.Indices, and the stats, like TopN and Histogram are not copied.
+func (t *Table) ShallowCopy() *Table {
+	newHistColl := HistColl{
+		PhysicalID:     t.PhysicalID,
+		HavePhysicalID: t.HavePhysicalID,
+		RealtimeCount:  t.RealtimeCount,
+		Columns:        t.Columns,
+		Indices:        t.Indices,
+		Pseudo:         t.Pseudo,
+		ModifyCount:    t.ModifyCount,
+	}
+	nt := &Table{
+		HistColl:        newHistColl,
+		Version:         t.Version,
+		Name:            t.Name,
+		TblInfoUpdateTS: t.TblInfoUpdateTS,
+		ExtendedStats:   t.ExtendedStats,
 	}
 	return nt
 }
@@ -388,18 +394,23 @@ func (t *Table) GetStatsInfo(id int64, isIndex bool) (*Histogram, *CMSketch, *To
 	return nil, nil, nil, nil, false
 }
 
-// GetColRowCount tries to get the row count of the a column if possible.
+// GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
 // This method is useful because this row count doesn't consider the modify count.
-func (t *Table) GetColRowCount() float64 {
-	ids := make([]int64, 0, len(t.Columns))
-	for id := range t.Columns {
-		ids = append(ids, id)
-	}
+func (coll *HistColl) GetAnalyzeRowCount() float64 {
+	ids := maps.Keys(coll.Columns)
 	slices.Sort(ids)
 	for _, id := range ids {
-		col := t.Columns[id]
+		col := coll.Columns[id]
 		if col != nil && col.IsFullLoad() {
 			return col.TotalRowCount()
+		}
+	}
+	ids = maps.Keys(coll.Indices)
+	slices.Sort(ids)
+	for _, id := range ids {
+		idx := coll.Indices[id]
+		if idx != nil && idx.IsFullLoad() {
+			return idx.TotalRowCount()
 		}
 	}
 	return -1
@@ -413,7 +424,7 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 	}
 	var healthy int64
 	count := float64(t.RealtimeCount)
-	if histCount := t.GetColRowCount(); histCount > 0 {
+	if histCount := t.GetAnalyzeRowCount(); histCount > 0 {
 		count = histCount
 	}
 	if float64(t.ModifyCount) < count {
@@ -478,7 +489,7 @@ func (t *Table) IsInitialized() bool {
 
 // IsOutdated returns true if the table stats is outdated.
 func (t *Table) IsOutdated() bool {
-	rowcount := t.GetColRowCount()
+	rowcount := t.GetAnalyzeRowCount()
 	if rowcount < 0 {
 		rowcount = float64(t.RealtimeCount)
 	}
@@ -486,66 +497,6 @@ func (t *Table) IsOutdated() bool {
 		return true
 	}
 	return false
-}
-
-// ColumnGreaterRowCount estimates the row count where the column greater than value.
-func (t *Table) ColumnGreaterRowCount(sctx sessionctx.Context, value types.Datum, colID int64) float64 {
-	c, ok := t.Columns[colID]
-	if !ok || c.IsInvalid(sctx, t.Pseudo) {
-		return float64(t.RealtimeCount) / pseudoLessRate
-	}
-	return c.GreaterRowCount(value) * c.GetIncreaseFactor(t.RealtimeCount)
-}
-
-// ColumnLessRowCount estimates the row count where the column less than value. Note that null values are not counted.
-func (t *Table) ColumnLessRowCount(sctx sessionctx.Context, value types.Datum, colID int64) float64 {
-	c, ok := t.Columns[colID]
-	if !ok || c.IsInvalid(sctx, t.Pseudo) {
-		return float64(t.RealtimeCount) / pseudoLessRate
-	}
-	return c.LessRowCount(sctx, value) * c.GetIncreaseFactor(t.RealtimeCount)
-}
-
-// ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (t *Table) ColumnBetweenRowCount(sctx sessionctx.Context, a, b types.Datum, colID int64) (float64, error) {
-	sc := sctx.GetSessionVars().StmtCtx
-	c, ok := t.Columns[colID]
-	if !ok || c.IsInvalid(sctx, t.Pseudo) {
-		return float64(t.RealtimeCount) / pseudoBetweenRate, nil
-	}
-	aEncoded, err := codec.EncodeKey(sc, nil, a)
-	if err != nil {
-		return 0, err
-	}
-	bEncoded, err := codec.EncodeKey(sc, nil, b)
-	if err != nil {
-		return 0, err
-	}
-	count := BetweenRowCountOnColumn(sctx, c, a, b, aEncoded, bEncoded)
-	if a.IsNull() {
-		count += float64(c.NullCount)
-	}
-	return count * c.GetIncreaseFactor(t.RealtimeCount), nil
-}
-
-// ColumnEqualRowCount estimates the row count where the column equals to value.
-func (t *Table) ColumnEqualRowCount(sctx sessionctx.Context, value types.Datum, colID int64) (float64, error) {
-	c, ok := t.Columns[colID]
-	if !ok || c.IsInvalid(sctx, t.Pseudo) {
-		return float64(t.RealtimeCount) / pseudoEqualRate, nil
-	}
-	encodedVal, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, value)
-	if err != nil {
-		return 0, err
-	}
-	result, err := EqualRowCountOnColumn(sctx, c, value, encodedVal, t.ModifyCount)
-	result *= c.GetIncreaseFactor(t.RealtimeCount)
-	return result, errors.Trace(err)
-}
-
-// PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
-func (t *Table) PseudoAvgCountPerValue() float64 {
-	return float64(t.RealtimeCount) / pseudoEqualRate
 }
 
 // ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.
@@ -628,9 +579,11 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 }
 
 // PseudoTable creates a pseudo table statistics.
-func PseudoTable(tblInfo *model.TableInfo) *Table {
+// Usually, we don't want to trigger stats loading for pseudo table.
+// But there are exceptional cases. In such cases, we should pass allowTriggerLoading as true.
+// Such case could possibly happen in getStatsTable().
+func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool) *Table {
 	const fakePhysicalID int64 = -1
-
 	pseudoHistColl := HistColl{
 		RealtimeCount:  PseudoRowCount,
 		PhysicalID:     tblInfo.ID,
@@ -653,6 +606,9 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
 				Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
 			}
+			if allowTriggerLoading {
+				t.Columns[col.ID].PhysicalID = tblInfo.ID
+			}
 		}
 	}
 	for _, idx := range tblInfo.Indices {
@@ -660,92 +616,14 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 			t.Indices[idx.ID] = &Index{
 				PhysicalID: fakePhysicalID,
 				Info:       idx,
-				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)}
+				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0),
+			}
+			if allowTriggerLoading {
+				t.Indices[idx.ID].PhysicalID = tblInfo.ID
+			}
 		}
 	}
 	return t
-}
-
-// GetAvgRowSize computes average row size for given columns.
-func (coll *HistColl) GetAvgRowSize(ctx sessionctx.Context, cols []*expression.Column, isEncodedKey bool, isForScan bool) (size float64) {
-	sessionVars := ctx.GetSessionVars()
-	if coll.Pseudo || len(coll.Columns) == 0 || coll.RealtimeCount == 0 {
-		size = pseudoColSize * float64(len(cols))
-	} else {
-		for _, col := range cols {
-			colHist, ok := coll.Columns[col.UniqueID]
-			// Normally this would not happen, it is for compatibility with old version stats which
-			// does not include TotColSize.
-			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.RealtimeCount)) {
-				size += pseudoColSize
-				continue
-			}
-			// We differentiate if the column is encoded as key or value, because the resulted size
-			// is different.
-			if sessionVars.EnableChunkRPC && !isForScan {
-				size += colHist.AvgColSizeChunkFormat(coll.RealtimeCount)
-			} else {
-				size += colHist.AvgColSize(coll.RealtimeCount, isEncodedKey)
-			}
-		}
-	}
-	if sessionVars.EnableChunkRPC && !isForScan {
-		// Add 1/8 byte for each column's nullBitMap byte.
-		return size + float64(len(cols))/8
-	}
-	// Add 1 byte for each column's flag byte. See `encode` for details.
-	return size + float64(len(cols))
-}
-
-// GetAvgRowSizeListInDisk computes average row size for given columns.
-func (coll *HistColl) GetAvgRowSizeListInDisk(cols []*expression.Column) (size float64) {
-	if coll.Pseudo || len(coll.Columns) == 0 || coll.RealtimeCount == 0 {
-		for _, col := range cols {
-			size += float64(chunk.EstimateTypeWidth(col.GetType()))
-		}
-	} else {
-		for _, col := range cols {
-			colHist, ok := coll.Columns[col.UniqueID]
-			// Normally this would not happen, it is for compatibility with old version stats which
-			// does not include TotColSize.
-			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.RealtimeCount)) {
-				size += float64(chunk.EstimateTypeWidth(col.GetType()))
-				continue
-			}
-			size += colHist.AvgColSizeListInDisk(coll.RealtimeCount)
-		}
-	}
-	// Add 8 byte for each column's size record. See `ListInDisk` for details.
-	return size + float64(8*len(cols))
-}
-
-// GetTableAvgRowSize computes average row size for a table scan, exclude the index key-value pairs.
-func (coll *HistColl) GetTableAvgRowSize(ctx sessionctx.Context, cols []*expression.Column, storeType kv.StoreType, handleInCols bool) (size float64) {
-	size = coll.GetAvgRowSize(ctx, cols, false, true)
-	switch storeType {
-	case kv.TiKV:
-		size += tablecodec.RecordRowKeyLen
-		// The `cols` for TiKV always contain the row_id, so prefix row size subtract its length.
-		size -= 8
-	case kv.TiFlash:
-		if !handleInCols {
-			size += 8 /* row_id length */
-		}
-	}
-	return
-}
-
-// GetIndexAvgRowSize computes average row size for a index scan.
-func (coll *HistColl) GetIndexAvgRowSize(ctx sessionctx.Context, cols []*expression.Column, isUnique bool) (size float64) {
-	size = coll.GetAvgRowSize(ctx, cols, true, true)
-	// tablePrefix(1) + tableID(8) + indexPrefix(2) + indexID(8)
-	// Because the cols for index scan always contain the handle, so we don't add the rowID here.
-	size += 19
-	if !isUnique {
-		// add the len("_")
-		size++
-	}
-	return
 }
 
 // CheckAnalyzeVerOnTable checks whether the given version is the one from the tbl.

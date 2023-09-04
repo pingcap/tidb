@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/aggregate"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/expression"
@@ -133,9 +134,9 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 		}
 
 		for i, r := range w.receivers {
-			r.inputHolderCh <- newFirstChunk(e.dataSources[i])
+			r.inputHolderCh <- exec.NewFirstChunk(e.dataSources[i])
 		}
-		w.outputHolderCh <- newFirstChunk(e)
+		w.outputHolderCh <- exec.NewFirstChunk(e)
 	}
 
 	return nil
@@ -264,7 +265,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 		workerIndices []int
 	)
 	results := make([]*chunk.Chunk, len(e.workers))
-	chk := tryNewCacheChunk(e.dataSources[dataSourceIndex])
+	chk := exec.TryNewCacheChunk(e.dataSources[dataSourceIndex])
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -276,7 +277,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 	}()
 
 	for {
-		err = Next(ctx, e.dataSources[dataSourceIndex], chk)
+		err = exec.Next(ctx, e.dataSources[dataSourceIndex], chk)
 		if err != nil {
 			e.outputCh <- &shuffleOutput{err: err}
 			return
@@ -394,7 +395,7 @@ func (e *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 		case <-e.finishCh:
 			return
 		case chk := <-e.outputHolderCh:
-			if err := Next(ctx, e.childExec, chk); err != nil {
+			if err := exec.Next(ctx, e.childExec, chk); err != nil {
 				e.outputCh <- &shuffleOutput{err: err}
 				return
 			}
@@ -423,7 +424,7 @@ type partitionHashSplitter struct {
 
 func (s *partitionHashSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
 	var err error
-	s.hashKeys, err = getGroupKey(ctx, input, s.hashKeys, s.byItems)
+	s.hashKeys, err = aggregate.GetGroupKey(ctx, input, s.hashKeys, s.byItems)
 	if err != nil {
 		return workerIndices, err
 	}

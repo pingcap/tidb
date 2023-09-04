@@ -17,11 +17,14 @@ package scheduler
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -260,6 +263,14 @@ func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) []*proto.Task 
 	return tasks[:i]
 }
 
+// TestContext only used in tests.
+type TestContext struct {
+	TestSyncSubtaskRun chan struct{}
+	mockDown           atomic.Bool
+}
+
+var testContexts sync.Map
+
 // onRunnableTask handles a runnable task.
 func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType string) {
 	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Any("task_id", taskID), zap.Any("type", taskType))
@@ -269,14 +280,23 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType str
 	}
 	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks.
 	scheduler := m.newScheduler(ctx, m.id, taskID, m.taskTable, m.subtaskExecutorPools[taskType])
-	scheduler.Start()
-	defer scheduler.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(checkTime):
 		}
+		failpoint.Inject("mockStopManager", func() {
+			testContexts.Store(m.id, &TestContext{make(chan struct{}), atomic.Bool{}})
+			go func() {
+				v, ok := testContexts.Load(m.id)
+				if ok {
+					<-v.(*TestContext).TestSyncSubtaskRun
+					m.Stop()
+					_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(m.id)
+				}
+			}()
+		})
 		task, err := m.taskTable.GetGlobalTaskByID(taskID)
 		if err != nil {
 			m.onError(err)

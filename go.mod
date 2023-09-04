@@ -87,6 +87,7 @@ require (
 	github.com/prometheus/client_model v0.4.0
 	github.com/prometheus/common v0.44.0
 	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/sasha-s/go-deadlock v0.2.0
 	github.com/shirou/gopsutil/v3 v3.23.5
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
@@ -98,7 +99,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20230811033710-8a214402da13
+	github.com/tikv/client-go/v2 v2.0.8-0.20230829002846-295094e5b534
 	github.com/tikv/pd/client v0.0.0-20230728033905-31343e006842
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6

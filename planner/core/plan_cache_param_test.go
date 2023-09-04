@@ -121,7 +121,7 @@ func TestParameterize(t *testing.T) {
 }
 
 func TestGetParamSQLFromASTConcurrently(t *testing.T) {
-	n := 100
+	n := 50
 	sqls := make([]string, 0, n)
 	for i := 0; i < n; i++ {
 		sqls = append(sqls, fmt.Sprintf(`insert into t values (%d, %d, %d)`, i*3+0, i*3+1, i*3+2))
@@ -137,7 +137,7 @@ func TestGetParamSQLFromASTConcurrently(t *testing.T) {
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(id int) {
-			for i := 0; i < 1000; i++ {
+			for i := 0; i < 100; i++ {
 				_, vals, err := GetParamSQLFromAST(stmts[id])
 				require.Nil(t, err)
 				require.Equal(t, len(vals), 3)

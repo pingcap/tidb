@@ -248,10 +248,10 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
-	fields := retTypes(e.Children(0))
+	fields := exec.RetTypes(e.Children(0))
 	colsInfo := plannercore.GetUpdateColumnsInfo(e.tblID2table, e.tblColPosInfos, len(fields))
 	globalRowIdx := 0
-	chk := tryNewCacheChunk(e.Children(0))
+	chk := exec.TryNewCacheChunk(e.Children(0))
 	if !e.allAssignmentsAreConstant {
 		e.evalBuffer = chunk.MutRowFromTypes(fields)
 	}
@@ -263,7 +263,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	totalNumRows := 0
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
-		err := Next(ctx, e.Children(0), chk)
+		err := exec.Next(ctx, e.Children(0), chk)
 		if err != nil {
 			return 0, err
 		}

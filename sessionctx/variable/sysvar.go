@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/tikvutil"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/versioninfo"
@@ -1389,10 +1390,10 @@ var defaultSysVars = []*SysVar{
 		if strings.EqualFold(normalizedValue, "SYSTEM") {
 			return "SYSTEM", nil
 		}
-		_, err := parseTimeZone(normalizedValue)
+		_, err := timeutil.ParseTimeZone(normalizedValue)
 		return normalizedValue, err
 	}, SetSession: func(s *SessionVars, val string) error {
-		tz, err := parseTimeZone(val)
+		tz, err := timeutil.ParseTimeZone(val)
 		if err != nil {
 			return err
 		}

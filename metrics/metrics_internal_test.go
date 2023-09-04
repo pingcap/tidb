@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,8 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package importintotest
+package metrics
 
-func (s *mockGCSSuite) TestDummy() {
-	s.True(true, gcsEndpoint)
+import (
+	"testing"
+
+	"github.com/pingcap/errors"
+	"github.com/stretchr/testify/require"
+)
+
+func TestRetLabel(t *testing.T) {
+	require.Equal(t, opSucc, RetLabel(nil))
+	require.Equal(t, opFailed, RetLabel(errors.New("test error")))
 }

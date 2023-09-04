@@ -265,9 +265,9 @@ func TestLFUReject(t *testing.T) {
 	v, ok := lfu.Get(2, false)
 	require.True(t, ok)
 	for _, c := range v.Columns {
-		require.Equal(t, c.GetEvictedStatus(), statistics.AllEvicted)
+		require.Equal(t, statistics.AllEvicted, c.GetEvictedStatus())
 	}
 	for _, i := range v.Indices {
-		require.Equal(t, i.GetEvictedStatus(), statistics.AllEvicted)
+		require.Equal(t, statistics.AllEvicted, i.GetEvictedStatus())
 	}
 }

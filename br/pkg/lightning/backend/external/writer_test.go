@@ -27,7 +27,6 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/kv"
@@ -195,12 +194,12 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	dir := t.TempDir()
 	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
 	require.NoError(t, err)
-	keyAdapter := local.DupDetectKeyAdapter{}
+	keyAdapter := common.DupDetectKeyAdapter{}
 	data := &MemoryIngestData{
 		keyAdapter:         keyAdapter,
 		duplicateDetection: true,
 		duplicateDB:        db,
-		dupDetectOpt:       local.DupDetectOpt{ReportErrOnDup: true},
+		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
 		keys:               keys,
 		values:             values,
 		ts:                 123,
