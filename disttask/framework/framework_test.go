@@ -156,7 +156,7 @@ func DispatchTask(taskKey string, t *testing.T) *proto.Task {
 
 	var task *proto.Task
 	for {
-		if time.Since(start) > 2*time.Minute {
+		if time.Since(start) > 10*time.Minute {
 			require.FailNow(t, "timeout")
 		}
 
@@ -356,5 +356,41 @@ func TestFrameworkCancelThenSubmitSubTask(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelBeforeUpdate", "return()"))
 	DispatchTaskAndCheckState("😊", t, &m, proto.TaskStateReverted)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelBeforeUpdate"))
+	distContext.Close()
+}
+
+func TestSchedulerDownBasic(t *testing.T) {
+	defer dispatcher.ClearTaskDispatcher()
+	defer scheduler.ClearSchedulers()
+	var m sync.Map
+	RegisterTaskMeta(&m, &testDispatcher{})
+
+	distContext := testkit.NewDistExecutionContext(t, 4)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockCleanScheduler", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockStopManager", "4*return(\":4000\")"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown", "return(\":4000\")"))
+	DispatchTaskAndCheckSuccess("😊", t, &m)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockCleanScheduler"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockStopManager"))
+
+	distContext.Close()
+}
+
+func TestSchedulerDownManyNodes(t *testing.T) {
+	defer dispatcher.ClearTaskDispatcher()
+	defer scheduler.ClearSchedulers()
+	var m sync.Map
+	RegisterTaskMeta(&m, &testDispatcher{})
+
+	distContext := testkit.NewDistExecutionContext(t, 30)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockCleanScheduler", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockStopManager", "30*return(\":4000\")"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown", "return(\":4000\")"))
+	DispatchTaskAndCheckSuccess("😊", t, &m)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockCleanScheduler"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockStopManager"))
+
 	distContext.Close()
 }

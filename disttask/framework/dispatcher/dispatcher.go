@@ -17,6 +17,7 @@ package dispatcher
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -36,6 +38,8 @@ const (
 	DefaultSubtaskConcurrency = 16
 	// MaxSubtaskConcurrency is the maximum concurrency for handling subtask.
 	MaxSubtaskConcurrency = 256
+	// DefaultLiveNodesCheckInterval is the tick interval of fetching all server infos from etcd.
+	DefaultLiveNodesCheckInterval = 2
 )
 
 var (
@@ -65,6 +69,17 @@ type dispatcher struct {
 	logCtx   context.Context
 	serverID string
 	impl     Dispatcher
+
+	// for HA
+	// liveNodes will fetch and store all live nodes every liveNodeInterval ticks.
+	liveNodes             []*infosync.ServerInfo
+	liveNodeFetchInterval int
+	// liveNodeFetchTick is the tick variable.
+	liveNodeFetchTick int
+	// taskNodes stores the id of current scheduler nodes.
+	taskNodes []string
+	// rand is for generating random selection of nodes.
+	rand *rand.Rand
 }
 
 // MockOwnerChange mock owner change in tests.
@@ -74,12 +89,17 @@ func newDispatcher(ctx context.Context, taskMgr *storage.TaskManager, serverID s
 	logPrefix := fmt.Sprintf("task_id: %d, task_type: %s, server_id: %s", task.ID, task.Type, serverID)
 	impl := GetTaskDispatcher(task.Type)
 	dsp := &dispatcher{
-		ctx:      ctx,
-		taskMgr:  taskMgr,
-		task:     task,
-		logCtx:   logutil.WithKeyValue(context.Background(), "dispatcher", logPrefix),
-		serverID: serverID,
-		impl:     impl,
+		ctx:                   ctx,
+		taskMgr:               taskMgr,
+		task:                  task,
+		logCtx:                logutil.WithKeyValue(context.Background(), "dispatcher", logPrefix),
+		serverID:              serverID,
+		impl:                  impl,
+		liveNodes:             nil,
+		liveNodeFetchInterval: DefaultLiveNodesCheckInterval,
+		liveNodeFetchTick:     0,
+		taskNodes:             nil,
+		rand:                  rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	if dsp.impl == nil {
 		logutil.BgLogger().Warn("gen dispatcher impl failed, this type impl doesn't register")
@@ -215,9 +235,67 @@ func (d *dispatcher) onRunning() error {
 		logutil.Logger(d.logCtx).Info("previous stage finished, generate dist plan", zap.Int64("stage", d.task.Step))
 		return d.onNextStage()
 	}
+	// Check if any node are down.
+	if err := d.replaceDeadNodesIfAny(); err != nil {
+		return err
+	}
 	// Wait all subtasks in this stage finished.
 	d.impl.OnTick(d.ctx, d.task)
 	logutil.Logger(d.logCtx).Debug("on running state, this task keeps current state", zap.String("state", d.task.State))
+	return nil
+}
+
+func (d *dispatcher) replaceDeadNodesIfAny() error {
+	if len(d.taskNodes) == 0 {
+		return errors.Errorf("len(d.taskNodes) == 0, onNextStage is not invoked before onRunning")
+	}
+	d.liveNodeFetchTick++
+	if d.liveNodeFetchTick == d.liveNodeFetchInterval {
+		d.liveNodeFetchTick = 0
+		serverInfos, err := GenerateSchedulerNodes(d.ctx)
+		if err != nil {
+			return err
+		}
+		eligibleServerInfos, err := d.impl.GetEligibleInstances(d.ctx, d.task)
+		if err != nil {
+			return err
+		}
+		newInfos := serverInfos[:0]
+		for _, m := range serverInfos {
+			found := false
+			for _, n := range eligibleServerInfos {
+				if m.ID == n.ID {
+					found = true
+					break
+				}
+			}
+			if found {
+				newInfos = append(newInfos, m)
+			}
+		}
+		d.liveNodes = newInfos
+	}
+	if len(d.liveNodes) > 0 {
+		replaceNodes := make(map[string]string)
+		for _, nodeID := range d.taskNodes {
+			if ok := disttaskutil.MatchServerInfo(d.liveNodes, nodeID); !ok {
+				n := d.liveNodes[d.rand.Int()%len(d.liveNodes)] //nolint:gosec
+				replaceNodes[nodeID] = disttaskutil.GenerateExecID(n.IP, n.Port)
+			}
+		}
+		if err := d.taskMgr.UpdateFailedSchedulerIDs(d.task.ID, replaceNodes); err != nil {
+			return err
+		}
+		// replace local cache.
+		for k, v := range replaceNodes {
+			for m, n := range d.taskNodes {
+				if n == k {
+					d.taskNodes[m] = v
+					break
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -331,6 +409,10 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error {
 	if len(serverNodes) == 0 {
 		return errors.New("no available TiDB node to dispatch subtasks")
 	}
+	d.taskNodes = make([]string, len(serverNodes))
+	for i := range serverNodes {
+		d.taskNodes[i] = disttaskutil.GenerateExecID(serverNodes[i].IP, serverNodes[i].Port)
+	}
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
@@ -353,8 +435,14 @@ func (d *dispatcher) handlePlanErr(err error) error {
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.
-func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error) {
-	serverInfos, err := infosync.GetAllServerInfo(ctx)
+func GenerateSchedulerNodes(ctx context.Context) (serverNodes []*infosync.ServerInfo, err error) {
+	var serverInfos map[string]*infosync.ServerInfo
+	_, etcd := ctx.Value("etcd").(bool)
+	if intest.InTest && !etcd {
+		serverInfos = infosync.MockGlobalServerInfoManagerEntry.GetAllServerInfo()
+	} else {
+		serverInfos, err = infosync.GetAllServerInfo(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -362,7 +450,7 @@ func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error)
 		return nil, errors.New("not found instance")
 	}
 
-	serverNodes := make([]*infosync.ServerInfo, 0, len(serverInfos))
+	serverNodes = make([]*infosync.ServerInfo, 0, len(serverInfos))
 	for _, serverInfo := range serverInfos {
 		serverNodes = append(serverNodes, serverInfo)
 	}

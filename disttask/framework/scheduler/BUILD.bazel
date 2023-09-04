@@ -13,6 +13,7 @@ go_library(
     deps = [
         "//disttask/framework/proto",
         "//disttask/framework/storage",
+        "//domain/infosync",
         "//resourcemanager/pool/spool",
         "//resourcemanager/util",
         "//util/logutil",

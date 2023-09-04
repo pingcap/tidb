@@ -31,6 +31,7 @@ type TaskTable interface {
 	FinishSubtask(id int64, meta []byte) error
 	HasSubtasksInStates(instanceID string, taskID int64, step int64, states ...interface{}) (bool, error)
 	UpdateErrorToSubtask(tidbID string, err error) error
+	IsSchedulerCanceled(taskID int64, execID string) (bool, error)
 }
 
 // Pool defines the interface of a pool.
@@ -42,8 +43,6 @@ type Pool interface {
 
 // InternalScheduler defines the interface of an internal scheduler.
 type InternalScheduler interface {
-	Start()
-	Stop()
 	Run(context.Context, *proto.Task) error
 	Rollback(context.Context, *proto.Task) error
 }

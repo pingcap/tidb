@@ -256,6 +256,33 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, subtask2.StartTime, subtask.StartTime)
 	require.Greater(t, subtask2.UpdateTime, subtask.UpdateTime)
+
+	// test UpdateFailedSchedulerIDs and IsSchedulerCanceled
+	canceled, err := sm.IsSchedulerCanceled(4, "for_test999")
+	require.NoError(t, err)
+	require.True(t, canceled)
+	canceled, err = sm.IsSchedulerCanceled(4, "for_test1")
+	require.NoError(t, err)
+	require.False(t, canceled)
+	canceled, err = sm.IsSchedulerCanceled(4, "for_test2")
+	require.NoError(t, err)
+	require.True(t, canceled)
+
+	require.NoError(t, sm.UpdateSubtaskStateAndError(4, proto.TaskStateRunning, nil))
+	require.NoError(t, sm.UpdateFailedSchedulerIDs(4, map[string]string{
+		"for_test1": "for_test999",
+		"for_test2": "for_test999",
+	}))
+
+	canceled, err = sm.IsSchedulerCanceled(4, "for_test1")
+	require.NoError(t, err)
+	require.True(t, canceled)
+	canceled, err = sm.IsSchedulerCanceled(4, "for_test2")
+	require.NoError(t, err)
+	require.True(t, canceled)
+	canceled, err = sm.IsSchedulerCanceled(4, "for_test999")
+	require.NoError(t, err)
+	require.False(t, canceled)
 }
 
 func TestBothGlobalAndSubTaskTable(t *testing.T) {
