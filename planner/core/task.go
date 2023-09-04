@@ -15,6 +15,8 @@
 package core
 
 import (
+	"math"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
@@ -39,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"math"
 )
 
 var (
