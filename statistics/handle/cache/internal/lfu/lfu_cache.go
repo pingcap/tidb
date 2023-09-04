@@ -177,6 +177,7 @@ func (s *LFU) triggerEvict() {
 	// ristretto'c cache execute the evict operation when to write the cache. for we can evict as soon as possible,
 	// we will write some fake item to the cache. fake item have a negative key, and the value is nil.
 	if s.Cost() > s.cache.MaxCost() {
+		//nolint: gosec
 		s.cache.Set(-rand.Int(), nil, 0)
 	}
 }
