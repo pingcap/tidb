@@ -691,5 +691,5 @@
         "Best": "TableReader(Table(t))->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_10])->Projection"
       }
     ]
-  },
+  }
 ]
