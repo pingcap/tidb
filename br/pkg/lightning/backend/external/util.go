@@ -192,8 +192,11 @@ func MockExternalEngine(
 type EndpointTp int
 
 const (
+	// ExclusiveEnd represents "..., Endpoint.Key)".
 	ExclusiveEnd EndpointTp = iota
+	// InclusiveStart represents "[Endpoint.Key, ...".
 	InclusiveStart
+	// InclusiveEnd represents "..., Endpoint.Key]".
 	InclusiveEnd
 )
 
