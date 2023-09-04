@@ -306,7 +306,8 @@ func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Servic
 			zap.String("addr", selfAddr),
 			zap.String("category", "autoid service"))
 	})
-	err := l.CampaignOwner()
+	// 10 means that autoid service's etcd lease is 10s.
+	err := l.CampaignOwner(10)
 	if err != nil {
 		panic(err)
 	}

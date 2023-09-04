@@ -131,7 +131,7 @@ func sleepContext(ctx context.Context, delay time.Duration) {
 }
 
 // CampaignOwner implements Manager.CampaignOwner interface.
-func (m *mockManager) CampaignOwner() error {
+func (m *mockManager) CampaignOwner(_ ...int) error {
 	m.wg.Add(1)
 	go func() {
 		logutil.BgLogger().Debug("owner manager campaign owner", zap.String("category", "ddl"),
