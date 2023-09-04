@@ -220,7 +220,7 @@ func CloneDefaultHttpTransport() (*http.Transport, bool) {
 }
 
 // GetMaxOffset returns the max offset of the file.
-func GetMaxOffset(ctx context.Context, storage ExternalStorage, name string) (n int, err error) {
+func GetMaxOffset(ctx context.Context, storage ExternalStorage, name string) (n int64, err error) {
 	s3storage, ok := storage.(*S3Storage)
 	if !ok {
 		return 0, errors.New("only support s3 storage")
@@ -232,7 +232,7 @@ func GetMaxOffset(ctx context.Context, storage ExternalStorage, name string) (n 
 	if err != nil {
 		return 0, err
 	}
-	return int(*output.ContentLength), nil
+	return *output.ContentLength, nil
 }
 
 // ReadDataInRange reads data from storage in range [start, end).

@@ -33,9 +33,7 @@ type SingeFileReader struct {
 	bufferReadOffset  int64
 	bufferMaxOffset   int64
 
-	BufferTotalOffset int64
-
-	MaxFileOffset int64
+	maxFileOffset int64
 	name          string
 
 	storage storage.ExternalStorage
@@ -60,7 +58,7 @@ func NewSingeFileReader(ctx context.Context, st storage.ExternalStorage, name st
 		readBufferSize:    readBufferSize,
 		currentFileOffset: 0,
 		bufferReadOffset:  0,
-		MaxFileOffset:     int64(maxOffset),
+		maxFileOffset:     maxOffset,
 		name:              name,
 		storage:           st,
 		buffer:            nil,
@@ -69,7 +67,7 @@ func NewSingeFileReader(ctx context.Context, st storage.ExternalStorage, name st
 
 // Reload reloads the buffer.
 func (r *SingeFileReader) Reload() error {
-	if r.currentFileOffset >= r.MaxFileOffset {
+	if r.currentFileOffset >= r.maxFileOffset {
 		return io.EOF
 	}
 
@@ -79,8 +77,8 @@ func (r *SingeFileReader) Reload() error {
 		eg.Go(func() error {
 			startOffset := r.currentFileOffset + int64(i*r.readBufferSize)
 			endOffset := startOffset + int64(r.readBufferSize)
-			if endOffset > r.MaxFileOffset {
-				endOffset = r.MaxFileOffset
+			if endOffset > r.maxFileOffset {
+				endOffset = r.maxFileOffset
 			}
 			if startOffset > endOffset {
 				return nil
@@ -99,14 +97,13 @@ func (r *SingeFileReader) Reload() error {
 		return err
 	}
 
-	if r.currentFileOffset+int64(r.readBufferSize*r.concurrency) > r.MaxFileOffset {
-		r.bufferMaxOffset = r.MaxFileOffset - r.currentFileOffset
-		r.currentFileOffset = r.MaxFileOffset
+	if r.currentFileOffset+int64(r.readBufferSize*r.concurrency) > r.maxFileOffset {
+		r.bufferMaxOffset = r.maxFileOffset - r.currentFileOffset
+		r.currentFileOffset = r.maxFileOffset
 	} else {
 		r.bufferMaxOffset = int64(r.readBufferSize * r.concurrency)
 		r.currentFileOffset += int64(r.readBufferSize * r.concurrency)
 	}
-	r.BufferTotalOffset += r.bufferMaxOffset
 	r.bufferReadOffset = 0
 
 	return nil

@@ -37,7 +37,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var HardcodedS3ChunkSize = 50 * 1024 * 1024
+var hardcodedS3ChunkSize = 5 * 1024 * 1024
 
 const (
 	s3EndpointOption     = "s3.endpoint"
@@ -946,7 +946,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 	} else {
 		up := s3manager.NewUploaderWithClient(rs.svc, func(u *s3manager.Uploader) {
 			u.Concurrency = option.Concurrency
-			u.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * HardcodedS3ChunkSize)
+			u.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * hardcodedS3ChunkSize)
 		})
 		rd, wd := io.Pipe()
 		upParams := &s3manager.UploadInput{
@@ -967,7 +967,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 		}()
 		uploader = s3Writer
 	}
-	uploaderWriter := newBufferedWriter(uploader, WriteBuffersize, NoCompression)
+	uploaderWriter := newBufferedWriter(uploader, WriteBufferSize, NoCompression)
 	return uploaderWriter, nil
 }
 
