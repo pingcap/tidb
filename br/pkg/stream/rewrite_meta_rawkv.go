@@ -547,6 +547,8 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 	} else if meta.IsDBkey(rawKey.Key) {
 		if meta.IsTableKey(rawKey.Field) {
 			return sr.rewriteEntryForTable(e, cf)
+		} else if meta.IsAutoIncrementIDKey(rawKey.Field) {
+			return sr.rewriteEntryForAutoIncrementIDKey(e, cf)
 		} else if meta.IsAutoTableIDKey(rawKey.Field) {
 			return sr.rewriteEntryForAutoTableIDKey(e, cf)
 		} else if meta.IsSequenceKey(rawKey.Field) {
@@ -559,21 +561,6 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 	} else {
 		return nil, nil
 	}
-<<<<<<< HEAD
-=======
-	if meta.IsTableKey(rawKey.Field) {
-		return sr.rewriteEntryForTable(e, cf)
-	} else if meta.IsAutoIncrementIDKey(rawKey.Field) {
-		return sr.rewriteEntryForAutoIncrementIDKey(e, cf)
-	} else if meta.IsAutoTableIDKey(rawKey.Field) {
-		return sr.rewriteEntryForAutoTableIDKey(e, cf)
-	} else if meta.IsSequenceKey(rawKey.Field) {
-		return sr.rewriteEntryForSequenceKey(e, cf)
-	} else if meta.IsAutoRandomTableIDKey(rawKey.Field) {
-		return sr.rewriteEntryForAutoRandomTableIDKey(e, cf)
-	}
-	return nil, nil
->>>>>>> e82519e79da (restore: rewrite auto increment id after pitr (#46521))
 }
 
 func (sr *SchemasReplace) tryToGCJob(job *model.Job) error {

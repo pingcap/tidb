@@ -13,11 +13,8 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/sessionctx/variable"
-=======
 	"github.com/pingcap/tidb/parser/model"
->>>>>>> e82519e79da (restore: rewrite auto increment id after pitr (#46521))
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 )
