@@ -60,7 +60,7 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err 
 		}
 		err = h.writeGCTimestampToKV(ctx, gcVer)
 	}()
-	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_meta where version > %? and version < %?", lastGC, gcVer)
+	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_meta where version >= %? and version < %?", lastGC, gcVer)
 	if err != nil {
 		return errors.Trace(err)
 	}
