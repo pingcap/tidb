@@ -2151,8 +2151,10 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 
 func TestExternalEngine(t *testing.T) {
 	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipStartWorker", "return()")
 	t.Cleanup(func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipStartWorker")
 	})
 	ctx := context.Background()
 	dir := t.TempDir()

@@ -1639,9 +1639,9 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 		}
 	}()
 
-	if intest.InTest {
-		goto testSkipStartWorker
-	}
+	failpoint.Inject("skipStartWorker", func() {
+		failpoint.Goto("afterStartWorker")
+	})
 
 	for i := 0; i < local.WorkerConcurrency; i++ {
 		workGroup.Go(func() error {
@@ -1649,7 +1649,7 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 		})
 	}
 
-testSkipStartWorker:
+	failpoint.Label("afterStartWorker")
 
 	err := local.prepareAndSendJob(
 		workerCtx,
