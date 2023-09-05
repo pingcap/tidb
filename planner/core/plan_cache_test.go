@@ -1875,12 +1875,10 @@ func planCacheIntConvertQueries(isNonPrep bool) []string {
 		} else if op == "in" {
 			if rand.Intn(2) == 0 {
 				return fmt.Sprintf("%v in (%v)", col, v())
-			} else {
-				return fmt.Sprintf("%v in (%v, %v, %v)", col, v(), v(), v())
 			}
-		} else {
-			return fmt.Sprintf("%v %v %v", col, op, v())
+			return fmt.Sprintf("%v in (%v, %v, %v)", col, v(), v(), v())
 		}
+		return fmt.Sprintf("%v %v %v", col, op, v())
 	}
 	fields := func() string {
 		var fs []string
