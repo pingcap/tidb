@@ -531,8 +531,7 @@ func TestMultiTasks(t *testing.T) {
 	defer scheduler.ClearSchedulers()
 	num := 3
 
-	var m []sync.Map
-	m = make([]sync.Map, num)
+	m := make([]sync.Map, num)
 	RegisterTaskMeta(&(m[0]), &testDispatcher{})
 	RegisterTaskMeta1(&(m[1]), &testDispatcher{})
 	RegisterTaskMeta2(&(m[2]), &testDispatcher{})
