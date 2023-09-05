@@ -53,6 +53,12 @@ type HashAggFinalWorker struct {
 	partialAndFinalNotifier chan struct{}
 
 	spillHelper *parallelHashAggSpillHelper
+
+	// These agg functions are partial agg functions that are same with partial workers'.
+	// They only be used for restoring data that are spilled to disk in partial stage.
+	aggFuncsForRestoring []aggfuncs.AggFunc
+
+	restoredMemDelta int64
 }
 
 func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok bool) {
@@ -173,20 +179,90 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 	}
 }
 
-func (w *HashAggFinalWorker) restoreFromDisk() {
-	for {
-		restoredPartitionNum := w.spillHelper.getPartitionNumNeedRestoring()
-		if restoredPartitionNum == spillTasksDoneFlag {
-			break;
+func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *HashAggIntermData, diskIO *chunk.ListInDisk) (int64, error) {
+	totalMemDelta := int64(0)
+	chunkNum := diskIO.NumChunks()
+	keyColPos := len(w.aggFuncsForRestoring)
+	aggFuncNum := len(w.aggFuncsForRestoring)
+	partialResultsRestored := make([][]aggfuncs.PartialResult, aggFuncNum)
+	for i := 0; i < chunkNum; i++ {
+		chunk, err := diskIO.GetChunk(i)
+		if err != nil {
+			return totalMemDelta, err
 		}
 
-		// spilledFilesIO := w.spillHelper.getListInDisks(restoredPartitionNum)
-		// for _, diskIO := range spilledFilesIO {
+		// Deserialize bytes to agg function's meta data
+		for aggPos, aggFunc := range w.aggFuncsForRestoring {
+			partialResult, memDelta, err := aggFunc.DeserializeToPartialResultForSpill(ctx, chunk)
+			if err != nil {
+				return 0, err
+			}
+			partialResultsRestored[aggPos] = partialResult
+			totalMemDelta += memDelta
+		}
 
-		// }
+		// Merge or create results
+		rowNum := chunk.NumRows()
+		for rowPos := 0; rowPos < rowNum; rowPos++ {
+			key := chunk.GetRow(rowPos).GetString(keyColPos)
+			prs, ok := restoreadData.partialResultMap[key]
+			if ok {
+				// The key has appeared before, merge results.
+				for aggPos := 0; aggPos < aggFuncNum; aggPos++ {
+					memDelta, err := w.aggFuncsForRestoring[aggPos].MergePartialResult(ctx, partialResultsRestored[aggPos][rowPos], prs[aggPos])
+					if err != nil {
+						return totalMemDelta, err
+					}
+					totalMemDelta += memDelta
+				}
+			} else {
+				// This is the first time the key has appeared.
+				restoreadData.groupKeys = append(restoreadData.groupKeys, key)
+
+				// Both restoreadData.groupKeys and restoreadData.partialResultMap will contain this key
+				totalMemDelta += int64(len(key) * 2)
+
+				results := make([]aggfuncs.PartialResult, aggFuncNum)
+				restoreadData.partialResultMap[key] = results
+				for aggPos := 0; aggPos < aggFuncNum; aggPos++ {
+					results[aggPos] = partialResultsRestored[aggPos][rowPos]
+				}
+			}
+		}
+	}
+	return totalMemDelta, nil
+}
+
+func (w *HashAggFinalWorker) restoreOnePartition(ctx sessionctx.Context) (bool, error) {
+	restoredData := HashAggIntermData{
+		groupKeys:        make([]string, 0),
+		cursor:           0,
+		partialResultMap: make(aggfuncs.AggPartialResultMapper, 0),
 	}
 
-	// TODO put data into inputCh
+	restoredPartitionNum := w.spillHelper.getRestoredPartitionNum()
+	if restoredPartitionNum == spillTasksDoneFlag {
+		return false, nil
+	}
+
+	spilledFilesIO := w.spillHelper.getListInDisks(restoredPartitionNum)
+	for _, diskIO := range spilledFilesIO {
+		memDelta, err := w.restoreFromOneSpillFile(ctx, &restoredData, diskIO)
+		if err != nil {
+			return false, err
+		}
+		w.memTracker.Consume(memDelta)
+	}
+
+	w.inputCh <- &restoredData
+	return true, nil
+}
+
+func (w *HashAggFinalWorker) mergeResultsAndSend(ctx sessionctx.Context) {
+	if err := w.consumeIntermData(ctx); err != nil {
+		w.outputCh <- &AfFinalResult{err: err}
+	}
+	w.loadFinalResult(ctx)
 }
 
 func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
@@ -205,11 +281,19 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 	<-w.partialAndFinalNotifier
 
 	if w.spillHelper.isInSpillMode() {
-		w.restoreFromDisk()
-	}
+		for {
+			hasData, err := w.restoreOnePartition(ctx)
+			if err != nil {
+				w.outputCh <- &AfFinalResult{err: err}
+				return
+			}
 
-	if err := w.consumeIntermData(ctx); err != nil {
-		w.outputCh <- &AfFinalResult{err: err}
+			if !hasData {
+				return
+			}
+			w.mergeResultsAndSend(ctx)
+		}
+	} else {
+		w.mergeResultsAndSend(ctx)
 	}
-	w.loadFinalResult(ctx)
 }

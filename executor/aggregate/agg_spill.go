@@ -17,6 +17,7 @@ package aggregate
 import (
 	"sync"
 	"sync/atomic"
+
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -41,7 +42,7 @@ type parallelHashAggSpillHelper struct {
 	partitionNeedRestore int
 }
 
-func (p *parallelHashAggSpillHelper) getPartitionNumNeedRestoring() int {
+func (p *parallelHashAggSpillHelper) getRestoredPartitionNum() int {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	if p.partitionNeedRestore == spillTasksDoneFlag {
@@ -50,6 +51,9 @@ func (p *parallelHashAggSpillHelper) getPartitionNumNeedRestoring() int {
 
 	tmp := p.partitionNeedRestore
 	p.partitionNeedRestore--
+	if p.partitionNeedRestore < 0 {
+		p.partitionNeedRestore = spillTasksDoneFlag
+	}
 	return tmp
 }
 

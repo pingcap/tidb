@@ -275,7 +275,7 @@ func (e *groupConcatDistinct) DeserializeToPartialResultForSpill(sctx sessionctx
 }
 
 // TODO implement it
-func (e *groupConcatDistinct) serializeForSpill(pr PartialResult, buf []byte, helper *spillSerializeHelper) []byte {
+func (e *groupConcatDistinct) serializeForSpill(pr PartialResult, buf []byte, helper *SpillSerializeHelper) []byte {
 	return buf
 }
 

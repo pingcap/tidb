@@ -16,45 +16,46 @@ package aggfuncs
 
 import "github.com/pingcap/tidb/util/spill"
 
-type spillSerializeHelper struct {
+// SpillSerializeHelper helpes to serialize data to bytes
+type SpillSerializeHelper struct {
 	tmpBuf []byte
 }
 
-func newSpillSerializeHelper(typeLen int) spillSerializeHelper {
+func newSpillSerializeHelper(typeLen int) SpillSerializeHelper {
 	if typeLen == varLenFlag {
-		return spillSerializeHelper{}
+		return SpillSerializeHelper{}
 	}
-	return spillSerializeHelper{
+	return SpillSerializeHelper{
 		tmpBuf: make([]byte, typeLen),
 	}
 }
 
-func (s *spillSerializeHelper) serializeBool(value bool, buf []byte) []byte {
-	return spill.SerializeBool(value, buf, s.tmpBuf)
+func (s *SpillSerializeHelper) serializeBool(value bool) []byte {
+	return spill.SerializeBool(value, s.tmpBuf)
 }
 
-func (s *spillSerializeHelper) serializeInt8(value int8, buf []byte) []byte {
-	return spill.SerializeInt8(value, buf, s.tmpBuf)
+func (s *SpillSerializeHelper) serializeInt8(value int8) []byte {
+	return spill.SerializeInt8(value, s.tmpBuf)
 }
 
-func (s *spillSerializeHelper) serializeInt32(value int32, buf []byte) []byte {
-	return spill.SerializeInt32(value, buf, s.tmpBuf)
+func (s *SpillSerializeHelper) serializeInt32(value int32) []byte {
+	return spill.SerializeInt32(value, s.tmpBuf)
 }
 
-func (s *spillSerializeHelper) serializeUint32(value uint32, buf []byte) []byte {
-	return spill.SerializeUint32(value, buf, s.tmpBuf)
+func (s *SpillSerializeHelper) serializeUint32(value uint32) []byte {
+	return spill.SerializeUint32(value, s.tmpBuf)
 }
 
-func (s *spillSerializeHelper) serializeUint64(value uint64, buf []byte) []byte {
-	return spill.SerializeUint64(value, buf, s.tmpBuf)
+func (s *SpillSerializeHelper) serializeUint64(value uint64) []byte {
+	return spill.SerializeUint64(value, s.tmpBuf)
 }
 
-func (s *spillSerializeHelper) serializeInt64(value int64, buf []byte) []byte {
-	return spill.SerializeInt64(value, buf, s.tmpBuf)
+func (s *SpillSerializeHelper) serializeInt64(value int64) []byte {
+	return spill.SerializeInt64(value, s.tmpBuf)
 }
 
-func (s *spillSerializeHelper) serializeFloat64(value float64, buf []byte) []byte {
-	return spill.SerializeFloat64(value, buf, s.tmpBuf)
+func (s *SpillSerializeHelper) serializeFloat64(value float64) []byte {
+	return spill.SerializeFloat64(value, s.tmpBuf)
 }
 
 // TODO if DefRowSize and DefInterfaceSize need to be serialized?

@@ -53,7 +53,6 @@ type countOriginal4Int struct {
 	baseCount
 }
 
-// mark
 func (e *countOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Count)(pr)
 
@@ -397,7 +396,6 @@ type countPartial struct {
 	baseCount
 }
 
-// mark
 func (e *countPartial) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Count)(pr)
 	for _, row := range rowsInGroup {
@@ -420,13 +418,15 @@ func (*countPartial) MergePartialResult(_ sessionctx.Context, src, dst PartialRe
 	return 0, nil
 }
 
-func (c *countPartial) SerializeToChunkForSpill(sctx sessionctx.Context, partialResults []PartialResult, chk *chunk.Chunk) {
-	resBuf := make([]byte, partialResult4CountByteLen)
-	spillHelper := newSpillSerializeHelper(partialResult4CountByteLen)
-	for _, pr := range partialResults {
-		resBuf = c.serializeForSpill(pr, resBuf, &spillHelper)
-		chk.AppendBytes(c.ordinal, resBuf)
-	}
+func (c *countPartial) NewSpillSerializeHelper() *SpillSerializeHelper {
+	helper := newSpillSerializeHelper(partialResult4CountByteLen)
+	return &helper
+}
+
+func (c *countPartial) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4Count)(partialResult)
+	resBuf := spillHelper.serializeInt64(int64(*pr))
+	chk.AppendBytes(c.ordinal, resBuf)
 }
 
 func (c *countPartial) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
@@ -445,11 +445,6 @@ func (c *countPartial) DeserializeToPartialResultForSpill(sctx sessionctx.Contex
 	}
 
 	return partialResults, totalMemDelta, nil
-}
-
-func (c *countPartial) serializeForSpill(pr PartialResult, buf []byte, helper *spillSerializeHelper) []byte {
-	p := (*partialResult4Count)(pr)
-	return helper.serializeInt64(int64(*p), buf)
 }
 
 func (c *countPartial) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {

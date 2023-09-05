@@ -86,7 +86,7 @@ func (e *countOriginalWithDistinct4Int) DeserializeToPartialResultForSpill(sctx 
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4Int) serializeForSpill(pr PartialResult, buf []byte, helper *spillSerializeHelper) []byte {
+func (e *countOriginalWithDistinct4Int) serializeForSpill(pr PartialResult, buf []byte, helper *SpillSerializeHelper) []byte {
 	return buf
 }
 
@@ -171,7 +171,7 @@ func (e *countOriginalWithDistinct4Real) DeserializeToPartialResultForSpill(sctx
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4Real) serializeForSpill(pr PartialResult, buf []byte, helper *spillSerializeHelper) []byte {
+func (e *countOriginalWithDistinct4Real) serializeForSpill(pr PartialResult, buf []byte, helper *SpillSerializeHelper) []byte {
 	return buf
 }
 
@@ -242,7 +242,7 @@ func (e *countOriginalWithDistinct4Decimal) DeserializeToPartialResultForSpill(s
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4Decimal) serializeForSpill(pr PartialResult, buf []byte, helper *spillSerializeHelper) []byte {
+func (e *countOriginalWithDistinct4Decimal) serializeForSpill(pr PartialResult, buf []byte, helper *SpillSerializeHelper) []byte {
 	return buf
 }
 
@@ -308,7 +308,7 @@ func (e *countOriginalWithDistinct4Duration) DeserializeToPartialResultForSpill(
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4Duration) serializeForSpill(pr PartialResult, buf []byte, helper *spillSerializeHelper) []byte {
+func (e *countOriginalWithDistinct4Duration) serializeForSpill(pr PartialResult, buf []byte, helper *SpillSerializeHelper) []byte {
 	return buf
 }
 
@@ -378,7 +378,7 @@ func (e *countOriginalWithDistinct4String) DeserializeToPartialResultForSpill(sc
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4String) serializeForSpill(pr PartialResult, buf []byte, helper *spillSerializeHelper) []byte {
+func (e *countOriginalWithDistinct4String) serializeForSpill(pr PartialResult, buf []byte, helper *SpillSerializeHelper) []byte {
 	return buf
 }
 
@@ -460,7 +460,7 @@ func (e *countOriginalWithDistinct) DeserializeToPartialResultForSpill(sctx sess
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct) serializeForSpill(pr PartialResult, buf []byte, helper *spillSerializeHelper) []byte {
+func (e *countOriginalWithDistinct) serializeForSpill(pr PartialResult, buf []byte, helper *SpillSerializeHelper) []byte {
 	return buf
 }
 
@@ -893,7 +893,7 @@ func (e *baseApproxCountDistinct) DeserializeToPartialResultForSpill(sctx sessio
 }
 
 // TODO implement it
-func (e *baseApproxCountDistinct) serializeForSpill(pr PartialResult, buf []byte, helper *spillSerializeHelper) []byte {
+func (e *baseApproxCountDistinct) serializeForSpill(pr PartialResult, buf []byte, helper *SpillSerializeHelper) []byte {
 	return buf
 }
 

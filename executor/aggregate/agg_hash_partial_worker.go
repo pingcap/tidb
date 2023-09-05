@@ -25,9 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/twmb/murmur3"
-	"go.uber.org/zap"
 )
 
 // HashAggIntermData indicates the intermediate data of aggregation execution.
@@ -69,13 +67,14 @@ type HashAggPartialWorker struct {
 	// and is reused by childExec and partial worker.
 	chk *chunk.Chunk
 
-	isSpillPrepared         bool
-	workerSync              *partialWorkerSync
-	spillHelper             *parallelHashAggSpillHelper
-	tmpChksForSpill         []*chunk.Chunk
-	getNewTmpChunkFunc      func() *chunk.Chunk
-	getSpillChunkFieldTypes func() []*types.FieldType
-	spilledChunksIO         []*chunk.ListInDisk
+	isSpillPrepared             bool
+	workerSync                  *partialWorkerSync
+	spillHelper                 *parallelHashAggSpillHelper
+	tmpChksForSpill             []*chunk.Chunk
+	spillSerializeHelpers       []aggfuncs.SpillSerializeHelper
+	getNewTmpChunkFunc          func() *chunk.Chunk
+	getSpillChunkFieldTypesFunc func() []*types.FieldType
+	spilledChunksIO             []*chunk.ListInDisk
 }
 
 func (w *HashAggPartialWorker) getChildInput() bool {
@@ -225,7 +224,7 @@ func (w *HashAggPartialWorker) prepareForSpillWhenNeeded() {
 		w.spilledChunksIO = make([]*chunk.ListInDisk, spilledPartitionNum)
 		for i := 0; i < spilledPartitionNum; i++ {
 			w.tmpChksForSpill[i] = w.getNewTmpChunkFunc()
-			w.spilledChunksIO[i] = chunk.NewListInDisk(w.getSpillChunkFieldTypes())
+			w.spilledChunksIO[i] = chunk.NewListInDisk(w.getSpillChunkFieldTypesFunc())
 		}
 	}
 }
@@ -247,12 +246,9 @@ func (w *HashAggPartialWorker) spillDataToDisk(ctx sessionctx.Context) error {
 		}
 
 		for i, aggFunc := range w.aggFuncs {
-			if err := aggFunc.AppendFinalResult2Chunk(ctx, partialResults[i], w.tmpChksForSpill[partitionNum]); err != nil {
-				logutil.BgLogger().Error("HashAggPartialWorker failed to append partial result to Chunk when spilling", zap.Error(err))
-			}
+			aggFunc.SerializeForSpill(ctx, partialResults[i], w.tmpChksForSpill[partitionNum], &(w.spillSerializeHelpers[i]))
 		}
 
-		// TODO research how to store data in disk
 		w.tmpChksForSpill[partitionNum].AppendString(len(w.aggFuncs), key)
 	}
 

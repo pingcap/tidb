@@ -227,6 +227,14 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	return nil
 }
 
+func (e *HashAggExec) getSpillSerializeHelper() []aggfuncs.SpillSerializeHelper {
+	helpers := make([]aggfuncs.SpillSerializeHelper, 0, len(e.PartialAggFuncs))
+	for _, aggFunc := range e.PartialAggFuncs {
+		helpers = append(helpers, *aggFunc.NewSpillSerializeHelper())
+	}
+	return helpers
+}
+
 func (e *HashAggExec) initForUnparallelExec() {
 	var setSize int64
 	e.groupSet, setSize = set.NewStringSetWithMemoryUsage()
@@ -294,9 +302,10 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 				retTypes = append(retTypes, types.NewFieldType(mysql.TypeString))
 				return chunk.New(retTypes, base.InitCap(), base.MaxChunkSize())
 			},
-			getSpillChunkFieldTypes: func() []*types.FieldType {
+			getSpillChunkFieldTypesFunc: func() []*types.FieldType {
 				return append(e.Base().RetFieldTypes(), types.NewFieldType(mysql.TypeString))
 			},
+			spillSerializeHelpers: e.getSpillSerializeHelper(),
 		}
 		// There is a bucket in the empty partialResultsMap.
 		failpoint.Inject("ConsumeRandomPanic", nil)
@@ -319,15 +328,17 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 	for i := 0; i < finalConcurrency; i++ {
 		groupSet, setSize := set.NewStringSetWithMemoryUsage()
 		w := HashAggFinalWorker{
-			baseHashAggWorker:   newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
-			partialResultMap:    make(aggfuncs.AggPartialResultMapper),
-			groupSet:            groupSet,
-			inputCh:             e.partialOutputChs[i],
-			outputCh:            e.finalOutputCh,
-			finalResultHolderCh: make(chan *chunk.Chunk, 1),
-			rowBuffer:           make([]types.Datum, 0, e.Schema().Len()),
-			mutableRow:          chunk.MutRowFromTypes(exec.RetTypes(e)),
-			groupKeys:           make([][]byte, 0, 8),
+			baseHashAggWorker:    newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
+			partialResultMap:     make(aggfuncs.AggPartialResultMapper),
+			groupSet:             groupSet,
+			inputCh:              e.partialOutputChs[i],
+			outputCh:             e.finalOutputCh,
+			finalResultHolderCh:  make(chan *chunk.Chunk, 1),
+			rowBuffer:            make([]types.Datum, 0, e.Schema().Len()),
+			mutableRow:           chunk.MutRowFromTypes(exec.RetTypes(e)),
+			groupKeys:            make([][]byte, 0, 8),
+			aggFuncsForRestoring: e.PartialAggFuncs,
+			restoredMemDelta:     0,
 		}
 		// There is a bucket in the empty partialResultsMap.
 		e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice*(1<<w.BInMap) + setSize)
@@ -341,6 +352,9 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 	}
 
 	e.parallelExecInitialized = true
+
+	// TODO set action when out of quota happens.
+	// TODO some agg functions' spill is not supported, set it.
 }
 
 // Next implements the Executor Next interface.
