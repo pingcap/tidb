@@ -64,27 +64,6 @@ func (*testDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ 
 	return nil, nil
 }
 
-//func (dsp *testDispatcher) OnNextStageBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (subtaskMetas [][]byte, err error) {
-//	// stepOne
-//	if dsp.cnt < 10 && task.Step == proto.StepOne {
-//		dsp.cnt++
-//		return [][]byte{
-//			[]byte(fmt.Sprintf("task%d", dsp.cnt)),
-//		}, nil
-//	}
-//	if dsp.cnt == 10 && task.Step == proto.StepOne {
-//		return nil, nil
-//	}
-//	// stepTwo
-//	if dsp.cnt < 11 && task.Step == proto.StepTwo {
-//		dsp.cnt++
-//		return [][]byte{
-//			[]byte("task11"),
-//		}, nil
-//	}
-//	return nil, nil
-//}
-
 func (dsp *testDispatcher) AllDispatched(task *proto.Task) bool {
 	if task.Step == proto.StepOne && dsp.cnt == 3 {
 		return true

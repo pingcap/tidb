@@ -146,6 +146,7 @@ func (dsp *planNotRetryableErrDispatcher) Finished(task *proto.Task) bool {
 	}
 	return false
 }
+
 func TestPlanErr(t *testing.T) {
 	defer dispatcher.ClearTaskDispatcher()
 	defer scheduler.ClearSchedulers()
