@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -2030,12 +2031,16 @@ func GetDataFromSessionVariables(ctx context.Context, sctx sessionctx.Context) (
 }
 
 // GetDataFromSessionConnectAttrs produces the rows for the session_connect_attrs table.
-func GetDataFromSessionConnectAttrs(sctx sessionctx.Context) ([][]types.Datum, error) {
+func GetDataFromSessionConnectAttrs(sctx sessionctx.Context, sameAccount bool) ([][]types.Datum, error) {
 	sm := sctx.GetSessionManager()
 	if sm == nil {
 		return nil, nil
 	}
-	allAttrs := sm.GetConAttrs()
+	var user *auth.UserIdentity
+	if sameAccount {
+		user = sctx.GetSessionVars().User
+	}
+	allAttrs := sm.GetConAttrs(user)
 	rows := make([][]types.Datum, 0, len(allAttrs)*10) // 10 Attributes per connection
 	for pid, attrs := range allAttrs {                 // Note: PID is not ordered.
 		// Sorts the attributes by key and gives ORDINAL_POSITION based on this. This is needed as we didn't store the

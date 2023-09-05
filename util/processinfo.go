@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -204,5 +205,5 @@ type SessionManager interface {
 	// KillNonFlashbackClusterConn kill all non flashback cluster connections.
 	KillNonFlashbackClusterConn()
 	// GetConAttrs gets the connection attributes
-	GetConAttrs() map[uint64]map[string]string
+	GetConAttrs(user *auth.UserIdentity) map[uint64]map[string]string
 }

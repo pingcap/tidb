@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
@@ -834,11 +835,19 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 }
 
 // GetConAttrs returns the connection attributes
-func (s *Server) GetConAttrs() map[uint64]map[string]string {
+func (s *Server) GetConAttrs(user *auth.UserIdentity) map[uint64]map[string]string {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 	rs := make(map[uint64]map[string]string)
 	for _, client := range s.clients {
+		if user != nil {
+			if user.Username != client.user {
+				continue
+			}
+			if user.Hostname != client.peerHost {
+				continue
+			}
+		}
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = client.attrs
 		}

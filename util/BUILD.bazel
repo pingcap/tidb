@@ -27,6 +27,7 @@ go_library(
         "//kv",
         "//metrics",
         "//parser",
+        "//parser/auth",
         "//parser/model",
         "//parser/mysql",
         "//parser/terror",
