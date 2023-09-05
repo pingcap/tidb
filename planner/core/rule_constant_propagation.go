@@ -31,17 +31,25 @@ import (
 // Query: select * from t, (select * from s where s.id>1) tmp where t.id=tmp.id
 // Optimized: select * from t, (select * from s where s.id>1) tmp where t.id=tmp.id and tmp.id>1
 //
-// MatchCondition:
-// 1. The tree pattern must satisfy function 'xxx'
-// 2. The original predicate should be a constant and compare predicate, such as 'a.id>1'
-// 3. The original predicate column should be the equal join predicate column, such as 'a.id=b.id'
+// Process:
+//  1. Match the Join + selection pattern and find the candidate constant predicate, such as 's.id>1'
+//  2. Pull up the candidate constant predicate, above of Join node.
+//     The new selection will be created with the new constant predicate. 'tmp.id>1'
 //
-// When the three conditions has been matched, the following optimizations will be performed.
-// 1. The new selection will be created with the new constant predicate, such as 'b.id>1'.
-// In the future, it will remove equal join predicate if the constant predicate is equal predicate.
+// Steps 1 and 2 will be called recursively
+//  3. (ppdSolver in rule_predicate_push_down.go) Push down constant predicate
+//     and propagate constant predicate into other side. 't.id>1'
 type constantPropagationSolver struct {
 }
 
+// **Preorder traversal** of logic tree
+// Step1: constant propagation current plan node
+// Step2: optimize all of child
+//
+// For step1, different logical plan have their own logic for constant propagation,
+// which is mainly implemented in the interface "constantPropagation" of LogicalPlan.
+// Currently only the Logical Join implements this function. (Used for the subquery in FROM List)
+// In the future, the Logical Apply will implements this function. (Used for the subquery in WHERE or SELECT list)
 func (cp *constantPropagationSolver) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	// constant propagation root plan
 	newRoot := p.constantPropagation(nil, 0, opt)
@@ -81,8 +89,56 @@ func (*baseLogicalPlan) constantPropagation(_ LogicalPlan, _ int, _ *logicalOpti
 	return nil
 }
 
-// 1. recursiveGetConstantPredicates
-// 2. add selection above of LogicalJoin
+// Implemented the logic of constant propagation in From List
+// Query: select * from t, (select a, b from s where s.a>1) tmp where tmp.a=t.a
+// Origin logical plan:
+/*
+            +----------------+
+            |  LogicalJoin   |
+            +-------^--------+
+                    |
+      +-------------+--------------+
+      |                            |
++-----+------+              +------+------+
+| Projection |              | TableScan   |
++-----^------+              +-------------+
+      |
+      |
++-----+------+
+| Selection  |
+|   s.a>1    |
++------------+
+*/
+//  1. 'recursiveFindAndPullUpConstantPredicates': Call this function until find selection and pull up the constant predicate layer by layer
+//     LogicalSelection: find the s.a>1
+//     LogicalProjection: get the s.a>1 and pull up it, changed to tmp.a>1
+//  2. 'addCandidateSelection': Add selection above of LogicalJoin,
+//     put all predicates pulled up from the lower layer into the current new selection.
+//     LogicalSelection: tmp.a >1
+//
+// Optimized plan:
+/*
+            +----------------+
+            |  Selection     |
+            |    tmp.a>1     |
+            +-------^--------+
+                    |
+            +-------+--------+
+            |  LogicalJoin   |
+            +-------^--------+
+                    |
+      +-------------+--------------+
+      |                            |
++-----+------+              +------+------+
+| Projection |              | TableScan   |
++-----^------+              +-------------+
+      |
+      |
++-----+------+
+| Selection  |
+|   s.a>1    |
++------------+
+*/
 // Return nil if the root of plan has not been changed
 // Return new root if the root of plan is changed to selection
 func (logicalJoin *LogicalJoin) constantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *logicalOptimizeOp) (newRoot LogicalPlan) {
@@ -102,26 +158,26 @@ func (logicalJoin *LogicalJoin) constantPropagation(parentPlan LogicalPlan, curr
 	}
 	var candidateConstantPredicates []expression.Expression
 	if getConstantPredicateFromLeft {
-		candidateConstantPredicates = logicalJoin.children[0].recursiveGetConstantPredicates()
+		candidateConstantPredicates = logicalJoin.children[0].recursiveFindAndPullUpConstantPredicates()
 	}
 	if getConstantPredicateFromRight {
-		candidateConstantPredicates = append(candidateConstantPredicates, logicalJoin.children[1].recursiveGetConstantPredicates()...)
+		candidateConstantPredicates = append(candidateConstantPredicates, logicalJoin.children[1].recursiveFindAndPullUpConstantPredicates()...)
 	}
 	if len(candidateConstantPredicates) == 0 {
 		return
 	}
 
 	// step2: add selection above of LogicalJoin
-	return pullUpCandidateConstantPredicates(logicalJoin, currentChildIdx, parentPlan, candidateConstantPredicates, opt)
+	return addCandidateSelection(logicalJoin, currentChildIdx, parentPlan, candidateConstantPredicates, opt)
 }
 
-func (*baseLogicalPlan) recursiveGetConstantPredicates() []expression.Expression {
+func (*baseLogicalPlan) recursiveFindAndPullUpConstantPredicates() []expression.Expression {
 	// Only LogicalProjection and LogicalSelection can get constant predicates
 	// Other Logical plan return nil
 	return nil
 }
 
-func (selection *LogicalSelection) recursiveGetConstantPredicates() []expression.Expression {
+func (selection *LogicalSelection) recursiveFindAndPullUpConstantPredicates() []expression.Expression {
 	var result []expression.Expression
 	for _, candidatePredicate := range selection.Conditions {
 		// the candidate predicate should be a constant and compare predicate
@@ -133,12 +189,12 @@ func (selection *LogicalSelection) recursiveGetConstantPredicates() []expression
 	return result
 }
 
-func (projection *LogicalProjection) recursiveGetConstantPredicates() []expression.Expression {
+func (projection *LogicalProjection) recursiveFindAndPullUpConstantPredicates() []expression.Expression {
 	// projection has no column expr
 	if !canProjectionBeEliminatedLoose(projection) {
 		return nil
 	}
-	candidateConstantPredicates := projection.children[0].recursiveGetConstantPredicates()
+	candidateConstantPredicates := projection.children[0].recursiveFindAndPullUpConstantPredicates()
 	// replace predicate by projection expr
 	// candidate predicate : a=1
 	// projection: a as a'
@@ -191,8 +247,25 @@ func validCompareConstantPredicate(candidatePredicate expression.Expression) boo
 	return true
 }
 
-// todo
-func pullUpCandidateConstantPredicates(currentPlan LogicalPlan, currentChildIdx int, parentPlan LogicalPlan,
+// Add a new selection between parent plan and current plan with candidate predicates
+/*
++-------------+                                    +-------------+
+| parentPlan  |                                    | parentPlan  |
++-----^-------+                                    +-----^-------+
+      |           --addCandidateSelection--->            |
++-----+-------+                              +-----------+--------------+
+| currentPlan |                              |        selection         |
++-------------+                              |   candidate predicate    |
+                                             +-----------^--------------+
+                                                         |
+                                                         |
+                                                    +----+--------+
+                                                    | currentPlan |
+                                                    +-------------+
+*/
+// If the currentPlan at the top of query plan, return new root plan (selection)
+// Else return nil
+func addCandidateSelection(currentPlan LogicalPlan, currentChildIdx int, parentPlan LogicalPlan,
 	candidatePredicates []expression.Expression, opt *logicalOptimizeOp) (newRoot LogicalPlan) {
 	// generate a new selection for candidatePredicates
 	selection := LogicalSelection{Conditions: candidatePredicates}.Init(currentPlan.SCtx(), currentPlan.SelectBlockOffset())

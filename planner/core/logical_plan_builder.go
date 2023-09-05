@@ -5756,11 +5756,6 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName model.CIStr, t
 func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, tp JoinType, markNoDecorrelate bool) LogicalPlan {
 	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate
 	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}, NoDecorrelate: markNoDecorrelate}.Init(b.ctx, b.getSelectOffset())
-	//selection, isSelection := outerPlan.(*LogicalSelection)
-	//if tp == LeftOuterJoin && isSelection {
-	//	outerPlan = selection.children[0]
-	//	selection.children[0] = ap
-	//}
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.names = make([]*types.FieldName, outerPlan.Schema().Len()+innerPlan.Schema().Len())
 	copy(ap.names, outerPlan.OutputNames())
@@ -5775,7 +5770,6 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 		ap.names[i] = types.EmptyName
 	}
 	ap.LogicalJoin.setPreferredJoinTypeAndOrder(b.TableHints())
-	//return selection
 	return ap
 }
 
