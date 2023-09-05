@@ -85,8 +85,8 @@ func (r *singeFileReader) reload() error {
 				return nil
 			}
 
-			_, err := storage.ReadDataInRange(r.ctx, r.storage, r.name, startOffset, endOffset, r.buffer[i*r.readBufferSize:(i+1)*r.readBufferSize])
-			if err != nil && err != io.ErrUnexpectedEOF {
+			_, err := storage.ReadDataInRange(r.ctx, r.storage, r.name, startOffset, r.buffer[i*r.readBufferSize:i*r.readBufferSize+int(endOffset-startOffset)])
+			if err != nil {
 				log.FromContext(r.ctx).Warn("read meet error", zap.Any("startOffset", startOffset), zap.Any("endOffset", endOffset), zap.Error(err))
 				return err
 			}
