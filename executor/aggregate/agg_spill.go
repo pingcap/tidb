@@ -17,7 +17,6 @@ package aggregate
 import (
 	"sync"
 	"sync/atomic"
-
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"

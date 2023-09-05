@@ -187,6 +187,7 @@ const (
 	// For more info, please see AsOfClause.
 	TiDBBoundedStaleness = "tidb_bounded_staleness"
 	TiDBParseTso         = "tidb_parse_tso"
+	TiDBParseTsoLogical  = "tidb_parse_tso_logical"
 	TiDBCurrentTso       = "tidb_current_tso"
 
 	// string functions

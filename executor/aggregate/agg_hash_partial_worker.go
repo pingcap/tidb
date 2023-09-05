@@ -34,7 +34,7 @@ import (
 type HashAggIntermData struct {
 	groupKeys        []string
 	cursor           int
-	partialResultMap AggPartialResultMapper
+	partialResultMap aggfuncs.AggPartialResultMapper
 }
 
 // getPartialResultBatch fetches a batch of partial results from HashAggIntermData.
@@ -62,7 +62,7 @@ type HashAggPartialWorker struct {
 	// so that the data fetcher could get the partial worker's HashAggInput
 	giveBackCh chan<- *HashAggInput
 
-	partialResultsMap AggPartialResultMapper
+	partialResultsMap aggfuncs.AggPartialResultMapper
 	groupByItems      []expression.Expression
 	groupKey          [][]byte
 	// chk stores the input data from child,
@@ -131,7 +131,6 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		}
 		waitGroup.Done()
 	}()
-
 	for {
 		waitStart := time.Now()
 		ok := w.getChildInput()
@@ -258,7 +257,7 @@ func (w *HashAggPartialWorker) spillDataToDisk(ctx sessionctx.Context) error {
 	}
 
 	// Clear the groupby keys and partialResultsMap
-	w.partialResultsMap = make(AggPartialResultMapper)
+	w.partialResultsMap = make(aggfuncs.AggPartialResultMapper)
 	w.memTracker.Consume(-w.partialResultsMem)
 	w.BInMap = 0
 	w.partialResultsMem = 0

@@ -265,6 +265,25 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	return memDelta, nil
 }
 
+// TODO implement it
+func (e *groupConcatDistinct) SerializeToChunkForSpill(sctx sessionctx.Context, partialResults []PartialResult, chk *chunk.Chunk) {
+}
+
+// TODO implement it
+func (e *groupConcatDistinct) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+	return make([]PartialResult, 0), -1, nil
+}
+
+// TODO implement it
+func (e *groupConcatDistinct) serializeForSpill(pr PartialResult, buf []byte, helper *spillSerializeHelper) []byte {
+	return buf
+}
+
+// TODO implement it
+func (e *groupConcatDistinct) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
+	return nil, -1, nil
+}
+
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
 func (e *groupConcatDistinct) SetTruncated(t *int32) {
 	e.truncated = t
