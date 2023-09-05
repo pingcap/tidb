@@ -262,6 +262,7 @@
   },
   "gci": {
     "exclude_files": {
+      "com_github_emmansun_gmsm/": "com_github_emmansun_gmsm",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*\\.s$": "ignore s code",
