@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package handle
+package lockstats
 
 import (
 	"testing"
@@ -74,81 +74,6 @@ func TestGenerateDuplicateTablesMessage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			msg := generateSkippedTablesMessage(tt.totalTableIDs, tt.tables, tt.action, tt.status)
 			require.Equal(t, tt.expectedMsg, msg)
-		})
-	}
-}
-
-func TestRemoveIfTableLocked(t *testing.T) {
-	tests := []struct {
-		name          string
-		tableLocked   []int64
-		removeTableID int64
-		expectedExist bool
-		expectedTable []int64
-	}{
-		{
-			name:          "no table locked",
-			tableLocked:   []int64{},
-			removeTableID: 1,
-			expectedExist: false,
-			expectedTable: []int64{},
-		},
-		{
-			name:          "table locked",
-			tableLocked:   []int64{1, 2, 3},
-			removeTableID: 1,
-			expectedExist: true,
-			expectedTable: []int64{2, 3},
-		},
-		{
-			name:          "table not locked",
-			tableLocked:   []int64{1, 2, 3},
-			removeTableID: 4,
-			expectedExist: false,
-			expectedTable: []int64{1, 2, 3},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			exist, tables := removeIfTableLocked(tt.tableLocked, tt.removeTableID)
-			require.Equal(t, tt.expectedExist, exist)
-			require.Equal(t, tt.expectedTable, tables)
-		})
-	}
-}
-
-func TestLockTableIndexOf(t *testing.T) {
-	tests := []struct {
-		name          string
-		tableLocked   []int64
-		tableID       int64
-		expectedIndex int
-	}{
-		{
-			name:          "no table locked",
-			tableLocked:   []int64{},
-			tableID:       1,
-			expectedIndex: -1,
-		},
-		{
-			name:          "table locked",
-			tableLocked:   []int64{1, 2, 3},
-			tableID:       1,
-			expectedIndex: 0,
-		},
-		{
-			name:          "table not locked",
-			tableLocked:   []int64{1, 2, 3},
-			tableID:       4,
-			expectedIndex: -1,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			index := lockTableIndexOf(tt.tableLocked, tt.tableID)
-			require.Equal(t, tt.expectedIndex, index)
 		})
 	}
 }

@@ -50,6 +50,15 @@ const (
 	DefaultTiDBEnableSlowLog = true
 )
 
+const (
+	// LogFieldCategory is the field name for log category
+	LogFieldCategory = "category"
+	// LogFieldConn is the field name for connection id in log
+	LogFieldConn = "conn"
+	// LogFieldSessionAlias is the field name for session_alias in log
+	LogFieldSessionAlias = "session_alias"
+)
+
 // EmptyFileLogConfig is an empty FileLogConfig.
 var EmptyFileLogConfig = FileLogConfig{}
 
@@ -215,17 +224,28 @@ func LoggerWithTraceInfo(logger *zap.Logger, info *model.TraceInfo) *zap.Logger 
 
 // WithConnID attaches connId to context.
 func WithConnID(ctx context.Context, connID uint64) context.Context {
-	return WithFields(ctx, zap.Uint64("conn", connID))
+	return WithFields(ctx, zap.Uint64(LogFieldConn, connID))
 }
 
 // WithSessionAlias attaches session_alias to context
 func WithSessionAlias(ctx context.Context, alias string) context.Context {
-	return WithFields(ctx, zap.String("session_alias", alias))
+	return WithFields(ctx, zap.String(LogFieldSessionAlias, alias))
 }
 
 // WithCategory attaches category to context.
 func WithCategory(ctx context.Context, category string) context.Context {
-	return WithFields(ctx, zap.String("category", category))
+	return WithFields(ctx, zap.String(LogFieldCategory, category))
+}
+
+// WithTraceFields attaches trace fields to context
+func WithTraceFields(ctx context.Context, info *model.TraceInfo) context.Context {
+	if info == nil {
+		return WithFields(ctx)
+	}
+	return WithFields(ctx,
+		zap.Uint64(LogFieldConn, info.ConnectionID),
+		zap.String(LogFieldSessionAlias, info.SessionAlias),
+	)
 }
 
 func fieldsFromTraceInfo(info *model.TraceInfo) []zap.Field {
@@ -235,11 +255,11 @@ func fieldsFromTraceInfo(info *model.TraceInfo) []zap.Field {
 
 	fields := make([]zap.Field, 0, 2)
 	if info.ConnectionID != 0 {
-		fields = append(fields, zap.Uint64("conn", info.ConnectionID))
+		fields = append(fields, zap.Uint64(LogFieldConn, info.ConnectionID))
 	}
 
 	if info.SessionAlias != "" {
-		fields = append(fields, zap.String("session_alias", info.SessionAlias))
+		fields = append(fields, zap.String(LogFieldSessionAlias, info.SessionAlias))
 	}
 
 	return fields

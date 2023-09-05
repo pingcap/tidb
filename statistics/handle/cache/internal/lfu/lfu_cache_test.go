@@ -260,7 +260,7 @@ func TestLFUReject(t *testing.T) {
 	require.True(t, lfu.Put(2, t2))
 	lfu.wait()
 	time.Sleep(3 * time.Second)
-	require.Equal(t, int64(12), lfu.Cost())
+	require.Equal(t, int64(0), lfu.Cost())
 	require.Len(t, lfu.Values(), 2)
 	v, ok := lfu.Get(2, false)
 	require.True(t, ok)
@@ -270,4 +270,36 @@ func TestLFUReject(t *testing.T) {
 	for _, i := range v.Indices {
 		require.Equal(t, statistics.AllEvicted, i.GetEvictedStatus())
 	}
+}
+
+func TestMemoryControl(t *testing.T) {
+	testMode = true
+	capacity := int64(100000000000)
+	lfu, err := NewLFU(capacity)
+	require.NoError(t, err)
+	t1 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
+	require.Equal(t, 2*mockCMSMemoryUsage+mockCMSMemoryUsage, t1.MemoryUsage().TotalTrackingMemUsage())
+	lfu.Put(1, t1)
+	lfu.wait()
+
+	for i := 2; i <= 1000; i++ {
+		t1 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
+		require.Equal(t, 2*mockCMSMemoryUsage+mockCMSMemoryUsage, t1.MemoryUsage().TotalTrackingMemUsage())
+		lfu.Put(int64(i), t1)
+	}
+	require.Equal(t, 1000*(2*mockCMSMemoryUsage+mockCMSMemoryUsage), lfu.Cost())
+
+	for i := 1000; i > 990; i-- {
+		lfu.SetCapacity(int64(i-1) * (2*mockCMSMemoryUsage + mockCMSMemoryUsage))
+		lfu.wait()
+		require.Equal(t, int64(i-1)*(2*mockCMSMemoryUsage+mockCMSMemoryUsage), lfu.Cost())
+	}
+	for i := 990; i > 100; i = i - 100 {
+		lfu.SetCapacity(int64(i-1) * (2*mockCMSMemoryUsage + mockCMSMemoryUsage))
+		lfu.wait()
+		require.Equal(t, int64(i-1)*(2*mockCMSMemoryUsage+mockCMSMemoryUsage), lfu.Cost())
+	}
+	lfu.SetCapacity(int64(10) * (2*mockCMSMemoryUsage + mockCMSMemoryUsage))
+	lfu.wait()
+	require.Equal(t, int64(10)*(2*mockCMSMemoryUsage+mockCMSMemoryUsage), lfu.Cost())
 }
