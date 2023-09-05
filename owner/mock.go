@@ -87,38 +87,8 @@ func (*mockManager) SetOwnerOpValue(_ context.Context, op OpType) error {
 }
 
 // CampaignOwner implements Manager.CampaignOwner interface.
-<<<<<<< HEAD
-func (m *mockManager) CampaignOwner() error {
-	m.toBeOwner()
-=======
 func (m *mockManager) CampaignOwner(_ ...int) error {
-	m.wg.Add(1)
-	go func() {
-		logutil.BgLogger().Debug("owner manager campaign owner", zap.String("category", "ddl"),
-			zap.String("ID", m.id), zap.String("ownerKey", m.key))
-		defer m.wg.Done()
-		for {
-			select {
-			case <-m.campaignDone:
-				m.RetireOwner()
-				logutil.BgLogger().Debug("owner manager campaign done", zap.String("category", "ddl"), zap.String("ID", m.id))
-				return
-			case <-m.ctx.Done():
-				m.RetireOwner()
-				logutil.BgLogger().Debug("owner manager is cancelled", zap.String("category", "ddl"), zap.String("ID", m.id))
-				return
-			case <-m.resignDone:
-				m.RetireOwner()
-				sleepContext(m.ctx, 1*time.Second) // Give a chance to the other owner managers to get owner.
-			default:
-				m.toBeOwner()
-				sleepContext(m.ctx, 1*time.Second) // Speed up domain.Close()
-				logutil.BgLogger().Debug("owner manager tick", zap.String("category", "ddl"), zap.String("ID", m.id),
-					zap.String("ownerKey", m.key), zap.String("currentOwner", util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).GetOwner()))
-			}
-		}
-	}()
->>>>>>> 18ecfba603c (autoid_service,owner: change autoid service's etcd lease to 10s (#46455))
+	m.toBeOwner()
 	return nil
 }
 
