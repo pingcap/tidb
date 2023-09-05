@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
-	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
@@ -679,30 +678,17 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobCh:          make(chan struct{}, 100),
 	}
 
-	scheduler.RegisterTaskType("backfill")
-	scheduler.RegisterSchedulerConstructor("backfill", proto.StepOne,
-		func(ctx context.Context, _ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
-			return NewBackfillSchedulerHandle(ctx, taskMeta, d, step == proto.StepTwo)
-		})
-
-	scheduler.RegisterSchedulerConstructor("backfill", proto.StepTwo,
-		func(ctx context.Context, _ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
-			return NewBackfillSchedulerHandle(ctx, taskMeta, d, step == proto.StepTwo)
-		})
+	scheduler.RegisterTaskType("backfill",
+		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool) scheduler.Scheduler {
+			return newBackfillDistScheduler(ctx, id, taskID, taskTable, pool, d)
+		},
+	)
 
 	backFillDsp, err := NewBackfillingDispatcher(d)
 	if err != nil {
 		logutil.BgLogger().Warn("NewBackfillingDispatcher failed", zap.String("category", "ddl"), zap.Error(err))
 	} else {
 		dispatcher.RegisterTaskDispatcher(BackfillTaskType, backFillDsp)
-		scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepOne,
-			func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
-				return &scheduler.EmptyExecutor{}, nil
-			})
-		scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepTwo,
-			func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
-				return &scheduler.EmptyExecutor{}, nil
-			})
 	}
 
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.

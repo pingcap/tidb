@@ -70,7 +70,7 @@ func newReadIndexToLocalStage(
 	}
 }
 
-func (r *readIndexToLocalStage) InitSubtaskExecEnv(ctx context.Context) error {
+func (r *readIndexToLocalStage) Init(ctx context.Context) error {
 	logutil.BgLogger().Info("read index stage init subtask exec env",
 		zap.String("category", "ddl"))
 	d := r.d
@@ -205,7 +205,7 @@ func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask []byte
 	return nil, nil
 }
 
-func (r *readIndexToLocalStage) CleanupSubtaskExecEnv(_ context.Context) error {
+func (r *readIndexToLocalStage) Cleanup(_ context.Context) error {
 	logutil.BgLogger().Info("read index stage cleanup subtask exec env",
 		zap.String("category", "ddl"))
 	if _, ok := r.ptbl.(table.PartitionedTable); ok {
@@ -222,7 +222,7 @@ func (r *readIndexToLocalStage) CleanupSubtaskExecEnv(_ context.Context) error {
 // MockDMLExecutionAddIndexSubTaskFinish is used to mock DML execution during distributed add index.
 var MockDMLExecutionAddIndexSubTaskFinish func()
 
-func (*readIndexToLocalStage) OnSubtaskFinished(_ context.Context, subtask []byte) ([]byte, error) {
+func (*readIndexToLocalStage) OnFinished(_ context.Context, subtask []byte) ([]byte, error) {
 	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecutionAddIndexSubTaskFinish != nil {

@@ -16,10 +16,6 @@ package scheduler
 
 import (
 	"context"
-	"path"
-	"strconv"
-
-	"github.com/pingcap/tidb/disttask/framework/proto"
 )
 
 type taskTypeOptions struct {
@@ -36,79 +32,29 @@ func WithPoolSize(poolSize int32) TaskTypeOption {
 	}
 }
 
-type schedulerRegisterOptions struct {
-}
-
-// Constructor is the constructor of Scheduler.
-type Constructor func(context context.Context, taskID int64, taskMeta []byte, step int64) (Scheduler, error)
-
-// RegisterOption is the register option of Scheduler.
-type RegisterOption func(opts *schedulerRegisterOptions)
-
-// SubtaskExecutorConstructor is the constructor of SubtaskExecutor.
-type SubtaskExecutorConstructor func(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error)
-
-type subtaskExecutorRegisterOptions struct {
-}
-
-// SubtaskExecutorRegisterOption is the register option of SubtaskExecutor.
-type SubtaskExecutorRegisterOption func(opts *subtaskExecutorRegisterOptions)
-
 var (
 	// key is task type
-	taskTypes = make(map[string]taskTypeOptions)
-
-	// key is task type + step
-	schedulerConstructors = make(map[string]Constructor)
-	schedulerOptions      = make(map[string]schedulerRegisterOptions)
-
-	// key is task type + step
-	subtaskExecutorConstructors = make(map[string]SubtaskExecutorConstructor)
-	subtaskExecutorOptions      = make(map[string]subtaskExecutorRegisterOptions)
+	taskTypes              = make(map[string]taskTypeOptions)
+	taskSchedulerFactories = make(map[string]schedulerFactoryFn)
 )
 
+type schedulerFactoryFn func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) Scheduler
+
 // RegisterTaskType registers the task type.
-func RegisterTaskType(taskType string, opts ...TaskTypeOption) {
+func RegisterTaskType(taskType string, factory schedulerFactoryFn, opts ...TaskTypeOption) {
 	var option taskTypeOptions
 	for _, opt := range opts {
 		opt(&option)
 	}
 	taskTypes[taskType] = option
+	taskSchedulerFactories[taskType] = factory
 }
 
-// RegisterSchedulerConstructor registers the constructor of Scheduler.
-func RegisterSchedulerConstructor(taskType string, step int64, constructor Constructor, opts ...RegisterOption) {
-	taskKey := getKey(taskType, step)
-	schedulerConstructors[taskKey] = constructor
-
-	var option schedulerRegisterOptions
-	for _, opt := range opts {
-		opt(&option)
-	}
-	schedulerOptions[taskKey] = option
-}
-
-// RegisterSubtaskExectorConstructor registers the constructor of SubtaskExecutor.
-func RegisterSubtaskExectorConstructor(taskType string, step int64, constructor SubtaskExecutorConstructor, opts ...SubtaskExecutorRegisterOption) {
-	taskKey := getKey(taskType, step)
-	subtaskExecutorConstructors[taskKey] = constructor
-
-	var option subtaskExecutorRegisterOptions
-	for _, opt := range opts {
-		opt(&option)
-	}
-	subtaskExecutorOptions[taskKey] = option
-}
-
-func getKey(taskType string, step int64) string {
-	return path.Join(taskType, strconv.FormatInt(step, 10))
+func getSchedulerFactory(taskType string) schedulerFactoryFn {
+	return taskSchedulerFactories[taskType]
 }
 
 // ClearSchedulers is only used in test
 func ClearSchedulers() {
 	taskTypes = make(map[string]taskTypeOptions)
-	schedulerConstructors = make(map[string]Constructor)
-	schedulerOptions = make(map[string]schedulerRegisterOptions)
-	subtaskExecutorConstructors = make(map[string]SubtaskExecutorConstructor)
-	subtaskExecutorOptions = make(map[string]subtaskExecutorRegisterOptions)
 }

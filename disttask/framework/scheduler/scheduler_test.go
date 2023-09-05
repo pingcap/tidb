@@ -75,7 +75,7 @@ func TestSchedulerRun(t *testing.T) {
 
 	// 1. no scheduler constructor
 	schedulerRegisterErr := errors.Errorf("constructor of scheduler for key %s not found", getKey(tp, proto.StepOne))
-	scheduler := NewInternalScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
+	scheduler := NewBaseScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
 	// UpdateErrorToSubtask won't return such errors, but since the error is not handled,
 	// it's saved by UpdateErrorToSubtask.
 	// here we use this to check the returned error of s.run.
@@ -86,7 +86,7 @@ func TestSchedulerRun(t *testing.T) {
 	err := scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
 	require.EqualError(t, err, schedulerRegisterErr.Error())
 
-	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ context.Context, _ int64, task []byte, step int64) (Scheduler, error) {
+	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ context.Context, _ int64, task []byte, step int64) (SubtaskExecutor, error) {
 		return mockScheduler, nil
 	})
 
@@ -140,7 +140,7 @@ func TestSchedulerRun(t *testing.T) {
 	err = scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
 	require.EqualError(t, err, subtaskExecutorRegisterErr.Error())
 
-	RegisterSubtaskExectorConstructor(tp, proto.StepOne, func(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error) {
+	RegisterSubtaskExectorConstructor(tp, proto.StepOne, func(minimalTask proto.MinimalTask, step int64) (MiniTaskExecutor, error) {
 		return mockSubtaskExecutor, nil
 	})
 
@@ -172,7 +172,7 @@ func TestSchedulerRun(t *testing.T) {
 	require.NoError(t, err)
 
 	// 9. run subtask one by one
-	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ context.Context, _ int64, task []byte, step int64) (Scheduler, error) {
+	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ context.Context, _ int64, task []byte, step int64) (SubtaskExecutor, error) {
 		return mockScheduler, nil
 	})
 	mockScheduler.EXPECT().InitSubtaskExecEnv(gomock.Any()).Return(nil)
@@ -218,7 +218,7 @@ func TestSchedulerRun(t *testing.T) {
 	runCancel()
 	wg.Wait()
 
-	// 11. run subtask one by one, on error, we should wait all minimal task finished before call CleanupSubtaskExecEnv
+	// 11. run subtask one by one, on error, we should wait all minimal task finished before call Cleanup
 	syncCh := make(chan struct{})
 	lastMinimalTaskFinishTime, cleanupTime := time.Time{}, time.Time{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/waitUntilError", `return(true)`))
@@ -240,7 +240,7 @@ func TestSchedulerRun(t *testing.T) {
 	mockScheduler.EXPECT().CleanupSubtaskExecEnv(gomock.Any()).Return(nil).Do(func(_ context.Context) {
 		cleanupTime = time.Now()
 	})
-	scheduler = NewInternalScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
+	scheduler = NewBaseScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
 	runCtx2, runCancel2 := context.WithCancel(ctx)
 	defer runCancel2()
 	wg = sync.WaitGroup{}
@@ -277,13 +277,13 @@ func TestSchedulerRollback(t *testing.T) {
 
 	// 1. no scheduler constructor
 	schedulerRegisterErr := errors.Errorf("constructor of scheduler for key %s not found", getKey(tp, proto.StepOne))
-	scheduler := NewInternalScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
+	scheduler := NewBaseScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
 	mockSubtaskTable.EXPECT().GetSubtaskInStates("id", int64(1), proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRunning}).Return(nil, nil)
 	err := scheduler.Rollback(runCtx, &proto.Task{Step: proto.StepOne, ID: 1, Type: tp})
 	require.EqualError(t, err, schedulerRegisterErr.Error())
 
-	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ context.Context, _ int64, task []byte, step int64) (Scheduler, error) {
+	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ context.Context, _ int64, task []byte, step int64) (SubtaskExecutor, error) {
 		return mockScheduler, nil
 	})
 
@@ -360,14 +360,14 @@ func TestScheduler(t *testing.T) {
 	mockScheduler := mock.NewMockScheduler(ctrl)
 	mockSubtaskExecutor := mock.NewMockSubtaskExecutor(ctrl)
 
-	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ context.Context, _ int64, task []byte, step int64) (Scheduler, error) {
+	RegisterSchedulerConstructor(tp, proto.StepOne, func(_ context.Context, _ int64, task []byte, step int64) (SubtaskExecutor, error) {
 		return mockScheduler, nil
 	})
-	RegisterSubtaskExectorConstructor(tp, proto.StepOne, func(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error) {
+	RegisterSubtaskExectorConstructor(tp, proto.StepOne, func(minimalTask proto.MinimalTask, step int64) (MiniTaskExecutor, error) {
 		return mockSubtaskExecutor, nil
 	})
 
-	scheduler := NewInternalScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
+	scheduler := NewBaseScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
 
 	poolWg, runWithConcurrencyFn := getRunWithConcurrencyFn()
 

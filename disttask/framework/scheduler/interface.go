@@ -41,33 +41,40 @@ type Pool interface {
 	ReleaseAndWait()
 }
 
-// InternalScheduler defines the interface of an internal scheduler.
-type InternalScheduler interface {
+// Scheduler is the subtask scheduler for a task.
+// each task type should implement this interface.
+type Scheduler interface {
 	Run(context.Context, *proto.Task) error
 	Rollback(context.Context, *proto.Task) error
 }
 
-// Scheduler defines the interface of a scheduler.
-// User should implement this interface to define their own scheduler.
-type Scheduler interface {
-	// InitSubtaskExecEnv is used to initialize the environment for the subtask executor.
-	InitSubtaskExecEnv(context.Context) error
+// Extension extends the scheduler.
+// each task type should implement this interface.
+type Extension interface {
+	GetSubtaskExecutor(ctx context.Context, task *proto.Task) (SubtaskExecutor, error)
+	GetMiniTaskExecutor(minimalTask proto.MinimalTask, tp string, step int64) (MiniTaskExecutor, error)
+}
+
+// SubtaskExecutor defines the executor of a subtask.
+type SubtaskExecutor interface {
+	// Init is used to initialize the environment for the subtask executor.
+	Init(context.Context) error
 	// SplitSubtask is used to split the subtask into multiple minimal tasks.
 	SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error)
-	// CleanupSubtaskExecEnv is used to clean up the environment for the subtask executor.
-	CleanupSubtaskExecEnv(context.Context) error
-	// OnSubtaskFinished is used to handle the subtask when it is finished.
+	// Cleanup is used to clean up the environment for the subtask executor.
+	Cleanup(context.Context) error
+	// OnFinished is used to handle the subtask when it is finished.
 	// return the result of the subtask.
 	// MUST return subtask meta back on success.
-	OnSubtaskFinished(ctx context.Context, subtask []byte) ([]byte, error)
-	// Rollback is used to rollback all subtasks.
+	OnFinished(ctx context.Context, subtask []byte) ([]byte, error)
+	// Rollback is used to roll back all subtasks.
 	Rollback(context.Context) error
 }
 
-// SubtaskExecutor defines the interface of a subtask executor.
+// MiniTaskExecutor defines the interface of a subtask executor.
 // User should implement this interface to define their own subtask executor.
 // TODO: Rename to minimal task executor.
-type SubtaskExecutor interface {
+type MiniTaskExecutor interface {
 	Run(ctx context.Context) error
 }
 
@@ -76,29 +83,29 @@ type SubtaskExecutor interface {
 type EmptyScheduler struct {
 }
 
-var _ Scheduler = &EmptyScheduler{}
+var _ SubtaskExecutor = &EmptyScheduler{}
 
-// InitSubtaskExecEnv implements the Scheduler interface.
-func (*EmptyScheduler) InitSubtaskExecEnv(context.Context) error {
+// InitSubtaskExecEnv implements the SubtaskExecutor interface.
+func (*EmptyScheduler) Init(context.Context) error {
 	return nil
 }
 
-// SplitSubtask implements the Scheduler interface.
+// SplitSubtask implements the SubtaskExecutor interface.
 func (*EmptyScheduler) SplitSubtask(context.Context, []byte) ([]proto.MinimalTask, error) {
 	return nil, nil
 }
 
-// CleanupSubtaskExecEnv implements the Scheduler interface.
-func (*EmptyScheduler) CleanupSubtaskExecEnv(context.Context) error {
+// CleanupSubtaskExecEnv implements the SubtaskExecutor interface.
+func (*EmptyScheduler) Cleanup(context.Context) error {
 	return nil
 }
 
-// OnSubtaskFinished implements the Scheduler interface.
-func (*EmptyScheduler) OnSubtaskFinished(_ context.Context, metaBytes []byte) ([]byte, error) {
+// OnSubtaskFinished implements the SubtaskExecutor interface.
+func (*EmptyScheduler) OnFinished(_ context.Context, metaBytes []byte) ([]byte, error) {
 	return metaBytes, nil
 }
 
-// Rollback implements the Scheduler interface.
+// Rollback implements the SubtaskExecutor interface.
 func (*EmptyScheduler) Rollback(context.Context) error {
 	return nil
 }
@@ -108,9 +115,9 @@ func (*EmptyScheduler) Rollback(context.Context) error {
 type EmptyExecutor struct {
 }
 
-var _ SubtaskExecutor = &EmptyExecutor{}
+var _ MiniTaskExecutor = &EmptyExecutor{}
 
-// Run implements the SubtaskExecutor interface.
+// Run implements the MiniTaskExecutor interface.
 func (*EmptyExecutor) Run(context.Context) error {
 	return nil
 }

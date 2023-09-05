@@ -81,16 +81,16 @@ func RegisterHATaskMeta(m *sync.Map) {
 	dispatcher.RegisterTaskDispatcher(proto.TaskTypeExample, &haTestFlowHandle{})
 	scheduler.ClearSchedulers()
 	scheduler.RegisterTaskType(proto.TaskTypeExample)
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &testScheduler{}, nil
 	})
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepTwo, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepTwo, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &testScheduler{}, nil
 	})
-	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
+	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.MiniTaskExecutor, error) {
 		return &testSubtaskExecutor{m: m}, nil
 	})
-	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepTwo, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
+	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepTwo, func(_ proto.MinimalTask, _ int64) (scheduler.MiniTaskExecutor, error) {
 		return &testSubtaskExecutor1{m: m}, nil
 	})
 }

@@ -87,7 +87,7 @@ func TestOnRunnableTasks(t *testing.T) {
 	mockPool := mock.NewMockPool(ctrl)
 
 	b := NewManagerBuilder()
-	b.setSchedulerFactory(func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler {
+	b.setSchedulerFactory(func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) Scheduler {
 		return mockInternalScheduler
 	})
 	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
@@ -163,14 +163,14 @@ func TestManager(t *testing.T) {
 	mockInternalScheduler := mock.NewMockInternalScheduler(ctrl)
 	mockPool := mock.NewMockPool(ctrl)
 	b := NewManagerBuilder()
-	b.setSchedulerFactory(func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler {
+	b.setSchedulerFactory(func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) Scheduler {
 		return mockInternalScheduler
 	})
 	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
 		return mockPool, nil
 	})
 	RegisterTaskType("type", WithPoolSize(1))
-	RegisterSubtaskExectorConstructor("type", proto.StepOne, func(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error) {
+	RegisterSubtaskExectorConstructor("type", proto.StepOne, func(minimalTask proto.MinimalTask, step int64) (MiniTaskExecutor, error) {
 		return mock.NewMockSubtaskExecutor(ctrl), nil
 	})
 	id := "test"

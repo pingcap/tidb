@@ -24,11 +24,11 @@ import (
 
 func mockSchedulerOptionFunc(op *schedulerRegisterOptions) {}
 
-func mockSchedulerConstructor(_ context.Context, _ int64, task []byte, step int64) (Scheduler, error) {
+func mockSchedulerConstructor(_ context.Context, _ int64, task []byte, step int64) (SubtaskExecutor, error) {
 	return nil, nil
 }
 
-func mockSubtaskExecutorConstructor(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error) {
+func mockSubtaskExecutorConstructor(minimalTask proto.MinimalTask, step int64) (MiniTaskExecutor, error) {
 	return nil, nil
 }
 

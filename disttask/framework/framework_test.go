@@ -91,9 +91,9 @@ func (testMiniTask) String() string {
 
 type testScheduler struct{}
 
-func (*testScheduler) InitSubtaskExecEnv(_ context.Context) error { return nil }
+func (*testScheduler) Init(_ context.Context) error { return nil }
 
-func (t *testScheduler) CleanupSubtaskExecEnv(_ context.Context) error { return nil }
+func (t *testScheduler) Cleanup(_ context.Context) error { return nil }
 
 func (t *testScheduler) Rollback(_ context.Context) error { return nil }
 
@@ -105,7 +105,7 @@ func (t *testScheduler) SplitSubtask(_ context.Context, _ []byte) ([]proto.Minim
 	}, nil
 }
 
-func (t *testScheduler) OnSubtaskFinished(_ context.Context, meta []byte) ([]byte, error) {
+func (t *testScheduler) OnFinished(_ context.Context, meta []byte) ([]byte, error) {
 	return meta, nil
 }
 
@@ -133,16 +133,16 @@ func RegisterTaskMeta(m *sync.Map, dispatcherHandle dispatcher.Dispatcher) {
 	dispatcher.RegisterTaskDispatcher(proto.TaskTypeExample, dispatcherHandle)
 	scheduler.ClearSchedulers()
 	scheduler.RegisterTaskType(proto.TaskTypeExample)
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &testScheduler{}, nil
 	})
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepTwo, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepTwo, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &testScheduler{}, nil
 	})
-	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
+	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.MiniTaskExecutor, error) {
 		return &testSubtaskExecutor{m: m}, nil
 	})
-	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepTwo, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
+	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepTwo, func(_ proto.MinimalTask, _ int64) (scheduler.MiniTaskExecutor, error) {
 		return &testSubtaskExecutor1{m: m}, nil
 	})
 }

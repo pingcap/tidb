@@ -34,9 +34,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// importStepScheduler is a scheduler for import step.
-// Scheduler is equivalent to a Lightning instance.
-type importStepScheduler struct {
+// importStepExecutor is a executor for import step.
+// SubtaskExecutor is equivalent to a Lightning instance.
+type importStepExecutor struct {
 	taskID        int64
 	taskMeta      *TaskMeta
 	tableImporter *importer.TableImporter
@@ -48,7 +48,7 @@ type importStepScheduler struct {
 	wg           sync.WaitGroup
 }
 
-func (s *importStepScheduler) InitSubtaskExecEnv(ctx context.Context) error {
+func (s *importStepExecutor) Init(ctx context.Context) error {
 	s.logger.Info("init subtask env")
 
 	idAlloc := kv.NewPanickingAllocators(0)
@@ -79,7 +79,7 @@ func (s *importStepScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	}
 	s.tableImporter = tableImporter
 
-	// we need this sub context since CleanupSubtaskExecEnv which wait on this routine is called
+	// we need this sub context since Cleanup which wait on this routine is called
 	// before parent context is canceled in normal flow.
 	s.importCtx, s.importCancel = context.WithCancel(ctx)
 	s.wg.Add(1)
@@ -90,7 +90,7 @@ func (s *importStepScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	return nil
 }
 
-func (s *importStepScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.MinimalTask, error) {
+func (s *importStepExecutor) SplitSubtask(ctx context.Context, bs []byte) ([]proto.MinimalTask, error) {
 	var subtaskMeta ImportStepMeta
 	err := json.Unmarshal(bs, &subtaskMeta)
 	if err != nil {
@@ -132,7 +132,7 @@ func (s *importStepScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]pr
 	return miniTask, nil
 }
 
-func (s *importStepScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaBytes []byte) ([]byte, error) {
+func (s *importStepExecutor) OnFinished(ctx context.Context, subtaskMetaBytes []byte) ([]byte, error) {
 	var subtaskMeta ImportStepMeta
 	if err := json.Unmarshal(subtaskMetaBytes, &subtaskMeta); err != nil {
 		return nil, err
@@ -186,29 +186,29 @@ func (s *importStepScheduler) OnSubtaskFinished(ctx context.Context, subtaskMeta
 	return json.Marshal(subtaskMeta)
 }
 
-func (s *importStepScheduler) CleanupSubtaskExecEnv(_ context.Context) (err error) {
+func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 	s.logger.Info("cleanup subtask env")
 	s.importCancel()
 	s.wg.Wait()
 	return s.tableImporter.Close()
 }
 
-func (s *importStepScheduler) Rollback(context.Context) error {
+func (s *importStepExecutor) Rollback(context.Context) error {
 	// TODO: add rollback
 	s.logger.Info("rollback")
 	return nil
 }
 
-type postStepScheduler struct {
+type postStepExecutor struct {
 	scheduler.EmptyScheduler
 	taskID   int64
 	taskMeta *TaskMeta
 	logger   *zap.Logger
 }
 
-var _ scheduler.Scheduler = &postStepScheduler{}
+var _ scheduler.SubtaskExecutor = &postStepExecutor{}
 
-func (p *postStepScheduler) SplitSubtask(_ context.Context, metaBytes []byte) ([]proto.MinimalTask, error) {
+func (p *postStepExecutor) SplitSubtask(_ context.Context, metaBytes []byte) ([]proto.MinimalTask, error) {
 	mTask := &postProcessStepMinimalTask{
 		taskMeta: p.taskMeta,
 		logger:   p.logger,
@@ -219,47 +219,70 @@ func (p *postStepScheduler) SplitSubtask(_ context.Context, metaBytes []byte) ([
 	return []proto.MinimalTask{mTask}, nil
 }
 
-func init() {
-	prepareFn := func(taskID int64, bs []byte, step int64) (*TaskMeta, *zap.Logger, error) {
-		taskMeta := TaskMeta{}
-		if err := json.Unmarshal(bs, &taskMeta); err != nil {
-			return nil, nil, err
-		}
-		logger := logutil.BgLogger().With(
-			zap.String("type", proto.ImportInto),
-			zap.Int64("task-id", taskID),
-			zap.String("step", stepStr(step)),
-		)
-		logger.Info("create step scheduler")
-		return &taskMeta, logger, nil
+type importScheduler struct {
+	*scheduler.BaseScheduler
+}
+
+func newImportScheduler(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool) scheduler.Scheduler {
+	s := &importScheduler{
+		BaseScheduler: scheduler.NewBaseScheduler(ctx, id, taskID, taskTable, pool),
 	}
-	scheduler.RegisterTaskType(proto.ImportInto, scheduler.WithPoolSize(int32(runtime.GOMAXPROCS(0))))
-	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepImport,
-		func(ctx context.Context, taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
-			// TODO(tangenta): use context for lifetime control.
-			taskMeta, logger, err := prepareFn(taskID, bs, step)
-			if err != nil {
-				return nil, err
-			}
-			return &importStepScheduler{
-				taskID:   taskID,
-				taskMeta: taskMeta,
-				logger:   logger,
-			}, nil
-		},
+	s.BaseScheduler.Extension = s
+	return s
+}
+
+func (s *importScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task) (scheduler.SubtaskExecutor, error) {
+	taskMeta := TaskMeta{}
+	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
+		return nil, err
+	}
+	logger := logutil.BgLogger().With(
+		zap.String("type", proto.ImportInto),
+		zap.Int64("task-id", task.ID),
+		zap.String("step", stepStr(task.Step)),
 	)
-	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepPostProcess,
-		func(ctx context.Context, taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
-			// TODO(tangenta): use context for lifetime control.
-			taskMeta, logger, err := prepareFn(taskID, bs, step)
-			if err != nil {
-				return nil, err
-			}
-			return &postStepScheduler{
-				taskID:   taskID,
-				taskMeta: taskMeta,
-				logger:   logger,
-			}, nil
-		},
+	logger.Info("create step scheduler")
+
+	switch task.Step {
+	case StepImport:
+		return &importStepExecutor{
+			taskID:   task.ID,
+			taskMeta: &taskMeta,
+			logger:   logger,
+		}, nil
+	case StepPostProcess:
+		return &postStepExecutor{
+			taskID:   task.ID,
+			taskMeta: &taskMeta,
+			logger:   logger,
+		}, nil
+	default:
+		return nil, errors.Errorf("unknown step %d for import task %d", task.Step, task.ID)
+	}
+}
+
+func (s *importScheduler) GetMiniTaskExecutor(minimalTask proto.MinimalTask, _ string, step int64) (scheduler.MiniTaskExecutor, error) {
+	switch step {
+	case StepImport:
+		task, ok := minimalTask.(*importStepMinimalTask)
+		if !ok {
+			return nil, errors.Errorf("invalid task type %T", minimalTask)
+		}
+		return &ImportMinimalTaskExecutor{mTtask: task}, nil
+	case StepPostProcess:
+
+		mTask, ok := minimalTask.(*postProcessStepMinimalTask)
+		if !ok {
+			return nil, errors.Errorf("invalid task type %T", minimalTask)
+		}
+		return &postProcessMinimalTaskExecutor{mTask: mTask}, nil
+	default:
+		return nil, errors.Errorf("unknown step %d for mini task", step)
+	}
+}
+
+func init() {
+	scheduler.RegisterTaskType(proto.ImportInto, newImportScheduler,
+		scheduler.WithPoolSize(int32(runtime.GOMAXPROCS(0))),
 	)
 }

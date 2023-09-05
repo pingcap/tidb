@@ -73,9 +73,9 @@ type rollbackScheduler struct {
 	m *sync.Map
 }
 
-func (*rollbackScheduler) InitSubtaskExecEnv(_ context.Context) error { return nil }
+func (*rollbackScheduler) Init(_ context.Context) error { return nil }
 
-func (t *rollbackScheduler) CleanupSubtaskExecEnv(_ context.Context) error { return nil }
+func (t *rollbackScheduler) Cleanup(_ context.Context) error { return nil }
 
 func (t *rollbackScheduler) Rollback(_ context.Context) error {
 	t.m = &sync.Map{}
@@ -91,7 +91,7 @@ func (t *rollbackScheduler) SplitSubtask(_ context.Context, _ []byte) ([]proto.M
 	}, nil
 }
 
-func (t *rollbackScheduler) OnSubtaskFinished(_ context.Context, meta []byte) ([]byte, error) {
+func (t *rollbackScheduler) OnFinished(_ context.Context, meta []byte) ([]byte, error) {
 	return meta, nil
 }
 
@@ -109,10 +109,10 @@ func RegisterRollbackTaskMeta(m *sync.Map) {
 	dispatcher.RegisterTaskDispatcher(proto.TaskTypeExample, &rollbackDispatcher{})
 	scheduler.ClearSchedulers()
 	scheduler.RegisterTaskType(proto.TaskTypeExample)
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &rollbackScheduler{m: m}, nil
 	})
-	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
+	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.MiniTaskExecutor, error) {
 		return &rollbackSubtaskExecutor{m: m}, nil
 	})
 	rollbackCnt.Store(0)
