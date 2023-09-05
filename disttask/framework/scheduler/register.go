@@ -37,10 +37,15 @@ func WithPoolSize(poolSize int32) TaskTypeOption {
 }
 
 type schedulerRegisterOptions struct {
+	Summary *Summary
 }
 
 // Constructor is the constructor of Scheduler.
-type Constructor func(context context.Context, taskID int64, taskMeta []byte, step int64) (Scheduler, error)
+type Constructor func(
+	context context.Context,
+	task *proto.Task,
+	summary *Summary,
+) (Scheduler, error)
 
 // RegisterOption is the register option of Scheduler.
 type RegisterOption func(opts *schedulerRegisterOptions)
@@ -111,4 +116,9 @@ func ClearSchedulers() {
 	schedulerOptions = make(map[string]schedulerRegisterOptions)
 	subtaskExecutorConstructors = make(map[string]SubtaskExecutorConstructor)
 	subtaskExecutorOptions = make(map[string]subtaskExecutorRegisterOptions)
+}
+
+// WithSummary is the option of Scheduler to set the summary.
+var WithSummary RegisterOption = func(opts *schedulerRegisterOptions) {
+	opts.Summary = NewSummary()
 }

@@ -116,7 +116,15 @@ func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error
 	s.registerCancelFunc(runCancel)
 	s.resetError()
 	logutil.Logger(s.logCtx).Info("scheduler run a step", zap.Any("step", task.Step), zap.Any("concurrency", task.Concurrency))
-	scheduler, err := createScheduler(ctx, task)
+
+	summary, cleanup, err := runSummaryCollectLoop(ctx, task, s.taskTable)
+	if err != nil {
+		s.onError(err)
+		return s.getError()
+	}
+	defer cleanup()
+
+	scheduler, err := createScheduler(ctx, task, summary)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -185,7 +193,7 @@ func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error
 }
 
 func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask, minimalTaskCh chan func()) {
-	minimalTasks, err := scheduler.SplitSubtask(ctx, subtask.Meta)
+	minimalTasks, err := scheduler.SplitSubtask(ctx, subtask)
 	if err != nil {
 		s.onError(err)
 		if errors.Cause(err) == context.Canceled {
@@ -349,7 +357,7 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 		}
 	}
 
-	scheduler, err := createScheduler(ctx, task)
+	scheduler, err := createScheduler(ctx, task, nil)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -378,13 +386,36 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 	return s.getError()
 }
 
-func createScheduler(ctx context.Context, task *proto.Task) (Scheduler, error) {
+func createScheduler(ctx context.Context, task *proto.Task, summary *Summary) (Scheduler, error) {
 	key := getKey(task.Type, task.Step)
 	constructor, ok := schedulerConstructors[key]
 	if !ok {
 		return nil, errors.Errorf("constructor of scheduler for key %s not found", key)
 	}
-	return constructor(ctx, task.ID, task.Meta, task.Step)
+	return constructor(ctx, task, summary)
+}
+
+func runSummaryCollectLoop(
+	ctx context.Context,
+	task *proto.Task,
+	taskTable TaskTable,
+) (summary *Summary, cleanup func(), err error) {
+	taskMgr, ok := taskTable.(*storage.TaskManager)
+	if !ok {
+		return nil, func() {}, nil
+	}
+	key := getKey(task.Type, task.Step)
+	opt, ok := schedulerOptions[key]
+	if !ok {
+		return nil, func() {}, errors.Errorf("scheduler option for key %s not found", key)
+	}
+	if opt.Summary != nil {
+		go opt.Summary.UpdateRowCountLoop(ctx, taskMgr)
+		return opt.Summary, func() {
+			opt.Summary.PersistRowCount(ctx, taskMgr)
+		}, nil
+	}
+	return nil, func() {}, nil
 }
 
 func createSubtaskExecutor(minimalTask proto.MinimalTask, tp string, step int64) (SubtaskExecutor, error) {

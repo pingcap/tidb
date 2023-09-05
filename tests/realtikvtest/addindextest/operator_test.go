@@ -17,6 +17,7 @@ package addindextest
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ngaut/pools"
@@ -192,31 +193,31 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	sessPool := newSessPoolForTest(t, store)
 
 	ctx := context.Background()
-	var keys, values [][]byte
-	onWrite := func(key, val []byte) {
-		keys = append(keys, key)
-		values = append(values, val)
-	}
+	mockBackendCtx := &ingest.MockBackendCtx{}
 	mockEngine := ingest.NewMockEngineInfo(nil)
-	mockEngine.SetHook(onWrite)
+	mockEngine.SetHook(func(key, val []byte) {})
+
+	totalRowCount := &atomic.Int64{}
 
 	pipeline, err := ddl.NewAddIndexIngestPipeline(
 		ctx, store,
 		sessPool,
+		mockBackendCtx,
 		mockEngine,
 		tk.Session(),
 		tbl.(table.PhysicalTable),
 		idxInfo,
 		startKey,
 		endKey,
+		totalRowCount,
+		nil,
 	)
 	require.NoError(t, err)
 	err = pipeline.Execute()
 	require.NoError(t, err)
 	err = pipeline.Close()
 	require.NoError(t, err)
-	require.Len(t, keys, 10)
-	require.Len(t, values, 10)
+	require.Equal(t, int64(10), totalRowCount.Load())
 }
 
 type sessPoolForTest struct {

@@ -224,11 +224,22 @@ func TestSubTaskTable(t *testing.T) {
 	subtasks, err := sm.GetSucceedSubtasksByStep(2, proto.StepInit)
 	require.NoError(t, err)
 	require.Len(t, subtasks, 0)
+
 	err = sm.FinishSubtask(2, []byte{})
 	require.NoError(t, err)
+
 	subtasks, err = sm.GetSucceedSubtasksByStep(2, proto.StepInit)
 	require.NoError(t, err)
 	require.Len(t, subtasks, 1)
+
+	rowCount, err := sm.GetSubtaskRowCount(2, proto.StepInit)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), rowCount)
+	err = sm.UpdateSubtaskRowCount(2, 100)
+	require.NoError(t, err)
+	rowCount, err = sm.GetSubtaskRowCount(2, proto.StepInit)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), rowCount)
 
 	// test UpdateErrorToSubtask do update start/update time
 	err = sm.AddNewSubTask(3, proto.StepInit, "for_test", []byte("test"), proto.TaskTypeExample, false)

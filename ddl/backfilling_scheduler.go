@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -127,9 +128,9 @@ func (b *txnBackfillScheduler) receiveResult() (*backfillResult, bool) {
 	return ret, ok
 }
 
-func newSessCtx(reorgInfo *reorgInfo) (sessionctx.Context, error) {
-	sessCtx := newContext(reorgInfo.d.store)
-	if err := initSessCtx(sessCtx, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location); err != nil {
+func newSessCtx(store kv.Storage, sqlMode mysql.SQLMode, tzLocation *model.TimeZoneLocation) (sessionctx.Context, error) {
+	sessCtx := newContext(store)
+	if err := initSessCtx(sessCtx, sqlMode, tzLocation); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return sessCtx, nil
@@ -182,7 +183,7 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 	workerCnt := b.expectedWorkerSize()
 	// Increase the worker.
 	for i := len(b.workers); i < workerCnt; i++ {
-		sessCtx, err := newSessCtx(b.reorgInfo)
+		sessCtx, err := newSessCtx(reorgInfo.d.store, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location)
 		if err != nil {
 			return err
 		}
@@ -382,7 +383,7 @@ func (b *ingestBackfillScheduler) adjustWorkerSize() error {
 func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[IndexRecordChunk, workerpool.None] {
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
-	sessCtx, err := newSessCtx(reorgInfo)
+	sessCtx, err := newSessCtx(reorgInfo.d.store, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location)
 	if err != nil {
 		b.poolErr <- err
 		return nil
@@ -423,7 +424,8 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 			zap.Int64("table ID", b.tbl.Meta().ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
 		return nil, errors.New("cannot find index info")
 	}
-	sessCtx, err := newSessCtx(b.reorgInfo)
+	ri := b.reorgInfo
+	sessCtx, err := newSessCtx(ri.d.store, ri.ReorgMeta.SQLMode, ri.ReorgMeta.Location)
 	if err != nil {
 		logutil.Logger(b.ctx).Warn("cannot init cop request sender", zap.Error(err))
 		return nil, err

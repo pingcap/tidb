@@ -361,7 +361,7 @@ func (mr *MockSchedulerMockRecorder) Rollback(arg0 interface{}) *gomock.Call {
 }
 
 // SplitSubtask mocks base method.
-func (m *MockScheduler) SplitSubtask(arg0 context.Context, arg1 []byte) ([]proto.MinimalTask, error) {
+func (m *MockScheduler) SplitSubtask(arg0 context.Context, arg1 *proto.Subtask) ([]proto.MinimalTask, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SplitSubtask", arg0, arg1)
 	ret0, _ := ret[0].([]proto.MinimalTask)

@@ -39,10 +39,12 @@ type BackfillSubTaskMeta struct {
 	PhysicalTableID int64  `json:"physical_table_id"`
 	StartKey        []byte `json:"start_key"`
 	EndKey          []byte `json:"end_key"`
+	RowCount        int64  `json:"row_count"`
 }
 
 // NewBackfillSchedulerHandle creates a new backfill scheduler.
-func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl, stepForImport bool) (scheduler.Scheduler, error) {
+func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
+	stepForImport bool, summary *scheduler.Summary) (scheduler.Scheduler, error) {
 	bgm := &BackfillGlobalMeta{}
 	err := json.Unmarshal(taskMeta, bgm)
 	if err != nil {
@@ -70,7 +72,7 @@ func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl, st
 		jc := d.jobContext(jobMeta.ID)
 		d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexToLocalStage(d, &bgm.Job, indexInfo, tbl.(table.PhysicalTable), jc, bc), nil
+		return newReadIndexToLocalStage(d, &bgm.Job, indexInfo, tbl.(table.PhysicalTable), jc, bc, summary), nil
 	}
 	return newIngestIndexStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc), nil
 }
