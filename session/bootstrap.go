@@ -1181,7 +1181,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 var (
 	// SupportUpgradeHTTPOpVer is exported for testing.
 	// The minimum version of the upgrade by paused user DDL can be notified through the HTTP API.
-	SupportUpgradeHTTPOpVer int64 = version172
+	SupportUpgradeHTTPOpVer int64 = version173
 )
 
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
