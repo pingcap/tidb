@@ -29,6 +29,7 @@ import (
 
 type planErrDispatcher struct {
 	callTime int
+	cnt      int
 }
 
 var (
@@ -39,13 +40,14 @@ var (
 func (*planErrDispatcher) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (p *planErrDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (dsp *planErrDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State == proto.TaskStatePending {
-		if p.callTime == 0 {
-			p.callTime++
+		if dsp.callTime == 0 {
+			dsp.callTime++
 			return nil, errors.New("retryable err")
 		}
 		gTask.Step = proto.StepOne
+		dsp.cnt = 3
 		return [][]byte{
 			[]byte("task1"),
 			[]byte("task2"),
@@ -54,6 +56,7 @@ func (p *planErrDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHand
 	}
 	if gTask.Step == proto.StepOne {
 		gTask.Step = proto.StepTwo
+		dsp.cnt = 4
 		return [][]byte{
 			[]byte("task4"),
 		}, nil
@@ -61,13 +64,9 @@ func (p *planErrDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHand
 	return nil, nil
 }
 
-func (*planErrDispatcher) OnNextStageBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) (subtaskMetas [][]byte, err error) {
-	return nil, nil
-}
-
-func (p *planErrDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	if p.callTime == 1 {
-		p.callTime++
+func (dsp *planErrDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+	if dsp.callTime == 1 {
+		dsp.callTime++
 		return nil, errors.New("not retryable err")
 	}
 	return []byte("planErrTask"), nil
@@ -81,7 +80,28 @@ func (*planErrDispatcher) IsRetryableErr(error) bool {
 	return true
 }
 
+func (dsp *planErrDispatcher) AllDispatched(task *proto.Task) bool {
+	if task.Step == proto.StepInit {
+		return true
+	}
+	if task.Step == proto.StepOne && dsp.cnt == 3 {
+		return true
+	}
+	if task.Step == proto.StepTwo && dsp.cnt == 4 {
+		return true
+	}
+	return false
+}
+
+func (dsp *planErrDispatcher) Finished(task *proto.Task) bool {
+	if task.Step == proto.StepTwo && dsp.cnt == 4 {
+		return true
+	}
+	return false
+}
+
 type planNotRetryableErrDispatcher struct {
+	cnt int
 }
 
 func (*planNotRetryableErrDispatcher) OnTick(_ context.Context, _ *proto.Task) {
@@ -107,14 +127,33 @@ func (*planNotRetryableErrDispatcher) IsRetryableErr(error) bool {
 	return false
 }
 
+func (dsp *planNotRetryableErrDispatcher) AllDispatched(task *proto.Task) bool {
+	if task.Step == proto.StepInit {
+		return true
+	}
+	if task.Step == proto.StepOne && dsp.cnt == 3 {
+		return true
+	}
+	if task.Step == proto.StepTwo && dsp.cnt == 4 {
+		return true
+	}
+	return false
+}
+
+func (dsp *planNotRetryableErrDispatcher) Finished(task *proto.Task) bool {
+	if task.Step == proto.StepTwo && dsp.cnt == 4 {
+		return true
+	}
+	return false
+}
 func TestPlanErr(t *testing.T) {
 	defer dispatcher.ClearTaskDispatcher()
 	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 
-	RegisterTaskMeta(&m, &planErrDispatcher{0})
+	RegisterTaskMeta(&m, &planErrDispatcher{0, 0})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", false, t, &m)
+	DispatchTaskAndCheckSuccess("key1", t, &m)
 	distContext.Close()
 }
 
@@ -123,9 +162,9 @@ func TestRevertPlanErr(t *testing.T) {
 	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 
-	RegisterTaskMeta(&m, &planErrDispatcher{0})
+	RegisterTaskMeta(&m, &planErrDispatcher{0, 0})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", false, t, &m)
+	DispatchTaskAndCheckSuccess("key1", t, &m)
 	distContext.Close()
 }
 
@@ -134,8 +173,8 @@ func TestPlanNotRetryableErr(t *testing.T) {
 	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 
-	RegisterTaskMeta(&m, &planNotRetryableErrDispatcher{})
+	RegisterTaskMeta(&m, &planNotRetryableErrDispatcher{0})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckState("key1", false, t, &m, proto.TaskStateFailed)
+	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateFailed)
 	distContext.Close()
 }

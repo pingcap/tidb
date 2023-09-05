@@ -232,11 +232,7 @@ func (d *dispatcher) onRunning() error {
 
 	prevStageFinished := cnt == 0
 	if prevStageFinished {
-		if d.task.EnableDynamicDispatch {
-			logutil.Logger(d.logCtx).Info("previous stage finished or dispatch batch of subtasks meet error, generate dist plan", zap.Int64("stage", d.task.Step))
-		} else {
-			logutil.Logger(d.logCtx).Info("previous stage finished, generate dist plan", zap.Int64("stage", d.task.Step))
-		}
+		logutil.Logger(d.logCtx).Info("previous stage finished, generate dist plan", zap.Int64("stage", d.task.Step))
 		return d.onNextStage()
 	}
 	// Check if any node are down.
@@ -364,42 +360,31 @@ func (d *dispatcher) dispatchSubTask4Revert(task *proto.Task, meta []byte) error
 
 func (d *dispatcher) onNextStage() error {
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
-	if !d.task.EnableDynamicDispatch {
-		// dispatch all subtasks.
-		metas, err := d.impl.OnNextStage(d.ctx, d, d.task)
-		if err != nil {
-			return d.handlePlanErr(err)
-		}
-		// 2. dispatch dist-plan to EligibleInstances.
-		return d.dispatchSubTask(d.task, metas)
-	}
+	//if !d.task.EnableDynamicDispatch {
+	//	// dispatch all subtasks.
+	//	metas, err := d.impl.OnNextStage(d.ctx, d, d.task)
+	//	if err != nil {
+	//		return d.handlePlanErr(err)
+	//	}
+	//	// 2. dispatch dist-plan to EligibleInstances.
+	//	return d.dispatchSubTask(d.task, metas)
+	//}
 	/// dynamic dispatch subtasks.
-	if d.task.SubState != proto.TaskSubStateDispatching {
-		d.task.Step++
-		d.task.SubState = proto.TaskSubStateDispatching
-	}
+	d.task.StateUpdateTime = time.Now().UTC()
 	err := d.updateTask(proto.TaskStateRunning, nil, retrySQLTimes)
 	if err != nil {
 		return err
 	}
-	firstTime := true
 	for {
-		metas, err := d.impl.OnNextStageBatch(d.ctx, d, d.task)
+		if d.impl.Finished(d.task) {
+			logutil.Logger(d.logCtx).Info("finish the task")
+			return d.updateTask(proto.TaskStateSucceed, nil, retrySQLTimes)
+		}
+		metas, err := d.impl.OnNextStage(d.ctx, d, d.task)
 		if err != nil {
 			logutil.Logger(d.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
 			return err
 		}
-		if len(metas) == 0 {
-			d.task.SubState = proto.TaskSubStateNormal
-			// When firstTime == true,
-			// mark the task as finished since all subtasks are processed.
-			if firstTime {
-				logutil.Logger(d.logCtx).Info("finish the task")
-				return d.updateTask(proto.TaskStateSucceed, nil, retrySQLTimes)
-			}
-			return d.updateTask(proto.TaskStateRunning, nil, retrySQLTimes)
-		}
-		firstTime = false
 		// dispatch batch of subtasks to EligibleInstances.
 		err = d.dispatchSubTask(d.task, metas)
 		if err != nil {
@@ -408,6 +393,9 @@ func (d *dispatcher) onNextStage() error {
 		failpoint.Inject("mockDynamicDispatchErr", func() {
 			failpoint.Return(errors.New("mockDynamicDispatchErr"))
 		})
+		if d.impl.AllDispatched(d.task) && !d.impl.Finished(d.task) {
+			return nil
+		}
 	}
 }
 

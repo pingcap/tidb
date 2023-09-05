@@ -577,8 +577,6 @@ const (
 		state_update_time TIMESTAMP,
 		meta LONGBLOB,
 		concurrency INT(11),
-		enable_dynamic_dispatch TINYINT(2) NOT NULL,
-		substate VARCHAR(64) NOT NULL,
 		step INT(11),
 		error BLOB,
 		key(state),
@@ -1125,7 +1123,6 @@ var (
 		upgradeToVer171,
 		upgradeToVer172,
 		upgradeToVer173,
-		upgradeToVer174,
 	}
 )
 
@@ -2724,14 +2721,6 @@ func upgradeToVer173(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
-}
-
-func upgradeToVer174(s Session, ver int64) {
-	if ver >= version174 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `enable_dynamic_dispatch` TINYINT(2) NOT NULL", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `substate` VARCHAR(64) NOT NULL", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s Session) {

@@ -332,6 +332,16 @@ func (*importDispatcher) IsRetryableErr(error) bool {
 	return false
 }
 
+func (dsp *importDispatcher) AllDispatched(task *proto.Task) bool {
+
+	return false
+}
+
+func (dsp *importDispatcher) Finished(task *proto.Task) bool {
+
+	return false
+}
+
 func (dsp *importDispatcher) switchTiKV2NormalMode(ctx context.Context, task *proto.Task, logger *zap.Logger) {
 	dsp.updateCurrentTask(task)
 	if dsp.disableTiKVImportMode.Load() {

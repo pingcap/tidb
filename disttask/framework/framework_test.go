@@ -17,7 +17,6 @@ package framework_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -41,9 +40,10 @@ var _ dispatcher.Dispatcher = (*testDispatcher)(nil)
 func (*testDispatcher) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (*testDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
-	if gTask.State == proto.TaskStatePending {
+func (dsp *testDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+	if gTask.Step == proto.StepInit {
 		gTask.Step = proto.StepOne
+		dsp.cnt = 3
 		return [][]byte{
 			[]byte("task1"),
 			[]byte("task2"),
@@ -52,6 +52,7 @@ func (*testDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, g
 	}
 	if gTask.Step == proto.StepOne {
 		gTask.Step = proto.StepTwo
+		dsp.cnt = 4
 		return [][]byte{
 			[]byte("task4"),
 		}, nil
@@ -63,25 +64,42 @@ func (*testDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ 
 	return nil, nil
 }
 
-func (dsp *testDispatcher) OnNextStageBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (subtaskMetas [][]byte, err error) {
-	// stepOne
-	if dsp.cnt < 10 && task.Step == proto.StepOne {
-		dsp.cnt++
-		return [][]byte{
-			[]byte(fmt.Sprintf("task%d", dsp.cnt)),
-		}, nil
+//func (dsp *testDispatcher) OnNextStageBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (subtaskMetas [][]byte, err error) {
+//	// stepOne
+//	if dsp.cnt < 10 && task.Step == proto.StepOne {
+//		dsp.cnt++
+//		return [][]byte{
+//			[]byte(fmt.Sprintf("task%d", dsp.cnt)),
+//		}, nil
+//	}
+//	if dsp.cnt == 10 && task.Step == proto.StepOne {
+//		return nil, nil
+//	}
+//	// stepTwo
+//	if dsp.cnt < 11 && task.Step == proto.StepTwo {
+//		dsp.cnt++
+//		return [][]byte{
+//			[]byte("task11"),
+//		}, nil
+//	}
+//	return nil, nil
+//}
+
+func (dsp *testDispatcher) AllDispatched(task *proto.Task) bool {
+	if task.Step == proto.StepOne && dsp.cnt == 3 {
+		return true
 	}
-	if dsp.cnt == 10 && task.Step == proto.StepOne {
-		return nil, nil
+	if task.Step == proto.StepTwo && dsp.cnt == 4 {
+		return true
 	}
-	// stepTwo
-	if dsp.cnt < 11 && task.Step == proto.StepTwo {
-		dsp.cnt++
-		return [][]byte{
-			[]byte("task11"),
-		}, nil
+	return false
+}
+
+func (dsp *testDispatcher) Finished(task *proto.Task) bool {
+	if task.Step == proto.StepTwo && dsp.cnt == 4 {
+		return true
 	}
-	return nil, nil
+	return false
 }
 
 func generateSchedulerNodes4Test() ([]*infosync.ServerInfo, error) {
@@ -171,10 +189,10 @@ func RegisterTaskMeta(m *sync.Map, dispatcherHandle dispatcher.Dispatcher) {
 	})
 }
 
-func DispatchTask(taskKey string, enableDynamicDispatch bool, t *testing.T) *proto.Task {
+func DispatchTask(taskKey string, t *testing.T) *proto.Task {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	taskID, err := mgr.AddNewGlobalTask(taskKey, proto.TaskTypeExample, 8, nil, enableDynamicDispatch)
+	taskID, err := mgr.AddNewGlobalTask(taskKey, proto.TaskTypeExample, 8, nil)
 	require.NoError(t, err)
 	start := time.Now()
 
@@ -196,8 +214,8 @@ func DispatchTask(taskKey string, enableDynamicDispatch bool, t *testing.T) *pro
 	return task
 }
 
-func DispatchTaskAndCheckSuccess(taskKey string, enableDynamicDispatch bool, t *testing.T, m *sync.Map) {
-	task := DispatchTask(taskKey, enableDynamicDispatch, t)
+func DispatchTaskAndCheckSuccess(taskKey string, t *testing.T, m *sync.Map) {
+	task := DispatchTask(taskKey, t)
 	require.Equal(t, proto.TaskStateSucceed, task.State)
 	v, ok := m.Load("1")
 	require.Equal(t, true, ok)
@@ -208,12 +226,12 @@ func DispatchTaskAndCheckSuccess(taskKey string, enableDynamicDispatch bool, t *
 	m = &sync.Map{}
 }
 
-func DispatchAndCancelTask(taskKey string, enableDynamicDispatch bool, t *testing.T, m *sync.Map) {
+func DispatchAndCancelTask(taskKey string, t *testing.T, m *sync.Map) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunCancel", "1*return(1)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunCancel"))
 	}()
-	task := DispatchTask(taskKey, enableDynamicDispatch, t)
+	task := DispatchTask(taskKey, t)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 	m.Range(func(key, value interface{}) bool {
 		m.Delete(key)
@@ -221,8 +239,8 @@ func DispatchAndCancelTask(taskKey string, enableDynamicDispatch bool, t *testin
 	})
 }
 
-func DispatchTaskAndCheckState(taskKey string, enableDynamicDispatch bool, t *testing.T, m *sync.Map, state string) {
-	task := DispatchTask(taskKey, enableDynamicDispatch, t)
+func DispatchTaskAndCheckState(taskKey string, t *testing.T, m *sync.Map, state string) {
+	task := DispatchTask(taskKey, t)
 	require.Equal(t, state, task.State)
 	m.Range(func(key, value interface{}) bool {
 		m.Delete(key)
@@ -236,15 +254,15 @@ func TestFrameworkBasic(t *testing.T) {
 	var m sync.Map
 	RegisterTaskMeta(&m, &testDispatcher{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", false, t, &m)
-	DispatchTaskAndCheckSuccess("key2", false, t, &m)
+	DispatchTaskAndCheckSuccess("key1", t, &m)
+	DispatchTaskAndCheckSuccess("key2", t, &m)
 	distContext.SetOwner(0)
 	time.Sleep(2 * time.Second) // make sure owner changed
-	DispatchTaskAndCheckSuccess("key3", false, t, &m)
-	DispatchTaskAndCheckSuccess("key4", false, t, &m)
+	DispatchTaskAndCheckSuccess("key3", t, &m)
+	DispatchTaskAndCheckSuccess("key4", t, &m)
 	distContext.SetOwner(1)
 	time.Sleep(2 * time.Second) // make sure owner changed
-	DispatchTaskAndCheckSuccess("key5", false, t, &m)
+	DispatchTaskAndCheckSuccess("key5", t, &m)
 	distContext.Close()
 }
 
@@ -254,12 +272,12 @@ func TestFramework3Server(t *testing.T) {
 	var m sync.Map
 	RegisterTaskMeta(&m, &testDispatcher{})
 	distContext := testkit.NewDistExecutionContext(t, 3)
-	DispatchTaskAndCheckSuccess("key1", false, t, &m)
-	DispatchTaskAndCheckSuccess("key2", false, t, &m)
+	DispatchTaskAndCheckSuccess("key1", t, &m)
+	DispatchTaskAndCheckSuccess("key2", t, &m)
 	distContext.SetOwner(0)
 	time.Sleep(2 * time.Second) // make sure owner changed
-	DispatchTaskAndCheckSuccess("key3", false, t, &m)
-	DispatchTaskAndCheckSuccess("key4", false, t, &m)
+	DispatchTaskAndCheckSuccess("key3", t, &m)
+	DispatchTaskAndCheckSuccess("key4", t, &m)
 	distContext.Close()
 }
 
@@ -269,15 +287,15 @@ func TestFrameworkAddDomain(t *testing.T) {
 	var m sync.Map
 	RegisterTaskMeta(&m, &testDispatcher{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", false, t, &m)
+	DispatchTaskAndCheckSuccess("key1", t, &m)
 	distContext.AddDomain()
-	DispatchTaskAndCheckSuccess("key2", false, t, &m)
+	DispatchTaskAndCheckSuccess("key2", t, &m)
 	distContext.SetOwner(1)
 	time.Sleep(2 * time.Second) // make sure owner changed
-	DispatchTaskAndCheckSuccess("key3", false, t, &m)
+	DispatchTaskAndCheckSuccess("key3", t, &m)
 	distContext.Close()
 	distContext.AddDomain()
-	DispatchTaskAndCheckSuccess("key4", false, t, &m)
+	DispatchTaskAndCheckSuccess("key4", t, &m)
 }
 
 func TestFrameworkDeleteDomain(t *testing.T) {
@@ -286,10 +304,10 @@ func TestFrameworkDeleteDomain(t *testing.T) {
 	var m sync.Map
 	RegisterTaskMeta(&m, &testDispatcher{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", false, t, &m)
+	DispatchTaskAndCheckSuccess("key1", t, &m)
 	distContext.DeleteDomain(1)
 	time.Sleep(2 * time.Second) // make sure the owner changed
-	DispatchTaskAndCheckSuccess("key2", false, t, &m)
+	DispatchTaskAndCheckSuccess("key2", t, &m)
 	distContext.Close()
 }
 
@@ -299,7 +317,7 @@ func TestFrameworkWithQuery(t *testing.T) {
 	var m sync.Map
 	RegisterTaskMeta(&m, &testDispatcher{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", false, t, &m)
+	DispatchTaskAndCheckSuccess("key1", t, &m)
 
 	tk := testkit.NewTestKit(t, distContext.Store)
 
@@ -321,7 +339,7 @@ func TestFrameworkCancelGTask(t *testing.T) {
 	var m sync.Map
 	RegisterTaskMeta(&m, &testDispatcher{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchAndCancelTask("key1", false, t, &m)
+	DispatchAndCancelTask("key1", t, &m)
 	distContext.Close()
 }
 
@@ -336,7 +354,7 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
 	}()
-	DispatchTaskAndCheckState("key1", false, t, &m, proto.TaskStateReverted)
+	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateReverted)
 
 	distContext.Close()
 }
@@ -352,7 +370,7 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockExecSubtaskInitEnvErr"))
 	}()
-	DispatchTaskAndCheckState("key1", false, t, &m, proto.TaskStateReverted)
+	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateReverted)
 	distContext.Close()
 }
 
@@ -367,7 +385,7 @@ func TestOwnerChange(t *testing.T) {
 		distContext.SetOwner(0)
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockOwnerChange", "1*return(true)"))
-	DispatchTaskAndCheckSuccess("😊", false, t, &m)
+	DispatchTaskAndCheckSuccess("😊", t, &m)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockOwnerChange"))
 	distContext.Close()
 }
@@ -379,7 +397,7 @@ func TestFrameworkCancelThenSubmitSubTask(t *testing.T) {
 	RegisterTaskMeta(&m, &testDispatcher{})
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelBeforeUpdate", "return()"))
-	DispatchTaskAndCheckState("😊", false, t, &m, proto.TaskStateReverted)
+	DispatchTaskAndCheckState("😊", t, &m, proto.TaskStateReverted)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelBeforeUpdate"))
 	distContext.Close()
 }

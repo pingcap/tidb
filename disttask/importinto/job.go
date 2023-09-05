@@ -187,7 +187,7 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 			return err2
 		}
 		taskID, err2 = globalTaskManager.AddGlobalTaskWithSession(se, TaskKey(jobID), proto.ImportInto,
-			int(plan.ThreadCnt), taskMeta, false)
+			int(plan.ThreadCnt), taskMeta)
 		if err2 != nil {
 			return err2
 		}

@@ -34,12 +34,10 @@ type Dispatcher interface {
 	// the task is finished.
 	// NOTE: don't change gTask.State inside, framework will manage it.
 	// it's called when:
+	// ywq todo change
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks of previous step has all finished with no error.
 	OnNextStage(ctx context.Context, h TaskHandle, task *proto.Task) (subtaskMetas [][]byte, err error)
-
-	// OnNextStageBatch is used to generate subtasks in batch.
-	OnNextStageBatch(ctx context.Context, h TaskHandle, task *proto.Task) (subtaskMetas [][]byte, err error)
 
 	// OnErrStage is called when:
 	// 	1. subtask is finished with error.
@@ -52,6 +50,12 @@ type Dispatcher interface {
 
 	// IsRetryableErr is used to check whether the error occurred in dispatcher is retryable.
 	IsRetryableErr(err error) bool
+
+	// AllDispatched
+	AllDispatched(task *proto.Task) bool
+
+	// Finished
+	Finished(task *proto.Task) bool
 }
 
 var taskDispatcherMap struct {

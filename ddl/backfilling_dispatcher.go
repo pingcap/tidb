@@ -110,9 +110,14 @@ func (h *backfillingDispatcher) OnNextStage(ctx context.Context, _ dispatcher.Ta
 		return nil, nil
 	}
 }
+func (dsp *backfillingDispatcher) AllDispatched(task *proto.Task) bool {
 
-func (*backfillingDispatcher) OnNextStageBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) (subtaskMetas [][]byte, err error) {
-	return nil, nil
+	return false
+}
+
+func (dsp *backfillingDispatcher) Finished(task *proto.Task) bool {
+
+	return false
 }
 
 // OnErrStage generate error handling stage's plan.

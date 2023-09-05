@@ -63,13 +63,11 @@ const (
 
 // Task represents the task of distributed framework.
 type Task struct {
-	ID                    int64
-	Key                   string
-	Type                  string
-	State                 string
-	Step                  int64
-	EnableDynamicDispatch bool
-	SubState              string
+	ID    int64
+	Key   string
+	Type  string
+	State string
+	Step  int64
 	// DispatcherID is not used now.
 	DispatcherID    string
 	Concurrency     uint64

@@ -29,7 +29,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type rollbackDispatcher struct{}
+type rollbackDispatcher struct {
+	cnt int
+}
 
 var _ dispatcher.Dispatcher = (*rollbackDispatcher)(nil)
 var rollbackCnt atomic.Int32
@@ -37,19 +39,16 @@ var rollbackCnt atomic.Int32
 func (*rollbackDispatcher) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (*rollbackDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (dsp *rollbackDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State == proto.TaskStatePending {
 		gTask.Step = proto.StepOne
+		dsp.cnt = 3
 		return [][]byte{
 			[]byte("task1"),
 			[]byte("task2"),
 			[]byte("task3"),
 		}, nil
 	}
-	return nil, nil
-}
-
-func (*rollbackDispatcher) OnNextStageBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) (subtaskMetas [][]byte, err error) {
 	return nil, nil
 }
 
@@ -63,6 +62,23 @@ func (*rollbackDispatcher) GetEligibleInstances(_ context.Context, _ *proto.Task
 
 func (*rollbackDispatcher) IsRetryableErr(error) bool {
 	return true
+}
+
+func (dsp *rollbackDispatcher) AllDispatched(task *proto.Task) bool {
+	if task.Step == proto.StepInit {
+		return true
+	}
+	if task.Step == proto.StepOne && dsp.cnt == 3 {
+		return true
+	}
+	return false
+}
+
+func (dsp *rollbackDispatcher) Finished(task *proto.Task) bool {
+	if task.Step == proto.StepOne && dsp.cnt == 3 {
+		return true
+	}
+	return false
 }
 
 type testRollbackMiniTask struct{}
@@ -134,7 +150,7 @@ func TestFrameworkRollback(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskAfterRefreshTask"))
 	}()
 
-	DispatchTaskAndCheckState("key2", false, t, &m, proto.TaskStateReverted)
+	DispatchTaskAndCheckState("key2", t, &m, proto.TaskStateReverted)
 	require.Equal(t, int32(2), rollbackCnt.Load())
 	rollbackCnt.Store(0)
 	distContext.Close()

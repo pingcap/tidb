@@ -41,7 +41,7 @@ func SubmitGlobalTask(taskKey, taskType string, concurrency int, taskMeta []byte
 	}
 
 	if globalTask == nil {
-		taskID, err := globalTaskManager.AddNewGlobalTask(taskKey, taskType, concurrency, taskMeta, enableDynamicDispatch)
+		taskID, err := globalTaskManager.AddNewGlobalTask(taskKey, taskType, concurrency, taskMeta)
 		if err != nil {
 			return nil, err
 		}

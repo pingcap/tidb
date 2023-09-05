@@ -31,7 +31,7 @@ func TestFrameworkDynamicBasic(t *testing.T) {
 	var m sync.Map
 	RegisterTaskMeta(&m, &testDispatcher{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", true, t, &m)
+	DispatchTaskAndCheckSuccess("key1", t, &m)
 	distContext.Close()
 }
 
@@ -42,7 +42,7 @@ func TestFrameworkDynamicHA(t *testing.T) {
 	RegisterTaskMeta(&m, &testDispatcher{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockDynamicDispatchErr", "5*return()"))
-	DispatchTaskAndCheckSuccess("key1", true, t, &m)
+	DispatchTaskAndCheckSuccess("key1", t, &m)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockDynamicDispatchErr"))
 	distContext.Close()
 }

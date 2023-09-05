@@ -28,16 +28,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type haTestDispatcher struct{}
+type haTestDispatcher struct {
+	cnt int
+}
 
 var _ dispatcher.Dispatcher = (*haTestDispatcher)(nil)
 
 func (*haTestDispatcher) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (*haTestDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (dsp *haTestDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State == proto.TaskStatePending {
 		gTask.Step = proto.StepOne
+		dsp.cnt = 10
 		return [][]byte{
 			[]byte("task1"),
 			[]byte("task2"),
@@ -52,6 +55,7 @@ func (*haTestDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle,
 		}, nil
 	}
 	if gTask.Step == proto.StepOne {
+		dsp.cnt = 15
 		gTask.Step = proto.StepTwo
 		return [][]byte{
 			[]byte("task11"),
@@ -61,10 +65,6 @@ func (*haTestDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle,
 			[]byte("task15"),
 		}, nil
 	}
-	return nil, nil
-}
-
-func (*haTestDispatcher) OnNextStageBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) (subtaskMetas [][]byte, err error) {
 	return nil, nil
 }
 
@@ -78,6 +78,26 @@ func (*haTestDispatcher) GetEligibleInstances(_ context.Context, _ *proto.Task) 
 
 func (*haTestDispatcher) IsRetryableErr(error) bool {
 	return true
+}
+
+func (dsp *haTestDispatcher) AllDispatched(task *proto.Task) bool {
+	if task.Step == proto.StepInit {
+		return true
+	}
+	if task.Step == proto.StepOne && dsp.cnt == 10 {
+		return true
+	}
+	if task.Step == proto.StepTwo && dsp.cnt == 15 {
+		return true
+	}
+	return false
+}
+
+func (dsp *haTestDispatcher) Finished(task *proto.Task) bool {
+	if task.Step == proto.StepTwo && dsp.cnt == 15 {
+		return true
+	}
+	return false
 }
 
 func RegisterHATaskMeta(m *sync.Map) {
@@ -108,7 +128,7 @@ func TestHABasic(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockCleanScheduler", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockStopManager", "4*return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown", "return(\":4000\")"))
-	DispatchTaskAndCheckSuccess("😊", false, t, &m)
+	DispatchTaskAndCheckSuccess("😊", t, &m)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockStopManager"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockCleanScheduler"))
@@ -125,7 +145,7 @@ func TestHAManyNodes(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockCleanScheduler", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockStopManager", "30*return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown", "return(\":4000\")"))
-	DispatchTaskAndCheckSuccess("😊", false, t, &m)
+	DispatchTaskAndCheckSuccess("😊", t, &m)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockStopManager"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockCleanScheduler"))
@@ -146,7 +166,7 @@ func TestHAFailInDifferentStage(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown", "return(\":4000\")"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown2", "return()"))
 
-	DispatchTaskAndCheckSuccess("😊", false, t, &m)
+	DispatchTaskAndCheckSuccess("😊", t, &m)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown2"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockStopManager"))
@@ -168,7 +188,7 @@ func TestHAFailInDifferentStageManyNodes(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown", "return(\":4000\")"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown2", "return()"))
 
-	DispatchTaskAndCheckSuccess("😊", false, t, &m)
+	DispatchTaskAndCheckSuccess("😊", t, &m)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown2"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockStopManager"))
@@ -184,7 +204,7 @@ func TestHAReplacedButRunning(t *testing.T) {
 	RegisterHATaskMeta(&m)
 	distContext := testkit.NewDistExecutionContext(t, 4)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBPartitionThenResume", "10*return(true)"))
-	DispatchTaskAndCheckSuccess("😊", false, t, &m)
+	DispatchTaskAndCheckSuccess("😊", t, &m)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBPartitionThenResume"))
 	distContext.Close()
 }
@@ -196,7 +216,7 @@ func TestHAReplacedButRunningManyNodes(t *testing.T) {
 	RegisterHATaskMeta(&m)
 	distContext := testkit.NewDistExecutionContext(t, 30)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBPartitionThenResume", "30*return(true)"))
-	DispatchTaskAndCheckSuccess("😊", false, t, &m)
+	DispatchTaskAndCheckSuccess("😊", t, &m)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBPartitionThenResume"))
 	distContext.Close()
 }
