@@ -15,14 +15,17 @@
 package lockstats
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec/mock"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
 )
 
@@ -114,10 +117,22 @@ func TestQueryLockedTables(t *testing.T) {
 	}
 }
 
+type ctxMatcher struct{}
+
+func (c *ctxMatcher) Matches(x interface{}) bool {
+	ctx := x.(context.Context)
+	s := util.RequestSourceFromCtx(ctx)
+	return s == util.InternalRequest+"_"+kv.InternalTxnStats
+}
+
+func (c *ctxMatcher) String() string {
+	return "all txns should be internal_stats source"
+}
+
 func executeQueryLockedTables(exec *mock.MockRestrictedSQLExecutor, numRows int, wantErr bool) (map[int64]struct{}, error) {
 	if wantErr {
 		exec.EXPECT().ExecRestrictedSQL(
-			gomock.Any(),
+			gomock.All(&ctxMatcher{}),
 			useCurrentSession,
 			"SELECT table_id FROM mysql.stats_table_locked",
 		).Return(nil, nil, errors.New("error"))
@@ -133,7 +148,7 @@ func executeQueryLockedTables(exec *mock.MockRestrictedSQLExecutor, numRows int,
 		rows = append(rows, c.GetRow(i))
 	}
 	exec.EXPECT().ExecRestrictedSQL(
-		gomock.Any(),
+		gomock.All(&ctxMatcher{}),
 		useCurrentSession,
 		"SELECT table_id FROM mysql.stats_table_locked",
 	).Return(rows, nil, nil)
