@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -112,7 +111,7 @@ func (r *singeFileReader) reload() error {
 
 // next returns the next n bytes.
 func (r *singeFileReader) next(n int) []byte {
-	end := mathutil.Min(r.bufferReadOffset+int64(n), r.bufferMaxOffset)
+	end := min(r.bufferReadOffset+int64(n), r.bufferMaxOffset)
 	ret := r.buffer[r.bufferReadOffset:end]
 	r.bufferReadOffset += int64(len(ret))
 
