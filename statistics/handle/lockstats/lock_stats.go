@@ -38,6 +38,7 @@ var (
 	statsLogger = logutil.BgLogger().With(zap.String("category", "stats"))
 	// useCurrentSession to make sure the sql is executed in current session.
 	useCurrentSession = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
+	insertSQL         = "INSERT INTO mysql.stats_table_locked (table_id) VALUES (%?) ON DUPLICATE KEY UPDATE table_id = %?"
 )
 
 // AddLockedTables add locked tables id to store.
@@ -117,7 +118,7 @@ func insertIntoStatsTableLocked(ctx context.Context, exec sqlexec.RestrictedSQLE
 	_, _, err := exec.ExecRestrictedSQL(
 		ctx,
 		useCurrentSession,
-		"INSERT INTO mysql.stats_table_locked (table_id) VALUES (%?) ON DUPLICATE KEY UPDATE table_id = %?", tid, tid,
+		insertSQL, tid, tid,
 	)
 	if err != nil {
 		logutil.BgLogger().Error("error occurred when insert mysql.stats_table_locked", zap.String("category", "stats"), zap.Error(err))
