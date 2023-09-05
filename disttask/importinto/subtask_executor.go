@@ -287,7 +287,9 @@ func rebaseAllocatorBases(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *
 	etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(kvStore.GetCodec()))
 	r := autoIDRequirement{store: kvStore, etcdCli: etcdCli}
 	err = common.RebaseTableAllocators(ctx, subtaskMeta.MaxIDs, &r, taskMeta.Plan.DBID, taskMeta.Plan.DesiredTableInfo)
-	etcdCli.Close()
+	if err1 := etcdCli.Close(); err1 != nil {
+		logger.Info("close etcd client error", zap.Error(err1))
+	}
 	return errors.Trace(err)
 }
 
