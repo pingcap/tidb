@@ -244,7 +244,7 @@ func TestSubTaskTable(t *testing.T) {
 	// test UpdateErrorToSubtask do update start/update time
 	err = sm.AddNewSubTask(3, proto.StepInit, "for_test", []byte("test"), proto.TaskTypeExample, false)
 	require.NoError(t, err)
-	require.NoError(t, sm.UpdateErrorToSubtask("for_test", errors.New("fail")))
+	require.NoError(t, sm.UpdateErrorToSubtask("for_test", 3, errors.New("fail")))
 	subtask, err = sm.GetSubtaskInStates("for_test", 3, proto.StepInit, proto.TaskStateFailed)
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStateFailed, subtask.State)
