@@ -2652,7 +2652,6 @@ func TestColumnInfoModified(t *testing.T) {
 }
 
 func TestIssues(t *testing.T) {
-	t.Skip("it has been broken. Please fix it as soon as possible.")
 	// for issue #4954
 	store := testkit.CreateMockStore(t)
 
