@@ -26,12 +26,12 @@ type TaskTable interface {
 	GetGlobalTaskByID(taskID int64) (task *proto.Task, err error)
 
 	GetSubtaskInStates(instanceID string, taskID int64, step int64, states ...interface{}) (*proto.Subtask, error)
-	StartSubtask(id int64) error
-	UpdateSubtaskStateAndError(id int64, state string, err error) error
-	FinishSubtask(id int64, meta []byte) error
+	StartSubtask(subtaskID int64) error
+	UpdateSubtaskStateAndError(subtaskID int64, state string, err error) error
+	FinishSubtask(subtaskID int64, meta []byte) error
 	HasSubtasksInStates(instanceID string, taskID int64, step int64, states ...interface{}) (bool, error)
-	UpdateErrorToSubtask(tidbID string, err error) error
-	IsSchedulerCanceled(taskID int64, execID string) (bool, error)
+	UpdateErrorToSubtask(instanceID string, taskID int64, err error) error
+	IsSchedulerCanceled(taskID int64, instanceID string) (bool, error)
 }
 
 // Pool defines the interface of a pool.
