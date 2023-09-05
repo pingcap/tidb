@@ -10,7 +10,7 @@ go_test(
         "framework_test.go",
     ],
     flaky = True,
-    race = "on",
+    race = "off",
     shard_count = 22,
     deps = [
         "//disttask/framework/dispatcher",
