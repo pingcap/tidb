@@ -108,5 +108,5 @@ func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *pr
 }
 
 func (*backfillDistScheduler) GetMiniTaskExecutor(_ proto.MinimalTask, _ string, _ int64) (execute.MiniTaskExecutor, error) {
-	return &scheduler.EmptyExecutor{}, nil
+	return &scheduler.EmptyMiniTaskExecutor{}, nil
 }

@@ -23,7 +23,7 @@ import (
 type taskTypeOptions struct {
 	PoolSize int32
 	// Summary is the summary of all tasks of the task type.
-	// TODO: better have a summary per task.
+	// TODO: better have a summary per task/subtask.
 	Summary *execute.Summary
 }
 

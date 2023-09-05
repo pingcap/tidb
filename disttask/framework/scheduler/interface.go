@@ -58,46 +58,46 @@ type Extension interface {
 	GetMiniTaskExecutor(minimalTask proto.MinimalTask, tp string, step int64) (execute.MiniTaskExecutor, error)
 }
 
-// EmptyScheduler is an empty scheduler.
+// EmptySubtaskExecutor is an empty scheduler.
 // it can be used for the task that does not need to split into subtasks.
-type EmptyScheduler struct {
+type EmptySubtaskExecutor struct {
 }
 
-var _ execute.SubtaskExecutor = &EmptyScheduler{}
+var _ execute.SubtaskExecutor = &EmptySubtaskExecutor{}
 
 // Init implements the SubtaskExecutor interface.
-func (*EmptyScheduler) Init(context.Context) error {
+func (*EmptySubtaskExecutor) Init(context.Context) error {
 	return nil
 }
 
 // SplitSubtask implements the SubtaskExecutor interface.
-func (*EmptyScheduler) SplitSubtask(context.Context, *proto.Subtask) ([]proto.MinimalTask, error) {
+func (*EmptySubtaskExecutor) SplitSubtask(context.Context, *proto.Subtask) ([]proto.MinimalTask, error) {
 	return nil, nil
 }
 
 // Cleanup implements the SubtaskExecutor interface.
-func (*EmptyScheduler) Cleanup(context.Context) error {
+func (*EmptySubtaskExecutor) Cleanup(context.Context) error {
 	return nil
 }
 
 // OnFinished implements the SubtaskExecutor interface.
-func (*EmptyScheduler) OnFinished(_ context.Context, metaBytes []byte) ([]byte, error) {
+func (*EmptySubtaskExecutor) OnFinished(_ context.Context, metaBytes []byte) ([]byte, error) {
 	return metaBytes, nil
 }
 
 // Rollback implements the SubtaskExecutor interface.
-func (*EmptyScheduler) Rollback(context.Context) error {
+func (*EmptySubtaskExecutor) Rollback(context.Context) error {
 	return nil
 }
 
-// EmptyExecutor is an empty minimal task executor.
+// EmptyMiniTaskExecutor is an empty minimal task executor.
 // it can be used for the task that does not need to split into minimal tasks.
-type EmptyExecutor struct {
+type EmptyMiniTaskExecutor struct {
 }
 
-var _ execute.MiniTaskExecutor = &EmptyExecutor{}
+var _ execute.MiniTaskExecutor = &EmptyMiniTaskExecutor{}
 
 // Run implements the MiniTaskExecutor interface.
-func (*EmptyExecutor) Run(context.Context) error {
+func (*EmptyMiniTaskExecutor) Run(context.Context) error {
 	return nil
 }

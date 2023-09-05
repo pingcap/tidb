@@ -202,7 +202,7 @@ func (s *importStepExecutor) Rollback(context.Context) error {
 }
 
 type postStepExecutor struct {
-	scheduler.EmptyScheduler
+	scheduler.EmptySubtaskExecutor
 	taskID   int64
 	taskMeta *TaskMeta
 	logger   *zap.Logger
