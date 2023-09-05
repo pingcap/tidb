@@ -118,6 +118,7 @@ func (sc *StatsCache) Put(id int64, t *statistics.Table) {
 }
 
 func (sc *StatsCache) putCache(id int64, t *statistics.Table) bool {
+	metrics.UpdateCounter.Inc()
 	ok := sc.c.Put(id, t)
 	if ok {
 		return ok
