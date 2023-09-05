@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/engine"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
@@ -580,6 +581,7 @@ func NewBackend(
 	}
 	local := &Backend{
 		engines:          sync.Map{},
+		externalEngine:   map[uuid.UUID]common.Engine{},
 		pdCtl:            pdCtl,
 		splitCli:         splitCli,
 		tikvCli:          tikvCli,
@@ -944,6 +946,11 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 		if err != nil {
 			return err
 		}
+		physical, logical, err := local.pdCtl.GetPDClient().GetTS(ctx)
+		if err != nil {
+			return err
+		}
+		ts := oracle.ComposeTS(physical, logical)
 		externalEngine := external.NewExternalEngine(
 			store,
 			externalCfg.DataFiles,
@@ -955,7 +962,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 			local.DupeDetectEnabled,
 			local.duplicateDB,
 			local.DuplicateDetectOpt,
-			123, // TODO(lance6716): get TS
+			ts,
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
 		)
@@ -1153,7 +1160,6 @@ func (local *Backend) generateAndSendJob(
 	jobWg *sync.WaitGroup,
 ) error {
 	logger := log.FromContext(ctx)
-	// TODO(lance6716): external engine should also support it
 	localEngine, ok := engine.(*Engine)
 
 	// when use dynamic region feature, the region may be very big, we need
@@ -1540,6 +1546,12 @@ func (local *Backend) ImportEngine(
 	return err
 }
 
+// expose these variables to unit test.
+var (
+	testJobToWorkerCh = make(chan *regionJob)
+	testJobWg         *sync.WaitGroup
+)
+
 func (local *Backend) doImport(ctx context.Context, engine common.Engine, regionRanges []common.Range, regionSplitSize, regionSplitKeys int64) error {
 	/*
 	   [prepareAndSendJob]-----jobToWorkerCh--->[workers]
@@ -1568,6 +1580,11 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 		dispatchJobGoroutine = make(chan struct{})
 	)
 	defer workerCancel()
+
+	if intest.InTest {
+		jobToWorkerCh = testJobToWorkerCh
+		testJobWg = &jobWg
+	}
 
 	retryer := startRegionJobRetryer(workerCtx, jobToWorkerCh, &jobWg)
 
@@ -1619,11 +1636,17 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 		}
 	}()
 
+	if intest.InTest {
+		goto testSkipStartWorker
+	}
+
 	for i := 0; i < local.WorkerConcurrency; i++ {
 		workGroup.Go(func() error {
 			return local.startWorker(workerCtx, jobToWorkerCh, jobFromWorkerCh, &jobWg)
 		})
 	}
+
+testSkipStartWorker:
 
 	err := local.prepareAndSendJob(
 		workerCtx,

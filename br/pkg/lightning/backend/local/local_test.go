@@ -2145,33 +2145,45 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
 }
 
-func TestExternalEngineLoadIngestData(t *testing.T) {
+func TestExternalEngine(t *testing.T) {
+	log.InitLogger(&log.Config{Level: "debug"}, "debug")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	t.Cleanup(func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
+	})
 	ctx := context.Background()
-	memstore := storage.NewMemStorage()
+	dir := t.TempDir()
+	storageURI := "file://" + filepath.ToSlash(dir)
+	storeBackend, err := storage.ParseBackend(storageURI, nil)
+	require.NoError(t, err)
+	extStorage, err := storage.New(ctx, storeBackend, nil)
+	require.NoError(t, err)
 	keys := make([][]byte, 100)
 	values := make([][]byte, 100)
 	for i := range keys {
 		keys[i] = []byte(fmt.Sprintf("key%06d", i))
 		values[i] = []byte(fmt.Sprintf("value%06d", i))
 	}
-	endKey := []byte(fmt.Sprintf("key%06d", 100))
-	dataFiles, statFiles, err := external.MockExternalEngine(memstore, keys, values)
+	// simple append 0x00
+	endKey := make([]byte, len(keys[99])+1)
+	copy(endKey, keys[99])
+
+	dataFiles, statFiles, err := external.MockExternalEngine(extStorage, keys, values)
 	require.NoError(t, err)
-	externalEngine := external.NewExternalEngine(
-		memstore,
-		dataFiles,
-		statFiles,
-		nil,
-		nil,
-		nil,
-		common.NoopKeyAdapter{},
-		false,
-		nil,
-		common.DupDetectOpt{},
-		123,
-		0,
-		0,
-	)
+
+	externalCfg := &backend.ExternalEngineConfig{
+		StorageURI:    storageURI,
+		DataFiles:     dataFiles,
+		StatFiles:     statFiles,
+		MinKey:        keys[0],
+		MaxKey:        keys[99],
+		SplitKeys:     [][]byte{keys[30], keys[60], keys[90]},
+		TotalFileSize: int64(config.SplitRegionSize) + 1,
+		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
+	}
+	engineUUID := uuid.New()
+	pdCtl := &pdutil.PdController{}
+	pdCtl.SetPDClient(&mockPdClient{})
 	local := &Backend{
 		BackendConfig: BackendConfig{
 			WorkerConcurrency: 2,
@@ -2179,30 +2191,39 @@ func TestExternalEngineLoadIngestData(t *testing.T) {
 		splitCli: initTestSplitClient([][]byte{
 			keys[0], keys[50], endKey,
 		}, nil),
+		pdCtl:          pdCtl,
+		externalEngine: map[uuid.UUID]common.Engine{},
+		keyAdapter:     common.NoopKeyAdapter{},
 	}
-	ranges := []common.Range{
-		{Start: keys[0], End: keys[30]},
-		{Start: keys[30], End: keys[60]},
-		{Start: keys[60], End: keys[90]},
-		{Start: keys[90], End: endKey},
-	}
-	jobToWorkerCh := make(chan *regionJob, 10)
-	jobWg := new(sync.WaitGroup)
-	err = local.generateAndSendJob(
-		ctx,
-		externalEngine,
-		ranges,
-		1<<30,
-		1<<20,
-		jobToWorkerCh,
-		jobWg,
-	)
-	require.NoError(t, err)
-	require.Len(t, jobToWorkerCh, 5)
 	jobs := make([]*regionJob, 0, 5)
-	for i := 0; i < 5; i++ {
-		jobs = append(jobs, <-jobToWorkerCh)
-	}
+
+	jobToWorkerCh := make(chan *regionJob, 10)
+	testJobToWorkerCh = jobToWorkerCh
+
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 5; i++ {
+			jobs = append(jobs, <-jobToWorkerCh)
+			testJobWg.Done()
+		}
+	}()
+	go func() {
+		err2 := local.CloseEngine(
+			ctx,
+			&backend.EngineConfig{External: externalCfg},
+			engineUUID,
+		)
+		require.NoError(t, err2)
+		err2 = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+		require.NoError(t, err2)
+		close(done)
+	}()
+
+	<-done
+
+	// no jobs left in the channel
+	require.Len(t, jobToWorkerCh, 0)
+
 	sort.Slice(jobs, func(i, j int) bool {
 		return bytes.Compare(jobs[i].keyRange.Start, jobs[j].keyRange.Start) < 0
 	})
