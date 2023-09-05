@@ -672,6 +672,10 @@ func (c *mockPdClient) ScanRegions(ctx context.Context, key, endKey []byte, limi
 	return c.regions, nil
 }
 
+func (c *mockPdClient) GetTS(ctx context.Context) (int64, int64, error) {
+	return 1, 2, nil
+}
+
 type mockGrpcErr struct{}
 
 func (e mockGrpcErr) GRPCStatus() *status.Status {
@@ -2146,7 +2150,6 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 }
 
 func TestExternalEngine(t *testing.T) {
-	log.InitLogger(&log.Config{Level: "debug"}, "debug")
 	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
 	t.Cleanup(func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")

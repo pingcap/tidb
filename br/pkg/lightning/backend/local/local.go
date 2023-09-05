@@ -1160,21 +1160,24 @@ func (local *Backend) generateAndSendJob(
 	jobWg *sync.WaitGroup,
 ) error {
 	logger := log.FromContext(ctx)
-	localEngine, ok := engine.(*Engine)
-
-	// when use dynamic region feature, the region may be very big, we need
-	// to split to smaller ranges to increase the concurrency.
-	if regionSplitSize > 2*int64(config.SplitRegionSize) && ok {
-		start := jobRanges[0].Start
-		end := jobRanges[len(jobRanges)-1].End
-		sizeLimit := int64(config.SplitRegionSize)
-		keysLimit := int64(config.SplitRegionKeys)
-		jrs, err := localEngine.SplitRanges(start, end, sizeLimit, keysLimit, logger)
-		if err != nil {
-			return errors.Trace(err)
+	// TODO(lance6716): external engine should also support split into smaller ranges
+	// to improve concurrency.
+	if localEngine, ok := engine.(*Engine); ok {
+		// when use dynamic region feature, the region may be very big, we need
+		// to split to smaller ranges to increase the concurrency.
+		if regionSplitSize > 2*int64(config.SplitRegionSize) {
+			start := jobRanges[0].Start
+			end := jobRanges[len(jobRanges)-1].End
+			sizeLimit := int64(config.SplitRegionSize)
+			keysLimit := int64(config.SplitRegionKeys)
+			jrs, err := localEngine.SplitRanges(start, end, sizeLimit, keysLimit, logger)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			jobRanges = jrs
 		}
-		jobRanges = jrs
 	}
+
 	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
 
 	ctx, cancel := context.WithCancel(ctx)
