@@ -12,6 +12,7 @@ go_test(
     deps = [
         "//br/pkg/lightning/common",
         "//config",
+        "//domain",
         "//infoschema",
         "//kv",
         "//meta/autoid",

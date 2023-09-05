@@ -22,6 +22,7 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
@@ -143,7 +144,7 @@ func (s *mockGCSSuite) TestWriteAfterImport() {
 		tableObj, err := is.TableByName(model.NewCIStr("write_after_import"), model.NewCIStr("t"))
 		s.NoError(err)
 		if common.TableHasAutoID(tableObj.Meta()) {
-			allocators, err := common.GetGlobalAutoIDAlloc(s.store, dbInfo.ID, tableObj.Meta())
+			allocators, err := common.GetGlobalAutoIDAlloc(domain.GetDomain(s.tk.Session()), dbInfo.ID, tableObj.Meta())
 			s.NoError(err)
 			var nextGlobalAutoID []int64
 			for _, alloc := range allocators {

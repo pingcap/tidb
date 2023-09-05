@@ -839,7 +839,7 @@ func onRebaseAutoRandomType(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 	return onRebaseAutoID(d, d.store, t, job, autoid.AutoRandomType)
 }
 
-func onRebaseAutoID(d *ddlCtx, store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
+func onRebaseAutoID(d *ddlCtx, _ kv.Storage, t *meta.Meta, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	var (
 		newBase int64
