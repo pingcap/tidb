@@ -32,11 +32,11 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/util/agg_spill"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/spill"
 	"go.uber.org/zap"
 )
 
@@ -1338,7 +1338,7 @@ func (d *Duration) SerializeForSpill(buf []byte) (int, error) {
 // DeserializeForSpill deserializes Duration to bytes
 func (d *Duration) DeserializeForSpill(buf []byte) (int, error) {
 	if len(buf) < durationLen {
-		return -1, agg_spill.ErrInternal.GenWithStack("Buffer is not large enough")
+		return -1, spill.ErrInternal.GenWithStack("Buffer is not large enough")
 	}
 	pos := 0
 	d.Duration = *(*gotime.Duration)(unsafe.Pointer(&buf[pos]))

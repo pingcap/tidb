@@ -10,3 +10,14 @@ go_library(
         "//util/dbterror",
     ],
 )
+
+go_library(
+    name = "spill",
+    srcs = ["agg_spill_util.go"],
+    importpath = "github.com/pingcap/tidb/util/spill",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/mysql",
+        "//util/dbterror",
+    ],
+)

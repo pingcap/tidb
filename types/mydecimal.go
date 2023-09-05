@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/util/agg_spill"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/spill"
 	"go.uber.org/zap"
 )
 
@@ -261,24 +261,24 @@ func (d *MyDecimal) SerializeForSpill(buf []byte) (int, error) {
 func (d *MyDecimal) DeserializeForSpill(buf []byte) (int, error) {
 	bufLen := len(buf)
 	if bufLen < 5 {
-		return -1, agg_spill.ErrInternal.GenWithStack("Buffer is not large enough when deserializing MyDecimal")
+		return -1, spill.ErrInternal.GenWithStack("Buffer is not large enough when deserializing MyDecimal")
 	}
 
 	readPos := 0
-	d.digitsInt = agg_spill.DeserializeInt8(buf, readPos)
-	d.digitsFrac = agg_spill.DeserializeInt8(buf, readPos+1)
-	d.resultFrac = agg_spill.DeserializeInt8(buf, readPos+2)
-	d.negative = agg_spill.DeserializeBool(buf, readPos+3)
-	wordBufByteNum := agg_spill.DeserializeInt8(buf, readPos+4)
+	d.digitsInt = spill.DeserializeInt8(buf, readPos)
+	d.digitsFrac = spill.DeserializeInt8(buf, readPos+1)
+	d.resultFrac = spill.DeserializeInt8(buf, readPos+2)
+	d.negative = spill.DeserializeBool(buf, readPos+3)
+	wordBufByteNum := spill.DeserializeInt8(buf, readPos+4)
 
 	readPos += 5
 	if bufLen-readPos < int(wordBufByteNum) {
-		return -1, agg_spill.ErrInternal.GenWithStack("Buffer is not large enough when deserializing MyDecimal")
+		return -1, spill.ErrInternal.GenWithStack("Buffer is not large enough when deserializing MyDecimal")
 	}
 
 	wordBufLen := wordBufByteNum / 4
 	for i := 0; i < int(wordBufLen); i++ {
-		d.wordBuf[i] = agg_spill.DeserializeInt32(buf, readPos)
+		d.wordBuf[i] = spill.DeserializeInt32(buf, readPos)
 		readPos += 4
 	}
 	return int(wordBufByteNum) + 5, nil

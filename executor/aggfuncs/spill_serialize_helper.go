@@ -14,7 +14,7 @@
 
 package aggfuncs
 
-import "github.com/pingcap/tidb/util/agg_spill"
+import "github.com/pingcap/tidb/util/spill"
 
 type spillSerializeHelper struct {
 	tmpBuf []byte
@@ -30,31 +30,31 @@ func newSpillSerializeHelper(typeLen int) spillSerializeHelper {
 }
 
 func (s *spillSerializeHelper) serializeBool(value bool, buf []byte) []byte {
-	return agg_spill.SerializeBool(value, buf, s.tmpBuf)
+	return spill.SerializeBool(value, buf, s.tmpBuf)
 }
 
 func (s *spillSerializeHelper) serializeInt8(value int8, buf []byte) []byte {
-	return agg_spill.SerializeInt8(value, buf, s.tmpBuf)
+	return spill.SerializeInt8(value, buf, s.tmpBuf)
 }
 
 func (s *spillSerializeHelper) serializeInt32(value int32, buf []byte) []byte {
-	return agg_spill.SerializeInt32(value, buf, s.tmpBuf)
+	return spill.SerializeInt32(value, buf, s.tmpBuf)
 }
 
 func (s *spillSerializeHelper) serializeUint32(value uint32, buf []byte) []byte {
-	return agg_spill.SerializeUint32(value, buf, s.tmpBuf)
+	return spill.SerializeUint32(value, buf, s.tmpBuf)
 }
 
 func (s *spillSerializeHelper) serializeUint64(value uint64, buf []byte) []byte {
-	return agg_spill.SerializeUint64(value, buf, s.tmpBuf)
+	return spill.SerializeUint64(value, buf, s.tmpBuf)
 }
 
 func (s *spillSerializeHelper) serializeInt64(value int64, buf []byte) []byte {
-	return agg_spill.SerializeInt64(value, buf, s.tmpBuf)
+	return spill.SerializeInt64(value, buf, s.tmpBuf)
 }
 
 func (s *spillSerializeHelper) serializeFloat64(value float64, buf []byte) []byte {
-	return agg_spill.SerializeFloat64(value, buf, s.tmpBuf)
+	return spill.SerializeFloat64(value, buf, s.tmpBuf)
 }
 
 // TODO if DefRowSize and DefInterfaceSize need to be serialized?

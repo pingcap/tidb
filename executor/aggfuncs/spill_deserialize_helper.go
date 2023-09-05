@@ -18,7 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/agg_spill"
+	"github.com/pingcap/tidb/util/spill"
 )
 
 // This flag means that the length of deserialized data is not fixed
@@ -51,7 +51,7 @@ func newDeserializeHelper(buf []byte, typeLen int) spillDeserializeHelper {
 
 func (d *spillDeserializeHelper) readBool(dst *bool) bool {
 	if d.readPos < d.readPosEnd {
-		*dst = agg_spill.DeserializeBool(d.buf, d.readPos)
+		*dst = spill.DeserializeBool(d.buf, d.readPos)
 		d.readPos += d.typeLen
 		return true
 	}
@@ -60,7 +60,7 @@ func (d *spillDeserializeHelper) readBool(dst *bool) bool {
 
 func (d *spillDeserializeHelper) readUint32(dst *uint32) bool {
 	if d.readPos < d.readPosEnd {
-		*dst = agg_spill.DeserializeUint32(d.buf, d.readPos)
+		*dst = spill.DeserializeUint32(d.buf, d.readPos)
 		d.readPos += d.typeLen
 		return true
 	}
@@ -69,7 +69,7 @@ func (d *spillDeserializeHelper) readUint32(dst *uint32) bool {
 
 func (d *spillDeserializeHelper) readUint64(dst *uint64) bool {
 	if d.readPos < d.readPosEnd {
-		*dst = agg_spill.DeserializeUint64(d.buf, d.readPos)
+		*dst = spill.DeserializeUint64(d.buf, d.readPos)
 		d.readPos += d.typeLen
 		return true
 	}
@@ -78,7 +78,7 @@ func (d *spillDeserializeHelper) readUint64(dst *uint64) bool {
 
 func (d *spillDeserializeHelper) readInt64(dst *int64) bool {
 	if d.readPos < d.readPosEnd {
-		*dst = agg_spill.DeserializeInt64(d.buf, d.readPos)
+		*dst = spill.DeserializeInt64(d.buf, d.readPos)
 		d.readPos += d.typeLen
 		return true
 	}
@@ -87,7 +87,7 @@ func (d *spillDeserializeHelper) readInt64(dst *int64) bool {
 
 func (d *spillDeserializeHelper) readFloat64(dst *float64) bool {
 	if d.readPos < d.readPosEnd {
-		*dst = agg_spill.DeserializeFloat64(d.buf, d.readPos)
+		*dst = spill.DeserializeFloat64(d.buf, d.readPos)
 		d.readPos += d.typeLen
 		return true
 	}
