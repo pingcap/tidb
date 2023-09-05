@@ -15,7 +15,6 @@
 package statistics
 
 import (
-	"math"
 	"strconv"
 
 	"github.com/pingcap/tidb/parser/model"
@@ -39,11 +38,43 @@ type Column struct {
 
 	// StatsLoadedStatus indicates the status of column statistics
 	StatsLoadedStatus
+	// PhysicalID is the physical table id,
+	// or it could possibly be -1, which means "stats not available".
+	// The -1 case could happen in a pseudo stats table, and in this case, this stats should not trigger stats loading.
 	PhysicalID int64
 	Flag       int64
 	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
 
 	IsHandle bool
+}
+
+// Copy copies the column.
+func (c *Column) Copy() *Column {
+	if c == nil {
+		return nil
+	}
+	nc := &Column{
+		PhysicalID: c.PhysicalID,
+		Flag:       c.Flag,
+		StatsVer:   c.StatsVer,
+		IsHandle:   c.IsHandle,
+	}
+	c.LastAnalyzePos.Copy(&nc.LastAnalyzePos)
+	if c.CMSketch != nil {
+		nc.CMSketch = c.CMSketch.Copy()
+	}
+	if c.TopN != nil {
+		nc.TopN = c.TopN.Copy()
+	}
+	if c.FMSketch != nil {
+		nc.FMSketch = c.FMSketch.Copy()
+	}
+	if c.Info != nil {
+		nc.Info = c.Info.Clone()
+	}
+	nc.Histogram = *c.Histogram.Copy()
+	nc.StatsLoadedStatus = c.StatsLoadedStatus.Copy()
+	return nc
 }
 
 func (c *Column) String() string {
@@ -132,22 +163,24 @@ func (c *Column) IsInvalid(
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
-	if collPseudo {
-		inValidForCollPseudo = true
-		return true
-	}
 	if sctx != nil {
 		stmtctx := sctx.GetSessionVars().StmtCtx
-		if c.IsLoadNeeded() && stmtctx != nil {
+		if (!c.IsStatsInitialized() || c.IsLoadNeeded()) && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
 			}
 			// In some tests, the c.Info is not set, so we add this check here.
-			if c.Info != nil {
+			// When we are using stats from PseudoTable(), the table ID will possibly be -1.
+			// In this case, we don't trigger stats loading.
+			if c.Info != nil && c.PhysicalID > 0 {
 				HistogramNeededItems.insert(model.TableItemID{TableID: c.PhysicalID, ID: c.Info.ID, IsIndex: false})
 			}
 		}
+	}
+	if collPseudo {
+		inValidForCollPseudo = true
+		return true
 	}
 	// In some cases, some statistics in column would be evicted
 	// For example: the cmsketch of the column might be evicted while the histogram and the topn are still exists
@@ -198,80 +231,6 @@ func (c *Column) GetStatsVer() int64 {
 // IsCMSExist indicates whether CMSketch exists
 func (c *Column) IsCMSExist() bool {
 	return c.CMSketch != nil
-}
-
-// AvgColSize is the average column size of the histogram. These sizes are derived from function `encode`
-// and `Datum::ConvertTo`, so we need to update them if those 2 functions are changed.
-func (c *Column) AvgColSize(count int64, isKey bool) float64 {
-	if count == 0 {
-		return 0
-	}
-	// Note that, if the handle column is encoded as value, instead of key, i.e,
-	// when the handle column is in a unique index, the real column size may be
-	// smaller than 8 because it is encoded using `EncodeVarint`. Since we don't
-	// know the exact value size now, use 8 as approximation.
-	if c.IsHandle {
-		return 8
-	}
-	histCount := c.TotalRowCount()
-	notNullRatio := 1.0
-	if histCount > 0 {
-		notNullRatio = 1.0 - float64(c.NullCount)/histCount
-	}
-	switch c.Histogram.Tp.GetType() {
-	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		return 8 * notNullRatio
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
-		if isKey {
-			return 8 * notNullRatio
-		}
-	}
-	// Keep two decimal place.
-	return math.Round(float64(c.TotColSize)/float64(count)*100) / 100
-}
-
-// AvgColSizeChunkFormat is the average column size of the histogram. These sizes are derived from function `Encode`
-// and `DecodeToChunk`, so we need to update them if those 2 functions are changed.
-func (c *Column) AvgColSizeChunkFormat(count int64) float64 {
-	if count == 0 {
-		return 0
-	}
-	fixedLen := chunk.GetFixedLen(c.Histogram.Tp)
-	if fixedLen != -1 {
-		return float64(fixedLen)
-	}
-	// Keep two decimal place.
-	// Add 8 bytes for unfixed-len type's offsets.
-	// Minus Log2(avgSize) for unfixed-len type LEN.
-	avgSize := float64(c.TotColSize) / float64(count)
-	if avgSize < 1 {
-		return math.Round(avgSize*100)/100 + 8
-	}
-	return math.Round((avgSize-math.Log2(avgSize))*100)/100 + 8
-}
-
-// AvgColSizeListInDisk is the average column size of the histogram. These sizes are derived
-// from `chunk.ListInDisk` so we need to update them if those 2 functions are changed.
-func (c *Column) AvgColSizeListInDisk(count int64) float64 {
-	if count == 0 {
-		return 0
-	}
-	histCount := c.TotalRowCount()
-	notNullRatio := 1.0
-	if histCount > 0 {
-		notNullRatio = 1.0 - float64(c.NullCount)/histCount
-	}
-	size := chunk.GetFixedLen(c.Histogram.Tp)
-	if size != -1 {
-		return float64(size) * notNullRatio
-	}
-	// Keep two decimal place.
-	// Minus Log2(avgSize) for unfixed-len type LEN.
-	avgSize := float64(c.TotColSize) / float64(count)
-	if avgSize < 1 {
-		return math.Round((avgSize)*100) / 100
-	}
-	return math.Round((avgSize-math.Log2(avgSize))*100) / 100
 }
 
 // StatusToString gets the string info of StatsLoadedStatus

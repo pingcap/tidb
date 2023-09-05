@@ -1,5 +1,4 @@
 set tidb_cost_model_version=1;
-use test;
 set @@session.tidb_enable_null_aware_anti_join=1;
 select "***************************************************** PART 1 *****************************************************************" as name;
 name
@@ -11,7 +10,7 @@ insert into naaj_A values (1,1,1);
 insert into naaj_B values (1,2,2);
 explain format = 'brief' select (a, b) not in (select a, b from naaj_B) from naaj_A;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a) eq(test.naaj_a.b, test.naaj_b.b)]
+HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -21,7 +20,7 @@ select (a, b) not in (select a, b from naaj_B) from naaj_A;
 1
 explain format = 'brief' select * from naaj_A where (a, b) not in (select a, b from naaj_B);
 id	estRows	task	access object	operator info
-HashJoin	8000.00	root		Null-aware anti semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a) eq(test.naaj_a.b, test.naaj_b.b)]
+HashJoin	8000.00	root		Null-aware anti semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -43,7 +42,7 @@ select * from naaj_A where (a, b) not in (select a, b from naaj_B);
 a	b	c
 explain format = 'brief' select (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a) eq(test.naaj_a.b, test.naaj_b.b)], other cond:gt(test.naaj_a.c, test.naaj_b.c)
+HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)], other cond:gt(naaj.naaj_a.c, naaj.naaj_b.c)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -53,7 +52,7 @@ select (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c) from na
 1
 explain format = 'brief' select * from naaj_A where (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c);
 id	estRows	task	access object	operator info
-HashJoin	8000.00	root		Null-aware anti semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a) eq(test.naaj_a.b, test.naaj_b.b)], other cond:gt(test.naaj_a.c, test.naaj_b.c)
+HashJoin	8000.00	root		Null-aware anti semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)], other cond:gt(naaj.naaj_a.c, naaj.naaj_b.c)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -63,7 +62,7 @@ a	b	c
 1	1	1
 explain format = 'brief' select (a, b) not in (select a, b from naaj_B where naaj_A.a != naaj_B.a) from naaj_A;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a) eq(test.naaj_a.b, test.naaj_b.b)], other cond:ne(test.naaj_a.a, test.naaj_b.a)
+HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)], other cond:ne(naaj.naaj_a.a, naaj.naaj_b.a)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -73,7 +72,7 @@ select (a, b) not in (select a, b from naaj_B where naaj_A.a != naaj_B.a) from n
 1
 explain format = 'brief' select * from naaj_A where (a, b) not in (select a, b from naaj_B where naaj_A.a != naaj_B.a);
 id	estRows	task	access object	operator info
-HashJoin	8000.00	root		Null-aware anti semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a) eq(test.naaj_a.b, test.naaj_b.b)], other cond:ne(test.naaj_a.a, test.naaj_b.a)
+HashJoin	8000.00	root		Null-aware anti semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)], other cond:ne(naaj.naaj_a.a, naaj.naaj_b.a)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -136,7 +135,7 @@ insert into naaj_B values(2, null, 2);
 insert into naaj_B values(null, null, 2);
 explain format = 'brief' select (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a) eq(test.naaj_a.b, test.naaj_b.b)], other cond:gt(test.naaj_a.c, test.naaj_b.c)
+HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)], other cond:gt(naaj.naaj_a.c, naaj.naaj_b.c)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -146,7 +145,7 @@ select (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c) from na
 1
 explain format = 'brief' select * from naaj_A where (a, b) not in (select a, b from naaj_B  where naaj_A.c > naaj_B.c);
 id	estRows	task	access object	operator info
-HashJoin	8000.00	root		Null-aware anti semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a) eq(test.naaj_a.b, test.naaj_b.b)], other cond:gt(test.naaj_a.c, test.naaj_b.c)
+HashJoin	8000.00	root		Null-aware anti semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)], other cond:gt(naaj.naaj_a.c, naaj.naaj_b.c)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -156,7 +155,7 @@ a	b	c
 1	NULL	1
 explain format = 'brief' select (a, b) not in (select a, b from naaj_B where naaj_A.c = naaj_B.c) from naaj_A;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		anti left outer semi join, equal:[eq(test.naaj_a.c, test.naaj_b.c)], other cond:eq(test.naaj_a.a, test.naaj_b.a), eq(test.naaj_a.b, test.naaj_b.b)
+HashJoin	10000.00	root		anti left outer semi join, equal:[eq(naaj.naaj_a.c, naaj.naaj_b.c)], other cond:eq(naaj.naaj_a.a, naaj.naaj_b.a), eq(naaj.naaj_a.b, naaj.naaj_b.b)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -166,7 +165,7 @@ select (a, b) not in (select a, b from naaj_B where naaj_A.c = naaj_B.c) from na
 1
 explain format = 'brief' select * from naaj_A where (a, b) not in (select a, b from naaj_B  where naaj_A.c = naaj_B.c);
 id	estRows	task	access object	operator info
-HashJoin	8000.00	root		anti semi join, equal:[eq(test.naaj_a.c, test.naaj_b.c)], other cond:eq(test.naaj_a.a, test.naaj_b.a), eq(test.naaj_a.b, test.naaj_b.b)
+HashJoin	8000.00	root		anti semi join, equal:[eq(naaj.naaj_a.c, naaj.naaj_b.c)], other cond:eq(naaj.naaj_a.a, naaj.naaj_b.a), eq(naaj.naaj_a.b, naaj.naaj_b.b)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -184,7 +183,7 @@ insert into naaj_A values (1,1,1);
 insert into naaj_B values (1,2,2);
 explain format = 'brief' select (a, b) != all (select a, b from naaj_B) from naaj_A;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a) eq(test.naaj_a.b, test.naaj_b.b)]
+HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -194,9 +193,9 @@ select (a, b) != all (select a, b from naaj_B) from naaj_A;
 1
 explain format = 'brief' select * from naaj_A where (a, b) != all (select a, b from naaj_B);
 id	estRows	task	access object	operator info
-Projection	8000.00	root		test.naaj_a.a, test.naaj_a.b, test.naaj_a.c
+Projection	8000.00	root		naaj.naaj_a.a, naaj.naaj_a.b, naaj.naaj_a.c
 └─Selection	8000.00	root		Column#9
-  └─HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a) eq(test.naaj_a.b, test.naaj_b.b)]
+  └─HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)]
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -218,7 +217,7 @@ select * from naaj_A where (a, b) != all (select a, b from naaj_B);
 a	b	c
 explain format = 'brief' select (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a) eq(test.naaj_a.b, test.naaj_b.b)], other cond:gt(test.naaj_a.c, test.naaj_b.c)
+HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)], other cond:gt(naaj.naaj_a.c, naaj.naaj_b.c)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -228,9 +227,9 @@ select (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c) from na
 1
 explain format = 'brief' select * from naaj_A where (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c);
 id	estRows	task	access object	operator info
-Projection	8000.00	root		test.naaj_a.a, test.naaj_a.b, test.naaj_a.c
+Projection	8000.00	root		naaj.naaj_a.a, naaj.naaj_a.b, naaj.naaj_a.c
 └─Selection	8000.00	root		Column#9
-  └─HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a) eq(test.naaj_a.b, test.naaj_b.b)], other cond:gt(test.naaj_a.c, test.naaj_b.c)
+  └─HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)], other cond:gt(naaj.naaj_a.c, naaj.naaj_b.c)
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -240,7 +239,7 @@ a	b	c
 1	1	1
 explain format = 'brief' select (a, b) != all (select a, b from naaj_B where naaj_A.a != naaj_B.a) from naaj_A;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a) eq(test.naaj_a.b, test.naaj_b.b)], other cond:ne(test.naaj_a.a, test.naaj_b.a)
+HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)], other cond:ne(naaj.naaj_a.a, naaj.naaj_b.a)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -250,9 +249,9 @@ select (a, b) != all (select a, b from naaj_B where naaj_A.a != naaj_B.a) from n
 1
 explain format = 'brief' select * from naaj_A where (a, b) != all (select a, b from naaj_B where naaj_A.a != naaj_B.a);
 id	estRows	task	access object	operator info
-Projection	8000.00	root		test.naaj_a.a, test.naaj_a.b, test.naaj_a.c
+Projection	8000.00	root		naaj.naaj_a.a, naaj.naaj_a.b, naaj.naaj_a.c
 └─Selection	8000.00	root		Column#9
-  └─HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a) eq(test.naaj_a.b, test.naaj_b.b)], other cond:ne(test.naaj_a.a, test.naaj_b.a)
+  └─HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)], other cond:ne(naaj.naaj_a.a, naaj.naaj_b.a)
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -315,7 +314,7 @@ insert into naaj_B values(2, null, 2);
 insert into naaj_B values(null, null, 2);
 explain format = 'brief' select (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a) eq(test.naaj_a.b, test.naaj_b.b)], other cond:gt(test.naaj_a.c, test.naaj_b.c)
+HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)], other cond:gt(naaj.naaj_a.c, naaj.naaj_b.c)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -325,9 +324,9 @@ select (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c) from na
 1
 explain format = 'brief' select * from naaj_A where (a, b) != all (select a, b from naaj_B  where naaj_A.c > naaj_B.c);
 id	estRows	task	access object	operator info
-Projection	8000.00	root		test.naaj_a.a, test.naaj_a.b, test.naaj_a.c
+Projection	8000.00	root		naaj.naaj_a.a, naaj.naaj_a.b, naaj.naaj_a.c
 └─Selection	8000.00	root		Column#9
-  └─HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a) eq(test.naaj_a.b, test.naaj_b.b)], other cond:gt(test.naaj_a.c, test.naaj_b.c)
+  └─HashJoin	10000.00	root		Null-aware anti left outer semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)], other cond:gt(naaj.naaj_a.c, naaj.naaj_b.c)
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -337,7 +336,7 @@ a	b	c
 1	NULL	1
 explain format = 'brief' select (a, b) != all (select a, b from naaj_B where naaj_A.c = naaj_B.c) from naaj_A;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		anti left outer semi join, equal:[eq(test.naaj_a.c, test.naaj_b.c)], other cond:eq(test.naaj_a.a, test.naaj_b.a), eq(test.naaj_a.b, test.naaj_b.b)
+HashJoin	10000.00	root		anti left outer semi join, equal:[eq(naaj.naaj_a.c, naaj.naaj_b.c)], other cond:eq(naaj.naaj_a.a, naaj.naaj_b.a), eq(naaj.naaj_a.b, naaj.naaj_b.b)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -347,9 +346,9 @@ select (a, b) != all (select a, b from naaj_B where naaj_A.c = naaj_B.c) from na
 1
 explain format = 'brief' select * from naaj_A where (a, b) != all (select a, b from naaj_B  where naaj_A.c = naaj_B.c);
 id	estRows	task	access object	operator info
-Projection	8000.00	root		test.naaj_a.a, test.naaj_a.b, test.naaj_a.c
+Projection	8000.00	root		naaj.naaj_a.a, naaj.naaj_a.b, naaj.naaj_a.c
 └─Selection	8000.00	root		Column#9
-  └─HashJoin	10000.00	root		anti left outer semi join, equal:[eq(test.naaj_a.c, test.naaj_b.c)], other cond:eq(test.naaj_a.a, test.naaj_b.a), eq(test.naaj_a.b, test.naaj_b.b)
+  └─HashJoin	10000.00	root		anti left outer semi join, equal:[eq(naaj.naaj_a.c, naaj.naaj_b.c)], other cond:eq(naaj.naaj_a.a, naaj.naaj_b.a), eq(naaj.naaj_a.b, naaj.naaj_b.b)
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -372,10 +371,10 @@ a	b	c
 1	1	1
 explain select (a+1,b*2) not in (select a, b from naaj_B) from naaj_A;
 id	estRows	task	access object	operator info
-HashJoin_9	10000.00	root		Null-aware anti left outer semi join, equal:[eq(Column#14, test.naaj_b.a) eq(Column#15, test.naaj_b.b)]
+HashJoin_9	10000.00	root		Null-aware anti left outer semi join, equal:[eq(Column#14, naaj.naaj_b.a) eq(Column#15, naaj.naaj_b.b)]
 ├─TableReader_14(Build)	10000.00	root		data:TableFullScan_13
 │ └─TableFullScan_13	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
-└─Projection_10(Probe)	10000.00	root		plus(test.naaj_a.a, 1)->Column#14, mul(test.naaj_a.b, 2)->Column#15
+└─Projection_10(Probe)	10000.00	root		plus(naaj.naaj_a.a, 1)->Column#14, mul(naaj.naaj_a.b, 2)->Column#15
   └─TableReader_12	10000.00	root		data:TableFullScan_11
     └─TableFullScan_11	10000.00	cop[tikv]	table:naaj_A	keep order:false, stats:pseudo
 select (a+1,b*2) not in (select a, b from naaj_B) from naaj_A;
@@ -388,24 +387,24 @@ select (a+1,b*2) not in (select a, b from naaj_B) from naaj_A;
 explain select * from naaj_A where (a+1,b*2) not in (select a+1, b-1 from naaj_B);
 id	estRows	task	access object	operator info
 HashJoin_9	8000.00	root		Null-aware anti semi join, equal:[eq(Column#13, Column#9) eq(Column#14, Column#10)]
-├─Projection_13(Build)	10000.00	root		plus(test.naaj_b.a, 1)->Column#9, minus(test.naaj_b.b, 1)->Column#10
+├─Projection_13(Build)	10000.00	root		plus(naaj.naaj_b.a, 1)->Column#9, minus(naaj.naaj_b.b, 1)->Column#10
 │ └─TableReader_15	10000.00	root		data:TableFullScan_14
 │   └─TableFullScan_14	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
-└─Projection_10(Probe)	10000.00	root		test.naaj_a.a, test.naaj_a.b, test.naaj_a.c, plus(test.naaj_a.a, 1)->Column#13, mul(test.naaj_a.b, 2)->Column#14
+└─Projection_10(Probe)	10000.00	root		naaj.naaj_a.a, naaj.naaj_a.b, naaj.naaj_a.c, plus(naaj.naaj_a.a, 1)->Column#13, mul(naaj.naaj_a.b, 2)->Column#14
   └─TableReader_12	10000.00	root		data:TableFullScan_11
     └─TableFullScan_11	10000.00	cop[tikv]	table:naaj_A	keep order:false, stats:pseudo
 select * from naaj_A where (a+1,b*2) not in (select a, b from naaj_B);
 a	b	c
 explain select (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a) from naaj_A;
 id	estRows	task	access object	operator info
-HashJoin_9	10000.00	root		anti left outer semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a)], other cond:eq(mul(test.naaj_a.b, 2), eq(test.naaj_b.b, 1)), eq(plus(test.naaj_a.a, 1), test.naaj_b.a)
+HashJoin_9	10000.00	root		anti left outer semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a)], other cond:eq(mul(naaj.naaj_a.b, 2), eq(naaj.naaj_b.b, 1)), eq(plus(naaj.naaj_a.a, 1), naaj.naaj_b.a)
 ├─TableReader_13(Build)	10000.00	root		data:TableFullScan_12
 │ └─TableFullScan_12	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader_11(Probe)	10000.00	root		data:TableFullScan_10
   └─TableFullScan_10	10000.00	cop[tikv]	table:naaj_A	keep order:false, stats:pseudo
 explain select * from naaj_A where (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a);
 id	estRows	task	access object	operator info
-HashJoin_9	8000.00	root		anti semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a)], other cond:eq(mul(test.naaj_a.b, 2), eq(test.naaj_b.b, 1)), eq(plus(test.naaj_a.a, 1), test.naaj_b.a)
+HashJoin_9	8000.00	root		anti semi join, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a)], other cond:eq(mul(naaj.naaj_a.b, 2), eq(naaj.naaj_b.b, 1)), eq(plus(naaj.naaj_a.a, 1), naaj.naaj_b.a)
 ├─TableReader_13(Build)	10000.00	root		data:TableFullScan_12
 │ └─TableFullScan_12	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader_11(Probe)	10000.00	root		data:TableFullScan_10

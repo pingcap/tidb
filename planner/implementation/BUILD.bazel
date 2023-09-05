@@ -15,6 +15,7 @@ go_library(
         "//expression",
         "//kv",
         "//parser/model",
+        "//planner/cardinality",
         "//planner/core",
         "//planner/memo",
         "//statistics",
@@ -31,6 +32,7 @@ go_test(
     embed = [":implementation"],
     flaky = True,
     deps = [
+        "//domain",
         "//planner/core",
         "//planner/memo",
         "//testkit/testsetup",

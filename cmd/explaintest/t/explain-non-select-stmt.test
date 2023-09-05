@@ -1,5 +1,4 @@
 set tidb_cost_model_version=1;
-use test;
 drop table if exists t;
 create table t(a bigint, b bigint);
 explain format = 'brief' insert into t values(1, 1);
