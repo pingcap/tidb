@@ -103,7 +103,7 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 	if s.mu.handled {
 		return err
 	}
-	return s.taskTable.UpdateErrorToSubtask(s.id, err)
+	return s.taskTable.UpdateErrorToSubtask(s.id, task.ID, err)
 }
 
 func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error {

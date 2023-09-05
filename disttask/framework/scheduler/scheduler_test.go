@@ -82,7 +82,7 @@ func TestSchedulerRun(t *testing.T) {
 	forwardErrFn := func(_ string, err error) error {
 		return err
 	}
-	mockSubtaskTable.EXPECT().UpdateErrorToSubtask(gomock.Any(), gomock.Any()).DoAndReturn(forwardErrFn).AnyTimes()
+	mockSubtaskTable.EXPECT().UpdateErrorToSubtask(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(forwardErrFn).AnyTimes()
 	err := scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
 	require.EqualError(t, err, schedulerRegisterErr.Error())
 
