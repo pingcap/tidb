@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package handle
+package lockstats
 
 import (
 	"context"
@@ -25,19 +25,22 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	selectDeltaSQL = "SELECT count, modify_count, version FROM mysql.stats_table_locked WHERE table_id = %?"
+	updateDeltaSQL = "UPDATE mysql.stats_meta SET version = %?, count = count + %?, modify_count = modify_count + %? WHERE table_id = %?"
+	deleteLockSQL  = "DELETE FROM mysql.stats_table_locked WHERE table_id = %?"
+)
+
 // RemoveLockedTables remove tables from table locked array.
+// - exec: sql executor.
 // - tids: table ids of which will be unlocked.
 // - pids: partition ids of which will be unlocked.
 // - tables: table names of which will be unlocked.
 // Return the message of skipped tables and error.
-func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
+func RemoveLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 
-	_, err := exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+	err := startTransaction(ctx, exec)
 	if err != nil {
 		return "", err
 	}
@@ -47,69 +50,72 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 	}()
 
 	// Load tables to check locked before delete.
-	tableLocked, err := loadLockedTables(ctx, exec, maxChunkSize)
+	lockedTables, err := QueryLockedTables(exec)
 	if err != nil {
 		return "", err
 	}
 	skippedTables := make([]string, 0, len(tables))
 
 	statsLogger.Info("unlock table", zap.Int64s("tableIDs", tids))
+
+	lockedStatuses := GetTablesLockedStatuses(lockedTables, tids...)
 	for i, tid := range tids {
-		var exist bool
-		exist, tableLocked = removeIfTableLocked(tableLocked, tid)
-		if !exist {
+		if !lockedStatuses[tid] {
 			skippedTables = append(skippedTables, tables[i].Schema.L+"."+tables[i].Name.L)
 			continue
 		}
-		if err := updateStatsAndUnlockTable(ctx, exec, tid, maxChunkSize); err != nil {
+		if err := updateStatsAndUnlockTable(ctx, exec, tid); err != nil {
 			return "", err
 		}
 	}
 
 	// Delete related partitions while don't warning delete empty partitions
-	for _, tid := range pids {
-		var exist bool
-		exist, tableLocked = removeIfTableLocked(tableLocked, tid)
-		if !exist {
+	lockedStatuses = GetTablesLockedStatuses(lockedTables, pids...)
+	for _, pid := range pids {
+		if !lockedStatuses[pid] {
 			continue
 		}
-		if err := updateStatsAndUnlockTable(ctx, exec, tid, maxChunkSize); err != nil {
+		if err := updateStatsAndUnlockTable(ctx, exec, pid); err != nil {
 			return "", err
 		}
 	}
-
-	// Update handle.tableLocked after transaction success, if txn failed, tableLocked won't be updated.
-	h.tableLocked = tableLocked
 
 	msg := generateSkippedTablesMessage(tids, skippedTables, unlockAction, unlockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.
 	return msg, err
 }
 
-func updateStatsAndUnlockTable(ctx context.Context, exec sqlexec.SQLExecutor, tid int64, maxChunkSize int) error {
-	count, modifyCount, version, err := getStatsDeltaFromTableLocked(ctx, tid, exec, maxChunkSize)
+func updateStatsAndUnlockTable(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, tid int64) error {
+	count, modifyCount, version, err := getStatsDeltaFromTableLocked(ctx, tid, exec)
 	if err != nil {
 		return err
 	}
 
-	if _, err := exec.ExecuteInternal(ctx,
-		"UPDATE mysql.stats_meta SET version = %?, count = count + %?, modify_count = modify_count + %? WHERE table_id = %?",
-		version, count, modifyCount, tid); err != nil {
+	if _, _, err := exec.ExecRestrictedSQL(
+		ctx,
+		useCurrentSession,
+		updateDeltaSQL,
+		version, count, modifyCount, tid,
+	); err != nil {
 		return err
 	}
 	cache.TableRowStatsCache.Invalidate(tid)
 
-	_, err = exec.ExecuteInternal(ctx, "DELETE FROM mysql.stats_table_locked WHERE table_id = %?", tid)
+	_, _, err = exec.ExecRestrictedSQL(
+		ctx,
+		useCurrentSession,
+		deleteLockSQL, tid,
+	)
 	return err
 }
 
 // getStatsDeltaFromTableLocked get count, modify_count and version for the given table from mysql.stats_table_locked.
-func getStatsDeltaFromTableLocked(ctx context.Context, tableID int64, exec sqlexec.SQLExecutor, maxChunkSize int) (count, modifyCount int64, version uint64, err error) {
-	recordSet, err := exec.ExecuteInternal(ctx, "SELECT count, modify_count, version FROM mysql.stats_table_locked WHERE table_id = %?", tableID)
-	if err != nil {
-		return 0, 0, 0, errors.Trace(err)
-	}
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, maxChunkSize)
+func getStatsDeltaFromTableLocked(ctx context.Context, tableID int64, exec sqlexec.RestrictedSQLExecutor) (count, modifyCount int64, version uint64, err error) {
+	rows, _, err := exec.ExecRestrictedSQL(
+		ctx,
+		useCurrentSession,
+		selectDeltaSQL, tableID,
+	)
 	if err != nil {
 		return 0, 0, 0, errors.Trace(err)
 	}

@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -731,6 +732,14 @@ func calculateFileBytes(ctx context.Context,
 
 // SampleFileCompressRatio samples the compress ratio of the compressed file.
 func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (float64, error) {
+	failpoint.Inject("SampleFileCompressPercentage", func(val failpoint.Value) {
+		switch v := val.(type) {
+		case string:
+			failpoint.Return(1.0, errors.New(v))
+		case int:
+			failpoint.Return(float64(v)/100, nil)
+		}
+	})
 	if fileMeta.Compression == CompressionNone {
 		return 1, nil
 	}
