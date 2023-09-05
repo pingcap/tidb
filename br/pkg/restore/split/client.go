@@ -274,7 +274,7 @@ func splitRegionWithFailpoint(
 	keys [][]byte,
 	isRawKv bool,
 ) (*kvrpcpb.SplitRegionResponse, error) {
-	failpoint.Inject("not-leader-error", func(injectNewLeader failpoint.Value) {
+	if injectNewLeader, _err_ := failpoint.Eval(_curpkg_("not-leader-error")); _err_ == nil {
 		log.Debug("failpoint not-leader-error injected.")
 		resp := &kvrpcpb.SplitRegionResponse{
 			RegionError: &errorpb.Error{
@@ -286,16 +286,16 @@ func splitRegionWithFailpoint(
 		if injectNewLeader.(bool) {
 			resp.RegionError.NotLeader.Leader = regionInfo.Leader
 		}
-		failpoint.Return(resp, nil)
-	})
-	failpoint.Inject("somewhat-retryable-error", func() {
+		return resp, nil
+	}
+	if _, _err_ := failpoint.Eval(_curpkg_("somewhat-retryable-error")); _err_ == nil {
 		log.Debug("failpoint somewhat-retryable-error injected.")
-		failpoint.Return(&kvrpcpb.SplitRegionResponse{
+		return &kvrpcpb.SplitRegionResponse{
 			RegionError: &errorpb.Error{
 				ServerIsBusy: &errorpb.ServerIsBusy{},
 			},
-		}, nil)
-	})
+		}, nil
+	}
 	return client.SplitRegion(ctx, &kvrpcpb.SplitRegionRequest{
 		Context: &kvrpcpb.Context{
 			RegionId:    regionInfo.Region.Id,
@@ -515,10 +515,10 @@ func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetO
 }
 
 func (c *pdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*RegionInfo, error) {
-	failpoint.Inject("no-leader-error", func(_ failpoint.Value) {
+	if _, _err_ := failpoint.Eval(_curpkg_("no-leader-error")); _err_ == nil {
 		logutil.CL(ctx).Debug("failpoint no-leader-error injected.")
-		failpoint.Return(nil, status.Error(codes.Unavailable, "not leader"))
-	})
+		return nil, status.Error(codes.Unavailable, "not leader")
+	}
 
 	regions, err := c.client.ScanRegions(ctx, key, endKey, limit)
 	if err != nil {

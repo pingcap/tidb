@@ -190,17 +190,17 @@ func RegisterTaskMeta(m *sync.Map, dispatcherHandle dispatcher.Extension) {
 }
 
 func RegisterTaskMeta1(m *sync.Map, dispatcherHandle dispatcher.Extension) {
-  dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample2,
-  func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-    baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
-    baseDispatcher.Extension = dispatcherHandle
-    return baseDispatcher
-  })
+	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample2,
+		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
+			baseDispatcher.Extension = dispatcherHandle
+			return baseDispatcher
+		})
 	scheduler.RegisterTaskType(proto.TaskTypeExample2)
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample2, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample2, proto.StepOne, func(_ context.Context, _ *proto.Task, _ *scheduler.Summary) (scheduler.Scheduler, error) {
 		return &testScheduler{}, nil
 	})
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample2, proto.StepTwo, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample2, proto.StepTwo, func(_ context.Context, _ *proto.Task, _ *scheduler.Summary) (scheduler.Scheduler, error) {
 		return &testScheduler{}, nil
 	})
 	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample2, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
@@ -213,16 +213,16 @@ func RegisterTaskMeta1(m *sync.Map, dispatcherHandle dispatcher.Extension) {
 
 func RegisterTaskMeta2(m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample3,
-  func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-    baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
-    baseDispatcher.Extension = dispatcherHandle
-    return baseDispatcher
-  })
+		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
+			baseDispatcher.Extension = dispatcherHandle
+			return baseDispatcher
+		})
 	scheduler.RegisterTaskType(proto.TaskTypeExample3)
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample3, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample3, proto.StepOne, func(_ context.Context, _ *proto.Task, _ *scheduler.Summary) (scheduler.Scheduler, error) {
 		return &testScheduler{}, nil
 	})
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample3, proto.StepTwo, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample3, proto.StepTwo, func(_ context.Context, _ *proto.Task, _ *scheduler.Summary) (scheduler.Scheduler, error) {
 		return &testScheduler{}, nil
 	})
 	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample3, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
@@ -542,7 +542,7 @@ func TestSchedulerDownManyNodes(t *testing.T) {
 }
 
 func TestMultiTasks(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	num := 3
 

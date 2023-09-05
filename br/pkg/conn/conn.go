@@ -81,19 +81,19 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 		ctx,
 		func() error {
 			stores, err = util.GetAllTiKVStores(ctx, pdClient, storeBehavior)
-			failpoint.Inject("hint-GetAllTiKVStores-error", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("hint-GetAllTiKVStores-error")); _err_ == nil {
 				if val.(bool) {
 					logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-error injected.")
 					err = status.Error(codes.Unknown, "Retryable error")
 				}
-			})
+			}
 
-			failpoint.Inject("hint-GetAllTiKVStores-cancel", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("hint-GetAllTiKVStores-cancel")); _err_ == nil {
 				if val.(bool) {
 					logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-cancel injected.")
 					err = status.Error(codes.Canceled, "Cancel Retry")
 				}
-			})
+			}
 
 			return errors.Trace(err)
 		},

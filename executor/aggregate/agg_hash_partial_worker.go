@@ -110,7 +110,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, _ int) (err error) {
 	memSize := getGroupKeyMemUsage(w.groupKey)
 	w.groupKey, err = GetGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
-	failpoint.Inject("ConsumeRandomPanic", nil)
+	failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKey) - memSize)
 	if err != nil {
 		return err

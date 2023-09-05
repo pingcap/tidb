@@ -77,7 +77,7 @@ func (w *baseHashAggWorker) getPartialResult(_ *stmtctx.StatementContext, groupK
 		mapper[string(groupKey[i])] = partialResults[i]
 		allMemDelta += int64(len(groupKey[i]))
 	}
-	failpoint.Inject("ConsumeRandomPanic", nil)
+	failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 	w.memTracker.Consume(allMemDelta)
 	return partialResults
 }

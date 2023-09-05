@@ -929,10 +929,10 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// Restore sst files in batch.
 	batchSize := mathutil.Clamp(int(cfg.Concurrency), defaultRestoreConcurrency, maxRestoreBatchSizeLimit)
-	failpoint.Inject("small-batch-size", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("small-batch-size")); _err_ == nil {
 		log.Info("failpoint small batch size is on", zap.Int("size", v.(int)))
 		batchSize = v.(int)
-	})
+	}
 
 	// Split/Scatter + Download/Ingest
 	progressLen := int64(rangeSize + len(files))

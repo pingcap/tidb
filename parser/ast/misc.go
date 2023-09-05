@@ -3454,9 +3454,9 @@ func RedactURL(str string) string {
 		return str
 	}
 	scheme := u.Scheme
-	failpoint.Inject("forceRedactURL", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("forceRedactURL")); _err_ == nil {
 		scheme = "s3"
-	})
+	}
 	if strings.ToLower(scheme) == "s3" {
 		values := u.Query()
 		for k := range values {

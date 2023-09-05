@@ -279,7 +279,7 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType str
 			return
 		case <-time.After(checkTime):
 		}
-		failpoint.Inject("mockStopManager", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("mockStopManager")); _err_ == nil {
 			testContexts.Store(m.id, &TestContext{make(chan struct{}), atomic.Bool{}})
 			go func() {
 				v, ok := testContexts.Load(m.id)
@@ -289,7 +289,7 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType str
 					_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(m.id)
 				}
 			}()
-		})
+		}
 		task, err := m.taskTable.GetGlobalTaskByID(taskID)
 		if err != nil {
 			m.onError(err)

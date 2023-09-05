@@ -209,7 +209,9 @@ func (stm *TaskManager) AddGlobalTaskWithSession(se sessionctx.Context, key, tp 
 	}
 
 	taskID = int64(rs[0].GetUint64(0))
-	failpoint.Inject("testSetLastTaskID", func() { TestLastTaskID.Store(taskID) })
+	if _, _err_ := failpoint.Eval(_curpkg_("testSetLastTaskID")); _err_ == nil {
+		TestLastTaskID.Store(taskID)
+	}
 
 	return taskID, nil
 }
@@ -617,11 +619,11 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 			return errors.New("invalid task state transform, state already changed")
 		}
 
-		failpoint.Inject("MockUpdateTaskErr", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("MockUpdateTaskErr")); _err_ == nil {
 			if val.(bool) {
-				failpoint.Return(errors.New("updateTaskErr"))
+				return errors.New("updateTaskErr")
 			}
-		})
+		}
 
 		subtaskState := proto.TaskStatePending
 		if gTask.State == proto.TaskStateReverting {

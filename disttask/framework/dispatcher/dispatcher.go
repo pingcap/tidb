@@ -140,14 +140,14 @@ func (d *BaseDispatcher) scheduleTask() {
 			if err != nil {
 				continue
 			}
-			failpoint.Inject("cancelTaskAfterRefreshTask", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("cancelTaskAfterRefreshTask")); _err_ == nil {
 				if val.(bool) && d.task.State == proto.TaskStateRunning {
 					err := d.taskMgr.CancelGlobalTask(d.task.ID)
 					if err != nil {
 						logutil.Logger(d.logCtx).Error("cancel task failed", zap.Error(err))
 					}
 				}
-			})
+			}
 			switch d.task.State {
 			case proto.TaskStateCancelling:
 				err = d.onCancelling()
@@ -165,13 +165,13 @@ func (d *BaseDispatcher) scheduleTask() {
 				logutil.Logger(d.logCtx).Info("schedule task meet err, reschedule it", zap.Error(err))
 			}
 
-			failpoint.Inject("mockOwnerChange", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("mockOwnerChange")); _err_ == nil {
 				if val.(bool) {
 					logutil.Logger(d.logCtx).Info("mockOwnerChange called")
 					MockOwnerChange()
 					time.Sleep(time.Second)
 				}
-			})
+			}
 		}
 	}
 }
@@ -309,12 +309,12 @@ func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subta
 		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
 	}
 
-	failpoint.Inject("cancelBeforeUpdate", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("cancelBeforeUpdate")); _err_ == nil {
 		err := d.taskMgr.CancelGlobalTask(d.task.ID)
 		if err != nil {
 			logutil.Logger(d.logCtx).Error("cancel task failed", zap.Error(err))
 		}
-	})
+	}
 	var retryable bool
 	for i := 0; i < retryTimes; i++ {
 		retryable, err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.task, newSubTasks, prevState)
