@@ -22,12 +22,12 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/disttask/framework/mock"
 	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 type rollbackDispatcher struct{}
@@ -105,26 +105,20 @@ func (e *rollbackSubtaskExecutor) Run(_ context.Context) error {
 	return nil
 }
 
-func RegisterRollbackTaskMeta(m *sync.Map) {
-	dispatcher.ClearTaskDispatcher()
-	dispatcher.RegisterTaskDispatcher(proto.TaskTypeExample, &rollbackDispatcher{})
-	scheduler.ClearSchedulers()
-	scheduler.RegisterTaskType(proto.TaskTypeExample)
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (execute.SubtaskExecutor, error) {
-		return &rollbackScheduler{m: m}, nil
-	})
-	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (execute.MiniTaskExecutor, error) {
-		return &rollbackSubtaskExecutor{m: m}, nil
-	})
+func registerRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map) {
+	mockExtension := mock.NewMockExtension(ctrl)
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any()).Return(&rollbackScheduler{m: m}, nil).AnyTimes()
+	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(&rollbackSubtaskExecutor{m: m}, nil).AnyTimes()
+	registerTaskMetaInner(t, mockExtension, &rollbackDispatcher{})
 	rollbackCnt.Store(0)
 }
 
 func TestFrameworkRollback(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
-	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 
-	RegisterRollbackTaskMeta(&m)
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	registerRollbackTaskMeta(t, ctrl, &m)
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskAfterRefreshTask", "2*return(true)"))
 	defer func() {
