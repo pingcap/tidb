@@ -21,6 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/ddl/internal/session"
@@ -62,10 +64,46 @@ type opSessPool interface {
 	Put(sessionctx.Context)
 }
 
+// OperatorCtx is the context for AddIndexIngestPipeline.
+// This is used to cancel the pipeline and collect errors.
+type OperatorCtx struct {
+	context.Context
+	cancel context.CancelFunc
+	err    atomic.Pointer[error]
+}
+
+// NewOperatorCtx creates a new OperatorCtx.
+func NewOperatorCtx(ctx context.Context) *OperatorCtx {
+	opCtx, cancel := context.WithCancel(ctx)
+	return &OperatorCtx{
+		Context: opCtx,
+		cancel:  cancel,
+	}
+}
+
+func (ctx *OperatorCtx) onError(err error) {
+	tracedErr := errors.Trace(err)
+	ctx.cancel()
+	ctx.err.CompareAndSwap(nil, &tracedErr)
+}
+
+// Cancel cancels the pipeline.
+func (ctx *OperatorCtx) Cancel() {
+	ctx.cancel()
+}
+
+// OperatorErr returns the error of the operator.
+func (ctx *OperatorCtx) OperatorErr() error {
+	err := ctx.err.Load()
+	if err == nil {
+		return nil
+	}
+	return *err
+}
+
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
-// TODO(tangenta): add failpoint tests for these operators to ensure the robustness.
 func NewAddIndexIngestPipeline(
-	ctx context.Context,
+	ctx *OperatorCtx,
 	store kv.Storage,
 	sessPool opSessPool,
 	backendCtx ingest.BackendCtx,
@@ -247,9 +285,9 @@ type TableScanOperator struct {
 
 // NewTableScanOperator creates a new TableScanOperator.
 func NewTableScanOperator(
-	ctx context.Context,
+	ctx *OperatorCtx,
 	sessPool opSessPool,
-	copCtx *copContext,
+	copCtx *CopContext,
 	srcChkPool chan *chunk.Chunk,
 	concurrency int,
 ) *TableScanOperator {
@@ -272,8 +310,8 @@ func NewTableScanOperator(
 }
 
 type tableScanWorker struct {
-	ctx        context.Context
-	copCtx     *copContext
+	ctx        *OperatorCtx
+	copCtx     *CopContext
 	sessPool   opSessPool
 	se         *session.Session
 	srcChkPool chan *chunk.Chunk
@@ -284,7 +322,7 @@ func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecord
 		sessCtx, err := w.sessPool.Get()
 		if err != nil {
 			logutil.Logger(w.ctx).Error("tableScanWorker get session from pool failed", zap.Error(err))
-			sender(IndexRecordChunk{Err: err})
+			w.ctx.onError(err)
 			return
 		}
 		w.se = session.NewSession(sessCtx)
@@ -298,12 +336,21 @@ func (w *tableScanWorker) Close() {
 	}
 }
 
+// OperatorCallBackForTest is used for test to mock scan record error.
+var OperatorCallBackForTest func()
+
 func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecordChunk)) {
 	logutil.Logger(w.ctx).Info("start a table scan task",
 		zap.Int("id", task.ID), zap.String("task", task.String()))
 
 	var idxResult IndexRecordChunk
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
+		failpoint.Inject("mockScanRecordError", func(_ failpoint.Value) {
+			failpoint.Return(errors.New("mock scan record error"))
+		})
+		failpoint.Inject("scanRecordExec", func(_ failpoint.Value) {
+			OperatorCallBackForTest()
+		})
 		rs, err := w.copCtx.buildTableScan(w.ctx, startTS, task.Start, task.End)
 		if err != nil {
 			return err
@@ -323,9 +370,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		return rs.Close()
 	})
 	if err != nil {
-		// TODO(tangenta): cancel operator instead of sending error to sink.
-		idxResult.Err = err
-		sender(idxResult)
+		w.ctx.onError(err)
 	}
 }
 
@@ -349,7 +394,6 @@ type IndexWriteResult struct {
 	Added int
 	Total int
 	Next  kv.Key
-	Err   error
 }
 
 // IndexIngestOperator writes index records to ingest engine.
@@ -359,8 +403,8 @@ type IndexIngestOperator struct {
 
 // NewIndexIngestOperator creates a new IndexIngestOperator.
 func NewIndexIngestOperator(
-	ctx context.Context,
-	copCtx *copContext,
+	ctx *OperatorCtx,
+	copCtx *CopContext,
 	sessPool opSessPool,
 	tbl table.PhysicalTable,
 	index table.Index,
@@ -397,12 +441,12 @@ func NewIndexIngestOperator(
 }
 
 type indexIngestWorker struct {
-	ctx context.Context
+	ctx *OperatorCtx
 
 	tbl   table.PhysicalTable
 	index table.Index
 
-	copCtx   *copContext
+	copCtx   *CopContext
 	sessPool opSessPool
 	se       *session.Session
 
@@ -417,28 +461,19 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 		}
 	}()
 	result := IndexWriteResult{
-		ID:  rs.ID,
-		Err: rs.Err,
+		ID: rs.ID,
 	}
 	if w.se == nil {
 		sessCtx, err := w.sessPool.Get()
 		if err != nil {
-			result.Err = err
-			send(result)
+			w.ctx.onError(err)
 			return
 		}
 		w.se = session.NewSession(sessCtx)
 	}
-	if result.Err != nil {
-		logutil.Logger(w.ctx).Error("encounter error when handle index chunk",
-			zap.Int("id", rs.ID), zap.Error(rs.Err))
-		send(result)
-		return
-	}
 	count, nextKey, err := w.WriteLocal(&rs)
 	if err != nil {
-		result.Err = err
-		send(result)
+		w.ctx.onError(err)
 		return
 	}
 	if count == 0 {
@@ -448,7 +483,7 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 	}
 	result.Added = count
 	result.Next = nextKey
-	if ResultCounterForTest != nil && result.Err == nil {
+	if ResultCounterForTest != nil {
 		ResultCounterForTest.Add(1)
 	}
 	send(result)
@@ -462,6 +497,13 @@ func (w *indexIngestWorker) Close() {
 
 // WriteLocal will write index records to lightning engine.
 func (w *indexIngestWorker) WriteLocal(rs *IndexRecordChunk) (count int, nextKey kv.Key, err error) {
+	failpoint.Inject("mockWriteLocalError", func(_ failpoint.Value) {
+		failpoint.Return(0, nil, errors.New("mock write local error"))
+	})
+	failpoint.Inject("writeLocalExec", func(_ failpoint.Value) {
+		OperatorCallBackForTest()
+	})
+
 	oprStartTime := time.Now()
 	vars := w.se.GetSessionVars()
 	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, w.copCtx, vars, rs.Chunk)
@@ -474,7 +516,7 @@ func (w *indexIngestWorker) WriteLocal(rs *IndexRecordChunk) (count int, nextKey
 }
 
 type indexWriteResultSink struct {
-	ctx        context.Context
+	ctx        *OperatorCtx
 	backendCtx ingest.BackendCtx
 	tbl        table.PhysicalTable
 	index      table.Index
@@ -487,7 +529,7 @@ type indexWriteResultSink struct {
 }
 
 func newIndexWriteResultSink(
-	ctx context.Context,
+	ctx *OperatorCtx,
 	backendCtx ingest.BackendCtx,
 	tbl table.PhysicalTable,
 	index table.Index,
@@ -518,23 +560,27 @@ func (s *indexWriteResultSink) collectResult() error {
 	for {
 		select {
 		case <-s.ctx.Done():
-			return nil
+			return s.ctx.Err()
 		case result, ok := <-s.source.Channel():
 			if !ok {
-				return s.flush()
+				err := s.flush()
+				if err != nil {
+					s.ctx.onError(err)
+				}
+				return err
 			}
 			s.rowCount.Add(int64(result.Added))
 			if s.metricCounter != nil {
 				s.metricCounter.Add(float64(result.Added))
-			}
-			if result.Err != nil {
-				return result.Err
 			}
 		}
 	}
 }
 
 func (s *indexWriteResultSink) flush() error {
+	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("mock flush error"))
+	})
 	flushMode := ingest.FlushModeForceLocalAndCheckDiskQuota
 	if s.tbl.GetPartitionedTable() != nil {
 		flushMode = ingest.FlushModeForceGlobal

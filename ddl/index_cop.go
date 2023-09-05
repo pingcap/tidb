@@ -74,7 +74,7 @@ type copReqSenderPool struct {
 	sessPool      *sess.Pool
 
 	ctx    context.Context
-	copCtx *copContext
+	copCtx *CopContext
 	store  kv.Storage
 
 	senders []*copReqSender
@@ -181,7 +181,7 @@ func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 	return f(startTS)
 }
 
-func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage,
+func newCopReqSenderPool(ctx context.Context, copCtx *CopContext, store kv.Storage,
 	taskCh chan *reorgBackfillTask, sessPool *sess.Pool,
 	checkpointMgr *ingest.CheckpointManager) *copReqSenderPool {
 	poolSize := copReadChunkPoolSize()
@@ -256,9 +256,9 @@ func (c *copReqSenderPool) recycleChunk(chk *chunk.Chunk) {
 	c.srcChkPool <- chk
 }
 
-// copContext contains the information that is needed when building a coprocessor request.
+// CopContext contains the information that is needed when building a coprocessor request.
 // It is unchanged after initialization.
-type copContext struct {
+type CopContext struct {
 	tblInfo  *model.TableInfo
 	idxInfo  *model.IndexInfo
 	pkInfo   *model.IndexInfo
@@ -275,12 +275,12 @@ type copContext struct {
 
 // FieldTypes is only used for test.
 // TODO(tangenta): refactor the operators to avoid using this method.
-func (c *copContext) FieldTypes() []*types.FieldType {
+func (c *CopContext) FieldTypes() []*types.FieldType {
 	return c.fieldTps
 }
 
-// NewCopContext creates a copContext.
-func NewCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx sessionctx.Context) (*copContext, error) {
+// NewCopContext creates a CopContext.
+func NewCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx sessionctx.Context) (*CopContext, error) {
 	var err error
 	usedColumnIDs := make(map[int64]struct{}, len(idxInfo.Columns))
 	usedColumnIDs, err = fillUsedColumns(usedColumnIDs, idxInfo, tblInfo)
@@ -334,7 +334,7 @@ func NewCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx s
 	hdColOffsets := resolveIndicesForHandle(expColInfos, handleIDs)
 	vColOffsets, vColFts := collectVirtualColumnOffsetsAndTypes(expColInfos)
 
-	copCtx := &copContext{
+	copCtx := &CopContext{
 		tblInfo:  tblInfo,
 		idxInfo:  idxInfo,
 		pkInfo:   primaryIdx,
@@ -413,7 +413,7 @@ func collectVirtualColumnOffsetsAndTypes(cols []*expression.Column) ([]int, []*t
 	return offsets, fts
 }
 
-func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
+func (c *CopContext) buildTableScan(ctx context.Context, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
 	dagPB, err := buildDAGPB(c.sessCtx, c.tblInfo, c.colInfos)
 	if err != nil {
 		return nil, err
@@ -438,7 +438,7 @@ func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, 
 	return distsql.Select(ctx, c.sessCtx, kvReq, c.fieldTps)
 }
 
-func (c *copContext) fetchTableScanResult(ctx context.Context, result distsql.SelectResult,
+func (c *CopContext) fetchTableScanResult(ctx context.Context, result distsql.SelectResult,
 	chk *chunk.Chunk) (bool, error) {
 	err := result.Next(ctx, chk)
 	if err != nil {
