@@ -49,4 +49,5 @@ header:
     - "**/OWNERS"
     - "OWNERS_ALIASES"
     - "disttask/framework/mock/*_mock.go"
+    - "util/sqlexec/mock/*_mock.go"
   comment: on-failure

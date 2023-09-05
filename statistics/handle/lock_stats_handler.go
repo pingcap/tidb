@@ -15,9 +15,7 @@
 package handle
 
 import (
-	"context"
-
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -29,9 +27,15 @@ import (
 // - tables: table names of which will be locked.
 // Return the message of skipped tables and error.
 func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return lockstats.AddLockedTables(h.mu.ctx.(sqlexec.SQLExecutor), tids, pids, tables)
+	se, err := h.pool.Get()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	defer h.pool.Put(se)
+
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+
+	return lockstats.AddLockedTables(exec, tids, pids, tables)
 }
 
 // RemoveLockedTables remove tables from table locked array.
@@ -40,41 +44,40 @@ func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.Table
 // - tables: table names of which will be unlocked.
 // Return the message of skipped tables and error.
 func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	se, err := h.pool.Get()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	defer h.pool.Put(se)
 
-	return lockstats.RemoveLockedTables(h.mu.ctx.(sqlexec.SQLExecutor), tids, pids, tables)
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	return lockstats.RemoveLockedTables(exec, tids, pids, tables)
 }
 
-// QueryTablesLockedStatuses query whether table is locked in handle with Handle.Mutex.
+// QueryTablesLockedStatuses query whether table is locked.
 // Note: This function query locked tables from store, so please try to batch the query.
 func (h *Handle) QueryTablesLockedStatuses(tableIDs ...int64) (map[int64]bool, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.queryTablesLockedStatuses(tableIDs...)
-}
-
-// queryTablesLockedStatuses query whether table is locked in handle without Handle.Mutex
-// Note: This function query locked tables from store, so please try to batch the query.
-func (h *Handle) queryTablesLockedStatuses(tableIDs ...int64) (map[int64]bool, error) {
-	tableLocked, err := h.queryLockedTablesWithoutLock()
+	tableLocked, err := h.queryLockedTables()
 	if err != nil {
 		return nil, err
 	}
+
 	return lockstats.GetTablesLockedStatuses(tableLocked, tableIDs...), nil
 }
 
-// queryLockedTablesWithoutLock query locked tables from store without Handle.Mutex.
-func (h *Handle) queryLockedTablesWithoutLock() (map[int64]struct{}, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+// queryLockedTables query locked tables from store.
+func (h *Handle) queryLockedTables() (map[int64]struct{}, error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer h.pool.Put(se)
 
-	return lockstats.QueryLockedTables(ctx, exec)
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	return lockstats.QueryLockedTables(exec)
 }
 
-// GetTableLockedAndClearForTest for unit test only
+// GetTableLockedAndClearForTest for unit test only.
 func (h *Handle) GetTableLockedAndClearForTest() (map[int64]struct{}, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.queryLockedTablesWithoutLock()
+	return h.queryLockedTables()
 }

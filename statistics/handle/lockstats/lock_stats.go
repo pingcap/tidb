@@ -19,10 +19,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -36,13 +34,11 @@ const (
 )
 
 var (
-	// maxChunkSize is the max chunk size for load locked tables.
-	// We use 1024 as the default value, which is the same as the default value of session.maxChunkSize.
-	// The reason why we don't use session.maxChunkSize is that we don't want to introduce a new dependency.
-	// See: https://github.com/pingcap/tidb/pull/46478#discussion_r1308786474
-	maxChunkSize = 1024
 	// Stats logger.
 	statsLogger = logutil.BgLogger().With(zap.String("category", "stats"))
+	// useCurrentSession to make sure the sql is executed in current session.
+	useCurrentSession = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
+	insertSQL         = "INSERT INTO mysql.stats_table_locked (table_id) VALUES (%?) ON DUPLICATE KEY UPDATE table_id = %?"
 )
 
 // AddLockedTables add locked tables id to store.
@@ -51,10 +47,10 @@ var (
 // - pids: partition ids of which will be locked.
 // - tables: table names of which will be locked.
 // Return the message of skipped tables and error.
-func AddLockedTables(exec sqlexec.SQLExecutor, tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
+func AddLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 
-	_, err := exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+	err := startTransaction(ctx, exec)
 	if err != nil {
 		return "", err
 	}
@@ -64,7 +60,7 @@ func AddLockedTables(exec sqlexec.SQLExecutor, tids []int64, pids []int64, table
 	}()
 
 	// Load tables to check duplicate before insert.
-	lockedTables, err := QueryLockedTables(ctx, exec)
+	lockedTables, err := QueryLockedTables(exec)
 	if err != nil {
 		return "", err
 	}
@@ -118,55 +114,15 @@ func generateSkippedTablesMessage(tids []int64, dupTables []string, action, stat
 	return ""
 }
 
-func insertIntoStatsTableLocked(ctx context.Context, exec sqlexec.SQLExecutor, tid int64) error {
-	_, err := exec.ExecuteInternal(ctx, "INSERT INTO mysql.stats_table_locked (table_id) VALUES (%?) ON DUPLICATE KEY UPDATE table_id = %?", tid, tid)
+func insertIntoStatsTableLocked(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, tid int64) error {
+	_, _, err := exec.ExecRestrictedSQL(
+		ctx,
+		useCurrentSession,
+		insertSQL, tid, tid,
+	)
 	if err != nil {
 		logutil.BgLogger().Error("error occurred when insert mysql.stats_table_locked", zap.String("category", "stats"), zap.Error(err))
 		return err
 	}
 	return nil
-}
-
-// QueryLockedTables loads locked tables from mysql.stats_table_locked.
-// Return it as a map for fast query.
-func QueryLockedTables(ctx context.Context, exec sqlexec.SQLExecutor) (map[int64]struct{}, error) {
-	recordSet, err := exec.ExecuteInternal(ctx, "SELECT table_id FROM mysql.stats_table_locked")
-	if err != nil {
-		return nil, err
-	}
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, maxChunkSize)
-	if err != nil {
-		return nil, err
-	}
-	tableLocked := make(map[int64]struct{}, len(rows))
-	for _, row := range rows {
-		tableLocked[row.GetInt64(0)] = struct{}{}
-	}
-	return tableLocked, nil
-}
-
-// GetTablesLockedStatuses check whether table is locked.
-func GetTablesLockedStatuses(tableLocked map[int64]struct{}, tableIDs ...int64) map[int64]bool {
-	lockedTableStatus := make(map[int64]bool, len(tableIDs))
-
-	for _, tid := range tableIDs {
-		if _, ok := tableLocked[tid]; ok {
-			lockedTableStatus[tid] = true
-			continue
-		}
-		lockedTableStatus[tid] = false
-	}
-
-	return lockedTableStatus
-}
-
-// finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
-func finishTransaction(ctx context.Context, exec sqlexec.SQLExecutor, err error) error {
-	if err == nil {
-		_, err = exec.ExecuteInternal(ctx, "commit")
-	} else {
-		_, err1 := exec.ExecuteInternal(ctx, "rollback")
-		terror.Log(errors.Trace(err1))
-	}
-	return errors.Trace(err)
 }

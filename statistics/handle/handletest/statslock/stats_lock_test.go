@@ -172,7 +172,6 @@ func TestStatsLockAndUnlockTables(t *testing.T) {
 	}
 
 	tk.MustExec("lock stats t1, t2")
-
 	rows := tk.MustQuery("select count(*) from mysql.stats_table_locked").Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 2)

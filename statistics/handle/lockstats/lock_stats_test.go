@@ -15,9 +15,18 @@
 package lockstats
 
 import (
+	"context"
 	"testing"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func TestGenerateDuplicateTablesMessage(t *testing.T) {
@@ -76,4 +85,92 @@ func TestGenerateDuplicateTablesMessage(t *testing.T) {
 			require.Equal(t, tt.expectedMsg, msg)
 		})
 	}
+}
+
+func TestInsertIntoStatsTableLocked(t *testing.T) {
+	ctx := context.Background()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
+
+	// Executed SQL should be:
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.Eq(ctx),
+		useCurrentSession,
+		gomock.Eq(insertSQL),
+		gomock.Eq([]interface{}{int64(1), int64(1)}),
+	)
+	err := insertIntoStatsTableLocked(ctx, exec, 1)
+	require.NoError(t, err)
+
+	// Error should be returned when ExecRestrictedSQL returns error.
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.Any(),
+		gomock.Any(),
+		gomock.Any(),
+		gomock.Any(),
+	).Return(nil, nil, errors.New("test error"))
+
+	err = insertIntoStatsTableLocked(ctx, exec, 1)
+	require.Equal(t, "test error", err.Error())
+}
+
+func TestAddLockedTables(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
+
+	// Executed SQL should be:
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		gomock.Eq("BEGIN PESSIMISTIC"),
+	)
+	// Return table 1 is locked.
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
+	c.AppendInt64(0, int64(1))
+	rows := []chunk.Row{c.GetRow(0)}
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		selectSQL,
+	).Return(rows, nil, nil)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		insertSQL,
+		gomock.Eq([]interface{}{int64(2), int64(2)}),
+	)
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		insertSQL,
+		gomock.Eq([]interface{}{int64(3), int64(3)}),
+	)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		insertSQL,
+		gomock.Eq([]interface{}{int64(4), int64(4)}),
+	)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		"COMMIT",
+	)
+
+	msg, err := AddLockedTables(
+		exec,
+		[]int64{1, 2, 3},
+		[]int64{4},
+		[]*ast.TableName{
+			{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t1")},
+			{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t2")},
+			{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t3")}},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "skip locking locked tables: test.t1, other tables locked successfully", msg)
 }
