@@ -230,15 +230,15 @@ func (dsp *importDispatcherExt) OnNextStage(ctx context.Context, handle dispatch
 		nextStep = StepImport
 	case StepImport:
 		dsp.switchTiKV2NormalMode(ctx, gTask, logger)
-		if _, _err_ := failpoint.Eval(_curpkg_("clearLastSwitchTime")); _err_ == nil {
+		failpoint.Inject("clearLastSwitchTime", func() {
 			dsp.lastSwitchTime.Store(time.Time{})
-		}
+		})
 		if err = job2Step(ctx, taskMeta, importer.JobStepValidating); err != nil {
 			return nil, err
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("failWhenDispatchPostProcessSubtask")); _err_ == nil {
-			return nil, errors.New("injected error after StepImport")
-		}
+		failpoint.Inject("failWhenDispatchPostProcessSubtask", func() {
+			failpoint.Return(nil, errors.New("injected error after StepImport"))
+		})
 		if err := updateResult(handle, gTask, taskMeta); err != nil {
 			return nil, err
 		}
@@ -498,17 +498,17 @@ func updateResult(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *Tas
 }
 
 func startJob(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta) error {
-	if _, _err_ := failpoint.Eval(_curpkg_("syncBeforeJobStarted")); _err_ == nil {
+	failpoint.Inject("syncBeforeJobStarted", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
-	}
+	})
 	err := handle.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		return importer.StartJob(ctx, exec, taskMeta.JobID)
 	})
-	if _, _err_ := failpoint.Eval(_curpkg_("syncAfterJobStarted")); _err_ == nil {
+	failpoint.Inject("syncAfterJobStarted", func() {
 		TestSyncChan <- struct{}{}
-	}
+	})
 	return err
 }
 

@@ -275,7 +275,7 @@ func (e *Executor) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec 
 	if err != nil {
 		return err
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("mockMetricsDataFilter")); _err_ == nil {
+	failpoint.Inject("mockMetricsDataFilter", func() {
 		ret := make([]*timePointValue, 0)
 		for _, point := range tikvCPUs.vals {
 			if point.tp.After(endTs) || point.tp.Before(startTs) {
@@ -300,7 +300,7 @@ func (e *Executor) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec 
 			ret = append(ret, point)
 		}
 		rus.vals = ret
-	}
+	})
 	quotas := make([]float64, 0)
 	lowCount := 0
 	for {

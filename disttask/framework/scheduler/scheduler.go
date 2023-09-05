@@ -130,9 +130,9 @@ func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error
 		return s.getError()
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("mockExecSubtaskInitEnvErr")); _err_ == nil {
-		return errors.New("mockExecSubtaskInitEnvErr")
-	}
+	failpoint.Inject("mockExecSubtaskInitEnvErr", func() {
+		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))
+	})
 	if err := scheduler.InitSubtaskExecEnv(runCtx); err != nil {
 		s.onError(err)
 		return s.getError()
@@ -178,14 +178,14 @@ func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error
 		if err := s.getError(); err != nil {
 			break
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("mockCleanScheduler")); _err_ == nil {
+		failpoint.Inject("mockCleanScheduler", func() {
 			v, ok := testContexts.Load(s.id)
 			if ok {
 				if v.(*TestContext).mockDown.Load() {
-					break
+					failpoint.Break()
 				}
 			}
-		}
+		})
 
 		s.runSubtask(runCtx, scheduler, subtask, minimalTaskCh)
 	}
@@ -213,18 +213,18 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 		zap.Int64("subtask_id", subtask.ID),
 		zap.Int64("subtask_step", subtask.Step))
 
-	if val, _err_ := failpoint.Eval(_curpkg_("mockTiDBDown")); _err_ == nil {
+	failpoint.Inject("mockTiDBDown", func(val failpoint.Value) {
 		if s.id == val.(string) || s.id == ":4001" || s.id == ":4002" {
 			v, ok := testContexts.Load(s.id)
 			if ok {
 				v.(*TestContext).TestSyncSubtaskRun <- struct{}{}
 				v.(*TestContext).mockDown.Store(true)
 				time.Sleep(2 * time.Second)
-				return
+				failpoint.Return()
 			}
 		}
-	}
-	if _, _err_ := failpoint.Eval(_curpkg_("mockTiDBDown2")); _err_ == nil {
+	})
+	failpoint.Inject("mockTiDBDown2", func() {
 		if s.id == ":4003" && subtask.Step == proto.StepTwo {
 			v, ok := testContexts.Load(s.id)
 			if ok {
@@ -234,14 +234,14 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 				return
 			}
 		}
-	}
+	})
 
-	if val, _err_ := failpoint.Eval(_curpkg_("mockTiDBPartitionThenResume")); _err_ == nil {
+	failpoint.Inject("mockTiDBPartitionThenResume", func(val failpoint.Value) {
 		if val.(bool) && (s.id == ":4000" || s.id == ":4001" || s.id == ":4002") {
 			_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(s.id)
 			time.Sleep(20 * time.Second)
 		}
-	}
+	})
 
 	var minimalTaskWg sync.WaitGroup
 	for _, minimalTask := range minimalTasks {
@@ -252,14 +252,14 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 			minimalTaskWg.Done()
 		}
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("waitUntilError")); _err_ == nil {
+	failpoint.Inject("waitUntilError", func() {
 		for i := 0; i < 10; i++ {
 			if s.getError() != nil {
 				break
 			}
 			time.Sleep(500 * time.Millisecond)
 		}
-	}
+	})
 	minimalTaskWg.Wait()
 	s.onSubtaskFinished(ctx, scheduler, subtask)
 }
@@ -283,10 +283,10 @@ func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler
 	if err := s.taskTable.FinishSubtask(subtask.ID, subtaskMeta); err != nil {
 		s.onError(err)
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("syncAfterSubtaskFinish")); _err_ == nil {
+	failpoint.Inject("syncAfterSubtaskFinish", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
-	}
+	})
 }
 
 func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, minimalTask proto.MinimalTask, tp string, step int64) {
@@ -306,12 +306,12 @@ func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, m
 		return
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("MockExecutorRunErr")); _err_ == nil {
+	failpoint.Inject("MockExecutorRunErr", func(val failpoint.Value) {
 		if val.(bool) {
 			s.onError(errors.New("MockExecutorRunErr"))
 		}
-	}
-	if val, _err_ := failpoint.Eval(_curpkg_("MockExecutorRunCancel")); _err_ == nil {
+	})
+	failpoint.Inject("MockExecutorRunCancel", func(val failpoint.Value) {
 		if taskID, ok := val.(int); ok {
 			mgr, err := storage.GetTaskManager()
 			if err != nil {
@@ -323,7 +323,7 @@ func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, m
 				}
 			}
 		}
-	}
+	})
 	if err = executor.Run(minimalTaskCtx); err != nil {
 		s.onError(err)
 	}

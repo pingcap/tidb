@@ -153,12 +153,12 @@ func (r *readIndexToLocalStage) CleanupSubtaskExecEnv(_ context.Context) error {
 var MockDMLExecutionAddIndexSubTaskFinish func()
 
 func (*readIndexToLocalStage) OnSubtaskFinished(_ context.Context, subtask []byte) ([]byte, error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockDMLExecutionAddIndexSubTaskFinish")); _err_ == nil {
+	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecutionAddIndexSubTaskFinish != nil {
 			MockDMLExecutionAddIndexSubTaskFinish()
 		}
-	}
+	})
 	return subtask, nil
 }
 

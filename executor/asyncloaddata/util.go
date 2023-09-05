@@ -94,20 +94,20 @@ func CreateLoadDataJob(
 		return nil, errors.Errorf("unexpected result length: %d", len(rows))
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("SaveLastLoadDataJobID")); _err_ == nil {
+	failpoint.Inject("SaveLastLoadDataJobID", func() {
 		TestLastLoadDataJobID.Store(rows[0].GetInt64(0))
-	}
+	})
 	return NewJob(rows[0].GetInt64(0), conn, user), nil
 }
 
 // StartJob tries to start a not-yet-started job with jobID. It will not return
 // error when there's no matched job.
 func (j *Job) StartJob(ctx context.Context) error {
-	failpoint.Eval(_curpkg_("AfterCreateLoadDataJob"))
-	if _, _err_ := failpoint.Eval(_curpkg_("SyncAfterCreateLoadDataJob")); _err_ == nil {
+	failpoint.Inject("AfterCreateLoadDataJob", nil)
+	failpoint.Inject("SyncAfterCreateLoadDataJob", func() {
 		TestSyncCh <- struct{}{}
 		<-TestSyncCh
-	}
+	})
 
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
 	_, err := j.Conn.ExecuteInternal(ctx,
@@ -119,11 +119,11 @@ func (j *Job) StartJob(ctx context.Context) error {
 		return err
 	}
 
-	failpoint.Eval(_curpkg_("AfterStartJob"))
-	if _, _err_ := failpoint.Eval(_curpkg_("SyncAfterStartJob")); _err_ == nil {
+	failpoint.Inject("AfterStartJob", nil)
+	failpoint.Inject("SyncAfterStartJob", func() {
 		TestSyncCh <- struct{}{}
 		<-TestSyncCh
-	}
+	})
 	return nil
 }
 

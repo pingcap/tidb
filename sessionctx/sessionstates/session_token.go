@@ -327,10 +327,10 @@ func (sc *signingCert) checkSignature(content, signature []byte) error {
 
 func getNow() time.Time {
 	now := time.Now()
-	if val, _err_ := failpoint.Eval(_curpkg_("mockNowOffset")); _err_ == nil {
+	failpoint.Inject("mockNowOffset", func(val failpoint.Value) {
 		if s := uint64(val.(int)); s != 0 {
 			now = now.Add(time.Duration(s))
 		}
-	}
+	})
 	return now
 }
