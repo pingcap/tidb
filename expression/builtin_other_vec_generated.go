@@ -365,7 +365,7 @@ func (b *builtinInRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			}
 			arg0 := args0[i]
 			arg1 := args1[i]
-			compareResult = types.CompareFloat64(arg0, arg1)
+			compareResult = cmp.Compare(arg0, arg1)
 			if compareResult == 0 {
 				result.SetNull(i, false)
 				r64s[i] = 1

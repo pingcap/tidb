@@ -51,7 +51,7 @@ func (b *builtinLTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareFloat64(arg0[i], arg1[i])
+		val := cmp.Compare(arg0[i], arg1[i])
 		i64s[i] = boolToInt64(val < 0)
 	}
 	return nil
@@ -275,7 +275,7 @@ func (b *builtinLERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareFloat64(arg0[i], arg1[i])
+		val := cmp.Compare(arg0[i], arg1[i])
 		i64s[i] = boolToInt64(val <= 0)
 	}
 	return nil
@@ -499,7 +499,7 @@ func (b *builtinGTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareFloat64(arg0[i], arg1[i])
+		val := cmp.Compare(arg0[i], arg1[i])
 		i64s[i] = boolToInt64(val > 0)
 	}
 	return nil
@@ -723,7 +723,7 @@ func (b *builtinGERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareFloat64(arg0[i], arg1[i])
+		val := cmp.Compare(arg0[i], arg1[i])
 		i64s[i] = boolToInt64(val >= 0)
 	}
 	return nil
@@ -947,7 +947,7 @@ func (b *builtinEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareFloat64(arg0[i], arg1[i])
+		val := cmp.Compare(arg0[i], arg1[i])
 		i64s[i] = boolToInt64(val == 0)
 	}
 	return nil
@@ -1171,7 +1171,7 @@ func (b *builtinNERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareFloat64(arg0[i], arg1[i])
+		val := cmp.Compare(arg0[i], arg1[i])
 		i64s[i] = boolToInt64(val != 0)
 	}
 	return nil
@@ -1398,7 +1398,7 @@ func (b *builtinNullEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			i64s[i] = 1
 		case isNull0 != isNull1:
 			i64s[i] = 0
-		case types.CompareFloat64(arg0[i], arg1[i]) == 0:
+		case cmp.Compare(arg0[i], arg1[i]) == 0:
 			i64s[i] = 1
 		}
 	}

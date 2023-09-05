@@ -2674,7 +2674,7 @@ func (b *builtinNullEQRealSig) evalInt(row chunk.Row) (val int64, isNull bool, e
 		res = 1
 	case isNull0 != isNull1:
 		return res, false, nil
-	case types.CompareFloat64(arg0, arg1) == 0:
+	case cmp.Compare(arg0, arg1) == 0:
 		res = 1
 	}
 	return res, false, nil
@@ -3006,7 +3006,7 @@ func CompareReal(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 	if isNull0 || isNull1 {
 		return compareNull(isNull0, isNull1), true, nil
 	}
-	return int64(types.CompareFloat64(arg0, arg1)), false, nil
+	return int64(cmp.Compare(arg0, arg1)), false, nil
 }
 
 // CompareDecimal compares two decimals.

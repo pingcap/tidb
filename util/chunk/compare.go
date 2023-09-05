@@ -16,6 +16,7 @@ package chunk
 
 import (
 	"bytes"
+	"cmp"
 	"sort"
 
 	"github.com/pingcap/tidb/parser/mysql"
@@ -101,7 +102,7 @@ func cmpFloat32(l Row, lCol int, r Row, rCol int) int {
 	if lNull || rNull {
 		return cmpNull(lNull, rNull)
 	}
-	return types.CompareFloat64(float64(l.GetFloat32(lCol)), float64(r.GetFloat32(rCol)))
+	return cmp.Compare(float64(l.GetFloat32(lCol)), float64(r.GetFloat32(rCol)))
 }
 
 func cmpFloat64(l Row, lCol int, r Row, rCol int) int {
@@ -109,7 +110,7 @@ func cmpFloat64(l Row, lCol int, r Row, rCol int) int {
 	if lNull || rNull {
 		return cmpNull(lNull, rNull)
 	}
-	return types.CompareFloat64(l.GetFloat64(lCol), r.GetFloat64(rCol))
+	return cmp.Compare(l.GetFloat64(lCol), r.GetFloat64(rCol))
 }
 
 func cmpMyDecimal(l Row, lCol int, r Row, rCol int) int {
@@ -189,9 +190,9 @@ func Compare(row Row, colIdx int, ad *types.Datum) int {
 	case types.KindUint64:
 		return types.CompareUint64(row.GetUint64(colIdx), ad.GetUint64())
 	case types.KindFloat32:
-		return types.CompareFloat64(float64(row.GetFloat32(colIdx)), float64(ad.GetFloat32()))
+		return cmp.Compare(float64(row.GetFloat32(colIdx)), float64(ad.GetFloat32()))
 	case types.KindFloat64:
-		return types.CompareFloat64(row.GetFloat64(colIdx), ad.GetFloat64())
+		return cmp.Compare(row.GetFloat64(colIdx), ad.GetFloat64())
 	case types.KindString:
 		return types.CompareString(row.GetString(colIdx), ad.GetString(), ad.Collation())
 	case types.KindBytes, types.KindBinaryLiteral, types.KindMysqlBit:
