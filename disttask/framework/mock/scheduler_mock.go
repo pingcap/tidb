@@ -9,6 +9,7 @@ import (
 	reflect "reflect"
 
 	proto "github.com/pingcap/tidb/disttask/framework/proto"
+	scheduler "github.com/pingcap/tidb/disttask/framework/scheduler"
 	execute "github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -334,16 +335,16 @@ func (mr *MockExtensionMockRecorder) GetMiniTaskExecutor(arg0, arg1, arg2 interf
 }
 
 // GetSubtaskExecutor mocks base method.
-func (m *MockExtension) GetSubtaskExecutor(arg0 context.Context, arg1 *proto.Task) (execute.SubtaskExecutor, error) {
+func (m *MockExtension) GetSubtaskExecutor(arg0 context.Context, arg1 *proto.Task, arg2 *scheduler.Summary) (execute.SubtaskExecutor, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetSubtaskExecutor", arg0, arg1)
+	ret := m.ctrl.Call(m, "GetSubtaskExecutor", arg0, arg1, arg2)
 	ret0, _ := ret[0].(execute.SubtaskExecutor)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetSubtaskExecutor indicates an expected call of GetSubtaskExecutor.
-func (mr *MockExtensionMockRecorder) GetSubtaskExecutor(arg0, arg1 interface{}) *gomock.Call {
+func (mr *MockExtensionMockRecorder) GetSubtaskExecutor(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskExecutor", reflect.TypeOf((*MockExtension)(nil).GetSubtaskExecutor), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskExecutor", reflect.TypeOf((*MockExtension)(nil).GetSubtaskExecutor), arg0, arg1, arg2)
 }

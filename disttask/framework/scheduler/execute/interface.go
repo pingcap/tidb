@@ -25,7 +25,7 @@ type SubtaskExecutor interface {
 	// Init is used to initialize the environment for the subtask executor.
 	Init(context.Context) error
 	// SplitSubtask is used to split the subtask into multiple minimal tasks.
-	SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error)
+	SplitSubtask(ctx context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error)
 	// Cleanup is used to clean up the environment for the subtask executor.
 	Cleanup(context.Context) error
 	// OnFinished is used to handle the subtask when it is finished.

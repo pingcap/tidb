@@ -118,7 +118,15 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 	s.registerCancelFunc(runCancel)
 	s.resetError()
 	logutil.Logger(s.logCtx).Info("scheduler run a step", zap.Any("step", task.Step), zap.Any("concurrency", task.Concurrency))
-	executor, err := s.GetSubtaskExecutor(ctx, task)
+
+	summary, cleanup, err := runSummaryCollectLoop(ctx, task, s.taskTable)
+	if err != nil {
+		s.onError(err)
+		return s.getError()
+	}
+	defer cleanup()
+
+	executor, err := s.GetSubtaskExecutor(ctx, task, summary)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -187,7 +195,7 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 }
 
 func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.SubtaskExecutor, subtask *proto.Subtask, minimalTaskCh chan func()) {
-	minimalTasks, err := scheduler.SplitSubtask(ctx, subtask.Meta)
+	minimalTasks, err := scheduler.SplitSubtask(ctx, subtask)
 	if err != nil {
 		s.onError(err)
 		if errors.Cause(err) == context.Canceled {
@@ -351,7 +359,7 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 		}
 	}
 
-	executor, err := s.GetSubtaskExecutor(ctx, task)
+	executor, err := s.GetSubtaskExecutor(ctx, task, nil)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -378,6 +386,28 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateReverted, nil)
 	}
 	return s.getError()
+}
+
+func runSummaryCollectLoop(
+	ctx context.Context,
+	task *proto.Task,
+	taskTable TaskTable,
+) (summary *Summary, cleanup func(), err error) {
+	taskMgr, ok := taskTable.(*storage.TaskManager)
+	if !ok {
+		return nil, func() {}, nil
+	}
+	opt, ok := taskTypes[task.Type]
+	if !ok {
+		return nil, func() {}, errors.Errorf("scheduler option for type %s not found", task.Type)
+	}
+	if opt.Summary != nil {
+		go opt.Summary.UpdateRowCountLoop(ctx, taskMgr)
+		return opt.Summary, func() {
+			opt.Summary.PersistRowCount(ctx, taskMgr)
+		}, nil
+	}
+	return nil, func() {}, nil
 }
 
 func (s *BaseScheduler) registerCancelFunc(cancel context.CancelFunc) {

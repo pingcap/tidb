@@ -93,7 +93,7 @@ func (mr *MockSubtaskExecutorMockRecorder) Rollback(arg0 interface{}) *gomock.Ca
 }
 
 // SplitSubtask mocks base method.
-func (m *MockSubtaskExecutor) SplitSubtask(arg0 context.Context, arg1 []byte) ([]proto.MinimalTask, error) {
+func (m *MockSubtaskExecutor) SplitSubtask(arg0 context.Context, arg1 *proto.Subtask) ([]proto.MinimalTask, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SplitSubtask", arg0, arg1)
 	ret0, _ := ret[0].([]proto.MinimalTask)

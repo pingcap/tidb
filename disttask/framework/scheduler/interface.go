@@ -52,7 +52,9 @@ type Scheduler interface {
 // Extension extends the scheduler.
 // each task type should implement this interface.
 type Extension interface {
-	GetSubtaskExecutor(ctx context.Context, task *proto.Task) (execute.SubtaskExecutor, error)
+	// GetSubtaskExecutor returns the subtask executor for the subtask.
+	// Note: summary is the summary manager of all subtask of the same type now.
+	GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *Summary) (execute.SubtaskExecutor, error)
 	GetMiniTaskExecutor(minimalTask proto.MinimalTask, tp string, step int64) (execute.MiniTaskExecutor, error)
 }
 
@@ -69,7 +71,7 @@ func (*EmptyScheduler) Init(context.Context) error {
 }
 
 // SplitSubtask implements the SubtaskExecutor interface.
-func (*EmptyScheduler) SplitSubtask(context.Context, []byte) ([]proto.MinimalTask, error) {
+func (*EmptyScheduler) SplitSubtask(context.Context, *proto.Subtask) ([]proto.MinimalTask, error) {
 	return nil, nil
 }
 

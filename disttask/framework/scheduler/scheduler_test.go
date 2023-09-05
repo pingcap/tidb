@@ -77,7 +77,7 @@ func TestSchedulerRun(t *testing.T) {
 
 	// 1. no scheduler constructor
 	schedulerRegisterErr := errors.Errorf("constructor of scheduler for key not found")
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any()).Return(nil, schedulerRegisterErr)
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, schedulerRegisterErr)
 	scheduler := NewBaseScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
 	scheduler.Extension = mockExtension
 	// UpdateErrorToSubtask won't return such errors, but since the error is not handled,
@@ -90,7 +90,7 @@ func TestSchedulerRun(t *testing.T) {
 	err := scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
 	require.EqualError(t, err, schedulerRegisterErr.Error())
 
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
 
 	// 2. init subtask exec env failed
 	initErr := errors.New("init error")
@@ -277,7 +277,7 @@ func TestSchedulerRollback(t *testing.T) {
 
 	// 1. no scheduler constructor
 	schedulerRegisterErr := errors.Errorf("constructor of scheduler for key not found")
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any()).Return(nil, schedulerRegisterErr)
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, schedulerRegisterErr)
 	scheduler := NewBaseScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
 	scheduler.Extension = mockExtension
 	mockSubtaskTable.EXPECT().GetSubtaskInStates("id", int64(1), proto.StepOne,
@@ -285,7 +285,7 @@ func TestSchedulerRollback(t *testing.T) {
 	err := scheduler.Rollback(runCtx, &proto.Task{Step: proto.StepOne, ID: 1, Type: tp})
 	require.EqualError(t, err, schedulerRegisterErr.Error())
 
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
 
 	// 2. get subtask failed
 	getSubtaskErr := errors.New("get subtask error")
@@ -362,7 +362,7 @@ func TestScheduler(t *testing.T) {
 	mockExtension := mock.NewMockExtension(ctrl)
 
 	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockMiniTaskExecutor, nil).AnyTimes()
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
 
 	scheduler := NewBaseScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
 	scheduler.Extension = mockExtension

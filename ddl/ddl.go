@@ -41,7 +41,9 @@ import (
 	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -678,17 +680,20 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobCh:          make(chan struct{}, 100),
 	}
 
-	scheduler.RegisterTaskType("backfill",
+	scheduler.RegisterTaskType(BackfillTaskType,
 		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool) scheduler.Scheduler {
 			return newBackfillDistScheduler(ctx, id, taskID, taskTable, pool, d)
 		},
 	)
 
-	backFillDsp, err := NewBackfillingDispatcher(d)
+	backFillDsp, err := NewBackfillingDispatcherExt(d)
 	if err != nil {
-		logutil.BgLogger().Warn("NewBackfillingDispatcher failed", zap.String("category", "ddl"), zap.Error(err))
+		logutil.BgLogger().Warn("NewBackfillingDispatcherExt failed", zap.String("category", "ddl"), zap.Error(err))
 	} else {
-		dispatcher.RegisterTaskDispatcher(BackfillTaskType, backFillDsp)
+		dispatcher.RegisterDispatcherFactory(BackfillTaskType,
+			func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+				return newLitBackfillDispatcher(ctx, taskMgr, serverID, task, backFillDsp)
+			})
 	}
 
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.

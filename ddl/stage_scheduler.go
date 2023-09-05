@@ -41,10 +41,12 @@ type BackfillSubTaskMeta struct {
 	PhysicalTableID int64  `json:"physical_table_id"`
 	StartKey        []byte `json:"start_key"`
 	EndKey          []byte `json:"end_key"`
+	RowCount        int64  `json:"row_count"`
 }
 
 // NewBackfillSchedulerHandle creates a new backfill scheduler.
-func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl, stepForImport bool) (execute.SubtaskExecutor, error) {
+func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
+	stepForImport bool, summary *scheduler.Summary) (execute.SubtaskExecutor, error) {
 	bgm := &BackfillGlobalMeta{}
 	err := json.Unmarshal(taskMeta, bgm)
 	if err != nil {
@@ -72,7 +74,7 @@ func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl, st
 		jc := d.jobContext(jobMeta.ID)
 		d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexToLocalStage(d, &bgm.Job, indexInfo, tbl.(table.PhysicalTable), jc, bc), nil
+		return newReadIndexToLocalStage(d, &bgm.Job, indexInfo, tbl.(table.PhysicalTable), jc, bc, summary), nil
 	}
 	return newIngestIndexStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc), nil
 }
@@ -94,12 +96,12 @@ func newBackfillDistScheduler(ctx context.Context, id string, taskID int64, task
 	return s
 }
 
-func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task) (execute.SubtaskExecutor, error) {
+func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *scheduler.Summary) (execute.SubtaskExecutor, error) {
 	switch task.Step {
 	case proto.StepOne:
-		return NewBackfillSchedulerHandle(ctx, task.Meta, s.d, false)
+		return NewBackfillSchedulerHandle(ctx, task.Meta, s.d, false, summary)
 	case proto.StepTwo:
-		return NewBackfillSchedulerHandle(ctx, task.Meta, s.d, true)
+		return NewBackfillSchedulerHandle(ctx, task.Meta, s.d, true, nil)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)
 	}

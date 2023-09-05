@@ -30,15 +30,15 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-type rollbackDispatcher struct{}
+type rollbackDispatcherExt struct{}
 
-var _ dispatcher.Dispatcher = (*rollbackDispatcher)(nil)
+var _ dispatcher.Extension = (*rollbackDispatcherExt)(nil)
 var rollbackCnt atomic.Int32
 
-func (*rollbackDispatcher) OnTick(_ context.Context, _ *proto.Task) {
+func (*rollbackDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (*rollbackDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (*rollbackDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State == proto.TaskStatePending {
 		gTask.Step = proto.StepOne
 		return [][]byte{
@@ -50,15 +50,15 @@ func (*rollbackDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandl
 	return nil, nil
 }
 
-func (*rollbackDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+func (*rollbackDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	return []byte("rollbacktask1"), nil
 }
 
-func (*rollbackDispatcher) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*rollbackDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return generateSchedulerNodes4Test()
 }
 
-func (*rollbackDispatcher) IsRetryableErr(error) bool {
+func (*rollbackDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
@@ -84,7 +84,7 @@ func (t *rollbackScheduler) Rollback(_ context.Context) error {
 	return nil
 }
 
-func (t *rollbackScheduler) SplitSubtask(_ context.Context, _ []byte) ([]proto.MinimalTask, error) {
+func (t *rollbackScheduler) SplitSubtask(_ context.Context, _ *proto.Subtask) ([]proto.MinimalTask, error) {
 	return []proto.MinimalTask{
 		testRollbackMiniTask{},
 		testRollbackMiniTask{},
@@ -107,9 +107,9 @@ func (e *rollbackSubtaskExecutor) Run(_ context.Context) error {
 
 func registerRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map) {
 	mockExtension := mock.NewMockExtension(ctrl)
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any()).Return(&rollbackScheduler{m: m}, nil).AnyTimes()
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(&rollbackScheduler{m: m}, nil).AnyTimes()
 	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(&rollbackSubtaskExecutor{m: m}, nil).AnyTimes()
-	registerTaskMetaInner(t, mockExtension, &rollbackDispatcher{})
+	registerTaskMetaInner(t, mockExtension, &rollbackDispatcherExt{})
 	rollbackCnt.Store(0)
 }
 

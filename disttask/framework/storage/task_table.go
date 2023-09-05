@@ -388,6 +388,29 @@ func (stm *TaskManager) GetSucceedSubtasksByStep(taskID int64, step int64) ([]*p
 	return subtasks, nil
 }
 
+// GetSubtaskRowCount gets the subtask row count.
+func (stm *TaskManager) GetSubtaskRowCount(taskID int64, step int64) (int64, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select
+    	cast(sum(json_extract(summary, '$.row_count')) as signed) as row_count
+		from mysql.tidb_background_subtask where task_key = %? and step = %?`,
+		taskID, step)
+	if err != nil {
+		return 0, err
+	}
+	if len(rs) == 0 {
+		return 0, nil
+	}
+	return rs[0].GetInt64(0), nil
+}
+
+// UpdateSubtaskRowCount updates the subtask row count.
+func (stm *TaskManager) UpdateSubtaskRowCount(subtaskID int64, rowCount int64) error {
+	_, err := stm.executeSQLWithNewSession(stm.ctx, `update mysql.tidb_background_subtask
+		set summary = json_set(summary, '$.row_count', %?) where id = %?`,
+		rowCount, subtaskID)
+	return err
+}
+
 // GetSubtaskInStatesCnt gets the subtask count in the states.
 func (stm *TaskManager) GetSubtaskInStatesCnt(taskID int64, states ...interface{}) (int64, error) {
 	args := []interface{}{taskID}

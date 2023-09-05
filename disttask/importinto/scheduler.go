@@ -91,7 +91,8 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 	return nil
 }
 
-func (s *importStepExecutor) SplitSubtask(ctx context.Context, bs []byte) ([]proto.MinimalTask, error) {
+func (s *importStepExecutor) SplitSubtask(ctx context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error) {
+	bs := subtask.Meta
 	var subtaskMeta ImportStepMeta
 	err := json.Unmarshal(bs, &subtaskMeta)
 	if err != nil {
@@ -209,11 +210,12 @@ type postStepExecutor struct {
 
 var _ execute.SubtaskExecutor = &postStepExecutor{}
 
-func (p *postStepExecutor) SplitSubtask(_ context.Context, metaBytes []byte) ([]proto.MinimalTask, error) {
+func (p *postStepExecutor) SplitSubtask(_ context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error) {
 	mTask := &postProcessStepMinimalTask{
 		taskMeta: p.taskMeta,
 		logger:   p.logger,
 	}
+	metaBytes := subtask.Meta
 	if err := json.Unmarshal(metaBytes, &mTask.meta); err != nil {
 		return nil, err
 	}
@@ -232,7 +234,7 @@ func newImportScheduler(ctx context.Context, id string, taskID int64, taskTable 
 	return s
 }
 
-func (s *importScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task) (execute.SubtaskExecutor, error) {
+func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, _ *scheduler.Summary) (execute.SubtaskExecutor, error) {
 	taskMeta := TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, err
@@ -262,7 +264,7 @@ func (s *importScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Ta
 	}
 }
 
-func (s *importScheduler) GetMiniTaskExecutor(minimalTask proto.MinimalTask, _ string, step int64) (execute.MiniTaskExecutor, error) {
+func (*importScheduler) GetMiniTaskExecutor(minimalTask proto.MinimalTask, _ string, step int64) (execute.MiniTaskExecutor, error) {
 	switch step {
 	case StepImport:
 		task, ok := minimalTask.(*importStepMinimalTask)

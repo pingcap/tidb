@@ -30,7 +30,7 @@ import (
 
 type haTestFlowHandle struct{}
 
-var _ dispatcher.Dispatcher = (*haTestFlowHandle)(nil)
+var _ dispatcher.Extension = (*haTestFlowHandle)(nil)
 
 func (*haTestFlowHandle) OnTick(_ context.Context, _ *proto.Task) {
 }
