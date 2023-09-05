@@ -141,7 +141,7 @@ func (l *LocalStorage) Open(_ context.Context, path string) (ExternalFileReader,
 func (l *LocalStorage) Create(_ context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
 	filename := filepath.Join(l.base, name)
 	dir := filepath.Dir(filename)
-	err := os.MkdirAll(dir, 0755)
+	err := os.MkdirAll(dir, 0750)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
