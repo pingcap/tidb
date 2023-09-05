@@ -134,7 +134,7 @@ func TestForeignKey(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		var t table.Table
-		t, err = testGetTableWithError(store, dbInfo.ID, tblInfo.ID)
+		t, err = testGetTableWithError(dom, dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return
@@ -176,7 +176,7 @@ func TestForeignKey(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		var t table.Table
-		t, err = testGetTableWithError(store, dbInfo.ID, tblInfo.ID)
+		t, err = testGetTableWithError(dom, dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return

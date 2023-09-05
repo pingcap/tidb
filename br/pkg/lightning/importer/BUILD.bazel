@@ -71,6 +71,7 @@ go_library(
         "//util/collate",
         "//util/dbterror",
         "//util/engine",
+        "//util/etcd",
         "//util/extsort",
         "//util/mathutil",
         "//util/mock",
