@@ -45,7 +45,7 @@ func NewSortedBuilder(sc *stmtctx.StatementContext, numBuckets, id int64, tp *ty
 		sc:              sc,
 		numBuckets:      numBuckets,
 		valuesPerBucket: 1,
-		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets), 0, true),
+		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets), 0, false),
 		needBucketNDV:   statsVer >= Version2,
 	}
 }
