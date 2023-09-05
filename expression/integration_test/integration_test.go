@@ -7814,7 +7814,7 @@ func TestIfFunctionWithNull(t *testing.T) {
 		testkit.Rows("20000 35100"))
 }
 
-func TestIssue41733(t *testing.T) {
+func TestIssue41733AndIssue45410(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database testIssue41733")
@@ -7845,11 +7845,8 @@ func TestIssue41733(t *testing.T) {
 	tk.MustExec("INSERT IGNORE INTO t_big(c0) VALUES (1E20)")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'c0' at row 1"))
 	tk.MustQuery("select * from t_big;").Check(testkit.Rows("18446744073709551615"))
-}
 
-func TestIssue45410(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	// Issue 45410
 	tk.MustExec("create database testIssue45410")
 	defer tk.MustExec("drop database testIssue45410")
 	tk.MustExec("use testIssue45410")
