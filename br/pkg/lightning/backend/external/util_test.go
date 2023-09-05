@@ -45,16 +45,16 @@ func TestSeekPropsOffsets(t *testing.T) {
 	rc1 := &rangePropertiesCollector{
 		props: []*rangeProperty{
 			{
-				key:    []byte("key1"),
-				offset: 10,
+				firstKey: []byte("key1"),
+				offset:   10,
 			},
 			{
-				key:    []byte("key3"),
-				offset: 30,
+				firstKey: []byte("key3"),
+				offset:   30,
 			},
 			{
-				key:    []byte("key5"),
-				offset: 50,
+				firstKey: []byte("key5"),
+				offset:   50,
 			},
 		},
 	}
@@ -69,12 +69,12 @@ func TestSeekPropsOffsets(t *testing.T) {
 	rc2 := &rangePropertiesCollector{
 		props: []*rangeProperty{
 			{
-				key:    []byte("key2"),
-				offset: 20,
+				firstKey: []byte("key2"),
+				offset:   20,
 			},
 			{
-				key:    []byte("key4"),
-				offset: 40,
+				firstKey: []byte("key4"),
+				offset:   40,
 			},
 		},
 	}

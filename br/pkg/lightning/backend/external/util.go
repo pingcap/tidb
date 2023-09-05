@@ -67,7 +67,7 @@ func seekPropsOffsets(
 	moved := false
 	for iter.Next() {
 		p := iter.prop()
-		propKey := kv.Key(p.key)
+		propKey := kv.Key(p.firstKey)
 		if propKey.Cmp(start) > 0 {
 			if !moved {
 				return nil, fmt.Errorf("start key %s is too small for stat files %v",
@@ -164,12 +164,25 @@ func MockExternalEngine(
 	keys [][]byte,
 	values [][]byte,
 ) (dataFiles []string, statsFiles []string, err error) {
-	ctx := context.Background()
+	subDir := "/mock-test"
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(128).
 		SetPropSizeDistance(32).
 		SetPropKeysDistance(4).
 		Build(storage, "/mock-test", 0)
+	return MockExternalEngineWithWriter(storage, writer, subDir, keys, values)
+}
+
+// MockExternalEngineWithWriter generates an external engine with the given
+// writer, keys and values.
+func MockExternalEngineWithWriter(
+	storage storage.ExternalStorage,
+	writer *Writer,
+	subDir string,
+	keys [][]byte,
+	values [][]byte,
+) (dataFiles []string, statsFiles []string, err error) {
+	ctx := context.Background()
 	kvs := make([]common.KvPair, len(keys))
 	for i := range keys {
 		kvs[i].Key = keys[i]
@@ -184,5 +197,5 @@ func MockExternalEngine(
 	if err != nil {
 		return nil, nil, err
 	}
-	return GetAllFileNames(ctx, storage, "/mock-test")
+	return GetAllFileNames(ctx, storage, subDir)
 }

@@ -23,10 +23,11 @@ import (
 
 func TestRangePropertyCodec(t *testing.T) {
 	prop := &rangeProperty{
-		key:    []byte("key"),
-		offset: 1,
-		size:   2,
-		keys:   3,
+		firstKey: []byte("key"),
+		lastKey:  []byte("key2"),
+		offset:   1,
+		size:     2,
+		keys:     3,
 	}
 	buf := encodeProp(nil, prop)
 	prop2 := decodeProp(buf)
@@ -34,7 +35,8 @@ func TestRangePropertyCodec(t *testing.T) {
 
 	p1, p2, p3 := &rangeProperty{}, &rangeProperty{}, &rangeProperty{}
 	for i, p := range []*rangeProperty{p1, p2, p3} {
-		p.key = []byte(fmt.Sprintf("key%d", i))
+		p.firstKey = []byte(fmt.Sprintf("key%d", i))
+		p.lastKey = []byte(fmt.Sprintf("key%d9", i))
 		p.offset = uint64(10 * i)
 		p.size = uint64(20 * i)
 		p.keys = uint64(30 * i)
@@ -42,4 +44,10 @@ func TestRangePropertyCodec(t *testing.T) {
 	buf = encodeMultiProps(nil, []*rangeProperty{p1, p2, p3})
 	props := decodeMultiProps(buf)
 	require.EqualValues(t, []*rangeProperty{p1, p2, p3}, props)
+}
+
+func TestPropertyLengthExceptKeys(t *testing.T) {
+	zero := &rangeProperty{}
+	bs := encodeProp(nil, zero)
+	require.EqualValues(t, propertyLengthExceptKeys, len(bs))
 }
