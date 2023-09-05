@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -690,11 +691,14 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 			return NewBackfillSchedulerHandle(ctx, taskMeta, d, step == proto.StepTwo)
 		})
 
-	backFillDsp, err := NewBackfillingDispatcher(d)
+	backFillDsp, err := NewBackfillingDispatcherExt(d)
 	if err != nil {
-		logutil.BgLogger().Warn("NewBackfillingDispatcher failed", zap.String("category", "ddl"), zap.Error(err))
+		logutil.BgLogger().Warn("NewBackfillingDispatcherExt failed", zap.String("category", "ddl"), zap.Error(err))
 	} else {
-		dispatcher.RegisterTaskDispatcher(BackfillTaskType, backFillDsp)
+		dispatcher.RegisterDispatcherFactory(BackfillTaskType,
+			func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+				return newLitBackfillDispatcher(ctx, taskMgr, serverID, task, backFillDsp)
+			})
 		scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepOne,
 			func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
 				return &scheduler.EmptyExecutor{}, nil

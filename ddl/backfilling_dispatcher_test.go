@@ -33,7 +33,7 @@ import (
 
 func TestBackfillingDispatcher(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	dsp, err := ddl.NewBackfillingDispatcher(dom.DDL())
+	dsp, err := ddl.NewBackfillingDispatcherExt(dom.DDL())
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

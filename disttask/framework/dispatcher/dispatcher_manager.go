@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
@@ -34,7 +35,7 @@ func (dm *Manager) getRunningTaskCnt() int {
 	return len(dm.runningTasks.taskIDs)
 }
 
-func (dm *Manager) setRunningTask(task *proto.Task, dispatcher *dispatcher) {
+func (dm *Manager) setRunningTask(task *proto.Task, dispatcher Dispatcher) {
 	dm.runningTasks.Lock()
 	defer dm.runningTasks.Unlock()
 	dm.runningTasks.taskIDs[task.ID] = struct{}{}
@@ -81,7 +82,7 @@ type Manager struct {
 	runningTasks struct {
 		syncutil.RWMutex
 		taskIDs     map[int64]struct{}
-		dispatchers map[int64]*dispatcher
+		dispatchers map[int64]Dispatcher
 	}
 	finishedTaskCh chan *proto.Task
 }
@@ -100,7 +101,7 @@ func NewManager(ctx context.Context, taskTable *storage.TaskManager, serverID st
 	dispatcherManager.gPool = gPool
 	dispatcherManager.ctx, dispatcherManager.cancel = context.WithCancel(ctx)
 	dispatcherManager.runningTasks.taskIDs = make(map[int64]struct{})
-	dispatcherManager.runningTasks.dispatchers = make(map[int64]*dispatcher)
+	dispatcherManager.runningTasks.dispatchers = make(map[int64]Dispatcher)
 
 	return dispatcherManager, nil
 }
@@ -157,6 +158,21 @@ func (dm *Manager) dispatchTaskLoop() {
 				if dm.isRunningTask(task.ID) {
 					continue
 				}
+				// we check it before start dispatcher, so no need to check it again.
+				// see startDispatcher.
+				// this should not happen normally, unless user modify system table
+				// directly.
+				if GetDispatcherFactory(task.Type) == nil {
+					logutil.BgLogger().Warn("unknown task type", zap.Int64("task-id", task.ID),
+						zap.String("task-type", task.Type))
+					prevState := task.State
+					task.State = proto.TaskStateFailed
+					task.Error = errors.New("unknown task type")
+					if _, err2 := dm.taskMgr.UpdateGlobalTaskAndAddSubTasks(task, nil, prevState); err2 != nil {
+						logutil.BgLogger().Warn("update task state of unknown type failed", zap.Error(err2))
+					}
+					continue
+				}
 				// the task is not in runningTasks set when:
 				// owner changed or task is cancelled when status is pending.
 				if task.State == proto.TaskStateRunning || task.State == proto.TaskStateReverting || task.State == proto.TaskStateCancelling {
@@ -186,17 +202,15 @@ func (*Manager) checkConcurrencyOverflow(cnt int) bool {
 func (dm *Manager) startDispatcher(task *proto.Task) {
 	// Using the pool with block, so it wouldn't return an error.
 	_ = dm.gPool.Run(func() {
-		dispatcher, err := newDispatcher(dm.ctx, dm.taskMgr, dm.serverID, task)
-		if err != nil {
-			return
-		}
+		dispatcherFactory := GetDispatcherFactory(task.Type)
+		dispatcher := dispatcherFactory(dm.ctx, dm.taskMgr, dm.serverID, task)
 		dm.setRunningTask(task, dispatcher)
-		dispatcher.executeTask()
+		dispatcher.ExecuteTask()
 		dm.delRunningTask(task.ID)
 	})
 }
 
 // MockDispatcher mock one dispatcher for one task, only used for tests.
-func (dm *Manager) MockDispatcher(task *proto.Task) (*dispatcher, error) {
-	return newDispatcher(dm.ctx, dm.taskMgr, dm.serverID, task)
+func (dm *Manager) MockDispatcher(task *proto.Task) *BaseDispatcher {
+	return NewBaseDispatcher(dm.ctx, dm.taskMgr, dm.serverID, task)
 }

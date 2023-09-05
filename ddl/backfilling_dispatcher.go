@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -32,28 +33,28 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-type backfillingDispatcher struct {
+type backfillingDispatcherExt struct {
 	d *ddl
 }
 
-var _ dispatcher.Dispatcher = (*backfillingDispatcher)(nil)
+var _ dispatcher.Extension = (*backfillingDispatcherExt)(nil)
 
-// NewBackfillingDispatcher creates a new backfillingDispatcher.
-func NewBackfillingDispatcher(d DDL) (dispatcher.Dispatcher, error) {
+// NewBackfillingDispatcherExt creates a new backfillingDispatcherExt.
+func NewBackfillingDispatcherExt(d DDL) (dispatcher.Extension, error) {
 	ddl, ok := d.(*ddl)
 	if !ok {
 		return nil, errors.New("The getDDL result should be the type of *ddl")
 	}
-	return &backfillingDispatcher{
+	return &backfillingDispatcherExt{
 		d: ddl,
 	}, nil
 }
 
-func (*backfillingDispatcher) OnTick(_ context.Context, _ *proto.Task) {
+func (*backfillingDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
 // OnNextStage generate next stage's plan.
-func (h *backfillingDispatcher) OnNextStage(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
+func (h *backfillingDispatcherExt) OnNextStage(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
 	var globalTaskMeta BackfillGlobalMeta
 	if err := json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
 		return nil, err
@@ -112,7 +113,7 @@ func (h *backfillingDispatcher) OnNextStage(ctx context.Context, _ dispatcher.Ta
 }
 
 // OnErrStage generate error handling stage's plan.
-func (*backfillingDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, receiveErr []error) (meta []byte, err error) {
+func (*backfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, receiveErr []error) (meta []byte, err error) {
 	// We do not need extra meta info when rolling back
 	firstErr := receiveErr[0]
 	task.Error = firstErr
@@ -120,13 +121,26 @@ func (*backfillingDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHan
 	return nil, nil
 }
 
-func (*backfillingDispatcher) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*backfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return dispatcher.GenerateSchedulerNodes(ctx)
 }
 
 // IsRetryableErr implements TaskFlowHandle.IsRetryableErr interface.
-func (*backfillingDispatcher) IsRetryableErr(error) bool {
+func (*backfillingDispatcherExt) IsRetryableErr(error) bool {
 	return true
+}
+
+type litBackfillDispatcher struct {
+	*dispatcher.BaseDispatcher
+}
+
+func newLitBackfillDispatcher(ctx context.Context, taskMgr *storage.TaskManager,
+	serverID string, task *proto.Task, handle dispatcher.Extension) dispatcher.Dispatcher {
+	dis := litBackfillDispatcher{
+		BaseDispatcher: dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task),
+	}
+	dis.BaseDispatcher.Extension = handle
+	return &dis
 }
 
 func getTblInfo(d *ddl, job *model.Job) (tblInfo *model.TableInfo, err error) {
