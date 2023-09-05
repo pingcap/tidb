@@ -57,4 +57,5 @@ func getSchedulerFactory(taskType string) schedulerFactoryFn {
 // ClearSchedulers is only used in test
 func ClearSchedulers() {
 	taskTypes = make(map[string]taskTypeOptions)
+	taskSchedulerFactories = make(map[string]schedulerFactoryFn)
 }

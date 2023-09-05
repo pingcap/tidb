@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -206,7 +207,7 @@ type postStepExecutor struct {
 	logger   *zap.Logger
 }
 
-var _ scheduler.SubtaskExecutor = &postStepExecutor{}
+var _ execute.SubtaskExecutor = &postStepExecutor{}
 
 func (p *postStepExecutor) SplitSubtask(_ context.Context, metaBytes []byte) ([]proto.MinimalTask, error) {
 	mTask := &postProcessStepMinimalTask{
@@ -231,7 +232,7 @@ func newImportScheduler(ctx context.Context, id string, taskID int64, taskTable 
 	return s
 }
 
-func (s *importScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task) (scheduler.SubtaskExecutor, error) {
+func (s *importScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task) (execute.SubtaskExecutor, error) {
 	taskMeta := TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, err
@@ -261,7 +262,7 @@ func (s *importScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Ta
 	}
 }
 
-func (s *importScheduler) GetMiniTaskExecutor(minimalTask proto.MinimalTask, _ string, step int64) (scheduler.MiniTaskExecutor, error) {
+func (s *importScheduler) GetMiniTaskExecutor(minimalTask proto.MinimalTask, _ string, step int64) (execute.MiniTaskExecutor, error) {
 	switch step {
 	case StepImport:
 		task, ok := minimalTask.(*importStepMinimalTask)

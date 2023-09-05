@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/util/logutil"
@@ -185,7 +186,7 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 	return s.getError()
 }
 
-func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler SubtaskExecutor, subtask *proto.Subtask, minimalTaskCh chan func()) {
+func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.SubtaskExecutor, subtask *proto.Subtask, minimalTaskCh chan func()) {
 	minimalTasks, err := scheduler.SplitSubtask(ctx, subtask.Meta)
 	if err != nil {
 		s.onError(err)
@@ -257,7 +258,7 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler SubtaskExecuto
 	s.onSubtaskFinished(ctx, scheduler, subtask)
 }
 
-func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler SubtaskExecutor, subtask *proto.Subtask) {
+func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute.SubtaskExecutor, subtask *proto.Subtask) {
 	var subtaskMeta []byte
 	if err := s.getError(); err == nil {
 		if subtaskMeta, err = scheduler.OnFinished(ctx, subtask.Meta); err != nil {

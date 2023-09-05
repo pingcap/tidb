@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 )
 
 // TaskTable defines the interface to access task table.
@@ -51,31 +52,8 @@ type Scheduler interface {
 // Extension extends the scheduler.
 // each task type should implement this interface.
 type Extension interface {
-	GetSubtaskExecutor(ctx context.Context, task *proto.Task) (SubtaskExecutor, error)
-	GetMiniTaskExecutor(minimalTask proto.MinimalTask, tp string, step int64) (MiniTaskExecutor, error)
-}
-
-// SubtaskExecutor defines the executor of a subtask.
-type SubtaskExecutor interface {
-	// Init is used to initialize the environment for the subtask executor.
-	Init(context.Context) error
-	// SplitSubtask is used to split the subtask into multiple minimal tasks.
-	SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error)
-	// Cleanup is used to clean up the environment for the subtask executor.
-	Cleanup(context.Context) error
-	// OnFinished is used to handle the subtask when it is finished.
-	// return the result of the subtask.
-	// MUST return subtask meta back on success.
-	OnFinished(ctx context.Context, subtask []byte) ([]byte, error)
-	// Rollback is used to roll back all subtasks.
-	Rollback(context.Context) error
-}
-
-// MiniTaskExecutor defines the interface of a subtask executor.
-// User should implement this interface to define their own subtask executor.
-// TODO: Rename to minimal task executor.
-type MiniTaskExecutor interface {
-	Run(ctx context.Context) error
+	GetSubtaskExecutor(ctx context.Context, task *proto.Task) (execute.SubtaskExecutor, error)
+	GetMiniTaskExecutor(minimalTask proto.MinimalTask, tp string, step int64) (execute.MiniTaskExecutor, error)
 }
 
 // EmptyScheduler is an empty scheduler.
@@ -83,9 +61,9 @@ type MiniTaskExecutor interface {
 type EmptyScheduler struct {
 }
 
-var _ SubtaskExecutor = &EmptyScheduler{}
+var _ execute.SubtaskExecutor = &EmptyScheduler{}
 
-// InitSubtaskExecEnv implements the SubtaskExecutor interface.
+// Init implements the SubtaskExecutor interface.
 func (*EmptyScheduler) Init(context.Context) error {
 	return nil
 }
@@ -95,12 +73,12 @@ func (*EmptyScheduler) SplitSubtask(context.Context, []byte) ([]proto.MinimalTas
 	return nil, nil
 }
 
-// CleanupSubtaskExecEnv implements the SubtaskExecutor interface.
+// Cleanup implements the SubtaskExecutor interface.
 func (*EmptyScheduler) Cleanup(context.Context) error {
 	return nil
 }
 
-// OnSubtaskFinished implements the SubtaskExecutor interface.
+// OnFinished implements the SubtaskExecutor interface.
 func (*EmptyScheduler) OnFinished(_ context.Context, metaBytes []byte) ([]byte, error) {
 	return metaBytes, nil
 }
@@ -115,7 +93,7 @@ func (*EmptyScheduler) Rollback(context.Context) error {
 type EmptyExecutor struct {
 }
 
-var _ MiniTaskExecutor = &EmptyExecutor{}
+var _ execute.MiniTaskExecutor = &EmptyExecutor{}
 
 // Run implements the MiniTaskExecutor interface.
 func (*EmptyExecutor) Run(context.Context) error {

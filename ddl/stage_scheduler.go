@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/logutil"
@@ -43,7 +44,7 @@ type BackfillSubTaskMeta struct {
 }
 
 // NewBackfillSchedulerHandle creates a new backfill scheduler.
-func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl, stepForImport bool) (scheduler.SubtaskExecutor, error) {
+func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl, stepForImport bool) (execute.SubtaskExecutor, error) {
 	bgm := &BackfillGlobalMeta{}
 	err := json.Unmarshal(taskMeta, bgm)
 	if err != nil {
@@ -93,7 +94,7 @@ func newBackfillDistScheduler(ctx context.Context, id string, taskID int64, task
 	return s
 }
 
-func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task) (scheduler.SubtaskExecutor, error) {
+func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task) (execute.SubtaskExecutor, error) {
 	switch task.Step {
 	case proto.StepOne:
 		return NewBackfillSchedulerHandle(ctx, task.Meta, s.d, false)
@@ -104,6 +105,6 @@ func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *pr
 	}
 }
 
-func (*backfillDistScheduler) GetMiniTaskExecutor(_ proto.MinimalTask, _ string, _ int64) (scheduler.MiniTaskExecutor, error) {
+func (*backfillDistScheduler) GetMiniTaskExecutor(_ proto.MinimalTask, _ string, _ int64) (execute.MiniTaskExecutor, error) {
 	return &scheduler.EmptyExecutor{}, nil
 }
