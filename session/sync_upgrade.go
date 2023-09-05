@@ -142,7 +142,7 @@ func isUpgradingClusterStateWithRetry(s sessionctx.Context, oldVer, newVer int64
 			logger.Error("get global state failed", zap.Int64("old version", oldVer), zap.Int64("latest version", newVer), zap.Error(err))
 			return
 		}
-		if i%10 == 0 {
+		if i%25 == 0 {
 			logger.Warn("get global state failed", zap.Int64("old version", oldVer), zap.Int64("latest version", newVer), zap.Error(err))
 		}
 		time.Sleep(interval)

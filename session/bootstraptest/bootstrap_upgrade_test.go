@@ -328,6 +328,7 @@ func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, false, isUpgrading)
 	upgradeHandler := handler.NewClusterUpgradeHandler(store)
+	upgradeHandler.StartUpgrade()
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
