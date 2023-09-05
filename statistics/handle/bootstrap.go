@@ -117,7 +117,7 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache *
 			if idxInfo == nil {
 				continue
 			}
-			hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), 0, 0)
+			hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), 0, 0, false)
 			index := &statistics.Index{
 				Histogram:  *hist,
 				Info:       idxInfo,
@@ -141,7 +141,7 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache *
 			if colInfo == nil {
 				continue
 			}
-			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, row.GetInt64(6))
+			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, row.GetInt64(6), true)
 			hist.Correlation = row.GetFloat64(8)
 			col := &statistics.Column{
 				Histogram:  *hist,
@@ -188,7 +188,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *cach
 				cms = nil
 				terror.Log(errors.Trace(err))
 			}
-			hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
+			hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0, false)
 			index := &statistics.Index{
 				Histogram:  *hist,
 				CMSketch:   cms,
@@ -214,7 +214,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *cach
 			if colInfo == nil {
 				continue
 			}
-			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
+			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize, false)
 			hist.Correlation = row.GetFloat64(9)
 			col := &statistics.Column{
 				Histogram:  *hist,

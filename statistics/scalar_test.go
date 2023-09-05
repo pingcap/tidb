@@ -168,7 +168,7 @@ func TestCalcFraction(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		hg := NewHistogram(0, 0, 0, 0, test.tp, 1, 0)
+		hg := NewHistogram(0, 0, 0, 0, test.tp, 1, 0, false)
 		hg.AppendBucket(&test.lower, &test.upper, 0, 0)
 		hg.PreCalculateScalar()
 		fraction := hg.calcFraction(0, &test.value)

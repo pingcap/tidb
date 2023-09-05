@@ -76,6 +76,9 @@ type Histogram struct {
 	// the column values. This ranges from -1 to +1, and it is only valid for Column histogram, not for
 	// Index histogram.
 	Correlation float64
+	bucketSize  int
+	// pseudo is true if this histogram is not collected from statistics.
+	pseudo bool
 }
 
 // EmptyHistogramSize is the size of empty histogram, about 112 = 8*6 for int64 & float64, 24*2 for arrays, 8*2 for references.
@@ -101,7 +104,7 @@ type scalar struct {
 const EmptyScalarSize = int64(unsafe.Sizeof(scalar{}))
 
 // NewHistogram creates a new histogram.
-func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {
+func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64, pseudo bool) *Histogram {
 	if tp.EvalType() == types.ETString {
 		// The histogram will store the string value's 'sort key' representation of its collation.
 		// If we directly set the field type's collation to its original one. We would decode the Key representation using its collation.
@@ -109,16 +112,21 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 		tp = tp.Clone()
 		tp.SetCollate(charset.CollationBin)
 	}
-	return &Histogram{
+	result := &Histogram{
 		ID:                id,
 		NDV:               ndv,
 		NullCount:         nullCount,
 		LastUpdateVersion: version,
 		Tp:                tp,
-		Bounds:            chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 2*bucketSize),
-		Buckets:           make([]Bucket, 0, bucketSize),
+		bucketSize:        bucketSize,
 		TotColSize:        totColSize,
+		pseudo:            pseudo,
 	}
+	if !pseudo {
+		result.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 2*bucketSize)
+		result.Buckets = make([]Bucket, 0, bucketSize)
+	}
+	return result
 }
 
 // GetLower gets the lower bound of bucket `idx`.
@@ -186,7 +194,7 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 
 // ConvertTo converts the histogram bucket values into `tp`.
 func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
-	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.TotColSize)
+	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.TotColSize, false)
 	hist.Correlation = hg.Correlation
 	iter := chunk.NewIterator4Chunk(hg.Bounds)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -728,7 +736,7 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 // be after all histograms merged.
 func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
 	tp := types.NewFieldType(mysql.TypeBlob)
-	hg := NewHistogram(0, protoHg.Ndv, 0, 0, tp, len(protoHg.Buckets), 0)
+	hg := NewHistogram(0, protoHg.Ndv, 0, 0, tp, len(protoHg.Buckets), 0, false)
 	for _, bucket := range protoHg.Buckets {
 		lower, upper := types.NewBytesDatum(bucket.LowerBound), types.NewBytesDatum(bucket.UpperBound)
 		if bucket.Ndv != nil {
@@ -1458,7 +1466,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 
 	// Calc the bucket lower.
 	if minValue == nil || len(globalBuckets) == 0 { // both hists and popedTopN are empty, returns an empty hist in this case
-		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize), nil
+		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize, false), nil
 	}
 	globalBuckets[0].lower = minValue.Clone()
 	for i := 1; i < len(globalBuckets); i++ {
@@ -1483,7 +1491,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		}
 	}
 
-	globalHist := NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize)
+	globalHist := NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize, false)
 	for _, bucket := range globalBuckets {
 		if !isIndex {
 			bucket.NDV = 0 // bucket.NDV is not maintained for column histograms

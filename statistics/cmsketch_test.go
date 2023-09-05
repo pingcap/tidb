@@ -382,7 +382,7 @@ func TestMergePartTopN2GlobalTopNWithHists(t *testing.T) {
 	hists := make([]*Histogram, 0, 10)
 	for i := 0; i < 10; i++ {
 		// Construct Hist
-		h := NewHistogram(1, 10, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0)
+		h := NewHistogram(1, 10, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0, false)
 		h.Bounds.AppendInt64(0, 1)
 		h.Buckets = append(h.Buckets, Bucket{Repeat: 10, Count: 20})
 		h.Bounds.AppendInt64(0, 2)

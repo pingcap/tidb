@@ -604,7 +604,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool) *Table {
 				PhysicalID: fakePhysicalID,
 				Info:       col,
 				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
-				Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
+				Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0, true),
 			}
 			if allowTriggerLoading {
 				t.Columns[col.ID].PhysicalID = tblInfo.ID
@@ -616,7 +616,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool) *Table {
 			t.Indices[idx.ID] = &Index{
 				PhysicalID: fakePhysicalID,
 				Info:       idx,
-				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0),
+				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0, true),
 			}
 			if allowTriggerLoading {
 				t.Indices[idx.ID].PhysicalID = tblInfo.ID

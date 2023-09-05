@@ -45,7 +45,7 @@ func NewSortedBuilder(sc *stmtctx.StatementContext, numBuckets, id int64, tp *ty
 		sc:              sc,
 		numBuckets:      numBuckets,
 		valuesPerBucket: 1,
-		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets), 0),
+		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets), 0, true),
 		needBucketNDV:   statsVer >= Version2,
 	}
 }
@@ -121,7 +121,7 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 		ndv = count
 	}
 	if count == 0 || len(collector.Samples) == 0 {
-		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil
+		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize, false), nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	samples := collector.Samples
@@ -129,7 +129,7 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 	if err != nil {
 		return nil, err
 	}
-	hg := NewHistogram(id, ndv, nullCount, 0, tp, int(numBuckets), collector.TotalSize)
+	hg := NewHistogram(id, ndv, nullCount, 0, tp, int(numBuckets), collector.TotalSize, false)
 
 	corrXYSum, err := buildHist(sc, hg, samples, count, ndv, numBuckets, nil)
 	if err != nil {
@@ -271,7 +271,7 @@ func BuildHistAndTopN(
 		ndv = count
 	}
 	if count == 0 || len(collector.Samples) == 0 || ndv == 0 {
-		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil, nil
+		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize, false), nil, nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	samples := collector.Samples
@@ -279,7 +279,7 @@ func BuildHistAndTopN(
 	if err != nil {
 		return nil, nil, err
 	}
-	hg := NewHistogram(id, ndv, nullCount, 0, tp, numBuckets, collector.TotalSize)
+	hg := NewHistogram(id, ndv, nullCount, 0, tp, numBuckets, collector.TotalSize, false)
 
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.

@@ -127,7 +127,7 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.Reco
 }
 
 func mockHistogram(lower, num int64) *Histogram {
-	h := NewHistogram(0, num, 0, 0, types.NewFieldType(mysql.TypeLonglong), int(num), 0)
+	h := NewHistogram(0, num, 0, 0, types.NewFieldType(mysql.TypeLonglong), int(num), 0, false)
 	for i := int64(0); i < num; i++ {
 		lower, upper := types.NewIntDatum(lower+i), types.NewIntDatum(lower+i)
 		h.AppendBucket(&lower, &upper, i+1, 1)

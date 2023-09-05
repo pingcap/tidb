@@ -62,7 +62,7 @@ func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
 	hists := make([]*statistics.Histogram, 0, partitions)
 	for i := 0; i < partitions; i++ {
 		// Construct Hist
-		h := statistics.NewHistogram(1, 10, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0)
+		h := statistics.NewHistogram(1, 10, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0, false)
 		h.Bounds.AppendInt64(0, 1)
 		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 20})
 		h.Bounds.AppendInt64(0, 2)
@@ -113,7 +113,7 @@ func benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(partitions int, b *test
 	hists := make([]*statistics.Histogram, 0, partitions)
 	for i := 0; i < partitions; i++ {
 		// Construct Hist
-		h := statistics.NewHistogram(1, 10, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0)
+		h := statistics.NewHistogram(1, 10, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0, false)
 		h.Bounds.AppendInt64(0, 1)
 		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 20})
 		h.Bounds.AppendInt64(0, 2)

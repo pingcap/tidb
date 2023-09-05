@@ -103,7 +103,7 @@ func HistogramFromStorage(reader *StatsReader, tableID int64, colID int64, tp *t
 		return nil, errors.Trace(err)
 	}
 	bucketSize := len(rows)
-	hg := NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize)
+	hg := NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize, false)
 	hg.Correlation = corr
 	totalCount := int64(0)
 	for i := 0; i < bucketSize; i++ {
@@ -245,7 +245,7 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 			config.GetGlobalConfig().Performance.LiteInitStats
 		if notNeedLoad {
 			idx = &Index{
-				Histogram:  *NewHistogram(histID, distinct, nullCount, histVer, types.NewFieldType(mysql.TypeBlob), 0, 0),
+				Histogram:  *NewHistogram(histID, distinct, nullCount, histVer, types.NewFieldType(mysql.TypeBlob), 0, 0, false),
 				StatsVer:   statsVer,
 				Info:       idxInfo,
 				Flag:       flag,
@@ -340,7 +340,7 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 		if notNeedLoad {
 			col = &Column{
 				PhysicalID: table.PhysicalID,
-				Histogram:  *NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
+				Histogram:  *NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize, false),
 				Info:       colInfo,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       flag,
