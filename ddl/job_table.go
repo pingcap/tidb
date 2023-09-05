@@ -301,9 +301,7 @@ func (d *ddl) startDispatchLoop() {
 		d.loadDDLJobAndRun(se, d.generalDDLWorkerPool, d.getGeneralJob)
 		d.loadDDLJobAndRun(se, d.reorgWorkerPool, d.getReorgJob)
 
-		// 1. gc tidb_ddl_history
-		// 2. gc tidb_global_task
-		// 3. gc tidb_background_subtask_history
+		// gc tidb_ddl_history
 		// set limitation
 	}
 }

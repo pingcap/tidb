@@ -108,6 +108,8 @@ func NewManager(ctx context.Context, taskTable *storage.TaskManager, serverID st
 // Start the dispatcherManager, start the dispatchTaskLoop to start multiple dispatchers.
 func (dm *Manager) Start() {
 	dm.wg.Run(dm.dispatchTaskLoop)
+	// run task/subtask history table gc
+	dm.wg.Run(dm.gcTaskTable)
 	dm.inited = true
 }
 
@@ -169,6 +171,24 @@ func (dm *Manager) dispatchTaskLoop() {
 				}
 				dm.startDispatcher(task)
 				cnt++
+			}
+		}
+	}
+}
+
+func (dm *Manager) gcTaskTable() {
+	logutil.BgLogger().Info("task table gc loop start")
+	ticker := time.NewTicker(taskTableGcInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-dm.ctx.Done():
+			logutil.BgLogger().Info("task table gc loop exits", zap.Error(dm.ctx.Err()), zap.Int64("interval", int64(taskTableGcInterval)/1000000))
+			return
+		case <-ticker.C:
+			err := dm.taskMgr.GC()
+			if err != nil {
+				logutil.BgLogger().Warn("task table gc failed", zap.Error(err))
 			}
 		}
 	}

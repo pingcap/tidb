@@ -42,7 +42,7 @@ const (
 	DefaultLiveNodesCheckInterval = 2
 )
 
-var (
+const (
 	// DefaultDispatchConcurrency is the default concurrency for handling task.
 	DefaultDispatchConcurrency = 4
 	checkTaskFinishedInterval  = 500 * time.Millisecond
@@ -50,6 +50,7 @@ var (
 	nonRetrySQLTime            = 1
 	retrySQLTimes              = variable.DefTiDBDDLErrorCountLimit
 	retrySQLInterval           = 500 * time.Millisecond
+	taskTableGcInterval        = 10 * time.Minute
 )
 
 // TaskHandle provides the interface for operations needed by Dispatcher.
@@ -115,7 +116,6 @@ func (d *dispatcher) executeTask() {
 	logutil.Logger(d.logCtx).Info("execute one task",
 		zap.String("state", d.task.State), zap.Uint64("concurrency", d.task.Concurrency))
 	d.scheduleTask()
-	// TODO: manage history task table.
 }
 
 // refreshTask fetch task state from tidb_global_task table.
@@ -160,6 +160,7 @@ func (d *dispatcher) scheduleTask() {
 				err = d.onRunning()
 			case proto.TaskStateSucceed, proto.TaskStateReverted, proto.TaskStateFailed:
 				logutil.Logger(d.logCtx).Info("schedule task, task is finished", zap.String("state", d.task.State))
+				// move all the subTask to subTask history table
 				return
 			}
 			if err != nil {

@@ -663,3 +663,12 @@ func (stm *TaskManager) GetSubtasksByStep(taskID, step int64) ([]*proto.Subtask,
 	}
 	return subtasks, nil
 }
+
+func (stm *TaskManager) GC() error {
+	// TODO:
+	// 1. gc tidb_background_subtask_history (TaskStateSucceed/TaskStateFailed/TaskStateRevertFailed)
+	// 2. gc corresponding task record from tidb_global_task
+	// 3. in one transaction
+
+	return nil
+}
