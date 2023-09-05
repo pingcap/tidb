@@ -15,6 +15,7 @@
 package aggfuncs_test
 
 import (
+	"cmp"
 	"fmt"
 	"testing"
 	"time"
