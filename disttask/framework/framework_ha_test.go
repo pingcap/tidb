@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -30,7 +31,7 @@ import (
 
 type haTestFlowHandle struct{}
 
-var _ dispatcher.Dispatcher = (*haTestFlowHandle)(nil)
+var _ dispatcher.Extension = (*haTestFlowHandle)(nil)
 
 func (*haTestFlowHandle) OnTick(_ context.Context, _ *proto.Task) {
 }
@@ -77,8 +78,13 @@ func (*haTestFlowHandle) IsRetryableErr(error) bool {
 }
 
 func RegisterHATaskMeta(m *sync.Map) {
-	dispatcher.ClearTaskDispatcher()
-	dispatcher.RegisterTaskDispatcher(proto.TaskTypeExample, &haTestFlowHandle{})
+	dispatcher.ClearDispatcherFactory()
+	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
+		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
+			baseDispatcher.Extension = &haTestFlowHandle{}
+			return baseDispatcher
+		})
 	scheduler.ClearSchedulers()
 	scheduler.RegisterTaskType(proto.TaskTypeExample)
 	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
@@ -96,7 +102,7 @@ func RegisterHATaskMeta(m *sync.Map) {
 }
 
 func TestHABasic(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 	RegisterHATaskMeta(&m)
@@ -112,7 +118,7 @@ func TestHABasic(t *testing.T) {
 }
 
 func TestHAManyNodes(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 
@@ -129,7 +135,7 @@ func TestHAManyNodes(t *testing.T) {
 }
 
 func TestHAFailInDifferentStage(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 
@@ -151,7 +157,7 @@ func TestHAFailInDifferentStage(t *testing.T) {
 }
 
 func TestHAFailInDifferentStageManyNodes(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 
@@ -173,7 +179,7 @@ func TestHAFailInDifferentStageManyNodes(t *testing.T) {
 }
 
 func TestHAReplacedButRunning(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 
@@ -186,7 +192,7 @@ func TestHAReplacedButRunning(t *testing.T) {
 }
 
 func TestHAReplacedButRunningManyNodes(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
 
