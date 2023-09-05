@@ -84,7 +84,14 @@ func TestZapLoggerWithKeys(t *testing.T) {
 
 	err = InitLogger(conf)
 	require.NoError(t, err)
-	newLogger := LoggerWithTraceInfo(log.L(), &model.TraceInfo{ConnectionID: 456, SessionAlias: "alias789"})
+	ctx1 = WithTraceFields(context.Background(), &model.TraceInfo{ConnectionID: 456, SessionAlias: "alias789"})
+	testZapLogger(ctx1, t, fileCfg.Filename, zapLogWithTraceInfoPattern)
+	err = os.Remove(fileCfg.Filename)
+	require.NoError(t, err)
+
+	err = InitLogger(conf)
+	require.NoError(t, err)
+	newLogger := LoggerWithTraceInfo(log.L(), &model.TraceInfo{ConnectionID: 789, SessionAlias: "alias012"})
 	ctx1 = context.WithValue(context.Background(), CtxLogKey, newLogger)
 	testZapLogger(ctx1, t, fileCfg.Filename, zapLogWithTraceInfoPattern)
 	err = os.Remove(fileCfg.Filename)
