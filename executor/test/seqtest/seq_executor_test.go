@@ -1210,6 +1210,30 @@ func TestShowForNewCollations(t *testing.T) {
 	)
 	tk.MustQuery("show collation").Check(expectRows)
 	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
+	tk.MustQuery("show character set like '%utf8mb4%'").Check(testkit.Rows("utf8mb4 UTF-8 Unicode utf8mb4_bin 4"))
+	tk.MustQuery("select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
+	// update default_collation_for_utf8mb4
+	tk.MustExec("set @@session.default_collation_for_utf8mb4='utf8mb4_0900_ai_ci';")
+	tk.MustQuery("show variables like 'default_collation_for_utf8mb4';").Check(testkit.Rows("default_collation_for_utf8mb4 utf8mb4_0900_ai_ci"))
+	expectRows1 := testkit.Rows(
+		"ascii_bin ascii 65 Yes Yes 1",
+		"binary binary 63 Yes Yes 1",
+		"gbk_bin gbk 87  Yes 1",
+		"gbk_chinese_ci gbk 28 Yes Yes 1",
+		"latin1_bin latin1 47 Yes Yes 1",
+		"utf8_bin utf8 83 Yes Yes 1",
+		"utf8_general_ci utf8 33  Yes 1",
+		"utf8_unicode_ci utf8 192  Yes 1",
+		"utf8mb4_0900_ai_ci utf8mb4 255 Yes Yes 1",
+		"utf8mb4_0900_bin utf8mb4 309  Yes 1",
+		"utf8mb4_bin utf8mb4 46  Yes 1",
+		"utf8mb4_general_ci utf8mb4 45  Yes 1",
+		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
+	)
+	tk.MustQuery("show collation").Check(expectRows1)
+	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
+	tk.MustQuery("show character set like '%utf8mb4%'").Check(testkit.Rows("utf8mb4 UTF-8 Unicode utf8mb4_0900_ai_ci 4"))
+	tk.MustQuery("select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
 }
 
 func TestForbidUnsupportedCollations(t *testing.T) {

@@ -182,11 +182,6 @@ func GetCharsetInfoByID(coID int) (charsetStr string, collateStr string, err err
 	return mysql.DefaultCharset, mysql.DefaultCollationName, errors.Errorf("Unknown collation id %d", coID)
 }
 
-// GetCollations returns a list for all collations.
-func GetCollations() []*Collation {
-	return collations
-}
-
 func utf8Alias(csname string) string {
 	switch csname {
 	case "utf8mb3_bin":

@@ -146,6 +146,8 @@ func TestBootstrapWithError(t *testing.T) {
 			store:       store,
 			sessionVars: variable.NewSessionVars(nil),
 		}
+		globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
+		se.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
 		se.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]interface{})

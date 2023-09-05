@@ -842,11 +842,20 @@ func (e *ShowExec) fetchShowIndex() error {
 // See http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
 func (e *ShowExec) fetchShowCharset() error {
 	descs := charset.GetSupportedCharsets()
+	sessVars := e.Ctx().GetSessionVars()
 	for _, desc := range descs {
+		defaultCollation := desc.DefaultCollation
+		if desc.Name == charset.CharsetUTF8MB4 {
+			var err error
+			defaultCollation, err = sessVars.GetSessionOrGlobalSystemVar(context.Background(), variable.DefaultCollationForUTF8MB4)
+			if err != nil {
+				return err
+			}
+		}
 		e.appendRow([]interface{}{
 			desc.Name,
 			desc.Desc,
-			desc.DefaultCollation,
+			defaultCollation,
 			desc.Maxlen,
 		})
 	}
@@ -1582,6 +1591,21 @@ func (e *ShowExec) fetchShowCreateResourceGroup() error {
 	return nil
 }
 
+// isUTF8MB4AndDefaultCollation returns if the cs is utf8mb4 and the co is DefaultCollationForUTF8MB4.
+func isUTF8MB4AndDefaultCollation(sessVars *variable.SessionVars, cs, co string) (isUTF8MB4 bool, isDefault bool, err error) {
+	if cs != charset.CharsetUTF8MB4 {
+		return false, false, nil
+	}
+	defaultCollation, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), variable.DefaultCollationForUTF8MB4)
+	if err != nil {
+		return false, false, err
+	}
+	if co == defaultCollation {
+		return true, true, nil
+	}
+	return true, false, nil
+}
+
 func (e *ShowExec) fetchShowCollation() error {
 	var (
 		fieldPatternsLike collate.WildcardPattern
@@ -1592,10 +1616,17 @@ func (e *ShowExec) fetchShowCollation() error {
 		fieldFilter = e.Extractor.Field()
 	}
 
+	sessVars := e.Ctx().GetSessionVars()
 	collations := collate.GetSupportedCollations()
 	for _, v := range collations {
 		isDefault := ""
-		if v.IsDefault {
+		isUTF8MB4, isDefaultCollation, err := isUTF8MB4AndDefaultCollation(sessVars, v.CharsetName, v.Name)
+		if err != nil {
+			return err
+		}
+		if isUTF8MB4 && isDefaultCollation {
+			isDefault = "Yes"
+		} else if !isUTF8MB4 && v.IsDefault {
 			isDefault = "Yes"
 		}
 		if fieldFilter != "" && strings.ToLower(v.Name) != fieldFilter {

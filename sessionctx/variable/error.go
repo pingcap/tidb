@@ -43,6 +43,8 @@ var (
 	// ErrFunctionsNoopImpl is an error to say the behavior is protected by the tidb_enable_noop_functions sysvar.
 	// This is copied from expression.ErrFunctionsNoopImpl to prevent circular dependencies.
 	// It needs to be public for tests.
-	ErrFunctionsNoopImpl         = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil))
-	ErrVariableNoLongerSupported = dbterror.ClassVariable.NewStd(mysql.ErrVariableNoLongerSupported)
+	ErrFunctionsNoopImpl                 = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil))
+	ErrVariableNoLongerSupported         = dbterror.ClassVariable.NewStd(mysql.ErrVariableNoLongerSupported)
+	ErrInvalidDefaultUTF8MB4Collation    = dbterror.ClassVariable.NewStd(mysql.ErrInvalidDefaultUTF8MB4Collation)
+	ErrWarnDeprecatedSyntaxNoReplacement = dbterror.ClassVariable.NewStdErr(mysql.ErrWarnDeprecatedSyntaxNoReplacement, pmysql.Message("Updating '%s' is deprecated. It will be made read-only in a future release.", nil))
 )
