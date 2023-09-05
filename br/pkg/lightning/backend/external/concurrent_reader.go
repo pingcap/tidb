@@ -16,16 +16,17 @@ package external
 
 import (
 	"context"
-	"github.com/pingcap/log"
+	"io"
+
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"io"
 )
 
-// SingeFileReader is a concurrent reader for a single file.
-type SingeFileReader struct {
+// singeFileReader is a concurrent reader for a single file.
+type singeFileReader struct {
 	ctx               context.Context
 	concurrency       int
 	readBufferSize    int
@@ -40,8 +41,8 @@ type SingeFileReader struct {
 	buffer  []byte
 }
 
-// NewSingeFileReader creates a new SingeFileReader.
-func NewSingeFileReader(ctx context.Context, st storage.ExternalStorage, name string, concurrency int, readBufferSize int) (*SingeFileReader, error) {
+// newSingeFileReader creates a new singeFileReader.
+func newSingeFileReader(ctx context.Context, st storage.ExternalStorage, name string, concurrency int, readBufferSize int) (*singeFileReader, error) {
 	if st == nil {
 		return nil, nil
 	}
@@ -52,7 +53,7 @@ func NewSingeFileReader(ctx context.Context, st storage.ExternalStorage, name st
 	if err != nil {
 		return nil, err
 	}
-	return &SingeFileReader{
+	return &singeFileReader{
 		ctx:               ctx,
 		concurrency:       concurrency,
 		readBufferSize:    readBufferSize,
@@ -65,8 +66,8 @@ func NewSingeFileReader(ctx context.Context, st storage.ExternalStorage, name st
 	}, nil
 }
 
-// Reload reloads the buffer.
-func (r *SingeFileReader) Reload() error {
+// reload reloads the buffer.
+func (r *singeFileReader) reload() error {
 	if r.currentFileOffset >= r.maxFileOffset {
 		return io.EOF
 	}
@@ -86,7 +87,7 @@ func (r *SingeFileReader) Reload() error {
 
 			_, err := storage.ReadDataInRange(r.ctx, r.storage, r.name, startOffset, endOffset, r.buffer[i*r.readBufferSize:(i+1)*r.readBufferSize])
 			if err != nil && err != io.ErrUnexpectedEOF {
-				log.Warn("read meet error", zap.Any("startOffset", startOffset), zap.Any("endOffset", endOffset), zap.Error(err))
+				log.FromContext(r.ctx).Warn("read meet error", zap.Any("startOffset", startOffset), zap.Any("endOffset", endOffset), zap.Error(err))
 				return err
 			}
 			return nil
@@ -109,8 +110,8 @@ func (r *SingeFileReader) Reload() error {
 	return nil
 }
 
-// Next returns the next n bytes.
-func (r *SingeFileReader) Next(n int) []byte {
+// next returns the next n bytes.
+func (r *singeFileReader) next(n int) []byte {
 	end := mathutil.Min(r.bufferReadOffset+int64(n), r.bufferMaxOffset)
 	ret := r.buffer[r.bufferReadOffset:end]
 	r.bufferReadOffset += int64(len(ret))

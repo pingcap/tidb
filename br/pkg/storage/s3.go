@@ -70,6 +70,9 @@ var permissionCheckFn = map[Permission]func(*s3.S3, *backuppb.S3) error{
 	GetObject:     getObject,
 }
 
+// WriteBufferSize is the size of the buffer used for writing. (64K may be a better choice)
+var WriteBufferSize = 5 * 1024 * 1024
+
 // S3Storage defines some standard operations for BR/Lightning on the S3 storage.
 // It implements the `ExternalStorage` interface.
 type S3Storage struct {

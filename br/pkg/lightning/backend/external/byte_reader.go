@@ -43,7 +43,7 @@ type byteReader struct {
 	useConcurrentReader        atomic.Bool
 
 	currFileOffset int64
-	conReader      *SingeFileReader
+	conReader      *singeFileReader
 }
 
 func openStoreReaderAndSeek(
@@ -65,8 +65,8 @@ func openStoreReaderAndSeek(
 
 // newByteReader wraps readNBytes functionality to storageReader. It will not
 // close storageReader when meet error.
-func newByteReader(ctx context.Context, storageReader storage.ReadSeekCloser, bufSize int, st storage.ExternalStorage, name string, defaultUseConcurrency bool) (*byteReader, error) {
-	conReader, err := NewSingeFileReader(ctx, st, name, 8, ConcurrentReaderBufferSize)
+func newByteReader(ctx context.Context, storageReader storage.ExternalFileReader, bufSize int, st storage.ExternalStorage, name string, defaultUseConcurrency bool) (*byteReader, error) {
+	conReader, err := newSingeFileReader(ctx, st, name, 8, ConcurrentReaderBufferSize)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +171,7 @@ func (r *byteReader) cloneSlices() {
 
 func (r *byteReader) next(n int) []byte {
 	if r.useConcurrentReaderCurrent.Load() {
-		return r.conReader.Next(n)
+		return r.conReader.next(n)
 	}
 	end := mathutil.Min(r.bufOffset+n, len(r.buf))
 	ret := r.buf[r.bufOffset:end]
@@ -196,7 +196,7 @@ func (r *byteReader) reload() error {
 		}
 	}
 	if to {
-		return r.conReader.Reload()
+		return r.conReader.reload()
 	}
 	nBytes, err := io.ReadFull(r.storageReader, r.buf[0:])
 	if err != nil {

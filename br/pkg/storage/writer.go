@@ -16,9 +16,6 @@ import (
 // CompressType represents the type of compression.
 type CompressType uint8
 
-// WriteBufferSize is the size of the buffer used for writing.
-var WriteBufferSize = 64 * 1024
-
 const (
 	// NoCompression won't compress given bytes.
 	NoCompression CompressType = iota
