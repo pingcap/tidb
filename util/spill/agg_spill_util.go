@@ -61,43 +61,43 @@ func DeserializeFloat64(buf []byte, pos int) float64 {
 }
 
 // SerializeBool serializes bool type
-func SerializeBool(value bool, buf []byte, tmpBuf []byte) []byte {
+func SerializeBool(value bool, tmpBuf []byte) []byte {
 	*(*bool)(unsafe.Pointer(&tmpBuf[0])) = value
-	return append(buf, tmpBuf...)
+	return tmpBuf
 }
 
 // SerializeBool serializes int8 type
-func SerializeInt8(value int8, buf []byte, tmpBuf []byte) []byte {
+func SerializeInt8(value int8, tmpBuf []byte) []byte {
 	*(*int8)(unsafe.Pointer(&tmpBuf[0])) = value
-	return append(buf, tmpBuf...)
+	return tmpBuf
 }
 
 // SerializeBool serializes int32 type
-func SerializeInt32(value int32, buf []byte, tmpBuf []byte) []byte {
+func SerializeInt32(value int32, tmpBuf []byte) []byte {
 	*(*int32)(unsafe.Pointer(&tmpBuf[0])) = value
-	return append(buf, tmpBuf...)
+	return tmpBuf
 }
 
 // SerializeBool serializes uint32 type
-func SerializeUint32(value uint32, buf []byte, tmpBuf []byte) []byte {
+func SerializeUint32(value uint32, tmpBuf []byte) []byte {
 	*(*uint32)(unsafe.Pointer(&tmpBuf[0])) = value
-	return append(buf, tmpBuf...)
+	return tmpBuf
 }
 
 // SerializeBool serializes uint64 type
-func SerializeUint64(value uint64, buf []byte, tmpBuf []byte) []byte {
+func SerializeUint64(value uint64, tmpBuf []byte) []byte {
 	*(*uint64)(unsafe.Pointer(&tmpBuf[0])) = value
-	return append(buf, tmpBuf...)
+	return tmpBuf
 }
 
 // SerializeBool serializes int64 type
-func SerializeInt64(value int64, buf []byte, tmpBuf []byte) []byte {
+func SerializeInt64(value int64, tmpBuf []byte) []byte {
 	*(*int64)(unsafe.Pointer(&tmpBuf[0])) = value
-	return append(buf, tmpBuf...)
+	return tmpBuf
 }
 
 // SerializeBool serializes float64 type
-func SerializeFloat64(value float64, buf []byte, tmpBuf []byte) []byte {
+func SerializeFloat64(value float64, tmpBuf []byte) []byte {
 	*(*float64)(unsafe.Pointer(&tmpBuf[0])) = value
-	return append(buf, tmpBuf...)
+	return tmpBuf
 }
