@@ -585,7 +585,8 @@ const (
 	// CreateDistFrameworkMeta create a system table that distributed task framework use to store meta information
 	CreateDistFrameworkMeta = `CREATE TABLE IF NOT EXISTS mysql.dist_framework_meta (
         host VARCHAR(100) NOT NULL PRIMARY KEY,
-        role VARCHAR(64));`
+        role VARCHAR(64),
+        keyspace_id bigint(8) NOT NULL DEFAULT -1);`
 
 	// CreateLoadDataJobs is a table that LOAD DATA uses
 	CreateLoadDataJobs = `CREATE TABLE IF NOT EXISTS mysql.load_data_jobs (

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -37,7 +36,7 @@ var (
 	subtaskExecutorPoolSize int32 = 10
 	// same as dispatcher
 	checkTime        = 300 * time.Millisecond
-	retrySQLTimes    = variable.DefTiDBDDLErrorCountLimit
+	retrySQLTimes    = 3
 	retrySQLInterval = 500 * time.Millisecond
 )
 
