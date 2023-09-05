@@ -97,7 +97,7 @@ func TestInsertIntoStatsTableLocked(t *testing.T) {
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.Eq(ctx),
 		gomock.Eq(useCurrentSession),
-		gomock.Eq("INSERT INTO mysql.stats_table_locked (table_id) VALUES (%?) ON DUPLICATE KEY UPDATE table_id = %?"),
+		gomock.Eq(insertSQL),
 		gomock.Eq([]interface{}{int64(1), int64(1)}),
 	)
 	err := insertIntoStatsTableLocked(ctx, exec, 1)
@@ -133,7 +133,7 @@ func TestAddLockedTables(t *testing.T) {
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		gomock.Eq(useCurrentSession),
-		"SELECT table_id FROM mysql.stats_table_locked",
+		selectSQL,
 	).Return(rows, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(

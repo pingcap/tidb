@@ -134,7 +134,7 @@ func executeQueryLockedTables(exec *mock.MockRestrictedSQLExecutor, numRows int,
 		exec.EXPECT().ExecRestrictedSQL(
 			gomock.All(&ctxMatcher{}),
 			useCurrentSession,
-			"SELECT table_id FROM mysql.stats_table_locked",
+			selectSQL,
 		).Return(nil, nil, errors.New("error"))
 		return QueryLockedTables(exec)
 	}
@@ -150,7 +150,7 @@ func executeQueryLockedTables(exec *mock.MockRestrictedSQLExecutor, numRows int,
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		useCurrentSession,
-		"SELECT table_id FROM mysql.stats_table_locked",
+		selectSQL,
 	).Return(rows, nil, nil)
 
 	return QueryLockedTables(exec)

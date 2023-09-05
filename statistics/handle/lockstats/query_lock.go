@@ -23,11 +23,13 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
+var selectSQL = "SELECT table_id FROM mysql.stats_table_locked"
+
 // QueryLockedTables loads locked tables from mysql.stats_table_locked.
 // Return it as a map for fast query.
 func QueryLockedTables(exec sqlexec.RestrictedSQLExecutor) (map[int64]struct{}, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, useCurrentSession, "SELECT table_id FROM mysql.stats_table_locked")
+	rows, _, err := exec.ExecRestrictedSQL(ctx, useCurrentSession, selectSQL)
 	if err != nil {
 		return nil, err
 	}
