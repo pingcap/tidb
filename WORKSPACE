@@ -110,3 +110,14 @@ http_archive(
             "https://github.com/bazelbuild/java_tools/releases/download/java_v12.6/java_tools_linux-v12.6.zip",
     ],
 )
+
+http_archive(
+    name = "rules_proto",
+    strip_prefix = "rules_proto-40298556293ae502c66579620a7ce867d5f57311",
+    urls = [
+        "http://bazel-cache.pingcap.net:8080/bazelbuild/rules_proto/archive/40298556293ae502c66579620a7ce867d5f57311.tar.gz",
+        "http://ats.apps.svc/bazelbuild/rules_proto/archive/40298556293ae502c66579620a7ce867d5f57311.tar.gz",
+        "https://mirror.bazel.build/github.com/bazelbuild/rules_proto/archive/40298556293ae502c66579620a7ce867d5f57311.tar.gz",
+        "https://github.com/bazelbuild/rules_proto/archive/40298556293ae502c66579620a7ce867d5f57311.tar.gz",
+    ],
+)
