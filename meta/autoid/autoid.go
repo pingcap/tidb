@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/autoid"
-	// "github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -34,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
-	// "github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -570,18 +568,6 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 var MockForTest func(kv.Storage) autoid.AutoIDAllocClient
 
 func newSinglePointAlloc(r Requirement, dbID, tblID int64, isUnsigned bool) *singlePointAlloc {
-	// ebd, ok := store.(kv.EtcdBackend)
-	// if !ok {
-	// 	// newSinglePointAlloc fail because not etcd background
-	// 	// This could happen in the server package unit test
-	// 	return nil
-	// }
-
-	// addrs, err := ebd.EtcdAddrs()
-	// if err != nil {
-	// 	panic(err)
-	// }
-
 	keyspaceID := uint32(r.Store().GetCodec().GetKeyspaceID())
 	spa := &singlePointAlloc{
 		dbID:       dbID,
@@ -589,22 +575,11 @@ func newSinglePointAlloc(r Requirement, dbID, tblID int64, isUnsigned bool) *sin
 		isUnsigned: isUnsigned,
 		keyspaceID: keyspaceID,
 	}
-	// if len(addrs) > 0 {
-	// 	etcdCli, err := clientv3.New(clientv3.Config{
-	// 		Endpoints:        addrs,
-	// 		AutoSyncInterval: 30 * time.Second,
-	// 		TLS:              ebd.TLSConfig(),
-	// 	})
-	// 	etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(store.GetCodec()))
-	// 	if err != nil {
-	// 		logutil.BgLogger().Error("fail to connect etcd, fallback to default", zap.String("category", "autoid client"), zap.Error(err))
-	// 		return nil
-	// 	}
-	// 	spa.clientDiscover = clientDiscover{etcdCli: etcdCli}
-	// } else {
-	// 	spa.clientDiscover = clientDiscover{}
-	// 	spa.mu.AutoIDAllocClient = MockForTest(store)
-	// }
+	if r.GetEtcdClient() == nil {
+		// Only for test in mockstore
+		spa.clientDiscover = clientDiscover{}
+		spa.mu.AutoIDAllocClient = MockForTest(r.Store())
+	}
 	spa.clientDiscover = clientDiscover{etcdCli: r.GetEtcdClient()}
 
 	// mockAutoIDChange failpoint is not implemented in this allocator, so fallback to use the default one.

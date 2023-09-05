@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	// "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 )
