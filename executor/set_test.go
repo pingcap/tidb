@@ -870,6 +870,23 @@ func TestSetVar(t *testing.T) {
 	require.Equal(t, uint64(2), tk.Session().GetSessionVars().CDCWriteSource)
 	tk.MustExec("set @@session.tidb_cdc_write_source = 0")
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().CDCWriteSource)
+
+	// test tidb_info_schema_cache_size
+	tk.MustQuery("select @@global.tidb_info_schema_cache_size").Check(testkit.Rows("16"))
+	tk.MustExec("set @@global.tidb_info_schema_cache_size=64;")
+	tk.MustQuery("select @@global.tidb_info_schema_cache_size").Check(testkit.Rows("64"))
+	tk.MustExec("set @@global.tidb_info_schema_cache_size=2;")
+	tk.MustQuery("select @@global.tidb_info_schema_cache_size").Check(testkit.Rows("2"))
+	tk.MustExec("set @@global.tidb_info_schema_cache_size=256;")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_info_schema_cache_size value: '256'"))
+	tk.MustQuery("select @@global.tidb_info_schema_cache_size").Check(testkit.Rows("255"))
+	tk.MustExec("set @@global.tidb_info_schema_cache_size=0;")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_info_schema_cache_size value: '0'"))
+	tk.MustQuery("select @@global.tidb_info_schema_cache_size").Check(testkit.Rows("2"))
+	tk.MustGetErrMsg("set @@global.tidb_info_schema_cache_size='x';", "[variable:1232]Incorrect argument type to variable 'tidb_info_schema_cache_size'")
+	tk.MustQuery("select @@global.tidb_info_schema_cache_size").Check(testkit.Rows("2"))
+	tk.MustExec("set @@global.tidb_info_schema_cache_size=64;")
+	tk.MustQuery("select @@global.tidb_info_schema_cache_size").Check(testkit.Rows("64"))
 }
 
 func TestGetSetNoopVars(t *testing.T) {
