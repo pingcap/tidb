@@ -1181,12 +1181,9 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 }
 
 var (
-	// SupportUpgradeStateVer is exported for testing.
-	// The minimum version that can be upgraded by paused user DDL.
-	SupportUpgradeStateVer int64 = version145
 	// SupportUpgradeHTTPOpVer is exported for testing.
-	// The minimum version of the upgrade can be notified through the HTTP API.
-	SupportUpgradeHTTPOpVer int64 = version172
+	// The minimum version of the upgrade by paused user DDL can be notified through the HTTP API.
+	SupportUpgradeHTTPOpVer int64 = version173
 )
 
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
@@ -1198,9 +1195,7 @@ func upgrade(s Session) {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
-	if ver >= SupportUpgradeStateVer {
-		checkOrSyncUpgrade(s, ver)
-	}
+	printClusterState(s, ver)
 
 	// Only upgrade from under version92 and this TiDB is not owner set.
 	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
