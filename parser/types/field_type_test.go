@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+
 	// import parser_driver
 	_ "github.com/pingcap/tidb/parser/test_driver"
 	. "github.com/pingcap/tidb/parser/types"
@@ -318,7 +319,6 @@ func TestCompactStr(t *testing.T) {
 		{mysql.TypeLong, 10, mysql.ZerofillFlag, `int(10)`, `int(10)`},
 	}
 	for _, cc := range cases {
-
 		ft := NewFieldType(cc.t)
 		ft.SetFlen(cc.flen)
 		ft.SetFlag(cc.flags)
