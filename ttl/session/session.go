@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	kvutil "github.com/tikv/client-go/v2/util"
 )
 
 // TxnMode represents using optimistic or pessimistic mode in the transaction
@@ -86,7 +87,7 @@ func (s *session) ExecuteSQL(ctx context.Context, sql string, args ...interface{
 		return nil, errors.New("session is closed")
 	}
 
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnTTL)
+	ctx = kv.WithInternalSourceAndTaskType(ctx, kv.InternalTxnTTL, kvutil.ExplicitTypeTTL)
 	rs, err := s.sqlExec.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, err
