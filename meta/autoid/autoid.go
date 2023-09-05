@@ -601,8 +601,12 @@ type Requirement interface {
 // NewAllocator returns a new auto increment id generator on the store.
 func NewAllocator(r Requirement, dbID, tbID int64, isUnsigned bool,
 	allocType AllocatorType, opts ...AllocOption) Allocator {
+	var store kv.Storage
+	if r != nil {
+		store = r.Store()
+	}
 	alloc := &allocator{
-		store:         r.Store(),
+		store:         store,
 		dbID:          dbID,
 		tbID:          tbID,
 		isUnsigned:    isUnsigned,
