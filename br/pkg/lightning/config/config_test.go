@@ -743,10 +743,13 @@ func TestDuplicateResolutionAlgorithm(t *testing.T) {
 	require.Equal(t, DupeResAlgNone, dra)
 	require.NoError(t, dra.FromStringValue("remove"))
 	require.Equal(t, DupeResAlgRemove, dra)
+	require.NoError(t, dra.FromStringValue("replace"))
+	require.Equal(t, DupeResAlgReplace, dra)
 
 	require.Equal(t, "record", DupeResAlgRecord.String())
 	require.Equal(t, "none", DupeResAlgNone.String())
 	require.Equal(t, "remove", DupeResAlgRemove.String())
+	require.Equal(t, "replace", DupeResAlgReplace.String())
 }
 
 func TestLoadConfig(t *testing.T) {
