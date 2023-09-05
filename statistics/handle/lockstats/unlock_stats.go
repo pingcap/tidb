@@ -25,6 +25,12 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	selectDeltaSQL = "SELECT count, modify_count, version FROM mysql.stats_table_locked WHERE table_id = %?"
+	updateDeltaSQL = "UPDATE mysql.stats_meta SET version = %?, count = count + %?, modify_count = modify_count + %? WHERE table_id = %?"
+	deleteLockSQL  = "DELETE FROM mysql.stats_table_locked WHERE table_id = %?"
+)
+
 // RemoveLockedTables remove tables from table locked array.
 // - exec: sql executor.
 // - tids: table ids of which will be unlocked.
@@ -88,7 +94,7 @@ func updateStatsAndUnlockTable(ctx context.Context, exec sqlexec.RestrictedSQLEx
 	if _, _, err := exec.ExecRestrictedSQL(
 		ctx,
 		useCurrentSession,
-		"UPDATE mysql.stats_meta SET version = %?, count = count + %?, modify_count = modify_count + %? WHERE table_id = %?",
+		updateDeltaSQL,
 		version, count, modifyCount, tid,
 	); err != nil {
 		return err
@@ -98,7 +104,7 @@ func updateStatsAndUnlockTable(ctx context.Context, exec sqlexec.RestrictedSQLEx
 	_, _, err = exec.ExecRestrictedSQL(
 		ctx,
 		useCurrentSession,
-		"DELETE FROM mysql.stats_table_locked WHERE table_id = %?", tid,
+		deleteLockSQL, tid,
 	)
 	return err
 }
@@ -108,7 +114,7 @@ func getStatsDeltaFromTableLocked(ctx context.Context, tableID int64, exec sqlex
 	rows, _, err := exec.ExecRestrictedSQL(
 		ctx,
 		useCurrentSession,
-		"SELECT count, modify_count, version FROM mysql.stats_table_locked WHERE table_id = %?", tableID,
+		selectDeltaSQL, tableID,
 	)
 	if err != nil {
 		return 0, 0, 0, errors.Trace(err)
