@@ -1762,7 +1762,7 @@ func TestIssue41828(t *testing.T) {
 }
 
 func convertQueryToPrepExecStmt(q string) (normalQuery, prepStmt string, parameters []string) {
-	// select ... from t where a = #_1# and b = #2#
+	// select ... from t where a = #?1# and b = #?2#
 	normalQuery = strings.ReplaceAll(q, "#", "")
 	normalQuery = strings.ReplaceAll(normalQuery, "?", "")
 	vs := strings.Split(q, "#")
@@ -1776,6 +1776,77 @@ func convertQueryToPrepExecStmt(q string) (normalQuery, prepStmt string, paramet
 		}
 	}
 	return normalQuery, fmt.Sprintf(`prepare st from '%v'`, strings.Join(vs, "")), parameters
+}
+
+func planCachePointGetPrepareData(tk *testkit.TestKit) {
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`drop table if exists t2`)
+	t := func() string {
+		types := []string{"int", "varchar(10)", "decimal(10, 2)", "double"}
+		return types[rand.Intn(len(types))]
+	}
+	tk.MustExec(fmt.Sprintf(`create table t1 (a %v, b %v, c %v, d %v, primary key(a), unique key(b), unique key(c), unique key(c))`, t(), t(), t(), t()))
+	tk.MustExec(fmt.Sprintf(`create table t2 (a %v, b %v, c %v, d %v, primary key(a, b), unique key(c, d))`, t(), t(), t(), t()))
+
+	var vals []string
+	for i := 0; i < 50; i++ {
+		vals = append(vals, fmt.Sprintf("('%v.%v', '%v.%v', '%v.%v', '%v.%v')",
+			i-20, rand.Intn(5),
+			i-20, rand.Intn(5),
+			i-20, rand.Intn(5),
+			i-20, rand.Intn(5)))
+	}
+	tk.MustExec(fmt.Sprintf(`insert into t1 values %v`, strings.Join(vals, ",")))
+	tk.MustExec(`insert into t1 values ('31', '31', null, null), ('32', null, 32, null)`)
+	tk.MustExec(fmt.Sprintf(`insert into t2 values %v`, strings.Join(vals, ",")))
+}
+
+func planCachePointGetQueries(isNonPrep bool) []string {
+	v := func() string {
+		var vStr string
+		switch rand.Intn(3) {
+		case 0: // int
+			vStr = fmt.Sprintf("%v", rand.Intn(50)-20)
+		case 1: // double
+			vStr = fmt.Sprintf("%v.%v", rand.Intn(50)-20, rand.Intn(100))
+		default: // string
+			vStr = fmt.Sprintf("'%v.%v'", rand.Intn(50)-20, rand.Intn(100))
+		}
+		if !isNonPrep {
+			vStr = fmt.Sprintf("#?%v#", vStr)
+		}
+		return vStr
+	}
+	f := func() string {
+		cols := []string{"a", "b", "c", "d"}
+		col := cols[rand.Intn(len(cols))]
+		ops := []string{"=", ">", "<", ">=", "<=", "in", "is null"}
+		op := ops[rand.Intn(len(ops))]
+		if op == "in" {
+			return fmt.Sprintf("%v %v (%v, %v, %v)", col, op, v(), v(), v())
+		} else if op == "is null" {
+			return fmt.Sprintf("%v %v", col, op)
+		} else {
+			return fmt.Sprintf("%v %v %v", col, op, v())
+		}
+	}
+	var queries []string
+	for i := 0; i < 50; i++ {
+		queries = append(queries, fmt.Sprintf("select * from t1 where %v", f()))
+		queries = append(queries, fmt.Sprintf("select * from t1 where %v and %v", f(), f()))
+		queries = append(queries, fmt.Sprintf("select * from t1 where %v and %v and %v", f(), f(), f()))
+		queries = append(queries, fmt.Sprintf("select * from t1 where %v and %v and %v and %v", f(), f(), f(), f()))
+		queries = append(queries, fmt.Sprintf("select * from t1 where %v and %v or %v", f(), f(), f()))
+		queries = append(queries, fmt.Sprintf("select * from t1 where %v and %v or %v and %v", f(), f(), f(), f()))
+		queries = append(queries, fmt.Sprintf("select * from t2 where %v", f()))
+		queries = append(queries, fmt.Sprintf("select * from t2 where %v and %v", f(), f()))
+		queries = append(queries, fmt.Sprintf("select * from t2 where %v and %v and %v", f(), f(), f()))
+		queries = append(queries, fmt.Sprintf("select * from t2 where %v and %v and %v and %v", f(), f(), f(), f()))
+		queries = append(queries, fmt.Sprintf("select * from t2 where %v and %v or %v", f(), f(), f()))
+		queries = append(queries, fmt.Sprintf("select * from t2 where %v and %v or %v and %v", f(), f(), f(), f()))
+	}
+	return queries
 }
 
 func planCacheIntConvertQueries(isNonPrep bool) []string {
@@ -1863,43 +1934,6 @@ func planCacheIntConvertPrepareData(tk *testkit.TestKit) {
 	tk.MustExec("insert into t values " + strings.Join(vals, ","))
 }
 
-func TestNonPlanCacheIntConvert(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	planCacheIntConvertPrepareData(tk)
-	for _, q := range planCacheIntConvertQueries(true) {
-		tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
-		result1 := tk.MustQuery(q).Sort()
-		tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
-		result2 := tk.MustQuery(q).Sort()
-		require.True(t, result1.Equal(result2.Rows()))
-	}
-}
-
-func TestPlanCacheIntConvert(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	planCacheIntConvertPrepareData(tk)
-	for _, q := range planCacheIntConvertQueries(false) {
-		q, prepStmt, parameters := convertQueryToPrepExecStmt(q)
-		result1 := tk.MustQuery(q).Sort()
-		tk.MustExec(prepStmt)
-		var xs []string
-		for i, p := range parameters {
-			tk.MustExec(fmt.Sprintf("set @x%d = %s", i, p))
-			xs = append(xs, fmt.Sprintf("@x%d", i))
-		}
-		var execStmt string
-		if len(xs) == 0 {
-			execStmt = "execute st"
-		} else {
-			execStmt = fmt.Sprintf("execute st using %s", strings.Join(xs, ", "))
-		}
-		result2 := tk.MustQuery(execStmt).Sort()
-		require.True(t, result1.Equal(result2.Rows()))
-	}
-}
-
 func planCacheIndexMergeQueries(isNonPrep bool) []string {
 	ops := []string{"=", ">", "<", ">=", "<=", "in", "mod", "is null"}
 	f := func(col string) string {
@@ -1979,11 +2013,34 @@ func planCacheIndexMergePrepareData(tk *testkit.TestKit) {
 	tk.MustExec("insert into t values " + strings.Join(vals, ","))
 }
 
-func TestPlanCacheIndexMerge(t *testing.T) {
+func TestPlanCacheRandomCases(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	planCacheIndexMergePrepareData(tk)
-	for _, q := range planCacheIndexMergeQueries(false) {
+	tk.MustExec("use test")
+
+	testRandomPlanCacheCases(t, planCacheIndexMergePrepareData, planCacheIndexMergeQueries)
+	testRandomPlanCacheCases(t, planCacheIntConvertPrepareData, planCacheIntConvertQueries)
+	testRandomPlanCacheCases(t, planCachePointGetPrepareData, planCachePointGetQueries)
+}
+
+func testRandomPlanCacheCases(t *testing.T,
+	prepFunc func(tk *testkit.TestKit),
+	queryFunc func(isNonPrep bool) []string) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	prepFunc(tk)
+
+	// prepared plan cache
+	for _, q := range queryFunc(true) {
+		tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
+		result1 := tk.MustQuery(q).Sort()
+		tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+		result2 := tk.MustQuery(q).Sort()
+		require.True(t, result1.Equal(result2.Rows()))
+	}
+
+	// non prepared plan cache
+	for _, q := range queryFunc(false) {
 		q, prepStmt, parameters := convertQueryToPrepExecStmt(q)
 		result1 := tk.MustQuery(q).Sort()
 		tk.MustExec(prepStmt)
@@ -1999,19 +2056,6 @@ func TestPlanCacheIndexMerge(t *testing.T) {
 			execStmt = fmt.Sprintf("execute st using %s", strings.Join(xs, ", "))
 		}
 		result2 := tk.MustQuery(execStmt).Sort()
-		require.True(t, result1.Equal(result2.Rows()))
-	}
-}
-
-func TestNonPlanCacheIndexMerge(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	planCacheIndexMergePrepareData(tk)
-	for _, q := range planCacheIndexMergeQueries(true) {
-		tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
-		result1 := tk.MustQuery(q).Sort()
-		tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
-		result2 := tk.MustQuery(q).Sort()
 		require.True(t, result1.Equal(result2.Rows()))
 	}
 }
