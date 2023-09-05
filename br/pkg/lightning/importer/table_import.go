@@ -331,7 +331,7 @@ func (r *asAutoIDRequirement) GetEtcdClient() *clientv3.Client {
 	return r.etcdCli
 }
 
-// Allocators returns an autoid.Requirement.
+// AutoIDRequirement returns an autoid.Requirement.
 func (tr *TableImporter) AutoIDRequirement() autoid.Requirement {
 	return (*asAutoIDRequirement)(tr)
 }
