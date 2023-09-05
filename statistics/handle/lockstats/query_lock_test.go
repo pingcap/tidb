@@ -17,7 +17,13 @@ package lockstats
 import (
 	"testing"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func TestGetTablesLockedStatuses(t *testing.T) {
@@ -61,4 +67,76 @@ func TestGetTablesLockedStatuses(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestQueryLockedTables(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
+
+	tests := []struct {
+		name      string
+		numRows   int
+		wantLen   int
+		wantError bool
+	}{
+		{
+			name:    "Empty result",
+			numRows: 0,
+			wantLen: 0,
+		},
+		{
+			name:    "One table",
+			numRows: 1,
+			wantLen: 1,
+		},
+		{
+			name:    "Two tables",
+			numRows: 2,
+			wantLen: 2,
+		},
+		{
+			name:      "Error",
+			numRows:   0,
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := executeQueryLockedTables(exec, tt.numRows, tt.wantError)
+			if tt.wantError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func executeQueryLockedTables(exec *mock.MockRestrictedSQLExecutor, numRows int, wantErr bool) (map[int64]struct{}, error) {
+	if wantErr {
+		exec.EXPECT().ExecRestrictedSQL(
+			gomock.Any(),
+			useCurrentSession,
+			"SELECT table_id FROM mysql.stats_table_locked",
+		).Return(nil, nil, errors.New("error"))
+		return QueryLockedTables(exec)
+	}
+
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, numRows)
+	for i := 0; i < numRows; i++ {
+		c.AppendInt64(0, int64(i+1))
+	}
+	var rows []chunk.Row
+	for i := 0; i < numRows; i++ {
+		rows = append(rows, c.GetRow(i))
+	}
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.Any(),
+		useCurrentSession,
+		"SELECT table_id FROM mysql.stats_table_locked",
+	).Return(rows, nil, nil)
+
+	return QueryLockedTables(exec)
 }
