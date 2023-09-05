@@ -591,6 +591,7 @@ func newSinglePointAlloc(r Requirement, dbID, tblID int64, isUnsigned bool) *sin
 	return spa
 }
 
+// Requirement is the parameter required by NewAllocator
 type Requirement interface {
 	Store() kv.Storage
 	GetEtcdClient() *clientv3.Client
