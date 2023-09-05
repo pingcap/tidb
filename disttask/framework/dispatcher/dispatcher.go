@@ -359,18 +359,7 @@ func (d *dispatcher) dispatchSubTask4Revert(task *proto.Task, meta []byte) error
 }
 
 func (d *dispatcher) onNextStage() error {
-	// 1. generate the needed global task meta and subTask meta (dist-plan).
-	//if !d.task.EnableDynamicDispatch {
-	//	// dispatch all subtasks.
-	//	metas, err := d.impl.OnNextStage(d.ctx, d, d.task)
-	//	if err != nil {
-	//		return d.handlePlanErr(err)
-	//	}
-	//	// 2. dispatch dist-plan to EligibleInstances.
-	//	return d.dispatchSubTask(d.task, metas)
-	//}
 	/// dynamic dispatch subtasks.
-
 	// all subtasks dispatched and processed, mark task as succeed.
 	if d.impl.Finished(d.task) {
 		d.task.StateUpdateTime = time.Now().UTC()
@@ -388,7 +377,7 @@ func (d *dispatcher) onNextStage() error {
 		metas, err := d.impl.OnNextStage(d.ctx, d, d.task)
 		if err != nil {
 			logutil.Logger(d.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
-			return err
+			return d.handlePlanErr(err)
 		}
 		// 2. dispatch batch of subtasks to EligibleInstances.
 		err = d.dispatchSubTask(d.task, metas)
@@ -445,6 +434,7 @@ func (d *dispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error {
 		logutil.Logger(d.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(task.ID, task.Type, instanceID, meta))
 	}
+
 	task.StateUpdateTime = time.Now().UTC()
 	return d.updateTask(proto.TaskStateRunning, subTasks, retrySQLTimes)
 }

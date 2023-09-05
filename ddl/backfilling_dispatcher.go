@@ -110,13 +110,15 @@ func (h *backfillingDispatcher) OnNextStage(ctx context.Context, _ dispatcher.Ta
 		return nil, nil
 	}
 }
-func (dsp *backfillingDispatcher) AllDispatched(task *proto.Task) bool {
 
-	return false
+func (dsp *backfillingDispatcher) AllDispatched(task *proto.Task) bool {
+	return true
 }
 
 func (dsp *backfillingDispatcher) Finished(task *proto.Task) bool {
-
+	if task.Step == proto.StepTwo {
+		return true
+	}
 	return false
 }
 

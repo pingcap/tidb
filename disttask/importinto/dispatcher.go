@@ -333,12 +333,13 @@ func (*importDispatcher) IsRetryableErr(error) bool {
 }
 
 func (dsp *importDispatcher) AllDispatched(task *proto.Task) bool {
-
-	return false
+	return true
 }
 
 func (dsp *importDispatcher) Finished(task *proto.Task) bool {
-
+	if task.Step == StepPostProcess {
+		return true
+	}
 	return false
 }
 

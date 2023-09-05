@@ -71,6 +71,14 @@ func (*testDispatcher) IsRetryableErr(error) bool {
 	return true
 }
 
+func (dsp *testDispatcher) AllDispatched(task *proto.Task) bool {
+	return true
+}
+
+func (dsp *testDispatcher) Finished(task *proto.Task) bool {
+	return false
+}
+
 type numberExampleDispatcher struct{}
 
 func (*numberExampleDispatcher) OnTick(_ context.Context, _ *proto.Task) {
@@ -88,6 +96,7 @@ func (n *numberExampleDispatcher) OnNextStage(_ context.Context, _ dispatcher.Ta
 		}
 		logutil.BgLogger().Info("progress step init")
 	case proto.StepOne:
+		task.Step = proto.StepTwo
 		logutil.BgLogger().Info("progress step one")
 		return nil, nil
 	default:
@@ -111,6 +120,17 @@ func (*numberExampleDispatcher) GetEligibleInstances(ctx context.Context, _ *pro
 
 func (*numberExampleDispatcher) IsRetryableErr(error) bool {
 	return true
+}
+
+func (dsp *numberExampleDispatcher) AllDispatched(task *proto.Task) bool {
+	return true
+}
+
+func (dsp *numberExampleDispatcher) Finished(task *proto.Task) bool {
+	if task.Step == proto.StepTwo {
+		return true
+	}
+	return false
 }
 
 func MockDispatcherManager(t *testing.T, pool *pools.ResourcePool) (*dispatcher.Manager, *storage.TaskManager) {
@@ -247,7 +267,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	// Mock add tasks.
 	taskIDs := make([]int64, 0, taskCnt)
 	for i := 0; i < taskCnt; i++ {
-		taskID, err := mgr.AddNewGlobalTask(fmt.Sprintf("%d", i), taskTypeExample, 0, nil, false)
+		taskID, err := mgr.AddNewGlobalTask(fmt.Sprintf("%d", i), taskTypeExample, 0, nil)
 		require.NoError(t, err)
 		taskIDs = append(taskIDs, taskID)
 	}
@@ -262,7 +282,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	}
 	// test parallelism control
 	if taskCnt == 1 {
-		taskID, err := mgr.AddNewGlobalTask(fmt.Sprintf("%d", taskCnt), taskTypeExample, 0, nil, false)
+		taskID, err := mgr.AddNewGlobalTask(fmt.Sprintf("%d", taskCnt), taskTypeExample, 0, nil)
 		require.NoError(t, err)
 		checkGetRunningTaskCnt(taskCnt)
 		// Clean the task.

@@ -31,8 +31,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ywq todo
-
 type testDynamicDispatcher struct {
 	cnt int
 }
