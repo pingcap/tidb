@@ -1463,6 +1463,7 @@ func (local *Backend) ImportEngine(
 			return nil
 		}
 		defer localEngine.unlock()
+		e = localEngine
 	}
 
 	lfTotalSize, lfLength := e.KVStatistics()
