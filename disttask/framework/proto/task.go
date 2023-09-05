@@ -117,8 +117,10 @@ type MinimalTask interface {
 
 const (
 	// TaskTypeExample is TaskType of Example.
-	TaskTypeExample  = "Example"
+	TaskTypeExample = "Example"
+	// TaskTypeExample2 is TaskType of Example.
 	TaskTypeExample2 = "Example1"
+	// TaskTypeExample3 is TaskType of Example.
 	TaskTypeExample3 = "Example2"
 	// ImportInto is TaskType of ImportInto.
 	ImportInto = "ImportInto"
