@@ -270,7 +270,15 @@ func analyzeIndexNDVPushDown(idxExec *AnalyzeIndexExec) *statistics.AnalyzeResul
 	result := &statistics.AnalyzeResult{
 		Fms: []*statistics.FMSketch{fms},
 		// We use histogram to get the Index's ID.
-		Hist:    []*statistics.Histogram{statistics.NewHistogram(idxExec.idxInfo.ID, 0, 0, statistics.Version1, types.NewFieldType(mysql.TypeBlob), 0, 0)},
+		Hist: []*statistics.Histogram{statistics.NewHistogram(
+			idxExec.idxInfo.ID,
+			0,
+			0,
+			statistics.Version1,
+			types.NewFieldType(mysql.TypeBlob),
+			0,
+			0,
+			false)},
 		IsIndex: 1,
 	}
 	r := &statistics.AnalyzeResults{
