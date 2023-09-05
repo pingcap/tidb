@@ -96,7 +96,7 @@ func TestInsertIntoStatsTableLocked(t *testing.T) {
 	// Executed SQL should be:
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.Eq(ctx),
-		gomock.Eq(useCurrentSession),
+		useCurrentSession,
 		gomock.Eq(insertSQL),
 		gomock.Eq([]interface{}{int64(1), int64(1)}),
 	)
@@ -123,7 +123,7 @@ func TestAddLockedTables(t *testing.T) {
 	// Executed SQL should be:
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		gomock.Eq(useCurrentSession),
+		useCurrentSession,
 		gomock.Eq("BEGIN PESSIMISTIC"),
 	)
 	// Return table 1 is locked.
@@ -132,33 +132,33 @@ func TestAddLockedTables(t *testing.T) {
 	rows := []chunk.Row{c.GetRow(0)}
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		gomock.Eq(useCurrentSession),
+		useCurrentSession,
 		selectSQL,
 	).Return(rows, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		gomock.Eq(useCurrentSession),
+		useCurrentSession,
 		insertSQL,
 		gomock.Eq([]interface{}{int64(2), int64(2)}),
 	)
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		gomock.Eq(useCurrentSession),
+		useCurrentSession,
 		insertSQL,
 		gomock.Eq([]interface{}{int64(3), int64(3)}),
 	)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		gomock.Eq(useCurrentSession),
+		useCurrentSession,
 		insertSQL,
 		gomock.Eq([]interface{}{int64(4), int64(4)}),
 	)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		gomock.Eq(useCurrentSession),
+		useCurrentSession,
 		"COMMIT",
 	)
 

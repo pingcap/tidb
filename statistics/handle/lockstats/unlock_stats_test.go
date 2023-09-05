@@ -180,7 +180,7 @@ func TestRemoveLockedTables(t *testing.T) {
 	// Executed SQL should be:
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		gomock.Eq(useCurrentSession),
+		useCurrentSession,
 		gomock.Eq("BEGIN PESSIMISTIC"),
 	)
 
@@ -190,7 +190,7 @@ func TestRemoveLockedTables(t *testing.T) {
 	rows := []chunk.Row{c.GetRow(0)}
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		gomock.Eq(useCurrentSession),
+		useCurrentSession,
 		selectSQL,
 	).Return(rows, nil, nil)
 
@@ -210,14 +210,14 @@ func TestRemoveLockedTables(t *testing.T) {
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		gomock.Eq(useCurrentSession),
+		useCurrentSession,
 		deleteLockSQL,
 		gomock.Eq([]interface{}{int64(1)}),
 	).Return(nil, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		gomock.Eq(useCurrentSession),
+		useCurrentSession,
 		"COMMIT",
 	)
 
