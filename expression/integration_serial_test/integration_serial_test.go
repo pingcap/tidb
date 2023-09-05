@@ -2795,6 +2795,16 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery(`select tidb_parse_tso(-1)`)
 	result.Check(testkit.Rows("<nil>"))
 
+	// for tidb_parse_tso_logical
+	result = tk.MustQuery(`SELECT TIDB_PARSE_TSO_LOGICAL(404411537129996288)`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`SELECT TIDB_PARSE_TSO_LOGICAL(404411537129996289)`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`SELECT TIDB_PARSE_TSO_LOGICAL(404411537129996290)`)
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`SELECT TIDB_PARSE_TSO_LOGICAL(-1)`)
+	result.Check(testkit.Rows("<nil>"))
+
 	// for tidb_bounded_staleness
 	tk.MustExec("SET time_zone = '+00:00';")
 	tt := time.Now().UTC()
