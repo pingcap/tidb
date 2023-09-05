@@ -70,6 +70,9 @@ func TestSchedulerRun(t *testing.T) {
 	mockScheduler := mock.NewMockScheduler(ctrl)
 	mockSubtaskExecutor := mock.NewMockSubtaskExecutor(ctrl)
 
+	// check cancel loop will call it once.
+	mockSubtaskTable.EXPECT().IsSchedulerCanceled(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+
 	// 1. no scheduler constructor
 	schedulerRegisterErr := errors.Errorf("constructor of scheduler for key %s not found", getKey(tp, proto.StepOne))
 	scheduler := NewInternalScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
@@ -365,8 +368,6 @@ func TestScheduler(t *testing.T) {
 	})
 
 	scheduler := NewInternalScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
-	scheduler.Start()
-	defer scheduler.Stop()
 
 	poolWg, runWithConcurrencyFn := getRunWithConcurrencyFn()
 

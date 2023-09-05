@@ -221,6 +221,7 @@ go_test(
         "planbuilder_test.go",
         "point_get_plan_test.go",
         "preprocess_test.go",
+        "rule_generate_column_substitute_test.go",
         "rule_join_reorder_dp_test.go",
         "rule_join_reorder_test.go",
         "rule_result_reorder_test.go",
