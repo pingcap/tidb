@@ -257,7 +257,7 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
 	dom.Close()
-	startUpgrade(store, session.CurrentBootstrapVersion-1)
+	startUpgrade(store)
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -433,7 +433,7 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	<-ch
 	dom.Close()
 	// Make sure upgrade is successful.
-	startUpgrade(store, session.CurrentBootstrapVersion-1)
+	startUpgrade(store)
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -518,7 +518,7 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	<-ch
 	dom.Close()
 	// Make sure upgrade is successful.
-	startUpgrade(store, session.CurrentBootstrapVersion-1)
+	startUpgrade(store)
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -607,7 +607,7 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 	<-ch
 	dom.Close()
 	// Make sure upgrade is successful.
-	startUpgrade(store, session.CurrentBootstrapVersion-1)
+	startUpgrade(store)
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -661,11 +661,7 @@ func execute(ctx context.Context, s sessionctx.Context, query string) ([]chunk.R
 	return rows, nil
 }
 
-func startUpgrade(store kv.Storage, currVer int64) {
-	// It's used for compatible tests upgraded from previous versions of SupportUpgradeHTTPOpVer.
-	if currVer < session.SupportUpgradeHTTPOpVer {
-		return
-	}
+func startUpgrade(store kv.Storage) {
 	upgradeHandler := handler.NewClusterUpgradeHandler(store)
 	upgradeHandler.StartUpgrade()
 }
@@ -786,7 +782,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
 	dom.Close()
-	startUpgrade(store, session.CurrentBootstrapVersion-1)
+	startUpgrade(store)
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
