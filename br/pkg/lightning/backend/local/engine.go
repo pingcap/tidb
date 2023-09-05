@@ -276,12 +276,12 @@ func (e *Engine) TotalMemorySize() int64 {
 }
 
 // KVStatistics returns the total kv size and total kv count.
-func (e *Engine) KVStatistics() (int64, int64) {
+func (e *Engine) KVStatistics() (totalSize int64, totalKVCount int64) {
 	return e.TotalSize.Load(), e.Length.Load()
 }
 
 // ImportedStatistics returns the imported kv size and imported kv count.
-func (e *Engine) ImportedStatistics() (int64, int64) {
+func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64) {
 	return e.importedKVSize.Load(), e.importedKVCount.Load()
 }
 

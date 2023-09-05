@@ -191,7 +191,7 @@ func (e *Engine) KVStatistics() (totalKVSize int64, totalKVLength int64) {
 }
 
 // ImportedStatistics returns the imported kv size and imported kv count.
-func (e *Engine) ImportedStatistics() (int64, int64) {
+func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64) {
 	return e.importedKVSize.Load(), e.importedKVCount.Load()
 }
 
