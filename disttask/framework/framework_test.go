@@ -365,10 +365,10 @@ func TestFrameworkCancelThenSubmitSubTask(t *testing.T) {
 }
 
 func TestSchedulerDownBasic(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
-	RegisterTaskMeta(&m, &testDispatcher{})
+	RegisterTaskMeta(&m, &testDispatcherExt{})
 
 	distContext := testkit.NewDistExecutionContext(t, 4)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockCleanScheduler", "return()"))
@@ -383,10 +383,10 @@ func TestSchedulerDownBasic(t *testing.T) {
 }
 
 func TestSchedulerDownManyNodes(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
-	RegisterTaskMeta(&m, &testDispatcher{})
+	RegisterTaskMeta(&m, &testDispatcherExt{})
 
 	distContext := testkit.NewDistExecutionContext(t, 30)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockCleanScheduler", "return()"))
