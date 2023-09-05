@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
@@ -238,6 +239,15 @@ func TestGetLock(t *testing.T) {
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+
+	// Increase pessimistic txn max retry count to make test more stable.
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.PessimisticTxn.MaxRetryCount = 2048
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
 
 	// No timeout specified
 	err := tk.ExecToErr("SELECT get_lock('testlock')")
