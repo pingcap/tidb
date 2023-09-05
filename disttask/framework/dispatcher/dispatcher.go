@@ -247,7 +247,14 @@ func (d *dispatcher) onRunning() error {
 
 func (d *dispatcher) replaceDeadNodesIfAny() error {
 	if len(d.taskNodes) == 0 {
-		return errors.Errorf("len(d.taskNodes) == 0, onNextStage is not invoked before onRunning")
+		serverNodes, err := d.impl.GetEligibleInstances(d.ctx, d.task)
+		if err != nil {
+			return err
+		}
+		d.taskNodes = make([]string, len(serverNodes))
+		for i := range serverNodes {
+			d.taskNodes[i] = disttaskutil.GenerateExecID(serverNodes[i].IP, serverNodes[i].Port)
+		}
 	}
 	d.liveNodeFetchTick++
 	if d.liveNodeFetchTick == d.liveNodeFetchInterval {
