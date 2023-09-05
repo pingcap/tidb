@@ -31,6 +31,7 @@ type TaskTable interface {
 	FinishSubtask(id int64, meta []byte) error
 	HasSubtasksInStates(instanceID string, taskID int64, step int64, states ...interface{}) (bool, error)
 	UpdateErrorToSubtask(tidbID string, err error) error
+	IsSchedulerCanceled(taskID int64, execID string) (bool, error)
 }
 
 // Pool defines the interface of a pool.
@@ -42,8 +43,6 @@ type Pool interface {
 
 // InternalScheduler defines the interface of an internal scheduler.
 type InternalScheduler interface {
-	Start()
-	Stop()
 	Run(context.Context, *proto.Task) error
 	Rollback(context.Context, *proto.Task) error
 }
@@ -54,7 +53,7 @@ type Scheduler interface {
 	// InitSubtaskExecEnv is used to initialize the environment for the subtask executor.
 	InitSubtaskExecEnv(context.Context) error
 	// SplitSubtask is used to split the subtask into multiple minimal tasks.
-	SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error)
+	SplitSubtask(ctx context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error)
 	// CleanupSubtaskExecEnv is used to clean up the environment for the subtask executor.
 	CleanupSubtaskExecEnv(context.Context) error
 	// OnSubtaskFinished is used to handle the subtask when it is finished.
@@ -85,7 +84,7 @@ func (*EmptyScheduler) InitSubtaskExecEnv(context.Context) error {
 }
 
 // SplitSubtask implements the Scheduler interface.
-func (*EmptyScheduler) SplitSubtask(context.Context, []byte) ([]proto.MinimalTask, error) {
+func (*EmptyScheduler) SplitSubtask(context.Context, *proto.Subtask) ([]proto.MinimalTask, error) {
 	return nil, nil
 }
 

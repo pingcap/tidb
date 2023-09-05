@@ -102,6 +102,7 @@ func TestImportIntoOptionsNegativeCase(t *testing.T) {
 		{OptionStr: "skip_rows=true", Err: exeerrors.ErrInvalidOptionVal},
 
 		{OptionStr: "split_file='aa'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: "split_file, skip_rows=2", Err: exeerrors.ErrInvalidOptionVal},
 
 		{OptionStr: "disk_quota='aa'", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: "disk_quota='220MiBxxx'", Err: exeerrors.ErrInvalidOptionVal},

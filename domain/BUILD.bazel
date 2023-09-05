@@ -38,6 +38,7 @@ go_library(
         "//domain/resourcegroup",
         "//errno",
         "//infoschema",
+        "//infoschema/metrics",
         "//infoschema/perfschema",
         "//keyspace",
         "//kv",

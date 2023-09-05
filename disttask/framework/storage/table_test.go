@@ -224,11 +224,22 @@ func TestSubTaskTable(t *testing.T) {
 	subtasks, err := sm.GetSucceedSubtasksByStep(2, proto.StepInit)
 	require.NoError(t, err)
 	require.Len(t, subtasks, 0)
+
 	err = sm.FinishSubtask(2, []byte{})
 	require.NoError(t, err)
+
 	subtasks, err = sm.GetSucceedSubtasksByStep(2, proto.StepInit)
 	require.NoError(t, err)
 	require.Len(t, subtasks, 1)
+
+	rowCount, err := sm.GetSubtaskRowCount(2, proto.StepInit)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), rowCount)
+	err = sm.UpdateSubtaskRowCount(2, 100)
+	require.NoError(t, err)
+	rowCount, err = sm.GetSubtaskRowCount(2, proto.StepInit)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), rowCount)
 
 	// test UpdateErrorToSubtask do update start/update time
 	err = sm.AddNewSubTask(3, proto.StepInit, "for_test", []byte("test"), proto.TaskTypeExample, false)
@@ -256,6 +267,33 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, subtask2.StartTime, subtask.StartTime)
 	require.Greater(t, subtask2.UpdateTime, subtask.UpdateTime)
+
+	// test UpdateFailedSchedulerIDs and IsSchedulerCanceled
+	canceled, err := sm.IsSchedulerCanceled(4, "for_test999")
+	require.NoError(t, err)
+	require.True(t, canceled)
+	canceled, err = sm.IsSchedulerCanceled(4, "for_test1")
+	require.NoError(t, err)
+	require.False(t, canceled)
+	canceled, err = sm.IsSchedulerCanceled(4, "for_test2")
+	require.NoError(t, err)
+	require.True(t, canceled)
+
+	require.NoError(t, sm.UpdateSubtaskStateAndError(4, proto.TaskStateRunning, nil))
+	require.NoError(t, sm.UpdateFailedSchedulerIDs(4, map[string]string{
+		"for_test1": "for_test999",
+		"for_test2": "for_test999",
+	}))
+
+	canceled, err = sm.IsSchedulerCanceled(4, "for_test1")
+	require.NoError(t, err)
+	require.True(t, canceled)
+	canceled, err = sm.IsSchedulerCanceled(4, "for_test2")
+	require.NoError(t, err)
+	require.True(t, canceled)
+	canceled, err = sm.IsSchedulerCanceled(4, "for_test999")
+	require.NoError(t, err)
+	require.False(t, canceled)
 }
 
 func TestBothGlobalAndSubTaskTable(t *testing.T) {

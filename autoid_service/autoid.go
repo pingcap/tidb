@@ -306,7 +306,8 @@ func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Servic
 			zap.String("addr", selfAddr),
 			zap.String("category", "autoid service"))
 	})
-	err := l.CampaignOwner()
+	// 10 means that autoid service's etcd lease is 10s.
+	err := l.CampaignOwner(10)
 	if err != nil {
 		panic(err)
 	}
@@ -464,7 +465,7 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 		var currentEnd int64
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 		err := kv.RunInNewTxn(ctx, s.store, true, func(ctx context.Context, txn kv.Transaction) error {
-			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(req.DbID, req.TblID).RowID()
+			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(req.DbID, req.TblID).IncrementID(model.TableInfoVersion5)
 			var err1 error
 			currentEnd, err1 = idAcc.Get()
 			if err1 != nil {
