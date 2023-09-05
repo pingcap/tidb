@@ -1276,6 +1276,10 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
+	// while for now, we still can not push the sort prop to the intersection index plan side, temporarily banned here.
+	if !prop.IsSortItemEmpty() && candidate.path.IndexMergeIsIntersection {
+		return invalidTask, nil
+	}
 	failpoint.Inject("forceIndexMergeKeepOrder", func(_ failpoint.Value) {
 		if len(candidate.path.PartialIndexPaths) > 0 && !candidate.path.IndexMergeIsIntersection {
 			if prop.IsSortItemEmpty() {
