@@ -15,6 +15,7 @@
 package cophandler
 
 import (
+	"cmp"
 	"container/heap"
 
 	"github.com/pingcap/errors"

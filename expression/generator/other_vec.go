@@ -113,6 +113,8 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 		compareResult = types.CompareBinaryJSON(arg0, arg1)
 	{{- else if eq .Input.TypeName "String" -}}
 		compareResult = types.CompareString(arg0, arg1, b.collation)
+	{{- else if eq .Input.TypeNameInColumn "Float64" -}}
+		compareResult = cmp.Compare(arg0, arg1)
 	{{- else -}}
 		compareResult = types.Compare{{ .Input.TypeNameInColumn }}(arg0, arg1)
 	{{- end -}}

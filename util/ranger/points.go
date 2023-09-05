@@ -15,6 +15,7 @@
 package ranger
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 	"sort"
