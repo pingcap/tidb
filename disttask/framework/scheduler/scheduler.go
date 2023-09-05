@@ -392,7 +392,7 @@ func runSummaryCollectLoop(
 	ctx context.Context,
 	task *proto.Task,
 	taskTable TaskTable,
-) (summary *Summary, cleanup func(), err error) {
+) (summary *execute.Summary, cleanup func(), err error) {
 	taskMgr, ok := taskTable.(*storage.TaskManager)
 	if !ok {
 		return nil, func() {}, nil

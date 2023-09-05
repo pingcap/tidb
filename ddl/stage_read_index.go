@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
@@ -40,7 +40,7 @@ type readIndexToLocalStage struct {
 	jc    *JobContext
 
 	bc      ingest.BackendCtx
-	summary *scheduler.Summary
+	summary *execute.Summary
 }
 
 func newReadIndexToLocalStage(
@@ -50,7 +50,7 @@ func newReadIndexToLocalStage(
 	ptbl table.PhysicalTable,
 	jc *JobContext,
 	bc ingest.BackendCtx,
-	summary *scheduler.Summary,
+	summary *execute.Summary,
 ) *readIndexToLocalStage {
 	return &readIndexToLocalStage{
 		d:       d,

@@ -234,7 +234,7 @@ func newImportScheduler(ctx context.Context, id string, taskID int64, taskTable 
 	return s
 }
 
-func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, _ *scheduler.Summary) (execute.SubtaskExecutor, error) {
+func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, _ *execute.Summary) (execute.SubtaskExecutor, error) {
 	taskMeta := TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, err

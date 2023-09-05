@@ -46,7 +46,7 @@ type BackfillSubTaskMeta struct {
 
 // NewBackfillSchedulerHandle creates a new backfill scheduler.
 func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
-	stepForImport bool, summary *scheduler.Summary) (execute.SubtaskExecutor, error) {
+	stepForImport bool, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	bgm := &BackfillGlobalMeta{}
 	err := json.Unmarshal(taskMeta, bgm)
 	if err != nil {
@@ -96,7 +96,7 @@ func newBackfillDistScheduler(ctx context.Context, id string, taskID int64, task
 	return s
 }
 
-func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *scheduler.Summary) (execute.SubtaskExecutor, error) {
+func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	switch task.Step {
 	case proto.StepOne:
 		return NewBackfillSchedulerHandle(ctx, task.Meta, s.d, false, summary)

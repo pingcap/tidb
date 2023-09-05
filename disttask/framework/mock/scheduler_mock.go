@@ -9,7 +9,6 @@ import (
 	reflect "reflect"
 
 	proto "github.com/pingcap/tidb/disttask/framework/proto"
-	scheduler "github.com/pingcap/tidb/disttask/framework/scheduler"
 	execute "github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -335,7 +334,7 @@ func (mr *MockExtensionMockRecorder) GetMiniTaskExecutor(arg0, arg1, arg2 interf
 }
 
 // GetSubtaskExecutor mocks base method.
-func (m *MockExtension) GetSubtaskExecutor(arg0 context.Context, arg1 *proto.Task, arg2 *scheduler.Summary) (execute.SubtaskExecutor, error) {
+func (m *MockExtension) GetSubtaskExecutor(arg0 context.Context, arg1 *proto.Task, arg2 *execute.Summary) (execute.SubtaskExecutor, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetSubtaskExecutor", arg0, arg1, arg2)
 	ret0, _ := ret[0].(execute.SubtaskExecutor)
