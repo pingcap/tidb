@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
-
 	// import parser_driver
 	_ "github.com/pingcap/tidb/parser/test_driver"
 	. "github.com/pingcap/tidb/parser/types"
