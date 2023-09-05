@@ -33,6 +33,7 @@ go_library(
         "//util/table-filter",
         "//util/zeropool",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_spkg_bom//:bom",
         "@com_github_xitongsys_parquet_go//parquet",
         "@com_github_xitongsys_parquet_go//reader",

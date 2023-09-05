@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -181,17 +182,23 @@ func TestNewCompressReader(t *testing.T) {
 	require.NoError(t, w.Close())
 	compressedData := buf.Bytes()
 
-	// default cfg
+	// default cfg(decode asynchronously)
+	prevRoutineCnt := runtime.NumGoroutine()
 	r, err := newCompressReader(Zstd, DecompressConfig{}, bytes.NewReader(compressedData))
+	currRoutineCnt := runtime.NumGoroutine()
 	require.NoError(t, err)
+	require.Greater(t, currRoutineCnt, prevRoutineCnt)
 	allData, err := io.ReadAll(r)
 	require.NoError(t, err)
 	require.Equal(t, "data", string(allData))
 
 	// sync decode
+	prevRoutineCnt = runtime.NumGoroutine()
 	config := DecompressConfig{ZStdDecodeConcurrency: 1}
 	r, err = newCompressReader(Zstd, config, bytes.NewReader(compressedData))
 	require.NoError(t, err)
+	currRoutineCnt = runtime.NumGoroutine()
+	require.Equal(t, prevRoutineCnt, currRoutineCnt)
 	allData, err = io.ReadAll(r)
 	require.NoError(t, err)
 	require.Equal(t, "data", string(allData))

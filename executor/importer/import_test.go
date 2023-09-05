@@ -15,14 +15,17 @@
 package importer
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"testing"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -156,4 +159,20 @@ func TestASTArgsFromStmt(t *testing.T) {
 	importIntoStmt := stmtNode.(*ast.ImportIntoStmt)
 	require.Equal(t, astArgs.ColumnAssignments, importIntoStmt.ColumnAssignments)
 	require.Equal(t, astArgs.ColumnsAndUserVars, importIntoStmt.ColumnsAndUserVars)
+}
+
+func TestGetFileRealSize(t *testing.T) {
+	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage", "return(250)")
+	require.NoError(t, err)
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage")
+	}()
+	fileMeta := mydump.SourceFileMeta{Compression: mydump.CompressionNone, FileSize: 100}
+	c := &LoadDataController{logger: log.L()}
+	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
+	fileMeta.Compression = mydump.CompressionGZ
+	require.Equal(t, int64(250), c.getFileRealSize(context.Background(), fileMeta, nil))
+	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
 }

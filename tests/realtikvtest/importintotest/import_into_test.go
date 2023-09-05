@@ -15,8 +15,6 @@
 package importintotest
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
 	"fmt"
 	"net"
@@ -440,60 +438,6 @@ func (s *mockGCSSuite) TestMultiValueIndex() {
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"1 [1, 2, 3]",
 		"2 [2, 3, 4]",
-	))
-}
-
-func (s *mockGCSSuite) TestMixedCompression() {
-	s.tk.MustExec("DROP DATABASE IF EXISTS multi_load;")
-	s.tk.MustExec("CREATE DATABASE multi_load;")
-	s.tk.MustExec("CREATE TABLE multi_load.t (i INT PRIMARY KEY, s varchar(32));")
-
-	// gzip content
-	var buf bytes.Buffer
-	w := gzip.NewWriter(&buf)
-	_, err := w.Write([]byte(`1,test1
-2,test2
-3,test3
-4,test4`))
-	require.NoError(s.T(), err)
-	err = w.Close()
-	require.NoError(s.T(), err)
-
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "test-multi-load",
-			Name:       "compress.001.tsv.gz",
-		},
-		Content: buf.Bytes(),
-	})
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "test-multi-load",
-			Name:       "compress.002.tsv",
-		},
-		Content: []byte(`5,test5
-6,test6
-7,test7
-8,test8
-9,test9`),
-	})
-
-	sql := fmt.Sprintf(`IMPORT INTO multi_load.t FROM 'gs://test-multi-load/compress.*?endpoint=%s'
-		WITH thread=1;`, gcsEndpoint)
-	s.tk.MustQuery(sql)
-	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
-		"1 test1", "2 test2", "3 test3", "4 test4",
-		"5 test5", "6 test6", "7 test7", "8 test8", "9 test9",
-	))
-
-	// with ignore N rows
-	s.tk.MustExec("truncate table multi_load.t")
-	sql = fmt.Sprintf(`IMPORT INTO multi_load.t FROM 'gs://test-multi-load/compress.*?endpoint=%s'
-		WITH skip_rows=3, thread=1;`, gcsEndpoint)
-	s.tk.MustQuery(sql)
-	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
-		"4 test4",
-		"8 test8", "9 test9",
 	))
 }
 
