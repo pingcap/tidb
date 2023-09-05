@@ -17,12 +17,9 @@ package executor
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
-	"encoding/binary"
 	"fmt"
 	"math"
 	"runtime/trace"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1376,7 +1373,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 
 	/// Triage for historical stats
 	if succ {
-		a.LogHistoricalStats()
+		a.RecordHistoryStats()
 	}
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
@@ -1500,80 +1497,49 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 	return nil
 }
 
-func SortAndGenMD5HashForConds(sc *stmtctx.StatementContext, conditions []expression.Expression) (bool, uint64) {
-	cnfHashCodeArray := make([][]byte, 0, len(conditions))
-	for _, arg := range conditions {
-		if sf, ok := arg.(*expression.ScalarFunction); ok {
-			dnfExprs := expression.FlattenDNFConditions(sf)
-			if len(dnfExprs) > 1000 {
-				logutil.BgLogger().Warn("Expression is too complex to record historical stat.", zap.Int("DNFExprLen", len(dnfExprs)))
-				return false, 0
-			}
-			dnfHashCodeArray := make([][]byte, 0, len(dnfExprs))
-			for _, dnf := range dnfExprs {
-				dnfHashCode := dnf.HashCode(sc)
-				dnfHashCodeArray = checkCondHashAndAppend(dnfHashCode, dnfHashCodeArray)
-			}
-			sort.Slice(dnfHashCodeArray, func(i, j int) bool { return bytes.Compare(dnfHashCodeArray[i], dnfHashCodeArray[j]) < 0 })
+// RecordHistoryStats is used to record history stats that is more accurate than estimation
+// Currently, only support "Selection + TableScan" pattern
+func (a *ExecStmt) RecordHistoryStats() {
+	sessVars := a.Ctx.GetSessionVars()
+	if sessVars.InRestrictedSQL || !sessVars.StmtCtx.InSelectStmt {
+		return
+	}
 
-			flatDnfHashCode := bytes.Join(dnfHashCodeArray, nil)
-			cnfHashCodeArray = append(cnfHashCodeArray, flatDnfHashCode)
-		} else {
-			flatDnfHashCode := arg.HashCode(sc)
-			cnfHashCodeArray = checkCondHashAndAppend(flatDnfHashCode, cnfHashCodeArray)
+	sql := FormatSQL(a.GetTextToLog(true))()
+	stmtCtx := sessVars.StmtCtx
+	flat := getFlatPlan(stmtCtx)
+	if flat == nil || len(flat.Main) == 0 {
+		return
+	}
+
+	for _, flatOp := range flat.Main {
+		pp, isPhysicalPlan := flatOp.Origin.(plannercore.PhysicalPlan)
+		if !isPhysicalPlan {
+			continue
+		}
+		if x, isSelect := pp.(*plannercore.PhysicalSelection); isSelect {
+			if _, ok := x.Children()[0].(*plannercore.PhysicalTableScan); ok {
+				checkAndRecordHistoryStats(stmtCtx, sql, x)
+			}
 		}
 	}
-	sort.Slice(cnfHashCodeArray, func(i, j int) bool { return bytes.Compare(cnfHashCodeArray[i], cnfHashCodeArray[j]) < 0 })
-	flatCnfHashCode := bytes.Join(cnfHashCodeArray, nil)
-	md5Sum := md5.Sum(flatCnfHashCode)
-	firstHalf := binary.BigEndian.Uint64(md5Sum[:8])
-	secondHalf := binary.BigEndian.Uint64(md5Sum[8:])
-	finalHash := firstHalf ^ secondHalf
-	return true, finalHash
 }
 
-func checkCondHashAndAppend(hashCode []byte, hashCodeArray [][]byte) [][]byte {
-	if len(hashCode) > 256 {
-		/// Avoid too large hash code here
-		newHashCode := md5.Sum(hashCode)
-		hashCodeArray = append(hashCodeArray, newHashCode[:])
-	} else {
-		hashCodeArray = append(hashCodeArray, hashCode)
-	}
-	return hashCodeArray
-}
-
-// LogHistoricalStats is used to log historical stats that is more accurate than estimate
-func (a *ExecStmt) LogHistoricalStats() {
-	sessVars := a.Ctx.GetSessionVars()
-	if !sessVars.InRestrictedSQL && sessVars.StmtCtx.InSelectStmt {
-		sql := FormatSQL(a.GetTextToLog(true))()
-		stmtCtx := sessVars.StmtCtx
-		flat := getFlatPlan(stmtCtx)
-		if flat == nil || len(flat.Main) == 0 {
+func checkAndRecordHistoryStats(stmtCtx *stmtctx.StatementContext, sql string, x *plannercore.PhysicalSelection) {
+	estRows := plannercore.GetPhysicalPlanEstRowCount(x)
+	actualRows := GetResultRowsCountForCopStats(stmtCtx, x.ID())
+	const Threshold float64 = 1.0
+	if actualRows >= 0 && math.Abs(float64(actualRows)-estRows) > 2*Threshold {
+		succ, hashCode := expression.SortAndGenMD5HashForCNFExprs(stmtCtx, x.Conditions)
+		if !succ {
 			return
 		}
-
-		for _, flatOp := range flat.Main {
-			pp, isPhysicalPlan := flatOp.Origin.(plannercore.PhysicalPlan)
-			if !isPhysicalPlan {
-				continue
-			}
-			if x, isSelect := pp.(*plannercore.PhysicalSelection); isSelect {
-				if _, ok := x.Children()[0].(*plannercore.PhysicalTableScan); ok {
-					estRows := plannercore.GetPhysicalPlanEstRowCount(pp)
-					actualRows := GetResultRowsCountV2(stmtCtx, pp.ID())
-					var Thres float64 = 1.0
-					if actualRows >= 0 && math.Abs(float64(actualRows)-estRows) > 2*Thres {
-						succ, hashCode := SortAndGenMD5HashForConds(stmtCtx, x.Conditions)
-						if !succ {
-							break
-						}
-						logutil.BgLogger().Info(sql, zap.Uint64("FinalHash", hashCode), zap.Float64("EstRows", estRows), zap.Int64("ActRows", actualRows), zap.Int("PlanID", pp.ID()))
-					}
-				}
-			}
-		}
+		logutil.BgLogger().Info(
+			sql,
+			zap.Uint64("FinalHash", hashCode),
+			zap.Float64("EstRows", estRows),
+			zap.Int64("ActRows", actualRows),
+			zap.Int("PlanID", x.ID()))
 	}
 }
 
@@ -1785,8 +1751,9 @@ func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p plannercore.Plan) i
 	return rootStats.GetActRows()
 }
 
-// GetResultRowsCountV2 gets the count of the statement result rows.
-func GetResultRowsCountV2(stmtCtx *stmtctx.StatementContext, planID int) int64 {
+// GetResultRowsCountForCopStats gets the count of the statement result rows of cop stats
+// Return -1 if no cop stats exists
+func GetResultRowsCountForCopStats(stmtCtx *stmtctx.StatementContext, planID int) int64 {
 	runtimeStatsColl := stmtCtx.RuntimeStatsColl
 	if runtimeStatsColl == nil {
 		return -1

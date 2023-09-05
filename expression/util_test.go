@@ -455,6 +455,151 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 	require.Equal(t, expectedGlobalResult, r.SQLDigestsMap)
 }
 
+func TestSortAndGenMD5HashForCNFExprs(t *testing.T) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	hashCodeSet := make(map[uint64]bool)
+
+	// col0 < 10
+	conditions := []Expression{
+		newFunction(ast.LE, newColumn(0), NewInt64Const(10)),
+	}
+	succ, hashCode0 := SortAndGenMD5HashForCNFExprs(sc, conditions)
+	require.True(t, succ)
+	require.True(t, !hashCodeSet[hashCode0])
+	hashCodeSet[hashCode0] = true
+	_, hashCode0x := SortAndGenMD5HashForCNFExprs(sc, conditions) // Same conditions, same hash code
+	require.True(t, hashCode0 == hashCode0x)
+
+	// col0 < 11
+	conditions = []Expression{
+		newFunction(ast.LE, newColumn(0), NewInt64Const(11)),
+	}
+	succ, hashCode1 := SortAndGenMD5HashForCNFExprs(sc, conditions)
+	require.True(t, succ)
+	require.True(t, !hashCodeSet[hashCode1])
+	hashCodeSet[hashCode1] = true
+
+	// col0 > 11
+	conditions = []Expression{
+		newFunction(ast.GE, newColumn(0), NewInt64Const(11)),
+	}
+	succ, hashCode2 := SortAndGenMD5HashForCNFExprs(sc, conditions)
+	require.True(t, succ)
+	require.True(t, !hashCodeSet[hashCode2])
+	hashCodeSet[hashCode2] = true
+
+	// col1 > 11
+	conditions = []Expression{
+		newFunction(ast.GE, newColumn(1), NewInt64Const(11)),
+	}
+	succ, hashCode2x := SortAndGenMD5HashForCNFExprs(sc, conditions)
+	require.True(t, succ)
+	require.True(t, !hashCodeSet[hashCode2x])
+	hashCodeSet[hashCode2x] = true
+
+	expr1 := newFunction(ast.LE, newColumn(0), NewInt64Const(11))
+	expr2 := newFunction(ast.GE, newColumn(0), NewInt64Const(8))
+	expr3 := newFunction(ast.GE, newColumn(1), NewInt64Const(15))
+	expr4 := newFunction(ast.LE, newColumn(1), NewInt64Const(100))
+	// expr1 and expr2 and expr3 and expr4
+	conditions = []Expression{
+		expr1,
+		expr2,
+		expr3,
+		expr4,
+	}
+	succ, hashCode3 := SortAndGenMD5HashForCNFExprs(sc, conditions)
+	require.True(t, succ)
+	require.True(t, !hashCodeSet[hashCode3])
+	hashCodeSet[hashCode3] = true
+
+	// expr3 and expr1 and expr4 and expr2
+	conditions = []Expression{
+		expr3,
+		expr1,
+		expr4,
+		expr2,
+	}
+	succ, hashCode4 := SortAndGenMD5HashForCNFExprs(sc, conditions)
+	require.True(t, succ)
+	require.True(t, hashCode3 == hashCode4)
+
+	// (expr1 or expr3) or (expr4 or expr2)
+	conditions = []Expression{
+		newFunction(ast.LogicOr,
+			newFunction(ast.LogicOr, expr1, expr3),
+			newFunction(ast.LogicOr, expr4, expr2)),
+	}
+	succ, hashCode5 := SortAndGenMD5HashForCNFExprs(sc, conditions)
+	require.True(t, succ)
+	require.True(t, !hashCodeSet[hashCode5])
+	hashCodeSet[hashCode5] = true
+
+	// (expr4 or expr2) or (expr3 or expr1)
+	conditions = []Expression{
+		newFunction(ast.LogicOr,
+			newFunction(ast.LogicOr, expr4, expr2),
+			newFunction(ast.LogicOr, expr3, expr1)),
+	}
+	succ, hashCode6 := SortAndGenMD5HashForCNFExprs(sc, conditions)
+	require.True(t, succ)
+	require.True(t, hashCode5 == hashCode6)
+
+	// expr4 or (expr3 or (expr1 or expr2)
+	conditions = []Expression{
+		newFunction(ast.LogicOr,
+			expr4,
+			newFunction(ast.LogicOr,
+				expr3,
+				newFunction(ast.LogicOr, expr1, expr2))),
+	}
+	succ, hashCode7 := SortAndGenMD5HashForCNFExprs(sc, conditions)
+	require.True(t, succ)
+	require.True(t, hashCode6 == hashCode7)
+
+	// expr4 or (expr3 or ((not expr1) or expr2)
+	conditions = []Expression{
+		newFunction(ast.LogicOr,
+			expr4,
+			newFunction(ast.LogicOr,
+				expr3,
+				newFunction(ast.LogicOr, newFunction(ast.UnaryNot, expr1), expr2))),
+	}
+	succ, hashCode8 := SortAndGenMD5HashForCNFExprs(sc, conditions)
+	require.True(t, succ)
+	require.True(t, !hashCodeSet[hashCode8])
+	hashCodeSet[hashCode8] = true
+
+	// (expr4 or expr3) and (expr1 or expr2)
+	conditions = []Expression{
+		newFunction(ast.LogicOr, expr4, expr3),
+		newFunction(ast.LogicOr, expr1, expr2),
+	}
+	succ, hashCode9 := SortAndGenMD5HashForCNFExprs(sc, conditions)
+	require.True(t, succ)
+	require.True(t, !hashCodeSet[hashCode9])
+	hashCodeSet[hashCode9] = true
+
+	// (expr4 or expr1) and (expr3 or expr2)
+	conditions = []Expression{
+		newFunction(ast.LogicOr, expr4, expr1),
+		newFunction(ast.LogicOr, expr3, expr2),
+	}
+	succ, hashCode10 := SortAndGenMD5HashForCNFExprs(sc, conditions)
+	require.True(t, succ)
+	require.True(t, !hashCodeSet[hashCode10])
+	hashCodeSet[hashCode10] = true
+
+	// (expr2 or expr3) and (expr1 or expr4)
+	conditions = []Expression{
+		newFunction(ast.LogicOr, expr2, expr3),
+		newFunction(ast.LogicOr, expr1, expr4),
+	}
+	succ, hashCode11 := SortAndGenMD5HashForCNFExprs(sc, conditions)
+	require.True(t, succ)
+	require.True(t, hashCode10 == hashCode11)
+}
+
 func BenchmarkExtractColumns(b *testing.B) {
 	conditions := []Expression{
 		newFunction(ast.EQ, newColumn(0), newColumn(1)),

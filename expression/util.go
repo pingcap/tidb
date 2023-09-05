@@ -17,7 +17,11 @@ package expression
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/binary"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -1793,4 +1797,52 @@ func ExprsToStringsForDisplay(exprs []Expression) []string {
 			quote)
 	}
 	return strs
+}
+
+// SortAndGenMD5HashForCNFExprs sorts cnf exprs by their hash codes
+// Return true and the hash code if none DNF expressions' length > 1000;
+// Otherwise, return false and 0
+func SortAndGenMD5HashForCNFExprs(sc *stmtctx.StatementContext, conditions []Expression) (bool, uint64) {
+	cnfHashCodes := make([][]byte, 0, len(conditions))
+	for _, arg := range conditions {
+		if sf, ok := arg.(*ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
+			dnfExprs := FlattenDNFConditions(sf)
+			if len(dnfExprs) > 1000 {
+				// It might consume too much cpu and memory resource to compute hash code
+				logutil.BgLogger().Warn("Expression is too complex to record history stat.",
+					zap.Int("DNFExprLen", len(dnfExprs)))
+				return false, 0
+			}
+			dnfHashCodes := make([][]byte, 0, len(dnfExprs))
+			for _, dnf := range dnfExprs {
+				dnfHashCode := dnf.HashCode(sc)
+				dnfHashCodes = checkHashLengthAndAppend(dnfHashCode, dnfHashCodes)
+			}
+			sort.Slice(dnfHashCodes, func(i, j int) bool { return bytes.Compare(dnfHashCodes[i], dnfHashCodes[j]) < 0 })
+
+			flatDnfHashCode := bytes.Join(dnfHashCodes, nil)
+			cnfHashCodes = append(cnfHashCodes, flatDnfHashCode)
+		} else {
+			flatDnfHashCode := arg.HashCode(sc)
+			cnfHashCodes = checkHashLengthAndAppend(flatDnfHashCode, cnfHashCodes)
+		}
+	}
+	sort.Slice(cnfHashCodes, func(i, j int) bool { return bytes.Compare(cnfHashCodes[i], cnfHashCodes[j]) < 0 })
+	flatCnfHashCode := bytes.Join(cnfHashCodes, []byte(","))
+	md5Sum := md5.Sum(flatCnfHashCode)
+	firstHalf := binary.BigEndian.Uint64(md5Sum[:8])
+	secondHalf := binary.BigEndian.Uint64(md5Sum[8:])
+	finalHash := firstHalf ^ secondHalf
+	return true, finalHash
+}
+
+func checkHashLengthAndAppend(hashCode []byte, hashCodes [][]byte) [][]byte {
+	if len(hashCode) > 256 {
+		/// Avoid large hash code here
+		newHashCode := md5.Sum(hashCode)
+		hashCodes = append(hashCodes, newHashCode[:])
+	} else {
+		hashCodes = append(hashCodes, hashCode)
+	}
+	return hashCodes
 }
