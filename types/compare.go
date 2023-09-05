@@ -20,28 +20,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 )
 
-// CompareInt64 returns an integer comparing the int64 x to y.
-func CompareInt64(x, y int64) int {
-	if x < y {
-		return -1
-	} else if x == y {
-		return 0
-	}
-
-	return 1
-}
-
-// CompareUint64 returns an integer comparing the uint64 x to y.
-func CompareUint64(x, y uint64) int {
-	if x < y {
-		return -1
-	} else if x == y {
-		return 0
-	}
-
-	return 1
-}
-
 // VecCompareUU returns []int64 comparing the []uint64 x to []uint64 y
 func VecCompareUU(x, y []uint64, res []int64) {
 	n := len(x)
