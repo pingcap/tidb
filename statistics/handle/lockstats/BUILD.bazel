@@ -24,8 +24,17 @@ go_library(
 go_test(
     name = "lockstats_test",
     timeout = "short",
-    srcs = ["lock_stats_test.go"],
+    srcs = [
+        "lock_stats_test.go",
+        "query_lock_test.go",
+    ],
     embed = [":lockstats"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
+    shard_count = 3,
+    deps = [
+        "//util/sqlexec/mock",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
+    ],
 )

@@ -15,9 +15,13 @@
 package lockstats
 
 import (
+	"context"
 	"testing"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/sqlexec/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func TestGenerateDuplicateTablesMessage(t *testing.T) {
@@ -76,4 +80,32 @@ func TestGenerateDuplicateTablesMessage(t *testing.T) {
 			require.Equal(t, tt.expectedMsg, msg)
 		})
 	}
+}
+
+func TestInsertIntoStatsTableLocked(t *testing.T) {
+	ctx := context.Background()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
+
+	// Executed SQL should be:
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.Eq(ctx),
+		gomock.Eq(useCurrentSession),
+		gomock.Eq("INSERT INTO mysql.stats_table_locked (table_id) VALUES (%?) ON DUPLICATE KEY UPDATE table_id = %?"),
+		gomock.Eq([]interface{}{int64(1), int64(1)}),
+	)
+	err := insertIntoStatsTableLocked(ctx, exec, 1)
+	require.NoError(t, err)
+
+	// Error should be returned when ExecRestrictedSQL returns error.
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.Any(),
+		gomock.Any(),
+		gomock.Any(),
+		gomock.Any(),
+	).Return(nil, nil, errors.New("test error"))
+
+	err = insertIntoStatsTableLocked(ctx, exec, 1)
+	require.Equal(t, "test error", err.Error())
 }
