@@ -126,15 +126,13 @@ func mockSimpleUpgradeToVerLatest(s Session, ver int64) {
 // TestHook is exported for testing.
 var TestHook = TestCallback{}
 
-// modifyBootstrapVersionForTest is used to test SupportUpgradeHTTPOpVer upgrade SupportUpgradeHTTPOpVer++.
+// modifyBootstrapVersionForTest is used to test currentBootstrapVersion upgrade currentBootstrapVersion++.
 func modifyBootstrapVersionForTest(ver int64) {
 	if !*WithMockUpgrade {
 		return
 	}
 
-	if ver == SupportUpgradeHTTPOpVer && currentBootstrapVersion == SupportUpgradeHTTPOpVer {
-		currentBootstrapVersion = mockLatestVer
-	}
+	currentBootstrapVersion = mockLatestVer
 }
 
 const (

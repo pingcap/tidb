@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -118,36 +117,4 @@ func IsUpgradingClusterState(s sessionctx.Context) (bool, error) {
 	}
 
 	return stateInfo.State == syncer.StateUpgrading, nil
-}
-
-func checkOrSyncUpgrade(s Session, ver int64) {
-	if ver < SupportUpgradeHTTPOpVer {
-		terror.MustNil(SyncUpgradeState(s, time.Duration(internalSQLTimeout)*time.Second))
-		return
-	}
-	isUpgradingClusterStateWithRetry(s, ver, currentBootstrapVersion, time.Duration(internalSQLTimeout)*time.Second)
-}
-
-func isUpgradingClusterStateWithRetry(s sessionctx.Context, oldVer, newVer int64, timeout time.Duration) {
-	now := time.Now()
-	interval := 200 * time.Millisecond
-	logger := logutil.BgLogger().With(zap.String("category", "upgrading"))
-	for i := 0; ; i++ {
-		isUpgrading, err := IsUpgradingClusterState(s)
-		if err == nil {
-			if isUpgrading {
-				break
-			}
-			logger.Fatal("global state isn't upgrading, please send a request to start the upgrade first", zap.Error(err))
-		}
-
-		if time.Since(now) >= timeout {
-			logger.Fatal("get global state failed", zap.Error(err))
-		}
-		if i%10 == 0 {
-			logger.Warn("get global state failed", zap.Error(err))
-		}
-		time.Sleep(interval)
-	}
-	logger.Info("global state is upgrading", zap.Int64("old version", oldVer), zap.Int64("latest version", newVer))
 }
