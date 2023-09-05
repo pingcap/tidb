@@ -203,9 +203,11 @@ func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, opt
 	}
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
+		metrics.UpdateCounter.Inc()
 		sc.c.Put(id, tbl)
 	}
 	for _, id := range deletedIDs {
+		metrics.DelCounter.Inc()
 		sc.c.Del(id)
 	}
 
