@@ -17,6 +17,8 @@
 package expression
 
 import (
+	"cmp"
+
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -199,7 +201,7 @@ func (b *builtinLTDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareDuration(arg0[i], arg1[i])
+		val := cmp.Compare(arg0[i], arg1[i])
 		i64s[i] = boolToInt64(val < 0)
 	}
 	return nil
@@ -423,7 +425,7 @@ func (b *builtinLEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareDuration(arg0[i], arg1[i])
+		val := cmp.Compare(arg0[i], arg1[i])
 		i64s[i] = boolToInt64(val <= 0)
 	}
 	return nil
@@ -647,7 +649,7 @@ func (b *builtinGTDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareDuration(arg0[i], arg1[i])
+		val := cmp.Compare(arg0[i], arg1[i])
 		i64s[i] = boolToInt64(val > 0)
 	}
 	return nil
@@ -871,7 +873,7 @@ func (b *builtinGEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareDuration(arg0[i], arg1[i])
+		val := cmp.Compare(arg0[i], arg1[i])
 		i64s[i] = boolToInt64(val >= 0)
 	}
 	return nil
@@ -1095,7 +1097,7 @@ func (b *builtinEQDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareDuration(arg0[i], arg1[i])
+		val := cmp.Compare(arg0[i], arg1[i])
 		i64s[i] = boolToInt64(val == 0)
 	}
 	return nil
@@ -1319,7 +1321,7 @@ func (b *builtinNEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareDuration(arg0[i], arg1[i])
+		val := cmp.Compare(arg0[i], arg1[i])
 		i64s[i] = boolToInt64(val != 0)
 	}
 	return nil
@@ -1562,7 +1564,7 @@ func (b *builtinNullEQDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.
 			i64s[i] = 1
 		case isNull0 != isNull1:
 			i64s[i] = 0
-		case types.CompareDuration(arg0[i], arg1[i]) == 0:
+		case cmp.Compare(arg0[i], arg1[i]) == 0:
 			i64s[i] = 1
 		}
 	}
