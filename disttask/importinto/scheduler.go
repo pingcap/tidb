@@ -90,7 +90,8 @@ func (s *importStepScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	return nil
 }
 
-func (s *importStepScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.MinimalTask, error) {
+func (s *importStepScheduler) SplitSubtask(ctx context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error) {
+	bs := subtask.Meta
 	var subtaskMeta ImportStepMeta
 	err := json.Unmarshal(bs, &subtaskMeta)
 	if err != nil {
@@ -208,11 +209,12 @@ type postStepScheduler struct {
 
 var _ scheduler.Scheduler = &postStepScheduler{}
 
-func (p *postStepScheduler) SplitSubtask(_ context.Context, metaBytes []byte) ([]proto.MinimalTask, error) {
+func (p *postStepScheduler) SplitSubtask(_ context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error) {
 	mTask := &postProcessStepMinimalTask{
 		taskMeta: p.taskMeta,
 		logger:   p.logger,
 	}
+	metaBytes := subtask.Meta
 	if err := json.Unmarshal(metaBytes, &mTask.meta); err != nil {
 		return nil, err
 	}
@@ -235,28 +237,28 @@ func init() {
 	}
 	scheduler.RegisterTaskType(proto.ImportInto, scheduler.WithPoolSize(int32(runtime.GOMAXPROCS(0))))
 	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepImport,
-		func(ctx context.Context, taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
+		func(_ context.Context, task *proto.Task, _ *scheduler.Summary) (scheduler.Scheduler, error) {
 			// TODO(tangenta): use context for lifetime control.
-			taskMeta, logger, err := prepareFn(taskID, bs, step)
+			taskMeta, logger, err := prepareFn(task.ID, task.Meta, task.Step)
 			if err != nil {
 				return nil, err
 			}
 			return &importStepScheduler{
-				taskID:   taskID,
+				taskID:   task.ID,
 				taskMeta: taskMeta,
 				logger:   logger,
 			}, nil
 		},
 	)
 	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepPostProcess,
-		func(ctx context.Context, taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
+		func(_ context.Context, task *proto.Task, _ *scheduler.Summary) (scheduler.Scheduler, error) {
 			// TODO(tangenta): use context for lifetime control.
-			taskMeta, logger, err := prepareFn(taskID, bs, step)
+			taskMeta, logger, err := prepareFn(task.ID, task.Meta, task.Step)
 			if err != nil {
 				return nil, err
 			}
 			return &postStepScheduler{
-				taskID:   taskID,
+				taskID:   task.ID,
 				taskMeta: taskMeta,
 				logger:   logger,
 			}, nil
