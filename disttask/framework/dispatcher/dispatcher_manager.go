@@ -29,7 +29,7 @@ import (
 )
 
 var (
-	// DefaultDispatchConcurrency is the default concurrency for handling task.
+	// DefaultDispatchConcurrency is the default concurrency for dispatching task.
 	DefaultDispatchConcurrency = 4
 	checkTaskRunningInterval   = 3 * time.Second
 )
