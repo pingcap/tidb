@@ -212,8 +212,8 @@ type Endpoint struct {
 // and will be sorted in-place in this function.
 func GetMaxOverlapping(points []Endpoint) int {
 	slices.SortFunc(points, func(i, j Endpoint) int {
-		if bytes.Compare(i.Key, j.Key) != 0 {
-			return bytes.Compare(i.Key, j.Key)
+		if cmp := bytes.Compare(i.Key, j.Key); cmp != 0 {
+			return cmp
 		}
 		return int(i.Tp) - int(j.Tp)
 	})
