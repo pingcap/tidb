@@ -31,15 +31,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type testDynamicDispatcher struct {
+type testDynamicDispatcherExt struct {
 	cnt int
 }
 
-var _ dispatcher.Dispatcher = (*testDynamicDispatcher)(nil)
+var _ dispatcher.Extension = (*testDynamicDispatcherExt)(nil)
 
-func (*testDynamicDispatcher) OnTick(_ context.Context, _ *proto.Task) {}
+func (*testDynamicDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {}
 
-func (dsp *testDynamicDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (dsp *testDynamicDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	// move to step1
 	if gTask.Step == proto.StepInit {
 		gTask.Step = proto.StepOne
@@ -69,11 +69,11 @@ func (dsp *testDynamicDispatcher) OnNextStage(_ context.Context, _ dispatcher.Ta
 	return nil, nil
 }
 
-func (*testDynamicDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+func (*testDynamicDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	return nil, nil
 }
 
-func (dsp *testDynamicDispatcher) AllDispatched(task *proto.Task) bool {
+func (dsp *testDynamicDispatcherExt) AllDispatched(task *proto.Task) bool {
 	if task.Step == proto.StepOne && dsp.cnt == 3 {
 		return true
 	}
@@ -83,7 +83,7 @@ func (dsp *testDynamicDispatcher) AllDispatched(task *proto.Task) bool {
 	return false
 }
 
-func (dsp *testDynamicDispatcher) Finished(task *proto.Task) bool {
+func (dsp *testDynamicDispatcherExt) Finished(task *proto.Task) bool {
 	if task.Step == proto.StepTwo && dsp.cnt == 4 {
 		dsp.cnt = 0
 		return true
@@ -91,28 +91,28 @@ func (dsp *testDynamicDispatcher) Finished(task *proto.Task) bool {
 	return false
 }
 
-func (*testDynamicDispatcher) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*testDynamicDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return generateSchedulerNodes4Test()
 }
 
-func (*testDynamicDispatcher) IsRetryableErr(error) bool {
+func (*testDynamicDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 func TestFrameworkDynamicBasic(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
-	RegisterTaskMeta(&m, &testDynamicDispatcher{})
+	RegisterTaskMeta(&m, &testDynamicDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess("key1", t, &m)
 	distContext.Close()
 }
 
 func TestFrameworkDynamicHA(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	var m sync.Map
-	RegisterTaskMeta(&m, &testDynamicDispatcher{})
+	RegisterTaskMeta(&m, &testDynamicDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockDynamicDispatchErr", "5*return()"))
 	DispatchTaskAndCheckSuccess("key1", t, &m)
