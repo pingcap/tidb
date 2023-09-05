@@ -15,6 +15,7 @@
 package types
 
 import (
+	"cmp"
 	gjson "encoding/json"
 	"fmt"
 	"math"
@@ -689,12 +690,12 @@ func (d *Datum) compareInt64(sc *stmtctx.StatementContext, i int64) (int, error)
 	case KindMaxValue:
 		return 1, nil
 	case KindInt64:
-		return CompareInt64(d.i, i), nil
+		return cmp.Compare(d.i, i), nil
 	case KindUint64:
 		if i < 0 || d.GetUint64() > math.MaxInt64 {
 			return 1, nil
 		}
-		return CompareInt64(d.i, i), nil
+		return cmp.Compare(d.i, i), nil
 	default:
 		return d.compareFloat64(sc, float64(i))
 	}
@@ -708,9 +709,9 @@ func (d *Datum) compareUint64(sc *stmtctx.StatementContext, u uint64) (int, erro
 		if d.i < 0 || u > math.MaxInt64 {
 			return -1, nil
 		}
-		return CompareInt64(d.i, int64(u)), nil
+		return cmp.Compare(d.i, int64(u)), nil
 	case KindUint64:
-		return CompareUint64(d.GetUint64(), u), nil
+		return cmp.Compare(d.GetUint64(), u), nil
 	default:
 		return d.compareFloat64(sc, float64(u))
 	}
@@ -723,33 +724,33 @@ func (d *Datum) compareFloat64(sc *stmtctx.StatementContext, f float64) (int, er
 	case KindMaxValue:
 		return 1, nil
 	case KindInt64:
-		return CompareFloat64(float64(d.i), f), nil
+		return cmp.Compare(float64(d.i), f), nil
 	case KindUint64:
-		return CompareFloat64(float64(d.GetUint64()), f), nil
+		return cmp.Compare(float64(d.GetUint64()), f), nil
 	case KindFloat32, KindFloat64:
-		return CompareFloat64(d.GetFloat64(), f), nil
+		return cmp.Compare(d.GetFloat64(), f), nil
 	case KindString, KindBytes:
 		fVal, err := StrToFloat(sc, d.GetString(), false)
-		return CompareFloat64(fVal, f), errors.Trace(err)
+		return cmp.Compare(fVal, f), errors.Trace(err)
 	case KindMysqlDecimal:
 		fVal, err := d.GetMysqlDecimal().ToFloat64()
-		return CompareFloat64(fVal, f), errors.Trace(err)
+		return cmp.Compare(fVal, f), errors.Trace(err)
 	case KindMysqlDuration:
 		fVal := d.GetMysqlDuration().Seconds()
-		return CompareFloat64(fVal, f), nil
+		return cmp.Compare(fVal, f), nil
 	case KindMysqlEnum:
 		fVal := d.GetMysqlEnum().ToNumber()
-		return CompareFloat64(fVal, f), nil
+		return cmp.Compare(fVal, f), nil
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err := d.GetBinaryLiteral4Cmp().ToInt(sc)
 		fVal := float64(val)
-		return CompareFloat64(fVal, f), errors.Trace(err)
+		return cmp.Compare(fVal, f), errors.Trace(err)
 	case KindMysqlSet:
 		fVal := d.GetMysqlSet().ToNumber()
-		return CompareFloat64(fVal, f), nil
+		return cmp.Compare(fVal, f), nil
 	case KindMysqlTime:
 		fVal, err := d.GetMysqlTime().ToNumber().ToFloat64()
-		return CompareFloat64(fVal, f), errors.Trace(err)
+		return cmp.Compare(fVal, f), errors.Trace(err)
 	default:
 		return -1, nil
 	}

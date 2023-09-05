@@ -15,6 +15,7 @@
 package aggfuncs_test
 
 import (
+	"cmp"
 	"fmt"
 	"testing"
 	"time"
@@ -336,7 +337,7 @@ func TestMaxSlidingWindow(t *testing.T) {
 
 func TestDequeReset(t *testing.T) {
 	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
-		return types.CompareInt64(i.(int64), j.(int64))
+		return cmp.Compare(i.(int64), j.(int64))
 	})
 	deque.PushBack(0, 12)
 	deque.Reset()
@@ -346,7 +347,7 @@ func TestDequeReset(t *testing.T) {
 
 func TestDequePushPop(t *testing.T) {
 	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
-		return types.CompareInt64(i.(int64), j.(int64))
+		return cmp.Compare(i.(int64), j.(int64))
 	})
 	times := 15
 	// pushes element from back of deque

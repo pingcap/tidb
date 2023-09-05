@@ -15,6 +15,7 @@
 package aggfuncs
 
 import (
+	"cmp"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -313,7 +314,7 @@ func (e *maxMin4IntSliding) ResetPartialResult(pr PartialResult) {
 func (e *maxMin4IntSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Int.AllocPartialResult()
 	(*partialResult4MaxMinInt)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
-		return types.CompareInt64(i.(int64), j.(int64))
+		return cmp.Compare(i.(int64), j.(int64))
 	})
 	return p, memDelta + DefMaxMinDequeSize
 }
@@ -450,7 +451,7 @@ type maxMin4UintSliding struct {
 func (e *maxMin4UintSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Uint.AllocPartialResult()
 	(*partialResult4MaxMinUint)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
-		return types.CompareUint64(i.(uint64), j.(uint64))
+		return cmp.Compare(i.(uint64), j.(uint64))
 	})
 	return p, memDelta + DefMaxMinDequeSize
 }
@@ -589,7 +590,7 @@ type maxMin4Float32Sliding struct {
 func (e *maxMin4Float32Sliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Float32.AllocPartialResult()
 	(*partialResult4MaxMinFloat32)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
-		return types.CompareFloat64(float64(i.(float32)), float64(j.(float32)))
+		return cmp.Compare(float64(i.(float32)), float64(j.(float32)))
 	})
 	return p, memDelta + DefMaxMinDequeSize
 }
@@ -726,7 +727,7 @@ type maxMin4Float64Sliding struct {
 func (e *maxMin4Float64Sliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Float64.AllocPartialResult()
 	(*partialResult4MaxMinFloat64)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
-		return types.CompareFloat64(i.(float64), j.(float64))
+		return cmp.Compare(i.(float64), j.(float64))
 	})
 	return p, memDelta + DefMaxMinDequeSize
 }

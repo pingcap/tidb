@@ -50,6 +50,8 @@ package expression
 const newLine = "\n"
 
 const builtinOtherImports = `import (
+	"cmp"
+
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -106,11 +108,13 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 	{{- else if eq .Input.TypeName "Time" -}}
 		compareResult = arg0.Compare(arg1)
 	{{- else if eq .Input.TypeName "Duration" -}}
-		compareResult = types.CompareDuration(arg0, arg1)
+		compareResult = cmp.Compare(arg0, arg1)
 	{{- else if eq .Input.TypeName "JSON" -}}
 		compareResult = types.CompareBinaryJSON(arg0, arg1)
 	{{- else if eq .Input.TypeName "String" -}}
 		compareResult = types.CompareString(arg0, arg1, b.collation)
+	{{- else if eq .Input.TypeNameInColumn "Float64" -}}
+		compareResult = cmp.Compare(arg0, arg1)
 	{{- else -}}
 		compareResult = types.Compare{{ .Input.TypeNameInColumn }}(arg0, arg1)
 	{{- end -}}

@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"cmp"
 	"math"
 	"strings"
 
@@ -2627,22 +2628,22 @@ func (b *builtinNullEQIntSig) evalInt(row chunk.Row) (val int64, isNull bool, er
 		res = 1
 	case isNull0 != isNull1:
 		return res, false, nil
-	case isUnsigned0 && isUnsigned1 && types.CompareUint64(uint64(arg0), uint64(arg1)) == 0:
+	case isUnsigned0 && isUnsigned1 && cmp.Compare(uint64(arg0), uint64(arg1)) == 0:
 		res = 1
-	case !isUnsigned0 && !isUnsigned1 && types.CompareInt64(arg0, arg1) == 0:
+	case !isUnsigned0 && !isUnsigned1 && cmp.Compare(arg0, arg1) == 0:
 		res = 1
 	case isUnsigned0 && !isUnsigned1:
 		if arg1 < 0 {
 			return res, false, nil
 		}
-		if types.CompareInt64(arg0, arg1) == 0 {
+		if cmp.Compare(arg0, arg1) == 0 {
 			res = 1
 		}
 	case !isUnsigned0 && isUnsigned1:
 		if arg0 < 0 {
 			return res, false, nil
 		}
-		if types.CompareInt64(arg0, arg1) == 0 {
+		if cmp.Compare(arg0, arg1) == 0 {
 			res = 1
 		}
 	}
@@ -2674,7 +2675,7 @@ func (b *builtinNullEQRealSig) evalInt(row chunk.Row) (val int64, isNull bool, e
 		res = 1
 	case isNull0 != isNull1:
 		return res, false, nil
-	case types.CompareFloat64(arg0, arg1) == 0:
+	case cmp.Compare(arg0, arg1) == 0:
 		res = 1
 	}
 	return res, false, nil
@@ -2948,21 +2949,21 @@ func CompareInt(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsR
 	var res int
 	switch {
 	case isUnsigned0 && isUnsigned1:
-		res = types.CompareUint64(uint64(arg0), uint64(arg1))
+		res = cmp.Compare(uint64(arg0), uint64(arg1))
 	case isUnsigned0 && !isUnsigned1:
 		if arg1 < 0 || uint64(arg0) > math.MaxInt64 {
 			res = 1
 		} else {
-			res = types.CompareInt64(arg0, arg1)
+			res = cmp.Compare(arg0, arg1)
 		}
 	case !isUnsigned0 && isUnsigned1:
 		if arg0 < 0 || uint64(arg1) > math.MaxInt64 {
 			res = -1
 		} else {
-			res = types.CompareInt64(arg0, arg1)
+			res = cmp.Compare(arg0, arg1)
 		}
 	case !isUnsigned0 && !isUnsigned1:
-		res = types.CompareInt64(arg0, arg1)
+		res = cmp.Compare(arg0, arg1)
 	}
 	return int64(res), false, nil
 }
@@ -3006,7 +3007,7 @@ func CompareReal(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 	if isNull0 || isNull1 {
 		return compareNull(isNull0, isNull1), true, nil
 	}
-	return int64(types.CompareFloat64(arg0, arg1)), false, nil
+	return int64(cmp.Compare(arg0, arg1)), false, nil
 }
 
 // CompareDecimal compares two decimals.
