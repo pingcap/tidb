@@ -233,7 +233,7 @@ func (d *sqlDigester) normalize(sql string, keepHint bool, forBinding bool) {
 
 		// Apply binding matching specific rules
 		if forBinding {
-			// IN (Lit) => IN ( ... ) #44298
+			// IN (?) => IN ( ... ) #44298
 			d.reduceInListWithSingleLiteral(&currTok)
 		}
 
