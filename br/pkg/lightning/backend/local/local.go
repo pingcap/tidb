@@ -740,23 +740,16 @@ func (local *Backend) lockAllEnginesUnless(newState, ignoreStateMask importMutex
 
 // Close the local backend.
 func (local *Backend) Close() {
-	allEngines := make([]common.Engine, 0, 8)
 	for _, e := range local.externalEngine {
-		allEngines = append(allEngines, e)
-	}
-	allLocalEngines := local.lockAllEnginesUnless(importMutexStateClose, 0)
-	for _, e := range allLocalEngines {
-		allEngines = append(allEngines, e)
-	}
-	for _, e := range allEngines {
 		_ = e.Close()
 	}
-	local.engines = sync.Map{}
-
+	local.externalEngine = map[uuid.UUID]common.Engine{}
+	allLocalEngines := local.lockAllEnginesUnless(importMutexStateClose, 0)
 	for _, e := range allLocalEngines {
+		_ = e.Close()
 		e.unlock()
 	}
-
+	local.engines = sync.Map{}
 	local.importClientFactory.Close()
 	local.bufferPool.Destroy()
 

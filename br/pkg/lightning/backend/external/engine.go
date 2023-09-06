@@ -186,7 +186,7 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 }
 
 // KVStatistics returns the total kv size and total kv count.
-func (e *Engine) KVStatistics() (totalKVSize int64, totalKVLength int64) {
+func (e *Engine) KVStatistics() (totalKVSize int64, totalKVCount int64) {
 	return e.totalKVSize, e.totalKVCount
 }
 
