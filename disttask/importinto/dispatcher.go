@@ -117,7 +117,7 @@ func (t *taskInfo) close(ctx context.Context) {
 	}
 }
 
-type importDispatcher struct {
+type importDispatcherExt struct {
 	mu sync.RWMutex
 	// NOTE: there's no need to sync for below 2 fields actually, since we add a restriction that only one
 	// task can be running at a time. but we might support task queuing in the future, leave it for now.
@@ -133,9 +133,9 @@ type importDispatcher struct {
 	disableTiKVImportMode atomic.Bool
 }
 
-var _ dispatcher.Dispatcher = (*importDispatcher)(nil)
+var _ dispatcher.Extension = (*importDispatcherExt)(nil)
 
-func (dsp *importDispatcher) OnTick(ctx context.Context, task *proto.Task) {
+func (dsp *importDispatcherExt) OnTick(ctx context.Context, task *proto.Task) {
 	// only switch TiKV mode or register task when task is running
 	if task.State != proto.TaskStateRunning {
 		return
@@ -144,7 +144,7 @@ func (dsp *importDispatcher) OnTick(ctx context.Context, task *proto.Task) {
 	dsp.registerTask(ctx, task)
 }
 
-func (dsp *importDispatcher) switchTiKVMode(ctx context.Context, task *proto.Task) {
+func (dsp *importDispatcherExt) switchTiKVMode(ctx context.Context, task *proto.Task) {
 	dsp.updateCurrentTask(task)
 	// only import step need to switch to IMPORT mode,
 	// If TiKV is in IMPORT mode during checksum, coprocessor will time out.
@@ -173,20 +173,20 @@ func (dsp *importDispatcher) switchTiKVMode(ctx context.Context, task *proto.Tas
 	dsp.lastSwitchTime.Store(time.Now())
 }
 
-func (dsp *importDispatcher) registerTask(ctx context.Context, task *proto.Task) {
+func (dsp *importDispatcherExt) registerTask(ctx context.Context, task *proto.Task) {
 	val, _ := dsp.taskInfoMap.LoadOrStore(task.ID, &taskInfo{taskID: task.ID})
 	info := val.(*taskInfo)
 	info.register(ctx)
 }
 
-func (dsp *importDispatcher) unregisterTask(ctx context.Context, task *proto.Task) {
+func (dsp *importDispatcherExt) unregisterTask(ctx context.Context, task *proto.Task) {
 	if val, loaded := dsp.taskInfoMap.LoadAndDelete(task.ID); loaded {
 		info := val.(*taskInfo)
 		info.close(ctx)
 	}
 }
 
-func (dsp *importDispatcher) OnNextStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (
+func (dsp *importDispatcherExt) OnNextStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (
 	resSubtaskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
 		zap.String("type", gTask.Type),
@@ -272,7 +272,7 @@ func (dsp *importDispatcher) OnNextStage(ctx context.Context, handle dispatcher.
 	return metaBytes, nil
 }
 
-func (dsp *importDispatcher) OnErrStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) ([]byte, error) {
+func (dsp *importDispatcherExt) OnErrStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) ([]byte, error) {
 	logger := logutil.BgLogger().With(
 		zap.String("type", gTask.Type),
 		zap.Int64("task-id", gTask.ID),
@@ -310,7 +310,7 @@ func (dsp *importDispatcher) OnErrStage(ctx context.Context, handle dispatcher.T
 	return nil, err
 }
 
-func (*importDispatcher) GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*importDispatcherExt) GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error) {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
@@ -322,12 +322,12 @@ func (*importDispatcher) GetEligibleInstances(ctx context.Context, gTask *proto.
 	return dispatcher.GenerateSchedulerNodes(ctx)
 }
 
-func (*importDispatcher) IsRetryableErr(error) bool {
+func (*importDispatcherExt) IsRetryableErr(error) bool {
 	// TODO: check whether the error is retryable.
 	return false
 }
 
-func (dsp *importDispatcher) switchTiKV2NormalMode(ctx context.Context, task *proto.Task, logger *zap.Logger) {
+func (dsp *importDispatcherExt) switchTiKV2NormalMode(ctx context.Context, task *proto.Task, logger *zap.Logger) {
 	dsp.updateCurrentTask(task)
 	if dsp.disableTiKVImportMode.Load() {
 		return
@@ -348,7 +348,7 @@ func (dsp *importDispatcher) switchTiKV2NormalMode(ctx context.Context, task *pr
 	dsp.lastSwitchTime.Store(time.Time{})
 }
 
-func (dsp *importDispatcher) updateCurrentTask(task *proto.Task) {
+func (dsp *importDispatcherExt) updateCurrentTask(task *proto.Task) {
 	if dsp.currTaskID.Swap(task.ID) != task.ID {
 		taskMeta := &TaskMeta{}
 		if err := json.Unmarshal(task.Meta, taskMeta); err == nil {
@@ -356,6 +356,19 @@ func (dsp *importDispatcher) updateCurrentTask(task *proto.Task) {
 			dsp.disableTiKVImportMode.Store(taskMeta.Plan.DisableTiKVImportMode || taskMeta.Plan.IsRaftKV2)
 		}
 	}
+}
+
+type importDispatcher struct {
+	*dispatcher.BaseDispatcher
+}
+
+func newImportDispatcher(ctx context.Context, taskMgr *storage.TaskManager,
+	serverID string, task *proto.Task) dispatcher.Dispatcher {
+	dis := importDispatcher{
+		BaseDispatcher: dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task),
+	}
+	dis.BaseDispatcher.Extension = &importDispatcherExt{}
+	return &dis
 }
 
 // preProcess does the pre-processing for the task.
@@ -512,7 +525,7 @@ func job2Step(ctx context.Context, taskMeta *TaskMeta, step string) error {
 	})
 }
 
-func (dsp *importDispatcher) finishJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
+func (dsp *importDispatcherExt) finishJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
 	dsp.unregisterTask(ctx, gTask)
 	redactSensitiveInfo(gTask, taskMeta)
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
@@ -522,7 +535,7 @@ func (dsp *importDispatcher) finishJob(ctx context.Context, handle dispatcher.Ta
 	})
 }
 
-func (dsp *importDispatcher) failJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task,
+func (dsp *importDispatcherExt) failJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task,
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
 	dsp.switchTiKV2NormalMode(ctx, gTask, logger)
 	dsp.unregisterTask(ctx, gTask)
@@ -583,5 +596,5 @@ func stepStr(step int64) string {
 }
 
 func init() {
-	dispatcher.RegisterTaskDispatcher(proto.ImportInto, &importDispatcher{})
+	dispatcher.RegisterDispatcherFactory(proto.ImportInto, newImportDispatcher)
 }

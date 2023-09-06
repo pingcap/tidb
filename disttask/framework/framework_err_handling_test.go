@@ -27,19 +27,19 @@ import (
 	"github.com/pingcap/tidb/testkit"
 )
 
-type planErrDispatcher struct {
+type planErrDispatcherExt struct {
 	callTime int
 }
 
 var (
-	_ dispatcher.Dispatcher = (*planErrDispatcher)(nil)
-	_ dispatcher.Dispatcher = (*planNotRetryableErrDispatcher)(nil)
+	_ dispatcher.Extension = (*planErrDispatcherExt)(nil)
+	_ dispatcher.Extension = (*planNotRetryableErrDispatcherExt)(nil)
 )
 
-func (*planErrDispatcher) OnTick(_ context.Context, _ *proto.Task) {
+func (*planErrDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (p *planErrDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (p *planErrDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State == proto.TaskStatePending {
 		if p.callTime == 0 {
 			p.callTime++
@@ -61,7 +61,7 @@ func (p *planErrDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHand
 	return nil, nil
 }
 
-func (p *planErrDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+func (p *planErrDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	if p.callTime == 1 {
 		p.callTime++
 		return nil, errors.New("not retryable err")
@@ -69,64 +69,64 @@ func (p *planErrDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandl
 	return []byte("planErrTask"), nil
 }
 
-func (*planErrDispatcher) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*planErrDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return generateSchedulerNodes4Test()
 }
 
-func (*planErrDispatcher) IsRetryableErr(error) bool {
+func (*planErrDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-type planNotRetryableErrDispatcher struct {
+type planNotRetryableErrDispatcherExt struct {
 }
 
-func (*planNotRetryableErrDispatcher) OnTick(_ context.Context, _ *proto.Task) {
+func (*planNotRetryableErrDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (p *planNotRetryableErrDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (p *planNotRetryableErrDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	return nil, errors.New("not retryable err")
 }
 
-func (*planNotRetryableErrDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+func (*planNotRetryableErrDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	return nil, errors.New("not retryable err")
 }
 
-func (*planNotRetryableErrDispatcher) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*planNotRetryableErrDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return generateSchedulerNodes4Test()
 }
 
-func (*planNotRetryableErrDispatcher) IsRetryableErr(error) bool {
+func (*planNotRetryableErrDispatcherExt) IsRetryableErr(error) bool {
 	return false
 }
 
 func TestPlanErr(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 
-	RegisterTaskMeta(&m, &planErrDispatcher{0})
+	RegisterTaskMeta(&m, &planErrDispatcherExt{0})
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess("key1", t, &m)
 	distContext.Close()
 }
 
 func TestRevertPlanErr(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 
-	RegisterTaskMeta(&m, &planErrDispatcher{0})
+	RegisterTaskMeta(&m, &planErrDispatcherExt{0})
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess("key1", t, &m)
 	distContext.Close()
 }
 
 func TestPlanNotRetryableErr(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
+	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 
-	RegisterTaskMeta(&m, &planNotRetryableErrDispatcher{})
+	RegisterTaskMeta(&m, &planNotRetryableErrDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateFailed)
 	distContext.Close()
