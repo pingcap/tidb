@@ -1,6 +1,6 @@
-# integrationTest
+# IntegrationTest
 
-integrationTest is a integration test command tool, also with some useful test cases for TiDB execute plan logic, we can run case via `run-tests.sh`.
+IntegrationTest is a integration test command tool, also with some useful test cases for TiDB execute plan logic, we can run case via `run-tests.sh`.
 
 ```
 Usage: ./run-tests.sh [options]
