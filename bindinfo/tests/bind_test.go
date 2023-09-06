@@ -414,7 +414,7 @@ func TestBindingSymbolList(t *testing.T) {
 	require.True(t, tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ib(b)"))
 
 	// Normalize
-	sql, hash := parser.NormalizeDigest("select a, b from test . t where a = 1 limit 0, 1", true)
+	sql, hash := parser.NormalizeDigestForBinding("select a, b from test . t where a = 1 limit 0, 1")
 
 	bindData := dom.BindHandle().GetBindRecord(hash.String(), sql, "test")
 	require.NotNil(t, bindData)
@@ -458,7 +458,7 @@ func TestBindingInListWithSingleLiteral(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	// Normalize
-	sql, hash := parser.NormalizeDigest("select a, b from test . t where a in (1)", true)
+	sql, hash := parser.NormalizeDigestForBinding("select a, b from test . t where a in (1)")
 
 	bindData := dom.BindHandle().GetBindRecord(hash.String(), sql, "test")
 	require.NotNil(t, bindData)
@@ -582,7 +582,7 @@ func TestErrorBind(t *testing.T) {
 	_, err := tk.Exec("create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
 	require.NoError(t, err, "err %v", err)
 
-	sql, hash := parser.NormalizeDigest("select * from test . t where i > ?", true)
+	sql, hash := parser.NormalizeDigestForBinding("select * from test . t where i > ?")
 	bindData := dom.BindHandle().GetBindRecord(hash.String(), sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `i` > ?", bindData.OriginalSQL)
@@ -1348,7 +1348,7 @@ func TestBindSQLDigest(t *testing.T) {
 		parser4binding := parser.New()
 		originNode, err := parser4binding.ParseOneStmt(c.origin, "utf8mb4", "utf8mb4_general_ci")
 		require.NoError(t, err)
-		_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, "test", c.origin), true)
+		_, sqlDigestWithDB := parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(originNode, "test", c.origin))
 		require.Equal(t, res[0][9], sqlDigestWithDB.String())
 	}
 }

@@ -404,9 +404,9 @@ func TestFunctionEncodeSQLDigest(t *testing.T) {
 	tk.MustExec("create table test_func_encode_sql_digest(id int primary key, v int)")
 
 	q1 := "begin"
-	digest1 := parser.DigestHash(q1, false)
+	digest1 := parser.DigestHash(q1)
 	q2 := "select @@tidb_current_ts"
-	digest2 := parser.DigestHash(q2, false)
+	digest2 := parser.DigestHash(q2)
 	q3 := "select id, v from test_func_decode_sql_digests where id = 1 for update"
 	digest3 := parser.DigestHash(q3, false)
 
