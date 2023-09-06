@@ -415,7 +415,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 		zap.String("job", job.String(se.GetSessionVars().EnableRedactLog)), zap.Int("totalJobCount", totalJobCount))
 	var dmlSQLInLog string
 	if se.GetSessionVars().EnableRedactLog {
-		dmlSQLInLog = parser.Normalize(dmlSQL, false)
+		dmlSQLInLog = parser.Normalize(dmlSQL)
 	} else {
 		dmlSQLInLog = dmlSQL
 	}

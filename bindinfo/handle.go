@@ -358,7 +358,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 			if err != nil {
 				return err
 			}
-			_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, record.Db, record.OriginalSQL), false)
+			_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, record.Db, record.OriginalSQL))
 			record.Bindings[i].SQLDigest = sqlDigestWithDB.String()
 		}
 		// Insert the BindRecord to the storage.
@@ -923,7 +923,7 @@ func (h *BindHandle) CaptureBaselines() {
 			}
 		}
 		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
-		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName, bindableStmt.Query), false)
+		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName, bindableStmt.Query))
 		if r := h.GetBindRecord(digest.String(), normalizedSQL, dbName); r != nil && r.HasAvailableBinding() {
 			continue
 		}
@@ -1245,7 +1245,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve b
 	}
 	if verifyPlanTime == -1 || (float64(verifyPlanTime)*acceptFactor > float64(currentPlanTime)) {
 		binding.Status = Rejected
-		digestText, _ := parser.NormalizeDigest(binding.BindSQL, false) // for log desensitization
+		digestText, _ := parser.NormalizeDigest(binding.BindSQL) // for log desensitization
 		logutil.BgLogger().Debug("new plan rejected", zap.String("category", "sql-bind"),
 			zap.Duration("currentPlanTime", currentPlanTime),
 			zap.Duration("verifyPlanTime", verifyPlanTime),

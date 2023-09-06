@@ -216,6 +216,6 @@ func (*TopSQLCollector) hash(stat collector.SQLCPUTimeRecord) string {
 
 // GenSQLDigest uses for testing.
 func GenSQLDigest(sql string) *parser.Digest {
-	_, digest := parser.NormalizeDigest(sql, false)
+	_, digest := parser.NormalizeDigest(sql)
 	return digest
 }

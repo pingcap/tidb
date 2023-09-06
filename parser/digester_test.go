@@ -70,11 +70,11 @@ func TestNormalize(t *testing.T) {
 		{"insert into t values (1)", "insert into `t` values ( ? )"},
 	}
 	for _, test := range tests_for_generic_normalization_rules {
-		normalized := parser.Normalize(test.input, false)
+		normalized := parser.Normalize(test.input)
 		digest := parser.DigestNormalized(normalized)
 		require.Equal(t, test.expect, normalized)
 
-		normalized2, digest2 := parser.NormalizeDigest(test.input, false)
+		normalized2, digest2 := parser.NormalizeDigest(test.input)
 		require.Equal(t, normalized, normalized2)
 		require.Equalf(t, digest.String(), digest2.String(), "%+v", test)
 	}
@@ -92,11 +92,11 @@ func TestNormalize(t *testing.T) {
 		{"select * from t where a in(1, 2, 3)", "select * from `t` where `a` in ( ... )"},
 	}
 	for _, test := range tests_for_binding_specific_rules {
-		normalized := parser.Normalize(test.input, true)
+		normalized := parser.NormalizeForBinding(test.input)
 		digest := parser.DigestNormalized(normalized)
 		require.Equal(t, test.expect, normalized)
 
-		normalized2, digest2 := parser.NormalizeDigest(test.input, true)
+		normalized2, digest2 := parser.NormalizeDigestForBinding(test.input)
 		require.Equal(t, normalized, normalized2)
 		require.Equalf(t, digest.String(), digest2.String(), "%+v", test)
 	}
@@ -144,7 +144,7 @@ func TestNormalizeKeepHint(t *testing.T) {
 		{"select * from `table", "select * from"},
 	}
 	for _, test := range tests {
-		normalized := parser.NormalizeKeepHint(test.input, false)
+		normalized := parser.NormalizeKeepHint(test.input)
 		require.Equal(t, test.expect, normalized)
 	}
 }
@@ -158,11 +158,11 @@ func TestNormalizeDigest(t *testing.T) {
 		{"select 1 from b where id in (1, 3, '3', 1, 2, 3, 4)", "select ? from `b` where `id` in ( ... )", "e1c8cc2738f596dc24f15ef8eb55e0d902910d7298983496362a7b46dbc0b310"},
 	}
 	for _, test := range tests {
-		normalized, digest := parser.NormalizeDigest(test.sql, false)
+		normalized, digest := parser.NormalizeDigest(test.sql)
 		require.Equal(t, test.normalized, normalized)
 		require.Equal(t, test.digest, digest.String())
 
-		normalized = parser.Normalize(test.sql, false)
+		normalized = parser.Normalize(test.sql)
 		digest = parser.DigestNormalized(normalized)
 		require.Equal(t, test.normalized, normalized)
 		require.Equal(t, test.digest, digest.String())

@@ -294,8 +294,8 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("insert into test_sql_digest_text_retriever values (1, 1)")
 
-	insertNormalized, insertDigest := parser.NormalizeDigest("insert into test_sql_digest_text_retriever values (1, 1)", false)
-	_, updateDigest := parser.NormalizeDigest("update test_sql_digest_text_retriever set v = v + 1 where id = 1", false)
+	insertNormalized, insertDigest := parser.NormalizeDigest("insert into test_sql_digest_text_retriever values (1, 1)")
+	_, updateDigest := parser.NormalizeDigest("update test_sql_digest_text_retriever set v = v + 1 where id = 1")
 	r := &expression.SQLDigestTextRetriever{
 		SQLDigestsMap: map[string]string{
 			insertDigest.String(): "",
@@ -322,11 +322,11 @@ func TestFunctionDecodeSQLDigests(t *testing.T) {
 	tk.MustExec("create table test_func_decode_sql_digests(id int primary key, v int)")
 
 	q1 := "begin"
-	norm1, digest1 := parser.NormalizeDigest(q1, false)
+	norm1, digest1 := parser.NormalizeDigest(q1)
 	q2 := "select @@tidb_current_ts"
-	norm2, digest2 := parser.NormalizeDigest(q2, false)
+	norm2, digest2 := parser.NormalizeDigest(q2)
 	q3 := "select id, v from test_func_decode_sql_digests where id = 1 for update"
-	norm3, digest3 := parser.NormalizeDigest(q3, false)
+	norm3, digest3 := parser.NormalizeDigest(q3)
 
 	// TIDB_DECODE_SQL_DIGESTS function doesn't actually do "decoding", instead it queries `statements_summary` and it's
 	// variations for the corresponding statements.

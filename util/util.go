@@ -171,7 +171,7 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 	if len(info.Info) > 0 {
 		sql = info.Info
 		if info.RedactSQL {
-			sql = parser.Normalize(sql, false)
+			sql = parser.Normalize(sql)
 		}
 	}
 	if len(sql) > logSQLLen && needTruncateSQL {

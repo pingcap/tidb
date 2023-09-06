@@ -581,7 +581,7 @@ func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 		return ""
 	}
 	if sv.EnableRedactLog {
-		return parser.Normalize(cc.preparedStmt2StringNoArgs(stmtID), false)
+		return parser.Normalize(cc.preparedStmt2StringNoArgs(stmtID))
 	}
 	return cc.preparedStmt2StringNoArgs(stmtID) + sv.PlanCacheParams.String()
 }

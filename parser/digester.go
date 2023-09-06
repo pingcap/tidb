@@ -83,9 +83,21 @@ func DigestNormalized(normalized string) (digest *Digest) {
 // which removes general property of a statement but keeps specific property.
 //
 // for example: Normalize('select 1 from b where a = 1') => 'select ? from b where a = ?'
-func Normalize(sql string, forBinding bool) (result string) {
+func Normalize(sql string) (result string) {
 	d := digesterPool.Get().(*sqlDigester)
-	result = d.doNormalize(sql, false, forBinding)
+	result = d.doNormalize(sql, false, false)
+	digesterPool.Put(d)
+	return
+}
+
+// NormalizeForBinding generates the normalized statements, while applying additional binding rules
+// it will get normalized form of statement text
+// which removes general property of a statement but keeps specific property.
+//
+// for example: NormalizeForBinding('select 1 from b where a = 1') => 'select ? from b where a = ?'
+func NormalizeForBinding(sql string) (result string) {
+	d := digesterPool.Get().(*sqlDigester)
+	result = d.doNormalize(sql, false, true)
 	digesterPool.Put(d)
 	return
 }
@@ -95,17 +107,25 @@ func Normalize(sql string, forBinding bool) (result string) {
 // which removes general property of a statement but keeps specific property.
 //
 // for example: Normalize('select /*+ use_index(t, primary) */ 1 from b where a = 1') => 'select /*+ use_index(t, primary) */ ? from b where a = ?'
-func NormalizeKeepHint(sql string, forBinding bool) (result string) {
+func NormalizeKeepHint(sql string) (result string) {
 	d := digesterPool.Get().(*sqlDigester)
-	result = d.doNormalize(sql, true, forBinding)
+	result = d.doNormalize(sql, true, false)
 	digesterPool.Put(d)
 	return
 }
 
 // NormalizeDigest combines Normalize and DigestNormalized into one method.
-func NormalizeDigest(sql string, forBinding bool) (normalized string, digest *Digest) {
+func NormalizeDigest(sql string) (normalized string, digest *Digest) {
 	d := digesterPool.Get().(*sqlDigester)
-	normalized, digest = d.doNormalizeDigest(sql, forBinding)
+	normalized, digest = d.doNormalizeDigest(sql, false)
+	digesterPool.Put(d)
+	return
+}
+
+// NormalizeDigestForBinding combines Normalize and DigestNormalized into one method, while applying additional binding rules.
+func NormalizeDigestForBinding(sql string) (normalized string, digest *Digest) {
+	d := digesterPool.Get().(*sqlDigester)
+	normalized, digest = d.doNormalizeDigest(sql, true)
 	digesterPool.Put(d)
 	return
 }

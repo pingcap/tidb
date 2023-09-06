@@ -2517,7 +2517,7 @@ func (cc getLastStmtInConn) String() string {
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		sql := string(hack.String(data))
 		if cc.ctx.GetSessionVars().EnableRedactLog {
-			sql = parser.Normalize(sql, false)
+			sql = parser.Normalize(sql)
 		}
 		return tidbutil.QueryStrForLog(sql)
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
@@ -2550,7 +2550,7 @@ func (cc getLastStmtInConn) PProfLabel() string {
 	case mysql.ComStmtReset:
 		return "ResetStmt"
 	case mysql.ComQuery, mysql.ComStmtPrepare:
-		return parser.Normalize(tidbutil.QueryStrForLog(string(hack.String(data))), false)
+		return parser.Normalize(tidbutil.QueryStrForLog(string(hack.String(data))))
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
 		return tidbutil.QueryStrForLog(cc.preparedStmt2StringNoArgs(stmtID))

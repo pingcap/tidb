@@ -125,7 +125,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		Params:        extractor.markers,
 		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
-	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text(), false)
+	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 
 	var (
 		normalizedSQL4PC, digest4PC string

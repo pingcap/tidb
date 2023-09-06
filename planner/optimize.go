@@ -584,18 +584,33 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string,
 		}
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-			normalizeSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()), forBinding)
+			var normalizeSQL string
+			if forBinding {
+				// Apply additional binding rules if enabled
+				normalizeSQL = parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
+			} else {
+				normalizeSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
+			}
 			normalizeSQL = core.EraseLastSemicolonInSQL(normalizeSQL)
 			hash := parser.DigestNormalized(normalizeSQL)
 			return x.Stmt, normalizeSQL, hash.String(), nil
 		case *ast.SetOprStmt:
 			core.EraseLastSemicolon(x)
 			var normalizeExplainSQL string
+			var explainSQL string
 			if specifiledDB != "" {
-				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()), forBinding)
+				explainSQL = utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text())
 			} else {
-				normalizeExplainSQL = parser.Normalize(x.Text(), forBinding)
+				explainSQL = x.Text()
 			}
+
+			if forBinding {
+				// Apply additional binding rules
+				normalizeExplainSQL = parser.NormalizeForBinding(explainSQL)
+			} else {
+				normalizeExplainSQL = parser.Normalize(explainSQL)
+			}
+
 			idx := strings.Index(normalizeExplainSQL, "select")
 			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")
 			if parenthesesIdx != -1 && parenthesesIdx < idx {
@@ -615,7 +630,7 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string,
 		if len(x.Text()) == 0 {
 			return x, "", "", nil
 		}
-		normalizedSQL, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()), forBinding)
+		normalizedSQL, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
 		return x, normalizedSQL, hash.String(), nil
 	}
 	return nil, "", "", nil
@@ -666,7 +681,7 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 		return
 	}
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmtNode, br.Db, br.OriginalSQL), false)
+	_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmtNode, br.Db, br.OriginalSQL))
 	binding := bindinfo.Binding{
 		BindSQL:   bindSQL,
 		Status:    bindinfo.PendingVerify,
