@@ -1078,9 +1078,9 @@ type SessionVars struct {
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
 
-	// TidbKvReadTimeout is the timeout for readonly kv request in milliseconds, 0 means using default value
+	// TiKVClientReadTimeout is the timeout for readonly kv request in milliseconds, 0 means using default value
 	// See https://github.com/pingcap/tidb/blob/7105505a78fc886c33258caa5813baf197b15247/docs/design/2023-06-30-configurable-kv-timeout.md?plain=1#L14-L15
-	TidbKvReadTimeout uint64
+	TiKVClientReadTimeout uint64
 
 	// Killed is a flag to indicate that this query is killed.
 	Killed uint32
@@ -3528,16 +3528,16 @@ func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 	return s.runtimeFilterMode
 }
 
-// GetTidbKvReadTimeout returns readonly kv request timeout, prefer query hint over session variable
-func (s *SessionVars) GetTidbKvReadTimeout() uint64 {
-	val, ok := s.stmtVars[TidbKvReadTimeout]
+// GetTiKVClientReadTimeout returns readonly kv request timeout, prefer query hint over session variable
+func (s *SessionVars) GetTiKVClientReadTimeout() uint64 {
+	val, ok := s.stmtVars[TiKVClientReadTimeout]
 	if ok {
 		timeout, err := strconv.ParseUint(val, 10, 64)
 		if err == nil {
 			return timeout
 		}
 	}
-	return s.TidbKvReadTimeout
+	return s.TiKVClientReadTimeout
 }
 
 // RuntimeFilterType type of runtime filter "IN"

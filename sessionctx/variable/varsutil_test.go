@@ -691,9 +691,9 @@ func TestStmtVars(t *testing.T) {
 	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'max_execution_time'", err.Error())
 	err = vars.SetStmtVar(MaxExecutionTime, "100")
 	require.NoError(t, err)
-	err = vars.SetStmtVar(TidbKvReadTimeout, "ACDC")
-	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'tidb_kv_read_timeout'", err.Error())
-	err = vars.SetStmtVar(TidbKvReadTimeout, "100")
+	err = vars.SetStmtVar(TiKVClientReadTimeout, "ACDC")
+	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'tikv_client_read_timeout'", err.Error())
+	err = vars.SetStmtVar(TiKVClientReadTimeout, "100")
 	require.NoError(t, err)
 }
 
