@@ -14,12 +14,15 @@ go_test(
     shard_count = 22,
     deps = [
         "//disttask/framework/dispatcher",
+        "//disttask/framework/mock",
         "//disttask/framework/proto",
         "//disttask/framework/scheduler",
+        "//disttask/framework/scheduler/execute",
         "//disttask/framework/storage",
         "//domain/infosync",
         "//testkit",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
     ],
 )
