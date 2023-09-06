@@ -266,21 +266,11 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 }
 
 // TODO implement it
-func (e *groupConcatDistinct) NewSpillSerializeHelper() *SpillSerializeHelper {
-	return nil
-}
-
-// TODO implement it
 func (e *groupConcatDistinct) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 }
 
 // TODO implement it
 func (e *groupConcatDistinct) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
-	return nil, 0, nil
-}
-
-// TODO implement it
-func (e *groupConcatDistinct) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
 	return nil, 0, nil
 }
 

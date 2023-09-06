@@ -1325,22 +1325,22 @@ type Duration struct {
 	Fsp int
 }
 
-const gotimeDurationLen = int(unsafe.Sizeof(gotime.Duration(0)))
-const fspLen = int(unsafe.Sizeof(Duration{}.Fsp))
-const durationLen = int(unsafe.Sizeof(Duration{}))
+const gotimeDurationLen = int64(unsafe.Sizeof(gotime.Duration(0)))
+const fspLen = int64(unsafe.Sizeof(Duration{}.Fsp))
+const durationLen = int64(unsafe.Sizeof(Duration{}))
 
 // SerializeForSpill serializes Duration to bytes
-func (d *Duration) SerializeForSpill(buf []byte) (int, error) {
+func (d *Duration) SerializeForSpill(buf []byte) (int64, error) {
 	// TODO
 	return -1, nil
 }
 
 // DeserializeForSpill deserializes Duration to bytes
-func (d *Duration) DeserializeForSpill(buf []byte) (int, error) {
-	if len(buf) < durationLen {
+func (d *Duration) DeserializeForSpill(buf []byte) (int64, error) {
+	if int64(len(buf)) < durationLen {
 		return -1, spill.ErrInternal.GenWithStack("Buffer is not large enough")
 	}
-	pos := 0
+	pos := int64(0)
 	d.Duration = *(*gotime.Duration)(unsafe.Pointer(&buf[pos]))
 	pos += gotimeDurationLen
 	d.Fsp = *(*int)(unsafe.Pointer(&buf[pos]))

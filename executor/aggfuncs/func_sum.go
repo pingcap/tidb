@@ -335,11 +335,6 @@ func (e *sum4DistinctFloat64) serializeForSpill(pr PartialResult, buf []byte) []
 	return buf
 }
 
-// TODO implement it
-func (e *sum4DistinctFloat64) deserializeForSpill(helper spillDeserializeHelper) PartialResult {
-	return nil
-}
-
 type sum4DistinctDecimal struct {
 	baseSumAggFunc
 }
@@ -414,9 +409,4 @@ func (e *sum4DistinctDecimal) DeserializeToPartialResultForSpill(sctx sessionctx
 // TODO implement it
 func (e *sum4DistinctDecimal) serializeForSpill(pr PartialResult, buf []byte) []byte {
 	return buf
-}
-
-// TODO implement it
-func (e *sum4DistinctDecimal) deserializeForSpill(helper spillDeserializeHelper) PartialResult {
-	return nil
 }

@@ -68,6 +68,15 @@ func (e *basePercentile) AppendFinalResult2Chunk(_ sessionctx.Context, _ Partial
 	return nil
 }
 
+// TODO implement it
+func (e *basePercentile) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+}
+
+// TODO implement it
+func (e *basePercentile) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+	return nil, 0, nil
+}
+
 type partialResult4Percentile interface {
 	sort.Interface
 

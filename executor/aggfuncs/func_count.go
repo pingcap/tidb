@@ -49,6 +49,40 @@ func (e *baseCount) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResu
 	return nil
 }
 
+func (c *baseCount) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4Count)(partialResult)
+	resBuf := spillHelper.serializeInt64(int64(*pr))
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *baseCount) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol.GetData())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta, _ := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta, nil
+}
+
+func (c *baseCount) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
+	pr, memDelta := c.AllocPartialResult()
+	result := int64(*(*partialResult4Count)(pr))
+	success := helper.readInt64(&result)
+	if !success {
+		return nil, 0, nil
+	}
+	return pr, memDelta, nil
+}
+
 type countOriginal4Int struct {
 	baseCount
 }
@@ -416,43 +450,4 @@ func (*countPartial) MergePartialResult(_ sessionctx.Context, src, dst PartialRe
 	p1, p2 := (*partialResult4Count)(src), (*partialResult4Count)(dst)
 	*p2 += *p1
 	return 0, nil
-}
-
-func (c *countPartial) NewSpillSerializeHelper() *SpillSerializeHelper {
-	helper := newSpillSerializeHelper(partialResult4CountByteLen)
-	return &helper
-}
-
-func (c *countPartial) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
-	pr := (*partialResult4Count)(partialResult)
-	resBuf := spillHelper.serializeInt64(int64(*pr))
-	chk.AppendBytes(c.ordinal, resBuf)
-}
-
-func (c *countPartial) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
-	dataCol := src.Column(c.ordinal)
-	totalMemDelta := int64(0)
-	spillHelper := newDeserializeHelper(dataCol.GetData(), partialResult4CountByteLen)
-	partialResults := make([]PartialResult, 0, src.NumRows())
-
-	for {
-		pr, memDelta, _ := c.deserializeForSpill(&spillHelper)
-		if pr == nil {
-			break
-		}
-		partialResults = append(partialResults, pr)
-		totalMemDelta += memDelta
-	}
-
-	return partialResults, totalMemDelta, nil
-}
-
-func (c *countPartial) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
-	pr, memDelta := c.AllocPartialResult()
-	p := int64(*(*partialResult4Count)(pr))
-	success := helper.readInt64(&p)
-	if !success {
-		return nil, 0, nil
-	}
-	return pr, memDelta, nil
 }

@@ -14,47 +14,48 @@
 
 package aggfuncs
 
-import "github.com/pingcap/tidb/util/spill"
+import (
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/spill"
+)
 
 type SpillSerializeHelper struct {
-	tmpBuf []byte
-}
-
-func newSpillSerializeHelper(typeLen int) SpillSerializeHelper {
-	if typeLen == varLenFlag {
-		return SpillSerializeHelper{}
-	}
-	return SpillSerializeHelper{
-		tmpBuf: make([]byte, typeLen),
-	}
+	// tmpBuf is an auxiliary data struct that used for encoding bytes.
+	// 1024 is large enough for all fixed length data struct.
+	tmpBuf [1024]byte
 }
 
 func (s *SpillSerializeHelper) serializeBool(value bool) []byte {
-	return spill.SerializeBool(value, s.tmpBuf)
+	return spill.SerializeBool(value, s.tmpBuf[0:boolLen])
 }
 
 func (s *SpillSerializeHelper) serializeInt8(value int8) []byte {
-	return spill.SerializeInt8(value, s.tmpBuf)
+	return spill.SerializeInt8(value, s.tmpBuf[0:int8Len])
 }
 
 func (s *SpillSerializeHelper) serializeInt32(value int32) []byte {
-	return spill.SerializeInt32(value, s.tmpBuf)
+	return spill.SerializeInt32(value, s.tmpBuf[0:int32Len])
 }
 
 func (s *SpillSerializeHelper) serializeUint32(value uint32) []byte {
-	return spill.SerializeUint32(value, s.tmpBuf)
+	return spill.SerializeUint32(value, s.tmpBuf[0:uint32Len])
 }
 
 func (s *SpillSerializeHelper) serializeUint64(value uint64) []byte {
-	return spill.SerializeUint64(value, s.tmpBuf)
+	return spill.SerializeUint64(value, s.tmpBuf[0:uint64Len])
 }
 
 func (s *SpillSerializeHelper) serializeInt64(value int64) []byte {
-	return spill.SerializeInt64(value, s.tmpBuf)
+	return spill.SerializeInt64(value, s.tmpBuf[0:int64Len])
+}
+
+func (s *SpillSerializeHelper) serializeFloat32(value float32) []byte {
+	return spill.SerializeFloat32(value, s.tmpBuf[0:float32Len])
 }
 
 func (s *SpillSerializeHelper) serializeFloat64(value float64) []byte {
-	return spill.SerializeFloat64(value, s.tmpBuf)
+	return spill.SerializeFloat64(value, s.tmpBuf[0:float64Len])
 }
 
 // TODO if DefRowSize and DefInterfaceSize need to be serialized?

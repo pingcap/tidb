@@ -26,37 +26,42 @@ var (
 )
 
 // DeserializeBool deserializes bool type
-func DeserializeBool(buf []byte, pos int) bool {
+func DeserializeBool(buf []byte, pos int64) bool {
 	return *(*bool)(unsafe.Pointer(&buf[pos]))
 }
 
 // DeserializeBool deserializes int8 type
-func DeserializeInt8(buf []byte, pos int) int8 {
+func DeserializeInt8(buf []byte, pos int64) int8 {
 	return *(*int8)(unsafe.Pointer(&buf[pos]))
 }
 
 // DeserializeBool deserializes int32 type
-func DeserializeInt32(buf []byte, pos int) int32 {
+func DeserializeInt32(buf []byte, pos int64) int32 {
 	return *(*int32)(unsafe.Pointer(&buf[pos]))
 }
 
 // DeserializeBool deserializes uint32 type
-func DeserializeUint32(buf []byte, pos int) uint32 {
+func DeserializeUint32(buf []byte, pos int64) uint32 {
 	return *(*uint32)(unsafe.Pointer(&buf[pos]))
 }
 
 // DeserializeBool deserializes uint64 type
-func DeserializeUint64(buf []byte, pos int) uint64 {
+func DeserializeUint64(buf []byte, pos int64) uint64 {
 	return *(*uint64)(unsafe.Pointer(&buf[pos]))
 }
 
 // DeserializeBool deserializes int64 type
-func DeserializeInt64(buf []byte, pos int) int64 {
+func DeserializeInt64(buf []byte, pos int64) int64 {
 	return *(*int64)(unsafe.Pointer(&buf[pos]))
 }
 
+// DeserializeBool deserializes float32 type
+func DeserializeFloat32(buf []byte, pos int64) float32 {
+	return *(*float32)(unsafe.Pointer(&buf[pos]))
+}
+
 // DeserializeBool deserializes float64 type
-func DeserializeFloat64(buf []byte, pos int) float64 {
+func DeserializeFloat64(buf []byte, pos int64) float64 {
 	return *(*float64)(unsafe.Pointer(&buf[pos]))
 }
 
@@ -93,6 +98,12 @@ func SerializeUint64(value uint64, tmpBuf []byte) []byte {
 // SerializeBool serializes int64 type
 func SerializeInt64(value int64, tmpBuf []byte) []byte {
 	*(*int64)(unsafe.Pointer(&tmpBuf[0])) = value
+	return tmpBuf
+}
+
+// SerializeBool serializes float32 type
+func SerializeFloat32(value float32, tmpBuf []byte) []byte {
+	*(*float32)(unsafe.Pointer(&tmpBuf[0])) = value
 	return tmpBuf
 }
 

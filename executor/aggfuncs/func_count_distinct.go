@@ -76,25 +76,6 @@ func (e *countOriginalWithDistinct4Int) AppendFinalResult2Chunk(_ sessionctx.Con
 	return nil
 }
 
-// TODO implement it
-func (e *countOriginalWithDistinct4Int) NewSpillSerializeHelper() *SpillSerializeHelper {
-	return nil
-}
-
-// TODO implement it
-func (e *countOriginalWithDistinct4Int) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
-}
-
-// TODO implement it
-func (e *countOriginalWithDistinct4Int) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
-	return nil, 0, nil
-}
-
-// TODO implement it
-func (e *countOriginalWithDistinct4Int) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
-	return nil, 0, nil
-}
-
 func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4CountDistinctInt)(pr)
 
@@ -162,21 +143,11 @@ func (e *countOriginalWithDistinct4Real) UpdatePartialResult(sctx sessionctx.Con
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4Real) NewSpillSerializeHelper() *SpillSerializeHelper {
-	return nil
-}
-
-// TODO implement it
 func (e *countOriginalWithDistinct4Real) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 }
 
 // TODO implement it
 func (e *countOriginalWithDistinct4Real) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
-	return nil, 0, nil
-}
-
-// TODO implement it
-func (e *countOriginalWithDistinct4Real) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
 	return nil, 0, nil
 }
 
@@ -233,21 +204,11 @@ func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4Decimal) NewSpillSerializeHelper() *SpillSerializeHelper {
-	return nil
-}
-
-// TODO implement it
 func (e *countOriginalWithDistinct4Decimal) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 }
 
 // TODO implement it
 func (e *countOriginalWithDistinct4Decimal) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
-	return nil, 0, nil
-}
-
-// TODO implement it
-func (e *countOriginalWithDistinct4Decimal) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
 	return nil, 0, nil
 }
 
@@ -299,21 +260,11 @@ func (e *countOriginalWithDistinct4Duration) UpdatePartialResult(sctx sessionctx
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4Duration) NewSpillSerializeHelper() *SpillSerializeHelper {
-	return nil
-}
-
-// TODO implement it
 func (e *countOriginalWithDistinct4Duration) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 }
 
 // TODO implement it
 func (e *countOriginalWithDistinct4Duration) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
-	return nil, 0, nil
-}
-
-// TODO implement it
-func (e *countOriginalWithDistinct4Duration) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
 	return nil, 0, nil
 }
 
@@ -369,21 +320,11 @@ func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.C
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4String) NewSpillSerializeHelper() *SpillSerializeHelper {
-	return nil
-}
-
-// TODO implement it
 func (e *countOriginalWithDistinct4String) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 }
 
 // TODO implement it
 func (e *countOriginalWithDistinct4String) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
-	return nil, 0, nil
-}
-
-// TODO implement it
-func (e *countOriginalWithDistinct4String) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
 	return nil, 0, nil
 }
 
@@ -451,21 +392,11 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct) NewSpillSerializeHelper() *SpillSerializeHelper {
-	return nil
-}
-
-// TODO implement it
 func (e *countOriginalWithDistinct) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 }
 
 // TODO implement it
 func (e *countOriginalWithDistinct) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
-	return nil, 0, nil
-}
-
-// TODO implement it
-func (e *countOriginalWithDistinct) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
 	return nil, 0, nil
 }
 
@@ -884,21 +815,11 @@ func (*baseApproxCountDistinct) MergePartialResult(_ sessionctx.Context, src, ds
 }
 
 // TODO implement it
-func (e *baseApproxCountDistinct) NewSpillSerializeHelper() *SpillSerializeHelper {
-	return nil
-}
-
-// TODO implement it
 func (e *baseApproxCountDistinct) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 }
 
 // TODO implement it
 func (e *baseApproxCountDistinct) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
-	return nil, 0, nil
-}
-
-// TODO implement it
-func (e *baseApproxCountDistinct) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
 	return nil, 0, nil
 }
 

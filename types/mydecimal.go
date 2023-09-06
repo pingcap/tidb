@@ -252,36 +252,36 @@ type MyDecimal struct {
 }
 
 // SerializeForSpill serializes MyDecimal to bytes
-func (d *MyDecimal) SerializeForSpill(buf []byte) (int, error) {
+func (d *MyDecimal) SerializeForSpill(buf []byte) (int64, error) {
 	// TODO
 	return -1, nil
 }
 
 // DeserializeForSpill deserializes MyDecimal to bytes
-func (d *MyDecimal) DeserializeForSpill(buf []byte) (int, error) {
-	bufLen := len(buf)
-	if bufLen < 5 {
+func (d *MyDecimal) DeserializeForSpill(buf []byte) (int64, error) {
+	bufLen := int64(len(buf))
+	fixedLen := int64(4)
+	if bufLen < fixedLen {
 		return -1, spill.ErrInternal.GenWithStack("Buffer is not large enough when deserializing MyDecimal")
 	}
 
-	readPos := 0
+	readPos := int64(0)
 	d.digitsInt = spill.DeserializeInt8(buf, readPos)
 	d.digitsFrac = spill.DeserializeInt8(buf, readPos+1)
 	d.resultFrac = spill.DeserializeInt8(buf, readPos+2)
 	d.negative = spill.DeserializeBool(buf, readPos+3)
-	wordBufByteNum := spill.DeserializeInt8(buf, readPos+4)
+	wordBufByteNum := maxWordBufLen * 4
 
-	readPos += 5
-	if bufLen-readPos < int(wordBufByteNum) {
+	readPos += fixedLen
+	if bufLen-readPos < int64(wordBufByteNum) {
 		return -1, spill.ErrInternal.GenWithStack("Buffer is not large enough when deserializing MyDecimal")
 	}
 
-	wordBufLen := wordBufByteNum / 4
-	for i := 0; i < int(wordBufLen); i++ {
+	for i := 0; i < int(maxWordBufLen); i++ {
 		d.wordBuf[i] = spill.DeserializeInt32(buf, readPos)
 		readPos += 4
 	}
-	return int(wordBufByteNum) + 5, nil
+	return int64(wordBufByteNum) + fixedLen, nil
 }
 
 // IsNegative returns whether a decimal is negative.

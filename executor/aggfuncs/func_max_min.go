@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/spill"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -300,6 +301,49 @@ func (e *maxMin4Int) MergePartialResult(_ sessionctx.Context, src, dst PartialRe
 	return 0, nil
 }
 
+func (c *maxMin4Int) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4MaxMinInt)(partialResult)
+	resBuf := spillHelper.serializeInt64(pr.val)
+	resBuf = append(resBuf, spillHelper.serializeBool(pr.isNull)...)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *maxMin4Int) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol.GetData())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta, err := c.deserializeForSpill(&spillHelper)
+		if err != nil {
+			return nil, 0, err
+		}
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta, nil
+}
+
+func (c *maxMin4Int) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4MaxMinInt)(pr)
+	success := helper.readInt64(&result.val)
+	if !success {
+		// It's unexpected to read only part of result
+		return nil, 0, spill.ErrInternal.GenWithStack("Only read part of partialResult4MaxMinInt when restoring")
+	}
+	success = helper.readBool(&result.isNull)
+	if !success {
+		return nil, 0, nil
+	}
+	return pr, memDelta, nil
+}
+
 type maxMin4IntSliding struct {
 	maxMin4Int
 	windowInfo
@@ -442,6 +486,49 @@ func (e *maxMin4Uint) MergePartialResult(_ sessionctx.Context, src, dst PartialR
 	return 0, nil
 }
 
+func (c *maxMin4Uint) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4MaxMinUint)(partialResult)
+	resBuf := spillHelper.serializeUint64(pr.val)
+	resBuf = append(resBuf, spillHelper.serializeBool(pr.isNull)...)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *maxMin4Uint) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol.GetData())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta, err := c.deserializeForSpill(&spillHelper)
+		if err != nil {
+			return nil, 0, err
+		}
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta, nil
+}
+
+func (c *maxMin4Uint) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4MaxMinUint)(pr)
+	success := helper.readUint64(&result.val)
+	if !success {
+		// It's unexpected to read only part of result
+		return nil, 0, spill.ErrInternal.GenWithStack("Only read part of partialResult4MaxMinInt when restoring")
+	}
+	success = helper.readBool(&result.isNull)
+	if !success {
+		return nil, 0, nil
+	}
+	return pr, memDelta, nil
+}
+
 type maxMin4UintSliding struct {
 	maxMin4Uint
 	windowInfo
@@ -581,6 +668,49 @@ func (e *maxMin4Float32) MergePartialResult(_ sessionctx.Context, src, dst Parti
 	return 0, nil
 }
 
+func (c *maxMin4Float32) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4MaxMinFloat32)(partialResult)
+	resBuf := spillHelper.serializeFloat32(pr.val)
+	resBuf = append(resBuf, spillHelper.serializeBool(pr.isNull)...)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *maxMin4Float32) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol.GetData())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta, err := c.deserializeForSpill(&spillHelper)
+		if err != nil {
+			return nil, 0, err
+		}
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta, nil
+}
+
+func (c *maxMin4Float32) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4MaxMinFloat32)(pr)
+	success := helper.readFloat32(&result.val)
+	if !success {
+		// It's unexpected to read only part of result
+		return nil, 0, spill.ErrInternal.GenWithStack("Only read part of partialResult4MaxMinInt when restoring")
+	}
+	success = helper.readBool(&result.isNull)
+	if !success {
+		return nil, 0, nil
+	}
+	return pr, memDelta, nil
+}
+
 type maxMin4Float32Sliding struct {
 	maxMin4Float32
 	windowInfo
@@ -716,6 +846,49 @@ func (e *maxMin4Float64) MergePartialResult(_ sessionctx.Context, src, dst Parti
 		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil
+}
+
+func (c *maxMin4Float64) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4MaxMinFloat64)(partialResult)
+	resBuf := spillHelper.serializeFloat64(pr.val)
+	resBuf = append(resBuf, spillHelper.serializeBool(pr.isNull)...)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *maxMin4Float64) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol.GetData())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta, err := c.deserializeForSpill(&spillHelper)
+		if err != nil {
+			return nil, 0, err
+		}
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta, nil
+}
+
+func (c *maxMin4Float64) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4MaxMinFloat64)(pr)
+	success := helper.readFloat64(&result.val)
+	if !success {
+		// It's unexpected to read only part of result
+		return nil, 0, spill.ErrInternal.GenWithStack("Only read part of partialResult4MaxMinInt when restoring")
+	}
+	success = helper.readBool(&result.isNull)
+	if !success {
+		return nil, 0, nil
+	}
+	return pr, memDelta, nil
 }
 
 type maxMin4Float64Sliding struct {
