@@ -28,7 +28,7 @@ Usage: ./run-tests.sh [options]
 
 ## How it works
 
-integrationTest will read test case in `t/*.test`, and execute them in TiDB server with `s/*.json` stat, and compare integration result in `r/*.result`.
+IntegrationTest will read test case in `t/*.test`, and execute them in TiDB server with `s/*.json` stat, and compare integration result in `r/*.result`.
 
 For convenience, we can generate new `*.result` and `*.json` from execute by use `-r` parameter for `run-tests.sh`
 
