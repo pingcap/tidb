@@ -1497,6 +1497,7 @@ var (
 	EnableResourceControl     = atomic.NewBool(false)
 	EnableCheckConstraint     = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
+	TiFlashEnablePipelineMode = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)
 )
 
 var (
