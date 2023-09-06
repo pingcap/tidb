@@ -867,8 +867,8 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 					// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
 					stats := deriveLimitStats(childProfile, float64(newCount))
 					pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-					// when indexPlanFinished is true here, additional limit will only be appended to the table plan.
-					cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
+					pushedDownLimit.SetChildren(cop.tablePlan)
+					cop.tablePlan = pushedDownLimit
 					// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
 					pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 					t = cop.convertToRootTask(p.SCtx())
@@ -902,12 +902,12 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			if len(cop.rootTaskConds) == 0 {
 				suspendLimitAboveTablePlan := func() {
 					newCount := p.Offset + p.Count
-					childProfile := cop.plan().StatsInfo()
+					childProfile := cop.tablePlan.StatsInfo()
 					// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
 					stats := deriveLimitStats(childProfile, float64(newCount))
 					pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-					// when indexPlanFinished is true here, additional limit will only be appended to the table plan.
-					cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
+					pushedDownLimit.SetChildren(cop.tablePlan)
+					cop.tablePlan = pushedDownLimit
 					// Don't use clone() so that Limit and its children share the same schema. Otherwise, the virtual generated column may not be resolved right.
 					pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 					t = cop.convertToRootTask(p.SCtx())
@@ -920,11 +920,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 					// todo: cop.indexPlanFinished = false indicates the table side is a pure table-scan, so we sink the limit as index merge embedded push-down Limit theoretically.
 					// todo: while currently in the execution layer, intersection concurrency framework is not quickly suitable for us to do the limit cut down or the order by operation.
 					// so currently, we just put the limit at the top of table plan rather than a embedded pushedLimit inside indexMergeReader.
-					origin := cop.indexPlanFinished
-					cop.indexPlanFinished = true
-					// reset the flag here to notify attachPlan2Task to append the limit to table plan.
 					suspendLimitAboveTablePlan()
-					cop.indexPlanFinished = origin
 				}
 			} else {
 				// otherwise, suspend the limit out of index merge reader.
