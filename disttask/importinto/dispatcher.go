@@ -369,11 +369,18 @@ type importDispatcher struct {
 
 func newImportDispatcher(ctx context.Context, taskMgr *storage.TaskManager,
 	serverID string, task *proto.Task) dispatcher.Dispatcher {
+	metrics := metricsManager.getMetrics(task.ID)
+	subCtx := metric.WithCommonMetric(ctx, metrics)
 	dis := importDispatcher{
-		BaseDispatcher: dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task),
+		BaseDispatcher: dispatcher.NewBaseDispatcher(subCtx, taskMgr, serverID, task),
 	}
 	dis.BaseDispatcher.Extension = &importDispatcherExt{}
 	return &dis
+}
+
+func (dsp *importDispatcher) Close() {
+	metricsManager.unregister(dsp.Task.ID)
+	dsp.BaseDispatcher.Close()
 }
 
 // preProcess does the pre-processing for the task.

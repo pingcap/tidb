@@ -83,20 +83,24 @@ type Common struct {
 }
 
 // NewCommon returns common metrics instance.
-func NewCommon(factory promutil.Factory, namespace string) *Common {
+func NewCommon(factory promutil.Factory, namespace, subsystem string, constLabels prometheus.Labels) *Common {
 	return &Common{
 		ChunkCounter: factory.NewCounterVec(
 			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "chunks",
-				Help:      "count number of chunks processed",
+				Namespace:   namespace,
+				Subsystem:   subsystem,
+				Name:        "chunks",
+				Help:        "count number of chunks processed",
+				ConstLabels: constLabels,
 			}, []string{"state"}),
 
 		BytesCounter: factory.NewCounterVec(
 			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "bytes",
-				Help:      "count of total bytes",
+				Namespace:   namespace,
+				Subsystem:   subsystem,
+				Name:        "bytes",
+				Help:        "count of total bytes",
+				ConstLabels: constLabels,
 			}, []string{"state"}),
 		// state can be one of:
 		//  - estimated (an estimation derived from the file size)
@@ -107,47 +111,59 @@ func NewCommon(factory promutil.Factory, namespace string) *Common {
 
 		RowsCounter: factory.NewCounterVec(
 			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "rows",
-				Help:      "count of total rows",
+				Namespace:   namespace,
+				Subsystem:   subsystem,
+				Name:        "rows",
+				Help:        "count of total rows",
+				ConstLabels: constLabels,
 			}, []string{"state", "table"}),
 
 		RowReadSecondsHistogram: factory.NewHistogram(
 			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Name:      "row_read_seconds",
-				Help:      "time needed to parse a row(include time to read and decompress file)",
-				Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 7),
+				Namespace:   namespace,
+				Subsystem:   subsystem,
+				Name:        "row_read_seconds",
+				Help:        "time needed to parse a row(include time to read and decompress file)",
+				ConstLabels: constLabels,
+				Buckets:     prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 7),
 			}),
 
 		RowEncodeSecondsHistogram: factory.NewHistogram(
 			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Name:      "row_encode_seconds",
-				Help:      "time needed to encode a row",
-				Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
+				Namespace:   namespace,
+				Subsystem:   subsystem,
+				Name:        "row_encode_seconds",
+				Help:        "time needed to encode a row",
+				ConstLabels: constLabels,
+				Buckets:     prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
 			}),
 
 		BlockDeliverSecondsHistogram: factory.NewHistogram(
 			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Name:      "block_deliver_seconds",
-				Help:      "time needed to deliver a block",
-				Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
+				Namespace:   namespace,
+				Subsystem:   subsystem,
+				Name:        "block_deliver_seconds",
+				Help:        "time needed to deliver a block",
+				ConstLabels: constLabels,
+				Buckets:     prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
 			}),
 		BlockDeliverBytesHistogram: factory.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Name:      "block_deliver_bytes",
-				Help:      "number of bytes being sent out to importer",
-				Buckets:   prometheus.ExponentialBuckets(512, 2, 10),
+				Namespace:   namespace,
+				Subsystem:   subsystem,
+				Name:        "block_deliver_bytes",
+				Help:        "number of bytes being sent out to importer",
+				ConstLabels: constLabels,
+				Buckets:     prometheus.ExponentialBuckets(512, 2, 10),
 			}, []string{"kind"}),
 		BlockDeliverKVPairsHistogram: factory.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Name:      "block_deliver_kv_pairs",
-				Help:      "number of KV pairs being sent out to importer",
-				Buckets:   prometheus.ExponentialBuckets(1, 2, 10),
+				Namespace:   namespace,
+				Subsystem:   subsystem,
+				Name:        "block_deliver_kv_pairs",
+				Help:        "number of KV pairs being sent out to importer",
+				ConstLabels: constLabels,
+				Buckets:     prometheus.ExponentialBuckets(1, 2, 10),
 			}, []string{"kind"}),
 	}
 }
@@ -202,7 +218,7 @@ type Metrics struct {
 
 // NewMetrics creates a new empty metrics.
 func NewMetrics(factory promutil.Factory) *Metrics {
-	c := NewCommon(factory, lightningNamespace)
+	c := NewCommon(factory, lightningNamespace, "", nil)
 	return &Metrics{
 		Common: c,
 		ImporterEngineCounter: factory.NewCounterVec(

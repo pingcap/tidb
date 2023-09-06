@@ -53,6 +53,9 @@ const (
 	StepTwo  int64 = 2
 )
 
+// TaskIDLabelName is the label name of task id.
+const TaskIDLabelName = "task_id"
+
 // Task represents the task of distribute framework.
 type Task struct {
 	ID    int64

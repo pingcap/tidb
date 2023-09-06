@@ -70,7 +70,7 @@ func TestMetricsRegister(t *testing.T) {
 		wg.Wait()
 		return count
 	}
-	cm := metric.NewCommon(promutil.NewDefaultFactory(), "test")
+	cm := metric.NewCommon(promutil.NewDefaultFactory(), "test", "", nil)
 	r := prometheus.NewRegistry()
 	require.Zero(t, getMetricCount(r))
 	cm.RegisterTo(r)
