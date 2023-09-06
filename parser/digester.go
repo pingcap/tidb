@@ -97,7 +97,7 @@ func Normalize(sql string) (result string) {
 // for example: NormalizeForBinding('select 1 from b where a = 1') => 'select ? from b where a = ?'
 func NormalizeForBinding(sql string) (result string) {
 	d := digesterPool.Get().(*sqlDigester)
-	result = d.doNormalize(sql, false)
+	result = d.doNormalizeForBinding(sql, false)
 	digesterPool.Put(d)
 	return
 }
@@ -125,7 +125,7 @@ func NormalizeDigest(sql string) (normalized string, digest *Digest) {
 // NormalizeDigestForBinding combines Normalize and DigestNormalized into one method with additional binding rules.
 func NormalizeDigestForBinding(sql string) (normalized string, digest *Digest) {
 	d := digesterPool.Get().(*sqlDigester)
-	normalized, digest = d.doNormalizeDigest(sql)
+	normalized, digest = d.doNormalizeDigestForBinding(sql)
 	digesterPool.Put(d)
 	return
 }
@@ -176,8 +176,25 @@ func (d *sqlDigester) doNormalize(sql string, keepHint bool) (result string) {
 	return
 }
 
+func (d *sqlDigester) doNormalizeForBinding(sql string, keepHint bool) (result string) {
+	d.normalize(sql, keepHint, true)
+	result = d.buffer.String()
+	d.buffer.Reset()
+	return
+}
+
 func (d *sqlDigester) doNormalizeDigest(sql string) (normalized string, digest *Digest) {
 	d.normalize(sql, false, false)
+	normalized = d.buffer.String()
+	d.hasher.Write(d.buffer.Bytes())
+	d.buffer.Reset()
+	digest = NewDigest(d.hasher.Sum(nil))
+	d.hasher.Reset()
+	return
+}
+
+func (d *sqlDigester) doNormalizeDigestForBinding(sql string) (normalized string, digest *Digest) {
+	d.normalize(sql, false, true)
 	normalized = d.buffer.String()
 	d.hasher.Write(d.buffer.Bytes())
 	d.buffer.Reset()
