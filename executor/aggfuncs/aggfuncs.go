@@ -209,6 +209,8 @@ func (*baseAggFunc) MergePartialResult(sessionctx.Context, PartialResult, Partia
 	return 0, nil
 }
 
+
+
 // SlidingWindowAggFunc is the interface to evaluate the aggregate functions using sliding window.
 type SlidingWindowAggFunc interface {
 	// Slide evaluates the aggregate functions using a sliding window. The input

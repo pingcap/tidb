@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/spill"
 )
 
 const (
@@ -285,6 +286,15 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(_ sessionctx.Conte
 	return nil
 }
 
+// TODO implement it
+func (c *avgOriginal4DistinctDecimal) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+}
+
+// TODO implement it
+func (c *avgOriginal4DistinctDecimal) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+	return nil, 0, nil
+}
+
 // All the following avg function implementations return the float64 result,
 // which store the partial results in "partialResult4AvgFloat64".
 //
@@ -318,6 +328,49 @@ func (e *baseAvgFloat64) AppendFinalResult2Chunk(_ sessionctx.Context, pr Partia
 		chk.AppendFloat64(e.ordinal, p.sum/float64(p.count))
 	}
 	return nil
+}
+
+func (c *baseAvgFloat64) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4AvgFloat64)(partialResult)
+	resBuf := spillHelper.serializeFloat64(pr.sum)
+	resBuf = append(resBuf, spillHelper.serializeInt64(pr.count)...)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *baseAvgFloat64) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol.GetData())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta, err := c.deserializeForSpill(&spillHelper)
+		if err != nil {
+			return nil, 0, err
+		}
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta, nil
+}
+
+func (c *baseAvgFloat64) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4AvgFloat64)(pr)
+	success := helper.readFloat64(&result.sum)
+	if !success {
+		// It's unexpected to read only part of result
+		return nil, 0, spill.ErrInternal.GenWithStack("Only read part of partialResult4MaxMinInt when restoring")
+	}
+	success = helper.readInt64(&result.count)
+	if !success {
+		return nil, 0, nil
+	}
+	return pr, memDelta, nil
 }
 
 type avgOriginal4Float64HighPrecision struct {
@@ -459,4 +512,13 @@ func (e *avgOriginal4DistinctFloat64) AppendFinalResult2Chunk(_ sessionctx.Conte
 	}
 	chk.AppendFloat64(e.ordinal, p.sum/float64(p.count))
 	return nil
+}
+
+// TODO implement it
+func (c *avgOriginal4DistinctFloat64) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+}
+
+// TODO implement it
+func (c *avgOriginal4DistinctFloat64) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+	return nil, 0, nil
 }

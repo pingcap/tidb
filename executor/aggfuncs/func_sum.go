@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/spill"
 )
 
 const (
@@ -112,6 +113,49 @@ func (*baseSum4Float64) MergePartialResult(_ sessionctx.Context, src, dst Partia
 	p2.val += p1.val
 	p2.notNullRowCount += p1.notNullRowCount
 	return 0, nil
+}
+
+func (c *baseSum4Float64) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4SumFloat64)(partialResult)
+	resBuf := spillHelper.serializeFloat64(pr.val)
+	resBuf = append(resBuf, spillHelper.serializeInt64(pr.notNullRowCount)...)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *baseSum4Float64) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol.GetData())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta, err := c.deserializeForSpill(&spillHelper)
+		if err != nil {
+			return nil, 0, err
+		}
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta, nil
+}
+
+func (c *baseSum4Float64) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4SumFloat64)(pr)
+	success := helper.readFloat64(&result.val)
+	if !success {
+		// It's unexpected to read only part of result
+		return nil, 0, spill.ErrInternal.GenWithStack("Only read part of partialResult4MaxMinInt when restoring")
+	}
+	success = helper.readInt64(&result.notNullRowCount)
+	if !success {
+		return nil, 0, nil
+	}
+	return pr, memDelta, nil
 }
 
 type sum4Float64 struct {
@@ -322,17 +366,12 @@ func (e *sum4DistinctFloat64) AppendFinalResult2Chunk(_ sessionctx.Context, pr P
 }
 
 // TODO implement it
-func (e *sum4DistinctFloat64) SerializeToChunkForSpill(sctx sessionctx.Context, partialResults []PartialResult, chk *chunk.Chunk) {
+func (c *sum4DistinctFloat64) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 }
 
 // TODO implement it
-func (e *sum4DistinctFloat64) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) []PartialResult {
-	return make([]PartialResult, 0)
-}
-
-// TODO implement it
-func (e *sum4DistinctFloat64) serializeForSpill(pr PartialResult, buf []byte) []byte {
-	return buf
+func (c *sum4DistinctFloat64) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+	return nil, 0, nil
 }
 
 type sum4DistinctDecimal struct {
@@ -398,15 +437,10 @@ func (e *sum4DistinctDecimal) AppendFinalResult2Chunk(_ sessionctx.Context, pr P
 }
 
 // TODO implement it
-func (e *sum4DistinctDecimal) SerializeToChunkForSpill(sctx sessionctx.Context, partialResults []PartialResult, chk *chunk.Chunk) {
+func (c *sum4DistinctDecimal) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 }
 
 // TODO implement it
-func (e *sum4DistinctDecimal) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) []PartialResult {
-	return make([]PartialResult, 0)
-}
-
-// TODO implement it
-func (e *sum4DistinctDecimal) serializeForSpill(pr PartialResult, buf []byte) []byte {
-	return buf
+func (c *sum4DistinctDecimal) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+	return nil, 0, nil
 }
