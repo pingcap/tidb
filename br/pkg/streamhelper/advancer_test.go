@@ -292,16 +292,16 @@ func TestResolveLock(t *testing.T) {
 		}
 	}()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/NeedResolveLocks", `return(true)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/ResolveLockTickTime", `return(1)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/NeedResolveLocks"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/ResolveLockTickTime"))
 	}()
 
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx := context.Background()
 	minCheckpoint := c.advanceCheckpoints()
 	env := &testEnv{fakeCluster: c, testCtx: t}
+
+	lockRegion := c.findRegionByKey([]byte("01"))
 	allLocks := []*txnlock.Lock{
 		{
 			Key: []byte{1},
@@ -314,11 +314,8 @@ func TestResolveLock(t *testing.T) {
 			TxnID: minCheckpoint + 1,
 		},
 	}
-	env.scanLocks = func(key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
-		return allLocks, &tikv.KeyLocation{
-			Region: tikv.NewRegionVerID(1, 0, 0),
-		}
-	}
+	c.LockRegion(lockRegion, allLocks)
+
 	// ensure resolve locks triggered and collect all locks from scan locks
 	resolveLockRef := atomic.NewBool(false)
 	env.resolveLocks = func(locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
@@ -343,13 +340,14 @@ func TestResolveLock(t *testing.T) {
 			},
 		}, 0)),
 	)
-	adv.OnBecomeOwner(ctx)
+	adv.StartTaskListener(ctx)
+	require.Eventually(t, func() bool { return adv.OnTick(ctx) == nil },
+		time.Second, 50*time.Millisecond)
 	coll := streamhelper.NewClusterCollector(ctx, env)
 	err := adv.GetCheckpointInRange(ctx, []byte{}, []byte{}, coll)
 
 	require.Eventually(t, func() bool { return resolveLockRef.Load() },
 		8*time.Second, 50*time.Microsecond)
-
 	require.NoError(t, err)
 	r, err := coll.Finish(ctx)
 	require.NoError(t, err)

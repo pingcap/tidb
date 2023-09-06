@@ -77,6 +77,8 @@ type region struct {
 	checkpoint atomic.Uint64
 
 	fsim flushSimulator
+
+	locks []*txnlock.Lock
 }
 
 type fakeStore struct {
@@ -329,6 +331,11 @@ func (f *fakeCluster) findRegionById(rid uint64) *region {
 		}
 	}
 	return nil
+}
+
+func (f *fakeCluster) LockRegion(r *region, locks []*txnlock.Lock) *region {
+	r.locks = locks
+	return r
 }
 
 func (f *fakeCluster) findRegionByKey(key []byte) *region {
@@ -588,7 +595,6 @@ type testEnv struct {
 	ranges     []kv.KeyRange
 	taskCh     chan<- streamhelper.TaskEvent
 
-	scanLocks    func([]byte) ([]*txnlock.Lock, *tikv.KeyLocation)
 	resolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
 
 	mu sync.Mutex
@@ -646,12 +652,25 @@ func (t *testEnv) unregisterTask() {
 }
 
 func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
-	locks, loc := t.scanLocks(key)
-	return locks, loc, nil
+	for _, r := range t.regions {
+		if len(r.locks) != 0 {
+			return r.locks, &tikv.KeyLocation{
+				Region: tikv.NewRegionVerID(r.id, 0, 0),
+			}, nil
+		}
+	}
+	return nil, nil, nil
 }
 
 func (t *testEnv) ResolveLocksInOneRegion(bo *tikv.Backoffer, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
-	return t.resolveLocks(locks, loc)
+	for _, r := range t.regions {
+		if loc != nil && loc.Region.GetID() == r.id {
+			// reset locks
+			r.locks = nil
+			return t.resolveLocks(locks, loc)
+		}
+	}
+	return nil, nil
 }
 
 func (t *testEnv) Identifier() string {
