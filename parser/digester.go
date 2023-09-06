@@ -377,7 +377,7 @@ func (d *sqlDigester) isGenericLists(last4 []token) bool {
 	return true
 }
 
-// IN (lit) => IN (...) Issue: #44298
+// IN (?) => IN (...) Issue: #44298
 func (d *sqlDigester) reduceInListWithSingleLiteral(currTok *token) {
 	last3 := d.tokens.back(3)
 	if len(last3) == 3 &&
