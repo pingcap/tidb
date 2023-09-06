@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
@@ -238,6 +239,15 @@ func TestGetLock(t *testing.T) {
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+
+	// Increase pessimistic txn max retry count to make test more stable.
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.PessimisticTxn.MaxRetryCount = 2048
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
 
 	// No timeout specified
 	err := tk.ExecToErr("SELECT get_lock('testlock')")
@@ -7814,7 +7824,7 @@ func TestIfFunctionWithNull(t *testing.T) {
 		testkit.Rows("20000 35100"))
 }
 
-func TestIssue41733(t *testing.T) {
+func TestIssue41733AndIssue45410(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database testIssue41733")
@@ -7845,4 +7855,14 @@ func TestIssue41733(t *testing.T) {
 	tk.MustExec("INSERT IGNORE INTO t_big(c0) VALUES (1E20)")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'c0' at row 1"))
 	tk.MustQuery("select * from t_big;").Check(testkit.Rows("18446744073709551615"))
+
+	// Issue 45410
+	tk.MustExec("create database testIssue45410")
+	defer tk.MustExec("drop database testIssue45410")
+	tk.MustExec("use testIssue45410")
+
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (c1 TINYINT(1) UNSIGNED NOT NULL );")
+	tk.MustExec("INSERT INTO t1 VALUES (0);")
+	tk.MustQuery("SELECT c1>=CAST('-787360724' AS TIME) FROM t1;").Check(testkit.Rows("1"))
 }

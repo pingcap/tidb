@@ -28,6 +28,12 @@ var (
 	HitLatestCounter  prometheus.Counter
 	HitTSCounter      prometheus.Counter
 	HitVersionCounter prometheus.Counter
+
+	LoadSchemaCounterSnapshot prometheus.Counter
+
+	LoadSchemaDurationTotal    prometheus.Observer
+	LoadSchemaDurationLoadDiff prometheus.Observer
+	LoadSchemaDurationLoadAll  prometheus.Observer
 )
 
 func init() {
@@ -43,4 +49,10 @@ func InitMetricsVars() {
 	HitLatestCounter = metrics.InfoCacheCounters.WithLabelValues("hit", "latest")
 	HitTSCounter = metrics.InfoCacheCounters.WithLabelValues("hit", "ts")
 	HitVersionCounter = metrics.InfoCacheCounters.WithLabelValues("hit", "version")
+
+	LoadSchemaCounterSnapshot = metrics.LoadSchemaCounter.WithLabelValues("snapshot")
+
+	LoadSchemaDurationTotal = metrics.LoadSchemaDuration.WithLabelValues("total")
+	LoadSchemaDurationLoadDiff = metrics.LoadSchemaDuration.WithLabelValues("load-diff")
+	LoadSchemaDurationLoadAll = metrics.LoadSchemaDuration.WithLabelValues("load-all")
 }
