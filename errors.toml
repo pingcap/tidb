@@ -406,6 +406,11 @@ error = '''
 raft proposal dropped
 '''
 
+["Lightning:KV:ErrNoLeader"]
+error = '''
+write to tikv with no leader returned, region '%d', leader: %d
+'''
+
 ["Lightning:KV:NotLeader"]
 error = '''
 not leader
@@ -3284,6 +3289,16 @@ Can't create more than maxPreparedStmtCount statements (current value: %d)
 ["variable:1621"]
 error = '''
 %s variable '%s' is read-only. Use SET %s to assign the value
+'''
+
+["variable:1681"]
+error = '''
+Updating '%s' is deprecated. It will be made read-only in a future release.
+'''
+
+["variable:3721"]
+error = '''
+Invalid default collation %s: utf8mb4_0900_ai_ci or utf8mb4_general_ci or utf8mb4_bin expected
 '''
 
 ["variable:8047"]

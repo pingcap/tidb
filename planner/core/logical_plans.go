@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/cardinality"
 	fd "github.com/pingcap/tidb/planner/funcdep"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
@@ -1677,7 +1678,7 @@ func (ds *DataSource) detachCondAndBuildRangeForPath(path *util.AccessPath, cond
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
 	}
-	path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(ds.SCtx(), path.Index.ID, path.Ranges)
+	path.CountAfterAccess, err = cardinality.GetRowCountByIndexRanges(ds.SCtx(), ds.tableStats.HistColl, path.Index.ID, path.Ranges)
 	return err
 }
 
@@ -1697,12 +1698,12 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
 		if len(accesses) > 0 && ds.statisticTable.Pseudo {
-			path.CountAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
+			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.statisticTable)
 		} else {
 			selectivity := path.CountAfterAccess / float64(ds.statisticTable.RealtimeCount)
 			for i := range accesses {
 				col := path.IdxCols[path.EqOrInCondCount+i]
-				ndv := ds.getColumnNDV(col.ID)
+				ndv := cardinality.EstimateColumnNDV(ds.statisticTable, col.ID)
 				ndv *= selectivity
 				if ndv < 1 {
 					ndv = 1.0
@@ -1793,7 +1794,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	if err != nil {
 		return err
 	}
-	path.CountAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(ds.SCtx(), pkCol.ID, path.Ranges)
+	path.CountAfterAccess, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.statisticTable.HistColl, pkCol.ID, path.Ranges)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.CountAfterAccess < ds.StatsInfo().RowCount && !isIm {
@@ -1848,12 +1849,12 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
 		if len(accesses) > 0 && ds.statisticTable.Pseudo {
-			path.CountAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
+			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.statisticTable)
 		} else {
 			selectivity := path.CountAfterAccess / float64(ds.statisticTable.RealtimeCount)
 			for i := range accesses {
 				col := path.IdxCols[path.EqOrInCondCount+i]
-				ndv := ds.getColumnNDV(col.ID)
+				ndv := cardinality.EstimateColumnNDV(ds.statisticTable, col.ID)
 				ndv *= selectivity
 				if ndv < 1 {
 					ndv = 1.0
@@ -1871,7 +1872,7 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression
 		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/SelectionFactor, float64(ds.statisticTable.RealtimeCount))
 	}
 	if path.IndexFilters != nil {
-		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.SCtx(), path.IndexFilters, nil)
+		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, path.IndexFilters, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = SelectionFactor

@@ -50,7 +50,7 @@ func TestJobSize(t *testing.T) {
 - SubJob.ToProxyJob()
 `
 	job := model.Job{}
-	require.Equal(t, 328, int(unsafe.Sizeof(job)), msg)
+	require.Equal(t, 336, int(unsafe.Sizeof(job)), msg)
 }
 
 func TestBackfillMetaCodec(t *testing.T) {
@@ -76,6 +76,8 @@ func TestMayNeedReorg(t *testing.T) {
 	//TODO(bb7133): add more test cases for different ActionType.
 	reorgJobTypes := []model.ActionType{
 		model.ActionReorganizePartition,
+		model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning,
 		model.ActionAddIndex,
 		model.ActionAddPrimaryKey,
 	}

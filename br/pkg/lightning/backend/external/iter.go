@@ -317,7 +317,7 @@ func (i *MergeKVIter) Close() error {
 }
 
 func (p rangeProperty) sortKey() []byte {
-	return p.key
+	return p.firstKey
 }
 
 type statReaderProxy struct {
@@ -376,6 +376,10 @@ func (i *MergePropIter) Next() bool {
 
 func (i *MergePropIter) prop() *rangeProperty {
 	return i.iter.curr
+}
+
+func (i *MergePropIter) readerIndex() int {
+	return i.iter.lastReaderIdx
 }
 
 // Close closes the iterator.

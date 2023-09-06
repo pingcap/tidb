@@ -762,7 +762,7 @@ func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 func (b *PlanBuilder) Init(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
 	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName.Load()
 	if processor == nil {
-		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(nil)
+		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&[]ast.HintTable{})
 	} else {
 		newPlannerSelectBlockAsName := make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&newPlannerSelectBlockAsName)
@@ -1807,10 +1807,10 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName m
 		Ranges:           ranger.FullRange(),
 		physicalTableID:  physicalID,
 		isPartition:      isPartition,
-		tblColHists:      &(statistics.PseudoTable(tblInfo)).HistColl,
+		tblColHists:      &(statistics.PseudoTable(tblInfo, false)).HistColl,
 	}.Init(b.ctx, b.getSelectOffset())
 	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
-	is.SetStats(&property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl})
+	is.SetStats(&property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo, false)).HistColl})
 	if hasCommonCols {
 		for _, c := range commonInfos {
 			is.Columns = append(is.Columns, c.ColumnInfo)
@@ -1826,7 +1826,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName m
 		DBName:          dbName,
 		physicalTableID: physicalID,
 		isPartition:     isPartition,
-		tblColHists:     &(statistics.PseudoTable(tblInfo)).HistColl,
+		tblColHists:     &(statistics.PseudoTable(tblInfo, false)).HistColl,
 	}.Init(b.ctx, b.getSelectOffset())
 	ts.SetSchema(idxColSchema)
 	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
@@ -2790,18 +2790,6 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			return nil, err
 		}
 		var commonHandleInfo *model.IndexInfo
-		// If we want to analyze this table with analyze version 2 but the existing stats is version 1 and stats feedback is enabled,
-		// we will switch back to analyze version 1.
-		if statistics.FeedbackProbability.Load() > 0 && version == statistics.Version2 {
-			statsHandle := domain.GetDomain(b.ctx).StatsHandle()
-			versionIsSame := statsHandle.CheckAnalyzeVersion(tbl.TableInfo, physicalIDs, &version)
-			if !versionIsSame {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Use analyze version 1 on table `%s` "+
-					"because this table already has version 1 statistics and query feedback is also enabled. "+
-					"If you want to switch to version 2 statistics, please first disable query feedback by setting feedback-probability to 0.0 in the config file.", tbl.Name))
-			}
-		}
-
 		if version == statistics.Version2 {
 			p.ColTasks, err = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, partitionNames, tbl, version, usePersistedOptions, p.OptionsMap)
 			if err != nil {
@@ -2828,24 +2816,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 				continue
 			}
-			for i, id := range physicalIDs {
-				if id == tbl.TableInfo.ID {
-					id = -1
-				}
-				info := AnalyzeInfo{
-					DBName:        tbl.Schema.O,
-					TableName:     tbl.Name.O,
-					PartitionName: partitionNames[i],
-					TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
-					Incremental:   as.Incremental,
-					StatsVersion:  version,
-				}
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
-					IndexInfo:   idx,
-					AnalyzeInfo: info,
-					TblInfo:     tbl.TableInfo,
-				})
-			}
+			p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tbl.TableInfo, partitionNames, physicalIDs, version)...)
 		}
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, true, nil)
 		if len(colInfo) > 0 || handleCols != nil {
@@ -2926,20 +2897,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 			continue
 		}
-		for i, id := range physicalIDs {
-			if id == tblInfo.ID {
-				id = -1
-			}
-			info := AnalyzeInfo{
-				DBName:        as.TableNames[0].Schema.O,
-				TableName:     as.TableNames[0].Name.O,
-				PartitionName: names[i],
-				TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
-				Incremental:   as.Incremental,
-				StatsVersion:  version,
-			}
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo})
-		}
+		p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tblInfo, names, physicalIDs, version)...)
 	}
 	return p, nil
 }
@@ -2973,20 +2931,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 				continue
 			}
 
-			for i, id := range physicalIDs {
-				if id == tblInfo.ID {
-					id = -1
-				}
-				info := AnalyzeInfo{
-					DBName:        as.TableNames[0].Schema.O,
-					TableName:     as.TableNames[0].Name.O,
-					PartitionName: names[i],
-					TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
-					Incremental:   as.Incremental,
-					StatsVersion:  version,
-				}
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo})
-			}
+			p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tblInfo, names, physicalIDs, version)...)
 		}
 	}
 	handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo, true, nil)
@@ -3007,6 +2952,37 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 		}
 	}
 	return p, nil
+}
+
+func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tblInfo *model.TableInfo, names []string, physicalIDs []int64, version int) []AnalyzeIndexTask {
+	if idx.Global {
+		info := AnalyzeInfo{
+			DBName:        as.TableNames[0].Schema.O,
+			TableName:     as.TableNames[0].Name.O,
+			PartitionName: "",
+			TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: -1},
+			Incremental:   as.Incremental,
+			StatsVersion:  version,
+		}
+		return []AnalyzeIndexTask{{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo}}
+	}
+
+	indexTasks := make([]AnalyzeIndexTask, 0, len(physicalIDs))
+	for i, id := range physicalIDs {
+		if id == tblInfo.ID {
+			id = -1
+		}
+		info := AnalyzeInfo{
+			DBName:        as.TableNames[0].Schema.O,
+			TableName:     as.TableNames[0].Name.O,
+			PartitionName: names[i],
+			TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
+			Incremental:   as.Incremental,
+			StatsVersion:  version,
+		}
+		indexTasks = append(indexTasks, AnalyzeIndexTask{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo})
+	}
+	return indexTasks
 }
 
 // CMSketchSizeLimit indicates the size limit of CMSketch.
@@ -3301,6 +3277,7 @@ func buildShowSlowSchema() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "INDEX_IDS", mysql.TypeVarchar, 256))
 	schema.Append(buildColumnWithName("", "INTERNAL", mysql.TypeTiny, tinySize))
 	schema.Append(buildColumnWithName("", "DIGEST", mysql.TypeVarchar, 64))
+	schema.Append(buildColumnWithName("", "SESSION_ALIAS", mysql.TypeVarchar, 64))
 	return schema.col2Schema(), schema.names
 }
 

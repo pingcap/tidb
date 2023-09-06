@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -65,7 +64,7 @@ func copReadChunkPoolSize() int {
 
 // chunkSender is used to receive the result of coprocessor request.
 type chunkSender interface {
-	AddTask(idxRecResult)
+	AddTask(IndexRecordChunk)
 }
 
 type copReqSenderPool struct {
@@ -75,7 +74,7 @@ type copReqSenderPool struct {
 	sessPool      *sess.Pool
 
 	ctx    context.Context
-	copCtx *copContext
+	copCtx *CopContext
 	store  kv.Storage
 
 	senders []*copReqSender
@@ -96,12 +95,12 @@ func (c *copReqSender) run() {
 	p := c.senderPool
 	defer p.wg.Done()
 	defer util.Recover(metrics.LabelDDL, "copReqSender.run", func() {
-		p.chunkSender.AddTask(idxRecResult{err: dbterror.ErrReorgPanic})
+		p.chunkSender.AddTask(IndexRecordChunk{Err: dbterror.ErrReorgPanic})
 	}, false)
 	sessCtx, err := p.sessPool.Get()
 	if err != nil {
 		logutil.Logger(p.ctx).Error("copReqSender get session from pool failed", zap.Error(err))
-		p.chunkSender.AddTask(idxRecResult{err: err})
+		p.chunkSender.AddTask(IndexRecordChunk{Err: err})
 		return
 	}
 	se := sess.NewSession(sessCtx)
@@ -122,7 +121,7 @@ func (c *copReqSender) run() {
 		}
 		err := scanRecords(p, task, se)
 		if err != nil {
-			p.chunkSender.AddTask(idxRecResult{id: task.id, err: err})
+			p.chunkSender.AddTask(IndexRecordChunk{ID: task.id, Err: err})
 			return
 		}
 	}
@@ -157,9 +156,9 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 			if p.checkpointMgr != nil {
 				p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
 			}
-			idxRs := idxRecResult{id: task.id, chunk: srcChk, done: done}
+			idxRs := IndexRecordChunk{ID: task.id, Chunk: srcChk, Done: done}
 			failpoint.Inject("mockCopSenderError", func() {
-				idxRs.err = errors.New("mock cop error")
+				idxRs.Err = errors.New("mock cop error")
 			})
 			p.chunkSender.AddTask(idxRs)
 		}
@@ -182,7 +181,7 @@ func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 	return f(startTS)
 }
 
-func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage,
+func newCopReqSenderPool(ctx context.Context, copCtx *CopContext, store kv.Storage,
 	taskCh chan *reorgBackfillTask, sessPool *sess.Pool,
 	checkpointMgr *ingest.CheckpointManager) *copReqSenderPool {
 	poolSize := copReadChunkPoolSize()
@@ -257,9 +256,9 @@ func (c *copReqSenderPool) recycleChunk(chk *chunk.Chunk) {
 	c.srcChkPool <- chk
 }
 
-// copContext contains the information that is needed when building a coprocessor request.
+// CopContext contains the information that is needed when building a coprocessor request.
 // It is unchanged after initialization.
-type copContext struct {
+type CopContext struct {
 	tblInfo  *model.TableInfo
 	idxInfo  *model.IndexInfo
 	pkInfo   *model.IndexInfo
@@ -274,7 +273,14 @@ type copContext struct {
 	virtualColFieldTps  []*types.FieldType
 }
 
-func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx sessionctx.Context) (*copContext, error) {
+// FieldTypes is only used for test.
+// TODO(tangenta): refactor the operators to avoid using this method.
+func (c *CopContext) FieldTypes() []*types.FieldType {
+	return c.fieldTps
+}
+
+// NewCopContext creates a CopContext.
+func NewCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx sessionctx.Context) (*CopContext, error) {
 	var err error
 	usedColumnIDs := make(map[int64]struct{}, len(idxInfo.Columns))
 	usedColumnIDs, err = fillUsedColumns(usedColumnIDs, idxInfo, tblInfo)
@@ -328,7 +334,7 @@ func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx s
 	hdColOffsets := resolveIndicesForHandle(expColInfos, handleIDs)
 	vColOffsets, vColFts := collectVirtualColumnOffsetsAndTypes(expColInfos)
 
-	copCtx := &copContext{
+	copCtx := &CopContext{
 		tblInfo:  tblInfo,
 		idxInfo:  idxInfo,
 		pkInfo:   primaryIdx,
@@ -407,7 +413,7 @@ func collectVirtualColumnOffsetsAndTypes(cols []*expression.Column) ([]int, []*t
 	return offsets, fts
 }
 
-func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
+func (c *CopContext) buildTableScan(ctx context.Context, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
 	dagPB, err := buildDAGPB(c.sessCtx, c.tblInfo, c.colInfos)
 	if err != nil {
 		return nil, err
@@ -429,10 +435,10 @@ func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, 
 	if err != nil {
 		return nil, err
 	}
-	return distsql.Select(ctx, c.sessCtx, kvReq, c.fieldTps, statistics.NewQueryFeedback(0, nil, 0, false))
+	return distsql.Select(ctx, c.sessCtx, kvReq, c.fieldTps)
 }
 
-func (c *copContext) fetchTableScanResult(ctx context.Context, result distsql.SelectResult,
+func (c *CopContext) fetchTableScanResult(ctx context.Context, result distsql.SelectResult,
 	chk *chunk.Chunk) (bool, error) {
 	err := result.Next(ctx, chk)
 	if err != nil {
@@ -526,11 +532,4 @@ func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
 		return kv.NewCommonHandle(handleBytes)
 	}
 	return kv.IntHandle(pkDts[0].GetInt64()), nil
-}
-
-type idxRecResult struct {
-	id    int
-	chunk *chunk.Chunk
-	err   error
-	done  bool
 }

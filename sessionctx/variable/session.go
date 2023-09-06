@@ -884,6 +884,14 @@ type SessionVars struct {
 	// not limit and spill will never happen
 	TiFlashMaxBytesBeforeExternalSort int64
 
+	// TiFlash max query memory per node, -1 and 0 means no limit, and the default value is 0
+	// If TiFlashMaxQueryMemoryPerNode > 0 && TiFlashQuerySpillRatio > 0, it will trigger auto spill in TiFlash side, and when auto spill
+	// is triggered, per executor's memory usage threshold set by TiFlashMaxBytesBeforeExternalJoin/TiFlashMaxBytesBeforeExternalGroupBy/TiFlashMaxBytesBeforeExternalSort will be ignored.
+	TiFlashMaxQueryMemoryPerNode int64
+
+	// TiFlashQuerySpillRatio is the percentage threshold to trigger auto spill in TiFlash if TiFlashMaxQueryMemoryPerNode is set
+	TiFlashQuerySpillRatio float64
+
 	// TiFlashEnablePipelineMode means if we should use pipeline model to execute query or not in tiflash.
 	// Default value is `true`, means never use pipeline model in tiflash.
 	// Value set to `true` means try to execute query with pipeline model in tiflash.
@@ -1534,6 +1542,15 @@ type SessionVars struct {
 	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
 	// When set to false, give up merging partition stats to global stats.
 	SkipMissingPartitionStats bool
+
+	// SessionAlias is the identifier of the session
+	SessionAlias string
+
+	// OptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
+	// For now, the possible values and corresponding behaviors are:
+	// OptObjectiveModerate: The default value. The optimizer considers the real-time stats (real-time row count, modify count).
+	// OptObjectiveDeterminate: The optimizer doesn't consider the real-time stats.
+	OptObjective string
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -2034,6 +2051,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashMaxBytesBeforeExternalJoin = DefTiFlashMaxBytesBeforeExternalJoin
 	vars.TiFlashMaxBytesBeforeExternalGroupBy = DefTiFlashMaxBytesBeforeExternalGroupBy
 	vars.TiFlashMaxBytesBeforeExternalSort = DefTiFlashMaxBytesBeforeExternalSort
+	vars.TiFlashMaxQueryMemoryPerNode = DefTiFlashMemQuotaQueryPerNode
+	vars.TiFlashQuerySpillRatio = DefTiFlashQuerySpillRatio
 	vars.TiFlashEnablePipelineMode = DefTiDBEnableTiFlashPipelineMode
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
@@ -2952,6 +2971,8 @@ const (
 	SlowLogHostStr = "Host"
 	// SlowLogConnIDStr is slow log field name.
 	SlowLogConnIDStr = "Conn_ID"
+	// SlowLogSessAliasStr is the session alias set by user
+	SlowLogSessAliasStr = "Session_alias"
 	// SlowLogQueryTimeStr is slow log field name.
 	SlowLogQueryTimeStr = "Query_time"
 	// SlowLogParseTimeStr is the parse sql time.
@@ -3153,6 +3174,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if s.ConnectionID != 0 {
 		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
+	}
+	if s.SessionAlias != "" {
+		writeSlowLogItem(&buf, SlowLogSessAliasStr, s.SessionAlias)
 	}
 	if logItems.ExecRetryCount > 0 {
 		buf.WriteString(SlowLogRowPrefixStr)
@@ -3612,4 +3636,18 @@ func RuntimeFilterModeStringToMode(name string) (RuntimeFilterMode, bool) {
 	default:
 		return -1, false
 	}
+}
+
+const (
+	// OptObjectiveModerate is a possible value and the default value for TiDBOptObjective.
+	// Please see comments of SessionVars.OptObjective for details.
+	OptObjectiveModerate string = "moderate"
+	// OptObjectiveDeterminate is a possible value for TiDBOptObjective.
+	OptObjectiveDeterminate = "determinate"
+)
+
+// GetOptObjective return the session variable "tidb_opt_objective".
+// Please see comments of SessionVars.OptObjective for details.
+func (s *SessionVars) GetOptObjective() string {
+	return s.OptObjective
 }

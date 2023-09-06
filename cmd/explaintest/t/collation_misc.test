@@ -82,5 +82,3 @@ select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COL
 # charset
 show charset;
 show collation;
-
-use test;

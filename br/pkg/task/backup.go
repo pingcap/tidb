@@ -421,7 +421,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		if err != nil {
 			return errors.Trace(err)
 		}
-		log.Info("get new_collations_enabled_on_first_bootstrap config from system table",
+		log.Info(fmt.Sprintf("get %s config from mysql.tidb table", utils.TidbNewCollationEnabled),
 			zap.String(utils.GetTidbNewCollationEnabled(), newCollationEnable))
 		return nil
 	})

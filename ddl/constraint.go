@@ -1,4 +1,4 @@
-// Copyright 2023-2023 PingCAP Xingchen (Beijing) Technology Co., Ltd.
+// Copyright 2023-2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -355,13 +355,13 @@ func (w *worker) verifyRemainRecordsForCheckConstraint(dbInfo *model.DBInfo, tab
 	// It's no need to construct expression node out and pull the chunk rows through it. Here we
 	// can let the check expression restored string as the filter in where clause directly.
 	// Prepare internal SQL to fetch data from physical table under this filter.
-	sql := fmt.Sprintf("select count(1) from `%s`.`%s` where not %s limit 1", dbInfo.Name.L, tableInfo.Name.L, constr.ExprString)
+	sql := fmt.Sprintf("select 1 from `%s`.`%s` where not %s limit 1", dbInfo.Name.L, tableInfo.Name.L, constr.ExprString)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rowCount := rows[0].GetInt64(0)
+	rowCount := len(rows)
 	if rowCount != 0 {
 		// If check constraint fail, the job state should be changed to canceled, otherwise it will tracked in.
 		job.State = model.JobStateCancelled

@@ -15,6 +15,7 @@
 package checkpoints
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"io"
 	"math"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -39,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // CheckpointStatus is the status of a checkpoint.
@@ -244,6 +245,13 @@ type ChunkCheckpointKey struct {
 // String implements fmt.Stringer.
 func (key *ChunkCheckpointKey) String() string {
 	return fmt.Sprintf("%s:%d", key.Path, key.Offset)
+}
+
+func (key *ChunkCheckpointKey) compare(other *ChunkCheckpointKey) int {
+	if c := cmp.Compare(key.Path, other.Path); c != 0 {
+		return c
+	}
+	return cmp.Compare(key.Offset, other.Offset)
 }
 
 func (key *ChunkCheckpointKey) less(other *ChunkCheckpointKey) bool {
@@ -1351,8 +1359,8 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 			})
 		}
 
-		slices.SortFunc(engine.Chunks, func(i, j *ChunkCheckpoint) bool {
-			return i.Key.less(&j.Key)
+		slices.SortFunc(engine.Chunks, func(i, j *ChunkCheckpoint) int {
+			return i.Key.compare(&j.Key)
 		})
 
 		cp.Engines[engineID] = engine

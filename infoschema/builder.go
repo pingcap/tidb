@@ -226,7 +226,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyRecoverTable(m, diff)
 	case model.ActionCreateTables:
 		return b.applyCreateTables(m, diff)
-	case model.ActionReorganizePartition:
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
 		return b.applyReorganizePartition(m, diff)
 	case model.ActionExchangeTablePartition:
 		return b.applyExchangeTablePartition(m, diff)
@@ -308,6 +309,7 @@ func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff)
 		if opt.TableID != 0 {
 			b.markTableBundleShouldUpdate(opt.TableID)
 		}
+		// TODO: Should we also check markPartitionBundleShouldUpdate?!?
 	}
 	return tblIDs, nil
 }
@@ -321,31 +323,46 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 	ntID := diff.OldTableID
 	ptSchemaID := diff.SchemaID
 	ptID := diff.TableID
+	partID := diff.TableID
 	if len(diff.AffectedOpts) > 0 {
-		// From old version
 		ptID = diff.AffectedOpts[0].TableID
-		ptSchemaID = diff.AffectedOpts[0].SchemaID
+		if diff.AffectedOpts[0].SchemaID != 0 {
+			ptSchemaID = diff.AffectedOpts[0].SchemaID
+		}
 	}
 	// The normal table needs to be updated first:
 	// Just update the tables separately
 	currDiff := &model.SchemaDiff{
+		// This is only for the case since https://github.com/pingcap/tidb/pull/45877
+		// Fixed now, by adding back the AffectedOpts
+		// to carry the partitioned Table ID.
+		Type:     diff.Type,
 		Version:  diff.Version,
 		TableID:  ntID,
 		SchemaID: ntSchemaID,
+	}
+	if ptID != partID {
+		currDiff.TableID = partID
+		currDiff.OldTableID = ntID
+		currDiff.OldSchemaID = ntSchemaID
 	}
 	ntIDs, err := b.applyTableUpdate(m, currDiff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	b.markPartitionBundleShouldUpdate(ntID)
-	// Then the partitioned table
+	// partID is the new id for the non-partitioned table!
+	b.markTableBundleShouldUpdate(partID)
+	// Then the partitioned table, will re-read the whole table, including all partitions!
 	currDiff.TableID = ptID
 	currDiff.SchemaID = ptSchemaID
+	currDiff.OldTableID = ptID
+	currDiff.OldSchemaID = ptSchemaID
 	ptIDs, err := b.applyTableUpdate(m, currDiff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	b.markTableBundleShouldUpdate(ptID)
+	// ntID is the new id for the partition!
+	b.markPartitionBundleShouldUpdate(ntID)
 	err = updateAutoIDForExchangePartition(b.store, ptSchemaID, ptID, ntSchemaID, ntID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -451,7 +468,9 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
-	case model.ActionTruncateTable, model.ActionCreateView:
+	case model.ActionTruncateTable, model.ActionCreateView,
+		model.ActionExchangeTablePartition, model.ActionAlterTablePartitioning,
+		model.ActionRemovePartitioning:
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	default:
@@ -752,7 +771,8 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	case model.ActionDropTablePartition:
 	case model.ActionTruncateTablePartition:
 	// ReorganizePartition handle the bundles in applyReorganizePartition
-	case model.ActionReorganizePartition:
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
 	default:
 		pi := tblInfo.GetPartitionInfo()
 		if pi != nil {
@@ -818,12 +838,10 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	tableNames := b.is.schemaMap[dbInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
 	bucketIdx := tableBucketIdx(tableID)
-	sortedTbls := b.is.sortedTablesBuckets[bucketIdx]
-	sortedTbls = append(sortedTbls, tbl)
-	slices.SortFunc(sortedTbls, func(i, j table.Table) int {
+	b.is.sortedTablesBuckets[bucketIdx] = append(b.is.sortedTablesBuckets[bucketIdx], tbl)
+	slices.SortFunc(b.is.sortedTablesBuckets[bucketIdx], func(i, j table.Table) int {
 		return cmp.Compare(i.Meta().ID, j.Meta().ID)
 	})
-	b.is.sortedTablesBuckets[bucketIdx] = sortedTbls
 
 	if tblInfo.TempTableType != model.TempTableNone {
 		b.addTemporaryTable(tableID)

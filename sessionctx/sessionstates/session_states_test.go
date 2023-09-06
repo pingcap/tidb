@@ -26,9 +26,11 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/sem"
@@ -171,6 +173,28 @@ func TestSystemVars(t *testing.T) {
 			checkStmt:       "select rand()",
 			expectedValue:   "0.11641535266900002",
 		},
+		{
+			// tidb_enforce_mpp depends on tidb_allow_mpp.
+			stmts: []string{
+				"set @@global.tidb_allow_mpp=0",
+				"set @@tidb_allow_mpp=1",
+				"set @@tidb_enforce_mpp=1",
+			},
+			inSessionStates: true,
+			varName:         variable.TiDBEnforceMPPExecution,
+			expectedValue:   "1",
+		},
+		{
+			// tx_read_only depends on tidb_enable_noop_functions.
+			stmts: []string{
+				"set @@global.tidb_enable_noop_functions=0",
+				"set @@tidb_enable_noop_functions=1",
+				"set @@tx_read_only=1",
+			},
+			inSessionStates: true,
+			varName:         variable.TxReadOnly,
+			expectedValue:   "1",
+		},
 	}
 
 	if !sem.IsEnabled() {
@@ -212,6 +236,103 @@ func TestSystemVars(t *testing.T) {
 		tk3 := testkit.NewTestKit(t, store)
 		showSessionStatesAndSet(t, tk1, tk3)
 		tk3.MustQuery("select @@autocommit").Check(testkit.Rows("1"))
+	}
+}
+
+func TestInvisibleVars(t *testing.T) {
+	tests := []struct {
+		hasPriv       bool
+		stmt          string
+		cleanStmt     string
+		varName       string
+		expectedValue string
+		showErr       int
+	}{
+		{
+			// Make sure the session can be migrated in normal cases.
+			hasPriv: false,
+		},
+		{
+			// The value is set but the same with before.
+			hasPriv: false,
+			stmt:    "set tidb_opt_write_row_id=false",
+		},
+		{
+			// The value is changed but the privilege is revoked.
+			hasPriv: false,
+			stmt:    "set tidb_opt_write_row_id=true",
+			showErr: errno.ErrCannotMigrateSession,
+		},
+		{
+			// The value is changed and the user has the privilege.
+			hasPriv:       true,
+			stmt:          "set tidb_opt_write_row_id=true",
+			varName:       variable.TiDBOptWriteRowID,
+			expectedValue: "1",
+		},
+		{
+			// The value has a global scope.
+			hasPriv:       true,
+			stmt:          "set tidb_row_format_version=1",
+			varName:       variable.TiDBRowFormatVersion,
+			expectedValue: "1",
+		},
+		{
+			// The global value is changed, so the session value is still different with global.
+			hasPriv:       true,
+			stmt:          "set global tidb_row_format_version=1",
+			varName:       variable.TiDBRowFormatVersion,
+			cleanStmt:     "set global tidb_row_format_version=2",
+			expectedValue: "2",
+		},
+		{
+			// The global value is changed, so the session value is still different with global.
+			hasPriv:   false,
+			stmt:      "set global tidb_row_format_version=1",
+			showErr:   errno.ErrCannotMigrateSession,
+			cleanStmt: "set global tidb_row_format_version=2",
+		},
+	}
+
+	sessionstates.SetupSigningCertForTest(t)
+	store := testkit.CreateMockStore(t)
+	if !sem.IsEnabled() {
+		sem.Enable()
+		defer sem.Disable()
+	}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER u1, u2")
+	tk.MustExec("GRANT RESTRICTED_VARIABLES_ADMIN ON *.* to u1")
+
+	for _, tt := range tests {
+		tk1 := testkit.NewTestKit(t, store)
+		if len(tt.stmt) > 0 {
+			tk1.MustExec(tt.stmt)
+		}
+
+		username := "u2"
+		if tt.hasPriv {
+			username = "u1"
+		}
+		err := tk1.Session().Auth(&auth.UserIdentity{Username: username, Hostname: "%"}, nil, nil, nil)
+		require.NoError(t, err)
+
+		if tt.showErr == 0 {
+			tk2 := testkit.NewTestKit(t, store)
+			err = tk2.Session().Auth(&auth.UserIdentity{Username: username, Hostname: "%"}, nil, nil, nil)
+			require.NoError(t, err)
+			showSessionStatesAndSet(t, tk1, tk2)
+			if len(tt.expectedValue) > 0 {
+				checkStmt := fmt.Sprintf("select @@%s", tt.varName)
+				tk2.MustQuery(checkStmt).Check(testkit.Rows(tt.expectedValue))
+			}
+		} else {
+			err := tk1.QueryToErr("show session_states")
+			errEqualsCode(t, err, tt.showErr)
+		}
+		if len(tt.cleanStmt) > 0 {
+			tk.MustExec(tt.cleanStmt)
+		}
 	}
 }
 

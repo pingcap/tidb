@@ -147,8 +147,17 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 			}
 		}
 	}
+	if !explicitCollation && explicitCharset {
+		coll, err := getDefaultCollationForUTF8MB4(ctx.GetSessionVars(), charsetOpt.Chs)
+		if err != nil {
+			return err
+		}
+		if len(coll) != 0 {
+			charsetOpt.Col = coll
+		}
+	}
 	dbInfo := &model.DBInfo{Name: stmt.Name}
-	chs, coll, err := ResolveCharsetCollation(charsetOpt)
+	chs, coll, err := ResolveCharsetCollation(ctx.GetSessionVars(), charsetOpt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -222,7 +231,7 @@ func (d *ddl) CreateSchemaWithInfo(
 
 func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, toCharset, toCollate string) (err error) {
 	if toCollate == "" {
-		if toCollate, err = charset.GetDefaultCollation(toCharset); err != nil {
+		if toCollate, err = GetDefaultCollation(ctx.GetSessionVars(), toCharset); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -775,10 +784,38 @@ func buildColumnsAndConstraints(
 	return cols, constraints, nil
 }
 
+func getDefaultCollationForUTF8MB4(sessVars *variable.SessionVars, cs string) (string, error) {
+	if sessVars == nil || cs != charset.CharsetUTF8MB4 {
+		return "", nil
+	}
+	defaultCollation, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), variable.DefaultCollationForUTF8MB4)
+	if err != nil {
+		return "", err
+	}
+	return defaultCollation, nil
+}
+
+// GetDefaultCollation returns the default collation for charset and handle the default collation for UTF8MB4.
+func GetDefaultCollation(sessVars *variable.SessionVars, cs string) (string, error) {
+	coll, err := getDefaultCollationForUTF8MB4(sessVars, cs)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if coll != "" {
+		return coll, nil
+	}
+
+	coll, err = charset.GetDefaultCollation(cs)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return coll, nil
+}
+
 // ResolveCharsetCollation will resolve the charset and collate by the order of parameters:
 // * If any given ast.CharsetOpt is not empty, the resolved charset and collate will be returned.
 // * If all ast.CharsetOpts are empty, the default charset and collate will be returned.
-func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (chs string, coll string, err error) {
+func ResolveCharsetCollation(sessVars *variable.SessionVars, charsetOpts ...ast.CharsetOpt) (chs string, coll string, err error) {
 	for _, v := range charsetOpts {
 		if v.Col != "" {
 			collation, err := collate.GetCollationByName(v.Col)
@@ -791,14 +828,21 @@ func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (chs string, coll st
 			return collation.CharsetName, v.Col, nil
 		}
 		if v.Chs != "" {
-			coll, err := charset.GetDefaultCollation(v.Chs)
+			coll, err := GetDefaultCollation(sessVars, v.Chs)
 			if err != nil {
 				return "", "", errors.Trace(err)
 			}
-			return v.Chs, coll, err
+			return v.Chs, coll, nil
 		}
 	}
 	chs, coll = charset.GetDefaultCharsetAndCollate()
+	utf8mb4Coll, err := getDefaultCollationForUTF8MB4(sessVars, chs)
+	if err != nil {
+		return "", "", errors.Trace(err)
+	}
+	if utf8mb4Coll != "" {
+		return chs, utf8mb4Coll, nil
+	}
 	return chs, coll, nil
 }
 
@@ -807,14 +851,14 @@ func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (chs string, coll st
 //	CREATE TABLE t (a VARCHAR(255) BINARY) CHARSET utf8 COLLATE utf8_general_ci;
 //
 // The 'BINARY' sets the column collation to *_bin according to the table charset.
-func OverwriteCollationWithBinaryFlag(colDef *ast.ColumnDef, chs, coll string) (newChs string, newColl string) {
+func OverwriteCollationWithBinaryFlag(sessVars *variable.SessionVars, colDef *ast.ColumnDef, chs, coll string) (newChs string, newColl string) {
 	ignoreBinFlag := colDef.Tp.GetCharset() != "" && (colDef.Tp.GetCollate() != "" || containsColumnOption(colDef, ast.ColumnOptionCollate))
 	if ignoreBinFlag {
 		return chs, coll
 	}
 	needOverwriteBinColl := types.IsString(colDef.Tp.GetType()) && mysql.HasBinaryFlag(colDef.Tp.GetFlag())
 	if needOverwriteBinColl {
-		newColl, err := charset.GetDefaultCollation(chs)
+		newColl, err := GetDefaultCollation(sessVars, chs)
 		if err != nil {
 			return chs, coll
 		}
@@ -898,15 +942,15 @@ func buildColumnAndConstraint(
 	}
 
 	// specifiedCollate refers to the last collate specified in colDef.Options.
-	chs, coll, err := getCharsetAndCollateInColumnDef(colDef)
+	chs, coll, err := getCharsetAndCollateInColumnDef(ctx.GetSessionVars(), colDef)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	chs, coll, err = ResolveCharsetCollation(
+	chs, coll, err = ResolveCharsetCollation(ctx.GetSessionVars(),
 		ast.CharsetOpt{Chs: chs, Col: coll},
 		ast.CharsetOpt{Chs: tblCharset, Col: tblCollate},
 	)
-	chs, coll = OverwriteCollationWithBinaryFlag(colDef, chs, coll)
+	chs, coll = OverwriteCollationWithBinaryFlag(ctx.GetSessionVars(), colDef, chs, coll)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -2378,11 +2422,11 @@ func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSc
 // BuildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
 func BuildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
 	colDefs := s.Cols
-	tableCharset, tableCollate, err := GetCharsetAndCollateInTableOption(0, s.Options)
+	tableCharset, tableCollate, err := GetCharsetAndCollateInTableOption(ctx.GetSessionVars(), 0, s.Options)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tableCharset, tableCollate, err = ResolveCharsetCollation(
+	tableCharset, tableCollate, err = ResolveCharsetCollation(ctx.GetSessionVars(),
 		ast.CharsetOpt{Chs: tableCharset, Col: tableCollate},
 		ast.CharsetOpt{Chs: dbCharset, Col: dbCollate},
 	)
@@ -2625,6 +2669,12 @@ func (d *ddl) createTableWithInfoPost(
 			allocType = autoid.RowIDAllocType
 		}
 		if err = d.handleAutoIncID(tbInfo, schemaID, newEnd, allocType); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	// For issue https://github.com/pingcap/tidb/issues/46093
+	if tbInfo.AutoIncIDExtra != 0 {
+		if err = d.handleAutoIncID(tbInfo, schemaID, tbInfo.AutoIncIDExtra-1, autoid.RowIDAllocType); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -3380,11 +3430,11 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 
 // getCharsetAndCollateInColumnDef will iterate collate in the options, validate it by checking the charset
 // of column definition. If there's no collate in the option, the default collate of column's charset will be used.
-func getCharsetAndCollateInColumnDef(def *ast.ColumnDef) (chs, coll string, err error) {
+func getCharsetAndCollateInColumnDef(sessVars *variable.SessionVars, def *ast.ColumnDef) (chs, coll string, err error) {
 	chs = def.Tp.GetCharset()
 	coll = def.Tp.GetCollate()
 	if chs != "" && coll == "" {
-		if coll, err = charset.GetDefaultCollation(chs); err != nil {
+		if coll, err = GetDefaultCollation(sessVars, chs); err != nil {
 			return "", "", errors.Trace(err)
 		}
 	}
@@ -3408,7 +3458,7 @@ func getCharsetAndCollateInColumnDef(def *ast.ColumnDef) (chs, coll string, err 
 // GetCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset and collate in options. If there is no charset in the options,
 // the returns charset will be "", the same as collate.
-func GetCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (chs, coll string, err error) {
+func GetCharsetAndCollateInTableOption(sessVars *variable.SessionVars, startIdx int, options []*ast.TableOption) (chs, coll string, err error) {
 	for i := startIdx; i < len(options); i++ {
 		opt := options[i]
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
@@ -3425,7 +3475,15 @@ func GetCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 				return "", "", dbterror.ErrConflictingDeclarations.GenWithStackByArgs(chs, info.Name)
 			}
 			if len(coll) == 0 {
-				coll = info.DefaultCollation
+				defaultColl, err := getDefaultCollationForUTF8MB4(sessVars, chs)
+				if err != nil {
+					return "", "", errors.Trace(err)
+				}
+				if len(defaultColl) == 0 {
+					coll = info.DefaultCollation
+				} else {
+					coll = defaultColl
+				}
 			}
 		case ast.TableOptionCollate:
 			info, err := collate.GetCollationByName(opt.StrValue)
@@ -3496,6 +3554,7 @@ func ResolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 		} else {
 			validSpecs = append(validSpecs, spec)
 		}
+		// TODO: Only allow REMOVE PARTITIONING as a single ALTER TABLE statement?
 	}
 
 	// Verify whether the algorithm is supported.
@@ -3588,7 +3647,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		case ast.AlterTableOptimizePartition:
 			err = errors.Trace(dbterror.ErrUnsupportedOptimizePartition)
 		case ast.AlterTableRemovePartitioning:
-			err = errors.Trace(dbterror.ErrUnsupportedRemovePartition)
+			err = d.RemovePartitioning(sctx, ident, spec)
 		case ast.AlterTableRepairPartition:
 			err = errors.Trace(dbterror.ErrUnsupportedRepairPartition)
 		case ast.AlterTableDropColumn:
@@ -3665,8 +3724,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			isAlterTable := true
 			err = d.renameTable(sctx, ident, newIdent, isAlterTable)
 		case ast.AlterTablePartition:
-			// Prevent silent succeed if user executes ALTER TABLE x PARTITION BY ...
-			err = errors.New("alter table partition is unsupported")
+			err = d.AlterTablePartitioning(sctx, ident, spec)
 		case ast.AlterTableOption:
 			var placementPolicyRef *model.PolicyRefInfo
 			for i, opt := range spec.Options {
@@ -3696,7 +3754,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 						continue
 					}
 					var toCharset, toCollate string
-					toCharset, toCollate, err = GetCharsetAndCollateInTableOption(i, spec.Options)
+					toCharset, toCollate, err = GetCharsetAndCollateInTableOption(sctx.GetSessionVars(), i, spec.Options)
 					if err != nil {
 						return err
 					}
@@ -4016,7 +4074,7 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 		}
 	}
 
-	tableCharset, tableCollate, err := ResolveCharsetCollation(
+	tableCharset, tableCollate, err := ResolveCharsetCollation(ctx.GetSessionVars(),
 		ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
 		ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
 	)
@@ -4211,11 +4269,12 @@ func getReorganizedDefinitions(pi *model.PartitionInfo, firstPartIdx, lastPartId
 	return tmpDefs
 }
 
-func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (firstPartIdx int, lastPartIdx int, idMap map[int]struct{}, err error) {
+func getReplacedPartitionIDs(names []string, pi *model.PartitionInfo) (firstPartIdx int, lastPartIdx int, idMap map[int]struct{}, err error) {
 	idMap = make(map[int]struct{})
 	firstPartIdx, lastPartIdx = -1, -1
 	for _, name := range names {
-		partIdx := pi.FindPartitionDefinitionByName(name.L)
+		nameL := strings.ToLower(name)
+		partIdx := pi.FindPartitionDefinitionByName(nameL)
 		if partIdx == -1 {
 			return 0, 0, nil, errors.Trace(dbterror.ErrWrongPartitionName)
 		}
@@ -4250,6 +4309,86 @@ func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (firs
 	return firstPartIdx, lastPartIdx, idMap, nil
 }
 
+func getPartitionInfoTypeNone() *model.PartitionInfo {
+	return &model.PartitionInfo{
+		Type:   model.PartitionTypeNone,
+		Enable: true,
+		Definitions: []model.PartitionDefinition{{
+			Name:    model.NewCIStr("pFullTable"),
+			Comment: "Intermediate partition during ALTER TABLE ... PARTITION BY ...",
+		}},
+		Num: 1,
+	}
+}
+
+// AlterTablePartitioning reorganize one set of partitions to a new set of partitions.
+func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
+	}
+
+	meta := t.Meta().Clone()
+	piOld := meta.GetPartitionInfo()
+	var partNames []string
+	if piOld != nil {
+		partNames = make([]string, 0, len(piOld.Definitions))
+		for i := range piOld.Definitions {
+			partNames = append(partNames, piOld.Definitions[i].Name.L)
+		}
+	} else {
+		piOld = getPartitionInfoTypeNone()
+		meta.Partition = piOld
+		partNames = append(partNames, piOld.Definitions[0].Name.L)
+	}
+	newMeta := meta.Clone()
+	err = buildTablePartitionInfo(ctx, spec.Partition, newMeta)
+	if err != nil {
+		return err
+	}
+	newPartInfo := newMeta.Partition
+
+	if err = d.assignPartitionIDs(newPartInfo.Definitions); err != nil {
+		return errors.Trace(err)
+	}
+	// A new table ID would be needed for
+	// the global index, which cannot be the same as the current table id,
+	// since this table id will be removed in the final state when removing
+	// all the data with this table id.
+	var newID []int64
+	newID, err = d.genGlobalIDs(1)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newPartInfo.NewTableID = newID[0]
+	newPartInfo.DDLType = piOld.Type
+
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		TableName:  t.Meta().Name.L,
+		Type:       model.ActionAlterTablePartitioning,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{partNames, newPartInfo},
+		ReorgMeta: &model.DDLReorgMeta{
+			SQLMode:       ctx.GetSessionVars().SQLMode,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
+		},
+	}
+
+	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	if err == nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("The statistics of new partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
+	}
+	return errors.Trace(err)
+}
+
 // ReorganizePartitions reorganize one set of partitions to a new set of partitions.
 func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
@@ -4272,7 +4411,11 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	default:
 		return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
 	}
-	firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(spec.PartitionNames, pi)
+	partNames := make([]string, 0, len(spec.PartitionNames))
+	for _, name := range spec.PartitionNames {
+		partNames = append(partNames, name.L)
+	}
+	firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(partNames, pi)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4283,7 +4426,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	if err = d.assignPartitionIDs(partInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkReorgPartitionDefs(ctx, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
+	if err = checkReorgPartitionDefs(ctx, model.ActionReorganizePartition, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
 		return errors.Trace(err)
 	}
 	if err = handlePartitionPlacement(ctx, partInfo); err != nil {
@@ -4298,7 +4441,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionReorganizePartition,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{spec.PartitionNames, partInfo},
+		Args:       []interface{}{partNames, partInfo},
 		ReorgMeta: &model.DDLReorgMeta{
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
@@ -4316,55 +4459,137 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	return errors.Trace(err)
 }
 
-func checkReorgPartitionDefs(ctx sessionctx.Context, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) error {
+// RemovePartitioning removes partitioning from a table.
+func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
+	}
+
+	meta := t.Meta().Clone()
+	pi := meta.GetPartitionInfo()
+	if pi == nil {
+		return dbterror.ErrPartitionMgmtOnNonpartitioned
+	}
+	// TODO: Optimize for remove partitioning with a single partition
+	// TODO: Add the support for this in onReorganizePartition
+	// skip if only one partition
+	// If there are only one partition, then we can do:
+	// change the table id to the partition id
+	// and keep the statistics for the partition id (which should be similar to the global statistics)
+	// and it let the GC clean up the old table metadata including possible global index.
+
+	newSpec := &ast.AlterTableSpec{}
+	newSpec.Tp = spec.Tp
+	defs := make([]*ast.PartitionDefinition, 1)
+	defs[0] = &ast.PartitionDefinition{}
+	defs[0].Name = model.NewCIStr("CollapsedPartitions")
+	newSpec.PartDefinitions = defs
+	partNames := make([]string, len(pi.Definitions))
+	for i := range pi.Definitions {
+		partNames[i] = pi.Definitions[i].Name.L
+	}
+	meta.Partition.Type = model.PartitionTypeNone
+	partInfo, err := BuildAddedPartitionInfo(ctx, meta, newSpec)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = d.assignPartitionIDs(partInfo.Definitions); err != nil {
+		return errors.Trace(err)
+	}
+	// TODO: check where the default placement comes from (i.e. table level)
+	if err = handlePartitionPlacement(ctx, partInfo); err != nil {
+		return errors.Trace(err)
+	}
+	partInfo.NewTableID = partInfo.Definitions[0].ID
+
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		TableName:  meta.Name.L,
+		Type:       model.ActionRemovePartitioning,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{partNames, partInfo},
+		ReorgMeta: &model.DDLReorgMeta{
+			SQLMode:       ctx.GetSessionVars().SQLMode,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
+		},
+	}
+
+	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
+func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) error {
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
 	pi := tblInfo.Partition
 	clonedMeta := tblInfo.Clone()
-	clonedMeta.Partition.AddingDefinitions = partInfo.Definitions
-	clonedMeta.Partition.Definitions = getReorganizedDefinitions(clonedMeta.Partition, firstPartIdx, lastPartIdx, idMap)
+	switch action {
+	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
+		clonedMeta.Partition = partInfo
+		clonedMeta.ID = partInfo.NewTableID
+	case model.ActionReorganizePartition:
+		clonedMeta.Partition.AddingDefinitions = partInfo.Definitions
+		clonedMeta.Partition.Definitions = getReorganizedDefinitions(clonedMeta.Partition, firstPartIdx, lastPartIdx, idMap)
+	default:
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("partition type")
+	}
 	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
 		return errors.Trace(err)
 	}
-	if pi.Type == model.PartitionTypeRange {
-		if lastPartIdx == len(pi.Definitions)-1 {
-			// Last partition dropped, OK to change the end range
-			// Also includes MAXVALUE
-			return nil
-		}
-		// Check if the replaced end range is the same as before
-		lastAddingPartition := partInfo.Definitions[len(partInfo.Definitions)-1]
-		lastOldPartition := pi.Definitions[lastPartIdx]
-		if len(pi.Columns) > 0 {
-			newGtOld, err := checkTwoRangeColumns(ctx, &lastAddingPartition, &lastOldPartition, pi, tblInfo)
+	if action == model.ActionReorganizePartition {
+		if pi.Type == model.PartitionTypeRange {
+			if lastPartIdx == len(pi.Definitions)-1 {
+				// Last partition dropped, OK to change the end range
+				// Also includes MAXVALUE
+				return nil
+			}
+			// Check if the replaced end range is the same as before
+			lastAddingPartition := partInfo.Definitions[len(partInfo.Definitions)-1]
+			lastOldPartition := pi.Definitions[lastPartIdx]
+			if len(pi.Columns) > 0 {
+				newGtOld, err := checkTwoRangeColumns(ctx, &lastAddingPartition, &lastOldPartition, pi, tblInfo)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if newGtOld {
+					return errors.Trace(dbterror.ErrRangeNotIncreasing)
+				}
+				oldGtNew, err := checkTwoRangeColumns(ctx, &lastOldPartition, &lastAddingPartition, pi, tblInfo)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if oldGtNew {
+					return errors.Trace(dbterror.ErrRangeNotIncreasing)
+				}
+				return nil
+			}
+
+			isUnsigned := isPartExprUnsigned(tblInfo)
+			currentRangeValue, _, err := getRangeValue(ctx, pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if newGtOld {
-				return errors.Trace(dbterror.ErrRangeNotIncreasing)
-			}
-			oldGtNew, err := checkTwoRangeColumns(ctx, &lastOldPartition, &lastAddingPartition, pi, tblInfo)
+			newRangeValue, _, err := getRangeValue(ctx, partInfo.Definitions[len(partInfo.Definitions)-1].LessThan[0], isUnsigned)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if oldGtNew {
+
+			if currentRangeValue != newRangeValue {
 				return errors.Trace(dbterror.ErrRangeNotIncreasing)
 			}
-			return nil
 		}
-
-		isUnsigned := isPartExprUnsigned(tblInfo)
-		currentRangeValue, _, err := getRangeValue(ctx, pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		newRangeValue, _, err := getRangeValue(ctx, partInfo.Definitions[len(partInfo.Definitions)-1].LessThan[0], isUnsigned)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		if currentRangeValue != newRangeValue {
-			return errors.Trace(dbterror.ErrRangeNotIncreasing)
+	} else {
+		if len(pi.Definitions) != (lastPartIdx - firstPartIdx + 1) {
+			// if not ActionReorganizePartition, require all partitions to be changed.
+			return errors.Trace(dbterror.ErrAlterOperationNotSupported)
 		}
 	}
 	return nil
@@ -4696,6 +4921,9 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		return errors.Trace(dbterror.ErrTablesDifferentMetadata)
 	}
 	for _, sourceIdx := range source.Indices {
+		if sourceIdx.Global {
+			return dbterror.ErrPartitionExchangeDifferentOption.GenWithStackByArgs(fmt.Sprintf("global index: %s", sourceIdx.Name))
+		}
 		var compatIdx *model.IndexInfo
 		for _, targetIdx := range target.Indices {
 			if strings.EqualFold(sourceIdx.Name.L, targetIdx.Name.L) {
@@ -5245,16 +5473,16 @@ func GetModifiableColumnJob(
 		chs = col.FieldType.GetCharset()
 		coll = col.FieldType.GetCollate()
 	} else {
-		chs, coll, err = getCharsetAndCollateInColumnDef(specNewColumn)
+		chs, coll, err = getCharsetAndCollateInColumnDef(sctx.GetSessionVars(), specNewColumn)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		chs, coll, err = ResolveCharsetCollation(
+		chs, coll, err = ResolveCharsetCollation(sctx.GetSessionVars(),
 			ast.CharsetOpt{Chs: chs, Col: coll},
 			ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
 			ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
 		)
-		chs, coll = OverwriteCollationWithBinaryFlag(specNewColumn, chs, coll)
+		chs, coll = OverwriteCollationWithBinaryFlag(sctx.GetSessionVars(), specNewColumn, chs, coll)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -5897,8 +6125,8 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	if toCollate == "" {
-		// get the default collation of the charset.
-		toCollate, err = charset.GetDefaultCollation(toCharset)
+		// Get the default collation of the charset.
+		toCollate, err = GetDefaultCollation(ctx.GetSessionVars(), toCharset)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -6241,7 +6469,7 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 	}
 
 	// This DDL will update the table charset to default charset.
-	origCharset, origCollate, err = ResolveCharsetCollation(
+	origCharset, origCollate, err = ResolveCharsetCollation(nil,
 		ast.CharsetOpt{Chs: origCharset, Col: origCollate},
 		ast.CharsetOpt{Chs: dbInfo.Charset, Col: dbInfo.Collate},
 	)
@@ -7481,6 +7709,8 @@ func validateCommentLength(vars *variable.SessionVars, name string, comment *str
 func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
 	numParts := uint64(0)
 	switch meta.Partition.Type {
+	case model.PartitionTypeNone:
+		// OK
 	case model.PartitionTypeList:
 		if len(spec.PartDefinitions) == 0 {
 			return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
@@ -7504,6 +7734,10 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 		}
 	case model.PartitionTypeHash, model.PartitionTypeKey:
 		switch spec.Tp {
+		case ast.AlterTableRemovePartitioning:
+			numParts = 1
+		default:
+			return nil, errors.Trace(dbterror.ErrUnsupportedAddPartition)
 		case ast.AlterTableCoalescePartitions:
 			if int(spec.Num) >= len(meta.Partition.Definitions) {
 				return nil, dbterror.ErrDropLastPartition
@@ -7534,6 +7768,7 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 	}
 
 	part.Definitions = defs
+	part.Num = uint64(len(defs))
 	return part, nil
 }
 
@@ -7582,7 +7817,7 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx sessionctx.Context, colTypes []typ
 		switch colType.GetType() {
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
 			switch vkind {
-			case types.KindString, types.KindBytes:
+			case types.KindString, types.KindBytes, types.KindNull:
 			default:
 				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}

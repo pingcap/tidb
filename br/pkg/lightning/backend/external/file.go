@@ -17,9 +17,6 @@ package external
 import (
 	"context"
 	"encoding/binary"
-	"path/filepath"
-	"strconv"
-	"strings"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
@@ -60,36 +57,43 @@ func NewKeyValueStore(
 // appended to the rangePropertiesCollector with current status.
 // `key` must be in strictly ascending order for invocations of a KeyValueStore.
 func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
-	kvLen := len(key) + len(value) + 16
-	var b [8]byte
+	var (
+		b     [8]byte
+		kvLen = 0
+	)
 
 	// data layout: keyLen + key + valueLen + value
-	_, err := s.dataWriter.Write(
+	n, err := s.dataWriter.Write(
 		s.ctx,
 		binary.BigEndian.AppendUint64(b[:0], uint64(len(key))),
 	)
 	if err != nil {
 		return err
 	}
-	_, err = s.dataWriter.Write(s.ctx, key)
+	kvLen += n
+	n, err = s.dataWriter.Write(s.ctx, key)
 	if err != nil {
 		return err
 	}
-	_, err = s.dataWriter.Write(
+	kvLen += n
+	n, err = s.dataWriter.Write(
 		s.ctx,
 		binary.BigEndian.AppendUint64(b[:0], uint64(len(value))),
 	)
 	if err != nil {
 		return err
 	}
-	_, err = s.dataWriter.Write(s.ctx, value)
+	kvLen += n
+	n, err = s.dataWriter.Write(s.ctx, value)
 	if err != nil {
 		return err
 	}
+	kvLen += n
 
-	if len(s.rc.currProp.key) == 0 {
-		s.rc.currProp.key = key
+	if len(s.rc.currProp.firstKey) == 0 {
+		s.rc.currProp.firstKey = key
 	}
+	s.rc.currProp.lastKey = key
 
 	s.offset += uint64(kvLen)
 	s.rc.currProp.size += uint64(len(key) + len(value))
@@ -100,7 +104,7 @@ func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
 		newProp := *s.rc.currProp
 		s.rc.props = append(s.rc.props, &newProp)
 
-		s.rc.currProp.key = nil
+		s.rc.currProp.firstKey = nil
 		s.rc.currProp.offset = s.offset
 		s.rc.currProp.keys = 0
 		s.rc.currProp.size = 0
@@ -117,77 +121,4 @@ func (s *KeyValueStore) Close() {
 	}
 }
 
-var statSuffix = filepath.Join("_stat", "0")
-
-// GetAllFileNames returns a FilePathHandle that contains all data file paths
-// and a slice of stat file paths.
-func GetAllFileNames(
-	ctx context.Context,
-	store storage.ExternalStorage,
-	subDir string,
-) (FilePathHandle, []string, error) {
-	var dataFilePaths FilePathHandle
-	var stats []string
-
-	err := store.WalkDir(ctx,
-		&storage.WalkOption{SubDir: subDir},
-		func(path string, size int64) error {
-			if strings.HasSuffix(path, statSuffix) {
-				stats = append(stats, path)
-			} else {
-				dir, file := filepath.Split(path)
-				writerID, err := strconv.Atoi(filepath.Base(dir))
-				if err != nil {
-					return err
-				}
-				seq, err := strconv.Atoi(file)
-				if err != nil {
-					return err
-				}
-				dataFilePaths.set(writerID, seq, path)
-			}
-			return nil
-		})
-	if err != nil {
-		return dataFilePaths, nil, err
-	}
-	return dataFilePaths, stats, nil
-}
-
-// FilePathHandle handles data file paths under a prefix path.
-type FilePathHandle struct {
-	paths [][]string
-}
-
-func (p *FilePathHandle) set(writerID, seq int, path string) {
-	if writerID >= len(p.paths) {
-		p.paths = append(p.paths, make([][]string, writerID-len(p.paths)+1)...)
-	}
-	if seq >= len(p.paths[writerID]) {
-		p.paths[writerID] = append(p.paths[writerID], make([]string, seq-len(p.paths[writerID])+1)...)
-	}
-	p.paths[writerID][seq] = path
-}
-
-// Get returns the path of the data file with the given writerID and seq.
-func (p *FilePathHandle) Get(writerID, seq int) string {
-	return p.paths[writerID][seq]
-}
-
-// ForEach applies the given function to each data file path.
-func (p *FilePathHandle) ForEach(f func(writerID, seq int, path string)) {
-	for writerID, paths := range p.paths {
-		for seq, path := range paths {
-			f(writerID, seq, path)
-		}
-	}
-}
-
-// FlatSlice returns a flat slice of all data file paths.
-func (p *FilePathHandle) FlatSlice() []string {
-	var paths []string
-	p.ForEach(func(writerID, seq int, path string) {
-		paths = append(paths, path)
-	})
-	return paths
-}
+const statSuffix = "_stat"

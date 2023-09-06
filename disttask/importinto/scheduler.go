@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -89,7 +90,8 @@ func (s *importStepScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	return nil
 }
 
-func (s *importStepScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.MinimalTask, error) {
+func (s *importStepScheduler) SplitSubtask(ctx context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error) {
+	bs := subtask.Meta
 	var subtaskMeta ImportStepMeta
 	err := json.Unmarshal(bs, &subtaskMeta)
 	if err != nil {
@@ -175,6 +177,12 @@ func (s *importStepScheduler) OnSubtaskFinished(ctx context.Context, subtaskMeta
 		LoadedRowCnt: uint64(dataKVCount),
 		ColSizeMap:   sharedVars.Progress.GetColSize(),
 	}
+	allocators := sharedVars.TableImporter.Allocators()
+	subtaskMeta.MaxIDs = map[autoid.AllocatorType]int64{
+		autoid.RowIDAllocType:    allocators.Get(autoid.RowIDAllocType).Base(),
+		autoid.AutoIncrementType: allocators.Get(autoid.AutoIncrementType).Base(),
+		autoid.AutoRandomType:    allocators.Get(autoid.AutoRandomType).Base(),
+	}
 	s.sharedVars.Delete(subtaskMeta.ID)
 	return json.Marshal(subtaskMeta)
 }
@@ -201,11 +209,12 @@ type postStepScheduler struct {
 
 var _ scheduler.Scheduler = &postStepScheduler{}
 
-func (p *postStepScheduler) SplitSubtask(_ context.Context, metaBytes []byte) ([]proto.MinimalTask, error) {
+func (p *postStepScheduler) SplitSubtask(_ context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error) {
 	mTask := &postProcessStepMinimalTask{
 		taskMeta: p.taskMeta,
 		logger:   p.logger,
 	}
+	metaBytes := subtask.Meta
 	if err := json.Unmarshal(metaBytes, &mTask.meta); err != nil {
 		return nil, err
 	}
@@ -228,28 +237,28 @@ func init() {
 	}
 	scheduler.RegisterTaskType(proto.ImportInto, scheduler.WithPoolSize(int32(runtime.GOMAXPROCS(0))))
 	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepImport,
-		func(ctx context.Context, taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
+		func(_ context.Context, task *proto.Task, _ *scheduler.Summary) (scheduler.Scheduler, error) {
 			// TODO(tangenta): use context for lifetime control.
-			taskMeta, logger, err := prepareFn(taskID, bs, step)
+			taskMeta, logger, err := prepareFn(task.ID, task.Meta, task.Step)
 			if err != nil {
 				return nil, err
 			}
 			return &importStepScheduler{
-				taskID:   taskID,
+				taskID:   task.ID,
 				taskMeta: taskMeta,
 				logger:   logger,
 			}, nil
 		},
 	)
 	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepPostProcess,
-		func(ctx context.Context, taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
+		func(_ context.Context, task *proto.Task, _ *scheduler.Summary) (scheduler.Scheduler, error) {
 			// TODO(tangenta): use context for lifetime control.
-			taskMeta, logger, err := prepareFn(taskID, bs, step)
+			taskMeta, logger, err := prepareFn(task.ID, task.Meta, task.Step)
 			if err != nil {
 				return nil, err
 			}
 			return &postStepScheduler{
-				taskID:   taskID,
+				taskID:   task.ID,
 				taskMeta: taskMeta,
 				logger:   logger,
 			}, nil

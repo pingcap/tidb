@@ -19,10 +19,9 @@ import (
 	"context"
 	"encoding/hex"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
-
-	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -75,11 +74,12 @@ func DummyOnCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
-	memSizeLimit    uint64
-	writeBatchCount uint64
-	propSizeDist    uint64
-	propKeysDist    uint64
-	onClose         OnCloseFunc
+	memSizeLimit      uint64
+	writeBatchCount   uint64
+	propSizeDist      uint64
+	propKeysDist      uint64
+	onClose           OnCloseFunc
+	dupeDetectEnabled bool
 
 	bufferPool *membuf.Pool
 }
@@ -95,7 +95,9 @@ func NewWriterBuilder() *WriterBuilder {
 	}
 }
 
-// SetMemorySizeLimit sets the memory size limit of the writer.
+// SetMemorySizeLimit sets the memory size limit of the writer. When accumulated
+// data size exceeds this limit, the writer will flush data as a file to external
+// storage.
 func (b *WriterBuilder) SetMemorySizeLimit(size uint64) *WriterBuilder {
 	b.memSizeLimit = size
 	return b
@@ -131,15 +133,27 @@ func (b *WriterBuilder) SetBufferPool(bufferPool *membuf.Pool) *WriterBuilder {
 	return b
 }
 
-// Build builds a new Writer.
+// EnableDuplicationDetection enables the duplication detection of the writer.
+func (b *WriterBuilder) EnableDuplicationDetection() *WriterBuilder {
+	b.dupeDetectEnabled = true
+	return b
+}
+
+// Build builds a new Writer. The files writer will create are under the prefix
+// of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
 	store storage.ExternalStorage,
+	prefix string,
 	writerID int,
-	filenamePrefix string,
 ) *Writer {
 	bp := b.bufferPool
 	if bp == nil {
 		bp = membuf.NewPool()
+	}
+	filenamePrefix := filepath.Join(prefix, strconv.Itoa(writerID))
+	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
+	if b.dupeDetectEnabled {
+		keyAdapter = common.DupDetectKeyAdapter{}
 	}
 	return &Writer{
 		rc: &rangePropertiesCollector{
@@ -154,6 +168,7 @@ func (b *WriterBuilder) Build(
 		writeBatch:     make([]common.KvPair, 0, b.writeBatchCount),
 		currentSeq:     0,
 		filenamePrefix: filenamePrefix,
+		keyAdapter:     keyAdapter,
 		writerID:       writerID,
 		kvStore:        nil,
 		onClose:        b.onClose,
@@ -167,6 +182,7 @@ type Writer struct {
 	writerID       int
 	currentSeq     int
 	filenamePrefix string
+	keyAdapter     common.KeyAdapter
 
 	kvStore *KeyValueStore
 	rc      *rangePropertiesCollector
@@ -192,10 +208,14 @@ type Writer struct {
 // Note that this method is NOT thread-safe.
 func (w *Writer) AppendRows(ctx context.Context, _ []string, rows encode.Rows) error {
 	kvs := kv.Rows2KvPairs(rows)
+	keyAdapter := w.keyAdapter
 	for _, pair := range kvs {
 		w.batchSize += uint64(len(pair.Key) + len(pair.Val))
-		key := w.kvBuffer.AddBytes(pair.Key)
+
+		buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(pair.Key, pair.RowID))
+		key := keyAdapter.Encode(buf[:0], pair.Key, pair.RowID)
 		val := w.kvBuffer.AddBytes(pair.Val)
+
 		w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val})
 		if w.batchSize >= w.memSizeLimit {
 			if err := w.flushKVs(ctx); err != nil {
@@ -262,6 +282,7 @@ func (w *Writer) flushKVs(ctx context.Context) (err error) {
 		return nil
 	}
 
+	logger := logutil.Logger(ctx)
 	dataWriter, statWriter, err := w.createStorageWriter(ctx)
 	if err != nil {
 		return err
@@ -277,16 +298,16 @@ func (w *Writer) flushKVs(ctx context.Context) (err error) {
 			return
 		}
 		if err1 != nil {
-			logutil.Logger(ctx).Error("close data writer failed", zap.Error(err))
+			logger.Error("close data writer failed", zap.Error(err))
 			err = err1
 			return
 		}
 		if err2 != nil {
-			logutil.Logger(ctx).Error("close stat writer failed", zap.Error(err))
+			logger.Error("close stat writer failed", zap.Error(err))
 			err = err2
 			return
 		}
-		logutil.Logger(ctx).Info("flush kv",
+		logger.Info("flush kv",
 			zap.Duration("time", time.Since(ts)),
 			zap.Uint64("bytes", savedBytes),
 			zap.Any("rate", float64(savedBytes)/1024.0/1024.0/time.Since(ts).Seconds()))
@@ -332,7 +353,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (data, stats storage.E
 	if err != nil {
 		return nil, nil, err
 	}
-	statPath := filepath.Join(w.filenamePrefix+"_stat", strconv.Itoa(w.currentSeq))
+	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(w.currentSeq))
 	statsWriter, err := w.store.Create(ctx, statPath, nil)
 	if err != nil {
 		return nil, nil, err

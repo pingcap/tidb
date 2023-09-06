@@ -17,7 +17,7 @@ package expression
 import (
 	"bytes"
 	"fmt"
-	"sort"
+	"slices"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -176,7 +176,14 @@ func typeInferForNull(args []Expression) {
 // newFunctionImpl creates a new scalar function or constant.
 // fold: 1 means folding constants, while 0 means not,
 // -1 means try to fold constants if without errors/warnings, otherwise not.
-func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType *types.FieldType, checkOrInit ScalarFunctionCallBack, args ...Expression) (ret Expression, err error) {
+	defer func() {
+		if err == nil && ret != nil && checkOrInit != nil {
+			if sf, ok := ret.(*ScalarFunction); ok {
+				ret, err = checkOrInit(sf)
+			}
+		}
+	}()
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction")
 	}
@@ -258,25 +265,48 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	return sf, nil
 }
 
+// ScalarFunctionCallBack is the definition of callback of calling a newFunction.
+type ScalarFunctionCallBack func(function *ScalarFunction) (Expression, error)
+
+func defaultScalarFunctionCheck(function *ScalarFunction) (Expression, error) {
+	// todo: more scalar function init actions can be added here, or setting up with customized init callback.
+	if function.FuncName.L == ast.Grouping {
+		if !function.Function.(*BuiltinGroupingImplSig).isMetaInited {
+			return function, errors.Errorf("grouping meta data hasn't been initialized, try use function clone instead")
+		}
+	}
+	return function, nil
+}
+
+// NewFunctionWithInit creates a new scalar function with callback init function.
+func NewFunctionWithInit(ctx sessionctx.Context, funcName string, retType *types.FieldType, init ScalarFunctionCallBack, args ...Expression) (Expression, error) {
+	return newFunctionImpl(ctx, 1, funcName, retType, init, args...)
+}
+
 // NewFunction creates a new scalar function or constant via a constant folding.
 func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, 1, funcName, retType, args...)
+	return newFunctionImpl(ctx, 1, funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
 // NewFunctionBase creates a new scalar function with no constant folding.
 func NewFunctionBase(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, 0, funcName, retType, args...)
+	return newFunctionImpl(ctx, 0, funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
 // NewFunctionTryFold creates a new scalar function with trying constant folding.
 func NewFunctionTryFold(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, -1, funcName, retType, args...)
+	return newFunctionImpl(ctx, -1, funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
-// NewFunctionInternal is similar to NewFunction, but do not returns error, should only be used internally.
+// NewFunctionInternal is similar to NewFunction, but do not return error, should only be used internally.
+// Deprecated: use NewFunction instead, old logic here is for the convenience of go linter error check.
+// while for the new function creation, some errors can also be thrown out, for example, args verification
+// error, collation derivation error, special function with meta doesn't be initialized error and so on.
+// only threw the these internal error out, then we can debug and dig it out quickly rather than in a confusion
+// of index out of range / nil pointer error / function execution error.
 func NewFunctionInternal(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) Expression {
 	expr, err := NewFunction(ctx, funcName, retType, args...)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return expr
 }
 
@@ -485,8 +515,8 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction, sc *stmtctx.StatementContex
 		// encode original function name.
 		sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(sf.FuncName.L))
 		// reorder parameters hashcode, eg: a+b and b+a should has the same hashcode here.
-		sort.Slice(argsHashCode, func(i, j int) bool {
-			return bytes.Compare(argsHashCode[i], argsHashCode[j]) <= 0
+		slices.SortFunc(argsHashCode, func(i, j []byte) int {
+			return bytes.Compare(i, j)
 		})
 		for _, argCode := range argsHashCode {
 			sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)

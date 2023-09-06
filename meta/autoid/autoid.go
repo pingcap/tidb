@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/autoid"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -579,10 +581,13 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *
 	if err != nil {
 		panic(err)
 	}
+
+	keyspaceID := uint32(store.GetCodec().GetKeyspaceID())
 	spa := &singlePointAlloc{
 		dbID:       dbID,
 		tblID:      tblID,
 		isUnsigned: isUnsigned,
+		keyspaceID: keyspaceID,
 	}
 	if len(addrs) > 0 {
 		etcdCli, err := clientv3.New(clientv3.Config{
@@ -590,6 +595,7 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *
 			AutoSyncInterval: 30 * time.Second,
 			TLS:              ebd.TLSConfig(),
 		})
+		etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespaceSlash(store.GetCodec()))
 		if err != nil {
 			logutil.BgLogger().Error("fail to connect etcd, fallback to default", zap.String("category", "autoid client"), zap.Error(err))
 			return nil
@@ -656,6 +662,8 @@ func NewSequenceAllocator(store kv.Storage, dbID, tbID int64, info *model.Sequen
 		sequence:      info,
 	}
 }
+
+// TODO: Handle allocators when changing Table ID during ALTER TABLE t PARTITION BY ...
 
 // NewAllocatorsFromTblInfo creates an array of allocators of different types with the information of model.TableInfo.
 func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) Allocators {

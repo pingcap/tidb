@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -64,7 +65,6 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -682,24 +682,32 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 
 	scheduler.RegisterTaskType("backfill")
 	scheduler.RegisterSchedulerConstructor("backfill", proto.StepOne,
-		func(ctx context.Context, _ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
-			return NewBackfillSchedulerHandle(ctx, taskMeta, d, step == proto.StepTwo)
-		})
+		func(ctx context.Context, task *proto.Task, summary *scheduler.Summary) (scheduler.Scheduler, error) {
+			return NewBackfillSchedulerHandle(ctx, task.Meta, d, task.Step == proto.StepTwo, summary)
+		}, scheduler.WithSummary)
 
 	scheduler.RegisterSchedulerConstructor("backfill", proto.StepTwo,
-		func(ctx context.Context, _ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
-			return NewBackfillSchedulerHandle(ctx, taskMeta, d, step == proto.StepTwo)
+		func(ctx context.Context, task *proto.Task, summary *scheduler.Summary) (scheduler.Scheduler, error) {
+			return NewBackfillSchedulerHandle(ctx, task.Meta, d, task.Step == proto.StepTwo, nil)
 		})
 
-	dispatcher.RegisterTaskFlowHandle(BackfillTaskType, NewLitBackfillFlowHandle(d))
-	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepOne,
-		func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
-			return &scheduler.EmptyExecutor{}, nil
-		})
-	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepTwo,
-		func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
-			return &scheduler.EmptyExecutor{}, nil
-		})
+	backFillDsp, err := NewBackfillingDispatcherExt(d)
+	if err != nil {
+		logutil.BgLogger().Warn("NewBackfillingDispatcherExt failed", zap.String("category", "ddl"), zap.Error(err))
+	} else {
+		dispatcher.RegisterDispatcherFactory(BackfillTaskType,
+			func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+				return newLitBackfillDispatcher(ctx, taskMgr, serverID, task, backFillDsp)
+			})
+		scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepOne,
+			func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
+				return &scheduler.EmptyExecutor{}, nil
+			})
+		scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepTwo,
+			func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
+				return &scheduler.EmptyExecutor{}, nil
+			})
+	}
 
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
@@ -747,7 +755,7 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 		}
 	}
 	// reorg worker count at least 1 at most 10.
-	reorgCnt := mathutil.Min(mathutil.Max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
+	reorgCnt := min(max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
 	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), reorg)
 	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), general)
 	failpoint.Inject("NoDDLDispatchLoop", func(val failpoint.Value) {
@@ -984,7 +992,9 @@ func getIntervalFromPolicy(policy []time.Duration, i int) (time.Duration, bool) 
 func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	switch job.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn,
-		model.ActionReorganizePartition:
+		model.ActionReorganizePartition,
+		model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	case model.ActionCreateTable, model.ActionCreateSchema:
 		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
@@ -1038,6 +1048,10 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
 func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	job.TraceInfo = &model.TraceInfo{
+		ConnectionID: ctx.GetSessionVars().ConnectionID,
+		SessionAlias: ctx.GetSessionVars().SessionAlias,
+	}
 	if mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
 		// In multiple schema change, we don't run the job.
 		// Instead, we merge all the jobs into one pending job.

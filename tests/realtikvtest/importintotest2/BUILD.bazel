@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "importintotest2_test",
+    timeout = "moderate",
+    srcs = [
+        "main_test.go",
+        "write_after_import_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    deps = [
+        "//br/pkg/lightning/common",
+        "//config",
+        "//infoschema",
+        "//kv",
+        "//meta/autoid",
+        "//parser/model",
+        "//testkit",
+        "//tests/realtikvtest",
+        "@com_github_fsouza_fake_gcs_server//fakestorage",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//suite",
+        "@io_etcd_go_etcd_client_v3//:client",
+    ],
+)
