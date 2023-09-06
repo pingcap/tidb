@@ -33,6 +33,7 @@ type heapElem interface {
 type sortedReader[T heapElem] interface {
 	path() string
 	next() (T, error)
+	setReadMode(useConcurrency bool)
 	close() error
 }
 
@@ -68,11 +69,13 @@ func (h *mergeHeap[T]) Pop() interface{} {
 }
 
 type mergeIter[T heapElem, R sortedReader[T]] struct {
-	h             mergeHeap[T]
-	readers       []*R
-	curr          T
-	lastReaderIdx int
-	err           error
+	h                mergeHeap[T]
+	readers          []*R
+	curr             T
+	lastReaderIdx    int
+	err              error
+	checkHotPointMap map[int]int
+	checkHotPointCnt int
 
 	logger *zap.Logger
 }
@@ -128,10 +131,11 @@ func newMergeIter[
 	}
 
 	i := &mergeIter[T, R]{
-		h:             make(mergeHeap[T], 0, len(readers)),
-		readers:       readers,
-		lastReaderIdx: -1,
-		logger:        logger,
+		h:                make(mergeHeap[T], 0, len(readers)),
+		readers:          readers,
+		lastReaderIdx:    -1,
+		checkHotPointMap: make(map[int]int),
+		logger:           logger,
 	}
 	for j := range i.readers {
 		if i.readers[j] == nil {
@@ -198,6 +202,23 @@ func (i *mergeIter[T, R]) next() bool {
 	var zeroT T
 	i.curr = zeroT
 	if i.lastReaderIdx >= 0 {
+		cnt, ok := i.checkHotPointMap[i.lastReaderIdx]
+		if !ok {
+			i.checkHotPointMap[i.lastReaderIdx] = 1
+		} else {
+			i.checkHotPointMap[i.lastReaderIdx] = cnt + 1
+		}
+		i.checkHotPointCnt++
+
+		if i.checkHotPointCnt == 1000 {
+			i.checkHotPointCnt = 0
+			for idx, cnt := range i.checkHotPointMap {
+				(*i.readers[idx]).setReadMode(cnt > 500)
+			}
+			i.checkHotPointCnt = 0
+			i.checkHotPointMap = make(map[int]int)
+		}
+
 		rd := *i.readers[i.lastReaderIdx]
 		e, err := rd.next()
 		switch err {
@@ -211,6 +232,7 @@ func (i *mergeIter[T, R]) next() bool {
 					zap.Error(closeErr))
 			}
 			i.readers[i.lastReaderIdx] = nil
+			delete(i.checkHotPointMap, i.lastReaderIdx)
 		default:
 			i.err = err
 			return false
@@ -255,6 +277,10 @@ func (p kvReaderProxy) next() (kvPair, error) {
 	return kvPair{key: k, value: v}, nil
 }
 
+func (p kvReaderProxy) setReadMode(useConcurrency bool) {
+	p.r.byteReader.SwitchReaderMode(useConcurrency)
+}
+
 func (p kvReaderProxy) close() error {
 	return p.r.Close()
 }
@@ -278,7 +304,7 @@ func NewMergeKVIter(
 
 	for i := range paths {
 		i := i
-		readerOpeners = append(readerOpeners, func(ctx context.Context) (*kvReaderProxy, error) {
+		readerOpeners = append(readerOpeners, func(ctx2 context.Context) (*kvReaderProxy, error) {
 			rd, err := newKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
 			if err != nil {
 				return nil, err
@@ -333,6 +359,10 @@ func (p statReaderProxy) next() (*rangeProperty, error) {
 	return p.r.nextProp()
 }
 
+func (p statReaderProxy) setReadMode(useConcurrency bool) {
+	p.r.byteReader.SwitchReaderMode(useConcurrency)
+}
+
 func (p statReaderProxy) close() error {
 	return p.r.Close()
 }
@@ -351,7 +381,7 @@ func NewMergePropIter(
 	readerOpeners := make([]readerOpenerFn[*rangeProperty, statReaderProxy], 0, len(paths))
 	for i := range paths {
 		i := i
-		readerOpeners = append(readerOpeners, func(ctx context.Context) (*statReaderProxy, error) {
+		readerOpeners = append(readerOpeners, func(ctx2 context.Context) (*statReaderProxy, error) {
 			rd, err := newStatsReader(ctx, exStorage, paths[i], 4096)
 			if err != nil {
 				return nil, err
