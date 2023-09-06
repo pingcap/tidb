@@ -1216,9 +1216,10 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 	case KindMysqlDuration:
 		dec := d.GetMysqlDuration().ToNumber()
 		err = dec.Round(dec, 0, ModeHalfUp)
-		ival, err1 := dec.ToInt()
-		if err1 == nil {
-			val, err = ConvertIntToUint(sc, ival, upperBound, tp)
+		var err1 error
+		val, err1 = ConvertDecimalToUint(sc, dec, upperBound, tp)
+		if err == nil {
+			err = err1
 		}
 	case KindMysqlDecimal:
 		val, err = ConvertDecimalToUint(sc, d.GetMysqlDecimal(), upperBound, tp)
