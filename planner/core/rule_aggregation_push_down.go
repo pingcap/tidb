@@ -569,25 +569,31 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 						for _, arg := range aggFunc.Args {
 							newArgs = append(newArgs, expression.ColumnSubstitute(arg, proj.schema, proj.Exprs))
 						}
-						oldAggOrderItems = append(oldAggOrderItems, aggFunc.OrderByItems)
-						newOrderByItems := make([]expression.Expression, 0, len(aggFunc.OrderByItems))
-						for _, oby := range aggFunc.OrderByItems {
-							newOrderByItems = append(newOrderByItems, expression.ColumnSubstitute(oby.Expr, proj.schema, proj.Exprs))
-						}
 						if ExprsHasSideEffects(newArgs) {
 							noSideEffects = false
 							break
 						}
-						if ExprsHasSideEffects(newOrderByItems) {
-							noSideEffects = false
-							break
-						}
 						newAggFuncsArgs = append(newAggFuncsArgs, newArgs)
-						oneAggOrderByItems := make([]*util.ByItems, 0, len(aggFunc.OrderByItems))
-						for i, obyExpr := range newOrderByItems {
-							oneAggOrderByItems = append(oneAggOrderByItems, &util.ByItems{Expr: obyExpr, Desc: aggFunc.OrderByItems[i].Desc})
+						if len(aggFunc.OrderByItems) != 0 {
+							oldAggOrderItems = append(oldAggOrderItems, aggFunc.OrderByItems)
+							newOrderByItems := make([]expression.Expression, 0, len(aggFunc.OrderByItems))
+							for _, oby := range aggFunc.OrderByItems {
+								newOrderByItems = append(newOrderByItems, expression.ColumnSubstitute(oby.Expr, proj.schema, proj.Exprs))
+							}
+							if ExprsHasSideEffects(newOrderByItems) {
+								noSideEffects = false
+								break
+							}
+							oneAggOrderByItems := make([]*util.ByItems, 0, len(aggFunc.OrderByItems))
+							for i, obyExpr := range newOrderByItems {
+								oneAggOrderByItems = append(oneAggOrderByItems, &util.ByItems{Expr: obyExpr, Desc: aggFunc.OrderByItems[i].Desc})
+							}
+							newAggOrderItems = append(newAggOrderItems, oneAggOrderByItems)
+						} else {
+							// occupy the pos for convenience of subscript index
+							oldAggOrderItems = append(oldAggOrderItems, nil)
+							newAggOrderItems = append(newAggOrderItems, nil)
 						}
-						newAggOrderItems = append(newAggOrderItems, oneAggOrderByItems)
 					}
 				}
 				for i, funcsArgs := range oldAggFuncsArgs {
@@ -597,7 +603,11 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 							break
 						}
 					}
-					for j := range newAggOrderItems {
+					for j, item := range newAggOrderItems {
+						if item == nil {
+							continue
+						}
+						// substitution happened, check the eval type compatibility.
 						if oldAggOrderItems[i][j].Expr.GetType().EvalType() != newAggOrderItems[i][j].Expr.GetType().EvalType() {
 							noSideEffects = false
 							break
