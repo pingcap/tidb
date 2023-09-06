@@ -913,15 +913,16 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 					t = cop.convertToRootTask(p.SCtx())
 					sunk = true
 				}
-				if cop.indexPlanFinished {
-					// cop.indexPlanFinished = true indicates the table side is not a pure table-scan, so we could only append the limit upon the table plan.
-					suspendLimitAboveTablePlan()
-				} else {
-					// todo: cop.indexPlanFinished = false indicates the table side is a pure table-scan, so we sink the limit as index merge embedded push-down Limit theoretically.
-					// todo: while currently in the execution layer, intersection concurrency framework is not quickly suitable for us to do the limit cut down or the order by operation.
-					// so currently, we just put the limit at the top of table plan rather than a embedded pushedLimit inside indexMergeReader.
-					suspendLimitAboveTablePlan()
-				}
+				// if cop.indexPlanFinished = true
+				// 		indicates the table side is not a pure table-scan, so we could only append the limit upon the table plan.
+				//		suspendLimitAboveTablePlan()
+				// else
+				// 		todo: cop.indexPlanFinished = false indicates the table side is a pure table-scan, so we sink the limit as index merge embedded push-down Limit theoretically.
+				// 		todo: while currently in the execution layer, intersection concurrency framework is not quickly suitable for us to do the limit cut down or the order by operation.
+				// 		so currently, we just put the limit at the top of table plan rather than a embedded pushedLimit inside indexMergeReader.
+				// 		t = cop.convertToRootTask(p.SCtx())
+				//		sunk = p.sinkIntoIndexMerge(t)
+				suspendLimitAboveTablePlan()
 			} else {
 				// otherwise, suspend the limit out of index merge reader.
 				t = cop.convertToRootTask(p.SCtx())
