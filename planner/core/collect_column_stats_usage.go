@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/model"
 )
@@ -163,10 +164,18 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 		tblID := ds.TableInfo().ID
 		c.visitedtbls[tblID] = struct{}{}
 	}
+	stats := domain.GetDomain(ds.SCtx()).StatsHandle()
+	tblStats := stats.GetTableStats(ds.tableInfo)
+	// Since we can not get the stats tbl, this table is not analyzed. So we don't need to consider load stats.
+	if tblStats.Pseudo {
+		return
+	}
 	columns := expression.ExtractColumnsFromExpressions(c.cols[:0], ds.pushedDownConds, nil)
 	for _, col := range columns {
-		tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
-		c.histNeededCols[tblColID] = struct{}{}
+		if tblStats.ColAndIndexExistenceMap.Has(col.ID, false) {
+			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
+			c.histNeededCols[tblColID] = struct{}{}
+		}
 	}
 }
 

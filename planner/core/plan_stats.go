@@ -158,10 +158,15 @@ func collectSyncIndices(ctx sessionctx.Context, histNeededColumns []model.TableI
 				if tblStats == nil || tblStats.Pseudo {
 					continue
 				}
+				// if tblStats.ColAndIndexExistenceSet.Has(int(idxID)*-1)
 				idxStats, ok := tblStats.Indices[idx.Meta().ID]
-				if ok && idxStats.IsStatsInitialized() && !idxStats.IsFullLoad() {
-					histNeededIndices[model.TableItemID{TableID: column.TableID, ID: idxID, IsIndex: true}] = struct{}{}
+				if ok && idxStats.IsFullLoad() || !idxStats.IsStatsInitialized() {
+					continue
 				}
+				if !ok && !tblStats.ColAndIndexExistenceMap.Has(idxID, true) {
+					continue
+				}
+				histNeededIndices[model.TableItemID{TableID: column.TableID, ID: idxID, IsIndex: true}] = struct{}{}
 			}
 		}
 	}

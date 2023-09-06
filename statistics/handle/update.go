@@ -598,7 +598,7 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 			return true
 		}
 	}
-	return false
+	return !tbl.ColAndIndexExistenceMap.IsEmpty()
 }
 
 // NeedAnalyzeTable checks if we need to analyze the table:
@@ -792,7 +792,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
-		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
+		if _, ok := statsTbl.Indices[idx.ID]; (!ok && !statsTbl.ColAndIndexExistenceMap.Has(idx.ID, true)) && idx.State == model.StatePublic {
 			sqlWithIdx := sql + " index %n"
 			paramsWithIdx := append(params, idx.Name.O)
 			escaped, err := sqlexec.EscapeSQL(sqlWithIdx, paramsWithIdx...)

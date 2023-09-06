@@ -234,6 +234,7 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 		if histID != idxInfo.ID {
 			continue
 		}
+		table.ColAndIndexExistenceMap.InsertIndex(idxInfo.ID, idxInfo)
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
 		// 2. the index doesn't have any of buckets, topn, cmsketch in memory before, and:
@@ -244,17 +245,6 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 			!loadAll &&
 			config.GetGlobalConfig().Performance.LiteInitStats
 		if notNeedLoad {
-			idx = &Index{
-				Histogram:  *NewHistogram(histID, distinct, nullCount, histVer, types.NewFieldType(mysql.TypeBlob), 0, 0),
-				StatsVer:   statsVer,
-				Info:       idxInfo,
-				Flag:       flag,
-				PhysicalID: table.PhysicalID,
-			}
-			if idx.IsAnalyzed() {
-				idx.StatsLoadedStatus = NewStatsAllEvictedStatus()
-			}
-			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
 			break
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer || loadAll {
@@ -316,6 +306,10 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 		if histID != colInfo.ID {
 			continue
 		}
+		if table.ColAndIndexExistenceMap == nil {
+			logutil.BgLogger().Warn("read stats", zap.String("the tbl", table.String()))
+			table.ColAndIndexExistenceMap.InsertCol(col.ID, colInfo)
+		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
@@ -338,19 +332,6 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 			(col == nil || ((!col.IsStatsInitialized() || col.IsAllEvicted()) && col.LastUpdateVersion < histVer)) &&
 			!loadAll
 		if notNeedLoad {
-			col = &Column{
-				PhysicalID: table.PhysicalID,
-				Histogram:  *NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
-				Info:       colInfo,
-				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				Flag:       flag,
-				StatsVer:   statsVer,
-			}
-			if col.StatsAvailable() {
-				col.StatsLoadedStatus = NewStatsAllEvictedStatus()
-			}
-			lastAnalyzePos.Copy(&col.LastAnalyzePos)
-			col.Histogram.Correlation = correlation
 			break
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {

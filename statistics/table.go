@@ -68,6 +68,61 @@ type Table struct {
 	// and the schema of the table does not change, we don't need to load the stats for this
 	// table again.
 	TblInfoUpdateTS uint64
+
+	ColAndIndexExistenceMap *ColAndIndexExistenceMap
+	IsPkIsHandle            bool
+}
+
+type ColAndIndexExistenceMap struct {
+	m1 map[int64]*model.ColumnInfo
+	m2 map[int64]*model.IndexInfo
+}
+
+func (m *ColAndIndexExistenceMap) Has(id int64, isIndex bool) bool {
+	if isIndex {
+		_, ok := m.m2[id]
+		return ok
+	}
+	_, ok := m.m1[id]
+	return ok
+}
+
+func (m *ColAndIndexExistenceMap) InsertCol(id int64, info *model.ColumnInfo) {
+	m.m1[id] = info
+}
+
+func (m *ColAndIndexExistenceMap) GetCol(id int64) *model.ColumnInfo {
+	return m.m1[id]
+}
+
+func (m *ColAndIndexExistenceMap) InsertIndex(id int64, info *model.IndexInfo) {
+	m.m2[id] = info
+}
+
+func (m *ColAndIndexExistenceMap) GetIndex(id int64) *model.IndexInfo {
+	return m.m2[id]
+}
+
+func (m *ColAndIndexExistenceMap) IsEmpty() bool {
+	return len(m.m1)+len(m.m2) == 0
+}
+
+func (m *ColAndIndexExistenceMap) Clone() *ColAndIndexExistenceMap {
+	mm := NewColAndIndexExistenceMap(len(m.m1), len(m.m2))
+	for k, v := range m.m1 {
+		mm.m1[k] = v
+	}
+	for k, v := range m.m2 {
+		mm.m2[k] = v
+	}
+	return mm
+}
+
+func NewColAndIndexExistenceMap(colCap, idxCap int) *ColAndIndexExistenceMap {
+	return &ColAndIndexExistenceMap{
+		m1: make(map[int64]*model.ColumnInfo, colCap),
+		m2: make(map[int64]*model.IndexInfo, idxCap),
+	}
 }
 
 // ExtendedStatsItem is the cached item of a mysql.stats_extended record.
@@ -295,6 +350,7 @@ func (t *Table) Copy() *Table {
 		Version:         t.Version,
 		Name:            t.Name,
 		TblInfoUpdateTS: t.TblInfoUpdateTS,
+		IsPkIsHandle:    t.IsPkIsHandle,
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
@@ -306,6 +362,7 @@ func (t *Table) Copy() *Table {
 		}
 		nt.ExtendedStats = newExtStatsColl
 	}
+	nt.ColAndIndexExistenceMap = t.ColAndIndexExistenceMap.Clone()
 	return nt
 }
 
@@ -323,11 +380,12 @@ func (t *Table) ShallowCopy() *Table {
 		ModifyCount:    t.ModifyCount,
 	}
 	nt := &Table{
-		HistColl:        newHistColl,
-		Version:         t.Version,
-		Name:            t.Name,
-		TblInfoUpdateTS: t.TblInfoUpdateTS,
-		ExtendedStats:   t.ExtendedStats,
+		HistColl:                newHistColl,
+		Version:                 t.Version,
+		Name:                    t.Name,
+		TblInfoUpdateTS:         t.TblInfoUpdateTS,
+		ExtendedStats:           t.ExtendedStats,
+		ColAndIndexExistenceMap: t.ColAndIndexExistenceMap,
 	}
 	return nt
 }
@@ -593,7 +651,8 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool) *Table {
 		Pseudo:         true,
 	}
 	t := &Table{
-		HistColl: pseudoHistColl,
+		HistColl:                pseudoHistColl,
+		ColAndIndexExistenceMap: NewColAndIndexExistenceMap(0, 0),
 	}
 	for _, col := range tblInfo.Columns {
 		// The column is public to use. Also we should check the column is not hidden since hidden means that it's used by expression index.

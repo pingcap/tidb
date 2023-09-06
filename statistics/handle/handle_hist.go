@@ -31,14 +31,17 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 
 type statsWrapper struct {
-	col *statistics.Column
-	idx *statistics.Index
+	colInfo *model.ColumnInfo
+	idxInfo *model.IndexInfo
+	col     *statistics.Column
+	idx     *statistics.Index
 }
 
 // StatsLoad is used to load stats concurrently
@@ -154,9 +157,10 @@ func (h *Handle) removeHistLoadedColumns(neededItems []model.TableItemID) []mode
 			continue
 		}
 		colHist, ok := tbl.Columns[item.ID]
-		if ok && colHist.IsStatsInitialized() && !colHist.IsFullLoad() {
-			remainedItems = append(remainedItems, item)
+		if (!ok && !tbl.ColAndIndexExistenceMap.Has(item.ID, false)) || (ok && colHist.IsFullLoad()) {
+			continue
 		}
+		remainedItems = append(remainedItems, item)
 	}
 	return remainedItems
 }
@@ -235,6 +239,7 @@ func (h *Handle) HandleOneTask(lastTask *NeededItemTask, readerCtx *StatsReaderC
 }
 
 func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) (*NeededItemTask, error) {
+	logutil.BgLogger().Warn("?")
 	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
 	item := result.Item
 	oldCache := h.statsCache.Load()
@@ -243,22 +248,31 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 		h.writeToResultChan(task.ResultCh, result)
 		return nil, nil
 	}
+	logutil.BgLogger().Warn("?")
 	var err error
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, ok := tbl.Indices[item.ID]
-		if !ok || index.IsFullLoad() {
+		if (!ok && !tbl.ColAndIndexExistenceMap.Has(item.ID, true)) || (ok && index.IsFullLoad()) {
 			h.writeToResultChan(task.ResultCh, result)
 			return nil, nil
 		}
-		wrapper.idx = index
+		if ok {
+			wrapper.idxInfo = index.Info
+		} else {
+			wrapper.idxInfo = tbl.ColAndIndexExistenceMap.GetIndex(item.ID)
+		}
 	} else {
 		col, ok := tbl.Columns[item.ID]
-		if !ok || col.IsFullLoad() {
+		if (!ok && !tbl.ColAndIndexExistenceMap.Has(item.ID, false)) || (ok && col.IsFullLoad()) {
 			h.writeToResultChan(task.ResultCh, result)
 			return nil, nil
 		}
-		wrapper.col = col
+		if ok {
+			wrapper.colInfo = col.Info
+		} else {
+			wrapper.colInfo = tbl.ColAndIndexExistenceMap.GetCol(item.ID)
+		}
 	}
 	// to avoid duplicated handling in concurrent scenario
 	working := h.setWorking(result.Item, task.ResultCh)
@@ -270,17 +284,17 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 	h.loadFreshStatsReader(readerCtx, ctx)
 	t := time.Now()
 	needUpdate := false
-	wrapper, err = h.readStatsForOneItem(item, wrapper, readerCtx.reader)
+	wrapper, err = h.readStatsForOneItem(item, wrapper, readerCtx.reader, tbl.IsPkIsHandle)
 	if err != nil {
 		result.Error = err
 		return task, err
 	}
 	if item.IsIndex {
-		if wrapper.idx != nil {
+		if wrapper.idxInfo != nil {
 			needUpdate = true
 		}
 	} else {
-		if wrapper.col != nil {
+		if wrapper.colInfo != nil {
 			needUpdate = true
 		}
 	}
@@ -315,29 +329,31 @@ func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec
 }
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
-func (*Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *statistics.StatsReader) (*statsWrapper, error) {
+func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *statistics.StatsReader, isPkIsHandle bool) (*statsWrapper, error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
 	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("gofail ReadStatsForOne error"))
 		}
 	})
-	c := w.col
-	index := w.idx
 	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 	var hg *statistics.Histogram
 	var err error
 	isIndexFlag := int64(0)
+	hgMeta, lastAnalyzePos, flag, err := h.readHistFromStorage(&item, w, reader)
+	if err != nil {
+		return nil, err
+	}
 	if item.IsIndex {
 		isIndexFlag = 1
 	}
 	if item.IsIndex {
-		hg, err = statistics.HistogramFromStorage(reader, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, int(isIndexFlag), index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
+		hg, err = statistics.HistogramFromStorage(reader, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, int(isIndexFlag), hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
-		hg, err = statistics.HistogramFromStorage(reader, item.TableID, item.ID, &c.Info.FieldType, c.Histogram.NDV, int(isIndexFlag), c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+		hg, err = statistics.HistogramFromStorage(reader, item.TableID, item.ID, hgMeta.Tp, hgMeta.NDV, int(isIndexFlag), hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -371,25 +387,25 @@ func (*Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, read
 			CMSketch:   cms,
 			TopN:       topN,
 			FMSketch:   fms,
-			Info:       index.Info,
+			Info:       w.idxInfo,
 			StatsVer:   statsVer,
-			Flag:       index.Flag,
-			PhysicalID: index.PhysicalID,
+			Flag:       flag,
+			PhysicalID: item.TableID,
 		}
 		if statsVer != statistics.Version0 {
 			idxHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 		}
-		index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
+		lastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 		w.idx = idxHist
 	} else {
 		colHist := &statistics.Column{
 			PhysicalID: item.TableID,
 			Histogram:  *hg,
-			Info:       c.Info,
+			Info:       w.colInfo,
 			CMSketch:   cms,
 			TopN:       topN,
 			FMSketch:   fms,
-			IsHandle:   c.IsHandle,
+			IsHandle:   isPkIsHandle && mysql.HasPriKeyFlag(w.colInfo.GetFlag()),
 			StatsVer:   statsVer,
 		}
 		if colHist.StatsAvailable() {
@@ -398,6 +414,34 @@ func (*Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, read
 		w.col = colHist
 	}
 	return w, nil
+}
+
+func (h *Handle) readHistFromStorage(item *model.TableItemID, wrapper *statsWrapper, reader *statistics.StatsReader) (*statistics.Histogram, *types.Datum, int64, error) {
+	isIndex := 0
+	var tp *types.FieldType
+	if item.IsIndex {
+		isIndex = 1
+		tp = types.NewFieldType(mysql.TypeBlob)
+	} else {
+		tp = &wrapper.colInfo.FieldType
+	}
+	rows, _, err := reader.Read(
+		"select distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?",
+		item.TableID,
+		item.ID,
+		isIndex,
+	)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if len(rows) == 0 {
+		return nil, nil, 0, nil
+	}
+	hist := statistics.NewHistogram(item.ID, rows[0].GetInt64(0), rows[0].GetInt64(2), rows[0].GetUint64(4), tp, chunk.InitialCapacity, rows[0].GetInt64(3))
+	hist.LastUpdateVersion = rows[0].GetUint64(1)
+	hist.Correlation = rows[0].GetFloat64(5)
+	lastPos := rows[0].GetDatum(7, types.NewFieldType(mysql.TypeBlob))
+	return hist, &lastPos, rows[0].GetInt64(6), nil
 }
 
 // drainColTask will hang until a column task can return, and either task or error will be returned.
@@ -486,14 +530,14 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 	}
 	if !item.IsIndex && colHist != nil {
 		c, ok := tbl.Columns[item.ID]
-		if !ok || c.IsFullLoad() {
+		if (!ok && !tbl.ColAndIndexExistenceMap.Has(item.ID, false)) || (ok && c.IsFullLoad()) {
 			return true
 		}
 		tbl = tbl.Copy()
-		tbl.Columns[c.ID] = colHist
+		tbl.Columns[item.ID] = colHist
 	} else if item.IsIndex && idxHist != nil {
 		index, ok := tbl.Indices[item.ID]
-		if !ok || index.IsFullLoad() {
+		if (!ok && !tbl.ColAndIndexExistenceMap.Has(item.ID, true)) || (ok && index.IsFullLoad()) {
 			return true
 		}
 		tbl = tbl.Copy()
