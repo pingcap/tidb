@@ -17,7 +17,7 @@ package expression
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
+	"crypto/md5" // #nosec
 	"encoding/binary"
 	"math"
 	"sort"
