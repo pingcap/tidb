@@ -30,9 +30,10 @@ type taskMetrics struct {
 	counter int
 }
 
-// taskMetricManager manages the metrics of tasks.
-// we have a set of metrics for each task, with different task_id const label,
-// but both dispatcher and scheduler might use it, to avoid registered again,
+// taskMetricManager manages the metrics of IMPORT INTO tasks.
+// we have a set of metrics for each task, with different task_id const label.
+// metrics is passed by context value to avoid passing parameters everywhere.
+// both dispatcher and scheduler might use it, to avoid registered again,
 // we add a manager to manage lifecycle of metrics for tasks.
 type taskMetricManager struct {
 	sync.RWMutex
