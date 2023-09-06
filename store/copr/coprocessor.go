@@ -1017,10 +1017,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		RecordTimeStat: true,
 		RecordScanStat: true,
 		TaskId:         worker.req.TaskID,
-		ResourceControlContext: &kvrpcpb.ResourceControlContext{
-			ResourceGroupName: worker.req.ResourceGroupName,
-		},
-		BusyThresholdMs: uint32(task.busyThreshold.Milliseconds()),
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
 	if task.firstReadType != "" {
