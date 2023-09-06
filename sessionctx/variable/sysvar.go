@@ -2831,9 +2831,9 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBInfoSchemaCacheSize, Value: strconv.Itoa(DefTiDBInfoSchemaCacheSize), Type: TypeInt, MinValue: 2, MaxValue: math.MaxUint8, AllowEmpty: true,
+	{Scope: ScopeGlobal, Name: TiDBSchemaVersionCacheLimit, Value: strconv.Itoa(DefTiDBSchemaVersionCacheLimit), Type: TypeInt, MinValue: 2, MaxValue: math.MaxUint8, AllowEmpty: true,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			InfoSchemaCacheSize.Store(TidbOptInt64(val, DefTiDBInfoSchemaCacheSize))
+			SchemaVersionCacheLimit.Store(TidbOptInt64(val, DefTiDBSchemaVersionCacheLimit))
 			return nil
 		}},
 }

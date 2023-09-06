@@ -1095,8 +1095,8 @@ const (
 	TiDBSkipMissingPartitionStats = "tidb_skip_missing_partition_stats"
 	// TiDBSessionAlias indicates the alias of a session which is used for tracing.
 	TiDBSessionAlias = "tidb_session_alias"
-	// TiDBInfoSchemaCacheSize defines the capacity size of domain infoSchema cache.
-	TiDBInfoSchemaCacheSize = "tidb_info_schema_cache_size"
+	// TiDBSchemaVersionCacheLimit defines the capacity size of domain infoSchema cache.
+	TiDBSchemaVersionCacheLimit = "tidb_schema_version_cache_limit"
 )
 
 // TiDB intentional limits
@@ -1404,7 +1404,7 @@ const (
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
-	DefTiDBInfoSchemaCacheSize                        = 16
+	DefTiDBSchemaVersionCacheLimit                    = 16
 )
 
 // Process global variables.
@@ -1500,7 +1500,7 @@ var (
 	EnableResourceControl     = atomic.NewBool(false)
 	EnableCheckConstraint     = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
-	InfoSchemaCacheSize       = atomic.NewInt64(DefTiDBInfoSchemaCacheSize)
+	SchemaVersionCacheLimit   = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 )
 
 var (
