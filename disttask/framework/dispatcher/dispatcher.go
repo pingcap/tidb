@@ -375,26 +375,25 @@ func (d *BaseDispatcher) onNextStage() error {
 		return nil
 	}
 
-	for {
-		// 1. generate a batch of subtasks.
-		metas, err := d.OnNextStage(d.ctx, d, d.task)
-		if err != nil {
-			logutil.Logger(d.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
-			return d.handlePlanErr(err)
-		}
-		// 2. dispatch batch of subtasks to EligibleInstances.
-		err = d.dispatchSubTask(d.task, metas)
-		if err != nil {
-			return err
-		}
-		failpoint.Inject("mockDynamicDispatchErr", func() {
-			failpoint.Return(errors.New("mockDynamicDispatchErr"))
-		})
-		// 3. check current stage all subtasks dispatched.
-		if d.AllDispatched(d.task) {
-			return nil
-		}
+	// 1. generate a batch of subtasks.
+	metas, err := d.OnNextStage(d.ctx, d, d.task)
+	if err != nil {
+		logutil.Logger(d.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
+		return d.handlePlanErr(err)
 	}
+	// 2. dispatch batch of subtasks to EligibleInstances.
+	err = d.dispatchSubTask(d.task, metas)
+	if err != nil {
+		return err
+	}
+	failpoint.Inject("mockDynamicDispatchErr", func() {
+		failpoint.Return(errors.New("mockDynamicDispatchErr"))
+	})
+	// 3. check current stage all subtasks dispatched.
+	if d.AllDispatched(d.task) {
+		return nil
+	}
+	return nil
 }
 
 func (d *BaseDispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error {
@@ -437,8 +436,6 @@ func (d *BaseDispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error
 		logutil.Logger(d.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(task.ID, task.Type, instanceID, meta))
 	}
-
-	task.StateUpdateTime = time.Now().UTC()
 	return d.updateTask(proto.TaskStateRunning, subTasks, retrySQLTimes)
 }
 

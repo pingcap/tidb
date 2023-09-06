@@ -40,7 +40,7 @@ func TestHandle(t *testing.T) {
 	storage.SetTaskManager(mgr)
 
 	// no dispatcher registered
-	err := handle.SubmitAndRunGlobalTask(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"), false)
+	err := handle.SubmitAndRunGlobalTask(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
 	require.Error(t, err)
 
 	task, err := mgr.GetGlobalTaskByID(1)

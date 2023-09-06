@@ -98,6 +98,7 @@ func (*testDynamicDispatcherExt) GetEligibleInstances(_ context.Context, _ *prot
 func (*testDynamicDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
+
 func TestFrameworkDynamicBasic(t *testing.T) {
 	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()

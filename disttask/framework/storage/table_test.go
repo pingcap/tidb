@@ -54,7 +54,7 @@ func TestGlobalTaskTable(t *testing.T) {
 	gm, err := storage.GetTaskManager()
 	require.NoError(t, err)
 
-	id, err := gm.AddNewGlobalTask("key1", "test", 4, []byte("test"), false)
+	id, err := gm.AddNewGlobalTask("key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 
@@ -87,26 +87,6 @@ func TestGlobalTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, true, retryable)
 
-	// substate.
-	task.SubState = proto.TaskSubStateDispatching
-	task.EnableDynamicDispatch = true
-	_, err = gm.UpdateGlobalTaskAndAddSubTasks(task, nil, task.State)
-	require.NoError(t, err)
-	task, err = gm.GetGlobalTaskByID(task.ID)
-	require.NoError(t, err)
-	require.Equal(t, proto.TaskSubStateDispatching, task.SubState)
-	require.Equal(t, true, task.EnableDynamicDispatch)
-
-	task.SubState = proto.TaskSubStateNormal
-	task.EnableDynamicDispatch = false
-	_, err = gm.UpdateGlobalTaskAndAddSubTasks(task, nil, task.State)
-	require.NoError(t, err)
-
-	task, err = gm.GetGlobalTaskByID(task.ID)
-	require.NoError(t, err)
-	require.Equal(t, proto.TaskSubStateNormal, task.SubState)
-	require.Equal(t, false, task.EnableDynamicDispatch)
-
 	task5, err := gm.GetGlobalTasksInStates(proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.Len(t, task5, 1)
@@ -117,11 +97,11 @@ func TestGlobalTaskTable(t *testing.T) {
 	require.Equal(t, task, task6)
 
 	// test cannot insert task with dup key
-	_, err = gm.AddNewGlobalTask("key1", "test2", 4, []byte("test2"), false)
+	_, err = gm.AddNewGlobalTask("key1", "test2", 4, []byte("test2"))
 	require.EqualError(t, err, "[kv:1062]Duplicate entry 'key1' for key 'tidb_global_task.task_key'")
 
 	// test cancel global task
-	id, err = gm.AddNewGlobalTask("key2", "test", 4, []byte("test"), false)
+	id, err = gm.AddNewGlobalTask("key2", "test", 4, []byte("test"))
 	require.NoError(t, err)
 
 	cancelling, err := gm.IsGlobalTaskCancelling(id)
@@ -330,7 +310,7 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	sm, err := storage.GetTaskManager()
 	require.NoError(t, err)
 
-	id, err := sm.AddNewGlobalTask("key1", "test", 4, []byte("test"), false)
+	id, err := sm.AddNewGlobalTask("key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 

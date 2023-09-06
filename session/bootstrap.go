@@ -975,13 +975,11 @@ const (
 	version172 = 172
 	// version 173 add column `summary` to `mysql.tidb_background_subtask`.
 	version173 = 173
-	// version 174 add column `substate` to `mysql.tidb_global_task`.
-	version174 = 174
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version174
+var currentBootstrapVersion int64 = version173
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15

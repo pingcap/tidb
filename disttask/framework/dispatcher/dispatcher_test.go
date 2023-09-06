@@ -91,7 +91,6 @@ func (n *numberExampleDispatcherExt) OnNextStage(_ context.Context, _ dispatcher
 		}
 		logutil.BgLogger().Info("progress step init")
 	case proto.StepOne:
-		task.Step = proto.StepTwo
 		logutil.BgLogger().Info("progress step one")
 		return nil, nil
 	default:
