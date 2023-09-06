@@ -179,7 +179,7 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 		skippedTables       []string
 		needAnalyzeTableCnt uint
 		tids                = make([]int64, 0, len(tasks))
-		// taskMap is used to collect the tasks that belong to the same table.
+		// tidMap is used to deduplicate table IDs.
 		// In stats v1, analyze for each index is a single task, and they have the same table id.
 		tidMap = make(map[int64]struct{}, len(tasks))
 	)
@@ -189,14 +189,14 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 		tableID := getTableIDFromTask(task)
 		tids = append(tids, tableID)
 	}
-	lcokedTables, err := statsHandle.GetLockedTables(tids...)
+	lockedTables, err := statsHandle.GetLockedTables(tids...)
 	if err != nil {
 		return nil, 0, nil, err
 	}
 
 	for _, task := range tasks {
 		tableID := getTableIDFromTask(task)
-		_, isLocked := lcokedTables[tableID]
+		_, isLocked := lockedTables[tableID]
 		if !isLocked {
 			filteredTasks = append(filteredTasks, task)
 		}
@@ -204,7 +204,6 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 			if isLocked {
 				tbl, ok := infoSchema.TableByID(tableID)
 				if !ok {
-					// Ignore this table because it may have been dropped.
 					logutil.BgLogger().Warn("Unknown table ID in analyze task", zap.Int64("tid", tableID))
 				} else {
 					skippedTables = append(skippedTables, tbl.Meta().Name.L)
