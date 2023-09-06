@@ -630,7 +630,16 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string,
 		if len(x.Text()) == 0 {
 			return x, "", "", nil
 		}
-		normalizedSQL, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
+
+		var normalizedSQL string
+		var hash *parser.Digest
+		if forBinding {
+			// Apply additional binding rules
+			normalizedSQL, hash = parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
+		} else {
+			normalizedSQL, hash = parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
+		}
+
 		return x, normalizedSQL, hash.String(), nil
 	}
 	return nil, "", "", nil
