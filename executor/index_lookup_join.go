@@ -189,9 +189,10 @@ func (e *IndexLookUpJoin) startWorkers(ctx context.Context) {
 	innerCh := make(chan *lookUpJoinTask, concurrency)
 	e.workerWg.Add(1)
 	go e.newOuterWorker(resultCh, innerCh).run(workerCtx, e.workerWg)
-	e.workerWg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
-		go e.newInnerWorker(innerCh).run(workerCtx, e.workerWg)
+		innerWorker := e.newInnerWorker(innerCh)
+		e.workerWg.Add(1)
+		go innerWorker.run(workerCtx, e.workerWg)
 	}
 }
 
@@ -233,6 +234,11 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		lookup:        e,
 		memTracker:    memory.NewTracker(memory.LabelForIndexJoinInnerWorker, -1),
 	}
+	failpoint.Inject("inlNewInnerPanic", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("test inlNewInnerPanic")
+		}
+	})
 	iw.memTracker.AttachTo(e.memTracker)
 	if len(copiedRanges) != 0 {
 		// We should not consume this memory usage in `iw.memTracker`. The
