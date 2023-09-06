@@ -48,7 +48,7 @@ type testDispatcherExt struct{}
 func (*testDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (*testDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (metas [][]byte, err error) {
+func (*testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (metas [][]byte, err error) {
 	return nil, nil
 }
 
@@ -66,7 +66,7 @@ func (*testDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (dsp *testDispatcherExt) AllDispatched(task *proto.Task) bool {
+func (dsp *testDispatcherExt) StageFinished(task *proto.Task) bool {
 	return true
 }
 
@@ -79,7 +79,7 @@ type numberExampleDispatcherExt struct{}
 func (*numberExampleDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (n *numberExampleDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (metas [][]byte, err error) {
+func (n *numberExampleDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (metas [][]byte, err error) {
 	if task.State == proto.TaskStatePending {
 		task.Step = proto.StepInit
 	}
@@ -112,7 +112,7 @@ func (*numberExampleDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (dsp *numberExampleDispatcherExt) AllDispatched(task *proto.Task) bool {
+func (dsp *numberExampleDispatcherExt) StageFinished(task *proto.Task) bool {
 	return true
 }
 
@@ -271,7 +271,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 		require.NoError(t, err)
 		taskIDs = append(taskIDs, taskID)
 	}
-	// test OnNextStage.
+	// test OnNextSubtasksBatch.
 	checkGetRunningTaskCnt(taskCnt)
 	tasks := checkTaskRunningCnt()
 	for i, taskID := range taskIDs {

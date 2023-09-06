@@ -38,7 +38,7 @@ func TestBackfillingDispatcher(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	// test partition table OnNextStage.
+	// test partition table OnNextSubtasksBatch.
 	tk.MustExec("create table tp1(id int primary key, v int) PARTITION BY RANGE (id) (\n    " +
 		"PARTITION p0 VALUES LESS THAN (10),\n" +
 		"PARTITION p1 VALUES LESS THAN (100),\n" +
@@ -48,7 +48,7 @@ func TestBackfillingDispatcher(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	metas, err := dsp.OnNextStage(context.Background(), nil, gTask)
+	metas, err := dsp.OnNextSubtasksBatch(context.Background(), nil, gTask)
 	require.NoError(t, err)
 	require.Equal(t, proto.StepOne, gTask.Step)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
@@ -58,9 +58,9 @@ func TestBackfillingDispatcher(t *testing.T) {
 		require.Equal(t, par.ID, subTask.PhysicalTableID)
 	}
 
-	// test partition table OnNextStage after step1 finished.
+	// test partition table OnNextSubtasksBatch after step1 finished.
 	gTask.State = proto.TaskStateRunning
-	metas, err = dsp.OnNextStage(context.Background(), nil, gTask)
+	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
 
@@ -75,7 +75,7 @@ func TestBackfillingDispatcher(t *testing.T) {
 
 	tk.MustExec("create table t1(id int primary key, v int)")
 	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", ddl.BackfillTaskType)
-	_, err = dsp.OnNextStage(context.Background(), nil, gTask)
+	_, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask)
 	require.NoError(t, err)
 }
 

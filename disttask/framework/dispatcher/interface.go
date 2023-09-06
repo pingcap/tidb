@@ -33,14 +33,12 @@ type Extension interface {
 	// the event is generated every checkTaskRunningInterval, and only when the task NOT FINISHED and NO ERROR.
 	OnTick(ctx context.Context, task *proto.Task)
 
-	// OnNextStage is used to move the task to next stage, if returns no error and there's no new subtasks
-	// the task is finished.
+	// OnNextSubtasksBatch is used to generate batch of subtasks for current stage
 	// NOTE: don't change gTask.State inside, framework will manage it.
 	// it's called when:
-	// ywq todo change
 	// 	1. task is pending and entering it's first step.
-	// 	2. subtasks of previous step has all finished with no error.
-	OnNextStage(ctx context.Context, h TaskHandle, task *proto.Task) (subtaskMetas [][]byte, err error)
+	// 	2. subtasks dispatched has all finished with no error.
+	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task) (subtaskMetas [][]byte, err error)
 
 	// OnErrStage is called when:
 	// 	1. subtask is finished with error.
@@ -54,10 +52,13 @@ type Extension interface {
 	// IsRetryableErr is used to check whether the error occurred in dispatcher is retryable.
 	IsRetryableErr(err error) bool
 
-	// AllDispatched
-	AllDispatched(task *proto.Task) bool
+	// StageFinished is used to check if all subtasks in current stage are dispatched and processed.
+	// StageFinished is called before generating batch of subtasks.
+	StageFinished(task *proto.Task) bool
 
-	// Finished
+	// Finished is used to check if all subtasks for the task are dispatched and processed.
+	// Finished is called before generating batch of subtasks.
+	// Once Finished return true, mark the task as succeed.
 	Finished(task *proto.Task) bool
 }
 

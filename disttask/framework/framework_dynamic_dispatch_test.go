@@ -17,12 +17,11 @@ package framework_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"sync"
 	"testing"
+
+	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/domain/infosync"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
@@ -39,28 +38,17 @@ var _ dispatcher.Extension = (*testDynamicDispatcherExt)(nil)
 
 func (*testDynamicDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {}
 
-func (dsp *testDynamicDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
-	// move to step1
-	if gTask.Step == proto.StepInit {
-		gTask.Step = proto.StepOne
-	}
-
+func (dsp *testDynamicDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	// step1
-	if gTask.Step == proto.StepOne && dsp.cnt < 3 {
+	if gTask.Step == proto.StepInit && dsp.cnt < 3 {
 		dsp.cnt++
-		logutil.BgLogger().Info("ywq test reach", zap.Any("cnt", dsp.cnt))
 		return [][]byte{
 			[]byte(fmt.Sprintf("task%d", dsp.cnt)),
 		}, nil
 	}
 
-	// move to step2.
-	if gTask.Step == proto.StepOne && dsp.cnt == 3 {
-		gTask.Step = proto.StepTwo
-	}
-
 	// step2
-	if gTask.Step == proto.StepTwo && dsp.cnt < 4 {
+	if gTask.Step == proto.StepOne && dsp.cnt < 4 {
 		dsp.cnt++
 		return [][]byte{
 			[]byte(fmt.Sprintf("task%d", dsp.cnt)),
@@ -73,18 +61,18 @@ func (*testDynamicDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.Task
 	return nil, nil
 }
 
-func (dsp *testDynamicDispatcherExt) AllDispatched(task *proto.Task) bool {
-	if task.Step == proto.StepOne && dsp.cnt == 3 {
+func (dsp *testDynamicDispatcherExt) StageFinished(task *proto.Task) bool {
+	if task.Step == proto.StepInit && dsp.cnt >= 3 {
 		return true
 	}
-	if task.Step == proto.StepTwo && dsp.cnt == 4 {
+	if task.Step == proto.StepOne && dsp.cnt >= 4 {
 		return true
 	}
 	return false
 }
 
 func (dsp *testDynamicDispatcherExt) Finished(task *proto.Task) bool {
-	if task.Step == proto.StepTwo && dsp.cnt == 4 {
+	if task.Step == proto.StepOne && dsp.cnt >= 4 {
 		dsp.cnt = 0
 		return true
 	}
@@ -118,5 +106,13 @@ func TestFrameworkDynamicHA(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockDynamicDispatchErr", "5*return()"))
 	DispatchTaskAndCheckSuccess("key1", t, &m)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockDynamicDispatchErr"))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockDynamicDispatchErr1", "5*return()"))
+	DispatchTaskAndCheckSuccess("key2", t, &m)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockDynamicDispatchErr1"))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockDynamicDispatchErr2", "5*return()"))
+	DispatchTaskAndCheckSuccess("key3", t, &m)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockDynamicDispatchErr2"))
 	distContext.Close()
 }

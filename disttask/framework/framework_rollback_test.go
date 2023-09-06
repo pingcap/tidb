@@ -40,9 +40,8 @@ var rollbackCnt atomic.Int32
 func (*rollbackDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (dsp *rollbackDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
-	if gTask.State == proto.TaskStatePending {
-		gTask.Step = proto.StepOne
+func (dsp *rollbackDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+	if gTask.Step == proto.StepInit {
 		dsp.cnt = 3
 		return [][]byte{
 			[]byte("task1"),
@@ -65,18 +64,15 @@ func (*rollbackDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (dsp *rollbackDispatcherExt) AllDispatched(task *proto.Task) bool {
-	if task.Step == proto.StepInit {
-		return true
-	}
-	if task.Step == proto.StepOne && dsp.cnt == 3 {
+func (dsp *rollbackDispatcherExt) StageFinished(task *proto.Task) bool {
+	if task.Step == proto.StepInit && dsp.cnt >= 3 {
 		return true
 	}
 	return false
 }
 
 func (dsp *rollbackDispatcherExt) Finished(task *proto.Task) bool {
-	if task.Step == proto.StepOne && dsp.cnt == 3 {
+	if task.Step == proto.StepInit && dsp.cnt >= 3 {
 		return true
 	}
 	return false
@@ -135,10 +131,10 @@ func RegisterRollbackTaskMeta(m *sync.Map) {
 		})
 	scheduler.ClearSchedulers()
 	scheduler.RegisterTaskType(proto.TaskTypeExample)
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ context.Context, _ *proto.Task, _ *scheduler.Summary) (scheduler.Scheduler, error) {
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepInit, func(_ context.Context, _ *proto.Task, _ *scheduler.Summary) (scheduler.Scheduler, error) {
 		return &rollbackScheduler{m: m}, nil
 	})
-	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
+	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepInit, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &rollbackSubtaskExecutor{m: m}, nil
 	})
 	rollbackCnt.Store(0)
@@ -156,7 +152,7 @@ func TestFrameworkRollback(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskAfterRefreshTask"))
 	}()
 
-	DispatchTaskAndCheckState("key2", t, &m, proto.TaskStateReverted)
+	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateReverted)
 	require.Equal(t, int32(2), rollbackCnt.Load())
 	rollbackCnt.Store(0)
 	distContext.Close()

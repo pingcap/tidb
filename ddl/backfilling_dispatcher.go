@@ -53,8 +53,8 @@ func NewBackfillingDispatcherExt(d DDL) (dispatcher.Extension, error) {
 func (*backfillingDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-// OnNextStage generate next stage's plan.
-func (h *backfillingDispatcherExt) OnNextStage(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
+// OnNextSubtasksBatch generate next stage's plan.
+func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
 	var globalTaskMeta BackfillGlobalMeta
 	if err := json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
 		return nil, err
@@ -68,7 +68,7 @@ func (h *backfillingDispatcherExt) OnNextStage(ctx context.Context, _ dispatcher
 	var subTaskMetas [][]byte
 	// generate partition table's plan.
 	if tblInfo.Partition != nil {
-		if gTask.Step != proto.StepInit {
+		if gTask.Step != proto.StepOne {
 			// This flow for partition table has only one step
 			return nil, nil
 		}
@@ -76,20 +76,18 @@ func (h *backfillingDispatcherExt) OnNextStage(ctx context.Context, _ dispatcher
 		if err != nil {
 			return nil, err
 		}
-		gTask.Step = proto.StepOne
 		return subTaskMetas, nil
 	}
 
 	// generate non-partition table's plan.
 	switch gTask.Step {
-	case proto.StepInit:
+	case proto.StepOne:
 		subtaskMeta, err := generateNonPartitionPlan(h.d, tblInfo, job)
 		if err != nil {
 			return nil, err
 		}
-		gTask.Step = proto.StepOne
 		return subtaskMeta, nil
-	case proto.StepOne:
+	case proto.StepTwo:
 		serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
 		if err != nil {
 			return nil, err
@@ -103,16 +101,13 @@ func (h *backfillingDispatcherExt) OnNextStage(ctx context.Context, _ dispatcher
 		for range serverNodes {
 			subTaskMetas = append(subTaskMetas, metaBytes)
 		}
-		gTask.Step = proto.StepTwo
 		return subTaskMetas, nil
-	case proto.StepTwo:
-		return nil, nil
 	default:
 		return nil, nil
 	}
 }
 
-func (dsp *backfillingDispatcherExt) AllDispatched(task *proto.Task) bool {
+func (dsp *backfillingDispatcherExt) StageFinished(task *proto.Task) bool {
 	return true
 }
 

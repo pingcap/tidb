@@ -602,6 +602,27 @@ func (stm *TaskManager) UpdateFailedSchedulerIDs(taskID int64, replaceNodes map[
 	return err
 }
 
+// AddSubTasks add new batch of subtasks.
+func (stm *TaskManager) AddSubTasks(task *proto.Task, subtasks []*proto.Subtask) error {
+	err := stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
+		for _, subtask := range subtasks {
+			subtaskState := proto.TaskStatePending
+			if task.State == proto.TaskStateReverting {
+				subtaskState = proto.TaskStateRevertPending
+			}
+			_, err := ExecSQL(stm.ctx, se, `insert into mysql.tidb_background_subtask
+					(step, task_key, exec_id, meta, state, type, checkpoint, summary)
+					values (%?, %?, %?, %?, %?, %?, %?, %?)`,
+				task.Step, task.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{}, "{}")
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return err
+}
+
 // UpdateGlobalTaskAndAddSubTasks update the global task and add new subtasks
 func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, prevState string) (bool, error) {
 	retryable := true
@@ -611,8 +632,7 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 		if err != nil {
 			return err
 		}
-		// why affected row ==0？
-		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 && gTask.State != proto.TaskStateRunning {
 			retryable = false
 			return errors.New("invalid task state transform, state already changed")
 		}

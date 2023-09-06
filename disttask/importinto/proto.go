@@ -33,10 +33,10 @@ import (
 // steps are processed in the following order: StepInit -> StepImport -> StepPostProcess
 const (
 	// StepImport we sort source data and ingest it into TiKV in this step.
-	StepImport int64 = 1
+	StepImport int64 = 0
 	// StepPostProcess we verify checksum and add index in this step.
 	// TODO: Might split into StepValidate and StepAddIndex later.
-	StepPostProcess int64 = 2
+	StepPostProcess int64 = 1
 )
 
 // TaskMeta is the task of IMPORT INTO.

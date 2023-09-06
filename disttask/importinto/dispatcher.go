@@ -186,7 +186,7 @@ func (dsp *importDispatcherExt) unregisterTask(ctx context.Context, task *proto.
 	}
 }
 
-func (dsp *importDispatcherExt) OnNextStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (
+func (dsp *importDispatcherExt) OnNextSubtasksBatch(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (
 	resSubtaskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
 		zap.String("type", gTask.Type),
@@ -198,7 +198,7 @@ func (dsp *importDispatcherExt) OnNextStage(ctx context.Context, handle dispatch
 	if err != nil {
 		return nil, err
 	}
-	logger.Info("on next stage")
+	logger.Info("on next subtasks batch")
 
 	defer func() {
 		// currently, framework will take the task as finished when err is not nil or resSubtaskMeta is empty.
@@ -217,18 +217,15 @@ func (dsp *importDispatcherExt) OnNextStage(ctx context.Context, handle dispatch
 		}
 	}()
 
-	var nextStep int64
 	switch gTask.Step {
-	case proto.StepInit:
+	case StepImport:
 		if err := preProcess(ctx, handle, gTask, taskMeta, logger); err != nil {
 			return nil, err
 		}
 		if err = startJob(ctx, handle, taskMeta); err != nil {
 			return nil, err
 		}
-		logger.Info("move to import step")
-		nextStep = StepImport
-	case StepImport:
+	case StepPostProcess:
 		dsp.switchTiKV2NormalMode(ctx, gTask, logger)
 		failpoint.Inject("clearLastSwitchTime", func() {
 			dsp.lastSwitchTime.Store(time.Time{})
@@ -243,14 +240,13 @@ func (dsp *importDispatcherExt) OnNextStage(ctx context.Context, handle dispatch
 			return nil, err
 		}
 		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result))
-		nextStep = StepPostProcess
-	case StepPostProcess:
+	case StepPostProcess + 1:
 		return nil, nil
 	default:
 		return nil, errors.Errorf("unknown step %d", gTask.Step)
 	}
 
-	previousSubtaskMetas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
+	previousSubtaskMetas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step-1)
 	if err != nil {
 		return nil, err
 	}
@@ -263,12 +259,11 @@ func (dsp *importDispatcherExt) OnNextStage(ctx context.Context, handle dispatch
 	if err != nil {
 		return nil, err
 	}
-	metaBytes, err := physicalPlan.ToSubtaskMetas(planCtx, nextStep)
+	metaBytes, err := physicalPlan.ToSubtaskMetas(planCtx, gTask.Step)
 	if err != nil {
 		return nil, err
 	}
-	gTask.Step = nextStep
-	logger.Info("generate subtasks", zap.Int64("step", nextStep), zap.Int("subtask-count", len(metaBytes)))
+	logger.Info("generate subtasks", zap.Int("subtask-count", len(metaBytes)))
 	return metaBytes, nil
 }
 
@@ -327,12 +322,12 @@ func (*importDispatcherExt) IsRetryableErr(error) bool {
 	return false
 }
 
-func (dsp *importDispatcherExt) AllDispatched(task *proto.Task) bool {
+func (dsp *importDispatcherExt) StageFinished(task *proto.Task) bool {
 	return true
 }
 
 func (dsp *importDispatcherExt) Finished(task *proto.Task) bool {
-	if task.Step == StepPostProcess {
+	if task.Step == StepPostProcess+1 {
 		return true
 	}
 	return false
@@ -483,7 +478,7 @@ func toChunkMap(engineCheckpoints map[int32]*checkpoints.EngineCheckpoint) map[i
 
 // we will update taskMeta in place and make gTask.Meta point to the new taskMeta.
 func updateResult(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
-	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
+	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step-1)
 	if err != nil {
 		return err
 	}
@@ -595,8 +590,6 @@ func rollback(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Ta
 
 func stepStr(step int64) string {
 	switch step {
-	case proto.StepInit:
-		return "init"
 	case StepImport:
 		return "import"
 	case StepPostProcess:

@@ -40,9 +40,8 @@ var _ dispatcher.Extension = (*testDispatcherExt)(nil)
 func (*testDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (dsp *testDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (dsp *testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.Step == proto.StepInit {
-		gTask.Step = proto.StepOne
 		dsp.cnt = 3
 		return [][]byte{
 			[]byte("task1"),
@@ -51,7 +50,6 @@ func (dsp *testDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHa
 		}, nil
 	}
 	if gTask.Step == proto.StepOne {
-		gTask.Step = proto.StepTwo
 		dsp.cnt = 4
 		return [][]byte{
 			[]byte("task4"),
@@ -64,18 +62,18 @@ func (*testDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle,
 	return nil, nil
 }
 
-func (dsp *testDispatcherExt) AllDispatched(task *proto.Task) bool {
-	if task.Step == proto.StepOne && dsp.cnt == 3 {
+func (dsp *testDispatcherExt) StageFinished(task *proto.Task) bool {
+	if task.Step == proto.StepInit && dsp.cnt >= 3 {
 		return true
 	}
-	if task.Step == proto.StepTwo && dsp.cnt == 4 {
+	if task.Step == proto.StepOne && dsp.cnt >= 4 {
 		return true
 	}
 	return false
 }
 
 func (dsp *testDispatcherExt) Finished(task *proto.Task) bool {
-	if task.Step == proto.StepTwo && dsp.cnt == 4 {
+	if task.Step == proto.StepOne && dsp.cnt >= 4 {
 		return true
 	}
 	return false
@@ -159,16 +157,16 @@ func RegisterTaskMeta(m *sync.Map, dispatcherHandle dispatcher.Extension) {
 		})
 	scheduler.ClearSchedulers()
 	scheduler.RegisterTaskType(proto.TaskTypeExample)
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepInit, func(_ context.Context, _ *proto.Task, _ *scheduler.Summary) (scheduler.Scheduler, error) {
+		return &testScheduler{}, nil
+	})
 	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ context.Context, _ *proto.Task, _ *scheduler.Summary) (scheduler.Scheduler, error) {
 		return &testScheduler{}, nil
 	})
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepTwo, func(_ context.Context, _ *proto.Task, _ *scheduler.Summary) (scheduler.Scheduler, error) {
-		return &testScheduler{}, nil
-	})
-	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
+	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepInit, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &testSubtaskExecutor{m: m}, nil
 	})
-	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepTwo, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
+	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &testSubtaskExecutor1{m: m}, nil
 	})
 }

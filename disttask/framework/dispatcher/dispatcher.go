@@ -178,7 +178,7 @@ func (d *BaseDispatcher) scheduleTask() {
 
 // handle task in cancelling state, dispatch revert subtasks.
 func (d *BaseDispatcher) onCancelling() error {
-	logutil.Logger(d.logCtx).Debug("on cancelling state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
+	logutil.Logger(d.logCtx).Info("on cancelling state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
 	errs := []error{errors.New("cancel")}
 	return d.onErrHandlingStage(errs)
 }
@@ -191,10 +191,9 @@ func (d *BaseDispatcher) onReverting() error {
 		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
 		return err
 	}
-	prevStageFinished := cnt == 0
-	if prevStageFinished {
+	if cnt == 0 {
 		// Finish the rollback step.
-		logutil.Logger(d.logCtx).Info("update the task to reverted state")
+		logutil.Logger(d.logCtx).Info("all reverting tasks finished, update the task to reverted state")
 		return d.updateTask(proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 	// Wait all subtasks in this stage finished.
@@ -206,7 +205,7 @@ func (d *BaseDispatcher) onReverting() error {
 // handle task in pending state, dispatch subtasks.
 func (d *BaseDispatcher) onPending() error {
 	logutil.Logger(d.logCtx).Debug("on pending state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
-	return d.onNextStage()
+	return d.onNextSubtasksBatch()
 }
 
 // handle task in running state, check all running subtasks finished.
@@ -229,10 +228,20 @@ func (d *BaseDispatcher) onRunning() error {
 		return err
 	}
 
-	prevStageFinished := cnt == 0
-	if prevStageFinished {
-		logutil.Logger(d.logCtx).Info("previous stage finished, generate dist plan", zap.Int64("stage", d.task.Step))
-		return d.onNextStage()
+	if cnt == 0 {
+		logutil.Logger(d.logCtx).Info("previous subtasks finished, generate dist plan", zap.Int64("stage", d.task.Step))
+		// When all subtasks dispatched and processed, mark task as succeed.
+		if d.Finished(d.task) {
+			d.task.StateUpdateTime = time.Now().UTC()
+			logutil.Logger(d.logCtx).Info("all subtasks dispatched and processed, finish the task")
+			err := d.updateTask(proto.TaskStateSucceed, nil, retrySQLTimes)
+			if err != nil {
+				logutil.Logger(d.logCtx).Warn("update task failed", zap.Error(err))
+				return err
+			}
+			return nil
+		}
+		return d.onNextSubtasksBatch()
 	}
 	// Check if any node are down.
 	if err := d.replaceDeadNodesIfAny(); err != nil {
@@ -302,6 +311,27 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 	return nil
 }
 
+func (d *BaseDispatcher) addSubtasks(subtasks []*proto.Subtask) (err error) {
+	for i := 0; i < retrySQLTimes; i++ {
+		err = d.taskMgr.AddSubTasks(d.task, subtasks)
+		if err == nil {
+			break
+		}
+		if i%10 == 0 {
+			logutil.Logger(d.logCtx).Warn("addSubtasks failed", zap.String("state", d.task.State), zap.Int64("step", d.task.Step),
+				zap.Int("subtask cnt", len(subtasks)),
+				zap.Int("retry times", i), zap.Error(err))
+		}
+		time.Sleep(retrySQLInterval)
+	}
+	if err != nil {
+		logutil.Logger(d.logCtx).Warn("addSubtasks failed", zap.String("state", d.task.State), zap.Int64("step", d.task.Step),
+			zap.Int("subtask cnt", len(subtasks)),
+			zap.Int("retry times", retrySQLTimes), zap.Error(err))
+	}
+	return err
+}
+
 func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
 	prevState := d.task.State
 	d.task.State = taskState
@@ -323,7 +353,7 @@ func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subta
 		}
 		if i%10 == 0 {
 			logutil.Logger(d.logCtx).Warn("updateTask first failed", zap.String("from", prevState), zap.String("to", d.task.State),
-				zap.Int("retry times", retryTimes), zap.Error(err))
+				zap.Int("retry times", i), zap.Error(err))
 		}
 		time.Sleep(retrySQLInterval)
 	}
@@ -361,43 +391,53 @@ func (d *BaseDispatcher) dispatchSubTask4Revert(task *proto.Task, meta []byte) e
 	return d.updateTask(proto.TaskStateReverting, subTasks, retrySQLTimes)
 }
 
-func (d *BaseDispatcher) onNextStage() error {
+func (d *BaseDispatcher) onNextSubtasksBatch() error {
 	/// dynamic dispatch subtasks.
-	// all subtasks dispatched and processed, mark task as succeed.
-	if d.Finished(d.task) {
+	failpoint.Inject("mockDynamicDispatchErr", func() {
+		failpoint.Return(errors.New("mockDynamicDispatchErr"))
+	})
+
+	// 1. when previous stage finished, update to next stage.
+	if d.task.State == proto.TaskStatePending {
 		d.task.StateUpdateTime = time.Now().UTC()
-		logutil.Logger(d.logCtx).Info("finish the task")
-		err := d.updateTask(proto.TaskStateSucceed, nil, retrySQLTimes)
-		if err != nil {
-			logutil.Logger(d.logCtx).Warn("update task failed", zap.Error(err))
+		if err := d.updateTask(proto.TaskStateRunning, nil, retrySQLTimes); err != nil {
 			return err
 		}
-		return nil
+	} else if d.StageFinished(d.task) {
+		d.task.Step++
+		logutil.Logger(d.logCtx).Info("previous stage finished, run into next stage", zap.Int64("from", d.task.Step-1), zap.Int64("to", d.task.Step))
+		d.task.StateUpdateTime = time.Now().UTC()
+		err := d.updateTask(proto.TaskStateRunning, nil, retrySQLTimes)
+		if err != nil {
+			return err
+		}
 	}
 
-	// 1. generate a batch of subtasks.
-	metas, err := d.OnNextStage(d.ctx, d, d.task)
+	// 2. generate a batch of subtasks.
+	metas, err := d.OnNextSubtasksBatch(d.ctx, d, d.task)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
 		return d.handlePlanErr(err)
 	}
-	// 2. dispatch batch of subtasks to EligibleInstances.
+
+	failpoint.Inject("mockDynamicDispatchEr1", func() {
+		failpoint.Return(errors.New("mockDynamicDispatchErr"))
+	})
+
+	// 3. dispatch batch of subtasks to EligibleInstances.
 	err = d.dispatchSubTask(d.task, metas)
 	if err != nil {
 		return err
 	}
-	failpoint.Inject("mockDynamicDispatchErr", func() {
-		failpoint.Return(errors.New("mockDynamicDispatchErr"))
+
+	failpoint.Inject("mockDynamicDispatchErr2", func() {
+		failpoint.Return(errors.New("mockDynamicDispatchErr1"))
 	})
-	// 3. check current stage all subtasks dispatched.
-	if d.AllDispatched(d.task) {
-		return nil
-	}
 	return nil
 }
 
 func (d *BaseDispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error {
-	logutil.Logger(d.logCtx).Info("dispatch subtasks", zap.String("state", d.task.State), zap.Uint64("concurrency", d.task.Concurrency), zap.Int("subtasks", len(metas)))
+	logutil.Logger(d.logCtx).Info("dispatch subtasks", zap.String("state", d.task.State), zap.Int64("step", d.task.Step), zap.Uint64("concurrency", d.task.Concurrency), zap.Int("subtasks", len(metas)))
 	// 1. Adjust the global task's concurrency.
 	if task.Concurrency == 0 {
 		task.Concurrency = DefaultSubtaskConcurrency
