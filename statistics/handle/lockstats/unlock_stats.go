@@ -25,16 +25,22 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	selectDeltaSQL = "SELECT count, modify_count, version FROM mysql.stats_table_locked WHERE table_id = %?"
+	updateDeltaSQL = "UPDATE mysql.stats_meta SET version = %?, count = count + %?, modify_count = modify_count + %? WHERE table_id = %?"
+	deleteLockSQL  = "DELETE FROM mysql.stats_table_locked WHERE table_id = %?"
+)
+
 // RemoveLockedTables remove tables from table locked array.
 // - exec: sql executor.
 // - tids: table ids of which will be unlocked.
 // - pids: partition ids of which will be unlocked.
 // - tables: table names of which will be unlocked.
 // Return the message of skipped tables and error.
-func RemoveLockedTables(exec sqlexec.SQLExecutor, tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
+func RemoveLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 
-	_, err := exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+	err := startTransaction(ctx, exec)
 	if err != nil {
 		return "", err
 	}
@@ -44,7 +50,7 @@ func RemoveLockedTables(exec sqlexec.SQLExecutor, tids []int64, pids []int64, ta
 	}()
 
 	// Load tables to check locked before delete.
-	lockedTables, err := QueryLockedTables(ctx, exec)
+	lockedTables, err := QueryLockedTables(exec)
 	if err != nil {
 		return "", err
 	}
@@ -58,7 +64,7 @@ func RemoveLockedTables(exec sqlexec.SQLExecutor, tids []int64, pids []int64, ta
 			skippedTables = append(skippedTables, tables[i].Schema.L+"."+tables[i].Name.L)
 			continue
 		}
-		if err := updateStatsAndUnlockTable(ctx, exec, tid, maxChunkSize); err != nil {
+		if err := updateStatsAndUnlockTable(ctx, exec, tid); err != nil {
 			return "", err
 		}
 	}
@@ -69,7 +75,7 @@ func RemoveLockedTables(exec sqlexec.SQLExecutor, tids []int64, pids []int64, ta
 		if !lockedStatuses[pid] {
 			continue
 		}
-		if err := updateStatsAndUnlockTable(ctx, exec, pid, maxChunkSize); err != nil {
+		if err := updateStatsAndUnlockTable(ctx, exec, pid); err != nil {
 			return "", err
 		}
 	}
@@ -79,30 +85,37 @@ func RemoveLockedTables(exec sqlexec.SQLExecutor, tids []int64, pids []int64, ta
 	return msg, err
 }
 
-func updateStatsAndUnlockTable(ctx context.Context, exec sqlexec.SQLExecutor, tid int64, maxChunkSize int) error {
-	count, modifyCount, version, err := getStatsDeltaFromTableLocked(ctx, tid, exec, maxChunkSize)
+func updateStatsAndUnlockTable(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, tid int64) error {
+	count, modifyCount, version, err := getStatsDeltaFromTableLocked(ctx, tid, exec)
 	if err != nil {
 		return err
 	}
 
-	if _, err := exec.ExecuteInternal(ctx,
-		"UPDATE mysql.stats_meta SET version = %?, count = count + %?, modify_count = modify_count + %? WHERE table_id = %?",
-		version, count, modifyCount, tid); err != nil {
+	if _, _, err := exec.ExecRestrictedSQL(
+		ctx,
+		useCurrentSession,
+		updateDeltaSQL,
+		version, count, modifyCount, tid,
+	); err != nil {
 		return err
 	}
 	cache.TableRowStatsCache.Invalidate(tid)
 
-	_, err = exec.ExecuteInternal(ctx, "DELETE FROM mysql.stats_table_locked WHERE table_id = %?", tid)
+	_, _, err = exec.ExecRestrictedSQL(
+		ctx,
+		useCurrentSession,
+		deleteLockSQL, tid,
+	)
 	return err
 }
 
 // getStatsDeltaFromTableLocked get count, modify_count and version for the given table from mysql.stats_table_locked.
-func getStatsDeltaFromTableLocked(ctx context.Context, tableID int64, exec sqlexec.SQLExecutor, maxChunkSize int) (count, modifyCount int64, version uint64, err error) {
-	recordSet, err := exec.ExecuteInternal(ctx, "SELECT count, modify_count, version FROM mysql.stats_table_locked WHERE table_id = %?", tableID)
-	if err != nil {
-		return 0, 0, 0, errors.Trace(err)
-	}
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, maxChunkSize)
+func getStatsDeltaFromTableLocked(ctx context.Context, tableID int64, exec sqlexec.RestrictedSQLExecutor) (count, modifyCount int64, version uint64, err error) {
+	rows, _, err := exec.ExecRestrictedSQL(
+		ctx,
+		useCurrentSession,
+		selectDeltaSQL, tableID,
+	)
 	if err != nil {
 		return 0, 0, 0, errors.Trace(err)
 	}

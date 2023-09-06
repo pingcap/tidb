@@ -19,7 +19,11 @@ import (
 )
 
 // CheckBackfillJobFinishInterval is export for test.
-var CheckBackfillJobFinishInterval = 300 * time.Millisecond
+var (
+	CheckBackfillJobFinishInterval = 300 * time.Millisecond
+	// UpdateBackfillJobRowCountInterval is the interval of updating the job row count.
+	UpdateBackfillJobRowCountInterval = 3 * time.Second
+)
 
 const (
 	distPhysicalTableConcurrency = 16

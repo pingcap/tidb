@@ -6459,3 +6459,119 @@ func TestListDefinitionError(t *testing.T) {
 	tk.MustContainErrMsg(`alter table t add partition (partition p2 values less than (2))`, "[ddl:1480]Only RANGE PARTITIONING can use VALUES LESS THAN in partition definition")
 	tk.MustContainErrMsg(`alter table t add partition (partition p2)`, "[ddl:1479]Syntax : LIST PARTITIONING requires definition of VALUES IN for each partition")
 }
+
+func TestListExchangeValidate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database ListExchange")
+	tk.MustExec("use ListExchange")
+	tk.MustExec("create table lcp (id int, create_ts datetime, name varchar(10))\n" +
+		"partition by list columns (create_ts)\n" +
+		"(partition p20230829 values in ('2023-08-29'),partition p20230830 values in ('2023-08-30'))")
+	tk.MustExec(`insert into lcp values (1,'2023-08-29','a')`)
+	tk.MustExec(`insert into lcp values (2,'2023-08-30','b')`)
+	tk.MustContainErrMsg(`insert into lcp values (3,'2023-08-31','c')`,
+		"[table:1526]Table has no partition for value from column_list")
+
+	tk.MustExec(`create table t (id int, create_ts datetime, name varchar(10))`)
+	tk.MustExec(`insert into t values (3,'2023-08-31','c')`)
+
+	tk.MustContainErrMsg(`alter table lcp EXCHANGE PARTITION p20230829 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lcp add partition
+		    (partition p202302 values in ('2023-02-01','2023-02-28',null),
+		     partition p202303 values in ('2023-03-01','2023-03-02','2023-03-31'))`)
+	tk.MustContainErrMsg(`alter table lcp EXCHANGE PARTITION p202302 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lcp EXCHANGE PARTITION p202303 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`truncate table t`)
+	tk.MustExec(`insert into t values (4,'2023-02-01','d'), (5,'2023-02-28','e'), (6, null, 'f')`)
+	tk.MustContainErrMsg(`alter table lcp EXCHANGE PARTITION p202303 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lcp EXCHANGE PARTITION p202302 WITH TABLE t`)
+	tk.MustExec(`insert into t values (4,'2023-03-01','d'), (5,'2023-03-02','e'), (6,'2023-03-31','f')`)
+	tk.MustContainErrMsg(`alter table lcp EXCHANGE PARTITION p202302 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lcp EXCHANGE PARTITION p202303 WITH TABLE t`)
+
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`CREATE TABLE lmcp (d date, name varchar(10), data varchar(255))
+					  PARTITION BY LIST COLUMNS(d,name)
+					  (partition p3 values IN (('2021-01-01','a'),('2021-01-02','b'),('2021-01-03','c')),
+					   partition p4 values IN (('2021-01-01','b'),(null,'a'),('2021-01-01',null),(null,null)),
+					   partition p2 values IN (('2021-01-01','c'),('2021-01-02','a')),
+					   partition p1 values IN (('2021-01-02','c')))`)
+	tk.MustExec(`CREATE TABLE t (d date, name varchar(10), data varchar(255))`)
+
+	tk.MustExec(`insert into t values ('2021-01-02', 'c', "OK")`)
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p3 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p4 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p2 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lmcp EXCHANGE PARTITION p1 WITH TABLE t`)
+
+	tk.MustExec(`insert into t values ('2021-01-01', 'c', "OK"), ('2021-01-02', 'a', "OK")`)
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p3 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p4 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p1 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lmcp EXCHANGE PARTITION p2 WITH TABLE t`)
+
+	tk.MustExec(`insert into t values ('2021-01-01', 'a', "OK"), ('2021-01-02','b', "OK"), ('2021-01-03','c', "OK")`)
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p1 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p2 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p4 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lmcp EXCHANGE PARTITION p3 WITH TABLE t`)
+
+	tk.MustExec(`insert into t values ('2021-01-01', 'b', "OK"), ('2021-01-01',null, "OK"), (null,'a', "OK"), (null,null,"OK")`)
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p1 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p2 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p3 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lmcp EXCHANGE PARTITION p4 WITH TABLE t`)
+
+	tk.MustExec(`create table lp (a int, data varchar(255)) partition by list (a) (partition p0 values in (0,4), partition pNull values in (null))`)
+	tk.MustExec(`create table np (a int, data varchar(255))`)
+	tk.MustExec(`insert into np values (0,"OK"), (4,"OK")`)
+	tk.MustContainErrMsg(`alter table lp EXCHANGE PARTITION pNull WITH TABLE np`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lp EXCHANGE PARTITION p0 WITH TABLE np`)
+	tk.MustExec(`insert into np values (null,"OK")`)
+	tk.MustContainErrMsg(`alter table lp EXCHANGE PARTITION p0 WITH TABLE np`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lp EXCHANGE PARTITION pNull WITH TABLE np`)
+	// TODO: Check EXCHANGE with DEFAULT partition!!
+}
+
+func TestRangeExchangeValidate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database RangeExchange")
+	tk.MustExec("use RangeExchange")
+	tk.MustExec(`CREATE TABLE t (d date, name varchar(10), data varchar(255))`)
+	tk.MustExec("create table rcp (d date, name varchar(10), data varchar(255))\n" +
+		"partition by range columns (d)\n" +
+		"(partition p20230829 values less than ('2023-08-30'),partition p20230830 values less than ('2023-08-31'))")
+	tk.MustExec(`insert into rcp values ('2023-08-29', 'a', "OK")`)
+	tk.MustExec(`insert into rcp values ('2023-08-30', 'b', "OK")`)
+	tk.MustContainErrMsg(`insert into rcp values ('2023-08-31', 'c', "FAIL")`,
+		"[table:1526]Table has no partition for value from column_list")
+	tk.MustExec(`insert into t values ('2023-08-31', 'c', "FAIL")`)
+	tk.MustContainErrMsg(`alter table rcp EXCHANGE PARTITION p20230829 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	// TODO: Add test with a RANGE single partition (both normal AND maxvalue!)
+	// TODO: add test with maxvalue (1, 2, and more partitions)
+	// TODO: add test not in first partition (both last without maxvalue and also not last with/without maxvalue)
+}
+
+// TODO: check EXCHANGE how it handles null (for all types of partitioning!!!)
