@@ -1765,11 +1765,11 @@ func GetResultRowsCountForCopStats(stmtCtx *stmtctx.StatementContext, planID int
 		return false, -1
 	}
 	copStats := runtimeStatsColl.GetCopStats(planID)
-	if copStats != nil {
-		return true, copStats.GetActRows()
-	} else {
+	if copStats == nil {
 		return false, -1
 	}
+	return true, copStats.GetActRows()
+
 }
 
 // getFlatPlan generates a FlatPhysicalPlan from the plan stored in stmtCtx.plan,
