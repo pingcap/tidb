@@ -81,6 +81,12 @@ func (s *mockGCSSuite) cleanupSysTables() {
 	s.tk.MustExec("delete from mysql.tidb_background_subtask")
 }
 
+func (s *mockGCSSuite) prepareAndUseDB(db string) {
+	s.tk.MustExec("drop database if exists " + db)
+	s.tk.MustExec("create database " + db)
+	s.tk.MustExec("use " + db)
+}
+
 func init() {
 	// need a real PD
 	config.UpdateGlobal(func(conf *config.Config) {

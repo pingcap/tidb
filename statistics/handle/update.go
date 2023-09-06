@@ -452,7 +452,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	}
 	startTS := txn.StartTS()
 	updateStatsMeta := func(id int64) error {
-		lockedStatuses, err := h.queryTablesLockedStatuses(id)
+		lockedStatuses, err := h.QueryTablesLockedStatuses(id)
 		if err != nil {
 			return errors.Trace(err)
 		}

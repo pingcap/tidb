@@ -203,7 +203,6 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 		} else {
 			tbl, ok := infoSchema.TableByID(tid)
 			if !ok {
-				// Ignore this table because it may have been dropped.
 				logutil.BgLogger().Warn("Unknown table ID in analyze task", zap.Int64("tid", tid))
 			} else {
 				skippedTables = append(skippedTables, tbl.Meta().Name.L)
