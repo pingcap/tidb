@@ -551,7 +551,7 @@ func TestMultiTasks(t *testing.T) {
 	RegisterTaskMeta1(&(m[1]), &testDispatcherExt{})
 	RegisterTaskMeta2(&(m[2]), &testDispatcherExt{})
 
-	distContext := testkit.NewDistExecutionContext(t, 1)
+	distContext := testkit.NewDistExecutionContext(t, 3)
 	dispatcher.MockOwnerChange = func() {
 		distContext.SetOwner(0)
 	}
