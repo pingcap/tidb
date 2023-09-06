@@ -323,7 +323,7 @@ func DispatchMultiTasksAndOneFail(t *testing.T, num int, m []sync.Map) []*proto.
 			}
 			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
 		} else {
-			taskID[i], err = mgr.AddNewGlobalTask("key"+fmt.Sprintf("%d", i), proto.Int2Type(i+2), 8, nil)
+			taskID[i], err = mgr.AddNewGlobalTask(fmt.Sprintf("key%d", i), proto.Int2Type(i+2), 8, nil)
 			require.NoError(t, err)
 			start[i] = time.Now()
 		}
