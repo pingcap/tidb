@@ -32,6 +32,7 @@ go_test(
     embed = [":implementation"],
     flaky = True,
     deps = [
+        "//domain",
         "//planner/core",
         "//planner/memo",
         "//testkit/testsetup",

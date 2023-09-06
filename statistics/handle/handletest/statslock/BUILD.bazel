@@ -5,7 +5,7 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
-        "stats_lcok_test.go",
+        "stats_lock_test.go",
     ],
     flaky = True,
     shard_count = 3,

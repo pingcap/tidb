@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,24 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dispatcher
+package metrics
 
 import (
-	"context"
+	"testing"
 
-	"github.com/stretchr/testify/mock"
+	"github.com/pingcap/errors"
+	"github.com/stretchr/testify/require"
 )
 
-// MockHandle is used to mock the Handle.
-type MockHandle struct {
-	mock.Mock
-}
-
-// GetAllSchedulerIDs implements the Handle.GetAllSchedulerIDs interface.
-func (m *MockHandle) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error) {
-	args := m.Called(ctx, gTaskID)
-	if args.Error(1) != nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]string), nil
+func TestRetLabel(t *testing.T) {
+	require.Equal(t, opSucc, RetLabel(nil))
+	require.Equal(t, opFailed, RetLabel(errors.New("test error")))
 }

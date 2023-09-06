@@ -119,6 +119,9 @@ func TestVersion(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
 	h, err := handle.NewHandle(testKit.Session(), testKit2.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker(), do.GetAutoAnalyzeProcID)
+	defer func() {
+		h.Close()
+	}()
 	require.NoError(t, err)
 	unit := oracle.ComposeTS(1, 0)
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
