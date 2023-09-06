@@ -165,17 +165,17 @@ func (mr *MockTaskTableMockRecorder) StartSubtask(arg0 interface{}) *gomock.Call
 }
 
 // UpdateErrorToSubtask mocks base method.
-func (m *MockTaskTable) UpdateErrorToSubtask(arg0 string, arg1 error) error {
+func (m *MockTaskTable) UpdateErrorToSubtask(arg0 string, arg1 int64, arg2 error) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateErrorToSubtask", arg0, arg1)
+	ret := m.ctrl.Call(m, "UpdateErrorToSubtask", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateErrorToSubtask indicates an expected call of UpdateErrorToSubtask.
-func (mr *MockTaskTableMockRecorder) UpdateErrorToSubtask(arg0, arg1 interface{}) *gomock.Call {
+func (mr *MockTaskTableMockRecorder) UpdateErrorToSubtask(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateErrorToSubtask", reflect.TypeOf((*MockTaskTable)(nil).UpdateErrorToSubtask), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateErrorToSubtask", reflect.TypeOf((*MockTaskTable)(nil).UpdateErrorToSubtask), arg0, arg1, arg2)
 }
 
 // UpdateSubtaskStateAndError mocks base method.
@@ -373,7 +373,7 @@ func (mr *MockSchedulerMockRecorder) Rollback(arg0 interface{}) *gomock.Call {
 }
 
 // SplitSubtask mocks base method.
-func (m *MockScheduler) SplitSubtask(arg0 context.Context, arg1 []byte) ([]proto.MinimalTask, error) {
+func (m *MockScheduler) SplitSubtask(arg0 context.Context, arg1 *proto.Subtask) ([]proto.MinimalTask, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SplitSubtask", arg0, arg1)
 	ret0, _ := ret[0].([]proto.MinimalTask)

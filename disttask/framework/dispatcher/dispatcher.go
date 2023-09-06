@@ -246,7 +246,11 @@ func (d *BaseDispatcher) onRunning() error {
 
 func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 	if len(d.taskNodes) == 0 {
-		return errors.Errorf("len(d.taskNodes) == 0, onNextStage is not invoked before onRunning")
+		var err error
+		d.taskNodes, err = d.taskMgr.GetSchedulerIDsByTaskIDAndStep(d.task.ID, d.task.Step)
+		if err != nil {
+			return err
+		}
 	}
 	d.liveNodeFetchTick++
 	if d.liveNodeFetchTick == d.liveNodeFetchInterval {

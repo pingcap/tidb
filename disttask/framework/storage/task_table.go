@@ -338,14 +338,14 @@ func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, step int
 }
 
 // UpdateErrorToSubtask updates the error to subtask.
-func (stm *TaskManager) UpdateErrorToSubtask(tidbID string, err error) error {
+func (stm *TaskManager) UpdateErrorToSubtask(tidbID string, taskID int64, err error) error {
 	if err == nil {
 		return nil
 	}
 	_, err1 := stm.executeSQLWithNewSession(stm.ctx, `update mysql.tidb_background_subtask
 		set state = %?, error = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
-		where exec_id = %? and state = %? limit 1;`,
-		proto.TaskStateFailed, serializeErr(err), tidbID, proto.TaskStatePending)
+		where exec_id = %? and task_key = %? and state = %? limit 1;`,
+		proto.TaskStateFailed, serializeErr(err), tidbID, taskID, proto.TaskStatePending)
 	return err1
 }
 
@@ -386,6 +386,29 @@ func (stm *TaskManager) GetSucceedSubtasksByStep(taskID int64, step int64) ([]*p
 		subtasks = append(subtasks, row2SubTask(r))
 	}
 	return subtasks, nil
+}
+
+// GetSubtaskRowCount gets the subtask row count.
+func (stm *TaskManager) GetSubtaskRowCount(taskID int64, step int64) (int64, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select
+    	cast(sum(json_extract(summary, '$.row_count')) as signed) as row_count
+		from mysql.tidb_background_subtask where task_key = %? and step = %?`,
+		taskID, step)
+	if err != nil {
+		return 0, err
+	}
+	if len(rs) == 0 {
+		return 0, nil
+	}
+	return rs[0].GetInt64(0), nil
+}
+
+// UpdateSubtaskRowCount updates the subtask row count.
+func (stm *TaskManager) UpdateSubtaskRowCount(subtaskID int64, rowCount int64) error {
+	_, err := stm.executeSQLWithNewSession(stm.ctx, `update mysql.tidb_background_subtask
+		set summary = json_set(summary, '$.row_count', %?) where id = %?`,
+		rowCount, subtaskID)
+	return err
 }
 
 // GetSubtaskInStatesCnt gets the subtask count in the states.
@@ -446,11 +469,11 @@ func (stm *TaskManager) HasSubtasksInStates(tidbID string, taskID int64, step in
 }
 
 // StartSubtask updates the subtask state to running.
-func (stm *TaskManager) StartSubtask(id int64) error {
+func (stm *TaskManager) StartSubtask(subtaskID int64) error {
 	_, err := stm.executeSQLWithNewSession(stm.ctx, `update mysql.tidb_background_subtask
 		set state = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
 		where id = %?`,
-		proto.TaskStateRunning, id)
+		proto.TaskStateRunning, subtaskID)
 	return err
 }
 
@@ -495,6 +518,26 @@ func (stm *TaskManager) DeleteSubtasksByTaskID(taskID int64) error {
 func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select distinct(exec_id) from mysql.tidb_background_subtask
 		where task_key = %?`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+
+	instanceIDs := make([]string, 0, len(rs))
+	for _, r := range rs {
+		id := r.GetString(0)
+		instanceIDs = append(instanceIDs, id)
+	}
+
+	return instanceIDs, nil
+}
+
+// GetSchedulerIDsByTaskIDAndStep gets the scheduler IDs of the given global task ID and step.
+func (stm *TaskManager) GetSchedulerIDsByTaskIDAndStep(taskID int64, step int64) ([]string, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select distinct(exec_id) from mysql.tidb_background_subtask
+		where task_key = %? and step = %?`, taskID, step)
 	if err != nil {
 		return nil, err
 	}
