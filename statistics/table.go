@@ -23,9 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
 	"golang.org/x/exp/maps"
@@ -588,40 +586,12 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool) *Table {
 		RealtimeCount:  PseudoRowCount,
 		PhysicalID:     tblInfo.ID,
 		HavePhysicalID: true,
-		Columns:        make(map[int64]*Column, len(tblInfo.Columns)),
-		Indices:        make(map[int64]*Index, len(tblInfo.Indices)),
 		Pseudo:         true,
+		Columns:        make(map[int64]*Column),
+		Indices:        make(map[int64]*Index),
 	}
 	t := &Table{
 		HistColl: pseudoHistColl,
-	}
-	for _, col := range tblInfo.Columns {
-		// The column is public to use. Also we should check the column is not hidden since hidden means that it's used by expression index.
-		// We would not collect stats for the hidden column and we won't use the hidden column to estimate.
-		// Thus we don't create pseudo stats for it.
-		if col.State == model.StatePublic && !col.Hidden {
-			t.Columns[col.ID] = &Column{
-				PhysicalID: fakePhysicalID,
-				Info:       col,
-				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
-				Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
-			}
-			if allowTriggerLoading {
-				t.Columns[col.ID].PhysicalID = tblInfo.ID
-			}
-		}
-	}
-	for _, idx := range tblInfo.Indices {
-		if idx.State == model.StatePublic {
-			t.Indices[idx.ID] = &Index{
-				PhysicalID: fakePhysicalID,
-				Info:       idx,
-				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0),
-			}
-			if allowTriggerLoading {
-				t.Indices[idx.ID].PhysicalID = tblInfo.ID
-			}
-		}
 	}
 	return t
 }
