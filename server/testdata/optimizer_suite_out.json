@@ -48,16 +48,16 @@
                             "github.com/pingcap/tidb/planner/core.getStatsTable": {
                               "CountIsZero": false,
                               "HandleIsNil": false,
-                              "InputPhysicalID": 100,
+                              "InputPhysicalID": 98,
                               "Outdated": false,
                               "StatsTblInfo": {
                                 "Columns": [
                                   {
                                     "CMSketchInfo": null,
                                     "Correlation": 0,
-                                    "HistogramSize": 0,
+                                    "HistogramSize": -1,
                                     "ID": 1,
-                                    "LastUpdateVersion": 440930000000000000,
+                                    "LastUpdateVersion": 0,
                                     "LoadingStatus": "unInitialized",
                                     "NDV": 0,
                                     "Name": "col1",
@@ -72,9 +72,9 @@
                                   {
                                     "CMSketchInfo": null,
                                     "Correlation": 0,
-                                    "HistogramSize": 0,
+                                    "HistogramSize": -1,
                                     "ID": 1,
-                                    "LastUpdateVersion": 440930000000000000,
+                                    "LastUpdateVersion": 0,
                                     "LoadingStatus": "unInitialized",
                                     "NDV": 0,
                                     "Name": "i",
@@ -85,11 +85,11 @@
                                   }
                                 ],
                                 "ModifyCount": 0,
-                                "PhysicalID": 100,
-                                "Version": 440930000000000000
+                                "PhysicalID": 98,
+                                "Version": 0
                               },
                               "TableName": "t",
-                              "TblInfoID": 100,
+                              "TblInfoID": 98,
                               "Uninitialized": true,
                               "UsePartitionStats": false
                             }
@@ -257,12 +257,12 @@
                     "BindSQL": "SELECT * FROM `test`.`t` USE INDEX () WHERE `col1` = 100",
                     "Charset": "utf8mb4",
                     "Collation": "utf8mb4_bin",
-                    "CreateTime": 0,
+                    "CreateTime": 2278342043590435800,
                     "PlanDigest": "",
                     "SQLDigest": "36ceb6159adb3ac83539ec90c861ac4be4bc5cdb5fa02f70542744a4af640eac",
                     "Source": "manual",
                     "Status": "enabled",
-                    "UpdateTime": 0
+                    "UpdateTime": 2278342043590435800
                   }
                 ],
                 "Db": "test",
@@ -286,16 +286,16 @@
                         "github.com/pingcap/tidb/planner/core.getStatsTable": {
                           "CountIsZero": false,
                           "HandleIsNil": false,
-                          "InputPhysicalID": 100,
+                          "InputPhysicalID": 98,
                           "Outdated": false,
                           "StatsTblInfo": {
                             "Columns": [
                               {
                                 "CMSketchInfo": null,
                                 "Correlation": 0,
-                                "HistogramSize": 0,
+                                "HistogramSize": -1,
                                 "ID": 1,
-                                "LastUpdateVersion": 440930000000000000,
+                                "LastUpdateVersion": 0,
                                 "LoadingStatus": "unInitialized",
                                 "NDV": 0,
                                 "Name": "col1",
@@ -310,9 +310,9 @@
                               {
                                 "CMSketchInfo": null,
                                 "Correlation": 0,
-                                "HistogramSize": 0,
+                                "HistogramSize": -1,
                                 "ID": 1,
-                                "LastUpdateVersion": 440930000000000000,
+                                "LastUpdateVersion": 0,
                                 "LoadingStatus": "unInitialized",
                                 "NDV": 0,
                                 "Name": "i",
@@ -323,11 +323,11 @@
                               }
                             ],
                             "ModifyCount": 0,
-                            "PhysicalID": 100,
-                            "Version": 440930000000000000
+                            "PhysicalID": 98,
+                            "Version": 0
                           },
                           "TableName": "t",
-                          "TblInfoID": 100,
+                          "TblInfoID": 98,
                           "Uninitialized": true,
                           "UsePartitionStats": false
                         }
@@ -474,16 +474,16 @@
                             "github.com/pingcap/tidb/planner/core.getStatsTable": {
                               "CountIsZero": false,
                               "HandleIsNil": false,
-                              "InputPhysicalID": 100,
+                              "InputPhysicalID": 98,
                               "Outdated": false,
                               "StatsTblInfo": {
                                 "Columns": [
                                   {
                                     "CMSketchInfo": null,
                                     "Correlation": 0,
-                                    "HistogramSize": 0,
+                                    "HistogramSize": -1,
                                     "ID": 1,
-                                    "LastUpdateVersion": 440930000000000000,
+                                    "LastUpdateVersion": 0,
                                     "LoadingStatus": "unInitialized",
                                     "NDV": 0,
                                     "Name": "col1",
@@ -498,9 +498,9 @@
                                   {
                                     "CMSketchInfo": null,
                                     "Correlation": 0,
-                                    "HistogramSize": 0,
+                                    "HistogramSize": -1,
                                     "ID": 1,
-                                    "LastUpdateVersion": 440930000000000000,
+                                    "LastUpdateVersion": 0,
                                     "LoadingStatus": "unInitialized",
                                     "NDV": 0,
                                     "Name": "i",
@@ -511,11 +511,11 @@
                                   }
                                 ],
                                 "ModifyCount": 0,
-                                "PhysicalID": 100,
-                                "Version": 440930000000000000
+                                "PhysicalID": 98,
+                                "Version": 0
                               },
                               "TableName": "t",
-                              "TblInfoID": 100,
+                              "TblInfoID": 98,
                               "Uninitialized": true,
                               "UsePartitionStats": false
                             }
