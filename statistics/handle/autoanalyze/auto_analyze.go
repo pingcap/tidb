@@ -26,6 +26,9 @@ const (
 	minAutoAnalyzeInterval = 5 * time.Minute
 )
 
+// DisableAutoAnalyzeIntervalForTest is used to disable the auto analyze interval for test.
+var DisableAutoAnalyzeIntervalForTest = false
+
 // AutoAnalyze is used to store the recent analyzed tables.
 type AutoAnalyze struct {
 	recentAnalyzedTables map[int64]time.Time // tid -> ts
@@ -47,6 +50,9 @@ func (a *AutoAnalyze) AddRecentAnalyzedTables(tid int64, ts time.Time) {
 
 // IsRecentAnalyzedTables checks whether a table is recently analyzed.
 func (a *AutoAnalyze) IsRecentAnalyzedTables(tid int64) bool {
+	if DisableAutoAnalyzeIntervalForTest {
+		return false
+	}
 	ts, ok := a.recentAnalyzedTables[tid]
 	if time.Since(ts) > maxAutoAnalyzeInterval {
 		delete(a.recentAnalyzedTables, tid)
