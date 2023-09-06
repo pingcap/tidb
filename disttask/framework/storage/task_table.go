@@ -37,7 +37,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const defaultSubtaskKeepDays = 7
+const defaultSubtaskKeepDays = 14
 
 // SessionExecutor defines the interface for executing SQLs in a session.
 type SessionExecutor interface {

@@ -406,7 +406,7 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	require.Equal(t, int64(0), cnt)
 }
 
-func TestTransferFinishedSubTasks(t *testing.T) {
+func TestSubtaskHistoryTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
