@@ -122,8 +122,10 @@ func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask *proto
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
 
+	opCtx := NewOperatorCtx(ctx)
+	defer opCtx.Cancel()
 	pipe, err := NewAddIndexIngestPipeline(
-		ctx, d.store, d.sessPool, r.bc, ei, sessCtx, tbl, r.index, startKey, endKey, totalRowCount, counter)
+		opCtx, d.store, d.sessPool, r.bc, ei, sessCtx, tbl, r.index, startKey, endKey, totalRowCount, counter)
 	if err != nil {
 		return nil, err
 	}
@@ -132,6 +134,9 @@ func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask *proto
 		return nil, err
 	}
 	err = pipe.Close()
+	if opCtx.OperatorErr() != nil {
+		return nil, opCtx.OperatorErr()
+	}
 	if err != nil {
 		return nil, err
 	}
