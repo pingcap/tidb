@@ -2807,6 +2807,16 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{
+		Scope: ScopeGlobal | ScopeSession,
+		Name:  TiDBEnableHistoryStats,
+		Value: BoolToOnOff(DefTiDBEnableHistoryStats),
+		Type:  TypeBool,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.EnableHistoryStats = TiDBOptOn(s)
+			return nil
+		},
+	},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

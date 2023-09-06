@@ -78,6 +78,11 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+const (
+	// HistoryStatsUpdateThreshold represents the threshold to check if history stats needs to be updated
+	HistoryStatsUpdateThreshold = 1.0
+)
+
 // processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
 	SetProcessInfo(string, time.Time, byte, uint64)
@@ -1501,7 +1506,7 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 // Currently, only support "Selection + TableScan" pattern
 func (a *ExecStmt) RecordHistoryStats() {
 	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.InRestrictedSQL || !sessVars.StmtCtx.InSelectStmt {
+	if !sessVars.EnableHistoryStats || sessVars.InRestrictedSQL || !sessVars.StmtCtx.InSelectStmt {
 		return
 	}
 
@@ -1525,14 +1530,13 @@ func (a *ExecStmt) RecordHistoryStats() {
 	}
 }
 
-func checkAndRecordHistoryStats(stmtCtx *stmtctx.StatementContext, sql string, x *plannercore.PhysicalSelection) {
+func checkAndRecordHistoryStats(stmtCtx *stmtctx.StatementContext, sql string, x *plannercore.PhysicalSelection) bool {
 	estRows := plannercore.GetPhysicalPlanEstRowCount(x)
-	actualRows := GetResultRowsCountForCopStats(stmtCtx, x.ID())
-	const Threshold float64 = 1.0
-	if actualRows >= 0 && math.Abs(float64(actualRows)-estRows) > 2*Threshold {
+	hasCopStats, actualRows := GetResultRowsCountForCopStats(stmtCtx, x.ID())
+	if hasCopStats && math.Abs(float64(actualRows)-estRows) > 2*HistoryStatsUpdateThreshold {
 		succ, hashCode := expression.SortAndGenMD5HashForCNFExprs(stmtCtx, x.Conditions)
 		if !succ {
-			return
+			return false
 		}
 		logutil.BgLogger().Info(
 			sql,
@@ -1540,7 +1544,9 @@ func checkAndRecordHistoryStats(stmtCtx *stmtctx.StatementContext, sql string, x
 			zap.Float64("EstRows", estRows),
 			zap.Int64("ActRows", actualRows),
 			zap.Int("PlanID", x.ID()))
+		return true
 	}
+	return false
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
@@ -1752,17 +1758,17 @@ func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p plannercore.Plan) i
 }
 
 // GetResultRowsCountForCopStats gets the count of the statement result rows of cop stats
-// Return -1 if no cop stats exists
-func GetResultRowsCountForCopStats(stmtCtx *stmtctx.StatementContext, planID int) int64 {
+// Return false, -1 if no cop stats exists
+func GetResultRowsCountForCopStats(stmtCtx *stmtctx.StatementContext, planID int) (bool, int64) {
 	runtimeStatsColl := stmtCtx.RuntimeStatsColl
 	if runtimeStatsColl == nil {
-		return -1
+		return false, -1
 	}
 	copStats := runtimeStatsColl.GetCopStats(planID)
 	if copStats != nil {
-		return copStats.GetActRows()
+		return true, copStats.GetActRows()
 	} else {
-		return -1
+		return false, -1
 	}
 }
 
