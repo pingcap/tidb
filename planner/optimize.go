@@ -608,7 +608,7 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string,
 				// Apply additional binding rules
 				normalizeExplainSQL = parser.NormalizeForBinding(explainSQL)
 			} else {
-				normalizeExplainSQL = parser.Normalize(explainSQL)
+				normalizeExplainSQL = parser.Normalize(x.Text())
 			}
 
 			idx := strings.Index(normalizeExplainSQL, "select")
