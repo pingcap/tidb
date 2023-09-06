@@ -598,6 +598,7 @@ type testEnv struct {
 	resolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
 
 	mu sync.Mutex
+	pd.Client
 }
 
 func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) error {
@@ -679,7 +680,7 @@ func (t *testEnv) Identifier() string {
 
 func (t *testEnv) GetStore() tikv.Storage {
 	// only used for GetRegionCache once in resolve lock
-	return &mockTiKVStore{regionCache: tikv.NewRegionCache(&mockPDClient{})}
+	return &mockTiKVStore{regionCache: tikv.NewRegionCache(&mockPDClient{fakeRegions: t.regions})}
 }
 
 type mockKVStore struct {
@@ -708,12 +709,24 @@ func (s *mockTiKVStore) SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, region
 
 type mockPDClient struct {
 	pd.Client
+	fakeRegions []*region
 }
 
 func (p *mockPDClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*pd.Region, error) {
-	return []*pd.Region{
-		newMockRegion(1, []byte("1"), []byte("3")),
-	}, nil
+	sort.Slice(p.fakeRegions, func(i, j int) bool {
+		return bytes.Compare(p.fakeRegions[i].rng.StartKey, p.fakeRegions[j].rng.StartKey) < 0
+	})
+
+	result := make([]*pd.Region, 0, len(p.fakeRegions))
+	for _, region := range p.fakeRegions {
+		if spans.Overlaps(kv.KeyRange{StartKey: key, EndKey: endKey}, region.rng) && len(result) < limit {
+			regionInfo := newMockRegion(region.id, region.rng.StartKey, region.rng.EndKey)
+			result = append(result, regionInfo)
+		} else if bytes.Compare(region.rng.StartKey, key) > 0 {
+			break
+		}
+	}
+	return result, nil
 }
 
 func (p *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Store, error) {
@@ -721,10 +734,6 @@ func (p *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Stor
 		Id:      storeID,
 		Address: fmt.Sprintf("127.0.0.%d", storeID),
 	}, nil
-}
-
-func (p *mockPDClient) GetRegion(ctx context.Context, key []byte, opts ...pd.GetRegionOption) (*pd.Region, error) {
-	return newMockRegion(1, []byte("1"), []byte("3")), nil
 }
 
 func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
