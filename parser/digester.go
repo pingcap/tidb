@@ -514,11 +514,6 @@ func (*sqlDigester) isInKeyword(tok token) (isInKeyword bool) {
 	return
 }
 
-func (*sqlDigester) isQuestionMarkKeyword(tok token) (isQuestionMarkKeyword bool) {
-	isQuestionMarkKeyword = tok.lit == "?"
-	return
-}
-
 type token struct {
 	tok int
 	lit string
