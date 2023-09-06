@@ -236,7 +236,7 @@ func newImportScheduler(ctx context.Context, id string, taskID int64, taskTable 
 }
 
 func (s *importScheduler) Run(ctx context.Context, task *proto.Task) error {
-	metrics := metricsManager.getMetrics(task.ID)
+	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	defer metricsManager.unregister(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	return s.BaseScheduler.Run(subCtx, task)

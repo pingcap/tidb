@@ -31,9 +31,9 @@ type taskMetrics struct {
 }
 
 // taskMetricManager manages the metrics of tasks.
-// we have a set of metrics for each task, but both dispatcher and scheduler
-// might use it, so add a manager to manage lifecycle of metrics for tasks.
-// there might be a better way to do this.
+// we have a set of metrics for each task, with different task_id const label,
+// but both dispatcher and scheduler might use it, to avoid registered again,
+// we add a manager to manage lifecycle of metrics for tasks.
 type taskMetricManager struct {
 	sync.RWMutex
 	metricsMap map[int64]*taskMetrics
@@ -43,7 +43,9 @@ var metricsManager = &taskMetricManager{
 	metricsMap: make(map[int64]*taskMetrics),
 }
 
-func (m *taskMetricManager) getMetrics(taskID int64) *metric.Common {
+// getOrCreateMetrics gets or creates the metrics for the task.
+// if the metrics has been created, the counter will be increased.
+func (m *taskMetricManager) getOrCreateMetrics(taskID int64) *metric.Common {
 	m.Lock()
 	defer m.Unlock()
 	tm, ok := m.metricsMap[taskID]
@@ -63,6 +65,8 @@ func (m *taskMetricManager) getMetrics(taskID int64) *metric.Common {
 	return tm.metrics
 }
 
+// unregister count down the metrics for the task.
+// if the counter is 0, the metrics will be unregistered.
 func (m *taskMetricManager) unregister(taskID int64) {
 	m.Lock()
 	defer m.Unlock()

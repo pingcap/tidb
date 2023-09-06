@@ -369,7 +369,7 @@ type importDispatcher struct {
 
 func newImportDispatcher(ctx context.Context, taskMgr *storage.TaskManager,
 	serverID string, task *proto.Task) dispatcher.Dispatcher {
-	metrics := metricsManager.getMetrics(task.ID)
+	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	dis := importDispatcher{
 		BaseDispatcher: dispatcher.NewBaseDispatcher(subCtx, taskMgr, serverID, task),
