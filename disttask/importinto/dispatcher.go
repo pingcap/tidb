@@ -322,15 +322,12 @@ func (*importDispatcherExt) IsRetryableErr(error) bool {
 	return false
 }
 
-func (dsp *importDispatcherExt) StageFinished(task *proto.Task) bool {
+func (*importDispatcherExt) StageFinished(task *proto.Task) bool {
 	return true
 }
 
-func (dsp *importDispatcherExt) Finished(task *proto.Task) bool {
-	if task.Step == StepPostProcess+1 {
-		return true
-	}
-	return false
+func (*importDispatcherExt) Finished(task *proto.Task) bool {
+	return task.Step == StepPostProcess+1
 }
 
 func (dsp *importDispatcherExt) switchTiKV2NormalMode(ctx context.Context, task *proto.Task, logger *zap.Logger) {

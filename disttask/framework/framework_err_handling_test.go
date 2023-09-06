@@ -129,10 +129,7 @@ func (dsp *planNotRetryableErrDispatcherExt) StageFinished(task *proto.Task) boo
 }
 
 func (dsp *planNotRetryableErrDispatcherExt) Finished(task *proto.Task) bool {
-	if task.Step == proto.StepOne && dsp.cnt >= 4 {
-		return true
-	}
-	return false
+	return task.Step == proto.StepOne && dsp.cnt >= 4
 }
 
 func TestPlanErr(t *testing.T) {

@@ -73,10 +73,7 @@ func (dsp *testDispatcherExt) StageFinished(task *proto.Task) bool {
 }
 
 func (dsp *testDispatcherExt) Finished(task *proto.Task) bool {
-	if task.Step == proto.StepOne && dsp.cnt >= 4 {
-		return true
-	}
-	return false
+	return task.Step == proto.StepOne && dsp.cnt >= 4
 }
 
 func generateSchedulerNodes4Test() ([]*infosync.ServerInfo, error) {

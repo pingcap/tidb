@@ -90,10 +90,7 @@ func (dsp *haTestDispatcherExt) StageFinished(task *proto.Task) bool {
 }
 
 func (dsp *haTestDispatcherExt) Finished(task *proto.Task) bool {
-	if task.Step == proto.StepOne && dsp.cnt >= 15 {
-		return true
-	}
-	return false
+	return task.Step == proto.StepOne && dsp.cnt >= 15
 }
 
 func RegisterHATaskMeta(m *sync.Map) {

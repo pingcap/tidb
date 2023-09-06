@@ -107,15 +107,12 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context, _ di
 	}
 }
 
-func (dsp *backfillingDispatcherExt) StageFinished(task *proto.Task) bool {
+func (*backfillingDispatcherExt) StageFinished(task *proto.Task) bool {
 	return true
 }
 
-func (dsp *backfillingDispatcherExt) Finished(task *proto.Task) bool {
-	if task.Step == proto.StepTwo {
-		return true
-	}
-	return false
+func (*backfillingDispatcherExt) Finished(task *proto.Task) bool {
+	return task.Step == proto.StepTwo
 }
 
 // OnErrStage generate error handling stage's plan.

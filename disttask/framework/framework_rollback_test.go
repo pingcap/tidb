@@ -65,17 +65,11 @@ func (*rollbackDispatcherExt) IsRetryableErr(error) bool {
 }
 
 func (dsp *rollbackDispatcherExt) StageFinished(task *proto.Task) bool {
-	if task.Step == proto.StepInit && dsp.cnt >= 3 {
-		return true
-	}
-	return false
+	return task.Step == proto.StepInit && dsp.cnt >= 3
 }
 
 func (dsp *rollbackDispatcherExt) Finished(task *proto.Task) bool {
-	if task.Step == proto.StepInit && dsp.cnt >= 3 {
-		return true
-	}
-	return false
+	return task.Step == proto.StepInit && dsp.cnt >= 3
 }
 
 type testRollbackMiniTask struct{}

@@ -112,15 +112,12 @@ func (*numberExampleDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (dsp *numberExampleDispatcherExt) StageFinished(task *proto.Task) bool {
+func (*numberExampleDispatcherExt) StageFinished(task *proto.Task) bool {
 	return true
 }
 
-func (dsp *numberExampleDispatcherExt) Finished(task *proto.Task) bool {
-	if task.Step == proto.StepTwo {
-		return true
-	}
-	return false
+func (*numberExampleDispatcherExt) Finished(task *proto.Task) bool {
+	return task.Step == proto.StepTwo
 }
 
 func MockDispatcherManager(t *testing.T, pool *pools.ResourcePool) (*dispatcher.Manager, *storage.TaskManager) {

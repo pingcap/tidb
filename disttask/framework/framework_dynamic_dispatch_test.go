@@ -72,11 +72,7 @@ func (dsp *testDynamicDispatcherExt) StageFinished(task *proto.Task) bool {
 }
 
 func (dsp *testDynamicDispatcherExt) Finished(task *proto.Task) bool {
-	if task.Step == proto.StepOne && dsp.cnt >= 4 {
-		dsp.cnt = 0
-		return true
-	}
-	return false
+	return task.Step == proto.StepOne && dsp.cnt >= 4
 }
 
 func (*testDynamicDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
