@@ -16,18 +16,14 @@ package importintotest
 
 import (
 	"fmt"
-	"reflect"
 	"slices"
-	"unsafe"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
-	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 func (s *mockGCSSuite) TestWriteAfterImport() {
@@ -161,18 +157,6 @@ func (s *mockGCSSuite) TestWriteAfterImport() {
 			newAllData := append(allData, c.insertedData)
 			slices.Sort(newAllData)
 			s.tk.MustQuery(querySQL).Sort().Check(testkit.Rows(newAllData...))
-		}
-
-		// workaround for issue https://github.com/pingcap/tidb/issues/46324,
-		// and we MUST drop the table after test.
-		if tableObj.Meta().SepAutoInc() && tableObj.Meta().GetAutoIncrementColInfo() != nil {
-			allocators := tableObj.Allocators(nil)
-			alloc := allocators.Get(autoid.AutoIncrementType)
-			cf := reflect.ValueOf(alloc).Elem().FieldByName("clientDiscover")
-			cliF := cf.FieldByName("etcdCli")
-			elem := reflect.NewAt(cliF.Type(), unsafe.Pointer(cliF.UnsafeAddr())).Elem()
-			client := elem.Interface().(*clientv3.Client)
-			s.NoError(client.Close())
 		}
 	}
 }
