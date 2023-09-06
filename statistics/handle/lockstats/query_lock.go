@@ -43,6 +43,9 @@ func QueryLockedTables(exec sqlexec.RestrictedSQLExecutor) (map[int64]struct{}, 
 // GetLockedTables returns the locked status of the given tables.
 func GetLockedTables(tableLocked map[int64]struct{}, tableIDs ...int64) map[int64]struct{} {
 	lockedTables := make(map[int64]struct{}, len(tableLocked))
+	if len(tableLocked) == 0 {
+		return lockedTables
+	}
 
 	for _, tid := range tableIDs {
 		if _, ok := tableLocked[tid]; ok {
