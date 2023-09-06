@@ -107,7 +107,7 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context, _ di
 	}
 }
 
-func (*backfillingDispatcherExt) StageFinished(task *proto.Task) bool {
+func (*backfillingDispatcherExt) StageFinished(_ *proto.Task) bool {
 	return true
 }
 

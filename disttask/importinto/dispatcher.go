@@ -322,7 +322,7 @@ func (*importDispatcherExt) IsRetryableErr(error) bool {
 	return false
 }
 
-func (*importDispatcherExt) StageFinished(task *proto.Task) bool {
+func (*importDispatcherExt) StageFinished(_ *proto.Task) bool {
 	return true
 }
 
