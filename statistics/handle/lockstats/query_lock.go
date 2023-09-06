@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-var selectSQL = "SELECT table_id FROM mysql.stats_table_locked"
+const selectSQL = "SELECT table_id FROM mysql.stats_table_locked"
 
 // QueryLockedTables loads locked tables from mysql.stats_table_locked.
 // Return it as a map for fast query.

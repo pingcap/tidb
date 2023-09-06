@@ -31,6 +31,8 @@ const (
 	unlockAction   = "unlocking"
 	lockedStatus   = "locked"
 	unlockedStatus = "unlocked"
+
+	insertSQL = "INSERT INTO mysql.stats_table_locked (table_id) VALUES (%?) ON DUPLICATE KEY UPDATE table_id = %?"
 )
 
 var (
@@ -38,7 +40,6 @@ var (
 	statsLogger = logutil.BgLogger().With(zap.String("category", "stats"))
 	// useCurrentSession to make sure the sql is executed in current session.
 	useCurrentSession = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
-	insertSQL         = "INSERT INTO mysql.stats_table_locked (table_id) VALUES (%?) ON DUPLICATE KEY UPDATE table_id = %?"
 )
 
 // AddLockedTables add locked tables id to store.

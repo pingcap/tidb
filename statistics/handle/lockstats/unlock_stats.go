@@ -25,7 +25,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
+const (
 	selectDeltaSQL = "SELECT count, modify_count, version FROM mysql.stats_table_locked WHERE table_id = %?"
 	updateDeltaSQL = "UPDATE mysql.stats_meta SET version = %?, count = count + %?, modify_count = modify_count + %? WHERE table_id = %?"
 	deleteLockSQL  = "DELETE FROM mysql.stats_table_locked WHERE table_id = %?"
