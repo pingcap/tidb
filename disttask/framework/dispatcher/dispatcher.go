@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
@@ -45,8 +44,8 @@ const (
 var (
 	checkTaskFinishedInterval = 500 * time.Millisecond
 	nonRetrySQLTime           = 1
-	retrySQLTimes             = variable.DefTiDBDDLErrorCountLimit
-	retrySQLInterval          = 500 * time.Millisecond
+	retrySQLTimes             = 30
+	retrySQLInterval          = 3 * time.Second
 )
 
 // TaskHandle provides the interface for operations needed by Dispatcher.
