@@ -1205,12 +1205,7 @@ func initConstantRepertoire(c *expression.Constant) {
 
 func (er *expressionRewriter) adjustUTF8MB4Collation(tp *types.FieldType) {
 	if tp.GetFlag()&mysql.UnderScoreCharsetFlag > 0 && charset.CharsetUTF8MB4 == tp.GetCharset() {
-		var collation string
-		collation, er.err = er.sctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.DefaultCollationForUTF8MB4)
-		if er.err != nil {
-			return
-		}
-		tp.SetCollate(collation)
+		tp.SetCollate(er.sctx.GetSessionVars().DefaultCollationForUTF8MB4)
 	}
 }
 
