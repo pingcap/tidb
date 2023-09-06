@@ -189,7 +189,7 @@ func RegisterTaskMeta(m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	})
 }
 
-func RegisterTaskMeta1(m *sync.Map, dispatcherHandle dispatcher.Extension) {
+func RegisterTaskMetaForExample2(m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample2,
 		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
@@ -211,7 +211,7 @@ func RegisterTaskMeta1(m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	})
 }
 
-func RegisterTaskMeta2(m *sync.Map, dispatcherHandle dispatcher.Extension) {
+func RegisterTaskMetaForExample3(m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample3,
 		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
@@ -548,13 +548,10 @@ func TestMultiTasks(t *testing.T) {
 
 	m := make([]sync.Map, num)
 	RegisterTaskMeta(&(m[0]), &testDispatcherExt{})
-	RegisterTaskMeta1(&(m[1]), &testDispatcherExt{})
-	RegisterTaskMeta2(&(m[2]), &testDispatcherExt{})
+	RegisterTaskMetaForExample2(&(m[1]), &testDispatcherExt{})
+	RegisterTaskMetaForExample3(&(m[2]), &testDispatcherExt{})
 
 	distContext := testkit.NewDistExecutionContext(t, 3)
-	dispatcher.MockOwnerChange = func() {
-		distContext.SetOwner(0)
-	}
 	tasks := DispatchMultiTasksAndOneFail(t, num, m)
 	require.Equal(t, proto.TaskStateReverted, tasks[0].State)
 	v, ok := m[0].Load("0")
