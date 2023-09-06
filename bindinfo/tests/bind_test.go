@@ -455,7 +455,7 @@ func TestBindingInListWithSingleLiteral(t *testing.T) {
 	require.Equal(t, "t:ib", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	require.True(t, tk.MustUseIndex(sqlcmd, "ib(b)"))
 
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 
 	// Normalize
 	sql, hash := parser.NormalizeDigestForBinding("select a, b from test . t where a in (1)")
