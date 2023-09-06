@@ -63,9 +63,6 @@ const (
 
 // Handle can update stats info periodically.
 type Handle struct {
-	// this gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
-	gpool *gp.Pool
-
 	pool sessionPool
 
 	// initStatsCtx is the ctx only used for initStats
@@ -73,6 +70,9 @@ type Handle struct {
 
 	// sysProcTracker is used to track sys process like analyze
 	sysProcTracker sessionctx.SysProcTracker
+
+	// this gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
+	gpool *gp.Pool
 
 	// autoAnalyzeProcIDGetter is used to generate auto analyze ID.
 	autoAnalyzeProcIDGetter func() uint64
@@ -92,6 +92,8 @@ type Handle struct {
 	// It can be read by multiple readers at the same time without acquiring lock, but it can be
 	// written only after acquiring the lock.
 	statsCache *cache.StatsCachePointer
+
+	autoanalyze *autoanalyze.AutoAnalyze
 
 	// globalMap contains all the delta map from collectors when we dump them to KV.
 	globalMap struct {
@@ -121,8 +123,7 @@ type Handle struct {
 		sync.RWMutex
 	}
 
-	lease       atomic2.Duration
-	autoanalyze *autoanalyze.AutoAnalyze
+	lease atomic2.Duration
 }
 
 func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
