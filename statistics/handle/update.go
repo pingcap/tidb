@@ -744,12 +744,16 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			if tblInfo.IsView() {
 				continue
 			}
+			if h.autoanalyze.IsRecentAnalyzedTables(tbl.Meta().ID) {
+				continue
+			}
 			pi := tblInfo.GetPartitionInfo()
 			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)
 				sql := "analyze table %n.%n"
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, autoAnalyzeRatio, analyzeSnapshot, sql, db, tblInfo.Name.O)
 				if analyzed {
+					h.autoanalyze.AddRecentAnalyzedTables(tbl.Meta().ID, time.Now())
 					// analyze one table at a time to let it get the freshest parameters.
 					// others will be analyzed next round which is just 3s later.
 					return true
@@ -759,20 +763,26 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			if pruneMode == variable.Dynamic {
 				analyzed := h.autoAnalyzePartitionTableInDynamicMode(tblInfo, pi, db, autoAnalyzeRatio, analyzeSnapshot)
 				if analyzed {
+					h.autoanalyze.AddRecentAnalyzedTables(tbl.Meta().ID, time.Now())
 					return true
 				}
 				continue
 			}
 			for _, def := range pi.Definitions {
+				if h.autoanalyze.IsRecentAnalyzedTables(def.ID) {
+					continue
+				}
 				sql := "analyze table %n.%n partition %n"
 				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, autoAnalyzeRatio, analyzeSnapshot, sql, db, tblInfo.Name.O, def.Name.O)
 				if analyzed {
+					h.autoanalyze.AddRecentAnalyzedTables(def.ID, time.Now())
 					return true
 				}
 			}
 		}
 	}
+	h.autoanalyze.GCRecentAnalyzedTables()
 	return false
 }
 

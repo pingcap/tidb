@@ -30,6 +30,7 @@ go_library(
         "//sessionctx/variable",
         "//sessiontxn",
         "//statistics",
+        "//statistics/handle/autoanalyze",
         "//statistics/handle/cache",
         "//statistics/handle/lockstats",
         "//statistics/handle/metrics",
