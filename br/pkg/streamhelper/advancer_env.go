@@ -150,13 +150,11 @@ type StreamMeta interface {
 var _ tikv.RegionLockResolver = &AdvancerLockResolver{}
 
 type AdvancerLockResolver struct {
-	store tikv.Storage
 	*tikv.BaseRegionLockResolver
 }
 
 func newAdvancerLockResolver(store tikv.Storage) *AdvancerLockResolver {
 	return &AdvancerLockResolver{
-		store:                  store,
 		BaseRegionLockResolver: tikv.NewRegionLockResolver("log backup advancer", store),
 	}
 }
