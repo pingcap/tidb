@@ -36,7 +36,7 @@ import (
 // PbTypeToFieldType converts tipb.FieldType to FieldType
 func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 	ftb := types.NewFieldTypeBuilder()
-	ft := ftb.SetType(byte(tp.Tp)).SetFlag(uint(tp.Flag)).SetFlen(int(tp.Flen)).SetDecimal(int(tp.Decimal)).SetCharset(tp.Charset).SetCollate(collate.ProtoToCollation(tp.Collate)).BuildP()
+	ft := ftb.SetType(byte(tp.Tp)).SetFlag(uint(tp.Flag)).SetFlen(int(tp.Flen)).SetDecimal(int(tp.Decimal)).SetCharset(tp.Charset).SetCollate(collate.ProtoToCollation(tp.Collate)).SetArray(tp.Array).BuildP()
 	ft.SetElems(tp.Elems)
 	return ft
 }

@@ -419,6 +419,7 @@ func ColumnToProto(c *model.ColumnInfo, forIndex bool) *tipb.ColumnInfo {
 		Decimal:   int32(c.GetDecimal()),
 		Flag:      int32(c.GetFlag()),
 		Elems:     c.GetElems(),
+		Array:     c.FieldType.IsArray(),
 	}
 	if forIndex {
 		// Use array type for read the multi-valued index.

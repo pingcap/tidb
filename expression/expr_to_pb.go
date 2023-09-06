@@ -164,6 +164,7 @@ func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 		Charset: ft.GetCharset(),
 		Collate: collate.CollationToProto(ft.GetCollate()),
 		Elems:   ft.GetElems(),
+		Array:   ft.IsArray(),
 	}
 }
 
@@ -176,8 +177,9 @@ func ToPBFieldTypeWithCheck(ft *types.FieldType, storeType kv.StoreType) (*tipb.
 }
 
 // FieldTypeFromPB converts *tipb.FieldType to *types.FieldType.
+// TODO: remove `FieldTypeFromPB` or `PbTypeToFieldType`, they are the same.
 func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
-	ft1 := types.NewFieldTypeBuilder().SetType(byte(ft.Tp)).SetFlag(uint(ft.Flag)).SetFlen(int(ft.Flen)).SetDecimal(int(ft.Decimal)).SetCharset(ft.Charset).SetCollate(collate.ProtoToCollation(ft.Collate)).BuildP()
+	ft1 := types.NewFieldTypeBuilder().SetType(byte(ft.Tp)).SetFlag(uint(ft.Flag)).SetFlen(int(ft.Flen)).SetDecimal(int(ft.Decimal)).SetCharset(ft.Charset).SetCollate(collate.ProtoToCollation(ft.Collate)).SetArray(ft.Array).BuildP()
 	ft1.SetElems(ft.Elems)
 	return ft1
 }
