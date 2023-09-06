@@ -265,10 +265,10 @@ func (d *ddl) startDispatchLoop() {
 	if d.etcdCli != nil {
 		notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
 	}
-	ticker := time.NewTicker(dispatchLoopWaitingDuration)
 	if err := d.checkAndUpdateClusterState(true); err != nil {
 		logutil.BgLogger().Fatal("dispatch loop get cluster state failed, it should not happen, please try restart TiDB", zap.Error(err))
 	}
+	ticker := time.NewTicker(dispatchLoopWaitingDuration)
 	defer ticker.Stop()
 	isOnce := false
 	for {
@@ -300,9 +300,6 @@ func (d *ddl) startDispatchLoop() {
 		isOnce = false
 		d.loadDDLJobAndRun(se, d.generalDDLWorkerPool, d.getGeneralJob)
 		d.loadDDLJobAndRun(se, d.reorgWorkerPool, d.getReorgJob)
-
-		// gc tidb_ddl_history
-		// set limitation
 	}
 }
 

@@ -405,3 +405,68 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(0), cnt)
 }
+
+func TestTransferFinishedSubTasks(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	sm := storage.NewTaskManager(context.Background(), pool)
+
+	storage.SetTaskManager(sm)
+	sm, err := storage.GetTaskManager()
+	require.NoError(t, err)
+
+	const (
+		taskID       = 1
+		subTask1     = 1
+		subTask2     = 2
+		subTask3     = 3
+		tidb1        = "tidb1"
+		tidb2        = "tidb2"
+		tidb3        = "tidb3"
+		meta         = "test"
+		finishedMeta = "finished"
+	)
+
+	require.NoError(t, sm.AddNewSubTask(taskID, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, false))
+	require.NoError(t, sm.FinishSubtask(subTask1, []byte(finishedMeta)))
+	require.NoError(t, sm.AddNewSubTask(taskID, proto.StepInit, tidb2, []byte(meta), proto.TaskTypeExample, false))
+	require.NoError(t, sm.UpdateSubtaskStateAndError(subTask2, proto.TaskStateCanceled, nil))
+	require.NoError(t, sm.AddNewSubTask(taskID, proto.StepInit, tidb3, []byte(meta), proto.TaskTypeExample, false))
+	require.NoError(t, sm.UpdateSubtaskStateAndError(subTask3, proto.TaskStateFailed, nil))
+
+	subTasks, err := sm.GetSubtasksByStep(taskID, proto.StepInit)
+	require.NoError(t, err)
+	require.Len(t, subTasks, 3)
+	historySubTasksCnt, err := storage.GetSubtasksFromHistoryForTest(sm)
+	require.NoError(t, err)
+	require.Equal(t, 0, historySubTasksCnt)
+
+	// test TransferSubTasks2History
+	err = sm.TransferSubTasks2History(taskID)
+	require.NoError(t, err)
+
+	subTasks, err = sm.GetSubtasksByStep(taskID, proto.StepInit)
+	require.NoError(t, err)
+	require.Len(t, subTasks, 0)
+
+	historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(sm)
+	require.NoError(t, err)
+	require.Equal(t, 3, historySubTasksCnt)
+
+	// test GC
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/SubtaskHistoryKeepDays", "return")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/SubtaskHistoryKeepDays"))
+	}()
+	time.Sleep(time.Second)
+	require.NoError(t, sm.GC())
+
+	historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(sm)
+	require.NoError(t, err)
+	require.Equal(t, 0, historySubTasksCnt)
+}

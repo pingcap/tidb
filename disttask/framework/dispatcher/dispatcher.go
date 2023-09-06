@@ -40,9 +40,11 @@ const (
 	MaxSubtaskConcurrency = 256
 	// DefaultLiveNodesCheckInterval is the tick interval of fetching all server infos from etcd.
 	DefaultLiveNodesCheckInterval = 2
+	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
+	defaultHistorySubtaskTableGcInterval = 10 * time.Minute
 )
 
-const (
+var (
 	// DefaultDispatchConcurrency is the default concurrency for handling task.
 	DefaultDispatchConcurrency = 4
 	checkTaskFinishedInterval  = 500 * time.Millisecond
@@ -50,7 +52,6 @@ const (
 	nonRetrySQLTime            = 1
 	retrySQLTimes              = variable.DefTiDBDDLErrorCountLimit
 	retrySQLInterval           = 500 * time.Millisecond
-	taskTableGcInterval        = 10 * time.Minute
 )
 
 // TaskHandle provides the interface for operations needed by Dispatcher.
@@ -160,7 +161,8 @@ func (d *dispatcher) scheduleTask() {
 				err = d.onRunning()
 			case proto.TaskStateSucceed, proto.TaskStateReverted, proto.TaskStateFailed:
 				logutil.Logger(d.logCtx).Info("schedule task, task is finished", zap.String("state", d.task.State))
-				// move all the subTask to subTask history table
+
+				err = d.onFinished()
 				return
 			}
 			if err != nil {
@@ -243,6 +245,11 @@ func (d *dispatcher) onRunning() error {
 	// Wait all subtasks in this stage finished.
 	d.impl.OnTick(d.ctx, d.task)
 	logutil.Logger(d.logCtx).Debug("on running state, this task keeps current state", zap.String("state", d.task.State))
+	return nil
+}
+
+func (d *dispatcher) onFinished() error {
+	d.taskMgr.TransferSubTasks2History(d.task.ID)
 	return nil
 }
 

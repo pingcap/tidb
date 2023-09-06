@@ -109,7 +109,7 @@ func NewManager(ctx context.Context, taskTable *storage.TaskManager, serverID st
 func (dm *Manager) Start() {
 	dm.wg.Run(dm.dispatchTaskLoop)
 	// run task/subtask history table gc
-	dm.wg.Run(dm.gcTaskTable)
+	dm.wg.Run(dm.gcSubtaskHistoryTable)
 	dm.inited = true
 }
 
@@ -176,14 +176,14 @@ func (dm *Manager) dispatchTaskLoop() {
 	}
 }
 
-func (dm *Manager) gcTaskTable() {
+func (dm *Manager) gcSubtaskHistoryTable() {
 	logutil.BgLogger().Info("task table gc loop start")
-	ticker := time.NewTicker(taskTableGcInterval)
+	ticker := time.NewTicker(defaultHistorySubtaskTableGcInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-dm.ctx.Done():
-			logutil.BgLogger().Info("task table gc loop exits", zap.Error(dm.ctx.Err()), zap.Int64("interval", int64(taskTableGcInterval)/1000000))
+			logutil.BgLogger().Info("task table gc loop exits", zap.Error(dm.ctx.Err()))
 			return
 		case <-ticker.C:
 			err := dm.taskMgr.GC()

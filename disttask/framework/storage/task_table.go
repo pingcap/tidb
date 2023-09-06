@@ -25,6 +25,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
@@ -35,6 +36,8 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
+
+const defaultSubtaskKeepDays = 7
 
 // SessionExecutor defines the interface for executing SQLs in a session.
 type SessionExecutor interface {
@@ -664,11 +667,81 @@ func (stm *TaskManager) GetSubtasksByStep(taskID, step int64) ([]*proto.Subtask,
 	return subtasks, nil
 }
 
-func (stm *TaskManager) GC() error {
-	// TODO:
-	// 1. gc tidb_background_subtask_history (TaskStateSucceed/TaskStateFailed/TaskStateRevertFailed)
-	// 2. gc corresponding task record from tidb_global_task
-	// 3. in one transaction
+// TransferSubTasks2History move all the finished subTask to tidb_background_subtask_history by taskID
+func (stm *TaskManager) TransferSubTasks2History(taskID int64) error {
+	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
+		rs, err := ExecSQL(stm.ctx, se, "select * from mysql.tidb_background_subtask where task_key = %?", taskID)
+		if err != nil {
+			return err
+		}
+		if len(rs) == 0 {
+			return nil
+		}
 
-	return nil
+		// delete taskID subtask
+		_, err = ExecSQL(stm.ctx, se, "delete from mysql.tidb_background_subtask where task_key = %?", taskID)
+		if err != nil {
+			return err
+		}
+
+		// build sql
+		args := make([]string, 0, rs[0].Len())
+		for i := 0; i < rs[0].Len(); i++ {
+			args = append(args, "%?")
+		}
+		argsStr := fmt.Sprintf("(%s)", strings.Join(args, ","))
+		args = make([]string, 0, len(rs))
+		for i := 0; i < len(rs); i++ {
+			args = append(args, argsStr)
+		}
+
+		sql := fmt.Sprintf("insert into mysql.tidb_background_subtask_history values %s", strings.Join(args, ","))
+		realArgs := make([]any, 0, len(rs)*rs[0].Len())
+		for _, r := range rs {
+			realArgs = append(realArgs, r.GetInt64(0))
+			realArgs = append(realArgs, r.GetInt64(1))
+			realArgs = append(realArgs, r.GetString(2))
+			realArgs = append(realArgs, r.GetString(3))
+			realArgs = append(realArgs, r.GetInt64(4))
+			realArgs = append(realArgs, r.GetInt64(5))
+			realArgs = append(realArgs, r.GetString(6))
+			if !r.IsNull(6) {
+				realArgs = append(realArgs, nil)
+			} else {
+				realArgs = append(realArgs, r.GetTime(7).String())
+			}
+			realArgs = append(realArgs, r.GetString(8))
+			realArgs = append(realArgs, r.GetBytes(9))
+			realArgs = append(realArgs, r.GetInt64(10))
+			realArgs = append(realArgs, r.GetInt64(11))
+			realArgs = append(realArgs, r.GetBytes(12))
+			realArgs = append(realArgs, r.GetBytes(13))
+			realArgs = append(realArgs, r.GetJSON(14).String())
+		}
+		log.Info("test", zap.Any("sql", sql), zap.Any("args", realArgs))
+		_, err = ExecSQL(stm.ctx, se, sql, realArgs...)
+		return err
+	})
+}
+
+func (stm *TaskManager) GC() error {
+	subtaskHistoryKeepDays := defaultSubtaskKeepDays
+	failpoint.Inject("SubtaskHistoryKeepDays", func() {
+		subtaskHistoryKeepDays = 0
+	})
+	_, err := stm.executeSQLWithNewSession(
+		stm.ctx,
+		fmt.Sprintf("DELETE FROM mysql.tidb_background_subtask_history WHERE state_update_time < UNIX_TIMESTAMP() - %d * 24 * 60 * 60;", subtaskHistoryKeepDays),
+	)
+	return err
+}
+
+// GetSubtasksFromHistoryForTest get the subtasks from tidb_background_subtask_history for test
+func GetSubtasksFromHistoryForTest(stm *TaskManager) (int, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx,
+		"select * from mysql.tidb_background_subtask_history")
+	if err != nil {
+		return 0, err
+	}
+	return len(rs), nil
 }
