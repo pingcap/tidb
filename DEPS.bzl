@@ -3703,19 +3703,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-<<<<<<< HEAD
-        sum = "h1:xL9X0pr5wZn8onnW6i98sf7KjaZmk0OIQnDhW1z+hRQ=",
-        version = "v2.0.4-0.20230817162610-e5fe1779769d",
-=======
-        sha256 = "9cf5877cb0b43d73140e280ad9c80dccd9684e89659a358ee75702469368cf95",
-        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20230829002846-295094e5b534",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20230829002846-295094e5b534.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20230829002846-295094e5b534.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20230829002846-295094e5b534.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20230829002846-295094e5b534.zip",
-        ],
->>>>>>> b524a2316f0 (client-go: attach request source with retry info for coprocessor (#46509))
+        sum = "h1:2W6QJ+Dh8SreeR4Z3xHXZLwdhIf1FHQwoMNBBBTn5Jg=",
+        version = "v2.0.4-0.20230905091602-cf19ede9ecd6",
     )
     go_repository(
         name = "com_github_tikv_pd_client",

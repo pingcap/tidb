@@ -269,14 +269,8 @@ type copTask struct {
 	RowCountHint     int // used for extra concurrency of small tasks, -1 for unknown row count
 	batchTaskList    map[uint64]*batchedCopTask
 	meetLockFallback bool
-<<<<<<< HEAD
-=======
-
-	// timeout value for one kv readonly request
-	tidbKvReadTimeout uint64
 	// firstReadType is used to indicate the type of first read when retrying.
 	firstReadType string
->>>>>>> b524a2316f0 (client-go: attach request source with retry info for coprocessor (#46509))
 }
 
 type batchedCopTask struct {
@@ -1023,14 +1017,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		RecordTimeStat: true,
 		RecordScanStat: true,
 		TaskId:         worker.req.TaskID,
-<<<<<<< HEAD
-		RequestSource:  task.requestSource.GetRequestSource(),
-=======
 		ResourceControlContext: &kvrpcpb.ResourceControlContext{
 			ResourceGroupName: worker.req.ResourceGroupName,
 		},
 		BusyThresholdMs: uint32(task.busyThreshold.Milliseconds()),
->>>>>>> b524a2316f0 (client-go: attach request source with retry info for coprocessor (#46509))
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
 	if task.firstReadType != "" {
