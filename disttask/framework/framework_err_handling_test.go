@@ -22,9 +22,9 @@ import (
 
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
+	"go.uber.org/mock/gomock"
 )
 
 type planErrDispatcherExt struct {
@@ -100,33 +100,33 @@ func (*planNotRetryableErrDispatcherExt) IsRetryableErr(error) bool {
 }
 
 func TestPlanErr(t *testing.T) {
-	defer dispatcher.ClearDispatcherFactory()
-	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 
-	RegisterTaskMeta(&m, &planErrDispatcherExt{0})
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &planErrDispatcherExt{0})
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess("key1", t, &m)
 	distContext.Close()
 }
 
 func TestRevertPlanErr(t *testing.T) {
-	defer dispatcher.ClearDispatcherFactory()
-	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 
-	RegisterTaskMeta(&m, &planErrDispatcherExt{0})
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &planErrDispatcherExt{0})
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess("key1", t, &m)
 	distContext.Close()
 }
 
 func TestPlanNotRetryableErr(t *testing.T) {
-	defer dispatcher.ClearDispatcherFactory()
-	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 
-	RegisterTaskMeta(&m, &planNotRetryableErrDispatcherExt{})
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &planNotRetryableErrDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateFailed)
 	distContext.Close()

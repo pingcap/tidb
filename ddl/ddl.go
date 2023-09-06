@@ -680,16 +680,11 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobCh:          make(chan struct{}, 100),
 	}
 
-	scheduler.RegisterTaskType("backfill")
-	scheduler.RegisterSchedulerConstructor("backfill", proto.StepOne,
-		func(ctx context.Context, task *proto.Task, summary *scheduler.Summary) (scheduler.Scheduler, error) {
-			return NewBackfillSchedulerHandle(ctx, task.Meta, d, task.Step == proto.StepTwo, summary)
-		}, scheduler.WithSummary)
-
-	scheduler.RegisterSchedulerConstructor("backfill", proto.StepTwo,
-		func(ctx context.Context, task *proto.Task, summary *scheduler.Summary) (scheduler.Scheduler, error) {
-			return NewBackfillSchedulerHandle(ctx, task.Meta, d, task.Step == proto.StepTwo, nil)
-		})
+	scheduler.RegisterTaskType(BackfillTaskType,
+		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool) scheduler.Scheduler {
+			return newBackfillDistScheduler(ctx, id, taskID, taskTable, pool, d)
+		}, scheduler.WithSummary,
+	)
 
 	backFillDsp, err := NewBackfillingDispatcherExt(d)
 	if err != nil {
@@ -698,14 +693,6 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		dispatcher.RegisterDispatcherFactory(BackfillTaskType,
 			func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 				return newLitBackfillDispatcher(ctx, taskMgr, serverID, task, backFillDsp)
-			})
-		scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepOne,
-			func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
-				return &scheduler.EmptyExecutor{}, nil
-			})
-		scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepTwo,
-			func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
-				return &scheduler.EmptyExecutor{}, nil
 			})
 	}
 
