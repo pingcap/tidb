@@ -34,39 +34,34 @@ func TestGetTablesLockedStatuses(t *testing.T) {
 		name        string
 		tableLocked map[int64]struct{}
 		tableIDs    []int64
-		want        map[int64]bool
+		want        map[int64]struct{}
 	}{
 		{
 			name:        "not locked",
 			tableLocked: map[int64]struct{}{},
 			tableIDs:    []int64{1, 2, 3},
-			want: map[int64]bool{
-				1: false,
-				2: false,
-				3: false,
-			},
+			want:        map[int64]struct{}{},
 		},
 		{
 			name:        "locked",
 			tableLocked: map[int64]struct{}{1: {}, 2: {}},
 			tableIDs:    []int64{1, 2, 3},
-			want: map[int64]bool{
-				1: true,
-				2: true,
-				3: false,
+			want: map[int64]struct{}{
+				1: {},
+				2: {},
 			},
 		},
 		{
 			name:        "empty",
 			tableLocked: map[int64]struct{}{},
 			tableIDs:    []int64{},
-			want:        map[int64]bool{},
+			want:        map[int64]struct{}{},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := GetTablesLockedStatuses(tt.tableLocked, tt.tableIDs...)
+			got := GetLockedTables(tt.tableLocked, tt.tableIDs...)
 			require.Equal(t, tt.want, got)
 		})
 	}

@@ -54,15 +54,15 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 	return lockstats.RemoveLockedTables(exec, tids, pids, tables)
 }
 
-// QueryTablesLockedStatuses query whether table is locked.
+// GetLockedTables returns the locked status of the given tables.
 // Note: This function query locked tables from store, so please try to batch the query.
-func (h *Handle) QueryTablesLockedStatuses(tableIDs ...int64) (map[int64]bool, error) {
+func (h *Handle) GetLockedTables(tableIDs ...int64) (map[int64]struct{}, error) {
 	tableLocked, err := h.queryLockedTables()
 	if err != nil {
 		return nil, err
 	}
 
-	return lockstats.GetTablesLockedStatuses(tableLocked, tableIDs...), nil
+	return lockstats.GetLockedTables(tableLocked, tableIDs...), nil
 }
 
 // queryLockedTables query locked tables from store.

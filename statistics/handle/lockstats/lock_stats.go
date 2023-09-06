@@ -69,9 +69,9 @@ func AddLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids []in
 	statsLogger.Info("lock table", zap.Int64s("tableIDs", tids))
 
 	// Insert locked tables.
-	lockedStatuses := GetTablesLockedStatuses(lockedTables, tids...)
+	checkedTables := GetLockedTables(lockedTables, tids...)
 	for i, tid := range tids {
-		if !lockedStatuses[tid] {
+		if _, ok := checkedTables[tid]; !ok {
 			if err := insertIntoStatsTableLocked(ctx, exec, tid); err != nil {
 				return "", err
 			}
@@ -81,9 +81,9 @@ func AddLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids []in
 	}
 
 	// Insert related partitions while don't warning duplicate partitions.
-	lockedStatuses = GetTablesLockedStatuses(lockedTables, pids...)
+	checkedTables = GetLockedTables(lockedTables, pids...)
 	for _, pid := range pids {
-		if !lockedStatuses[pid] {
+		if _, ok := checkedTables[pid]; !ok {
 			if err := insertIntoStatsTableLocked(ctx, exec, pid); err != nil {
 				return "", err
 			}
