@@ -93,7 +93,7 @@ http_archive(
     name = "remote_java_tools",
     sha256 = "f58a358ca694a41416a9b6a92b852935ad301d8882e5d22f4f11134f035317d5",
     urls = [
-            "http://bazel-cache.pingcap.net:8080/bazelbuild/java_tools/releases/download/java_v12.6/java_tools-v12.6.zip",
+            "http://bazel-cache.pingcap.net:8080/bazel_java_tools/releases/download/java_v12.6/java_tools-v12.6.zip",
             "http://ats.apps.svc/bazel_java_tools/releases/java/v12.6/java_tools-v12.6.zip",
             "https://mirror.bazel.build/bazel_java_tools/releases/java/v12.6/java_tools-v12.6.zip",
             "https://github.com/bazelbuild/java_tools/releases/download/java_v12.6/java_tools-v12.6.zip",
@@ -104,7 +104,7 @@ http_archive(
     name = "remote_java_tools_linux",
     sha256 = "64294e91fe940c77e6d35818b4c3a1f07d78e33add01e330188d907032687066",
     urls = [
-            "http://bazel-cache.pingcap.net:8080/bazelbuild/java_tools/releases/download/java_v12.6/java_tools_linux-v12.6.zip",
+            "http://bazel-cache.pingcap.net:8080/bazel_java_tools/releases/download/java_v12.6/java_tools_linux-v12.6.zip",
             "http://ats.apps.svc/bazel_java_tools/releases/java/v12.6/java_tools_linux-v12.6.zip",
             "https://mirror.bazel.build/bazel_java_tools/releases/java/v12.6/java_tools_linux-v12.6.zip",
             "https://github.com/bazelbuild/java_tools/releases/download/java_v12.6/java_tools_linux-v12.6.zip",
