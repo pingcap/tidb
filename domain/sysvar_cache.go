@@ -158,6 +158,6 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 	defer do.sysVarCache.Unlock()
 	do.sysVarCache.session = newSessionCache
 	do.sysVarCache.global = newGlobalCache
-	do.infoCache.ReSize(int(variable.InfoSchemaCacheSize.Load()))
+	do.infoCache.ReSize(int(variable.SchemaVersionCacheLimit.Load()))
 	return nil
 }

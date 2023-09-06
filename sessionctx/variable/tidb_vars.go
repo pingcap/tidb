@@ -907,8 +907,8 @@ const (
 	PasswordReuseHistory = "password_history"
 	// PasswordReuseTime limit how long passwords can be reused.
 	PasswordReuseTime = "password_reuse_interval"
-	// TiDBInfoSchemaCacheSize defines the capacity size of domain infoSchema cache.
-	TiDBInfoSchemaCacheSize = "tidb_info_schema_cache_size"
+	// TiDBSchemaVersionCacheLimit defines the capacity size of domain infoSchema cache.
+	TiDBSchemaVersionCacheLimit = "tidb_schema_version_cache_limit"
 )
 
 // TiDB intentional limits
@@ -1169,7 +1169,7 @@ const (
 	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                        = 4
 	DefTiDBTTLDeleteWorkerCount                      = 4
-	DefTiDBInfoSchemaCacheSize                       = 64
+	DefTiDBSchemaVersionCacheLimit                   = 64
 )
 
 // Process global variables.
@@ -1245,7 +1245,7 @@ var (
 	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled               = atomic.NewBool(false)
 	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
-	InfoSchemaCacheSize                = atomic.NewInt64(DefTiDBInfoSchemaCacheSize)
+	SchemaVersionCacheLimit            = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 )
 
 var (
