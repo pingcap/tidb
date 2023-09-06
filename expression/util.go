@@ -19,7 +19,6 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/binary"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"math"
 	"sort"
 	"strconv"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1829,7 +1829,7 @@ func SortAndGenMD5HashForCNFExprs(sc *stmtctx.StatementContext, conditions []Exp
 	}
 	sort.Slice(cnfHashCodes, func(i, j int) bool { return bytes.Compare(cnfHashCodes[i], cnfHashCodes[j]) < 0 })
 	flatCnfHashCode := bytes.Join(cnfHashCodes, []byte(","))
-	md5Sum := md5.Sum(flatCnfHashCode)
+	md5Sum := md5.Sum(flatCnfHashCode) // #nosec
 	firstHalf := binary.BigEndian.Uint64(md5Sum[:8])
 	secondHalf := binary.BigEndian.Uint64(md5Sum[8:])
 	finalHash := firstHalf ^ secondHalf
@@ -1839,7 +1839,7 @@ func SortAndGenMD5HashForCNFExprs(sc *stmtctx.StatementContext, conditions []Exp
 func checkHashLengthAndAppend(hashCode []byte, hashCodes [][]byte) [][]byte {
 	if len(hashCode) > 256 {
 		/// Avoid large hash code here
-		newHashCode := md5.Sum(hashCode)
+		newHashCode := md5.Sum(hashCode) // #nosec
 		hashCodes = append(hashCodes, newHashCode[:])
 	} else {
 		hashCodes = append(hashCodes, hashCode)
