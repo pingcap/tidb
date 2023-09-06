@@ -5,6 +5,7 @@ package streamhelper
 import (
 	"bytes"
 	"context"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +20,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -62,7 +66,8 @@ type CheckpointAdvancer struct {
 
 	// the cached last checkpoint.
 	// if no progress, this cache can help us don't to send useless requests.
-	lastCheckpoint *checkpoint
+	lastCheckpoint   *checkpoint
+	lastCheckpointMu sync.Mutex
 
 	checkpoints   *spans.ValueSortedFull
 	checkpointsMu sync.Mutex
@@ -74,6 +79,7 @@ type CheckpointAdvancer struct {
 // checkpoint represents the TS with specific range.
 // it's only used in advancer.go.
 type checkpoint struct {
+	sync.Mutex
 	StartKey []byte
 	EndKey   []byte
 	TS       uint64
@@ -97,10 +103,6 @@ func NewCheckpointWithSpan(s spans.Valued) *checkpoint {
 		TS:              s.Value,
 		resolveLockTime: time.Now(),
 	}
-}
-
-func (c *checkpoint) UpdateResolveLockTime(t time.Time) {
-	c.resolveLockTime = t
 }
 
 func (c *checkpoint) safeTS() uint64 {
@@ -145,9 +147,11 @@ func (c *CheckpointAdvancer) UpdateConfigWith(f func(*config.Config)) {
 	c.UpdateConfig(cfg)
 }
 
-// only used for test
+// UpdateLastCheckpoint modify the checkpoint in ticking.
 func (c *CheckpointAdvancer) UpdateLastCheckpoint(p *checkpoint) {
+	c.lastCheckpointMu.Lock()
 	c.lastCheckpoint = p
+	c.lastCheckpointMu.Unlock()
 }
 
 // Config returns the current config.
@@ -402,7 +406,7 @@ func (c *CheckpointAdvancer) setCheckpoint(ctx context.Context, s spans.Valued) 
 	if cp.equal(c.lastCheckpoint) {
 		return false
 	}
-	c.lastCheckpoint = cp
+	c.UpdateLastCheckpoint(cp)
 	metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint.TS))
 	return true
 }
@@ -496,6 +500,25 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 }
 
 func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
+	// lastCheckpoint is not increased too long enough.
+	// assume the cluster has expired locks for whatever reasons.
+	var targets []spans.Valued
+	if c.lastCheckpoint != nil && c.lastCheckpoint.needResolveLocks() {
+		c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
+			// when get locks here. assume these locks are not belong to same txn,
+			// but these locks' start ts are close to 1 minute. try resolve these locks at one time
+			vsf.TraverseValuesLessThan(tsoAfter(c.lastCheckpoint.TS, time.Minute), func(v spans.Valued) bool {
+				targets = append(targets, v)
+				return true
+			})
+		})
+		if len(targets) != 0 {
+			log.Info("Advancer starts to resolve locks", zap.Int("targets", len(targets)))
+			// use new context here to avoid timeout
+			ctx := context.Background()
+			c.asyncResolveLocksForRanges(ctx, targets)
+		}
+	}
 	threshold := c.Config().GetDefaultStartPollThreshold()
 	if err := c.subscribeTick(cx); err != nil {
 		log.Warn("Subscriber meet error, would polling the checkpoint.", zap.String("category", "log backup advancer"),
@@ -503,13 +526,9 @@ func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
 		threshold = c.Config().GetSubscriberErrorStartPollThreshold()
 	}
 
-	err := c.advanceCheckpointBy(cx, func(cx context.Context) (spans.Valued, error) {
+	return c.advanceCheckpointBy(cx, func(cx context.Context) (spans.Valued, error) {
 		return c.CalculateGlobalCheckpointLight(cx, threshold)
 	})
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func (c *CheckpointAdvancer) tick(ctx context.Context) error {
@@ -537,4 +556,47 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 	}
 
 	return errs
+}
+
+func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, targets []spans.Valued) {
+	// run in another goroutine
+	// do not block main tick here
+	go func() {
+		handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
+			// we will scan all locks and try to resolve them by check txn status.
+			return tikv.ResolveLocksForRange(
+				ctx, c.env, math.MaxUint64, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, tikv.GCScanLockLimit)
+		}
+		workerPool := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
+		var wg sync.WaitGroup
+		for _, r := range targets {
+			targetRange := r
+			wg.Add(1)
+			workerPool.Apply(func() {
+				defer wg.Done()
+				// Run resolve lock on the whole TiKV cluster.
+				// it will use startKey/endKey to scan region in PD.
+				// but regionCache already has a codecPDClient. so just use decode key here.
+				// and it almost only include one region here. so set concurrency to 1.
+				runner := rangetask.NewRangeTaskRunner("advancer-resolve-locks-runner",
+					c.env.GetStore(), 1, handler)
+				err := runner.RunOnRange(ctx, targetRange.Key.StartKey, targetRange.Key.EndKey)
+				if err != nil {
+					// wait for next tick
+					log.Warn("resolve locks failed, wait for next tick", zap.String("category", "advancer"),
+						zap.String("uuid", "log backup advancer"),
+						zap.Error(err))
+				}
+			})
+		}
+		wg.Wait()
+		log.Info("finish resolve locks for checkpoint", zap.String("category", "advancer"),
+			zap.String("uuid", "log backup advancer"),
+			logutil.Key("StartKey", c.lastCheckpoint.StartKey),
+			logutil.Key("EndKey", c.lastCheckpoint.EndKey),
+			zap.Int("targets", len(targets)))
+		c.lastCheckpointMu.Lock()
+		c.lastCheckpoint.resolveLockTime = time.Now()
+		c.lastCheckpointMu.Unlock()
+	}()
 }

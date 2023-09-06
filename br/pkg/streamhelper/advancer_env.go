@@ -174,5 +174,5 @@ func (l *AdvancerLockResolver) ResolveLocksInOneRegion(
 
 // If we don't implement GetStore here, it won't complie.
 func (l *AdvancerLockResolver) GetStore() tikv.Storage {
-	return l.store
+	return l.BaseRegionLockResolver.GetStore()
 }

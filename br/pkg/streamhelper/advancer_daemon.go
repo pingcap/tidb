@@ -4,24 +4,14 @@ package streamhelper
 
 import (
 	"context"
-	"math"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
-	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
-	tikvstore "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
 )
 
 const (
@@ -55,68 +45,6 @@ func (c *CheckpointAdvancer) OnStart(ctx context.Context) {
 func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 	metrics.AdvancerOwner.Set(1.0)
 	c.spawnSubscriptionHandler(ctx)
-	go func() {
-		t := resolveLockTickTime()
-		tick := time.NewTicker(t)
-		defer tick.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				// no longger be an owner. return it.
-				return
-			case <-tick.C:
-				{
-					// lastCheckpoint is not increased too long enough.
-					// assume the cluster has expired locks for whatever reasons.
-					if c.lastCheckpoint != nil && c.lastCheckpoint.needResolveLocks() {
-						var targets []spans.Valued
-						c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
-							// when get locks here. assume these locks are not belong to same txn,
-							// but these locks' start ts are close to 1 minute. try resolve these locks at one time
-							vsf.TraverseValuesLessThan(tsoAfter(c.lastCheckpoint.TS, time.Minute), func(v spans.Valued) bool {
-								targets = append(targets, v)
-								return true
-							})
-						})
-						handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-							// we will scan all locks and try to resolve them by check txn status.
-							return tikv.ResolveLocksForRange(
-								ctx, c.env, math.MaxUint64, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, tikv.GCScanLockLimit)
-						}
-						workerPool := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
-						var wg sync.WaitGroup
-						for _, r := range targets {
-							targetRange := r
-							wg.Add(1)
-							workerPool.Apply(func() {
-								defer wg.Done()
-								// Run resolve lock on the whole TiKV cluster.
-								// it will use startKey/endKey to scan region in PD.
-								// but regionCache already has a codecPDClient. so just use decode key here.
-								// and it almost only include one region here. so set concurrency to 1.
-								runner := rangetask.NewRangeTaskRunner("advancer-resolve-locks-runner",
-									c.env.GetStore(), 1, handler)
-								err := runner.RunOnRange(ctx, targetRange.Key.StartKey, targetRange.Key.EndKey)
-								if err != nil {
-									// wait for next tick
-									log.Error("resolve locks failed", zap.String("category", "advancer"),
-										zap.String("uuid", "log backup advancer"),
-										zap.Error(err))
-								}
-							})
-						}
-						wg.Wait()
-						log.Info("finish resolve locks for checkpoint", zap.String("category", "advancer"),
-							zap.String("uuid", "log backup advancer"),
-							logutil.Key("StartKey", c.lastCheckpoint.StartKey),
-							logutil.Key("EndKey", c.lastCheckpoint.EndKey),
-							zap.Int("targets", len(targets)))
-						c.lastCheckpoint.UpdateResolveLockTime(time.Now())
-					}
-				}
-			}
-		}
-	}()
 	go func() {
 		<-ctx.Done()
 		c.onStop()
