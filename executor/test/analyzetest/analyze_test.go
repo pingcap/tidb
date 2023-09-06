@@ -2180,8 +2180,10 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
 	handle.AutoAnalyzeMinCnt = 0
+	autoanalyze.DisableAutoAnalyzeIntervalForTest = true
 	defer func() {
 		handle.AutoAnalyzeMinCnt = 1000
+		autoanalyze.DisableAutoAnalyzeIntervalForTest = false
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
