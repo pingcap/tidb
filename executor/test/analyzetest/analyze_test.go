@@ -2266,7 +2266,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 	handle.AutoAnalyzeMinCnt = 0
 	autoanalyze.DisableAutoAnalyzeIntervalForTest = true
 	defer func() {
-		autoanalyze.DisableAutoAnalyzeIntervalForTest = falseit
+		autoanalyze.DisableAutoAnalyzeIntervalForTest = false
 		handle.AutoAnalyzeMinCnt = 1000
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
