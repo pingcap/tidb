@@ -231,7 +231,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		hist.RemoveVals(topn.TopN)
 	}
 	if statsVer == statistics.Version2 {
-		hist.StandardizeForV2Analyze()
+		hist.StandardizeForV2AnalyzeIndex()
 	}
 	if needCMS && cms != nil {
 		cms.CalcDefaultValForAnalyze(uint64(hist.NDV))

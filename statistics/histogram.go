@@ -337,26 +337,37 @@ func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
 	}
 }
 
-func (hg *Histogram) StandardizeForV2Analyze() {
+// StandardizeForV2AnalyzeIndex fixes some "irregular" places in the Histogram, which come from current implementation of
+// analyze index task in v2.
+// For now, it does two things: 1. Remove empty buckets. 2. Reset Bucket.NDV to 0.
+func (hg *Histogram) StandardizeForV2AnalyzeIndex() {
 	if hg == nil || len(hg.Buckets) == 0 {
 		return
 	}
-
 	// Note that hg.Buckets is []Bucket instead of []*Bucket, so we try to avoid extra memory allocation for the
 	// struct Bucket in the process below.
+
+	// remainedBktIdxs are the positions of the eventually remained buckets in the original hg.Buckets slice.
 	remainedBktIdxs := make([]int, 0, len(hg.Buckets))
+	// We use two pointers here.
+	// checkingIdx is the "fast" one, and it iterates through the hg.Buckets to check if they are empty one by one.
+	// When we find a non-empty bucket, we move it to the position where nextRemainedBktIdx, which is the "slow"
+	// pointer, points to.
 	nextRemainedBktIdx := 0
 	for checkingIdx := range hg.Buckets {
 		if hg.Buckets[checkingIdx].Count <= 0 && hg.Buckets[checkingIdx].Repeat <= 0 {
 			continue
 		}
 		remainedBktIdxs = append(remainedBktIdxs, checkingIdx)
-		hg.Buckets[nextRemainedBktIdx] = hg.Buckets[checkingIdx]
+		if nextRemainedBktIdx != checkingIdx {
+			hg.Buckets[nextRemainedBktIdx] = hg.Buckets[checkingIdx]
+		}
 		hg.Buckets[nextRemainedBktIdx].NDV = 0
 		nextRemainedBktIdx++
 	}
 	hg.Buckets = hg.Buckets[:nextRemainedBktIdx]
 
+	// Get the new Bounds from the original Bounds according to the indexes we collect.
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.Tp}, len(remainedBktIdxs))
 	for _, i := range remainedBktIdxs {
 		c.AppendDatum(0, hg.GetLower(i))
