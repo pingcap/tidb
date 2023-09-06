@@ -15,7 +15,6 @@ go_test(
         "//domain",
         "//infoschema",
         "//kv",
-        "//meta/autoid",
         "//parser/model",
         "//testkit",
         "//tests/realtikvtest",
@@ -23,6 +22,5 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
-        "@io_etcd_go_etcd_client_v3//:client",
     ],
 )
