@@ -3530,8 +3530,12 @@ func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 
 // GetTidbKvReadTimeout returns readonly kv request timeout, prefer query hint over session variable
 func (s *SessionVars) GetTidbKvReadTimeout() uint64 {
-	if s.StmtCtx.HasTidbKvReadTimeout {
-		return s.StmtCtx.TidbKvReadTimeout
+	val, ok := s.stmtVars[TidbKvReadTimeout]
+	if ok {
+		timeout, err := strconv.ParseUint(val, 10, 64)
+		if err == nil {
+			return timeout
+		}
 	}
 	return s.TidbKvReadTimeout
 }

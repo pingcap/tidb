@@ -569,19 +569,19 @@ func TestTidbKvReadTimeout(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCDeadlineExceeded"))
 	}()
 	// Test for point_get request
-	rows := tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where a = 1").Rows()
+	rows := tk.MustQuery("explain analyze select /*+ set_var(tidb_kv_read_timeout=1) */ * from t where a = 1").Rows()
 	require.Len(t, rows, 1)
 	explain := fmt.Sprintf("%v", rows[0])
 	require.Regexp(t, ".*Point_Get.* Get:{num_rpc:2, total_time:.*", explain)
 
 	// Test for batch_point_get request
-	rows = tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where a in (1,2)").Rows()
+	rows = tk.MustQuery("explain analyze select /*+ set_var(tidb_kv_read_timeout=1) */ * from t where a in (1,2)").Rows()
 	require.Len(t, rows, 1)
 	explain = fmt.Sprintf("%v", rows[0])
 	require.Regexp(t, ".*Batch_Point_Get.* BatchGet:{num_rpc:2, total_time:.*", explain)
 
 	// Test for cop request
-	rows = tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t where b > 1").Rows()
+	rows = tk.MustQuery("explain analyze select /*+ set_var(tidb_kv_read_timeout=1) */ * from t where b > 1").Rows()
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
 	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
@@ -589,7 +589,7 @@ func TestTidbKvReadTimeout(t *testing.T) {
 	// Test for stale read.
 	tk.MustExec("set @a=now(6);")
 	tk.MustExec("set @@tidb_replica_read='closest-replicas';")
-	rows = tk.MustQuery("explain analyze select /*+ tidb_kv_read_timeout(1) */ * from t as of timestamp(@a) where b > 1").Rows()
+	rows = tk.MustQuery("explain analyze select /*+ set_var(tidb_kv_read_timeout=1) */ * from t as of timestamp(@a) where b > 1").Rows()
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
 	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 2.*", explain)

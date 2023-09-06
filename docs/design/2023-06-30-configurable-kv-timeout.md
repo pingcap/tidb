@@ -35,7 +35,7 @@ timeout values of specific KV requests configurable. For example:
 TiKV read RPC request. When the user sets the value of this variable, all read RPC request timeouts will use this value. 
 The default value of this variable is 0, and the timeout of TiKV read RPC requests is still the original 
 value of `ReadTimeoutShort` and `ReadTimeoutMedium`.
-- Adding statement level hint like `SELECT /*+ tidb_kv_read_timeout(500ms) */ * FROM t where id = ?;` to
+- Support statement level hint like `SELECT /*+ set_var(tidb_kv_read_timeout=500) */ * FROM t where id = ?;` to
 set the timeout value of the KV requests of this single query to the certain value.
 
 ### Example Usage
@@ -48,7 +48,7 @@ set @@tidb_read_staleness=-5;
 set @@tidb_tikv_tidb_timeout=500;
 select * from t where id = 1;
 # The unit is miliseconds. The query hint usage.
-select /*+ tidb_kv_read_timeout(500ms) */ * FROM t where id = 1;
+select /*+ set_var(tidb_kv_read_timeout=500) */ * FROM t where id = 1;
 ```
 
 ### Problems

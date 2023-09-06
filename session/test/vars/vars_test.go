@@ -338,7 +338,7 @@ func TestSetVarHint(t *testing.T) {
 	tk.MustQuery("SELECT @@tidb_kv_read_timeout;").Check(testkit.Rows("0"))
 
 	tk.MustExec("set @@tidb_kv_read_timeout = 5")
-	tk.MustQuery("SELECT /*+ tidb_kv_read_timeout(1) */ @@tidb_kv_read_timeout;").Check(testkit.Rows("5"))
+	tk.MustQuery("SELECT /*+ set_var(tidb_kv_read_timeout=1) */ @@tidb_kv_read_timeout;").Check(testkit.Rows("1"))
 	require.Equal(t, tk.Session().GetSessionVars().GetTidbKvReadTimeout(), uint64(1))
 	tk.MustQuery("SELECT @@tidb_kv_read_timeout;").Check(testkit.Rows("5"))
 	require.Equal(t, tk.Session().GetSessionVars().GetTidbKvReadTimeout(), uint64(5))
