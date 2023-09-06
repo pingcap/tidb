@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -441,7 +441,7 @@ func (d *BaseDispatcher) handlePlanErr(err error) error {
 func GenerateSchedulerNodes(ctx context.Context) (serverNodes []*infosync.ServerInfo, err error) {
 	var serverInfos map[string]*infosync.ServerInfo
 	_, etcd := ctx.Value("etcd").(bool)
-	if intest.InTest && !etcd {
+	if testing.Testing() && !etcd {
 		serverInfos = infosync.MockGlobalServerInfoManagerEntry.GetAllServerInfo()
 	} else {
 		serverInfos, err = infosync.GetAllServerInfo(ctx)
