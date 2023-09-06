@@ -408,7 +408,7 @@ func TestFunctionEncodeSQLDigest(t *testing.T) {
 	q2 := "select @@tidb_current_ts"
 	digest2 := parser.DigestHash(q2)
 	q3 := "select id, v from test_func_decode_sql_digests where id = 1 for update"
-	digest3 := parser.DigestHash(q3, false)
+	digest3 := parser.DigestHash(q3)
 
 	tk.MustQuery(fmt.Sprintf("select tidb_encode_sql_digest(\"%s\")", q1)).Check(testkit.Rows(digest1.String()))
 	tk.MustQuery(fmt.Sprintf("select tidb_encode_sql_digest(\"%s\")", q2)).Check(testkit.Rows(digest2.String()))

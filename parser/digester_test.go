@@ -197,7 +197,7 @@ func TestDigestHashNotEqForSimpleSQL(t *testing.T) {
 	for _, sqlGroup := range sqlGroups {
 		var d string
 		for _, sql := range sqlGroup {
-			dig := parser.DigestHash(sql, false)
+			dig := parser.DigestHash(sql)
 			if d == "" {
 				d = dig.String()
 				continue
