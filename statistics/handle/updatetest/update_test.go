@@ -358,6 +358,10 @@ func TestUpdatePartition(t *testing.T) {
 func TestAutoUpdate(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
+	autoanalyze.DisableAutoAnalyzeIntervalForTest = true
+	defer func() {
+		autoanalyze.DisableAutoAnalyzeIntervalForTest = false
+	}()
 	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
 		testKit.MustExec("create table t (a varchar(20))")
