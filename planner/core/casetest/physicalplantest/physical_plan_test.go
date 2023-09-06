@@ -2608,6 +2608,8 @@ func TestIndexMergeSinkLimit(t *testing.T) {
 	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec(" CREATE TABLE `t2` (  `a` int(11) DEFAULT NULL,  `b` int(11) DEFAULT NULL,  `c` int(11) DEFAULT NULL,  KEY `a` (`a`),  KEY `b` (`b`)) ")
 	tk.MustExec("insert into t2 values(1,2,1),(2,1,1),(3,3,1)")
+	tk.MustExec("create table t(a int, j json, index kj((cast(j as signed array))))")
+	tk.MustExec("insert into t values(1, '[1,2,3]')")
 
 	for i, ts := range input {
 		testdata.OnRecord(func() {
