@@ -3536,6 +3536,8 @@ func (s *SessionVars) GetTiKVClientReadTimeout() uint64 {
 		if err == nil {
 			return timeout
 		}
+		// Normally, we should not go into this branch, because we have checked the type of the variable in `SetStmtVar`.
+		// So just ignore the error here.
 	}
 	return s.TiKVClientReadTimeout
 }
