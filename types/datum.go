@@ -1159,10 +1159,18 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 		}
 	case KindMysqlDuration:
 		dec := d.GetMysqlDuration().ToNumber()
+<<<<<<< HEAD
 		err = dec.Round(dec, 0, ModeHalfEven)
 		ival, err1 := dec.ToInt()
 		if err1 == nil {
 			val, err = ConvertIntToUint(sc, ival, upperBound, tp)
+=======
+		err = dec.Round(dec, 0, ModeHalfUp)
+		var err1 error
+		val, err1 = ConvertDecimalToUint(sc, dec, upperBound, tp)
+		if err == nil {
+			err = err1
+>>>>>>> ca696229234 (expression: fix wrong result for unsigned non-const int cmp const duration (#46620))
 		}
 	case KindMysqlDecimal:
 		val, err = ConvertDecimalToUint(sc, d.GetMysqlDecimal(), upperBound, tp)
