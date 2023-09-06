@@ -36,42 +36,41 @@ type taskMetrics struct {
 // there might be a better way to do this.
 type taskMetricManager struct {
 	sync.RWMutex
-	metricsMap map[string]*taskMetrics
+	metricsMap map[int64]*taskMetrics
 }
 
 var metricsManager = &taskMetricManager{
-	metricsMap: make(map[string]*taskMetrics),
+	metricsMap: make(map[int64]*taskMetrics),
 }
 
 func (m *taskMetricManager) getMetrics(taskID int64) *metric.Common {
 	m.Lock()
 	defer m.Unlock()
-	key := strconv.FormatInt(taskID, 10)
-	metrics := tidbmetrics.GetRegisteredImportMetrics(promutil.NewDefaultFactory(),
-		prometheus.Labels{
-			proto.TaskIDLabelName: key,
-		})
-	if tm, ok := m.metricsMap[key]; !ok {
+	tm, ok := m.metricsMap[taskID]
+	if !ok {
+		metrics := tidbmetrics.GetRegisteredImportMetrics(promutil.NewDefaultFactory(),
+			prometheus.Labels{
+				proto.TaskIDLabelName: strconv.FormatInt(taskID, 10),
+			})
 		tm = &taskMetrics{
 			metrics: metrics,
-			counter: 1,
 		}
-		m.metricsMap[key] = tm
-	} else {
-		tm.counter++
+		m.metricsMap[taskID] = tm
 	}
-	return metrics
+
+	tm.counter++
+
+	return tm.metrics
 }
 
 func (m *taskMetricManager) unregister(taskID int64) {
 	m.Lock()
 	defer m.Unlock()
-	key := strconv.FormatInt(taskID, 10)
-	if tm, ok := m.metricsMap[key]; ok {
+	if tm, ok := m.metricsMap[taskID]; ok {
 		tm.counter--
 		if tm.counter == 0 {
 			tidbmetrics.UnregisterImportMetrics(tm.metrics)
-			delete(m.metricsMap, key)
+			delete(m.metricsMap, taskID)
 		}
 	}
 }
