@@ -83,4 +83,5 @@ type AnalyzeResults struct {
 	BaseCount int64
 	// BaseModifyCnt is the original modify_count in mysql.stats_meta at the beginning of analyze.
 	BaseModifyCnt int64
+	ForMVIndex    bool
 }

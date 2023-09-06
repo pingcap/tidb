@@ -337,6 +337,34 @@ func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
 	}
 }
 
+func (hg *Histogram) StandardizeForV2Analyze() {
+	if hg == nil || len(hg.Buckets) == 0 {
+		return
+	}
+
+	// Note that hg.Buckets is []Bucket instead of []*Bucket, so we try to avoid extra memory allocation for the
+	// struct Bucket in the process below.
+	remainedBktIdxs := make([]int, 0, len(hg.Buckets))
+	nextRemainedBktIdx := 0
+	for checkingIdx := range hg.Buckets {
+		if hg.Buckets[checkingIdx].Count <= 0 && hg.Buckets[checkingIdx].Repeat <= 0 {
+			continue
+		}
+		remainedBktIdxs = append(remainedBktIdxs, checkingIdx)
+		hg.Buckets[nextRemainedBktIdx] = hg.Buckets[checkingIdx]
+		hg.Buckets[nextRemainedBktIdx].NDV = 0
+		nextRemainedBktIdx++
+	}
+	hg.Buckets = hg.Buckets[:nextRemainedBktIdx]
+
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.Tp}, len(remainedBktIdxs))
+	for _, i := range remainedBktIdxs {
+		c.AppendDatum(0, hg.GetLower(i))
+		c.AppendDatum(0, hg.GetUpper(i))
+	}
+	hg.Bounds = c
+}
+
 // AddIdxVals adds the given values to the histogram.
 func (hg *Histogram) AddIdxVals(idxValCntPairs []TopNMeta) {
 	totalAddCnt := int64(0)
