@@ -64,16 +64,16 @@ import (
 
 // GCWorker periodically triggers GC process on tikv server.
 type GCWorker struct {
-	uuid         string
-	desc         string
-	store        kv.Storage
-	tikvStore    tikv.Storage
-	pdClient     pd.Client
-	gcIsRunning  bool
-	lastFinish   time.Time
-	cancel       context.CancelFunc
-	done         chan error
-	lockResolver tikv.RegionLockResolver
+	uuid               string
+	desc               string
+	store              kv.Storage
+	tikvStore          tikv.Storage
+	pdClient           pd.Client
+	gcIsRunning        bool
+	lastFinish         time.Time
+	cancel             context.CancelFunc
+	done               chan error
+	regionLockResolver tikv.RegionLockResolver
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -93,15 +93,15 @@ func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
 	uuid := strconv.FormatUint(ver.Ver, 16)
 	resolverIdentifier := fmt.Sprintf("gc-worker-%s", uuid)
 	worker := &GCWorker{
-		uuid:         uuid,
-		desc:         fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
-		store:        store,
-		tikvStore:    tikvStore,
-		pdClient:     pdClient,
-		gcIsRunning:  false,
-		lastFinish:   time.Now(),
-		lockResolver: tikv.NewRegionLockResolver(resolverIdentifier, tikvStore),
-		done:         make(chan error),
+		uuid:               uuid,
+		desc:               fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
+		store:              store,
+		tikvStore:          tikvStore,
+		pdClient:           pdClient,
+		gcIsRunning:        false,
+		lastFinish:         time.Now(),
+		regionLockResolver: tikv.NewRegionLockResolver(resolverIdentifier, tikvStore),
+		done:               make(chan error),
 	}
 	variable.RegisterStatistics(worker)
 	return worker, nil
@@ -1186,7 +1186,7 @@ func (w *GCWorker) legacyResolveLocks(
 		failpoint.Inject("lowScanLockLimit", func() {
 			scanLimit = 3
 		})
-		return tikv.ResolveLocksForRange(ctx, w.lockResolver, safePoint, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, scanLimit)
+		return tikv.ResolveLocksForRange(ctx, w.regionLockResolver, safePoint, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, scanLimit)
 	}
 
 	runner := rangetask.NewRangeTaskRunner("resolve-locks-runner", w.tikvStore, concurrency, handler)
@@ -2034,12 +2034,12 @@ func getGCRules(ids []int64, rules map[string]*label.Rule) []string {
 
 // RunGCJob sends GC command to KV. It is exported for kv api, do not use it with GCWorker at the same time.
 // only use for test
-func RunGCJob(ctx context.Context, lockResolver tikv.RegionLockResolver, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int) error {
+func RunGCJob(ctx context.Context, regionLockResolver tikv.RegionLockResolver, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int) error {
 	gcWorker := &GCWorker{
-		tikvStore:    s,
-		uuid:         identifier,
-		pdClient:     pd,
-		lockResolver: lockResolver,
+		tikvStore:          s,
+		uuid:               identifier,
+		pdClient:           pd,
+		regionLockResolver: regionLockResolver,
 	}
 
 	if concurrency <= 0 {
@@ -2072,12 +2072,12 @@ func RunGCJob(ctx context.Context, lockResolver tikv.RegionLockResolver, s tikv.
 // RunDistributedGCJob notifies TiKVs to do GC. It is exported for kv api, do not use it with GCWorker at the same time.
 // This function may not finish immediately because it may take some time to do resolveLocks.
 // Param concurrency specifies the concurrency of resolveLocks phase.
-func RunDistributedGCJob(ctx context.Context, lockResolver tikv.RegionLockResolver, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int) error {
+func RunDistributedGCJob(ctx context.Context, regionLockResolver tikv.RegionLockResolver, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int) error {
 	gcWorker := &GCWorker{
-		tikvStore:    s,
-		uuid:         identifier,
-		pdClient:     pd,
-		lockResolver: lockResolver,
+		tikvStore:          s,
+		uuid:               identifier,
+		pdClient:           pd,
+		regionLockResolver: regionLockResolver,
 	}
 
 	safePoint, err := gcWorker.setGCWorkerServiceSafePoint(ctx, safePoint)
@@ -2109,10 +2109,10 @@ func RunDistributedGCJob(ctx context.Context, lockResolver tikv.RegionLockResolv
 // It is exported only for test, do not use it in the production environment.
 func RunResolveLocks(ctx context.Context, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int, usePhysical bool) (bool, error) {
 	gcWorker := &GCWorker{
-		tikvStore:    s,
-		uuid:         identifier,
-		pdClient:     pd,
-		lockResolver: tikv.NewRegionLockResolver("test-resolver", s),
+		tikvStore:          s,
+		uuid:               identifier,
+		pdClient:           pd,
+		regionLockResolver: tikv.NewRegionLockResolver("test-resolver", s),
 	}
 	return gcWorker.resolveLocks(ctx, safePoint, concurrency, usePhysical)
 }

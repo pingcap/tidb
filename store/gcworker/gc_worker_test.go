@@ -1146,14 +1146,15 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 		tikvStore: s.tikvStore,
 		scanLocks: func(key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
 			// first time scan locks
-			if bytes.Equal(key, []byte("")) {
+			region, _, _ := s.cluster.GetRegionByKey(key)
+			if region.GetId() == s.initRegion.regionID {
 				return []*txnlock.Lock{{Key: []byte("a")}, {Key: []byte("b")}},
 					&tikv.KeyLocation{
 						Region: tikv.NewRegionVerID(s.initRegion.regionID, 0, 0),
 					}
 			}
 			// second time scan locks
-			if bytes.Equal(key, []byte("m")) {
+			if region.GetId() == region2 {
 				return []*txnlock.Lock{{Key: []byte("o")}, {Key: []byte("p")}},
 					&tikv.KeyLocation{
 						Region: tikv.NewRegionVerID(region2, 0, 0),
