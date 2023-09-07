@@ -159,9 +159,8 @@ func (d *BaseDispatcher) scheduleTask() {
 			case proto.TaskStateRunning:
 				err = d.onRunning()
 			case proto.TaskStateSucceed, proto.TaskStateReverted, proto.TaskStateFailed:
-				logutil.Logger(d.logCtx).Info("schedule task, task is finished", zap.String("state", d.task.State))
-
 				err = d.onFinished()
+				logutil.Logger(d.logCtx).Info("schedule task, task is finished", zap.String("state", d.task.State), zap.Error(err))
 				return
 			}
 			if err != nil {
@@ -248,8 +247,7 @@ func (d *BaseDispatcher) onRunning() error {
 }
 
 func (d *BaseDispatcher) onFinished() error {
-	d.taskMgr.TransferSubTasks2History(d.task.ID)
-	return nil
+	return d.taskMgr.TransferSubTasks2History(d.task.ID)
 }
 
 func (d *BaseDispatcher) replaceDeadNodesIfAny() error {

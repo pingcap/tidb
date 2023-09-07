@@ -16,6 +16,7 @@ go_library(
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_log//:log",
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_zap//:zap",
     ],
@@ -27,7 +28,7 @@ go_test(
     srcs = ["table_test.go"],
     flaky = True,
     race = "on",
-    shard_count = 3,
+    shard_count = 4,
     deps = [
         ":storage",
         "//disttask/framework/proto",

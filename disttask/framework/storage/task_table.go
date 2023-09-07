@@ -767,6 +767,7 @@ func (stm *TaskManager) TransferSubTasks2History(taskID int64) error {
 	})
 }
 
+// GC deletes the history subtask which is older than the given days.
 func (stm *TaskManager) GC() error {
 	subtaskHistoryKeepDays := defaultSubtaskKeepDays
 	failpoint.Inject("SubtaskHistoryKeepDays", func() {
