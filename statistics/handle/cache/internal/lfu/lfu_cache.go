@@ -230,6 +230,7 @@ func (s *LFU) SetCapacity(maxCost int64) {
 	s.cache.UpdateMaxCost(cost)
 	s.triggerEvict()
 	metrics.CapacityGauge.Set(float64(cost))
+	metrics.CostGauge.Set(float64(s.Cost()))
 }
 
 // wait blocks until all buffered writes have been applied. This ensures a call to Set()
