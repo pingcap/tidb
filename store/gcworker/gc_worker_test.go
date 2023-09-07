@@ -50,18 +50,29 @@ import (
 )
 
 type mockGCWorkerLockResolver struct {
+	tikv.RegionLockResolver
 	tikvStore         tikv.Storage
-	scanLocks         func([]byte) ([]*txnlock.Lock, *tikv.KeyLocation)
+	scanLocks         func([]*txnlock.Lock, []byte) ([]*txnlock.Lock, *tikv.KeyLocation)
 	batchResolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
 }
 
 func (l *mockGCWorkerLockResolver) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
-	locks, loc := l.scanLocks(key)
-	return locks, loc, nil
+	locks, loc, err := l.RegionLockResolver.ScanLocksInOneRegion(bo, key, maxVersion, limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	mockLocks, mockLoc := l.scanLocks(locks, key)
+	if loc.Region.GetID() != mockLoc.Region.GetID() {
+		panic("detect different location for region lock resolve tests")
+	}
+	return mockLocks, loc, nil
 }
 
 func (l *mockGCWorkerLockResolver) ResolveLocksInOneRegion(bo *tikv.Backoffer, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
-	return l.batchResolveLocks(locks, loc)
+	if l.batchResolveLocks != nil {
+		return l.batchResolveLocks(locks, loc)
+	}
+	return l.RegionLockResolver.ResolveLocksInOneRegion(bo, locks, loc)
 }
 
 func (l *mockGCWorkerLockResolver) GetStore() tikv.Storage {
@@ -1039,8 +1050,9 @@ func TestResolveLockRangeInfine(t *testing.T) {
 	}()
 
 	mockLockResolver := &mockGCWorkerLockResolver{
-		tikvStore: s.tikvStore,
-		scanLocks: func(key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
+		RegionLockResolver: tikv.NewRegionLockResolver("test", s.tikvStore),
+		tikvStore:          s.tikvStore,
+		scanLocks: func(_ []*txnlock.Lock, key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
 			return []*txnlock.Lock{}, &tikv.KeyLocation{}
 		},
 		batchResolveLocks: func(
@@ -1095,8 +1107,9 @@ func TestResolveLockRangeMeetRegionCacheMiss(t *testing.T) {
 	}
 
 	mockLockResolver := &mockGCWorkerLockResolver{
-		tikvStore: s.tikvStore,
-		scanLocks: func(key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
+		RegionLockResolver: tikv.NewRegionLockResolver("test", s.tikvStore),
+		tikvStore:          s.tikvStore,
+		scanLocks: func(_ []*txnlock.Lock, key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
 			*scanCntRef++
 			return allLocks, &tikv.KeyLocation{
 				Region: tikv.NewRegionVerID(s.initRegion.regionID, 0, 0),
@@ -1143,8 +1156,9 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 	s.cluster.Split(s.initRegion.regionID, region2, []byte("m"), newPeers, newPeers[0])
 
 	mockGCLockResolver := &mockGCWorkerLockResolver{
-		tikvStore: s.tikvStore,
-		scanLocks: func(key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
+		RegionLockResolver: tikv.NewRegionLockResolver("test", s.tikvStore),
+		tikvStore:          s.tikvStore,
+		scanLocks: func(_ []*txnlock.Lock, key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
 			// first time scan locks
 			region, _, _ := s.cluster.GetRegionByKey(key)
 			if region.GetId() == s.initRegion.regionID {
@@ -1179,7 +1193,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 				[]*metapb.Region{regionMeta})
 			require.NoError(t, err)
 			// also let region1 contains all 4 locks
-			mockGCLockResolver.scanLocks = func(key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
+			mockGCLockResolver.scanLocks = func(_ []*txnlock.Lock, key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
 				if bytes.Equal(key, []byte("")) {
 					locks := []*txnlock.Lock{
 						{Key: []byte("a")},
@@ -1297,8 +1311,9 @@ func TestSetServiceSafePoint(t *testing.T) {
 func TestRunGCJobAPI(t *testing.T) {
 	s := createGCWorkerSuite(t)
 	mockLockResolver := &mockGCWorkerLockResolver{
-		tikvStore: s.tikvStore,
-		scanLocks: func(key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
+		RegionLockResolver: tikv.NewRegionLockResolver("test", s.tikvStore),
+		tikvStore:          s.tikvStore,
+		scanLocks: func(_ []*txnlock.Lock, key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
 			return []*txnlock.Lock{}, &tikv.KeyLocation{}
 		},
 		batchResolveLocks: func(
@@ -1327,8 +1342,9 @@ func TestRunDistGCJobAPI(t *testing.T) {
 
 	gcSafePointCacheInterval = 0
 	mockLockResolver := &mockGCWorkerLockResolver{
-		tikvStore: s.tikvStore,
-		scanLocks: func(key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
+		RegionLockResolver: tikv.NewRegionLockResolver("test", s.tikvStore),
+		tikvStore:          s.tikvStore,
+		scanLocks: func(_ []*txnlock.Lock, key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
 			return []*txnlock.Lock{}, &tikv.KeyLocation{}
 		},
 		batchResolveLocks: func(
