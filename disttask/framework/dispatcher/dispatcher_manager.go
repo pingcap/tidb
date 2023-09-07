@@ -109,7 +109,6 @@ func NewManager(ctx context.Context, taskTable *storage.TaskManager, serverID st
 // Start the dispatcherManager, start the dispatchTaskLoop to start multiple dispatchers.
 func (dm *Manager) Start() {
 	dm.wg.Run(dm.dispatchTaskLoop)
-	// run task/subtask history table gc
 	dm.wg.Run(dm.gcSubtaskHistoryTable)
 	dm.inited = true
 }
