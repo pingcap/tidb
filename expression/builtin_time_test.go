@@ -1900,7 +1900,7 @@ func TestDateArithFuncs(t *testing.T) {
 	tests := []struct {
 		inputDate    string
 		fc           functionClass
-		inputDecimal float64
+		inputDecimal interface{}
 		expect       string
 	}{
 		{date[0], fcAdd, 1, date[1]},
@@ -1909,6 +1909,7 @@ func TestDateArithFuncs(t *testing.T) {
 		{date[1], fcAdd, -1.4, date[0]},
 		{"1998-10-00", fcAdd, 1, ""},
 		{"2004-00-01", fcAdd, 1, ""},
+		{"20111111", fcAdd, "-123", "2011-07-11"},
 
 		{date[1], fcSub, 1, date[0]},
 		{date[0], fcSub, -1, date[1]},
@@ -1916,6 +1917,7 @@ func TestDateArithFuncs(t *testing.T) {
 		{date[0], fcSub, -1.4, date[1]},
 		{"1998-10-00", fcSub, 31, ""},
 		{"2004-00-01", fcSub, 31, ""},
+		{"20111111", fcSub, "-123", "2012-03-13"},
 	}
 	for _, test := range tests {
 		args := types.MakeDatums(test.inputDate, test.inputDecimal, "DAY")
@@ -2025,32 +2027,29 @@ func TestDateArithFuncs(t *testing.T) {
 		require.Equal(t, test.expected, v.GetString())
 	}
 
-	testOverflowYears := []struct {
+	testOverflow := []struct {
 		input string
-		year  int
+		v     int
+		unit  string
 	}{
-		{"2008-11-23", -1465647104},
-		{"2008-11-23", 1465647104},
+		{"2008-11-23", -1465647104, "YEAR"},
+		{"2008-11-23", 1465647104, "YEAR"},
+		{"2000-04-13 07:17:02", -1465647104, "YEAR"},
+		{"2000-04-13 07:17:02", 1465647104, "YEAR"},
+		{"2008-11-23 22:47:31", 266076160, "QUARTER"},
+		{"2008-11-23 22:47:31", -266076160, "QUARTER"},
 	}
 
-	for _, test := range testOverflowYears {
-		args = types.MakeDatums(test.input, test.year, "YEAR")
-		f, err = fcAdd.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
-		require.NotNil(t, f)
-		v, err = evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		require.True(t, v.IsNull())
-	}
-
-	for _, test := range testOverflowYears {
-		args = types.MakeDatums(test.input, test.year, "YEAR")
-		f, err = fcSub.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
-		require.NotNil(t, f)
-		v, err = evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		require.True(t, v.IsNull())
+	for _, test := range testOverflow {
+		for _, fc := range []functionClass{fcAdd, fcSub} {
+			args = types.MakeDatums(test.input, test.v, test.unit)
+			f, err = fc.getFunction(ctx, datumsToConstants(args))
+			require.NoError(t, err)
+			require.NotNil(t, f)
+			v, err = evalBuiltinFunc(f, chunk.Row{})
+			require.NoError(t, err)
+			require.True(t, v.IsNull())
+		}
 	}
 
 	testDurations := []struct {

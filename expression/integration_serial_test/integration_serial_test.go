@@ -38,76 +38,6 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-func TestIssue17727(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
-
-	tk.MustExec("use test;")
-	tk.MustExec("DROP TABLE IF EXISTS t1;")
-	tk.MustExec("CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY auto_increment, a timestamp NOT NULL);")
-	tk.MustExec("INSERT INTO t1 VALUES (null, '2020-05-30 20:30:00');")
-	tk.MustExec("PREPARE mystmt FROM 'SELECT * FROM t1 WHERE UNIX_TIMESTAMP(a) >= ?';")
-	tk.MustExec("SET @a=1590868800;")
-	tk.MustQuery("EXECUTE mystmt USING @a;").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-
-	tk.MustExec("SET @a=1590868801;")
-	tk.MustQuery("EXECUTE mystmt USING @a;").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
-
-	tk.MustExec("prepare stmt from 'select unix_timestamp(?)';")
-	tk.MustExec("set @a = '2020-05-30 20:30:00';")
-	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1590841800"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @a = '2020-06-12 13:47:58';")
-	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1591940878"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-}
-
-func TestIssue17891(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_bin default 'a,b ');")
-	tk.MustExec("drop table t")
-	tk.MustExec("create table test(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_general_ci default 'a,B ,C');")
-}
-
-func TestIssue31174(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a char(4) collate utf8_general_ci primary key /*T![clustered_index] clustered */);")
-	tk.MustExec("insert into t values('`?');")
-	// The 'like' condition can not be used to construct the range.
-	tk.HasPlan("select * from t where a like '`%';", "TableFullScan")
-	tk.MustQuery("select * from t where a like '`%';").Check(testkit.Rows("`?"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a char(4) collate binary primary key /*T![clustered_index] clustered */);")
-	tk.MustExec("insert into t values('`?');")
-	tk.HasPlan("select * from t where a like '`%';", "TableRangeScan")
-	tk.MustQuery("select * from t where a like '`%';").Check(testkit.Rows("`?\x00\x00"))
-}
-
-func TestIssue20268(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE `t` (   `a` enum('a','b') DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
-	tk.MustExec("insert into t values('a');")
-	tk.MustExec("select * from t where a = 'A';")
-}
-
 func TestCollationBasic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -663,33 +593,6 @@ func TestCollateIndexLookup(t *testing.T) {
 	tk.MustQuery("select id from t_bin where v < 'b' and v > ' '").Sort().Check(testkit.Rows("1"))
 }
 
-func TestIssue16668(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tx")
-	tk.MustExec("CREATE TABLE `tx` ( `a` int(11) NOT NULL,`b` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL)")
-	tk.MustExec("insert into tx values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ')")
-	tk.MustQuery("select count(distinct(b)) from tx").Check(testkit.Rows("4"))
-}
-
-func TestIssue27091(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tx")
-	tk.MustExec("CREATE TABLE `tx` ( `a` int(11) NOT NULL,`b` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL, `c` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL)")
-	tk.MustExec("insert into tx values (1, 'a', 'a'), (2, 'A ', 'a '), (3, 'A', 'A'), (4, 'a ', 'A ')")
-	tk.MustQuery("select count(distinct b) from tx").Check(testkit.Rows("1"))
-	tk.MustQuery("select count(distinct c) from tx").Check(testkit.Rows("2"))
-	tk.MustQuery("select count(distinct b, c) from tx where a < 3").Check(testkit.Rows("1"))
-	tk.MustQuery("select approx_count_distinct(b) from tx").Check(testkit.Rows("1"))
-	tk.MustQuery("select approx_count_distinct(c) from tx").Check(testkit.Rows("2"))
-	tk.MustQuery("select approx_count_distinct(b, c) from tx where a < 3").Check(testkit.Rows("1"))
-}
-
 func TestCollateStringFunction(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -931,32 +834,6 @@ func TestNewCollationBinaryFlag(t *testing.T) {
 	require.Contains(t, sct, "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 }
 
-func TestIssue17176(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8 collate utf8_bin;", "[types:1291]Column 'a' has duplicated value 'a' in ENUM")
-	tk.MustGetErrMsg("create table t(a enum('a', 'Á')) charset utf8 collate utf8_general_ci;", "[types:1291]Column 'a' has duplicated value 'Á' in ENUM")
-	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8mb4 collate utf8mb4_bin;", "[types:1291]Column 'a' has duplicated value 'a' in ENUM")
-	tk.MustExec("create table t(a enum('a', 'A')) charset utf8 collate utf8_bin;")
-	tk.MustExec("drop table t;")
-	tk.MustExec("create table t3(a enum('a', 'A')) charset utf8mb4 collate utf8mb4_bin;")
-}
-
-func TestIssue18638(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a varchar(10) collate utf8mb4_bin, b varchar(10) collate utf8mb4_general_ci);")
-	tk.MustExec("insert into t (a, b) values ('a', 'A');")
-	tk.MustQuery("select * from t t1, t t2 where t1.a = t2.b collate utf8mb4_general_ci;").Check(testkit.Rows("a A a A"))
-	tk.MustQuery("select * from t t1 left join t t2 on t1.a = t2.b collate utf8mb4_general_ci;").Check(testkit.Rows("a A a A"))
-}
-
 func TestCollationText(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -968,115 +845,6 @@ func TestCollationText(t *testing.T) {
 	tk.MustQuery("select * from t t1 inner join t t2 on t1.a = t2.a where t1.a = 'A';").Check(testkit.Rows("A A"))
 	tk.MustExec("update t set a = 'B';")
 	tk.MustExec("admin check table t;")
-}
-
-func TestIssue18662(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a varchar(10) collate utf8mb4_bin, b varchar(10) collate utf8mb4_general_ci);")
-	tk.MustExec("insert into t (a, b) values ('a', 'A');")
-	tk.MustQuery("select * from t where field('A', a collate utf8mb4_general_ci, b) > 1;").Check(testkit.Rows())
-	tk.MustQuery("select * from t where field('A', a, b collate utf8mb4_general_ci) > 1;").Check(testkit.Rows())
-	tk.MustQuery("select * from t where field('A' collate utf8mb4_general_ci, a, b) > 1;").Check(testkit.Rows())
-	tk.MustQuery("select * from t where field('A', a, b) > 1;").Check(testkit.Rows("a A"))
-}
-
-func TestIssue19116(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
-	tk.MustQuery("select collation(concat(1 collate `binary`));").Check(testkit.Rows("binary"))
-	tk.MustQuery("select coercibility(concat(1 collate `binary`));").Check(testkit.Rows("0"))
-	tk.MustQuery("select collation(concat(NULL,NULL));").Check(testkit.Rows("binary"))
-	tk.MustQuery("select coercibility(concat(NULL,NULL));").Check(testkit.Rows("6"))
-	tk.MustQuery("select collation(concat(1,1));").Check(testkit.Rows("utf8mb4_general_ci"))
-	tk.MustQuery("select coercibility(concat(1,1));").Check(testkit.Rows("4"))
-	tk.MustQuery("select collation(1);").Check(testkit.Rows("binary"))
-	tk.MustQuery("select coercibility(1);").Check(testkit.Rows("5"))
-	tk.MustQuery("select coercibility(1=1);").Check(testkit.Rows("5"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a datetime)")
-	tk.MustExec("insert into t values ('2020-02-02')")
-	tk.MustQuery("select collation(concat(unix_timestamp(a))) from t;").Check(testkit.Rows("utf8mb4_general_ci"))
-	tk.MustQuery("select coercibility(concat(unix_timestamp(a))) from t;").Check(testkit.Rows("4"))
-}
-
-func TestIssue17063(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test;`)
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec("create table t(a char, b char) collate utf8mb4_general_ci;")
-	tk.MustExec(`insert into t values('a', 'b');`)
-	tk.MustExec(`insert into t values('a', 'B');`)
-	tk.MustQuery(`select * from t where if(a='x', a, b) = 'b';`).Check(testkit.Rows("a b", "a B"))
-	tk.MustQuery(`select collation(if(a='x', a, b)) from t;`).Check(testkit.Rows("utf8mb4_general_ci", "utf8mb4_general_ci"))
-	tk.MustQuery(`select coercibility(if(a='x', a, b)) from t;`).Check(testkit.Rows("2", "2"))
-	tk.MustQuery(`select collation(lag(b, 1, 'B') over w) from t window w as (order by b);`).Check(testkit.Rows("utf8mb4_general_ci", "utf8mb4_general_ci"))
-	tk.MustQuery(`select coercibility(lag(b, 1, 'B') over w) from t window w as (order by b);`).Check(testkit.Rows("2", "2"))
-}
-
-func TestIssue11177(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("SELECT 'lvuleck' BETWEEN '2008-09-16 22:23:50' AND 0;").Check(testkit.Rows("0"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect DOUBLE value: 'lvuleck'", "Warning 1292 Truncated incorrect DOUBLE value: '2008-09-16 22:23:50'"))
-	tk.MustQuery("SELECT 'aa' BETWEEN 'bb' AND 0;").Check(testkit.Rows("1"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect DOUBLE value: 'aa'", "Warning 1292 Truncated incorrect DOUBLE value: 'bb'"))
-	tk.MustQuery("select 1 between 0 and b'110';").Check(testkit.Rows("1"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows())
-	tk.MustQuery("select 'b' between 'a' and b'110';").Check(testkit.Rows("0"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows())
-}
-
-func TestIssue19804(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test;`)
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t(a set('a', 'b', 'c'));`)
-	tk.MustGetErrMsg("alter table t change a a set('a', 'b', 'c', 'c');", "[types:1291]Column 'a' has duplicated value 'c' in SET")
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t(a enum('a', 'b', 'c'));`)
-	tk.MustGetErrMsg("alter table t change a a enum('a', 'b', 'c', 'c');", "[types:1291]Column 'a' has duplicated value 'c' in ENUM")
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t(a set('a', 'b', 'c'));`)
-	tk.MustExec(`alter table t change a a set('a', 'b', 'c', 'd');`)
-	tk.MustExec(`insert into t values('d');`)
-	tk.MustGetErrMsg(`alter table t change a a set('a', 'b', 'c', 'e', 'f');`, "[types:1265]Data truncated for column 'a', value is 'd'")
-}
-
-func TestIssue20209(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test;`)
-	tk.MustExec(`set @@character_set_client=utf8mb4;`)
-	tk.MustExec(`set @@collation_connection=utf8_bin;`)
-	tk.MustExec("CREATE VIEW tview_1 AS SELECT 'a' AS `id`;")
-}
-
-func TestIssue18949(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test;`)
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t(a enum('a ', 'b\t', ' c '), b set('a ', 'b\t', ' c '));`)
-	result := tk.MustQuery("show create table t").Rows()[0][1]
-	require.Regexp(t, `(?s).*enum\('a','b	',' c'\).*set\('a','b	',' c'\).*`, result)
-	tk.MustExec(`alter table t change a aa enum('a   ', 'b\t', ' c ');`)
-	result = tk.MustQuery("show create table t").Rows()[0][1]
-	require.Regexp(t, `(?s).*enum\('a','b	',' c'\).*set\('a','b	',' c'\).*`, result)
 }
 
 func TestClusteredIndexAndNewCollationIndexEncodeDecodeV5(t *testing.T) {
@@ -1178,25 +946,6 @@ func TestClusteredIndexAndNewCollation(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("&"))
 }
 
-func TestIssue20608(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("select '䇇Հ' collate utf8mb4_bin like '___Հ';").Check(testkit.Rows("0"))
-}
-
-func TestIssue20161(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test;`)
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t(raw JSON);`)
-	tk.MustExec(`insert into t(raw) values('["a","ab"]'), ('["a"]'), (null);`)
-	tk.MustQuery(`SELECT JSON_SEARCH(raw,'one','c') FROM t;`).
-		Check(testkit.Rows("<nil>", "<nil>", "<nil>"))
-}
-
 func TestCollationIndexJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1257,25 +1006,6 @@ func TestCollationMergeJoin(t *testing.T) {
 		testkit.Rows("\x41 2.00000 a", "\x61 23.00000 A", "\x61 12523.00000 A"))
 }
 
-func TestIssue20876(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE `t` (" +
-		"  `a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL," +
-		"  `b` char(20) COLLATE utf8mb4_general_ci NOT NULL," +
-		"  `c` int(11) NOT NULL," +
-		"  PRIMARY KEY (`a`,`b`,`c`)," +
-		"  KEY `idx` (`a`)" +
-		")")
-	tk.MustExec("insert into t values ('#', 'C', 10), ('$', 'c', 20), ('$', 'c', 30), ('a', 'a', 10), ('A', 'A', 30)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select * from t where a='#';").Check(testkit.Rows("# C 10"))
-}
-
 func TestLikeWithCollation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1300,46 +1030,6 @@ func TestCollationPrefixClusteredIndex(t *testing.T) {
 	tk.MustQuery("select * from t use index(k_2);").Check(testkit.Rows("01233 1"))
 	tk.MustQuery("select * from t use index(idx);").Check(testkit.Rows("01233 1"))
 	tk.MustExec("admin check table t;")
-}
-
-func TestIssue23805(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE `tbl_5` (" +
-		"  `col_25` time NOT NULL DEFAULT '05:35:58'," +
-		"  `col_26` blob NOT NULL," +
-		"  `col_27` double NOT NULL," +
-		"  `col_28` char(83) CHARACTER SET utf8 COLLATE utf8_bin NOT NULL," +
-		"  `col_29` timestamp NOT NULL," +
-		"  `col_30` varchar(36) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'ywzIn'," +
-		"  `col_31` binary(85) DEFAULT 'OIstcXsGmAyc'," +
-		"  `col_32` datetime NOT NULL DEFAULT '2024-08-02 00:00:00'," +
-		"  PRIMARY KEY (`col_26`(3),`col_27`) /*T![clustered_index] CLUSTERED */," +
-		"  UNIQUE KEY `idx_10` (`col_26`(5)));")
-	tk.MustExec("insert ignore into tbl_5 set col_28 = 'ZmZIdSnq' , col_25 = '18:50:52.00' on duplicate key update col_26 = 'y';\n")
-}
-
-func TestIssue26662(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1(a varchar(36) NOT NULL) ENGINE = InnoDB DEFAULT CHARSET = utf8 COLLATE = utf8_general_ci;")
-	tk.MustExec("set names utf8;")
-	tk.MustQuery("select t2.b from (select t1.a as b from t1 union all select t1.a as b from t1) t2 where case when (t2.b is not null) then t2.b else '' end > '1234567';").
-		Check(testkit.Rows())
-}
-
-func TestIssue30245(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustGetErrCode("select case 1 when 1 then 'a' collate utf8mb4_unicode_ci else 'b' collate utf8mb4_general_ci end", mysql.ErrCantAggregate2collations)
-	tk.MustGetErrCode("select case when 1 then 'a' collate utf8mb4_unicode_ci when 2 then 'b' collate utf8mb4_general_ci end", mysql.ErrCantAggregate2collations)
-	tk.MustGetErrCode("select case 1 when 1 then 'a' collate utf8mb4_unicode_ci when 2 then 'b' collate utf8mb4_general_ci else 'b' collate utf8mb4_bin end", mysql.ErrCantAggregate3collations)
 }
 
 func TestCollationForBinaryLiteral(t *testing.T) {
@@ -3938,123 +3628,6 @@ func TestCacheConstEval(t *testing.T) {
 	tk.MustExec("admin reload expr_pushdown_blacklist")
 }
 
-func TestIssue24502(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t0,t1;")
-	tk.MustExec("create table t0(col1 varchar(255));")
-	tk.MustExec("create table t1(col1 int(11));")
-	tk.MustExec(`insert into t0 values("\\9jM\\M");`)
-	tk.MustExec(`insert into t1 values(0);`)
-	tk.MustExec(`insert into t1 values(null);`)
-	tk.MustExec(`insert into t1 values(null);`)
-
-	tk.MustQuery(`select t0.col1, t1.col1 from t0 left join t1 on t0.col1 not like t0.col1;`).
-		Check(testkit.Rows(`\9jM\M <nil>`, `\9jM\M <nil>`, `\9jM\M 0`))
-
-	tk.MustQuery(`select 'a' like '\\a'`).Check(testkit.Rows("1"))
-	tk.MustQuery(`select 'a' like '+a' escape '+'`).Check(testkit.Rows("1"))
-}
-
-func TestIssue17233(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists table_int")
-	tk.MustExec(`CREATE TABLE table_int (
-	  id_0 int(16) NOT NULL AUTO_INCREMENT,
-	  col_int_0 int(16) DEFAULT NULL,
-	  PRIMARY KEY (id_0),
-	  KEY fvclc (id_0,col_int_0));`)
-	tk.MustExec("INSERT INTO table_int VALUES (1,NULL),(2,NULL),(3,65535),(4,1),(5,0),(6,NULL),(7,-1),(8,65535),(9,NULL),(10,65535),(11,-1),(12,0),(13,-1),(14,1),(15,65535),(16,0),(17,1),(18,0),(19,0)")
-
-	tk.MustExec("drop table if exists table_varchar")
-	tk.MustExec(`CREATE TABLE table_varchar (
-	  id_2 int(16) NOT NULL AUTO_INCREMENT,
-	  col_varchar_2 varchar(511) DEFAULT NULL,
-	  PRIMARY KEY (id_2));`)
-	tk.MustExec(`INSERT INTO table_varchar VALUES (1,''),(2,''),(3,''),(4,''),(5,''),(6,''),(7,''),(8,''),(9,''),(10,''),(11,''),(12,'');`)
-
-	tk.MustExec("drop table if exists table_float_varchar")
-	tk.MustExec(`CREATE TABLE table_int_float_varchar (
-	  id_6 int(16) NOT NULL AUTO_INCREMENT,
-	  col_int_6 int(16) NOT NULL,
-	  col_float_6 float DEFAULT NULL,
-	  col_varchar_6 varchar(511) DEFAULT NULL,
-	  PRIMARY KEY (id_6,col_int_6)
-	)
-	PARTITION BY RANGE ( col_int_6 ) (
-	  PARTITION p0 VALUES LESS THAN (1),
-	  PARTITION p2 VALUES LESS THAN (1000),
-	  PARTITION p3 VALUES LESS THAN (10000),
-	  PARTITION p5 VALUES LESS THAN (1000000),
-	  PARTITION p7 VALUES LESS THAN (100000000),
-	  PARTITION p9 VALUES LESS THAN (10000000000),
-	  PARTITION p10 VALUES LESS THAN (100000000000),
-	  PARTITION pn VALUES LESS THAN (MAXVALUE));`)
-	tk.MustExec(`INSERT INTO table_int_float_varchar VALUES (1,-1,0.1,'0000-00-00 00:00:00'),(2,0,0,NULL),(3,-1,1,NULL),(4,0,NULL,NULL),(7,0,0.5,NULL),(8,0,0,NULL),(10,-1,0,'-1'),(5,1,-0.1,NULL),(6,1,0.1,NULL),(9,65535,0,'1');`)
-
-	tk.MustExec("drop table if exists table_float")
-	tk.MustExec(`CREATE TABLE table_float (
-	  id_1 int(16) NOT NULL AUTO_INCREMENT,
-	  col_float_1 float DEFAULT NULL,
-	  PRIMARY KEY (id_1),
-	  KEY zbjus (id_1,col_float_1));`)
-	tk.MustExec(`INSERT INTO table_float VALUES (1,NULL),(2,-0.1),(3,-1),(4,NULL),(5,-0.1),(6,0),(7,0),(8,-1),(9,NULL),(10,NULL),(11,0.1),(12,-1);`)
-
-	tk.MustExec("drop view if exists view_4")
-	tk.MustExec(`CREATE DEFINER='root'@'127.0.0.1' VIEW view_4 (col_1, col_2, col_3, col_4, col_5, col_6, col_7, col_8, col_9, col_10) AS
-    SELECT /*+ USE_INDEX(table_int fvclc, fvclc)*/
-        tmp1.id_6 AS col_1,
-        tmp1.col_int_6 AS col_2,
-        tmp1.col_float_6 AS col_3,
-        tmp1.col_varchar_6 AS col_4,
-        tmp2.id_2 AS col_5,
-        tmp2.col_varchar_2 AS col_6,
-        tmp3.id_0 AS col_7,
-        tmp3.col_int_0 AS col_8,
-        tmp4.id_1 AS col_9,
-        tmp4.col_float_1 AS col_10
-    FROM ((
-            test.table_int_float_varchar AS tmp1 LEFT JOIN
-            test.table_varchar AS tmp2 ON ((NULL<=tmp2.col_varchar_2)) IS NULL
-        ) JOIN
-        test.table_int AS tmp3 ON (1.117853833115198e-03!=tmp1.col_int_6))
-    JOIN
-        test.table_float AS tmp4 ON !((1900370398268920328=0e+00)) WHERE ((''<='{Gm~PcZNb') OR (tmp2.id_2 OR tmp3.col_int_0)) ORDER BY col_1,col_2,col_3,col_4,col_5,col_6,col_7,col_8,col_9,col_10 LIMIT 20580,5;`)
-
-	tk.MustExec("drop view if exists view_10")
-	tk.MustExec(`CREATE DEFINER='root'@'127.0.0.1' VIEW view_10 (col_1, col_2) AS
-    SELECT  table_int.id_0 AS col_1,
-            table_int.col_int_0 AS col_2
-    FROM test.table_int
-    WHERE
-        ((-1e+00=1) OR (0e+00>=table_int.col_int_0))
-    ORDER BY col_1,col_2
-    LIMIT 5,9;`)
-
-	tk.MustQuery("SELECT col_1 FROM test.view_10").Sort().Check(testkit.Rows("16", "18", "19"))
-	tk.MustQuery("SELECT col_1 FROM test.view_4").Sort().Check(testkit.Rows("8", "8", "8", "8", "8"))
-	tk.MustQuery("SELECT view_10.col_1 FROM view_4 JOIN view_10").Check(testkit.Rows("16", "16", "16", "16", "16", "18", "18", "18", "18", "18", "19", "19", "19", "19", "19"))
-}
-
-func TestIssue17989(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b tinyint as(a+1), c int as(b+1));")
-	tk.MustExec("set sql_mode='';")
-	tk.MustExec("insert into t(a) values(2000);")
-	tk.MustExec("create index idx on t(c);")
-	tk.MustQuery("select c from t;").Check(testkit.Rows("128"))
-	tk.MustExec("admin check table t")
-}
-
 func TestNullValueRange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -4074,48 +3647,6 @@ func TestNullValueRange(t *testing.T) {
 	tk.MustQuery("select c from t1 where a=1 and b<=>null and c>2 order by c").Check(testkit.Rows("3", "4"))
 	tk.MustQuery("select c from t1 where a=1 and b is null and c>2 order by c").Check(testkit.Rows("3", "4"))
 	tk.MustQuery("select c from t1 where a=1 and b is not null and c>2 order by c").Check(testkit.Rows("33", "44"))
-}
-
-func TestIssue18652(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("DROP TABLE IF EXISTS t1")
-	tk.MustExec("CREATE TABLE t1 ( `pk` int not null primary key auto_increment, `col_smallint_key_signed` smallint  , key (`col_smallint_key_signed`))")
-	tk.MustExec("INSERT INTO `t1` VALUES (1,0),(2,NULL),(3,NULL),(4,0),(5,0),(6,NULL),(7,NULL),(8,0),(9,0),(10,0)")
-	tk.MustQuery("SELECT * FROM t1 WHERE ( LOG( `col_smallint_key_signed`, -8297584758403770424 ) ) DIV 1").Check(testkit.Rows())
-}
-
-func TestIssue19045(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t1, t2")
-	tk.MustExec(`CREATE TABLE t (
-  id int(11) NOT NULL AUTO_INCREMENT,
-  a char(10) DEFAULT NULL,
-  PRIMARY KEY (id)
-);`)
-	tk.MustExec(`CREATE TABLE t1 (
-  id int(11) NOT NULL AUTO_INCREMENT,
-  a char(10) DEFAULT NULL,
-  b char(10) DEFAULT NULL,
-  c char(10) DEFAULT NULL,
-  PRIMARY KEY (id)
-);`)
-	tk.MustExec(`CREATE TABLE t2 (
-  id int(11) NOT NULL AUTO_INCREMENT,
-  a char(10) DEFAULT NULL,
-  b char(10) DEFAULT NULL,
-  PRIMARY KEY (id),
-  UNIQUE KEY b (b)
-);`)
-	tk.MustExec(`insert into t1(a,b,c) values('hs4_0004', "04", "101"), ('a01', "01", "101"),('a011', "02", "101");`)
-	tk.MustExec(`insert into t2(a,b) values("02","03");`)
-	tk.MustExec(`insert into t(a) values('101'),('101');`)
-	tk.MustQuery(`select  ( SELECT t1.a FROM  t1,  t2 WHERE t1.b = t2.a AND  t2.b = '03' AND t1.c = a.a) invode from t a ;`).Check(testkit.Rows("a011", "a011"))
 }
 
 // issues 14448, 19383, 17734
@@ -4184,21 +3715,6 @@ func TestNoopFunctions(t *testing.T) {
 	}
 }
 
-func TestIssue19315(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("CREATE TABLE `t` (`a` bit(10) DEFAULT NULL,`b` int(11) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
-	tk.MustExec("INSERT INTO `t` VALUES (_binary '\\0',1),(_binary '\\0',2),(_binary '\\0',5),(_binary '\\0',4),(_binary '\\0',2),(_binary '\\0	',4)")
-	tk.MustExec("CREATE TABLE `t1` (`a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
-	tk.MustExec("INSERT INTO `t1` VALUES (1,1),(1,5),(2,3),(2,4),(3,3)")
-	err := tk.QueryToErr("select * from t where t.b > (select min(t1.b) from t1 where t1.a > t.a)")
-	require.NoError(t, err)
-}
-
 func TestIssue18674(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -4228,32 +3744,6 @@ func TestJsonObjectCompare(t *testing.T) {
 	tk.MustExec("create table tx(a double, b int)")
 	tk.MustExec("insert into tx values (3.0, 3)")
 	tk.MustQuery("select json_object('k', a) = json_object('k', b) from tx").Check(testkit.Rows("1"))
-}
-
-func TestIssue21290(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1(a date);")
-	tk.MustExec("insert into t1 values (20100202);")
-	tk.MustQuery("select a in ('2020-02-02', 20100202) from t1;").Check(testkit.Rows("1"))
-}
-
-// for issue 20128
-func TestIssue20128(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(b enum('a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z') DEFAULT NULL, c decimal(40,20));")
-	tk.MustExec("insert into t values('z', 19.18040000000000000000);")
-	tk.MustExec("insert into t values('z', 26.18040000000000000000);")
-	tk.MustExec("insert into t values('z', 25.18040000000000000000);")
-	tk.MustQuery("select * from t where t.b > t.c;").Check(testkit.Rows("z 19.18040000000000000000", "z 25.18040000000000000000"))
-	tk.MustQuery("select * from t where t.b < t.c;").Check(testkit.Rows("z 26.18040000000000000000"))
 }
 
 func TestCrossDCQuery(t *testing.T) {
