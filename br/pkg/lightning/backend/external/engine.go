@@ -38,6 +38,8 @@ type Engine struct {
 	storage    storage.ExternalStorage
 	dataFiles  []string
 	statsFiles []string
+	minKey     []byte
+	maxKey     []byte
 	splitKeys  [][]byte
 	bufPool    *membuf.Pool
 
@@ -49,8 +51,8 @@ type Engine struct {
 	dupDetectOpt       common.DupDetectOpt
 	ts                 uint64
 
-	totalKVSize   int64
-	totalKVLength int64
+	totalKVSize  int64
+	totalKVCount int64
 
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
@@ -61,18 +63,24 @@ func NewExternalEngine(
 	storage storage.ExternalStorage,
 	dataFiles []string,
 	statsFiles []string,
+	minKey []byte,
+	maxKey []byte,
+	splitKeys [][]byte,
 	keyAdapter common.KeyAdapter,
 	duplicateDetection bool,
 	duplicateDB *pebble.DB,
 	dupDetectOpt common.DupDetectOpt,
 	ts uint64,
 	totalKVSize int64,
-	totakKVLength int64,
+	totalKVCount int64,
 ) common.Engine {
 	return &Engine{
 		storage:            storage,
 		dataFiles:          dataFiles,
 		statsFiles:         statsFiles,
+		minKey:             minKey,
+		maxKey:             maxKey,
+		splitKeys:          splitKeys,
 		bufPool:            membuf.NewPool(),
 		keyAdapter:         keyAdapter,
 		duplicateDetection: duplicateDetection,
@@ -80,7 +88,7 @@ func NewExternalEngine(
 		dupDetectOpt:       dupDetectOpt,
 		ts:                 ts,
 		totalKVSize:        totalKVSize,
-		totalKVLength:      totakKVLength,
+		totalKVCount:       totalKVCount,
 		importedKVSize:     atomic.NewInt64(0),
 		importedKVCount:    atomic.NewInt64(0),
 	}
@@ -177,19 +185,24 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 	return iter, nil
 }
 
-// KVStatistics returns the total kv size and total kv length.
-func (e *Engine) KVStatistics() (totalKVSize int64, totalKVLength int64) {
-	return e.totalKVSize, e.totalKVLength
+// KVStatistics returns the total kv size and total kv count.
+func (e *Engine) KVStatistics() (totalKVSize int64, totalKVCount int64) {
+	return e.totalKVSize, e.totalKVCount
 }
 
-// ImportedStatistics returns the imported kv size and imported kv length.
-func (e *Engine) ImportedStatistics() (importedKVSize int64, importedKVLength int64) {
+// ImportedStatistics returns the imported kv size and imported kv count.
+func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64) {
 	return e.importedKVSize.Load(), e.importedKVCount.Load()
 }
 
 // ID is the identifier of an engine.
 func (e *Engine) ID() string {
 	return "external"
+}
+
+// GetKeyRange implements common.Engine.
+func (e *Engine) GetKeyRange() (firstKey []byte, lastKey []byte, err error) {
+	return e.minKey, e.maxKey, nil
 }
 
 // SplitRanges split the ranges by split keys provided by external engine.

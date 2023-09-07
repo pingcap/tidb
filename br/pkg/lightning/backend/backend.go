@@ -84,6 +84,8 @@ type EngineConfig struct {
 	TableInfo *checkpoints.TidbTableInfo
 	// local backend specified configuration
 	Local LocalEngineConfig
+	// local backend external engine specified configuration
+	External *ExternalEngineConfig
 	// KeepSortDir indicates whether to keep the temporary sort directory
 	// when opening the engine, instead of removing it.
 	KeepSortDir bool
@@ -97,6 +99,20 @@ type LocalEngineConfig struct {
 	CompactThreshold int64
 	// compact routine concurrency
 	CompactConcurrency int
+}
+
+// ExternalEngineConfig is the configuration used for local backend external engine.
+type ExternalEngineConfig struct {
+	StorageURI string
+	DataFiles  []string
+	StatFiles  []string
+	MinKey     []byte
+	MaxKey     []byte
+	SplitKeys  [][]byte
+	// TotalFileSize can be an estimated value.
+	TotalFileSize int64
+	// TotalKVCount can be an estimated value.
+	TotalKVCount int64
 }
 
 // CheckCtx contains all parameters used in CheckRequirements

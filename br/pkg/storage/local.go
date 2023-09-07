@@ -139,7 +139,13 @@ func (l *LocalStorage) Open(_ context.Context, path string) (ExternalFileReader,
 
 // Create implements ExternalStorage interface.
 func (l *LocalStorage) Create(_ context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
-	file, err := os.Create(filepath.Join(l.base, name))
+	filename := filepath.Join(l.base, name)
+	dir := filepath.Dir(filename)
+	err := os.MkdirAll(dir, 0750)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	file, err := os.Create(filename)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
