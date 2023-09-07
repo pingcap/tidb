@@ -7463,3 +7463,27 @@ func TestMultiStmt(t *testing.T) {
 	require.Equal(t, "'baz'", stmt3.Fields.Fields[2].Text())
 	require.Equal(t, "1", stmt4.Fields.Fields[0].Text())
 }
+
+// https://dev.mysql.com/doc/refman/8.1/en/other-vendor-data-types.html
+func TestCompatTypes(t *testing.T) {
+	table := []testCase{
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 BOOL)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` TINYINT(1))"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 BOOLEAN)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` TINYINT(1))"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 CHARACTER VARYING(0))`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` VARCHAR(0))"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 FIXED)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` DECIMAL)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 FLOAT4)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` FLOAT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 FLOAT8)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` DOUBLE)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 INT1)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` TINYINT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 INT2)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` SMALLINT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 INT3)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMINT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 INT4)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` INT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 INT8)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` BIGINT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 LONG VARBINARY)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMBLOB)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 LONG VARCHAR)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMTEXT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 LONG)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMTEXT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 MIDDLEINT)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMINT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 NUMERIC)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` DECIMAL)"},
+	}
+
+	RunTest(t, table, false)
+}
