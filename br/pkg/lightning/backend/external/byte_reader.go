@@ -103,11 +103,6 @@ func (r *byteReader) switchToConcurrentReaderImpl() error {
 	return nil
 }
 
-// UseConcurrentReader returns whether the reader is using concurrent reader.
-func (r *byteReader) UseConcurrentReader() bool {
-	return r.useConcurrentReader.Load()
-}
-
 func (r *byteReader) switchToNormalReaderImpl() error {
 	r.useConcurrentReaderCurrent.Store(false)
 	r.currFileOffset = r.conReader.currentFileOffset
