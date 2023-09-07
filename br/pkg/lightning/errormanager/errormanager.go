@@ -148,6 +148,20 @@ const (
 		ORDER BY raw_key;
 	`
 
+	selectDataConflictKeysReplace = `
+		SELECT raw_key
+		FROM %s.` + ConflictErrorTableName + `
+		WHERE table_name = ? AND index_name = 'PRIMARY'
+		GROUP BY raw_key;
+	`
+
+	selectDataConflictByKeysReplace = `
+		SELECT raw_value, raw_handle
+		FROM %s.` + ConflictErrorTableName + `
+		WHERE table_name = ? AND index_name = 'PRIMARY'
+		AND raw_key = ?;
+	`
+
 	insertIntoDupRecord = `
 		INSERT INTO %s.` + DupRecordTable + `
 		(task_id, table_name, path, offset, error, row_id, row_data)
@@ -553,17 +567,17 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		// TODO: provide a detailed document to explain the algorithm and link it here
 		// demo for "replace" algorithm: https://github.com/lyzx2001/tidb-conflict-replace
 		// check index KV first
-		rawKeyRows, err := em.db.QueryContext(
+		indexKvRows, err := em.db.QueryContext(
 			gCtx, fmt.Sprintf(selectIndexConflictKeysReplace, em.schemaEscaped),
 			tableName)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		defer rawKeyRows.Close()
-		for rawKeyRows.Next() {
+		defer indexKvRows.Close()
+		for indexKvRows.Next() {
 			var rawKey, rawValue, rawHandle []byte
 			var indexName string
-			if err := rawKeyRows.Scan(&rawKey, &indexName, &rawValue, &rawHandle); err != nil {
+			if err := indexKvRows.Scan(&rawKey, &indexName, &rawValue, &rawHandle); err != nil {
 				return errors.Trace(err)
 			}
 			em.logger.Debug("got raw_key, index_name, raw_value, raw_handle from table",
@@ -573,14 +587,16 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				zap.Binary("raw_handle", rawHandle))
 
 			// get the latest value of rawKey from downstream TiDB
-			value, err := fnGetLatest(gCtx, rawKey)
+			latestValue, err := fnGetLatest(gCtx, rawKey)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			em.logger.Debug("got latestValue0 from fnGetLatest",
+				zap.Binary("latestValue0", latestValue))
 
 			// if the latest value of rawKey equals to rawValue, that means this index KV is maintained in downstream TiDB
 			// if not, that means this index KV has been overwritten, and its corresponding data KV needs to be deleted
-			if bytes.Equal(rawValue, value) {
+			if bytes.Equal(rawValue, latestValue) {
 				continue
 			}
 
@@ -594,6 +610,8 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			if err != nil {
 				return errors.Trace(err)
 			}
+			em.logger.Debug("got overwritten from fnGetLatest",
+				zap.Binary("overwritten", overwritten))
 
 			overwrittenHandle, err := tablecodec.DecodeRowKey(rawHandle)
 			if err != nil {
@@ -642,11 +660,132 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				}
 			}
 		}
-		if err := rawKeyRows.Err(); err != nil {
+		if err := indexKvRows.Err(); err != nil {
 			return errors.Trace(err)
 		}
 
-		// TODO: check data KV
+		// check data KV
+		dataKvRows, err := em.db.QueryContext(
+			gCtx, fmt.Sprintf(selectDataConflictKeysReplace, em.schemaEscaped),
+			tableName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer dataKvRows.Close()
+		for dataKvRows.Next() {
+			var rawKey []byte
+			if err := dataKvRows.Scan(&rawKey); err != nil {
+				return errors.Trace(err)
+			}
+			em.logger.Debug("got group raw_key from table",
+				zap.Binary("raw_key", rawKey))
+
+			var mustKeepKvPairs *kv.Pairs
+
+			// get the latest value of rawKey from downstream TiDB
+			latestValue, err := fnGetLatest(gCtx, rawKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			em.logger.Debug("got latestValue from fnGetLatest",
+				zap.Binary("latestValue", latestValue))
+			if latestValue != nil {
+				handle, err := tablecodec.DecodeRowKey(rawKey)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
+					tbl.Meta(), handle, tbl.Cols(), latestValue)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				// find out all the KV pairs that are contained in the data KV
+				mustKeepKvPairs = encoder.SessionCtx.TakeKvPairs()
+			}
+
+			dataKvRowsByRawKey, err := em.db.QueryContext(
+				gCtx, fmt.Sprintf(selectDataConflictByKeysReplace, em.schemaEscaped),
+				tableName, rawKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			for dataKvRowsByRawKey.Next() {
+				var rawValue, rawHandle []byte
+				if err := dataKvRowsByRawKey.Scan(&rawValue, &rawHandle); err != nil {
+					return errors.Trace(err)
+				}
+				em.logger.Debug("got raw_value, raw_handle group by raw_key",
+					zap.Binary("raw_value", rawValue),
+					zap.Binary("raw_handle", rawHandle))
+
+				if bytes.Equal(rawValue, latestValue) {
+					continue
+				}
+
+				handle, err := tablecodec.DecodeRowKey(rawHandle)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
+					tbl.Meta(), handle, tbl.Cols(), rawValue)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
+				if err != nil {
+					return errors.Trace(err)
+				}
+
+				// find out all the KV pairs that are contained in the data KV
+				kvPairs := encoder.SessionCtx.TakeKvPairs()
+				for _, kvPair := range kvPairs.Pairs {
+					em.logger.Debug("got encoded KV",
+						logutil.Key("key", kvPair.Key),
+						zap.Binary("value", kvPair.Val))
+					kvLatestValue, err := fnGetLatest(gCtx, kvPair.Key)
+					if tikverr.IsErrNotFound(err) || kvLatestValue == nil {
+						continue
+					}
+					if err != nil {
+						return errors.Trace(err)
+					}
+					em.logger.Debug("got kvLatestValue from fnGetLatest",
+						zap.Binary("kvLatestValue", kvLatestValue))
+
+					if !bytes.Equal(kvLatestValue, kvPair.Val) {
+						continue
+					}
+
+					isContained := false
+					for _, mustKeepKvPair := range mustKeepKvPairs.Pairs {
+						if bytes.Equal(mustKeepKvPair.Key, kvPair.Key) && bytes.Equal(mustKeepKvPair.Val, kvPair.Val) {
+							isContained = true
+							break
+						}
+					}
+					if isContained {
+						continue
+					}
+
+					if err := fnDeleteKey(gCtx, kvPair.Key); err != nil {
+						return errors.Trace(err)
+					}
+				}
+			}
+			if err := dataKvRowsByRawKey.Err(); err != nil {
+				return errors.Trace(err)
+			}
+			if err := dataKvRowsByRawKey.Close(); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		if err := dataKvRows.Err(); err != nil {
+			return errors.Trace(err)
+		}
 
 		return nil
 	})

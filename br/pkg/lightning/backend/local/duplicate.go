@@ -1094,7 +1094,7 @@ func (local *DupeController) getLatestValue(
 	snapshot := local.tikvCli.GetSnapshot(math.MaxUint64)
 	value, err := snapshot.Get(ctx, key)
 	logger.Debug("getLatestValue",
-		logutil.Key("key", key),
+		zap.Binary("key", key),
 		zap.Binary("value", value),
 		zap.Error(err))
 	if err != nil {
@@ -1123,7 +1123,9 @@ func (local *DupeController) deleteDuplicateRow(
 		}
 	}()
 
-	logger.Debug("will delete key", zap.String("category", "resolve-dupe"), logutil.Key("key", key))
+	logger.Debug("deleteDuplicateRow will delete key",
+		zap.String("category", "resolve-dupe"),
+		zap.Binary("key", key))
 	err = txn.Delete(key)
 
 	return errors.Trace(err)
