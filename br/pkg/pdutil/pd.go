@@ -239,6 +239,7 @@ func DefaultExpectPDCfgGenerators() map[string]pauseConfigGenerator {
 
 // PdController manage get/update config from pd.
 type PdController struct {
+	remove below!!!
 	addrs    []string
 	cli      *http.Client
 	pdClient pd.Client
