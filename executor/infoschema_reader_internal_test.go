@@ -50,8 +50,8 @@ func TestSetDataFromCheckConstraints(t *testing.T) {
 	err := mt.setDataFromCheckConstraints(sctx, dbs)
 	require.NoError(t, err)
 
-	require.Equal(t, 1, len(mt.rows))
-	require.Equal(t, 4, len(mt.rows[0]))
+	require.Equal(t, 1, len(mt.rows))    // 1 row
+	require.Equal(t, 4, len(mt.rows[0])) // 4 columns
 	require.Equal(t, types.NewStringDatum("def"), mt.rows[0][0])
 	require.Equal(t, types.NewStringDatum("test"), mt.rows[0][1])
 	require.Equal(t, types.NewStringDatum("t2_c1"), mt.rows[0][2])
