@@ -1235,7 +1235,7 @@ const (
 	DefTiDBRedactLog                               = false
 	DefTiDBRestrictedReadOnly                      = false
 	DefTiDBSuperReadOnly                           = false
-	DefTiDBShardAllocateStep                       = math.MaxInt64
+	DefTiDBShardAllocateStep                       = 200
 	DefTiDBEnableTelemetry                         = false
 	DefTiDBEnableParallelApply                     = false
 	DefTiDBPartitionPruneMode                      = "dynamic"
