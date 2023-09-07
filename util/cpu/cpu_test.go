@@ -23,11 +23,17 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/resourcemanager/scheduler"
 	"github.com/pingcap/tidb/resourcemanager/util"
+	"github.com/pingcap/tidb/util/cgroup"
 	"github.com/pingcap/tidb/util/cpu"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCPUValue(t *testing.T) {
+	// If it's not in the container,
+	// it will have less files and the test case will fail forever.
+	if !cgroup.InContainer() {
+		t.Skip("Not in container, skip this test case.")
+	}
 	observer := cpu.NewCPUObserver()
 	exit := make(chan struct{})
 	var wg sync.WaitGroup
@@ -47,7 +53,7 @@ func TestCPUValue(t *testing.T) {
 	}
 	observer.Start()
 	for n := 0; n < 10; n++ {
-		time.Sleep(1 * time.Second)
+		time.Sleep(200 * time.Millisecond)
 		value, unsupported := cpu.GetCPUUsage()
 		require.False(t, unsupported)
 		require.Greater(t, value, 0.0)
@@ -82,7 +88,7 @@ func TestFailpointCPUValue(t *testing.T) {
 	}
 	observer.Start()
 	for n := 0; n < 10; n++ {
-		time.Sleep(1 * time.Second)
+		time.Sleep(200 * time.Millisecond)
 		value, unsupported := cpu.GetCPUUsage()
 		require.True(t, unsupported)
 		require.Equal(t, value, 0.0)
