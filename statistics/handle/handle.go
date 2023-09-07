@@ -1154,11 +1154,8 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 		}
 		statsVer = version
 	} else if results.ForMVIndex {
-		// 1-2. There's already an existing records for this table, and we are handling stats for mv index now.
-		// In this case, we only update the version.
-		// Count and snapshot should not be updated here. Because the count for the mv index may be higher than the
-		// table row count, and updating the snapshot will make the normal v2 analyze at the same time wrongly thinks
-		// there's another normal v2 analyze finished and then drops the result.
+		// 1-2. There's already an existing record for this table, and we are handling stats for mv index now.
+		// In this case, we only update the version. See comments for AnalyzeResults.ForMVIndex for more details.
 		if _, err = exec.ExecuteInternal(ctx,
 			"update mysql.stats_meta set version=%? where table_id=%?",
 			version,
