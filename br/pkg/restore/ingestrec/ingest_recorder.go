@@ -79,11 +79,6 @@ func (i *IngestRecorder) AddJob(job *model.Job) error {
 		return nil
 	}
 
-	// If the add-index operation affects no row, the index doesn't need to be repair.
-	if job.RowCount == 0 {
-		return nil
-	}
-
 	var indexID int64 = 0
 	if err := job.DecodeArgs(&indexID); err != nil {
 		return errors.Trace(err)
