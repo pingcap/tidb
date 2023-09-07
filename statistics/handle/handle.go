@@ -1138,14 +1138,16 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 		// b. it's stats v1.
 		// In these cases, we use REPLACE INTO to directly insert/update the version, count and snapshot.
 		snapShot := results.Snapshot
+		count := results.Count
 		if results.ForMVIndex {
 			snapShot = 0
+			count = 0
 		}
 		if _, err = exec.ExecuteInternal(ctx,
 			"replace into mysql.stats_meta (version, table_id, count, snapshot) values (%?, %?, %?, %?)",
 			version,
 			tableID,
-			results.Count,
+			count,
 			snapShot,
 		); err != nil {
 			return err
