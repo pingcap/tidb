@@ -24,9 +24,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -204,43 +201,44 @@ type Writer struct {
 	totalSize uint64
 }
 
-// AppendRows appends rows to the external storage.
-// Note that this method is NOT thread-safe.
-func (w *Writer) AppendRows(ctx context.Context, _ []string, rows encode.Rows) error {
-	kvs := kv.Rows2KvPairs(rows)
+func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tidbkv.Handle) error {
 	keyAdapter := w.keyAdapter
-	for _, pair := range kvs {
-		w.batchSize += uint64(len(pair.Key) + len(pair.Val))
+	w.batchSize += uint64(len(idxKey) + len(idxVal))
 
-		buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(pair.Key, pair.RowID))
-		key := keyAdapter.Encode(buf[:0], pair.Key, pair.RowID)
-		val := w.kvBuffer.AddBytes(pair.Val)
+	var rowID []byte
+	if handle != nil {
+		rowID = handle.Encoded()
+	}
+	buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(idxKey, rowID))
+	key := keyAdapter.Encode(buf[:0], idxKey, rowID)
+	val := w.kvBuffer.AddBytes(idxVal)
 
-		w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val})
-		if w.batchSize >= w.memSizeLimit {
-			if err := w.flushKVs(ctx); err != nil {
-				return err
-			}
+	w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val})
+	if w.batchSize >= w.memSizeLimit {
+		if err := w.flushKVs(ctx); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-// IsSynced implements the backend.EngineWriter interface.
-func (w *Writer) IsSynced() bool {
-	return false
+// LockForWrite implements ingest.Writer.
+// Since flushKVs is thread-safe in external storage writer,
+// this is implemented as noop.
+func (w *Writer) LockForWrite() func() {
+	return func() {}
 }
 
 // Close closes the writer.
-func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+func (w *Writer) Close(ctx context.Context) error {
 	if w.closed {
-		return status(false), errors.Errorf("writer %d has been closed", w.writerID)
+		return errors.Errorf("writer %d has been closed", w.writerID)
 	}
 	w.closed = true
 	defer w.kvBuffer.Destroy()
 	err := w.flushKVs(ctx)
 	if err != nil {
-		return status(false), err
+		return err
 	}
 
 	logutil.Logger(ctx).Info("close writer",
@@ -257,7 +255,7 @@ func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
 		Max:       w.maxKey,
 		TotalSize: w.totalSize,
 	})
-	return status(true), nil
+	return nil
 }
 
 func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key, size uint64) {
@@ -268,13 +266,6 @@ func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key, size uint64) {
 		w.maxKey = newMax.Clone()
 	}
 	w.totalSize += size
-}
-
-type status bool
-
-// Flushed implements the backend.ChunkFlushStatus interface.
-func (s status) Flushed() bool {
-	return bool(s)
 }
 
 func (w *Writer) flushKVs(ctx context.Context) (err error) {

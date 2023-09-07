@@ -1464,17 +1464,8 @@ func (local *Backend) ImportEngine(
 		log.FromContext(ctx).Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
-	kvRegionSplitSize, kvRegionSplitKeys, err := getRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
-	if err == nil {
-		if kvRegionSplitSize > regionSplitSize {
-			regionSplitSize = kvRegionSplitSize
-		}
-		if kvRegionSplitKeys > regionSplitKeys {
-			regionSplitKeys = kvRegionSplitKeys
-		}
-	} else {
-		log.FromContext(ctx).Warn("fail to get region split keys and size", zap.Error(err))
-	}
+
+	regionSplitSize, regionSplitKeys, _ = local.GetRegionSplitSizeKeys(ctx, regionSplitSize, regionSplitKeys)
 
 	// split sorted file into range about regionSplitSize per file
 	regionRanges, err := readAndSplitIntoRange(ctx, e, regionSplitSize, regionSplitKeys)
@@ -1540,6 +1531,25 @@ func (local *Backend) ImportEngine(
 			zap.Int64("importedCount", importedLength))
 	}
 	return err
+}
+
+// GetRegionSplitSizeKeys gets the region split size and keys from PD.
+func (local *Backend) GetRegionSplitSizeKeys(
+	ctx context.Context,
+	regionSplitSize, regionSplitKeys int64,
+) (int64, int64, error) {
+	kvRegionSplitSize, kvRegionSplitKeys, err := getRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
+	if err == nil {
+		if kvRegionSplitSize > regionSplitSize {
+			regionSplitSize = kvRegionSplitSize
+		}
+		if kvRegionSplitKeys > regionSplitKeys {
+			regionSplitKeys = kvRegionSplitKeys
+		}
+	} else {
+		log.FromContext(ctx).Warn("fail to get region split keys and size", zap.Error(err))
+	}
+	return kvRegionSplitSize, kvRegionSplitKeys, err
 }
 
 // expose these variables to unit test.

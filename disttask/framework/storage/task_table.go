@@ -344,8 +344,8 @@ func (stm *TaskManager) UpdateErrorToSubtask(tidbID string, taskID int64, err er
 	}
 	_, err1 := stm.executeSQLWithNewSession(stm.ctx, `update mysql.tidb_background_subtask
 		set state = %?, error = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
-		where exec_id = %? and task_key = %? and state = %? limit 1;`,
-		proto.TaskStateFailed, serializeErr(err), tidbID, taskID, proto.TaskStatePending)
+		where exec_id = %? and task_key = %? and state in (%?, %?) limit 1;`,
+		proto.TaskStateFailed, serializeErr(err), tidbID, taskID, proto.TaskStatePending, proto.TaskStateRunning)
 	return err1
 }
 

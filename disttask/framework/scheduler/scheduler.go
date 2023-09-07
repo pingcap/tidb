@@ -100,8 +100,18 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 }
 
 // Run runs the scheduler task.
-func (s *BaseScheduler) Run(ctx context.Context, task *proto.Task) error {
-	err := s.run(ctx, task)
+func (s *BaseScheduler) Run(ctx context.Context, task *proto.Task) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.Logger(ctx).Error("BaseScheduler panicked", zap.Any("recover", r), zap.Stack("stack"))
+			err4Panic := errors.Errorf("%v", r)
+			err1 := s.taskTable.UpdateErrorToSubtask(s.id, task.ID, err4Panic)
+			if err == nil {
+				err = err1
+			}
+		}
+	}()
+	err = s.run(ctx, task)
 	if s.mu.handled {
 		return err
 	}
