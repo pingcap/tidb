@@ -260,6 +260,7 @@ func TestReplaceConflictKeysIndexKvChecking(t *testing.T) {
 		SessionOptions: sessionOpts,
 		Logger:         log.L(),
 	})
+	require.NoError(t, err)
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),
@@ -422,6 +423,7 @@ func TestReplaceConflictKeys(t *testing.T) {
 		SessionOptions: sessionOpts,
 		Logger:         log.L(),
 	})
+	require.NoError(t, err)
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),
