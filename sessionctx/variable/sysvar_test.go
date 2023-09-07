@@ -1296,19 +1296,27 @@ func TestSetTiDBGlobalSortURI(t *testing.T) {
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
 	globalSortURI := GetSysVar(TiDBGlobalSortURI)
+	require.Len(t, GlobalSortURI.Load(), 0)
+	defer func() {
+		GlobalSortURI.Store("")
+	}()
 
 	// Default empty
 	require.Len(t, globalSortURI.Value, 0)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	// Set to noop
-	err := mock.SessionVars.SetSystemVar(TiDBGlobalSortURI, "noop://blackhole")
+	noopURI := "noop://blackhole?access-key=hello&secret-access-key=world"
+	err := mock.SetGlobalSysVar(ctx, TiDBGlobalSortURI, noopURI)
 	require.NoError(t, err)
-	val, err1 := mock.SessionVars.GetSessionOrGlobalSystemVar(context.TODO(), TiDBGlobalSortURI)
+	val, err1 := mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, TiDBGlobalSortURI)
 	require.NoError(t, err1)
-	require.Equal(t, "noop://blackhole", val)
+	require.Equal(t, "noop:///", val)
+	require.Equal(t, noopURI, GlobalSortURI.Load())
 
 	// Set to s3, should fail
-	err = mock.SessionVars.SetSystemVar(TiDBGlobalSortURI, "s3://blackhole")
+	err = mock.SetGlobalSysVar(ctx, TiDBGlobalSortURI, "s3://blackhole")
 	t.Log(err)
 	require.ErrorContains(t, err, "bucket blackhole")
 }

@@ -2227,15 +2227,18 @@ var defaultSysVars = []*SysVar{
 		DDLDiskQuota.Store(TidbOptUint64(val, DefTiDBDDLDiskQuota))
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBGlobalSortURI, Value: "", Type: TypeStr, Validation: func(sv *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		if err := ValidGlobalSortURI(normalizedValue); err != nil {
+	// can't assign validate function here. Because validation function will run after GetGlobal function
+	{Scope: ScopeGlobal, Name: TiDBGlobalSortURI, Value: "", Type: TypeStr, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+		backend, err := ParseGlobalSortURI(GlobalSortURI.Load())
+		if err != nil {
 			return "", err
 		}
-		return normalizedValue, nil
-	}, GetSession: func(sv *SessionVars) (string, error) {
-		return sv.GlobalSortURI, nil
-	}, SetSession: func(s *SessionVars, val string) error {
-		s.GlobalSortURI = val
+		return backend.URI(), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		if _, err := ParseGlobalSortURI(val); err != nil {
+			return err
+		}
+		GlobalSortURI.Store(val)
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(config.GetGlobalConfig().PessimisticTxn.ConstraintCheckInPlacePessimistic), Type: TypeBool,

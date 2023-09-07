@@ -614,21 +614,21 @@ func ParseAnalyzeSkipColumnTypes(val string) map[string]struct{} {
 	return skipTypes
 }
 
-// ValidGlobalSortURI makes validation for tidb_global_sort_uri.
-func ValidGlobalSortURI(uri string) error {
+// ParseGlobalSortURI makes validation for tidb_global_sort_uri.
+func ParseGlobalSortURI(uri string) (storage.ExternalStorage, error) {
 	b, err := storage.ParseBackend(uri, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, err = storage.New(context.TODO(), b, &storage.ExternalStorageOptions{
+	backend, err := storage.New(context.TODO(), b, &storage.ExternalStorageOptions{
 		CheckPermissions: []storage.Permission{
 			storage.ListObjects,
 			storage.GetObject,
-			storage.PutObject,
+			storage.AccessBuckets,
 		},
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	return backend, nil
 }
