@@ -30,6 +30,7 @@ go_library(
         "//disttask/framework/planner",
         "//disttask/framework/proto",
         "//disttask/framework/scheduler",
+        "//disttask/framework/scheduler/execute",
         "//disttask/framework/storage",
         "//domain/infosync",
         "//errno",
