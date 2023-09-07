@@ -1,18 +1,6 @@
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 http_archive(
-    name = "remotejdk17_linux",
-    sha256 = "20c91a922eec795f3181eaa70def8b99d8eac56047c9a14bfb257c85b991df1b",
-    strip_prefix = "zulu17.38.21-ca-jdk17.0.5-linux_x64",
-    urls = [
-        "http://ats.apps.svc/bazelbuild/gomod/rules/zulu17.38.21-ca-jdk17.0.5-linux_x64.tar.gz",
-        "http://bazel-cache.pingcap.net:8080/gomod/rules/zulu17.38.21-ca-jdk17.0.5-linux_x64.tar.gz",
-        "https://mirror.bazel.build/cdn.azul.com/zulu/bin/zulu17.38.21-ca-jdk17.0.5-linux_x64.tar.gz",
-        "https://cdn.azul.com/zulu/bin/zulu17.38.21-ca-jdk17.0.5-linux_x64.tar.gz",
-    ],
-)
-
-http_archive(
     name = "bazel_skylib",
     sha256 = "66ffd9315665bfaafc96b52278f57c7e2dd09f5ede279ea6d39b2be471e7e3aa",
     urls = [
@@ -144,5 +132,17 @@ http_archive(
         "http://ats.apps.svc/bazelbuild/gomod/rules/rules_java/rules_java-981f06c3d2bd10225e85209904090eb7b5fb26bd.tar.gz",
         "https://mirror.bazel.build/github.com/bazelbuild/rules_java/archive/981f06c3d2bd10225e85209904090eb7b5fb26bd.tar.gz",
         "https://github.com/bazelbuild/rules_java/archive/981f06c3d2bd10225e85209904090eb7b5fb26bd.tar.gz",
+    ],
+)
+
+http_archive(
+    name = "remotejdk17_linux",
+    sha256 = "20c91a922eec795f3181eaa70def8b99d8eac56047c9a14bfb257c85b991df1b",
+    strip_prefix = "zulu17.38.21-ca-jdk17.0.5-linux_x64",
+    urls = [
+        "http://ats.apps.svc/bazelbuild/gomod/rules/zulu17.38.21-ca-jdk17.0.5-linux_x64.tar.gz",
+        "http://bazel-cache.pingcap.net:8080/gomod/rules/zulu17.38.21-ca-jdk17.0.5-linux_x64.tar.gz",
+        "https://mirror.bazel.build/cdn.azul.com/zulu/bin/zulu17.38.21-ca-jdk17.0.5-linux_x64.tar.gz",
+        "https://cdn.azul.com/zulu/bin/zulu17.38.21-ca-jdk17.0.5-linux_x64.tar.gz",
     ],
 )
