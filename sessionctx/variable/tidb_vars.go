@@ -17,7 +17,6 @@ package variable
 import (
 	"context"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/pingcap/tidb/config"

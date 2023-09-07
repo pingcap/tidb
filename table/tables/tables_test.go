@@ -414,6 +414,7 @@ func TestTableFromMeta(t *testing.T) {
 func TestShardRowIDBitsStep(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@tidb_shard_allocate_step").Check(testkit.Rows("200"))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists shard_t;")
 	tk.MustExec("create table shard_t (a int) shard_row_id_bits = 15;")
