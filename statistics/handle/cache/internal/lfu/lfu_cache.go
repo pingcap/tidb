@@ -41,26 +41,34 @@ type LFU struct {
 
 var testMode = false
 
-// NewLFU creates a new LFU cache.
-func NewLFU(totalMemCost int64) (*LFU, error) {
-	if totalMemCost == 0 {
-		if intest.InTest {
-			totalMemCost = 5000000
-		} else {
+func setMemCost(totalMemCost int64) (result int64, err error) {
+	if intest.InTest {
+		result = 5000000
+	} else {
+		if totalMemCost != 0 {
 			memTotal, err := memory.MemTotal()
 			if err != nil {
-				return nil, err
+				return 0, err
 			}
-			totalMemCost = int64(memTotal / 2)
+			result = int64(memTotal / 2)
 		}
 	}
-	metrics.CapacityGauge.Set(float64(totalMemCost))
+	return
+}
+
+// NewLFU creates a new LFU cache.
+func NewLFU(totalMemCost int64) (*LFU, error) {
+	cost, err := setMemCost(totalMemCost)
+	if err != nil {
+		return nil, err
+	}
+	metrics.CapacityGauge.Set(float64(cost))
 	result := &LFU{}
 	bufferItems := int64(64)
 
 	cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters:        mathutil.Max(mathutil.Min(totalMemCost/128, 1_000_000), 10), // assume the cost per table stats is 128
-		MaxCost:            totalMemCost,
+		NumCounters:        mathutil.Max(mathutil.Min(cost/128, 1_000_000), 10), // assume the cost per table stats is 128
+		MaxCost:            cost,
 		BufferItems:        bufferItems,
 		OnEvict:            result.onEvict,
 		OnExit:             result.onExit,
@@ -211,9 +219,14 @@ func (s *LFU) Copy() internal.StatsCacheInner {
 
 // SetCapacity implements statsCacheInner
 func (s *LFU) SetCapacity(maxCost int64) {
-	s.cache.UpdateMaxCost(maxCost)
+	cost, err := setMemCost(maxCost)
+	if err != nil {
+		logutil.BgLogger().Warn("setMemCost failed", zap.Error(err))
+		return
+	}
+	s.cache.UpdateMaxCost(cost)
 	s.triggerEvict()
-	metrics.CapacityGauge.Set(float64(maxCost))
+	metrics.CapacityGauge.Set(float64(cost))
 }
 
 // wait blocks until all buffered writes have been applied. This ensures a call to Set()
