@@ -31,6 +31,8 @@ const (
 	unlockAction   = "unlocking"
 	lockedStatus   = "locked"
 	unlockedStatus = "unlocked"
+
+	insertSQL = "INSERT INTO mysql.stats_table_locked (table_id) VALUES (%?) ON DUPLICATE KEY UPDATE table_id = %?"
 )
 
 var (
@@ -38,7 +40,6 @@ var (
 	statsLogger = logutil.BgLogger().With(zap.String("category", "stats"))
 	// useCurrentSession to make sure the sql is executed in current session.
 	useCurrentSession = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
-	insertSQL         = "INSERT INTO mysql.stats_table_locked (table_id) VALUES (%?) ON DUPLICATE KEY UPDATE table_id = %?"
 )
 
 // AddLockedTables add locked tables id to store.
@@ -69,9 +70,9 @@ func AddLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids []in
 	statsLogger.Info("lock table", zap.Int64s("tableIDs", tids))
 
 	// Insert locked tables.
-	lockedStatuses := GetTablesLockedStatuses(lockedTables, tids...)
+	checkedTables := GetLockedTables(lockedTables, tids...)
 	for i, tid := range tids {
-		if !lockedStatuses[tid] {
+		if _, ok := checkedTables[tid]; !ok {
 			if err := insertIntoStatsTableLocked(ctx, exec, tid); err != nil {
 				return "", err
 			}
@@ -81,9 +82,9 @@ func AddLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids []in
 	}
 
 	// Insert related partitions while don't warning duplicate partitions.
-	lockedStatuses = GetTablesLockedStatuses(lockedTables, pids...)
+	checkedTables = GetLockedTables(lockedTables, pids...)
 	for _, pid := range pids {
-		if !lockedStatuses[pid] {
+		if _, ok := checkedTables[pid]; !ok {
 			if err := insertIntoStatsTableLocked(ctx, exec, pid); err != nil {
 				return "", err
 			}

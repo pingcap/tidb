@@ -452,12 +452,12 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	}
 	startTS := txn.StartTS()
 	updateStatsMeta := func(id int64) error {
-		lockedStatuses, err := h.QueryTablesLockedStatuses(id)
+		lockedTables, err := h.GetLockedTables(id)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		// This lock is already locked on it so it use isTableLockedWithoutLock without lock.
-		if lockedStatuses[id] {
+		if _, ok := lockedTables[id]; ok {
 			if delta.Delta < 0 {
 				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
 			} else {
@@ -725,7 +725,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			tids = append(tids, tbl.Meta().ID)
 		}
 
-		lockedStatuses, err := h.QueryTablesLockedStatuses(tids...)
+		lockedTables, err := h.GetLockedTables(tids...)
 		if err != nil {
 			logutil.BgLogger().Error("check table lock failed",
 				zap.String("category", "stats"), zap.Error(err))
@@ -735,7 +735,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		for _, tbl := range tbls {
 			// If table locked, skip analyze.
 			// FIXME: This check is not accurate, because other nodes may change the table lock status at any time.
-			if lockedStatuses[tbl.Meta().ID] {
+			if _, ok := lockedTables[tbl.Meta().ID]; ok {
 				logutil.BgLogger().Info("skip analyze locked table", zap.String("category", "stats"),
 					zap.String("db", db), zap.String("table", tbl.Meta().Name.O))
 				continue

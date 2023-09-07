@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-var selectSQL = "SELECT table_id FROM mysql.stats_table_locked"
+const selectSQL = "SELECT table_id FROM mysql.stats_table_locked"
 
 // QueryLockedTables loads locked tables from mysql.stats_table_locked.
 // Return it as a map for fast query.
@@ -40,19 +40,21 @@ func QueryLockedTables(exec sqlexec.RestrictedSQLExecutor) (map[int64]struct{}, 
 	return tableLocked, nil
 }
 
-// GetTablesLockedStatuses check whether table is locked.
-func GetTablesLockedStatuses(tableLocked map[int64]struct{}, tableIDs ...int64) map[int64]bool {
-	lockedTableStatus := make(map[int64]bool, len(tableIDs))
+// GetLockedTables returns the locked status of the given tables.
+func GetLockedTables(tableLocked map[int64]struct{}, tableIDs ...int64) map[int64]struct{} {
+	lockedTables := make(map[int64]struct{}, len(tableLocked))
+	if len(tableLocked) == 0 {
+		return lockedTables
+	}
 
 	for _, tid := range tableIDs {
 		if _, ok := tableLocked[tid]; ok {
-			lockedTableStatus[tid] = true
+			lockedTables[tid] = struct{}{}
 			continue
 		}
-		lockedTableStatus[tid] = false
 	}
 
-	return lockedTableStatus
+	return lockedTables
 }
 
 func startTransaction(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) error {
