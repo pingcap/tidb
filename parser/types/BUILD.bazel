@@ -27,7 +27,7 @@ go_test(
     ],
     embed = [":types"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         "//parser",
         "//parser/ast",

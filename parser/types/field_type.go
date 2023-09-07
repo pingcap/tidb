@@ -409,10 +409,20 @@ func (ft *FieldType) CompactStr() string {
 		suffix = fmt.Sprintf("(%d,%d)", displayFlen, displayDecimal)
 	case mysql.TypeBit, mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
 		suffix = fmt.Sprintf("(%d)", displayFlen)
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+	case mysql.TypeTiny:
+		// With display length deprecation active tinyint(1) still has
+		// a display length to indicate this might have been a BOOL.
+		// Connectors expect this.
+		//
+		// See also:
+		// https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-19.html
+		if !TiDBStrictIntegerDisplayWidth || (mysql.HasZerofillFlag(ft.flag) || displayFlen == 1) {
+			suffix = fmt.Sprintf("(%d)", displayFlen)
+		}
+	case mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		// Referring this issue #6688, the integer max display length is deprecated in MySQL 8.0.
 		// Since the length doesn't take any effect in TiDB storage or showing result, we remove it here.
-		if !TiDBStrictIntegerDisplayWidth {
+		if !TiDBStrictIntegerDisplayWidth || mysql.HasZerofillFlag(ft.flag) {
 			suffix = fmt.Sprintf("(%d)", displayFlen)
 		}
 	case mysql.TypeYear:
