@@ -525,7 +525,7 @@ func (rc *Controller) Close() {
 
 // Run starts the restore task.
 func (rc *Controller) Run(ctx context.Context) error {
-	failpoint.Inject("beforeImportTables", func() {})
+	failpoint.Inject("beforeRun", func() {})
 
 	opts := []func(context.Context) error{
 		rc.setGlobalVariables,

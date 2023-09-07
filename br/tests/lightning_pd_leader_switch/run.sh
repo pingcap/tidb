@@ -30,6 +30,7 @@ bin/pd-server --join "https://$PD_ADDR" \
   --name pd2 \
   --config $PD_CONFIG &
 
+# strange that new PD can't join too quickly
 sleep 10
 
 bin/pd-server --join "https://$PD_ADDR" \
@@ -42,14 +43,25 @@ bin/pd-server --join "https://$PD_ADDR" \
 
 # restart TiDB to let TiDB load new PD nodes
 killall tidb-server
-# wait for TiDB to exit
+# wait for TiDB to exit to release file lock
 sleep 5
 start_tidb
 
-export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/importer/beforeImportTables=sleep(60000)'
+export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/importer/beforeRun=sleep(60000)'
 run_lightning --backend local --enable-checkpoint=0 &
+lightning_pid=$!
 # in many libraries, etcd client's auto-sync-interval is 30s, so we need to wait at least 30s before kill PD leader
 sleep 45
 kill $(cat /tmp/backup_restore_test/pd_pid.txt)
 
-read -p 123
+# Check that everything is correctly imported
+wait $lightning_pid
+run_sql 'SELECT count(*), sum(c) FROM cpeng.a'
+check_contains 'count(*): 4'
+check_contains 'sum(c): 10'
+
+run_sql 'SELECT count(*), sum(c) FROM cpeng.b'
+check_contains 'count(*): 4'
+check_contains 'sum(c): 46'
+
+restart_services
