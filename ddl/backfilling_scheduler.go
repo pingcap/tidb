@@ -128,7 +128,11 @@ func (b *txnBackfillScheduler) receiveResult() (*backfillResult, bool) {
 	return ret, ok
 }
 
-func newSessCtx(store kv.Storage, sqlMode mysql.SQLMode, tzLocation *model.TimeZoneLocation) (sessionctx.Context, error) {
+func newSessCtx(
+	store kv.Storage,
+	sqlMode mysql.SQLMode,
+	tzLocation *model.TimeZoneLocation,
+) (sessionctx.Context, error) {
 	sessCtx := newContext(store)
 	if err := initSessCtx(sessCtx, sqlMode, tzLocation); err != nil {
 		return nil, errors.Trace(err)
@@ -136,7 +140,11 @@ func newSessCtx(store kv.Storage, sqlMode mysql.SQLMode, tzLocation *model.TimeZ
 	return sessCtx, nil
 }
 
-func initSessCtx(sessCtx sessionctx.Context, sqlMode mysql.SQLMode, tzLocation *model.TimeZoneLocation) error {
+func initSessCtx(
+	sessCtx sessionctx.Context,
+	sqlMode mysql.SQLMode,
+	tzLocation *model.TimeZoneLocation,
+) error {
 	// Unify the TimeZone settings in newContext.
 	if sessCtx.GetSessionVars().StmtCtx.TimeZone == nil {
 		tz := *time.UTC

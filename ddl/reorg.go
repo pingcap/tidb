@@ -447,6 +447,10 @@ type reorgInfo struct {
 	currElement     *meta.Element
 }
 
+func (r *reorgInfo) NewJobContext() *JobContext {
+	return r.d.jobContext(r.Job.ID, r.Job.ReorgMeta)
+}
+
 func (r *reorgInfo) String() string {
 	var isEnabled bool
 	if ingest.LitInitialized {
