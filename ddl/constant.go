@@ -80,6 +80,5 @@ const (
 		meta longblob,
 		error BLOB,
 		summary json,
-		key idx_task_key(task_key),
 		key idx_state_update_time(state_update_time))`
 )
