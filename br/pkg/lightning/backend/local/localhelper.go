@@ -402,13 +402,18 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 // ScatterRegion scatter the regions and retry if it fails. It returns error if can not scatter after max_retry.
 func (local *Backend) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
 	backoffer := split.NewWaitRegionOnlineBackoffer().(*split.WaitRegionOnlineBackoffer)
-	_ = utils.WithRetry(ctx, func() error {
-		return (local.splitCli.ScatterRegion(ctx, regionInfo))
+	err := utils.WithRetry(ctx, func() error {
+		var failedErr error
+		err := local.splitCli.ScatterRegion(ctx, regionInfo)
+		if err != nil {
+			failedErr = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scatter region failed")
+		}
+		return failedErr
 	}, backoffer)
-	if ctx.Err() != nil {
+	if err != nil {
 		log.FromContext(ctx).Warn("scatter region failed", zap.Error(ctx.Err()))
 	}
-	return ctx.Err()
+	return err
 }
 
 // BatchSplitRegions will split regions by the given split keys and tries to
@@ -430,7 +435,7 @@ func (local *Backend) BatchSplitRegions(
 	splitRegions := newRegions
 	// wait for regions to be split
 	backoffer := split.NewWaitRegionOnlineBackoffer().(*split.WaitRegionOnlineBackoffer)
-	_ = utils.WithRetry(ctx, func() error {
+	failedErr = utils.WithRetry(ctx, func() error {
 		retryRegions := make([]*split.RegionInfo, 0)
 		for _, region := range splitRegions {
 			// Wait for a while until the regions successfully splits.
@@ -462,6 +467,10 @@ func (local *Backend) BatchSplitRegions(
 		failedErr = errors.Annotatef(berrors.ErrPDBatchScanRegion, "split region failed")
 		return failedErr
 	}, backoffer)
+
+	if failedErr != nil {
+		log.FromContext(ctx).Warn("split region failed for few regions", zap.Int("regionCount", len(newRegions)), zap.Int("failedCount", len(splitRegions)))
+	}
 
 	if ctx.Err() != nil {
 		return region, newRegions, ctx.Err()
