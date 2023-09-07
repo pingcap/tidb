@@ -17,10 +17,14 @@ package analyzetest
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),

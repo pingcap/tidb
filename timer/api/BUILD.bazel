@@ -16,8 +16,10 @@ go_library(
         "//parser/duration",
         "//util",
         "//util/logutil",
+        "//util/timeutil",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_robfig_cron_v3//:cron",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -35,9 +37,10 @@ go_test(
     embed = [":api"],
     flaky = True,
     race = "on",
-    shard_count = 11,
+    shard_count = 13,
     deps = [
         "//testkit/testsetup",
+        "//util/timeutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

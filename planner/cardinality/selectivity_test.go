@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
@@ -131,7 +130,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	statsTbl := h.GetTableStats(table.Meta())
 	sctx := mock.NewContext()
 	col := statsTbl.Columns[table.Meta().Columns[0].ID]
-	count, err := col.GetColumnRowCount(sctx, getRange(900, 900), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	count, err := cardinality.GetColumnRowCount(sctx, col, getRange(900, 900), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
 	require.NoError(t, err)
 	// Because the ANALYZE collect data by random sampling, so the result is not an accurate value.
 	// so we use a range here.
@@ -152,7 +151,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	increasedTblRowCount := int64(float64(statsTbl.RealtimeCount) * 1.5)
 	modifyCount := int64(float64(statsTbl.RealtimeCount) * 0.5)
 	for i, ran := range input {
-		count, err = col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
+		count, err = cardinality.GetColumnRowCount(sctx, col, getRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
@@ -174,11 +173,15 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int unsigned)")
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// [300, 900)
+	// 5 rows for each value, 3000 rows in total.
 	for i := 0; i < 3000; i++ {
-		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300))
 	}
 	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	testKit.MustExec("analyze table t with 1 samplerate, 0 topn")
+	// Data in [300, 500), 1000 rows in total, are deleted.
+	// 2000 rows left.
 	testKit.MustExec("delete from t where a < 500")
 	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.Nil(t, h.Update(dom.InfoSchema()))
@@ -194,9 +197,15 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = input[i]
-			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
 		})
-		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+		if strings.HasPrefix(input[i], "explain") {
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+			})
+			testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+		} else {
+			testKit.MustExec(input[i])
+		}
 	}
 }
 
@@ -225,24 +234,24 @@ func TestEstimationForUnknownValues(t *testing.T) {
 
 	sctx := mock.NewContext()
 	colID := table.Meta().Columns[0].ID
-	count, err := statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(30, 30))
+	count, err := cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(30, 30))
 	require.NoError(t, err)
 	require.Equal(t, 0.2, count)
 
-	count, err = statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(9, 30))
+	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, 30))
 	require.NoError(t, err)
 	require.Equal(t, 7.2, count)
 
-	count, err = statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(9, math.MaxInt64))
+	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, math.MaxInt64))
 	require.NoError(t, err)
 	require.Equal(t, 7.2, count)
 
 	idxID := table.Meta().Indices[0].ID
-	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(30, 30))
+	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(30, 30))
 	require.NoError(t, err)
 	require.Equal(t, 0.1, count)
 
-	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(9, 30))
+	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(9, 30))
 	require.NoError(t, err)
 	require.Equal(t, 7.0, count)
 
@@ -254,7 +263,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	statsTbl = h.GetTableStats(table.Meta())
 
 	colID = table.Meta().Columns[0].ID
-	count, err = statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(1, 30))
+	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(1, 30))
 	require.NoError(t, err)
 	require.Equal(t, 0.0, count)
 
@@ -267,12 +276,12 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	statsTbl = h.GetTableStats(table.Meta())
 
 	colID = table.Meta().Columns[0].ID
-	count, err = statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(2, 2))
+	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(2, 2))
 	require.NoError(t, err)
 	require.Equal(t, 0.0, count)
 
 	idxID = table.Meta().Indices[0].ID
-	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(2, 2))
+	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(2, 2))
 	require.NoError(t, err)
 	require.Equal(t, 0.0, count)
 }
@@ -291,20 +300,20 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 
 	sctx := mock.NewContext()
 	idxID := table.Meta().Indices[0].ID
-	count, err := statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(7, 7))
+	count, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(7, 7))
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
-	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(6, 6))
+	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
 	colID := table.Meta().Columns[0].ID
-	count, err = statsTbl.GetRowCountByIntColumnRanges(sctx, colID, getRange(7, 7))
+	count, err = cardinality.GetRowCountByIntColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(7, 7))
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
-	count, err = statsTbl.GetRowCountByIntColumnRanges(sctx, colID, getRange(6, 6))
+	count, err = cardinality.GetRowCountByIntColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(6, 6))
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 }
@@ -706,7 +715,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 
 	// Test issue 22134
 	// Information about column n will not be in stats immediately after this SQL executed.
-	// If we don't have a check against this, DNF condition could lead to infinite recursion in cardinality.Selectivity().
+	// If we don't have a check against this, DNF condition could lead to infinite recursion in  cardinality.Selectivity().
 	testKit.MustExec("alter table t add column n timestamp;")
 	testKit.MustExec("select * from t where n = '2000-01-01' or n = '2000-01-02';")
 
@@ -790,7 +799,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, ran := range input {
-		count, err := col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+		count, err := cardinality.GetColumnRowCount(sctx, col, getRange(ran.Start, ran.End), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
@@ -1150,12 +1159,12 @@ func TestIssue39593(t *testing.T) {
 	sctx := testKit.Session()
 	idxID := tblInfo.Indices[0].ID
 	vals := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
-	count, err := statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRanges(vals, vals))
+	count, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count without any changes
 	require.Equal(t, float64(360), count)
 	statsTbl.RealtimeCount *= 10
-	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRanges(vals, vals))
+	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table
 	require.Equal(t, float64(3600), count)
@@ -1305,99 +1314,88 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 	}
 }
 
-func TestNewHistogramBySelectivity(t *testing.T) {
-	coll := &statistics.HistColl{
-		RealtimeCount: 330,
-		Columns:       make(map[int64]*statistics.Column),
-		Indices:       make(map[int64]*statistics.Index),
+func TestCrossValidationSelectivity(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("create table t (a int, b int, c int, primary key (a, b) clustered)")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t values (1,2,3), (1,4,5)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec("analyze table t")
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1 and b > 0 and b < 1000 and c > 1000").Check(testkit.Rows(
+		"TableReader 0.00 root  data:Selection",
+		"└─Selection 0.00 cop[tikv]  gt(test.t.c, 1000)",
+		"  └─TableRangeScan 2.00 cop[tikv] table:t range:(1 0,1 1000), keep order:false"))
+}
+
+func TestIgnoreRealtimeStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, index ib(b))")
+	h := dom.StatsHandle()
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+
+	// 1. Insert 11 rows of data without ANALYZE.
+	testKit.MustExec("insert into t values(1,1),(1,2),(1,3),(1,4),(1,5),(2,1),(2,2),(2,3),(2,4),(2,5),(3,1)")
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.Update(dom.InfoSchema()))
+
+	// 1-1. use real-time stats.
+	// From the real-time stats, we are able to know the total count is 11.
+	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
+	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(
+		"TableReader_7 0.00 root  data:Selection_6",
+		"└─Selection_6 0.00 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
+		"  └─TableFullScan_5 11.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+
+	// 1-2. ignore real-time stats.
+	// Use pseudo stats table. The total row count is 10000.
+	testKit.MustExec("set @@tidb_opt_objective = 'determinate'")
+	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(
+		"TableReader_7 3.33 root  data:Selection_6",
+		"└─Selection_6 3.33 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+
+	// 2. After ANALYZE.
+	testKit.MustExec("analyze table t with 1 samplerate")
+	require.Nil(t, h.Update(dom.InfoSchema()))
+
+	// The execution plans are the same no matter we ignore the real-time stats or not.
+	analyzedPlan := []string{
+		"TableReader_7 2.73 root  data:Selection_6",
+		"└─Selection_6 2.73 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
+		"  └─TableFullScan_5 11.00 cop[tikv] table:t keep order:false",
 	}
-	ctx := mock.NewContext()
-	sc := ctx.GetSessionVars().StmtCtx
-	intCol := &statistics.Column{}
-	intCol.Histogram = *statistics.NewHistogram(1, 30, 30, 0, types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity, 0)
-	intCol.IsHandle = true
-	intCol.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-	for i := 0; i < 10; i++ {
-		intCol.Bounds.AppendInt64(0, int64(i*3))
-		intCol.Bounds.AppendInt64(0, int64(i*3+2))
-		intCol.Buckets = append(intCol.Buckets, statistics.Bucket{Repeat: 10, Count: int64(30*i + 30)})
-	}
-	coll.Columns[1] = intCol
-	node := &cardinality.StatsNode{ID: 1, Tp: cardinality.PkType, Selectivity: 0.56}
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(nil), HighVal: types.MakeDatums(nil), Collators: collate.GetBinaryCollatorSlice(1)})
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: types.MakeDatums(2), Collators: collate.GetBinaryCollatorSlice(1)})
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(5), HighVal: types.MakeDatums(6), Collators: collate.GetBinaryCollatorSlice(1)})
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(8), HighVal: types.MakeDatums(10), Collators: collate.GetBinaryCollatorSlice(1)})
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(13), HighVal: types.MakeDatums(13), Collators: collate.GetBinaryCollatorSlice(1)})
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(25), HighVal: []types.Datum{types.MaxValueDatum()}, Collators: collate.GetBinaryCollatorSlice(1)})
-	intColResult := `column:1 ndv:16 totColSize:0
-num: 30 lower_bound: 0 upper_bound: 2 repeats: 10 ndv: 0
-num: 11 lower_bound: 6 upper_bound: 8 repeats: 0 ndv: 0
-num: 30 lower_bound: 9 upper_bound: 11 repeats: 0 ndv: 0
-num: 1 lower_bound: 12 upper_bound: 14 repeats: 0 ndv: 0
-num: 30 lower_bound: 27 upper_bound: 29 repeats: 0 ndv: 0`
+	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
+	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(analyzedPlan...))
+	testKit.MustExec("set @@tidb_opt_objective = 'determinate'")
+	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(analyzedPlan...))
 
-	stringCol := &statistics.Column{}
-	stringCol.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-	stringCol.Histogram = *statistics.NewHistogram(2, 15, 30, 0, types.NewFieldType(mysql.TypeString), chunk.InitialCapacity, 0)
-	stringCol.Bounds.AppendString(0, "a")
-	stringCol.Bounds.AppendString(0, "aaaabbbb")
-	stringCol.Buckets = append(stringCol.Buckets, statistics.Bucket{Repeat: 10, Count: 60})
-	stringCol.Bounds.AppendString(0, "bbbb")
-	stringCol.Bounds.AppendString(0, "fdsfdsfds")
-	stringCol.Buckets = append(stringCol.Buckets, statistics.Bucket{Repeat: 10, Count: 120})
-	stringCol.Bounds.AppendString(0, "kkkkk")
-	stringCol.Bounds.AppendString(0, "ooooo")
-	stringCol.Buckets = append(stringCol.Buckets, statistics.Bucket{Repeat: 10, Count: 180})
-	stringCol.Bounds.AppendString(0, "oooooo")
-	stringCol.Bounds.AppendString(0, "sssss")
-	stringCol.Buckets = append(stringCol.Buckets, statistics.Bucket{Repeat: 10, Count: 240})
-	stringCol.Bounds.AppendString(0, "ssssssu")
-	stringCol.Bounds.AppendString(0, "yyyyy")
-	stringCol.Buckets = append(stringCol.Buckets, statistics.Bucket{Repeat: 10, Count: 300})
-	stringCol.PreCalculateScalar()
-	coll.Columns[2] = stringCol
-	node2 := &cardinality.StatsNode{ID: 2, Tp: cardinality.ColType, Selectivity: 0.6}
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums(nil), HighVal: types.MakeDatums(nil), Collators: collate.GetBinaryCollatorSlice(1)})
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: types.MakeDatums("aaa"), Collators: collate.GetBinaryCollatorSlice(1)})
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("aaaaaaaaaaa"), HighVal: types.MakeDatums("aaaaaaaaaaaaaa"), Collators: collate.GetBinaryCollatorSlice(1)})
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("bbb"), HighVal: types.MakeDatums("cccc"), Collators: collate.GetBinaryCollatorSlice(1)})
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("ddd"), HighVal: types.MakeDatums("fff"), Collators: collate.GetBinaryCollatorSlice(1)})
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("ggg"), HighVal: []types.Datum{types.MaxValueDatum()}, Collators: collate.GetBinaryCollatorSlice(1)})
-	stringColResult := `column:2 ndv:9 totColSize:0
-num: 60 lower_bound: a upper_bound: aaaabbbb repeats: 0 ndv: 0
-num: 52 lower_bound: bbbb upper_bound: fdsfdsfds repeats: 0 ndv: 0
-num: 54 lower_bound: kkkkk upper_bound: ooooo repeats: 0 ndv: 0
-num: 60 lower_bound: oooooo upper_bound: sssss repeats: 0 ndv: 0
-num: 60 lower_bound: ssssssu upper_bound: yyyyy repeats: 0 ndv: 0`
+	// 3. Insert another 4 rows of data.
+	testKit.MustExec("insert into t values(3,2),(3,3),(3,4),(3,5)")
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.Update(dom.InfoSchema()))
 
-	newColl := cardinality.NewHistCollBySelectivity(ctx, coll, []*cardinality.StatsNode{node, node2})
-	require.Equal(t, intColResult, newColl.Columns[1].String())
-	require.Equal(t, stringColResult, newColl.Columns[2].String())
+	// 3-1. use real-time stats.
+	// From the real-time stats, we are able to know the total count is 15.
+	// Selectivity is not changed: 15 * (2.73 / 11) = 3.72
+	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
+	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(
+		"TableReader_7 3.72 root  data:Selection_6",
+		"└─Selection_6 3.72 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
+		"  └─TableFullScan_5 15.00 cop[tikv] table:t keep order:false",
+	))
 
-	idx := &statistics.Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Name: model.NewCIStr("a"), Offset: 0}}}}
-	coll.Indices[0] = idx
-	idx.Histogram = *statistics.NewHistogram(0, 15, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
-	for i := 0; i < 5; i++ {
-		low, err1 := codec.EncodeKey(sc, nil, types.NewIntDatum(int64(i*3)))
-		require.NoError(t, err1)
-		high, err2 := codec.EncodeKey(sc, nil, types.NewIntDatum(int64(i*3+2)))
-		require.NoError(t, err2)
-		idx.Bounds.AppendBytes(0, low)
-		idx.Bounds.AppendBytes(0, high)
-		idx.Buckets = append(idx.Buckets, statistics.Bucket{Repeat: 10, Count: int64(30*i + 30)})
-	}
-	idx.PreCalculateScalar()
-	node3 := &cardinality.StatsNode{ID: 0, Tp: cardinality.IndexType, Selectivity: 0.47}
-	node3.Ranges = append(node3.Ranges, &ranger.Range{LowVal: types.MakeDatums(2), HighVal: types.MakeDatums(3), Collators: collate.GetBinaryCollatorSlice(1)})
-	node3.Ranges = append(node3.Ranges, &ranger.Range{LowVal: types.MakeDatums(10), HighVal: types.MakeDatums(13), Collators: collate.GetBinaryCollatorSlice(1)})
-
-	idxResult := `index:0 ndv:7
-num: 30 lower_bound: 0 upper_bound: 2 repeats: 10 ndv: 0
-num: 30 lower_bound: 3 upper_bound: 5 repeats: 10 ndv: 0
-num: 30 lower_bound: 9 upper_bound: 11 repeats: 10 ndv: 0
-num: 30 lower_bound: 12 upper_bound: 14 repeats: 10 ndv: 0`
-
-	newColl = cardinality.NewHistCollBySelectivity(ctx, coll, []*cardinality.StatsNode{node3})
-	require.Equal(t, idxResult, newColl.Indices[0].String())
+	// 3-2. ignore real-time stats.
+	// The execution plan is the same as case 2.
+	testKit.MustExec("set @@tidb_opt_objective = 'determinate'")
+	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(analyzedPlan...))
 }

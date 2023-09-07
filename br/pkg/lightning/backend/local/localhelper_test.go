@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/kv"
@@ -469,11 +470,11 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 	checkRegionRanges(t, regions, [][]byte{[]byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca")})
 
 	// generate:  ranges [b, ba), [ba, bb), [bb, bc), ... [by, bz)
-	ranges := make([]Range, 0)
+	ranges := make([]common.Range, 0)
 	start := []byte{'b'}
 	for i := byte('a'); i <= 'z'; i++ {
 		end := []byte{'b', i}
-		ranges = append(ranges, Range{start: start, end: end})
+		ranges = append(ranges, common.Range{Start: start, End: end})
 		start = end
 	}
 
@@ -559,11 +560,11 @@ func TestMissingScatter(t *testing.T) {
 	checkRegionRanges(t, regions, [][]byte{[]byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca")})
 
 	// generate:  ranges [b, ba), [ba, bb), [bb, bc), ... [by, bz)
-	ranges := make([]Range, 0)
+	ranges := make([]common.Range, 0)
 	start := []byte{'b'}
 	for i := byte('a'); i <= 'z'; i++ {
 		end := []byte{'b', i}
-		ranges = append(ranges, Range{start: start, end: end})
+		ranges = append(ranges, common.Range{Start: start, End: end})
 		start = end
 	}
 
@@ -722,11 +723,11 @@ func TestSplitAndScatterRegionInBatches(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var ranges []Range
+	var ranges []common.Range
 	for i := 0; i < 20; i++ {
-		ranges = append(ranges, Range{
-			start: []byte(fmt.Sprintf("a%02d", i)),
-			end:   []byte(fmt.Sprintf("a%02d", i+1)),
+		ranges = append(ranges, common.Range{
+			Start: []byte(fmt.Sprintf("a%02d", i)),
+			End:   []byte(fmt.Sprintf("a%02d", i+1)),
 		})
 	}
 
@@ -820,9 +821,9 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 	}
 
 	start := rangeKeys[0]
-	ranges := make([]Range, 0, len(rangeKeys)-1)
+	ranges := make([]common.Range, 0, len(rangeKeys)-1)
 	for _, e := range rangeKeys[1:] {
-		ranges = append(ranges, Range{start: start, end: e})
+		ranges = append(ranges, common.Range{Start: start, End: e})
 		start = e
 	}
 

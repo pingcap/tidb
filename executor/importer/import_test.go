@@ -15,14 +15,17 @@
 package importer
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"testing"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -80,7 +83,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		fieldsEscapedByOption+"='', "+
 		fieldsDefinedNullByOption+"='N', "+
 		linesTerminatedByOption+"='END', "+
-		skipRowsOption+"=3, "+
+		skipRowsOption+"=1, "+
 		diskQuotaOption+"='100gib', "+
 		checksumTableOption+"='optional', "+
 		threadOption+"=100000, "+
@@ -101,7 +104,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, "", plan.FieldsEscapedBy, sql)
 	require.Equal(t, []string{"N"}, plan.FieldNullDef, sql)
 	require.Equal(t, "END", plan.LinesTerminatedBy, sql)
-	require.Equal(t, uint64(3), plan.IgnoreLines, sql)
+	require.Equal(t, uint64(1), plan.IgnoreLines, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
 	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
 	require.Equal(t, int64(runtime.GOMAXPROCS(0)), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
@@ -156,4 +159,20 @@ func TestASTArgsFromStmt(t *testing.T) {
 	importIntoStmt := stmtNode.(*ast.ImportIntoStmt)
 	require.Equal(t, astArgs.ColumnAssignments, importIntoStmt.ColumnAssignments)
 	require.Equal(t, astArgs.ColumnsAndUserVars, importIntoStmt.ColumnsAndUserVars)
+}
+
+func TestGetFileRealSize(t *testing.T) {
+	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage", "return(250)")
+	require.NoError(t, err)
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage")
+	}()
+	fileMeta := mydump.SourceFileMeta{Compression: mydump.CompressionNone, FileSize: 100}
+	c := &LoadDataController{logger: log.L()}
+	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
+	fileMeta.Compression = mydump.CompressionGZ
+	require.Equal(t, int64(250), c.getFileRealSize(context.Background(), fileMeta, nil))
+	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
 }
