@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -427,4 +428,15 @@ func replacePrefix(s []byte, rewriteRules *RewriteRules) ([]byte, *sst.RewriteRu
 	}
 
 	return s, nil
+}
+
+// GetRewriteTableID gets rewrite table id by the rewrite rule and original table id
+func GetRewriteTableID(tableID int64, rewriteRules *RewriteRules) int64 {
+	tableKey := tablecodec.GenTableRecordPrefix(tableID)
+	rule := matchOldPrefix(tableKey, rewriteRules)
+	if rule == nil {
+		return 0
+	}
+
+	return tablecodec.DecodeTableID(rule.GetNewKeyPrefix())
 }
