@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 type testDynamicDispatcherExt struct {
@@ -83,20 +83,20 @@ func (*testDynamicDispatcherExt) IsRetryableErr(error) bool {
 }
 
 func TestFrameworkDynamicBasic(t *testing.T) {
-	defer dispatcher.ClearDispatcherFactory()
-	defer scheduler.ClearSchedulers()
 	var m sync.Map
-	RegisterTaskMeta(&m, &testDynamicDispatcherExt{})
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &testDynamicDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess("key1", t, &m)
 	distContext.Close()
 }
 
 func TestFrameworkDynamicHA(t *testing.T) {
-	defer dispatcher.ClearDispatcherFactory()
-	defer scheduler.ClearSchedulers()
 	var m sync.Map
-	RegisterTaskMeta(&m, &testDynamicDispatcherExt{})
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &testDynamicDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockDynamicDispatchErr", "5*return()"))
 	DispatchTaskAndCheckSuccess("key1", t, &m)
