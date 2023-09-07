@@ -150,6 +150,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	store kv.Storage,
 	sessPool opSessPool,
 	sessCtx sessionctx.Context,
+	jobID int64,
 	tbl table.PhysicalTable,
 	idxInfo *model.IndexInfo,
 	startKey, endKey kv.Key,
@@ -182,7 +183,8 @@ func NewWriteIndexToExternalStoragePipeline(
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
-	writeOp := NewWriteExternalStoreOperator(ctx, copCtx, sessPool, tbl, index, extStore, srcChkPool, writerCnt, onClose)
+	writeOp := NewWriteExternalStoreOperator(
+		ctx, copCtx, sessPool, jobID, tbl, index, extStore, srcChkPool, writerCnt, onClose)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, index, totalRowCount, nil)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
@@ -449,6 +451,7 @@ func NewWriteExternalStoreOperator(
 	ctx *OperatorCtx,
 	copCtx *CopContext,
 	sessPool opSessPool,
+	jobID int64,
 	tbl table.PhysicalTable,
 	index table.Index,
 	store storage.ExternalStorage,
@@ -469,7 +472,7 @@ func NewWriteExternalStoreOperator(
 				builder = builder.EnableDuplicationDetection()
 			}
 
-			prefix := strconv.Itoa(int(index.Meta().ID))
+			prefix := strconv.Itoa(int(jobID))
 			writer := builder.Build(store, prefix, writerID)
 
 			return &indexIngestWorker{

@@ -153,7 +153,7 @@ func (r *readIndexStage) SplitSubtask(ctx context.Context, subtask *proto.Subtas
 			r.mu.Unlock()
 		}
 		pipe, err = NewWriteIndexToExternalStoragePipeline(
-			opCtx, d.store, d.sessPool, sessCtx, tbl, r.index, startKey, endKey, totalRowCount, onClose)
+			opCtx, d.store, d.sessPool, sessCtx, r.job.ID, tbl, r.index, startKey, endKey, totalRowCount, onClose)
 		if err != nil {
 			return nil, err
 		}
