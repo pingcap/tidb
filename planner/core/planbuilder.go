@@ -3141,8 +3141,8 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 		return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently")
 	}
 
-	// Check privilege.
-	b.checkInsertAndSelectPriv(as.TableNames)
+	// Require INSERT and SELECT privilege for tables.
+	b.requireInsertAndSelectPriv(as.TableNames)
 
 	opts, err := handleAnalyzeOptions(as.AnalyzeOpts, statsVersion)
 	if err != nil {
@@ -4523,7 +4523,7 @@ func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 
 func (b *PlanBuilder) buildLockStats(ld *ast.LockStatsStmt) Plan {
 	p := &LockStats{Tables: ld.Tables}
-	b.checkInsertAndSelectPriv(ld.Tables)
+	b.requireInsertAndSelectPriv(ld.Tables)
 
 	return p
 }
@@ -4531,13 +4531,13 @@ func (b *PlanBuilder) buildLockStats(ld *ast.LockStatsStmt) Plan {
 // buildUnlockStats requires INSERT and SELECT privilege for the tables same as buildAnalyze.
 func (b *PlanBuilder) buildUnlockStats(ld *ast.UnlockStatsStmt) Plan {
 	p := &UnlockStats{Tables: ld.Tables}
-	b.checkInsertAndSelectPriv(ld.Tables)
+	b.requireInsertAndSelectPriv(ld.Tables)
 
 	return p
 }
 
-// checkInsertAndSelectPriv requires INSERT and SELECT privilege for the tables.
-func (b *PlanBuilder) checkInsertAndSelectPriv(tables []*ast.TableName) {
+// requireInsertAndSelectPriv requires INSERT and SELECT privilege for the tables.
+func (b *PlanBuilder) requireInsertAndSelectPriv(tables []*ast.TableName) {
 	for _, tbl := range tables {
 		user := b.ctx.GetSessionVars().User
 		var insertErr, selectErr error

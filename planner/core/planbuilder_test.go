@@ -708,7 +708,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 	require.Equal(t, specifiedCols, cols)
 }
 
-func TestCheckInsertAndSelectPriv(t *testing.T) {
+func TestRequireInsertAndSelectPriv(t *testing.T) {
 	ctx := MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
@@ -726,7 +726,7 @@ func TestCheckInsertAndSelectPriv(t *testing.T) {
 		},
 	}
 
-	pb.checkInsertAndSelectPriv(tables)
+	pb.requireInsertAndSelectPriv(tables)
 	require.Len(t, pb.visitInfo, 4)
 	require.Equal(t, "test", pb.visitInfo[0].db)
 	require.Equal(t, "t1", pb.visitInfo[0].table)
