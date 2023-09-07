@@ -19,6 +19,7 @@
 package table
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -53,6 +54,19 @@ type Column struct {
 	GetInternalGeneratedExpr func() ast.ExprNode
 	// If this column has default expr value, this expression will be stored here.
 	DefaultExpr ast.ExprNode
+}
+
+// MarshalJSON implements json.Marshaler interface.
+func (c *Column) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		*model.ColumnInfo `json:"info"`
+		GeneratedExpr     ast.ExprNode `json:"generated_expr"`
+		DefaultExpr       ast.ExprNode `json:"default_expr"`
+	}{
+		c.ColumnInfo,
+		c.generatedExpr,
+		c.DefaultExpr,
+	})
 }
 
 // SetGeneratedExpr sets the generated column exprNode.
