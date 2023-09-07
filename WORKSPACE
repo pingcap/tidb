@@ -137,12 +137,12 @@ http_archive(
 
 http_archive(
     name = "openjdk_linux_vanilla",
-    sha256 = "ec5c0426a0eb2b0460968a044665ed4603b224acd5e20c379e9d7890511da683",
-    strip_prefix = "zulu20.30.11-ca-jdk20.0.1-linux_x64",
+    sha256 = "20c91a922eec795f3181eaa70def8b99d8eac56047c9a14bfb257c85b991df1b",
+    strip_prefix = "zulu17.38.21-ca-jdk17.0.5-linux_x64",
     urls = [
-        "http://ats.apps.svc/bazelbuild/gomod/rules/zulu20.30.11-ca-jdk20.0.1-linux_x64.tar.gz",
-        "http://bazel-cache.pingcap.net:8080/gomod/rules/zulu20.30.11-ca-jdk20.0.1-linux_x64.tar.gz",
-        "https://mirror.bazel.build/cdn.azul.com/zulu/bin/zulu20.30.11-ca-jdk20.0.1-linux_x64.tar.gz",
-        "https://cdn.azul.com/zulu/bin/zulu20.30.11-ca-jdk20.0.1-linux_x64.tar.gz",
+        "http://ats.apps.svc/bazelbuild/gomod/rules/zulu17.38.21-ca-jdk17.0.5-linux_x64.tar.gz",
+        "http://bazel-cache.pingcap.net:8080/gomod/rules/zulu17.38.21-ca-jdk17.0.5-linux_x64.tar.gz",
+        "https://mirror.bazel.build/cdn.azul.com/zulu/bin/zulu17.38.21-ca-jdk17.0.5-linux_x64.tar.gz",
+        "https://cdn.azul.com/zulu/bin/zulu17.38.21-ca-jdk17.0.5-linux_x64.tar.gz",
     ],
 )
