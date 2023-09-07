@@ -8,6 +8,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -68,6 +69,7 @@ type CheckpointAdvancer struct {
 	// if no progress, this cache can help us don't to send useless requests.
 	lastCheckpoint   *checkpoint
 	lastCheckpointMu sync.Mutex
+	inResolvingLock  atomic.Bool
 
 	checkpoints   *spans.ValueSortedFull
 	checkpointsMu sync.Mutex
@@ -503,7 +505,8 @@ func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
 	// lastCheckpoint is not increased too long enough.
 	// assume the cluster has expired locks for whatever reasons.
 	var targets []spans.Valued
-	if c.lastCheckpoint != nil && c.lastCheckpoint.needResolveLocks() {
+	if c.lastCheckpoint != nil && c.lastCheckpoint.needResolveLocks() && !c.inResolvingLock.Load() {
+		c.inResolvingLock.Store(true)
 		c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
 			// when get locks here. assume these locks are not belong to same txn,
 			// but these locks' start ts are close to 1 minute. try resolve these locks at one time
@@ -598,5 +601,6 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 		c.lastCheckpointMu.Lock()
 		c.lastCheckpoint.resolveLockTime = time.Now()
 		c.lastCheckpointMu.Unlock()
+		c.inResolvingLock.Store(false)
 	}()
 }
