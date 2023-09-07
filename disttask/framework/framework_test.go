@@ -213,35 +213,29 @@ func RegisterTaskMetaForExample2(t *testing.T, ctrl *gomock.Controller, m *sync.
 		func(minimalTask proto.MinimalTask, tp string, step int64) (execute.MiniTaskExecutor, error) {
 			switch step {
 			case proto.StepOne:
-				return &testSubtaskExecutor{m: m}, nil
+				return &testSubtaskExecutor2{m: m}, nil
 			case proto.StepTwo:
-				return &testSubtaskExecutor1{m: m}, nil
+				return &testSubtaskExecutor3{m: m}, nil
 			}
 			panic("invalid step")
 		}).AnyTimes()
 	RegisterTaskMetaForExample2Inner(t, mockExtension, dispatcherHandle)
 }
 
-func RegisterTaskMetaForExample2Inner(m *sync.Map, dispatcherHandle dispatcher.Extension) {
+func RegisterTaskMetaForExample2Inner(t *testing.T, mockExtension scheduler.Extension, dispatcherHandle dispatcher.Extension) {
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample2,
 		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
 			baseDispatcher.Extension = dispatcherHandle
 			return baseDispatcher
 		})
-	scheduler.RegisterTaskType(proto.TaskTypeExample2)
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample2, proto.StepOne, func(_ context.Context, _ *proto.Task, _ *scheduler.Summary) (scheduler.Scheduler, error) {
-		return &testScheduler{}, nil
-	})
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample2, proto.StepTwo, func(_ context.Context, _ *proto.Task, _ *scheduler.Summary) (scheduler.Scheduler, error) {
-		return &testScheduler{}, nil
-	})
-	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample2, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
-		return &testSubtaskExecutor2{m: m}, nil
-	})
-	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample2, proto.StepTwo, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
-		return &testSubtaskExecutor3{m: m}, nil
-	})
+	scheduler.RegisterTaskType(proto.TaskTypeExample2,
+		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool) scheduler.Scheduler {
+			s := scheduler.NewBaseScheduler(ctx, id, taskID, taskTable, pool)
+			s.Extension = mockExtension
+			return s
+		},
+	)
 }
 
 func RegisterTaskMetaForExample3(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispatcherHandle dispatcher.Extension) {
@@ -251,35 +245,29 @@ func RegisterTaskMetaForExample3(t *testing.T, ctrl *gomock.Controller, m *sync.
 		func(minimalTask proto.MinimalTask, tp string, step int64) (execute.MiniTaskExecutor, error) {
 			switch step {
 			case proto.StepOne:
-				return &testSubtaskExecutor{m: m}, nil
+				return &testSubtaskExecutor4{m: m}, nil
 			case proto.StepTwo:
-				return &testSubtaskExecutor1{m: m}, nil
+				return &testSubtaskExecutor5{m: m}, nil
 			}
 			panic("invalid step")
 		}).AnyTimes()
 	RegisterTaskMetaForExample3Inner(t, mockExtension, dispatcherHandle)
 }
 
-func RegisterTaskMetaForExample3Inner(m *sync.Map, dispatcherHandle dispatcher.Extension) {
+func RegisterTaskMetaForExample3Inner(t *testing.T, mockExtension scheduler.Extension, dispatcherHandle dispatcher.Extension) {
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample3,
 		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
 			baseDispatcher.Extension = dispatcherHandle
 			return baseDispatcher
 		})
-	scheduler.RegisterTaskType(proto.TaskTypeExample3)
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample3, proto.StepOne, func(_ context.Context, _ *proto.Task, _ *scheduler.Summary) (scheduler.Scheduler, error) {
-		return &testScheduler{}, nil
-	})
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample3, proto.StepTwo, func(_ context.Context, _ *proto.Task, _ *scheduler.Summary) (scheduler.Scheduler, error) {
-		return &testScheduler{}, nil
-	})
-	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample3, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
-		return &testSubtaskExecutor4{m: m}, nil
-	})
-	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample3, proto.StepTwo, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
-		return &testSubtaskExecutor5{m: m}, nil
-	})
+	scheduler.RegisterTaskType(proto.TaskTypeExample3,
+		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool) scheduler.Scheduler {
+			s := scheduler.NewBaseScheduler(ctx, id, taskID, taskTable, pool)
+			s.Extension = mockExtension
+			return s
+		},
+	)
 }
 
 func DispatchTask(taskKey string, t *testing.T) *proto.Task {
@@ -604,7 +592,7 @@ func TestMultiTasks(t *testing.T) {
 	num := 3
 
 	m := make([]sync.Map, num)
-  ctrl := gomock.NewController(t)
+	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	RegisterTaskMeta(t, ctrl, &(m[0]), &testDispatcherExt{})
 	RegisterTaskMetaForExample2(t, ctrl, &(m[1]), &testDispatcherExt{})
