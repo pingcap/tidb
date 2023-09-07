@@ -48,7 +48,7 @@ type Column struct {
 	// If this column is a generated column, the expression will be stored here.
 	generatedExpr ast.ExprNode
 	// GetGeneratedExpr gets the generated column exprNode. If you want to rewrite the node, please set the parameter to true to avoid data race.
-	GetGeneratedExpr func(new bool) ast.ExprNode
+	GetGeneratedExpr func(isNew bool) ast.ExprNode
 	// GetInternalGeneratedExpr get the internal generated column exprNode, please use GetGeneratedExpr instead.
 	GetInternalGeneratedExpr func() ast.ExprNode
 	// If this column has default expr value, this expression will be stored here.
