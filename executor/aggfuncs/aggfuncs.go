@@ -147,7 +147,7 @@ type aggSpillHelper interface {
 	SerializeForSpill(ctx sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper)
 
 	// DeserializeToPartialResultForSpill deserializes from bytes to PartialResult.
-	DeserializeToPartialResultForSpill(ctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error)
+	DeserializeToPartialResultForSpill(ctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64)
 }
 
 // AggFunc is the interface to evaluate the aggregate functions.

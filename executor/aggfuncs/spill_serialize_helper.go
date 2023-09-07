@@ -15,6 +15,9 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/spill"
 )
 
@@ -24,36 +27,83 @@ type SpillSerializeHelper struct {
 	tmpBuf [1024]byte
 }
 
-func (s *SpillSerializeHelper) serializeBool(value bool) []byte {
-	return spill.SerializeBool(value, s.tmpBuf[0:boolLen])
+func (s *SpillSerializeHelper) serializePartialResult4Count(value partialResult4Count) []byte {
+	return spill.SerializeInt64(int64(value), s.tmpBuf[0:int64Len])
 }
 
-func (s *SpillSerializeHelper) serializeInt8(value int8) []byte {
-	return spill.SerializeInt8(value, s.tmpBuf[0:int8Len])
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinInt(value partialResult4MaxMinInt) []byte {
+	spill.SerializeInt64(value.val, s.tmpBuf[0:int64Len])
+	end := int64Len + boolLen
+	spill.SerializeBool(value.isNull, s.tmpBuf[int64Len:end])
+	return s.tmpBuf[0:end]
 }
 
-func (s *SpillSerializeHelper) serializeInt32(value int32) []byte {
-	return spill.SerializeInt32(value, s.tmpBuf[0:int32Len])
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinUint(value partialResult4MaxMinUint) []byte {
+	spill.SerializeUint64(value.val, s.tmpBuf[0:uint64Len])
+	end := uint64Len + boolLen
+	spill.SerializeBool(value.isNull, s.tmpBuf[uint64Len:end])
+	return s.tmpBuf[0:end]
 }
 
-func (s *SpillSerializeHelper) serializeUint32(value uint32) []byte {
-	return spill.SerializeUint32(value, s.tmpBuf[0:uint32Len])
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinDecimal(value partialResult4MaxMinDecimal) []byte {
+	*(*types.MyDecimal)(unsafe.Pointer(&s.tmpBuf[0])) = value.val
+	end := types.MyDecimalStructSize + boolLen
+	spill.SerializeBool(value.isNull, s.tmpBuf[types.MyDecimalStructSize:end])
+	return s.tmpBuf[0:end]
 }
 
-func (s *SpillSerializeHelper) serializeUint64(value uint64) []byte {
-	return spill.SerializeUint64(value, s.tmpBuf[0:uint64Len])
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinFloat32(value partialResult4MaxMinFloat32) []byte {
+	spill.SerializeFloat32(value.val, s.tmpBuf[0:float32Len])
+	end := float32Len + boolLen
+	spill.SerializeBool(value.isNull, s.tmpBuf[float32Len:end])
+	return s.tmpBuf[0:end]
 }
 
-func (s *SpillSerializeHelper) serializeInt64(value int64) []byte {
-	return spill.SerializeInt64(value, s.tmpBuf[0:int64Len])
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinFloat64(value partialResult4MaxMinFloat64) []byte {
+	spill.SerializeFloat64(value.val, s.tmpBuf[0:float64Len])
+	end := float64Len + boolLen
+	spill.SerializeBool(value.isNull, s.tmpBuf[float64Len:end])
+	return s.tmpBuf[0:end]
 }
 
-func (s *SpillSerializeHelper) serializeFloat32(value float32) []byte {
-	return spill.SerializeFloat32(value, s.tmpBuf[0:float32Len])
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinTime(value partialResult4MaxMinTime) []byte {
+	*(*types.Time)(unsafe.Pointer(&s.tmpBuf[0])) = value.val
+	end := timeLen + boolLen
+	spill.SerializeBool(value.isNull, s.tmpBuf[timeLen:end])
+	return s.tmpBuf[0:end]
 }
 
-func (s *SpillSerializeHelper) serializeFloat64(value float64) []byte {
-	return spill.SerializeFloat64(value, s.tmpBuf[0:float64Len])
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinDuration(value partialResult4MaxMinDuration) []byte {
+	spill.SerializeInt64(int64(value.val.Duration), s.tmpBuf[0:int64Len])
+	end := int64Len + boolLen
+	spill.SerializeBool(value.isNull, s.tmpBuf[int64Len:end])
+	return s.tmpBuf[0:end]
 }
 
-// TODO if DefRowSize and DefInterfaceSize need to be serialized?
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinString(value partialResult4MaxMinString) []byte {
+	spill.SerializeBool(value.isNull, s.tmpBuf[0:boolLen])
+	bytes := []byte(value.val)
+	copy(s.tmpBuf[boolLen:], bytes)
+	return s.tmpBuf[0 : boolLen+int64(len(bytes))]
+}
+
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinJSON(value partialResult4MaxMinJSON) []byte {
+	s.tmpBuf[0] = value.val.TypeCode
+	spill.SerializeBool(value.isNull, s.tmpBuf[1:])
+	copy(s.tmpBuf[1+boolLen:], value.val.Value)
+	return s.tmpBuf[0 : 1+boolLen+int64(len(value.val.Value))]
+}
+
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinEnum(value partialResult4MaxMinEnum) []byte {
+	spill.SerializeUint64(value.val.Value, s.tmpBuf[0:])
+	spill.SerializeBool(value.isNull, s.tmpBuf[uint64Len:])
+	copy(s.tmpBuf[uint64Len+boolLen:], []byte(value.val.Name))
+	return s.tmpBuf[0 : uint64Len+boolLen+int64(len(value.val.Name))]
+}
+
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinSet(value partialResult4MaxMinSet) []byte {
+	spill.SerializeUint64(value.val.Value, s.tmpBuf[0:])
+	spill.SerializeBool(value.isNull, s.tmpBuf[uint64Len:])
+	copy(s.tmpBuf[uint64Len+boolLen:], []byte(value.val.Name))
+	return s.tmpBuf[0 : uint64Len+boolLen+int64(len(value.val.Name))]
+}

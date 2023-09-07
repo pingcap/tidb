@@ -51,18 +51,18 @@ func (e *baseCount) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResu
 
 func (c *baseCount) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4Count)(partialResult)
-	resBuf := spillHelper.serializeInt64(int64(*pr))
+	resBuf := spillHelper.serializePartialResult4Count(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *baseCount) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+func (c *baseCount) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
-	spillHelper := newDeserializeHelper(dataCol.GetData())
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
 	partialResults := make([]PartialResult, 0, src.NumRows())
 
 	for {
-		pr, memDelta, _ := c.deserializeForSpill(&spillHelper)
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
 		if pr == nil {
 			break
 		}
@@ -70,17 +70,17 @@ func (c *baseCount) DeserializeToPartialResultForSpill(_ sessionctx.Context, src
 		totalMemDelta += memDelta
 	}
 
-	return partialResults, totalMemDelta, nil
+	return partialResults, totalMemDelta
 }
 
-func (c *baseCount) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
+func (c *baseCount) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
 	pr, memDelta := c.AllocPartialResult()
 	result := int64(*(*partialResult4Count)(pr))
-	success := helper.readInt64(&result)
+	success := helper.deserializePartialResult4Count(&result)
 	if !success {
-		return nil, 0, nil
+		return nil, 0
 	}
-	return pr, memDelta, nil
+	return pr, memDelta
 }
 
 type countOriginal4Int struct {

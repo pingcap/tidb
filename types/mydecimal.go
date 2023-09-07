@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/spill"
 	"go.uber.org/zap"
 )
 
@@ -249,39 +248,6 @@ type MyDecimal struct {
 	//  wordBuf is an array of int32 words.
 	// A word is an int32 value can hold 9 digits.(0 <= word < wordBase)
 	wordBuf [maxWordBufLen]int32
-}
-
-// SerializeForSpill serializes MyDecimal to bytes
-func (d *MyDecimal) SerializeForSpill(buf []byte) (int64, error) {
-	// TODO
-	return -1, nil
-}
-
-// DeserializeForSpill deserializes MyDecimal to bytes
-func (d *MyDecimal) DeserializeForSpill(buf []byte) (int64, error) {
-	bufLen := int64(len(buf))
-	fixedLen := int64(4)
-	if bufLen < fixedLen {
-		return -1, spill.ErrInternal.GenWithStack("Buffer is not large enough when deserializing MyDecimal")
-	}
-
-	readPos := int64(0)
-	d.digitsInt = spill.DeserializeInt8(buf, readPos)
-	d.digitsFrac = spill.DeserializeInt8(buf, readPos+1)
-	d.resultFrac = spill.DeserializeInt8(buf, readPos+2)
-	d.negative = spill.DeserializeBool(buf, readPos+3)
-	wordBufByteNum := maxWordBufLen * 4
-
-	readPos += fixedLen
-	if bufLen-readPos < int64(wordBufByteNum) {
-		return -1, spill.ErrInternal.GenWithStack("Buffer is not large enough when deserializing MyDecimal")
-	}
-
-	for i := 0; i < int(maxWordBufLen); i++ {
-		d.wordBuf[i] = spill.DeserializeInt32(buf, readPos)
-		readPos += 4
-	}
-	return int64(wordBufByteNum) + fixedLen, nil
 }
 
 // IsNegative returns whether a decimal is negative.
