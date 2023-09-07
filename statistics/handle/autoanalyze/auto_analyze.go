@@ -54,6 +54,9 @@ func (a *AutoAnalyze) IsRecentAnalyzedTables(tid int64) bool {
 		return false
 	}
 	ts, ok := a.recentAnalyzedTables[tid]
+	if !ok {
+		return false
+	}
 	if time.Since(ts) > maxAutoAnalyzeInterval {
 		delete(a.recentAnalyzedTables, tid)
 		return false
