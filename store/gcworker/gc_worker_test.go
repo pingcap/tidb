@@ -61,11 +61,14 @@ func (l *mockGCWorkerLockResolver) ScanLocksInOneRegion(bo *tikv.Backoffer, key 
 	if err != nil {
 		return nil, nil, err
 	}
-	mockLocks, mockLoc := l.scanLocks(locks, key)
-	if loc.Region.GetID() != mockLoc.Region.GetID() {
-		panic("detect different location for region lock resolve tests")
+	if l.scanLocks != nil {
+		mockLocks, mockLoc := l.scanLocks(locks, key)
+		// append locks from mock function
+		locks = append(locks, mockLocks...)
+		// use location from mock function
+		loc = mockLoc
 	}
-	return mockLocks, loc, nil
+	return locks, loc, nil
 }
 
 func (l *mockGCWorkerLockResolver) ResolveLocksInOneRegion(bo *tikv.Backoffer, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
