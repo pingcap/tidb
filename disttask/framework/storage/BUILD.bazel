@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "storage",
-    srcs = ["task_table.go"],
+    srcs = [
+        "task_table.go",
+        "util.go",
+    ],
     importpath = "github.com/pingcap/tidb/disttask/framework/storage",
     visibility = ["//visibility:public"],
     deps = [
@@ -16,7 +19,6 @@ go_library(
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pingcap_log//:log",
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_zap//:zap",
     ],
