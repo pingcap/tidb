@@ -23,9 +23,44 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/resourcemanager/scheduler"
 	"github.com/pingcap/tidb/resourcemanager/util"
+	"github.com/pingcap/tidb/util/cgroup"
 	"github.com/pingcap/tidb/util/cpu"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCPUValue(t *testing.T) {
+	if !cgroup.InContainer() {
+		t.Skip()
+	}
+	observer := cpu.NewCPUObserver()
+	exit := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-exit:
+					return
+				default:
+					runtime.Gosched()
+				}
+			}
+		}()
+	}
+	observer.Start()
+	for n := 0; n < 10; n++ {
+		time.Sleep(100 * time.Millisecond)
+		value, unsupported := cpu.GetCPUUsage()
+		require.False(t, unsupported)
+		require.Greater(t, value, 0.0)
+		require.Less(t, value, 1.0)
+	}
+	observer.Stop()
+	close(exit)
+	wg.Wait()
+}
 
 func TestFailpointCPUValue(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/util/cgroup/GetCgroupCPUErr", "return(true)")
