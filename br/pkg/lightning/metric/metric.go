@@ -67,7 +67,7 @@ type Common struct {
 	// 	- total_restore: total source file bytes needs to restore, it's constant.
 	// 	- restored: source file bytes encoded and sorted.
 	// 	- written: kv bytes written during encode & sort.
-	// 	- imported: kv bytes imported during import engine.
+	// 	- imported: kv bytes imported during import engine(this value don't account for replica).
 	BytesCounter *prometheus.CounterVec
 	RowsCounter  *prometheus.CounterVec
 	// RowReadSecondsHistogram records the time spent on reading a batch of rows.
