@@ -59,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/engine"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
@@ -1578,10 +1577,10 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 	)
 	defer workerCancel()
 
-	if intest.InTest {
+	failpoint.Inject("injectVariables", func() {
 		jobToWorkerCh = testJobToWorkerCh
 		testJobWg = &jobWg
-	}
+	})
 
 	retryer := startRegionJobRetryer(workerCtx, jobToWorkerCh, &jobWg)
 
