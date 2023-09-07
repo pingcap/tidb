@@ -179,6 +179,7 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	// why add before again? because the cost will be subtracted in onExit.
 	// in fact, it is after - before
 	s.addCost(after)
+	s.triggerEvict()
 }
 
 func (s *LFU) triggerEvict() {
