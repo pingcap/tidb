@@ -720,7 +720,6 @@ func (stm *TaskManager) TransferSubTasks2History(taskID int64) error {
 		// delete taskID subtask
 		_, err = ExecSQL(stm.ctx, se, "delete from mysql.tidb_background_subtask where task_key = %?", taskID)
 		return err
-
 	})
 }
 
