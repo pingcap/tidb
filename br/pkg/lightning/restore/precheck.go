@@ -52,6 +52,7 @@ func WithPrecheckKey(ctx context.Context, key precheckContextKey, val any) conte
 }
 
 type PrecheckItemBuilder struct {
+<<<<<<< HEAD:br/pkg/lightning/restore/precheck.go
 	cfg           *config.Config
 	dbMetas       []*mydump.MDDatabaseMeta
 	preInfoGetter PreRestoreInfoGetter
@@ -59,6 +60,23 @@ type PrecheckItemBuilder struct {
 }
 
 func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, pdCli pd.Client, opts ...ropts.PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
+=======
+	cfg                *config.Config
+	dbMetas            []*mydump.MDDatabaseMeta
+	preInfoGetter      PreImportInfoGetter
+	checkpointsDB      checkpoints.DB
+	pdLeaderAddrGetter func() string
+}
+
+// NewPrecheckItemBuilderFromConfig creates a new PrecheckItemBuilder from config
+// pdCli **must not** be nil for local backend
+func NewPrecheckItemBuilderFromConfig(
+	ctx context.Context,
+	cfg *config.Config,
+	pdCli pd.Client,
+	opts ...ropts.PrecheckItemBuilderOption,
+) (*PrecheckItemBuilder, error) {
+>>>>>>> 41d1ec0267e (lightning: always get latest PD leader when access PD after initialized (#46726)):br/pkg/lightning/importer/precheck.go
 	var gerr error
 	builderCfg := new(ropts.PrecheckItemBuilderConfig)
 	for _, o := range opts {
@@ -98,7 +116,7 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, p
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, cpdb), gerr
+	return NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, cpdb, pdCli), gerr
 }
 
 func NewPrecheckItemBuilder(
@@ -106,12 +124,21 @@ func NewPrecheckItemBuilder(
 	dbMetas []*mydump.MDDatabaseMeta,
 	preInfoGetter PreRestoreInfoGetter,
 	checkpointsDB checkpoints.DB,
+	pdCli pd.Client,
 ) *PrecheckItemBuilder {
+	leaderAddrGetter := func() string {
+		return cfg.TiDB.PdAddr
+	}
+	// in tests we may not have a pdCli
+	if pdCli != nil {
+		leaderAddrGetter = pdCli.GetLeaderAddr
+	}
 	return &PrecheckItemBuilder{
-		cfg:           cfg,
-		dbMetas:       dbMetas,
-		preInfoGetter: preInfoGetter,
-		checkpointsDB: checkpointsDB,
+		cfg:                cfg,
+		dbMetas:            dbMetas,
+		preInfoGetter:      preInfoGetter,
+		checkpointsDB:      checkpointsDB,
+		pdLeaderAddrGetter: leaderAddrGetter,
 	}
 }
 
@@ -139,10 +166,17 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID CheckItemID) (PrecheckIt
 		return NewClusterVersionCheckItem(b.preInfoGetter, b.dbMetas), nil
 	case CheckLocalDiskPlacement:
 		return NewLocalDiskPlacementCheckItem(b.cfg), nil
+<<<<<<< HEAD:br/pkg/lightning/restore/precheck.go
 	case CheckLocalTempKVDir:
 		return NewLocalTempKVDirCheckItem(b.cfg, b.preInfoGetter), nil
 	case CheckTargetUsingCDCPITR:
 		return NewCDCPITRCheckItem(b.cfg), nil
+=======
+	case precheck.CheckLocalTempKVDir:
+		return NewLocalTempKVDirCheckItem(b.cfg, b.preInfoGetter, b.dbMetas), nil
+	case precheck.CheckTargetUsingCDCPITR:
+		return NewCDCPITRCheckItem(b.cfg, b.pdLeaderAddrGetter), nil
+>>>>>>> 41d1ec0267e (lightning: always get latest PD leader when access PD after initialized (#46726)):br/pkg/lightning/importer/precheck.go
 	default:
 		return nil, errors.Errorf("unsupported check item: %v", checkID)
 	}

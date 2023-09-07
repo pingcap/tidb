@@ -31,6 +31,7 @@ func TestPrecheckBuilderBasic(t *testing.T) {
 
 	preInfoGetter, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil)
 	require.NoError(t, err)
+<<<<<<< HEAD:br/pkg/lightning/restore/precheck_test.go
 	theCheckBuilder := NewPrecheckItemBuilder(cfg, mockSrc.GetAllDBFileMetas(), preInfoGetter, nil)
 	for _, checkItemID := range []CheckItemID{
 		CheckLargeDataFile,
@@ -45,6 +46,22 @@ func TestPrecheckBuilderBasic(t *testing.T) {
 		CheckTargetClusterVersion,
 		CheckLocalDiskPlacement,
 		CheckLocalTempKVDir,
+=======
+	theCheckBuilder := NewPrecheckItemBuilder(cfg, mockSrc.GetAllDBFileMetas(), preInfoGetter, nil, nil)
+	for _, checkItemID := range []precheck.CheckItemID{
+		precheck.CheckLargeDataFile,
+		precheck.CheckSourcePermission,
+		precheck.CheckTargetTableEmpty,
+		precheck.CheckSourceSchemaValid,
+		precheck.CheckCheckpoints,
+		precheck.CheckCSVHeader,
+		precheck.CheckTargetClusterSize,
+		precheck.CheckTargetClusterEmptyRegion,
+		precheck.CheckTargetClusterRegionDist,
+		precheck.CheckTargetClusterVersion,
+		precheck.CheckLocalDiskPlacement,
+		precheck.CheckLocalTempKVDir,
+>>>>>>> 41d1ec0267e (lightning: always get latest PD leader when access PD after initialized (#46726)):br/pkg/lightning/importer/precheck_test.go
 	} {
 		theChecker, err := theCheckBuilder.BuildPrecheckItem(checkItemID)
 		require.NoError(t, err)
