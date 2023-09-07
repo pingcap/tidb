@@ -825,12 +825,15 @@ func (t *rootTask) MemoryUsage() (sum int64) {
 //
 // For Index Merge:
 // 2: attach the limit to **table** side for index merge intersection case, cause intersection will invalidate the
-// fetched limit+offset rows from each partial index plan, you can not decide how many you want in advance, actually.
+// fetched limit+offset rows from each partial index plan, you can not decide how many you want in advance for partial
+// index path, actually. After we sink limit to table side, we still need an upper root limit to control the real limit
+// count admission.
 //
 // 3: attach the limit to **index** side for index merge union case, because each index plan will output the fetched
 // limit+offset (* N path) rows, you still need an embedded pushedLimit inside index merge reader to cut it down.
 //
-// 4: attach the limit to the TOP of root index merge operator if there is some root condition exists for index merge intersection/union case.
+// 4: attach the limit to the TOP of root index merge operator if there is some root condition exists for index merge
+// intersection/union case.
 func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
@@ -872,7 +875,6 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 					// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
 					pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 					t = cop.convertToRootTask(p.SCtx())
-					sunk = true
 				} else {
 					// cop.indexPlanFinished = false indicates the table side is a pure table-scan, sink the limit to the index merge index side.
 					newCount := p.Offset + p.Count
@@ -911,7 +913,6 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 					// Don't use clone() so that Limit and its children share the same schema. Otherwise, the virtual generated column may not be resolved right.
 					pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 					t = cop.convertToRootTask(p.SCtx())
-					sunk = true
 				}
 				// if cop.indexPlanFinished = true
 				// 		indicates the table side is not a pure table-scan, so we could only append the limit upon the table plan.
