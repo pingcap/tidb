@@ -411,8 +411,8 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 	var sep string
 	var targetLength int
 
-	N := len(args)
-	if N > 0 {
+	n := len(args)
+	if n > 0 {
 		val, isNull, err := args[0].EvalString(b.ctx, row)
 		if err != nil || isNull {
 			// If the separator is NULL, the result is NULL.
@@ -420,7 +420,7 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 		sep = val
 	}
-	for i := 1; i < N; i++ {
+	for i := 1; i < n; i++ {
 		val, isNull, err := args[i].EvalString(b.ctx, row)
 		if err != nil {
 			return val, isNull, err
@@ -2397,11 +2397,11 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 	bigints := make([]int64, 0, len(b.args)-1)
 
 	for i := 0; i < len(b.args)-1; i++ {
-		val, IsNull, err := b.args[i].EvalInt(b.ctx, row)
+		val, isNull, err := b.args[i].EvalInt(b.ctx, row)
 		if err != nil {
 			return "", true, err
 		}
-		if IsNull {
+		if isNull {
 			continue
 		}
 		bigints = append(bigints, val)
@@ -3297,8 +3297,7 @@ func (c *formatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 const formatMaxDecimals int64 = 30
 
 // evalNumDecArgsForFormat evaluates first 2 arguments, i.e, x and d, for function `format`.
-func evalNumDecArgsForFormat(f builtinFunc, row chunk.Row) (string, string, bool, error) {
-	var xStr string
+func evalNumDecArgsForFormat(f builtinFunc, row chunk.Row) (xStr, dStr string, isNull bool, err error) {
 	arg0, arg1 := f.getArgs()[0], f.getArgs()[1]
 	ctx := f.getCtx()
 	if arg0.GetType().EvalType() == types.ETDecimal {
@@ -3324,7 +3323,7 @@ func evalNumDecArgsForFormat(f builtinFunc, row chunk.Row) (string, string, bool
 		d = formatMaxDecimals
 	}
 	xStr = roundFormatArgs(xStr, int(d))
-	dStr := strconv.FormatInt(d, 10)
+	dStr = strconv.FormatInt(d, 10)
 	return xStr, dStr, false, nil
 }
 
@@ -3804,12 +3803,12 @@ func (b *builtinInstrSig) Clone() builtinFunc {
 // evalInt evals INSTR(str,substr).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
 func (b *builtinInstrUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
-	str, IsNull, err := b.args[0].EvalString(b.ctx, row)
-	if IsNull || err != nil {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
 		return 0, true, err
 	}
-	substr, IsNull, err := b.args[1].EvalString(b.ctx, row)
-	if IsNull || err != nil {
+	substr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
 		return 0, true, err
 	}
 	if collate.IsCICollation(b.collation) {
@@ -3827,13 +3826,13 @@ func (b *builtinInstrUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 // evalInt evals INSTR(str,substr), case sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
 func (b *builtinInstrSig) evalInt(row chunk.Row) (int64, bool, error) {
-	str, IsNull, err := b.args[0].EvalString(b.ctx, row)
-	if IsNull || err != nil {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
 		return 0, true, err
 	}
 
-	substr, IsNull, err := b.args[1].EvalString(b.ctx, row)
-	if IsNull || err != nil {
+	substr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
 		return 0, true, err
 	}
 

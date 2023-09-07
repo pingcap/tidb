@@ -1223,7 +1223,7 @@ func getInstructions(repl []byte) ([]Instruction, error) {
 	var literals []byte
 
 	replLen := len(repl)
-	for i := 0; i < replLen; i += 1 {
+	for i := 0; i < replLen; i++ {
 		if repl[i] == '\\' {
 			if i+1 >= replLen {
 				// This slash is in the end. Ignore it and break the loop.
@@ -1239,7 +1239,7 @@ func getInstructions(repl []byte) ([]Instruction, error) {
 			} else {
 				literals = append(literals, repl[i+1]) // Escaping
 			}
-			i += 1
+			i++
 		} else {
 			literals = append(literals, repl[i]) // Plain character
 		}

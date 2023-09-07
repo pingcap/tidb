@@ -101,7 +101,7 @@ func (b *builtinInternalToBinarySig) evalString(row chunk.Row) (res string, isNu
 	return string(ret), false, err
 }
 
-func (b *builtinInternalToBinarySig) vectorized() bool {
+func (*builtinInternalToBinarySig) vectorized() bool {
 	return true
 }
 
@@ -184,7 +184,7 @@ func (b *builtinInternalFromBinarySig) evalString(row chunk.Row) (res string, is
 	return string(ret), false, err
 }
 
-func (b *builtinInternalFromBinarySig) vectorized() bool {
+func (*builtinInternalFromBinarySig) vectorized() bool {
 	return true
 }
 

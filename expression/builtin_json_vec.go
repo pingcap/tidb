@@ -103,7 +103,7 @@ func vecJSONModify(ctx sessionctx.Context, args []Expression, bufAllocator colum
 	return nil
 }
 
-func (b *builtinJSONStorageFreeSig) vectorized() bool {
+func (*builtinJSONStorageFreeSig) vectorized() bool {
 	return true
 }
 
@@ -130,7 +130,7 @@ func (b *builtinJSONStorageFreeSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	return nil
 }
 
-func (b *builtinJSONStorageSizeSig) vectorized() bool {
+func (*builtinJSONStorageSizeSig) vectorized() bool {
 	return true
 }
 
@@ -158,7 +158,7 @@ func (b *builtinJSONStorageSizeSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	return nil
 }
 
-func (b *builtinJSONDepthSig) vectorized() bool {
+func (*builtinJSONDepthSig) vectorized() bool {
 	return true
 }
 
@@ -185,7 +185,7 @@ func (b *builtinJSONDepthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	return nil
 }
 
-func (b *builtinJSONKeysSig) vectorized() bool {
+func (*builtinJSONKeysSig) vectorized() bool {
 	return true
 }
 
@@ -218,7 +218,7 @@ func (b *builtinJSONKeysSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Colum
 	return nil
 }
 
-func (b *builtinJSONInsertSig) vectorized() bool {
+func (*builtinJSONInsertSig) vectorized() bool {
 	return true
 }
 
@@ -227,7 +227,7 @@ func (b *builtinJSONInsertSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 	return err
 }
 
-func (b *builtinJSONReplaceSig) vectorized() bool {
+func (*builtinJSONReplaceSig) vectorized() bool {
 	return true
 }
 
@@ -236,7 +236,7 @@ func (b *builtinJSONReplaceSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Co
 	return err
 }
 
-func (b *builtinJSONArraySig) vectorized() bool {
+func (*builtinJSONArraySig) vectorized() bool {
 	return true
 }
 
@@ -274,7 +274,7 @@ func (b *builtinJSONArraySig) vecEvalJSON(input *chunk.Chunk, result *chunk.Colu
 	return nil
 }
 
-func (b *builtinJSONMemberOfSig) vectorized() bool {
+func (*builtinJSONMemberOfSig) vectorized() bool {
 	return true
 }
 
@@ -327,7 +327,7 @@ func (b *builtinJSONMemberOfSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	return nil
 }
 
-func (b *builtinJSONContainsSig) vectorized() bool {
+func (*builtinJSONContainsSig) vectorized() bool {
 	return true
 }
 
@@ -412,7 +412,7 @@ func (b *builtinJSONContainsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	return nil
 }
 
-func (b *builtinJSONOverlapsSig) vectorized() bool {
+func (*builtinJSONOverlapsSig) vectorized() bool {
 	return true
 }
 
@@ -457,7 +457,7 @@ func (b *builtinJSONOverlapsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	return nil
 }
 
-func (b *builtinJSONQuoteSig) vectorized() bool {
+func (*builtinJSONQuoteSig) vectorized() bool {
 	return true
 }
 
@@ -588,7 +588,7 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 	return nil
 }
 
-func (b *builtinJSONSetSig) vectorized() bool {
+func (*builtinJSONSetSig) vectorized() bool {
 	return true
 }
 
@@ -597,7 +597,7 @@ func (b *builtinJSONSetSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column
 	return err
 }
 
-func (b *builtinJSONObjectSig) vectorized() bool {
+func (*builtinJSONObjectSig) vectorized() bool {
 	return true
 }
 
@@ -675,7 +675,7 @@ func (b *builtinJSONObjectSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 	return nil
 }
 
-func (b *builtinJSONArrayInsertSig) vectorized() bool {
+func (*builtinJSONArrayInsertSig) vectorized() bool {
 	return true
 }
 
@@ -754,7 +754,7 @@ func (b *builtinJSONArrayInsertSig) vecEvalJSON(input *chunk.Chunk, result *chun
 	return nil
 }
 
-func (b *builtinJSONKeys2ArgsSig) vectorized() bool {
+func (*builtinJSONKeys2ArgsSig) vectorized() bool {
 	return true
 }
 
@@ -1111,7 +1111,7 @@ func (b *builtinJSONMergeSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Colu
 	return nil
 }
 
-func (b *builtinJSONContainsPathSig) vectorized() bool {
+func (*builtinJSONContainsPathSig) vectorized() bool {
 	return true
 }
 
@@ -1194,7 +1194,7 @@ func (b *builtinJSONContainsPathSig) vecEvalInt(input *chunk.Chunk, result *chun
 	return nil
 }
 
-func (b *builtinJSONArrayAppendSig) vectorized() bool {
+func (*builtinJSONArrayAppendSig) vectorized() bool {
 	return true
 }
 
@@ -1278,7 +1278,7 @@ func (b *builtinJSONArrayAppendSig) vecEvalJSON(input *chunk.Chunk, result *chun
 	return nil
 }
 
-func (b *builtinJSONUnquoteSig) vectorized() bool {
+func (*builtinJSONUnquoteSig) vectorized() bool {
 	return true
 }
 
@@ -1312,7 +1312,7 @@ func (b *builtinJSONUnquoteSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
-func (b *builtinJSONSPrettySig) vectorized() bool {
+func (*builtinJSONSPrettySig) vectorized() bool {
 	return true
 }
 
@@ -1348,7 +1348,7 @@ func (b *builtinJSONSPrettySig) vecEvalString(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
-func (b *builtinJSONMergePatchSig) vectorized() bool {
+func (*builtinJSONMergePatchSig) vectorized() bool {
 	return true
 }
 

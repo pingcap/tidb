@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 )
 
-func (b *builtinDatabaseSig) vectorized() bool {
+func (*builtinDatabaseSig) vectorized() bool {
 	return true
 }
 
@@ -49,7 +49,7 @@ func (b *builtinDatabaseSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	return nil
 }
 
-func (b *builtinConnectionIDSig) vectorized() bool {
+func (*builtinConnectionIDSig) vectorized() bool {
 	return true
 }
 
@@ -68,11 +68,11 @@ func (b *builtinConnectionIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	return nil
 }
 
-func (b *builtinTiDBVersionSig) vectorized() bool {
+func (*builtinTiDBVersionSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTiDBVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinTiDBVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ReserveString(n)
 	info := printer.GetTiDBInfo()
@@ -82,7 +82,7 @@ func (b *builtinTiDBVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
-func (b *builtinRowCountSig) vectorized() bool {
+func (*builtinRowCountSig) vectorized() bool {
 	return true
 }
 
@@ -99,7 +99,7 @@ func (b *builtinRowCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	return nil
 }
 
-func (b *builtinCurrentUserSig) vectorized() bool {
+func (*builtinCurrentUserSig) vectorized() bool {
 	return true
 }
 
@@ -119,7 +119,7 @@ func (b *builtinCurrentUserSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
-func (b *builtinCurrentResourceGroupSig) vectorized() bool {
+func (*builtinCurrentResourceGroupSig) vectorized() bool {
 	return true
 }
 
@@ -136,7 +136,7 @@ func (b *builtinCurrentResourceGroupSig) vecEvalString(input *chunk.Chunk, resul
 	return nil
 }
 
-func (b *builtinCurrentRoleSig) vectorized() bool {
+func (*builtinCurrentRoleSig) vectorized() bool {
 	return true
 }
 
@@ -170,7 +170,7 @@ func (b *builtinCurrentRoleSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
-func (b *builtinUserSig) vectorized() bool {
+func (*builtinUserSig) vectorized() bool {
 	return true
 }
 
@@ -190,7 +190,7 @@ func (b *builtinUserSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	return nil
 }
 
-func (b *builtinTiDBIsDDLOwnerSig) vectorized() bool {
+func (*builtinTiDBIsDDLOwnerSig) vectorized() bool {
 	return true
 }
 
@@ -208,7 +208,7 @@ func (b *builtinTiDBIsDDLOwnerSig) vecEvalInt(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
-func (b *builtinFoundRowsSig) vectorized() bool {
+func (*builtinFoundRowsSig) vectorized() bool {
 	return true
 }
 
@@ -297,7 +297,7 @@ func (b *builtinBenchmarkSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	return nil
 }
 
-func (b *builtinLastInsertIDSig) vectorized() bool {
+func (*builtinLastInsertIDSig) vectorized() bool {
 	return true
 }
 
@@ -312,7 +312,7 @@ func (b *builtinLastInsertIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	return nil
 }
 
-func (b *builtinLastInsertIDWithIDSig) vectorized() bool {
+func (*builtinLastInsertIDWithIDSig) vectorized() bool {
 	return true
 }
 
@@ -330,11 +330,11 @@ func (b *builtinLastInsertIDWithIDSig) vecEvalInt(input *chunk.Chunk, result *ch
 	return nil
 }
 
-func (b *builtinVersionSig) vectorized() bool {
+func (*builtinVersionSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (*builtinVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
@@ -343,7 +343,7 @@ func (b *builtinVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	return nil
 }
 
-func (b *builtinTiDBDecodeKeySig) vectorized() bool {
+func (*builtinTiDBDecodeKeySig) vectorized() bool {
 	return true
 }
 

@@ -465,7 +465,7 @@ type defaultFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *defaultFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (*defaultFunctionClass) getFunction(sessionctx.Context, []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "DEFAULT")
 }
 
@@ -1083,7 +1083,7 @@ type masterPosWaitFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *masterPosWaitFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (*masterPosWaitFunctionClass) getFunction(sessionctx.Context, []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "MASTER_POS_WAIT")
 }
 
@@ -1307,7 +1307,7 @@ type uuidShortFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *uuidShortFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (*uuidShortFunctionClass) getFunction(sessionctx.Context, []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "UUID_SHORT")
 }
 
@@ -1561,6 +1561,6 @@ type tidbRowChecksumFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbRowChecksumFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (*tidbRowChecksumFunctionClass) getFunction(sessionctx.Context, []Expression) (builtinFunc, error) {
 	return nil, ErrNotSupportedYet.GenWithStack("FUNCTION tidb_row_checksum can only be used as a select field in a fast point plan")
 }

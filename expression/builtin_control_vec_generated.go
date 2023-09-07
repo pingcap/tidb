@@ -134,7 +134,7 @@ ROW:
 	return nil
 }
 
-func (b *builtinCaseWhenIntSig) vectorized() bool {
+func (*builtinCaseWhenIntSig) vectorized() bool {
 	return true
 }
 
