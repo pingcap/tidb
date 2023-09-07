@@ -81,7 +81,7 @@ func (e *ShowBaseExtractor) Extract() bool {
 				e.field = strings.ToLower(string(patValue))
 				return true
 			}
-			e.fieldPattern = strings.ToLower(string(ptn))
+			e.fieldPattern = strings.ToLower(ptn)
 			return true
 		case *ast.ColumnNameExpr:
 			// It is used in `SHOW COLUMNS FROM t LIKE abc`.
