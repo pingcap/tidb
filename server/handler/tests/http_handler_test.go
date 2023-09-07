@@ -1320,6 +1320,18 @@ func TestUpgrade(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, isUpgrading)
 
+	// test upgrade show failed
+	resp, err = ts.PostStatus("/upgrade/show", "application/x-www-form-urlencoded", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	b, err = httputil.DumpResponse(resp, true)
+	require.NoError(t, err)
+	require.Greater(t, len(b), 0)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "\"The cluster state is normal. Guess that the upgrade has been completed, or that the upgrade did not use the method of pausing the user DDL.\"\"success!\"", string(body))
+
 	// Do finish upgrade again.
 	resp, err = ts.PostStatus("/upgrade/finish", "application/x-www-form-urlencoded", nil)
 	require.NoError(t, err)

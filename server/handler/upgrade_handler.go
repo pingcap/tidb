@@ -141,6 +141,22 @@ type ClusterUpgradeInfo struct {
 }
 
 func (h ClusterUpgradeHandler) showUpgrade(w http.ResponseWriter) error {
+	se, err := session.CreateSession(h.store)
+	if err != nil {
+		return err
+	}
+	defer se.Close()
+
+	// Check if we are upgrading by pausing user DDL.
+	isUpgrading, err := session.IsUpgradingClusterState(se)
+	if err != nil {
+		return err
+	}
+	if !isUpgrading {
+		WriteData(w, "The cluster state is normal. Guess that the upgrade has been completed, or that the upgrade did not use the method of pausing the user DDL.")
+		return nil
+	}
+
 	do, err := session.GetDomain(h.store)
 	if err != nil {
 		return err
