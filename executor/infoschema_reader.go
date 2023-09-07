@@ -639,6 +639,9 @@ func (e *memtableRetriever) setDataFromCheckConstraints(sctx sessionctx.Context,
 					continue
 				}
 				for _, constraint := range table.Constraints {
+					if constraint.State != model.StatePublic {
+						continue
+					}
 					record := types.MakeDatums(
 						infoschema.CatalogVal, // CONSTRAINT_CATALOG
 						schema.Name.O,         // CONSTRAINT_SCHEMA
