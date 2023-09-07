@@ -24,10 +24,11 @@ import (
 )
 
 func TestNormalize(t *testing.T) {
-	tests := []struct {
+	tests_for_generic_normalization_rules := []struct {
 		input  string
 		expect string
 	}{
+		// Generic normalization rules
 		{"select _utf8mb4'123'", "select (_charset) ?"},
 		{"SELECT 1", "select ?"},
 		{"select null", "select ?"},
@@ -68,12 +69,34 @@ func TestNormalize(t *testing.T) {
 		{"insert into t values (1), (2)", "insert into `t` values ( ... )"},
 		{"insert into t values (1)", "insert into `t` values ( ? )"},
 	}
-	for _, test := range tests {
+	for _, test := range tests_for_generic_normalization_rules {
 		normalized := parser.Normalize(test.input)
 		digest := parser.DigestNormalized(normalized)
 		require.Equal(t, test.expect, normalized)
 
 		normalized2, digest2 := parser.NormalizeDigest(test.input)
+		require.Equal(t, normalized, normalized2)
+		require.Equalf(t, digest.String(), digest2.String(), "%+v", test)
+	}
+
+	tests_for_binding_specific_rules := []struct {
+		input  string
+		expect string
+	}{
+		// Binding specific rules
+		// IN (Lit) => IN ( ... ) #44298
+		{"select * from t where a in (1)", "select * from `t` where `a` in ( ... )"},
+		{"select * from t where (a, b) in ((1, 1))", "select * from `t` where ( `a` , `b` ) in ( ( ... ) )"},
+		{"select * from t where (a, b) in ((1, 1), (2, 2))", "select * from `t` where ( `a` , `b` ) in ( ( ... ) )"},
+		{"select * from t where a in(1, 2)", "select * from `t` where `a` in ( ... )"},
+		{"select * from t where a in(1, 2, 3)", "select * from `t` where `a` in ( ... )"},
+	}
+	for _, test := range tests_for_binding_specific_rules {
+		normalized := parser.NormalizeForBinding(test.input)
+		digest := parser.DigestNormalized(normalized)
+		require.Equal(t, test.expect, normalized)
+
+		normalized2, digest2 := parser.NormalizeDigestForBinding(test.input)
 		require.Equal(t, normalized, normalized2)
 		require.Equalf(t, digest.String(), digest2.String(), "%+v", test)
 	}

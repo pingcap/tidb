@@ -35,6 +35,6 @@ func UtilNormalizeWithDefaultDB(t *testing.T, sql string) (normalized, digest st
 	testParser := parser.New()
 	stmt, err := testParser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	normalized, digestResult := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, "test", ""))
+	normalized, digestResult := parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(stmt, "test", ""))
 	return normalized, digestResult.String()
 }
