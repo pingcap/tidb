@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/infoschema"
@@ -608,7 +607,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	switch indexInfo.State {
 	case model.StateNone:
 		// none -> delete only
-		reorgTp := pickBackfillType(w, job)
+		reorgTp := pickBackfillType(job)
 		if reorgTp.NeedMergeProcess() {
 			// Increase telemetryAddIndexIngestUsage
 			telemetryAddIndexIngestUsage.Inc()
@@ -693,14 +692,14 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 }
 
 // pickBackfillType determines which backfill process will be used.
-func pickBackfillType(w *worker, job *model.Job) model.ReorgType {
+func pickBackfillType(job *model.Job) model.ReorgType {
 	if job.ReorgMeta.ReorgTp != model.ReorgTypeNone {
 		// The backfill task has been started.
 		// Don't switch the backfill process.
 		return job.ReorgMeta.ReorgTp
 	}
 	if IsEnableFastReorg() {
-		canUseIngest := canUseIngest(w)
+		canUseIngest := canUseIngest()
 		if ingest.LitInitialized && canUseIngest {
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 			return model.ReorgTypeLitMerge
@@ -717,22 +716,18 @@ func pickBackfillType(w *worker, job *model.Job) model.ReorgType {
 }
 
 // canUseIngest indicates whether it can use ingest way to backfill index.
-func canUseIngest(w *worker) bool {
+func canUseIngest() bool {
 	// We only allow one task to use ingest at the same time, in order to limit the CPU usage.
 	if len(ingest.LitBackCtxMgr.Keys()) > 0 {
 		return false
 	}
-	ctx, err := w.sessPool.get()
-	if err != nil {
-		return false
-	}
-	defer w.sessPool.put(ctx)
+
 	failpoint.Inject("EnablePiTR", func() {
 		logutil.BgLogger().Info("lightning: mock enable PiTR")
 		failpoint.Return(true)
 	})
 	// Ingest way is not compatible with PiTR.
-	return !utils.IsLogBackupInUse(ctx)
+	return true
 }
 
 // IngestJobsNotExisted checks the ddl about `add index` with ingest method not existed.
@@ -791,7 +786,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
-	bfProcess := pickBackfillType(w, job)
+	bfProcess := pickBackfillType(job)
 	if !bfProcess.NeedMergeProcess() {
 		return runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 	}
