@@ -338,14 +338,14 @@ func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, step int
 }
 
 // UpdateErrorToSubtask updates the error to subtask.
-func (stm *TaskManager) UpdateErrorToSubtask(tidbID string, err error) error {
+func (stm *TaskManager) UpdateErrorToSubtask(tidbID string, taskID int64, err error) error {
 	if err == nil {
 		return nil
 	}
 	_, err1 := stm.executeSQLWithNewSession(stm.ctx, `update mysql.tidb_background_subtask
 		set state = %?, error = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
-		where exec_id = %? and state = %? limit 1;`,
-		proto.TaskStateFailed, serializeErr(err), tidbID, proto.TaskStatePending)
+		where exec_id = %? and task_key = %? and state = %? limit 1;`,
+		proto.TaskStateFailed, serializeErr(err), tidbID, taskID, proto.TaskStatePending)
 	return err1
 }
 
@@ -469,11 +469,11 @@ func (stm *TaskManager) HasSubtasksInStates(tidbID string, taskID int64, step in
 }
 
 // StartSubtask updates the subtask state to running.
-func (stm *TaskManager) StartSubtask(id int64) error {
+func (stm *TaskManager) StartSubtask(subtaskID int64) error {
 	_, err := stm.executeSQLWithNewSession(stm.ctx, `update mysql.tidb_background_subtask
 		set state = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
 		where id = %?`,
-		proto.TaskStateRunning, id)
+		proto.TaskStateRunning, subtaskID)
 	return err
 }
 
