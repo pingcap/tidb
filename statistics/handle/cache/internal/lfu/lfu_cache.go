@@ -41,7 +41,7 @@ type LFU struct {
 
 var testMode = false
 
-func setMemCost(totalMemCost int64) (result int64, err error) {
+func adjustMemCost(totalMemCost int64) (result int64, err error) {
 	if totalMemCost == 0 {
 		memTotal, err := memory.MemTotal()
 		if err != nil {
@@ -54,7 +54,7 @@ func setMemCost(totalMemCost int64) (result int64, err error) {
 
 // NewLFU creates a new LFU cache.
 func NewLFU(totalMemCost int64) (*LFU, error) {
-	cost, err := setMemCost(totalMemCost)
+	cost, err := adjustMemCost(totalMemCost)
 	if err != nil {
 		return nil, err
 	}
@@ -218,9 +218,9 @@ func (s *LFU) Copy() internal.StatsCacheInner {
 
 // SetCapacity implements statsCacheInner
 func (s *LFU) SetCapacity(maxCost int64) {
-	cost, err := setMemCost(maxCost)
+	cost, err := adjustMemCost(maxCost)
 	if err != nil {
-		logutil.BgLogger().Warn("setMemCost failed", zap.Error(err))
+		logutil.BgLogger().Warn("adjustMemCost failed", zap.Error(err))
 		return
 	}
 	s.cache.UpdateMaxCost(cost)
