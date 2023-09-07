@@ -1455,7 +1455,6 @@ func TestIssue41778(t *testing.T) {
 	insert into ta
 	values (NULL, 1337.0);
 	`)
-	tk.MustExecToErr(
-		"select count(*)from ta where not ( ta.a1 in ( select b2 from tb where not ( ta.a1 in ( select c1 from tc where ta.a2 in ( select b2 from tb where IsNull(ta.a1) ) ) ) ) )",
-		"[planner:1815]expression isnull(cast(test.ta.a1, var_string(4294967295))) cannot be pushed down")
+	err := tk.QueryToErr("select count(*)from ta where not ( ta.a1 in ( select b2 from tb where not ( ta.a1 in ( select c1 from tc where ta.a2 in ( select b2 from tb where IsNull(ta.a1) ) ) ) ) )")
+	require.Equal(t, "[planner:1815]expression isnull(cast(test.ta.a1, var_string(4294967295))) cannot be pushed down", err.Error())
 }
