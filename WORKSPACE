@@ -134,3 +134,15 @@ http_archive(
         "https://github.com/bazelbuild/rules_java/archive/981f06c3d2bd10225e85209904090eb7b5fb26bd.tar.gz",
     ],
 )
+
+http_archive(
+    name = "openjdk_linux_vanilla",
+    sha256 = "ec5c0426a0eb2b0460968a044665ed4603b224acd5e20c379e9d7890511da683",
+    strip_prefix = "zulu20.30.11-ca-jdk20.0.1-linux_x64",
+    urls = [
+        "http://ats.apps.svc/bazelbuild/gomod/rules/zulu20.30.11-ca-jdk20.0.1-linux_x64.tar.gz",
+        "http://bazel-cache.pingcap.net:8080/gomod/rules/zulu20.30.11-ca-jdk20.0.1-linux_x64.tar.gz",
+        "https://mirror.bazel.build/cdn.azul.com/zulu/bin/zulu20.30.11-ca-jdk20.0.1-linux_x64.tar.gz",
+        "https://cdn.azul.com/zulu/bin/zulu20.30.11-ca-jdk20.0.1-linux_x64.tar.gz",
+    ],
+)
