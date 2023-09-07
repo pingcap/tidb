@@ -66,6 +66,11 @@ func checkKernelVersionNewerThan(t *testing.T, major, minor int) bool {
 }
 
 func TestGetCgroupCPU(t *testing.T) {
+	// If it's not in the container,
+	// it will have less files and the test case will fail forever.
+	if !InContainer() {
+		t.Skip("Not in container, skip this test case.")
+	}
 	exit := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {

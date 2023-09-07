@@ -717,6 +717,23 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 		}()
 		<-ch
 	}
+	checkDDLJobState := func(s session.Session) {
+		rows, err := execute(context.Background(), s, sql)
+		require.NoError(t, err)
+		for _, row := range rows {
+			jobBinary := row.GetBytes(0)
+			runJob := model.Job{}
+			err := runJob.Decode(jobBinary)
+			require.NoError(t, err)
+			cmt := fmt.Sprintf("job: %s", runJob.String())
+			isPause := runJob.IsPausedBySystem() || runJob.IsPausing()
+			if tidb_util.IsSysDB(runJob.SchemaName) {
+				require.False(t, isPause, cmt)
+			} else {
+				require.True(t, isPause, cmt)
+			}
+		}
+	}
 	// Before every test bootstrap(DDL operation), we add a user and a system DB's DDL operations.
 	tc.OnBootstrapExported = func(s session.Session) {
 		var query1, query2 string
@@ -733,37 +750,11 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 		asyncExecDDL(query1)
 		asyncExecDDL(query2)
 
-		rows, err := execute(context.Background(), s, sql)
-		require.NoError(t, err)
-		for _, row := range rows {
-			jobBinary := row.GetBytes(0)
-			runJob := model.Job{}
-			err := runJob.Decode(jobBinary)
-			require.NoError(t, err)
-			cmt := fmt.Sprintf("job: %s", runJob.String())
-			if !tidb_util.IsSysDB(runJob.SchemaName) {
-				require.True(t, runJob.IsPausedBySystem(), cmt)
-			} else {
-				require.False(t, !runJob.IsPausedBySystem(), cmt)
-			}
-		}
+		checkDDLJobState(s)
 	}
-	tc.OnBootstrapAfterExported = func(s session.Session) {
-		rows, err := execute(context.Background(), s, sql)
-		require.NoError(t, err)
 
-		for _, row := range rows {
-			jobBinary := row.GetBytes(0)
-			runJob := model.Job{}
-			err := runJob.Decode(jobBinary)
-			require.NoError(t, err)
-			cmt := fmt.Sprintf("job: %s", runJob.String())
-			if !tidb_util.IsSysDB(runJob.SchemaName) {
-				require.True(t, runJob.IsPausedBySystem(), cmt)
-			} else {
-				require.False(t, !runJob.IsPausedBySystem(), cmt)
-			}
-		}
+	tc.OnBootstrapAfterExported = func(s session.Session) {
+		checkDDLJobState(s)
 	}
 	session.TestHook = tc
 
