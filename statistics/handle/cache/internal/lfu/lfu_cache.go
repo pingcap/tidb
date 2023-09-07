@@ -41,6 +41,8 @@ type LFU struct {
 
 var testMode = false
 
+// adjustMemCost adjusts the memory cost according to the total memory cost.
+// When the total memory cost is 0, the memory cost is set to half of the total memory.
 func adjustMemCost(totalMemCost int64) (result int64, err error) {
 	if totalMemCost == 0 {
 		memTotal, err := memory.MemTotal()
@@ -59,7 +61,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 		return nil, err
 	}
 	if intest.InTest {
-		// In test, we set the cost to 5MB to avoid using too many memory in the LFU's cm sketch.
+		// In test, we set the cost to 5MB to avoid using too many memory in the LFU's CM sketch.
 		cost = 5000000
 	}
 	metrics.CapacityGauge.Set(float64(cost))
