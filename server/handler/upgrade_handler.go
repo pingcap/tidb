@@ -64,22 +64,22 @@ func (h ClusterUpgradeHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 
 	if err != nil {
 		WriteError(w, err)
-		logutil.Logger(req.Context()).Info("upgrade op failed",
-			zap.String("category", "upgrading"), zap.String("op", op), zap.Bool("hasDone", hasDone))
+		logutil.Logger(req.Context()).Info("upgrade operation failed",
+			zap.String("category", "upgrading"), zap.String("operation", op), zap.Bool("hasDone", hasDone))
 		return
 	}
 	if hasDone {
 		switch op {
 		case "start":
-			WriteData(w, "It's a duplicated op and the cluster is already in upgrading state.")
+			WriteData(w, "It's a duplicated operation and the cluster is already in upgrading state.")
 		case "finish":
-			WriteData(w, "It's a duplicated op and the cluster is already in normal state.")
+			WriteData(w, "It's a duplicated operation and the cluster is already in normal state.")
 		}
 	} else {
 		WriteData(w, "success!")
 	}
-	logutil.Logger(req.Context()).Info("upgrade op success",
-		zap.String("category", "upgrading"), zap.String("op", op), zap.Bool("hasDone", hasDone))
+	logutil.Logger(req.Context()).Info("upgrade operation success",
+		zap.String("category", "upgrading"), zap.String("operation", op), zap.Bool("hasDone", hasDone))
 }
 
 // StartUpgrade is used to start the upgrade.
@@ -153,7 +153,7 @@ func (h ClusterUpgradeHandler) showUpgrade(w http.ResponseWriter) error {
 		return err
 	}
 	if !isUpgrading {
-		WriteData(w, "The cluster state is normal. Guess that the upgrade has been completed, or that the upgrade did not use the method of pausing the user DDL.")
+		WriteData(w, "The cluster state is normal.")
 		return nil
 	}
 

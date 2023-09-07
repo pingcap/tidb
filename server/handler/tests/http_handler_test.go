@@ -1285,7 +1285,7 @@ func TestUpgrade(t *testing.T) {
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, "\"It's a duplicated op and the cluster is already in upgrading state.\"", string(body))
+	require.Equal(t, "\"It's a duplicated operation and the cluster is already in upgrading state.\"", string(body))
 	// check the result
 	se, err = session.CreateSession(ts.store)
 	require.NoError(t, err)
@@ -1330,7 +1330,7 @@ func TestUpgrade(t *testing.T) {
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, "\"The cluster state is normal. Guess that the upgrade has been completed, or that the upgrade did not use the method of pausing the user DDL.\"\"success!\"", string(body))
+	require.Equal(t, "\"The cluster state is normal.\"\"success!\"", string(body))
 
 	// Do finish upgrade again.
 	resp, err = ts.PostStatus("/upgrade/finish", "application/x-www-form-urlencoded", nil)
@@ -1342,7 +1342,7 @@ func TestUpgrade(t *testing.T) {
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, "\"It's a duplicated op and the cluster is already in normal state.\"", string(body))
+	require.Equal(t, "\"It's a duplicated operation and the cluster is already in normal state.\"", string(body))
 	// check the result
 	se, err = session.CreateSession(ts.store)
 	require.NoError(t, err)
