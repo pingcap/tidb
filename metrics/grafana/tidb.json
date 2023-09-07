@@ -2551,6 +2551,14 @@
               "legendFormat": "total",
               "refId": "B",
               "step": 40
+            },
+            {
+              "expr": "sum(tidb_server_tokens{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"})",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "active connections",
+              "refId": "C",
+              "step": 40
             }
           ],
           "thresholds": [],
