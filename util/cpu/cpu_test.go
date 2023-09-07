@@ -53,7 +53,7 @@ func TestCPUValue(t *testing.T) {
 	}
 	observer.Start()
 	for n := 0; n < 10; n++ {
-		time.Sleep(1 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 		value, unsupported := cpu.GetCPUUsage()
 		require.False(t, unsupported)
 		require.Greater(t, value, 0.0)
@@ -88,7 +88,7 @@ func TestFailpointCPUValue(t *testing.T) {
 	}
 	observer.Start()
 	for n := 0; n < 10; n++ {
-		time.Sleep(1 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 		value, unsupported := cpu.GetCPUUsage()
 		require.True(t, unsupported)
 		require.Equal(t, value, 0.0)
