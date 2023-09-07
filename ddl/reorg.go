@@ -523,9 +523,11 @@ func (dc *ddlCtx) buildDescTableScan(ctx *JobContext, startTS uint64, tbl table.
 	builder.SetDAGRequest(dagPB).
 		SetStartTS(startTS).
 		SetKeepOrder(true).
-		SetConcurrency(1).SetDesc(true)
+		SetConcurrency(1).
+		SetDesc(true).
+		SetResourceGroupTagger(ctx.getResourceGroupTaggerForTopSQL()).
+		SetResourceGroupName(ctx.resourceGroupName)
 
-	builder.Request.ResourceGroupTagger = ctx.getResourceGroupTaggerForTopSQL()
 	builder.Request.NotFillCache = true
 	builder.Request.Priority = kv.PriorityLow
 	builder.RequestSource.RequestSourceInternal = true
