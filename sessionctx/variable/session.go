@@ -884,6 +884,14 @@ type SessionVars struct {
 	// not limit and spill will never happen
 	TiFlashMaxBytesBeforeExternalSort int64
 
+	// TiFlash max query memory per node, -1 and 0 means no limit, and the default value is 0
+	// If TiFlashMaxQueryMemoryPerNode > 0 && TiFlashQuerySpillRatio > 0, it will trigger auto spill in TiFlash side, and when auto spill
+	// is triggered, per executor's memory usage threshold set by TiFlashMaxBytesBeforeExternalJoin/TiFlashMaxBytesBeforeExternalGroupBy/TiFlashMaxBytesBeforeExternalSort will be ignored.
+	TiFlashMaxQueryMemoryPerNode int64
+
+	// TiFlashQuerySpillRatio is the percentage threshold to trigger auto spill in TiFlash if TiFlashMaxQueryMemoryPerNode is set
+	TiFlashQuerySpillRatio float64
+
 	// TiFlashEnablePipelineMode means if we should use pipeline model to execute query or not in tiflash.
 	// Default value is `true`, means never use pipeline model in tiflash.
 	// Value set to `true` means try to execute query with pipeline model in tiflash.
@@ -2043,6 +2051,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashMaxBytesBeforeExternalJoin = DefTiFlashMaxBytesBeforeExternalJoin
 	vars.TiFlashMaxBytesBeforeExternalGroupBy = DefTiFlashMaxBytesBeforeExternalGroupBy
 	vars.TiFlashMaxBytesBeforeExternalSort = DefTiFlashMaxBytesBeforeExternalSort
+	vars.TiFlashMaxQueryMemoryPerNode = DefTiFlashMemQuotaQueryPerNode
+	vars.TiFlashQuerySpillRatio = DefTiFlashQuerySpillRatio
 	vars.TiFlashEnablePipelineMode = DefTiDBEnableTiFlashPipelineMode
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
