@@ -5699,3 +5699,14 @@ func TestIssue40015(t *testing.T) {
 		"<nil>",
 	))
 }
+
+func TestIssue44359(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE t1 (c1 INT UNSIGNED NOT NULL )")
+	tk.MustExec("INSERT INTO t1 VALUES (0)")
+	tk.MustQuery("SELECT c1 FROM t1 WHERE c1 <> CAST(POW(-'0', 1) AS BINARY)").Check(testkit.Rows())
+	tk.MustQuery("SELECT c1 FROM t1 WHERE c1 = CAST('-000' AS BINARY)").Check(testkit.Rows("0"))
+}
