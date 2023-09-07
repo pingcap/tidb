@@ -14,6 +14,7 @@
 
 package storage
 
+// GetSubtasksFromHistoryForTest gets subtasks from history table for test.
 func GetSubtasksFromHistoryForTest(stm *TaskManager) (int, error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx,
 		"select * from mysql.tidb_background_subtask_history")
