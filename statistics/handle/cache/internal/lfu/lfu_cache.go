@@ -42,18 +42,14 @@ type LFU struct {
 var testMode = false
 
 func setMemCost(totalMemCost int64) (result int64, err error) {
-	if intest.InTest {
-		result = 5000000
-	} else {
-		if totalMemCost != 0 {
-			memTotal, err := memory.MemTotal()
-			if err != nil {
-				return 0, err
-			}
-			result = int64(memTotal / 2)
+	if totalMemCost == 0 {
+		memTotal, err := memory.MemTotal()
+		if err != nil {
+			return 0, err
 		}
+		return int64(memTotal / 2), nil
 	}
-	return
+	return totalMemCost, nil
 }
 
 // NewLFU creates a new LFU cache.
@@ -61,6 +57,9 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 	cost, err := setMemCost(totalMemCost)
 	if err != nil {
 		return nil, err
+	}
+	if intest.InTest {
+		cost = 5000000
 	}
 	metrics.CapacityGauge.Set(float64(cost))
 	result := &LFU{}
