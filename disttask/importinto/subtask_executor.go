@@ -29,7 +29,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	tidb "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
@@ -51,7 +51,7 @@ type importMinimalTaskExecutor struct {
 
 var newImportMinimalTaskExecutor = newImportMinimalTaskExecutor0
 
-func newImportMinimalTaskExecutor0(t *importStepMinimalTask) scheduler.SubtaskExecutor {
+func newImportMinimalTaskExecutor0(t *importStepMinimalTask) execute.MiniTaskExecutor {
 	return &importMinimalTaskExecutor{
 		mTtask: t,
 	}
@@ -269,22 +269,4 @@ func rebaseAllocatorBases(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *
 	}
 	return errors.Trace(common.RebaseTableAllocators(ctx, subtaskMeta.MaxIDs,
 		kvStore, taskMeta.Plan.DBID, taskMeta.Plan.DesiredTableInfo))
-}
-
-func init() {
-	scheduler.RegisterSubtaskExectorConstructor(proto.ImportInto, StepImport,
-		// The order of the subtask executors is the same as the order of the subtasks.
-		func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
-			return &scheduler.EmptyExecutor{}, nil
-		},
-	)
-	scheduler.RegisterSubtaskExectorConstructor(proto.ImportInto, StepPostProcess,
-		func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
-			mTask, ok := minimalTask.(*postProcessStepMinimalTask)
-			if !ok {
-				return nil, errors.Errorf("invalid task type %T", minimalTask)
-			}
-			return &postProcessMinimalTaskExecutor{mTask: mTask}, nil
-		},
-	)
 }

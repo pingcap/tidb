@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/aggregate"
 	"github.com/pingcap/tidb/executor/internal"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -1221,22 +1221,22 @@ func TestIssue17216(t *testing.T) {
 }
 
 func TestHashAggRuntimeStat(t *testing.T) {
-	partialInfo := &executor.AggWorkerInfo{
+	partialInfo := &aggregate.AggWorkerInfo{
 		Concurrency: 5,
 		WallTime:    int64(time.Second * 20),
 	}
-	finalInfo := &executor.AggWorkerInfo{
+	finalInfo := &aggregate.AggWorkerInfo{
 		Concurrency: 8,
 		WallTime:    int64(time.Second * 10),
 	}
-	stats := &executor.HashAggRuntimeStats{
+	stats := &aggregate.HashAggRuntimeStats{
 		PartialConcurrency: 5,
 		PartialWallTime:    int64(time.Second * 20),
 		FinalConcurrency:   8,
 		FinalWallTime:      int64(time.Second * 10),
 	}
 	for i := 0; i < partialInfo.Concurrency; i++ {
-		stats.PartialStats = append(stats.PartialStats, &executor.AggWorkerStat{
+		stats.PartialStats = append(stats.PartialStats, &aggregate.AggWorkerStat{
 			TaskNum:    5,
 			WaitTime:   int64(2 * time.Second),
 			ExecTime:   int64(1 * time.Second),
@@ -1244,7 +1244,7 @@ func TestHashAggRuntimeStat(t *testing.T) {
 		})
 	}
 	for i := 0; i < finalInfo.Concurrency; i++ {
-		stats.FinalStats = append(stats.FinalStats, &executor.AggWorkerStat{
+		stats.FinalStats = append(stats.FinalStats, &aggregate.AggWorkerStat{
 			TaskNum:    5,
 			WaitTime:   int64(2 * time.Millisecond),
 			ExecTime:   int64(1 * time.Millisecond),
@@ -1523,7 +1523,7 @@ func TestRandomPanicConsume(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into s(a,b) values(%v,%v),(%v,%v),(%v,%v)", i, i, i, i, i, i))
 	}
 
-	fpName := "github.com/pingcap/tidb/executor/ConsumeRandomPanic"
+	fpName := "github.com/pingcap/tidb/executor/aggregate/ConsumeRandomPanic"
 	require.NoError(t, failpoint.Enable(fpName, "5%panic(\"ERROR 1105 (HY000): Out Of Memory Quota![conn=1]\")"))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
