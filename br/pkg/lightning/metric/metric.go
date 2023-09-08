@@ -59,13 +59,13 @@ const (
 
 // Common contains metrics shared for lightning and import-into.
 // they will have different namespace.
-// metrics here will an additional task-id const-label when used for import-into.
+// metrics here will have an additional task-id const-label when used for import-into.
 type Common struct {
 	ChunkCounter *prometheus.CounterVec
 	// BytesCounter records the total bytes processed.
 	// it has a state label, values includes:
 	// 	- total_restore: total source file bytes needs to restore, it's constant.
-	// 	- restored: source file bytes encoded and sorted.
+	// 	- restored: source file bytes restored, i.e. encoded and sorted.
 	// 	- written: kv bytes written during encode & sort.
 	// 	- imported: kv bytes imported during import engine(this value don't account for replica).
 	BytesCounter *prometheus.CounterVec
