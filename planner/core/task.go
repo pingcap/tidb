@@ -818,6 +818,22 @@ func (t *rootTask) MemoryUsage() (sum int64) {
 	return sum
 }
 
+// attach2Task attach limit to different cases.
+// For Normal Index Lookup
+// 1: attach the limit to table side or index side of normal index lookup cop task. (normal case, old code, no more
+// explanation here)
+//
+// For Index Merge:
+// 2: attach the limit to **table** side for index merge intersection case, cause intersection will invalidate the
+// fetched limit+offset rows from each partial index plan, you can not decide how many you want in advance for partial
+// index path, actually. After we sink limit to table side, we still need an upper root limit to control the real limit
+// count admission.
+//
+// 3: attach the limit to **index** side for index merge union case, because each index plan will output the fetched
+// limit+offset (* N path) rows, you still need an embedded pushedLimit inside index merge reader to cut it down.
+//
+// 4: attach the limit to the TOP of root index merge operator if there is some root condition exists for index merge
+// intersection/union case.
 func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
@@ -827,6 +843,18 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 
 	sunk := false
 	if cop, ok := t.(*copTask); ok {
+		suspendLimitAboveTablePlan := func() {
+			newCount := p.Offset + p.Count
+			childProfile := cop.tablePlan.StatsInfo()
+			// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
+			stats := deriveLimitStats(childProfile, float64(newCount))
+			pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+			pushedDownLimit.SetChildren(cop.tablePlan)
+			cop.tablePlan = pushedDownLimit
+			// Don't use clone() so that Limit and its children share the same schema. Otherwise, the virtual generated column may not be resolved right.
+			pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+			t = cop.convertToRootTask(p.SCtx())
+		}
 		if len(cop.idxMergePartPlans) == 0 {
 			// For double read which requires order being kept, the limit cannot be pushed down to the table side,
 			// because handles would be reordered before being sent to table scan.
@@ -845,22 +873,53 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			t = cop.convertToRootTask(p.SCtx())
 			sunk = p.sinkIntoIndexLookUp(t)
 		} else if !cop.idxMergeIsIntersection {
-			// We only support push part of the order prop down to index merge case.
-			if !cop.indexPlanFinished && len(cop.rootTaskConds) == 0 {
-				newCount := p.Offset + p.Count
-				limitChildren := make([]PhysicalPlan, 0, len(cop.idxMergePartPlans))
-				for _, partialScan := range cop.idxMergePartPlans {
-					childProfile := partialScan.StatsInfo()
-					stats := deriveLimitStats(childProfile, float64(newCount))
-					pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-					pushedDownLimit.SetChildren(partialScan)
-					pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
-					limitChildren = append(limitChildren, pushedDownLimit)
+			// We only support push part of the order prop down to index merge build case.
+			if len(cop.rootTaskConds) == 0 {
+				if cop.indexPlanFinished {
+					// when the index plan is finished, sink the limit to the index merge table side.
+					suspendLimitAboveTablePlan()
+				} else {
+					// cop.indexPlanFinished = false indicates the table side is a pure table-scan, sink the limit to the index merge index side.
+					newCount := p.Offset + p.Count
+					limitChildren := make([]PhysicalPlan, 0, len(cop.idxMergePartPlans))
+					for _, partialScan := range cop.idxMergePartPlans {
+						childProfile := partialScan.StatsInfo()
+						stats := deriveLimitStats(childProfile, float64(newCount))
+						pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+						pushedDownLimit.SetChildren(partialScan)
+						pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+						limitChildren = append(limitChildren, pushedDownLimit)
+					}
+					cop.idxMergePartPlans = limitChildren
+					t = cop.convertToRootTask(p.SCtx())
+					sunk = p.sinkIntoIndexMerge(t)
 				}
-				cop.idxMergePartPlans = limitChildren
+			} else {
+				// when there are some root conditions, just sink the limit upon the index merge reader.
+				t = cop.convertToRootTask(p.SCtx())
+				sunk = p.sinkIntoIndexMerge(t)
 			}
-			t = cop.convertToRootTask(p.SCtx())
-			sunk = p.sinkIntoIndexMerge(t)
+		} else if cop.idxMergeIsIntersection {
+			// In the index merge with intersection case, only the limit can be pushed down to the index merge table side.
+			// Note Difference:
+			// IndexMerge.PushedLimit is applied before table scan fetching, limiting the indexPartialPlan rows returned (it maybe ordered if orderBy items not empty)
+			// TableProbeSide sink limit is applied on the top of table plan, which will quickly shut down the both fetch-back and read-back process.
+			if len(cop.rootTaskConds) == 0 {
+				// if cop.indexPlanFinished = true
+				// 		indicates the table side is not a pure table-scan, so we could only append the limit upon the table plan.
+				//		suspendLimitAboveTablePlan()
+				// else
+				// 		todo: cop.indexPlanFinished = false indicates the table side is a pure table-scan, so we sink the limit as index merge embedded push-down Limit theoretically.
+				// 		todo: while currently in the execution layer, intersection concurrency framework is not quickly suitable for us to do the limit cut down or the order by operation.
+				// 		so currently, we just put the limit at the top of table plan rather than a embedded pushedLimit inside indexMergeReader.
+				// 		t = cop.convertToRootTask(p.SCtx())
+				//		sunk = p.sinkIntoIndexMerge(t)
+				suspendLimitAboveTablePlan()
+			} else {
+				// otherwise, suspend the limit out of index merge reader.
+				t = cop.convertToRootTask(p.SCtx())
+				sunk = p.sinkIntoIndexMerge(t)
+			}
 		} else {
 			// Whatever the remained case is, we directly convert to it to root task.
 			t = cop.convertToRootTask(p.SCtx())
@@ -1024,9 +1083,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 }
 
 // canPushToIndexPlan checks if this TopN can be pushed to the index side of copTask.
-// It can be pushed to the index side when all columns used by ByItems are available from the index side and
-//
-//	there's no prefix index column.
+// It can be pushed to the index side when all columns used by ByItems are available from the index side and there's no prefix index column.
 func (*PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*expression.Column) bool {
 	// If we call canPushToIndexPlan and there's no index plan, we should go into the index merge case.
 	// Index merge case is specially handled for now. So we directly return false here.

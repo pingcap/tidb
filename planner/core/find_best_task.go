@@ -1284,14 +1284,19 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	return
 }
 
+// convertToIndexMergeScan builds the index merge scan for intersection or union cases.
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
 	if prop.IsFlashProp() || prop.TaskTp == property.CopSingleReadTaskType {
 		return invalidTask, nil
 	}
-	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IndexMergeIsIntersection {
+	// lift the limitation of that double read can not build index merge **COP** task with intersection.
+	// that means we can output a cop task here without encapsulating it as root task, for the convenience of attaching limit to its table side.
+
+	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
-	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
+	// while for now, we still can not push the sort prop to the intersection index plan side, temporarily banned here.
+	if !prop.IsSortItemEmpty() && candidate.path.IndexMergeIsIntersection {
 		return invalidTask, nil
 	}
 	failpoint.Inject("forceIndexMergeKeepOrder", func(_ failpoint.Value) {

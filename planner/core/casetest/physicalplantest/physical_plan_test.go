@@ -2247,3 +2247,35 @@ func TestIndexMergeOrderPushDown(t *testing.T) {
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
 	}
 }
+
+func TestIndexMergeSinkLimit(t *testing.T) {
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
+	tk.MustExec(" CREATE TABLE `t2` (  `a` int(11) DEFAULT NULL,  `b` int(11) DEFAULT NULL,  `c` int(11) DEFAULT NULL,  KEY `a` (`a`),  KEY `b` (`b`)) ")
+	tk.MustExec("insert into t2 values(1,2,1),(2,1,1),(3,3,1)")
+	tk.MustExec("create table t(a int, j json, index kj((cast(j as signed array))))")
+	tk.MustExec("insert into t values(1, '[1,2,3]')")
+
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Rows())
+			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+		})
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
+	}
+}
