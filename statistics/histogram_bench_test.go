@@ -50,7 +50,11 @@ func genBucket4TestData(len int) []*bucket4Test {
 		} else {
 			lower = upper + 1
 		}
-		upper = lower + (rand.Int63n(magicLower[n+1] - lower))
+		if n == len-1 {
+			upper = 10000
+		} else {
+			upper = lower + (rand.Int63n(magicLower[n+1] - lower))
+		}
 		result = append(result, &bucket4Test{
 			lower:  lower,
 			upper:  upper,
@@ -75,33 +79,28 @@ func genHist4Bench(t *testing.B, buckets []*bucket4Test, totColSize int64) *Hist
 	return h
 }
 
-func BenchABC(b *testing.B) {
-	ctx := mock.NewContext()
-	sc := ctx.GetSessionVars().StmtCtx
-	hists := make([]*Histogram, 0, histogramLen)
-	buckets := genBucket4TestData(histogramLen)
-	hists := genHist4Bench(b, buckets, histogramLen)
-	const expBucketNumber = 100
-	poped := make([]TopNMeta, 0, popedTopNLen)
-	for _, top := range tt.popedTopN {
-		b, err := codec.EncodeKey(sc, nil, types.NewIntDatum(top.data))
-		require.NoError(t, err)
-		tmp := TopNMeta{
-			Encoded: b,
-			Count:   uint64(top.count),
-		}
-		poped = append(poped, tmp)
-	}
-	for _, top := range tt.popedTopN {
-		b, err := codec.EncodeKey(sc, nil, types.NewIntDatum(top.data))
-		require.NoError(t, err)
-		tmp := TopNMeta{
-			Encoded: b,
-			Count:   uint64(top.count),
-		}
-		poped = append(poped, tmp)
-	}
+func BenchmarkMergePartitionHist2GlobalHist(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		globalHist, err := MergePartitionHist2GlobalHist(sc, hists, poped, expBucketNumber, true)
+		b.StopTimer()
+		ctx := mock.NewContext()
+		sc := ctx.GetSessionVars().StmtCtx
+		hists := make([]*Histogram, 0, histogramLen)
+		for i := 0; i < histogramLen; i++ {
+			buckets := genBucket4TestData(histogramLen)
+			hist := genHist4Bench(b, buckets, histogramLen)
+			hists = append(hists, hist)
+		}
+		const expBucketNumber = 100
+		poped := make([]TopNMeta, 0, popedTopNLen)
+		for n := 0; n < popedTopNLen; n++ {
+			b, _ := codec.EncodeKey(sc, nil, types.NewIntDatum(rand.Int63n(10000)))
+			tmp := TopNMeta{
+				Encoded: b,
+				Count:   uint64(rand.Int63n(10000)),
+			}
+			poped = append(poped, tmp)
+		}
+		b.StartTimer()
+		MergePartitionHist2GlobalHist(sc, hists, poped, expBucketNumber, true)
 	}
 }
