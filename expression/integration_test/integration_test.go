@@ -7824,6 +7824,18 @@ func TestIfFunctionWithNull(t *testing.T) {
 		testkit.Rows("20000 35100"))
 }
 
+func TestIssue46709(t *testing.T) {
+	// issue 43805
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (c1 INT);")
+	tk.MustExec("INSERT INTO t1 VALUES (1);")
+	tk.MustQuery("SELECT concat(IFNULL(c1, 0.0)) from t1;").Check(testkit.Rows("1"))
+}
+
 func TestIssue41733AndIssue45410(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
