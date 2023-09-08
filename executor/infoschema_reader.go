@@ -194,6 +194,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromResourceGroups()
 		case infoschema.TableRunawayWatches:
 			err = e.setDataFromRunawayWatches(sctx)
+		case infoschema.TableCheckConstraints:
+			err = e.setDataFromCheckConstraints(sctx, dbs)
 		}
 		if err != nil {
 			return nil, err
@@ -620,6 +622,34 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					nil,                   // TIDB_PLACEMENT_POLICY_NAME
 				)
 				rows = append(rows, record)
+			}
+		}
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromCheckConstraints(sctx sessionctx.Context, schemas []*model.DBInfo) error {
+	var rows [][]types.Datum
+	checker := privilege.GetPrivilegeManager(sctx)
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			if len(table.Constraints) > 0 {
+				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.SelectPriv) {
+					continue
+				}
+				for _, constraint := range table.Constraints {
+					if constraint.State != model.StatePublic {
+						continue
+					}
+					record := types.MakeDatums(
+						infoschema.CatalogVal, // CONSTRAINT_CATALOG
+						schema.Name.O,         // CONSTRAINT_SCHEMA
+						constraint.Name.O,     // CONSTRAINT_NAME
+						fmt.Sprintf("(%s)", constraint.ExprString), // CHECK_CLAUSE
+					)
+					rows = append(rows, record)
+				}
 			}
 		}
 	}
