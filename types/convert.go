@@ -294,7 +294,7 @@ func StrToUint(sc *stmtctx.StatementContext, str string, isFuncCast bool) (uint6
 	hasParseErr := false
 
 	if validPrefix[0] == '-' {
-		// only `-0` is valid to be converted into unsigned integer
+		// only `-000*` is valid to be converted into unsigned integer
 		for _, v := range validPrefix[1:] {
 			if v != '0' {
 				hasParseErr = true
