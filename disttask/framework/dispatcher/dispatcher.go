@@ -448,7 +448,6 @@ func (d *BaseDispatcher) onNextStage() error {
 		failpoint.Inject("mockDynamicDispatchErr2", func() {
 			failpoint.Return(errors.New("mockDynamicDispatchErr2"))
 		})
-		return nil
 	}
 	return nil
 }
