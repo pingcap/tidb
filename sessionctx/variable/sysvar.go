@@ -344,7 +344,10 @@ var defaultSysVars = []*SysVar{
 			case kv.TiKV.Name():
 				s.IsolationReadEngines[kv.TiKV] = struct{}{}
 			case kv.TiFlash.Name():
-				s.IsolationReadEngines[kv.TiFlash] = struct{}{}
+				// If the tiflash is removed by the strict SQL mode. The hint should also not take effect.
+				if !s.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
+					s.IsolationReadEngines[kv.TiFlash] = struct{}{}
+				}
 			case kv.TiDB.Name():
 				s.IsolationReadEngines[kv.TiDB] = struct{}{}
 			}
