@@ -44,6 +44,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 	"unsafe"
 
@@ -287,7 +288,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.capability |= mysql.ClientSSL
 	}
 
-	if s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest) {
+	if s.cfg.Host != "" && (s.cfg.Port != 0 || testing.Testing()) {
 		addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(int(s.cfg.Port)))
 		tcpProto := "tcp"
 		if s.cfg.EnableTCP4Only {
@@ -297,7 +298,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			return nil, errors.Trace(err)
 		}
 		logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
-		if RunInGoTest && s.cfg.Port == 0 {
+		if testing.Testing() && s.cfg.Port == 0 {
 			s.cfg.Port = uint(s.listener.Addr().(*net.TCPAddr).Port)
 		}
 	}
