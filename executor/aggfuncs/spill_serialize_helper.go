@@ -144,6 +144,11 @@ func (s *SpillSerializeHelper) serializePartialResult4SumFloat64(value partialRe
 // 	lastRead readOp // last read operation, so that Unread* can work correctly. int8
 // }
 
-func (s *SpillSerializeHelper) serializeBasePartialResult4GroupConcat(value basePartialResult4GroupConcat) []byte {
-	// totalMemLen := 2 * intLen + 2 * int8Len + len(value.valsBuf.)
+// func (s *SpillSerializeHelper) serializeBasePartialResult4GroupConcat(value basePartialResult4GroupConcat) []byte {
+// totalMemLen := 2 * intLen + 2 * int8Len + len(value.valsBuf.)
+// }
+
+func (s *SpillSerializeHelper) serializePartialResult4BitFunc(value partialResult4BitFunc) []byte {
+	spill.SerializeUint64(value, s.tmpBuf[:])
+	return s.tmpBuf[0:uint64Len]
 }

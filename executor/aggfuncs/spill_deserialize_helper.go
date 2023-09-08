@@ -229,3 +229,24 @@ func (s *spillDeserializeHelper) deserializePartialResult4SumFloat64(dst *partia
 	}
 	return false
 }
+
+// func (s *spillDeserializeHelper) deserializeBasePartialResult4GroupConcat(dst *basePartialResult4GroupConcat) bool {
+// 	if s.readRowIndex < s.rowNum {
+// 		bytes := s.column.GetBytes(s.readRowIndex)
+// 		dst.val = spill.DeserializeFloat64(bytes, 0)
+// 		dst.notNullRowCount = spill.DeserializeInt64(bytes, float64Len)
+// 		s.readRowIndex++
+// 		return true
+// 	}
+// 	return false
+// }
+
+func (s *spillDeserializeHelper) deserializePartialResult4BitFunc(dst *partialResult4BitFunc) bool {
+	if s.readRowIndex < s.rowNum {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		*dst = uint64(spill.DeserializeUint64(bytes, 0))
+		s.readRowIndex++
+		return true
+	}
+	return false
+}

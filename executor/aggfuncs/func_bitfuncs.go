@@ -50,21 +50,18 @@ func (e *baseBitAggFunc) AppendFinalResult2Chunk(_ sessionctx.Context, pr Partia
 
 func (c *baseBitAggFunc) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4BitFunc)(partialResult)
-	resBuf := spillHelper.serializeUint64(*(*uint64)(pr))
+	resBuf := spillHelper.serializePartialResult4BitFunc(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *baseBitAggFunc) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
+func (c *baseBitAggFunc) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
-	spillHelper := newDeserializeHelper(dataCol.GetData())
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
 	partialResults := make([]PartialResult, 0, src.NumRows())
 
 	for {
-		pr, memDelta, err := c.deserializeForSpill(&spillHelper)
-		if err != nil {
-			return nil, 0, err
-		}
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
 		if pr == nil {
 			break
 		}
@@ -72,18 +69,17 @@ func (c *baseBitAggFunc) DeserializeToPartialResultForSpill(_ sessionctx.Context
 		totalMemDelta += memDelta
 	}
 
-	return partialResults, totalMemDelta, nil
+	return partialResults, totalMemDelta
 }
 
-func (c *baseBitAggFunc) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
+func (c *baseBitAggFunc) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
 	pr, memDelta := c.AllocPartialResult()
 	result := (*partialResult4BitFunc)(pr)
-	success := helper.readUint64((*uint64)(result))
+	success := helper.deserializePartialResult4BitFunc(result)
 	if !success {
-		// It's unexpected to read only part of result
-		return nil, 0, nil
+		return nil, 0
 	}
-	return pr, memDelta, nil
+	return pr, memDelta
 }
 
 type bitOrUint64 struct {
