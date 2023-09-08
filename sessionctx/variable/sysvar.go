@@ -40,6 +40,7 @@ import (
 	_ "github.com/pingcap/tidb/types/parser_driver" // for parser driver
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/collate"
+	distroleutil "github.com/pingcap/tidb/util/distrole"
 	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -343,7 +344,10 @@ var defaultSysVars = []*SysVar{
 			case kv.TiKV.Name():
 				s.IsolationReadEngines[kv.TiKV] = struct{}{}
 			case kv.TiFlash.Name():
-				s.IsolationReadEngines[kv.TiFlash] = struct{}{}
+				// If the tiflash is removed by the strict SQL mode. The hint should also not take effect.
+				if !s.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
+					s.IsolationReadEngines[kv.TiFlash] = struct{}{}
+				}
 			case kv.TiDB.Name():
 				s.IsolationReadEngines[kv.TiDB] = struct{}{}
 			}
@@ -2845,6 +2849,23 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeInstance, Name: TiDBServiceScope, Value: "", Type: TypeStr,
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			_, ok := distroleutil.ToTiDBServiceScope(originalValue)
+			if !ok {
+				err := fmt.Errorf("incorrect value: `%s`. %s options: %s",
+					originalValue,
+					TiDBServiceScope, `"", background`)
+				return normalizedValue, err
+			}
+			return normalizedValue, nil
+		},
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			ServiceScope.Store(strings.ToLower(s))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return ServiceScope.Load(), nil
+		}},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

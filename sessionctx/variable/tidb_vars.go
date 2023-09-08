@@ -1097,6 +1097,8 @@ const (
 	TiDBSkipMissingPartitionStats = "tidb_skip_missing_partition_stats"
 	// TiDBSessionAlias indicates the alias of a session which is used for tracing.
 	TiDBSessionAlias = "tidb_session_alias"
+	// TiDBServiceScope indicates the role for tidb for distributed task framework.
+	TiDBServiceScope = "tidb_service_scope"
 )
 
 // TiDB intentional limits
@@ -1499,6 +1501,7 @@ var (
 	EnableResourceControl     = atomic.NewBool(false)
 	EnableCheckConstraint     = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
+	ServiceScope              = atomic.NewString("")
 	CloudStorageURI           = atomic.NewString("")
 )
 

@@ -207,6 +207,8 @@ const (
 	TableResourceGroups = "RESOURCE_GROUPS"
 	// TableRunawayWatches is the query list of runaway watch.
 	TableRunawayWatches = "RUNAWAY_WATCHES"
+	// TableCheckConstraints is the list of CHECK constraints.
+	TableCheckConstraints = "CHECK_CONSTRAINTS"
 )
 
 const (
@@ -315,6 +317,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableMemoryUsageOpsHistory:    autoid.InformationSchemaDBID + 87,
 	TableResourceGroups:                  autoid.InformationSchemaDBID + 88,
 	TableRunawayWatches:                  autoid.InformationSchemaDBID + 89,
+	TableCheckConstraints:                autoid.InformationSchemaDBID + 90,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1626,6 +1629,13 @@ var tableRunawayWatchListCols = []columnInfo{
 	{name: "ACTION", tp: mysql.TypeVarchar, size: 12, flag: mysql.NotNullFlag},
 }
 
+var tableCheckConstraintsCols = []columnInfo{
+	{name: "CONSTRAINT_CATALOG", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "CONSTRAINT_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "CONSTRAINT_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "CHECK_CLAUSE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2143,6 +2153,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableMemoryUsageOpsHistory:              tableMemoryUsageOpsHistoryCols,
 	TableResourceGroups:                     tableResourceGroupsCols,
 	TableRunawayWatches:                     tableRunawayWatchListCols,
+	TableCheckConstraints:                   tableCheckConstraintsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
