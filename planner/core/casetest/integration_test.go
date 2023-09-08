@@ -566,30 +566,6 @@ func TestMergeContinuousSelections(t *testing.T) {
 	}
 }
 
-func TestLimitIndexLookUpKeepOrder(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int, b int, c int, d int, index idx(a,b,c));")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	integrationSuiteData := GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
 func TestDecorrelateInnerJoinInSubquery(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
