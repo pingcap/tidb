@@ -88,8 +88,8 @@ func TestAstFormat(t *testing.T) {
 		expr := fmt.Sprintf("select %s", tt.input)
 		charset, collation := getDefaultCharsetAndCollate()
 		stmts, _, err := parser.New().Parse(expr, charset, collation)
-		node := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
 		require.NoError(t, err)
+		node := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
 
 		writer := bytes.NewBufferString("")
 		node.Format(writer)

@@ -124,7 +124,7 @@ func (d *MyDecimal) ToString() (str []byte) {
 	if d.negative {
 		length++
 	}
-	if digitsFrac > 0 {
+	if digitsFrac >= 0 {
 		length++
 	}
 	str = str[:length]
@@ -134,7 +134,7 @@ func (d *MyDecimal) ToString() (str []byte) {
 		strIdx++
 	}
 	var fill int
-	if digitsFrac > 0 {
+	if digitsFrac >= 0 {
 		fracIdx := strIdx + digitsIntLen
 		fill = digitsFracLen - digitsFrac
 		wordIdx := wordStartIdx + digitsToWords(digitsInt)
