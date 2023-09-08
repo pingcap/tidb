@@ -411,7 +411,6 @@ func (d *BaseDispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error
 	}
 	// 4. filter by role.
 	serverNodes, err = d.filterByRole(serverNodes)
-
 	if err != nil {
 		return err
 	}
@@ -469,7 +468,7 @@ func GenerateSchedulerNodes(ctx context.Context) (serverNodes []*infosync.Server
 	return serverNodes, nil
 }
 
-func (d *dispatcher) filterByRole(infos []*infosync.ServerInfo) ([]*infosync.ServerInfo, error) {
+func (d *BaseDispatcher) filterByRole(infos []*infosync.ServerInfo) ([]*infosync.ServerInfo, error) {
 	nodes, err := d.taskMgr.GetNodesByRole("background")
 	if err != nil {
 		return nil, err
