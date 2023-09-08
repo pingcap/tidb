@@ -7832,8 +7832,8 @@ func TestIssue46709(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("CREATE TABLE t1 (c1 INT);")
-	tk.MustExec("INSERT INTO t1 VALUES (1);")
-	tk.MustQuery("SELECT concat(IFNULL(c1, 0.0)) from t1;").Check(testkit.Rows("1"))
+	tk.MustExec("INSERT INTO t1 VALUES (1), (null);")
+	tk.MustQuery("SELECT concat(IFNULL(c1, 0.0)) from t1;").Check(testkit.Rows("1", "0.0"))
 }
 
 func TestIssue41733AndIssue45410(t *testing.T) {
