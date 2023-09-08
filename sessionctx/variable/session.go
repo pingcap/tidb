@@ -2536,7 +2536,7 @@ func (s *SessionVars) SetSystemVarWithOldValAsRet(name string, val string) (stri
 	if err != nil {
 		return "", err
 	}
-	oldV := sv.Value
+	oldV := s.systems[sv.Name]
 	return oldV, sv.SetSessionFromHook(s, val)
 }
 

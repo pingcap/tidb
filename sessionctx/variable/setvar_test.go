@@ -152,3 +152,15 @@ func TestSetVarHintBreakCache(t *testing.T) {
 	tk.MustExec("SELECT * FROM t WHERE b < 5 AND a = 2;")
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
+
+func TestSetVarHintWithCurrentValNotDefaultVal(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustQuery("select @@max_execution_time").Check(testkit.Rows("0"))
+	tk.MustExec("set @@max_execution_time=1000")
+	tk.MustQuery("select @@max_execution_time").Check(testkit.Rows("1000"))
+	tk.MustQuery("select /*+ set_var(max_execution_time=100) */ @@max_execution_time").Check(testkit.Rows("100"))
+	// The value is the changed value 1000, not the default value 0.
+	tk.MustQuery("select @@max_execution_time").Check(testkit.Rows("1000"))
+}
