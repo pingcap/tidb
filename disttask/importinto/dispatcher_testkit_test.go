@@ -100,7 +100,7 @@ func TestDispatcherExt(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)
 	// update task/subtask, and finish subtask, so we can go to next stage
-	var subtasks []*proto.Subtask
+	subtasks := make([]*proto.Subtask, 0, len(subtaskMetas))
 	for _, m := range subtaskMetas {
 		subtasks = append(subtasks, proto.NewSubtask(task.ID, task.Type, "", m))
 	}
