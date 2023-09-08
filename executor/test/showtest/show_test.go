@@ -1656,7 +1656,6 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 	tk.MustExec("create table t(a int1(1), b int2(2), c int3, d int4, e int8)")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1681 Integer display width is deprecated and will be removed in a future release.",
-		"Warning 1681 Integer display width is deprecated and will be removed in a future release.",
 	))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` tinyint(1) DEFAULT NULL,\n" +
@@ -1668,7 +1667,10 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, c1 bool, c2 int(10) zerofill)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1681 Integer display width is deprecated and will be removed in a future release.",
+		"Warning 1681 The ZEROFILL attribute is deprecated and will be removed in a future release. Use the LPAD function to zero-pad numbers, or store the formatted numbers in a CHAR column.",
+	))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `id` int NOT NULL,\n" +
 		"  `c1` tinyint(1) DEFAULT NULL,\n" +
