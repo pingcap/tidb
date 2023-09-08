@@ -1409,6 +1409,7 @@ func TestIssue42662(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/servermemorylimit/issue42662_2"))
 }
 
+<<<<<<< HEAD:executor/issuetest/executor_issue_test.go
 func TestIssue40596(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1444,4 +1445,36 @@ PARTITION BY HASH (c5) PARTITIONS 4;`)
 	tk.MustQuery("select    /*+ inl_join( t1 , t2 ) */ avg(   t2.c5 ) as r0 , repeat( t2.c7 , t2.c5 ) as r1 , locate( t2.c7 , t2.c7 ) as r2 , unhex( t1.c1 ) as r3 from t1 right join t2 on t1.c2 = t2.c5 where not( t2.c5 in ( -7860 ,-13384 ,-12940 ) ) and not( t1.c2 between '4s7ht' and 'mj' );").Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 	// Again, a simpler reproduce.
 	tk.MustQuery("select /*+ inl_join (t1, t2) */ t2.c5 from t1 right join t2 on t1.c2 = t2.c5 where not( t1.c2 between '4s7ht' and 'mj' );").Check(testkit.Rows())
+=======
+func TestIssue41778(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+	CREATE TABLE ta (
+		a1 json DEFAULT NULL,
+		a2 decimal(31, 1) DEFAULT '0'
+	);
+	CREATE TABLE tb (
+		b1 smallint(6) DEFAULT '-11385',
+		b2 decimal(63, 14) DEFAULT '-6197127648752447138876497216172307937317445669286.98661563645110'
+	);
+	CREATE TABLE tc (
+		c1 text DEFAULT NULL,
+		c2 float NOT NULL DEFAULT '1.8132474',
+		PRIMARY KEY (c2)
+		/*T![clustered_index] CLUSTERED */
+	);
+	`)
+	tk.MustExec(`
+	insert into ta
+	values (NULL, 1228.0);
+	insert into ta
+	values ('"json string1"', 623.8);
+	insert into ta
+	values (NULL, 1337.0);
+	`)
+	err := tk.QueryToErr("select count(*)from ta where not ( ta.a1 in ( select b2 from tb where not ( ta.a1 in ( select c1 from tc where ta.a2 in ( select b2 from tb where IsNull(ta.a1) ) ) ) ) )")
+	require.Equal(t, "[planner:1815]expression isnull(cast(test.ta.a1, var_string(4294967295))) cannot be pushed down", err.Error())
+>>>>>>> 1d55a3c68d2 (executor: fix panic issue when handle `HashAggExec.Close()` (#46662)):executor/test/issuetest/executor_issue_test.go
 }
