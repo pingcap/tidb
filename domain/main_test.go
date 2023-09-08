@@ -17,7 +17,6 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
