@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
@@ -40,7 +40,7 @@ type readIndexToLocalStage struct {
 	jc    *JobContext
 
 	bc      ingest.BackendCtx
-	summary *scheduler.Summary
+	summary *execute.Summary
 }
 
 func newReadIndexToLocalStage(
@@ -50,7 +50,7 @@ func newReadIndexToLocalStage(
 	ptbl table.PhysicalTable,
 	jc *JobContext,
 	bc ingest.BackendCtx,
-	summary *scheduler.Summary,
+	summary *execute.Summary,
 ) *readIndexToLocalStage {
 	return &readIndexToLocalStage{
 		d:       d,
@@ -63,7 +63,7 @@ func newReadIndexToLocalStage(
 	}
 }
 
-func (*readIndexToLocalStage) InitSubtaskExecEnv(_ context.Context) error {
+func (*readIndexToLocalStage) Init(_ context.Context) error {
 	logutil.BgLogger().Info("read index stage init subtask exec env",
 		zap.String("category", "ddl"))
 	return nil
@@ -145,7 +145,7 @@ func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask *proto
 	return nil, nil
 }
 
-func (r *readIndexToLocalStage) CleanupSubtaskExecEnv(_ context.Context) error {
+func (r *readIndexToLocalStage) Cleanup(_ context.Context) error {
 	logutil.BgLogger().Info("read index stage cleanup subtask exec env",
 		zap.String("category", "ddl"))
 	if _, ok := r.ptbl.(table.PartitionedTable); ok {
@@ -157,7 +157,7 @@ func (r *readIndexToLocalStage) CleanupSubtaskExecEnv(_ context.Context) error {
 // MockDMLExecutionAddIndexSubTaskFinish is used to mock DML execution during distributed add index.
 var MockDMLExecutionAddIndexSubTaskFinish func()
 
-func (*readIndexToLocalStage) OnSubtaskFinished(_ context.Context, subtask []byte) ([]byte, error) {
+func (*readIndexToLocalStage) OnFinished(_ context.Context, subtask []byte) ([]byte, error) {
 	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecutionAddIndexSubTaskFinish != nil {
