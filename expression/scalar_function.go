@@ -214,7 +214,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		if db == "" {
 			return nil, errors.Trace(ErrNoDB)
 		}
-		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
+		return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
 	}
 	noopFuncsMode := ctx.GetSessionVars().NoopFuncsMode
 	if noopFuncsMode != variable.OnInt {
