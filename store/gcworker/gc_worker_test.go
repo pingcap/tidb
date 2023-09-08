@@ -1167,14 +1167,22 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 			if region.GetId() == s.initRegion.regionID {
 				return []*txnlock.Lock{{Key: []byte("a")}, {Key: []byte("b")}},
 					&tikv.KeyLocation{
-						Region: tikv.NewRegionVerID(s.initRegion.regionID, 0, 0),
+						Region: tikv.NewRegionVerID(
+							region.GetId(),
+							region.GetRegionEpoch().ConfVer,
+							region.GetRegionEpoch().Version,
+						),
 					}
 			}
 			// second time scan locks
 			if region.GetId() == region2 {
 				return []*txnlock.Lock{{Key: []byte("o")}, {Key: []byte("p")}},
 					&tikv.KeyLocation{
-						Region: tikv.NewRegionVerID(region2, 0, 0),
+						Region: tikv.NewRegionVerID(
+							region.GetId(),
+							region.GetRegionEpoch().ConfVer,
+							region.GetRegionEpoch().Version,
+						),
 					}
 			}
 			return []*txnlock.Lock{}, nil
@@ -1206,7 +1214,10 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 					}
 					for i, lock := range locks {
 						if bytes.Compare(key, lock.Key) <= 0 {
-							return locks[i:], &tikv.KeyLocation{Region: tikv.NewRegionVerID(s.initRegion.regionID, 0, 0)}
+							return locks[i:], &tikv.KeyLocation{Region: tikv.NewRegionVerID(
+								regionMeta.GetId(),
+								regionMeta.GetRegionEpoch().ConfVer,
+								regionMeta.GetRegionEpoch().Version)}
 						}
 					}
 				}
@@ -1219,7 +1230,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 		}
 		return loc, nil
 	}
-	_, err := tikv.ResolveLocksForRange(gcContext(), mockGCLockResolver, 1, []byte(""), []byte("z"), tikv.NewNoopBackoff, 10)
+	_, err := tikv.ResolveLocksForRange(gcContext(), mockGCLockResolver, 1, []byte(""), []byte("z"), tikv.NewGcResolveLockMaxBackoffer, 10)
 	require.NoError(t, err)
 	require.Len(t, resolvedLock, 4)
 	expects := [][]byte{[]byte("a"), []byte("b"), []byte("o"), []byte("p")}
