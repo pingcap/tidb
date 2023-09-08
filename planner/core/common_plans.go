@@ -473,8 +473,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			txtVarTypes = append(txtVarTypes, tp)
 		}
 	}
-
-	if prepared.CachedPlan != nil {
+	if prepared.UseCache && prepared.CachedPlan != nil { // short path for point-get plans
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
 		// the expression in the where condition will not be evaluated,
@@ -500,7 +499,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		stmtCtx.PointExec = true
 		return nil
 	}
-	if prepared.UseCache {
+	if prepared.UseCache { // for general plans
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
@@ -650,7 +649,7 @@ func containShuffleOperator(p Plan) bool {
 // short paths for these executions, currently "point select" and "point update"
 func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
 	preparedStmt *CachedPrepareStmt, is infoschema.InfoSchema, p Plan) error {
-	if sctx.GetSessionVars().StmtCtx.SkipPlanCache {
+	if !sctx.GetSessionVars().StmtCtx.UseCache || sctx.GetSessionVars().StmtCtx.SkipPlanCache {
 		return nil
 	}
 	var (
