@@ -2826,7 +2826,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 				continue
 			}
-			p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tbl.TableInfo, partitionNames, physicalIDs, version)...)
+			p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tbl, partitionNames, physicalIDs, version)...)
 		}
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, true, nil)
 		if len(colInfo) > 0 || handleCols != nil {
@@ -2907,7 +2907,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 			continue
 		}
-		p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tblInfo, names, physicalIDs, version)...)
+		p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, as.TableNames[0], names, physicalIDs, version)...)
 	}
 	return p, nil
 }
@@ -2941,7 +2941,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 				continue
 			}
 
-			p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tblInfo, names, physicalIDs, version)...)
+			p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, as.TableNames[0], names, physicalIDs, version)...)
 		}
 	}
 	handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo, true, nil)
@@ -2964,11 +2964,12 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	return p, nil
 }
 
-func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tblInfo *model.TableInfo, names []string, physicalIDs []int64, version int) []AnalyzeIndexTask {
+func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tbl *ast.TableName, names []string, physicalIDs []int64, version int) []AnalyzeIndexTask {
+	tblInfo := tbl.TableInfo
 	if idx.Global {
 		info := AnalyzeInfo{
-			DBName:        as.TableNames[0].Schema.O,
-			TableName:     as.TableNames[0].Name.O,
+			DBName:        tbl.Schema.O,
+			TableName:     tbl.Name.O,
 			PartitionName: "",
 			TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: -1},
 			Incremental:   as.Incremental,
@@ -2983,8 +2984,8 @@ func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tblInfo 
 			id = -1
 		}
 		info := AnalyzeInfo{
-			DBName:        as.TableNames[0].Schema.O,
-			TableName:     as.TableNames[0].Name.O,
+			DBName:        tbl.Schema.O,
+			TableName:     tbl.Name.O,
 			PartitionName: names[i],
 			TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
 			Incremental:   as.Incremental,

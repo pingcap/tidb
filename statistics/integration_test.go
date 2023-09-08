@@ -816,5 +816,39 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").
 			Check(testkit.Rows("IndexReader_12 4.00 root partition:all index:IndexRangeScan_11",
 				"└─IndexRangeScan_11 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
+
+		// analyze multiple tables
+		tk.MustExec("drop table if exists t1,t2")
+		tk.MustExec("CREATE TABLE t1 ( a int, b int, c int default 0 )" +
+			"PARTITION BY RANGE (a) (" +
+			"PARTITION p0 VALUES LESS THAN (10)," +
+			"PARTITION p1 VALUES LESS THAN (20)," +
+			"PARTITION p2 VALUES LESS THAN (30)," +
+			"PARTITION p3 VALUES LESS THAN (40))")
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		tk.MustExec("insert into t1(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
+		tk.MustExec("ALTER TABLE t1 ADD UNIQUE INDEX idx(b)")
+		require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+
+		tk.MustExec("CREATE TABLE t2 ( a int, b int, c int, d int)" +
+			"PARTITION BY RANGE (a) (" +
+			"PARTITION p0 VALUES LESS THAN (10)," +
+			"PARTITION p1 VALUES LESS THAN (20)," +
+			"PARTITION p2 VALUES LESS THAN (30)," +
+			"PARTITION p3 VALUES LESS THAN (40))")
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		tk.MustExec("insert into t2(a,b,c,d) values (1,1,1,1), (2,2,2,2), (3,3,3,3), (16,16,16,16), (25,25,25,25), (35,35,35,35)")
+		tk.MustExec("ALTER TABLE t2 ADD UNIQUE INDEX idx(b,c)")
+		require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+
+		tk.MustExec("analyze table t1,t2")
+
+		require.Nil(t, h.Update(dom.InfoSchema()))
+		tk.MustQuery("SELECT b FROM t2 use index(idx) WHERE b = 16 and c = 16 ORDER BY b").
+			Check(testkit.Rows("16"))
+		tk.MustQuery("EXPLAIN SELECT b FROM t2 use index(idx) WHERE b = 16 and c = 16 ORDER BY b").
+			Check(testkit.Rows("Projection_12 1.00 root  test.t2.b",
+				"└─IndexReader_16 1.00 root partition:all index:IndexRangeScan_15",
+				"  └─IndexRangeScan_15 1.00 cop[tikv] table:t2, index:idx(b, c) range:[16 16,16 16], keep order:true"))
 	}
 }
