@@ -42,16 +42,16 @@ var magicLower = [histogramLen]int64{
 	9000, 9100, 9200, 9300, 9400, 9500, 9600, 9700, 9800, 9900,
 }
 
-func genBucket4TestData(len int) []*bucket4Test {
-	result := make([]*bucket4Test, 0, len)
+func genBucket4TestData(length int) []*bucket4Test {
+	result := make([]*bucket4Test, 0, length)
 	var lower, upper int64
-	for n := 0; n < len; n++ {
+	for n := 0; n < length; n++ {
 		if n == 0 {
 			lower = 0
 		} else {
 			lower = upper + 1
 		}
-		if n == len-1 {
+		if n == length-1 {
 			upper = 10000
 		} else {
 			upper = lower + (rand.Int63n(magicLower[n+1] - lower))
