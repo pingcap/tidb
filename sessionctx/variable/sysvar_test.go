@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -1384,6 +1386,20 @@ func TestSetTiDBGlobalSortURI(t *testing.T) {
 
 	// Set to s3, should fail
 	err = mock.SetGlobalSysVar(ctx, TiDBGlobalSortURI, "s3://blackhole")
-	t.Log(err)
 	require.ErrorContains(t, err, "bucket blackhole")
+
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer s.Close()
+
+	// Set to s3, skip validation
+	s3URI := "s3://tiflow-test?access-key=testid&secret-access-key=testkey8&session-token=testtoken&endpoint=" + s.URL
+	err = mock.SetGlobalSysVar(ctx, TiDBGlobalSortURI, s3URI)
+	require.NoError(t, err)
+	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, TiDBGlobalSortURI)
+	require.NoError(t, err1)
+	require.Equal(t, "s3://tiflow-test/", val)
+	require.Equal(t, s3URI, GlobalSortURI.Load())
+	cancel()
 }

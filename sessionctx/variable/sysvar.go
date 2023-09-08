@@ -2253,14 +2253,14 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	// can't assign validate function here. Because validation function will run after GetGlobal function
-	{Scope: ScopeGlobal, Name: TiDBGlobalSortURI, Value: "", Type: TypeStr, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
-		backend, err := ParseGlobalSortURI(GlobalSortURI.Load())
+	{Scope: ScopeGlobal, Name: TiDBGlobalSortURI, Value: "", Type: TypeStr, GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
+		backend, err := ParseGlobalSortURI(ctx, GlobalSortURI.Load(), false)
 		if err != nil {
 			return "", err
 		}
 		return backend.URI(), nil
-	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		if _, err := ParseGlobalSortURI(val); err != nil {
+	}, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
+		if _, err := ParseGlobalSortURI(ctx, val, true); err != nil {
 			return err
 		}
 		GlobalSortURI.Store(val)
