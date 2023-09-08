@@ -1264,11 +1264,6 @@ func restoreStream(
 
 	rewriteRules := initRewriteRules(schemasReplace)
 
-	ingestRecorder := schemasReplace.GetIngestRecorder()
-	if err := client.RangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
-		return errors.Trace(err)
-	}
-
 	logFilesIter, err := client.LoadDMLFiles(ctx)
 	if err != nil {
 		return errors.Annotate(err, "failed to initialize the dml iterator")
@@ -1291,10 +1286,6 @@ func restoreStream(
 
 	if err = client.InsertGCRows(ctx); err != nil {
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
-	}
-
-	if err = client.RepairIngestIndex(ctx, ingestRecorder, g, mgr.GetStorage()); err != nil {
-		return errors.Annotate(err, "failed to repair ingest index")
 	}
 
 	if cfg.tiflashRecorder != nil {

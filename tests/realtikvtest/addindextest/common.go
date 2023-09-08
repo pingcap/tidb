@@ -505,6 +505,7 @@ type failpointsPath struct {
 }
 
 var failpoints = []failpointsPath{
+	{"github.com/pingcap/tidb/ddl/EnablePiTR", "return"},
 	{"github.com/pingcap/tidb/ddl/mockHighLoadForAddIndex", "return"},
 	{"github.com/pingcap/tidb/ddl/mockBackfillRunErr", "1*return"},
 	{"github.com/pingcap/tidb/ddl/mockBackfillSlow", "return"},
@@ -517,7 +518,7 @@ var failpoints = []failpointsPath{
 func useFailpoints(ctx *suiteContext, failpos int) {
 	defer ctx.failSync.Done()
 	logutil.BgLogger().Info("stack", zap.Stack("cur stack"), zap.Int("id:", failpos))
-	failpos %= 7
+	failpos %= 8
 	require.NoError(ctx.t, failpoint.Enable(failpoints[failpos].failpath, failpoints[failpos].inTerm))
 	logutil.BgLogger().Info("stack", zap.Stack("cur stack"), zap.Int("id:", failpos), zap.Bool("enable failpoints:", true))
 	time.Sleep(10 * time.Second)
