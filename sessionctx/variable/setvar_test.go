@@ -110,6 +110,26 @@ func TestSetVarNonStringOrEnum(t *testing.T) {
 			tk.MustQuery(fmt.Sprintf("select @@%v", c.varName)).Check(r)
 		}
 	}
+
+	tk.MustQuery("select @@max_execution_time").Check(testkit.Rows("0"))
+	tk.MustExec("set @@max_execution_time=1000")
+	tk.MustQuery("select @@max_execution_time").Check(testkit.Rows("1000"))
+	tk.MustQuery("select /*+ set_var(max_execution_time=100) */ @@max_execution_time").Check(testkit.Rows("100"))
+	// The value is the changed value 1000, not the default value 0.
+	tk.MustQuery("select @@max_execution_time").Check(testkit.Rows("1000"))
+
+	tk.MustExec("set @@global.max_execution_time=1000")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustQuery("select @@max_execution_time").Check(testkit.Rows("1000"))
+	tk2.MustQuery("select /*+ set_var(max_execution_time=100) */ @@max_execution_time").Check(testkit.Rows("100"))
+	// The value is the global value 1000, not the default value 0.
+	tk2.MustQuery("select @@max_execution_time").Check(testkit.Rows("1000"))
+	tk2.MustExec("set @@max_execution_time=2000")
+	tk2.MustQuery("select @@max_execution_time").Check(testkit.Rows("2000"))
+	tk2.MustQuery("select /*+ set_var(max_execution_time=100) */ @@max_execution_time").Check(testkit.Rows("100"))
+	// The value is the changed value 2000, not the default value 0 or the global value 1000.
+	tk2.MustQuery("select @@max_execution_time").Check(testkit.Rows("2000"))
 }
 
 func TestSetVarStringOrEnum(t *testing.T) {
@@ -151,16 +171,4 @@ func TestSetVarHintBreakCache(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustExec("SELECT * FROM t WHERE b < 5 AND a = 2;")
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
-}
-
-func TestSetVarHintWithCurrentValNotDefaultVal(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustQuery("select @@max_execution_time").Check(testkit.Rows("0"))
-	tk.MustExec("set @@max_execution_time=1000")
-	tk.MustQuery("select @@max_execution_time").Check(testkit.Rows("1000"))
-	tk.MustQuery("select /*+ set_var(max_execution_time=100) */ @@max_execution_time").Check(testkit.Rows("100"))
-	// The value is the changed value 1000, not the default value 0.
-	tk.MustQuery("select @@max_execution_time").Check(testkit.Rows("1000"))
 }
