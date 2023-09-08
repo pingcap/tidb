@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
@@ -339,7 +339,7 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		}
 	}
 	close(b.resultCh)
-	if intest.InTest && len(b.copReqSenderPool.srcChkPool) != copReadChunkPoolSize() {
+	if testing.Testing() && len(b.copReqSenderPool.srcChkPool) != copReadChunkPoolSize() {
 		panic(fmt.Sprintf("unexpected chunk size %d", len(b.copReqSenderPool.srcChkPool)))
 	}
 	if !force {
