@@ -772,13 +772,13 @@ func buildColumnsAndConstraints(
 			switch colDef.Tp.GetType() {
 			case mysql.TypeTiny:
 				// No warning for BOOL-like tinyint(1)
-				if colDef.Tp.GetFlen() > -1 && colDef.Tp.GetFlen() != 1 {
+				if colDef.Tp.GetFlen() != types.UnspecifiedLength && colDef.Tp.GetFlen() != 1 {
 					ctx.GetSessionVars().StmtCtx.AppendWarning(
 						dbterror.ErrWarnDeprecatedIntegerDisplayWidth.GenWithStackByArgs(),
 					)
 				}
 			case mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-				if colDef.Tp.GetFlen() > -1 {
+				if colDef.Tp.GetFlen() != types.UnspecifiedLength {
 					ctx.GetSessionVars().StmtCtx.AppendWarning(
 						dbterror.ErrWarnDeprecatedIntegerDisplayWidth.GenWithStackByArgs(),
 					)
