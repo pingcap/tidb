@@ -142,8 +142,13 @@ func isInTokenMap(target string) bool {
 	return ok
 }
 
-func isReservedKeyWord(target string) bool {
+func isInReservedTokenMap(target string) bool {
 	_, ok := reservedTokenMap[target]
+	return ok
+}
+
+func isInWindowFuncTokenMap(target string) bool {
+	_, ok := windowFuncTokenMap[target]
 	return ok
 }
 
@@ -1330,7 +1335,7 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 
 	// select * from t where t. status = 1; -- parse ok, unreserved keyword.
 	// select * from t where t. and = 1; -- parse failed, reserved keyword.
-	if !isReservedKeyWord(string(data)) {
+	if !isInReservedTokenMap(string(data)) || (!s.supportWindowFunc && isInWindowFuncTokenMap(string(data))) {
 		for idx := offset - 1; idx >= 0; idx-- {
 			if s.r.s[idx] == ' ' {
 				continue
