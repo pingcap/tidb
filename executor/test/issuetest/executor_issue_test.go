@@ -1426,3 +1426,35 @@ func TestIssue42662(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/issue42662_1"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/servermemorylimit/issue42662_2"))
 }
+
+func TestIssue41778(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+	CREATE TABLE ta (
+		a1 json DEFAULT NULL,
+		a2 decimal(31, 1) DEFAULT '0'
+	);
+	CREATE TABLE tb (
+		b1 smallint(6) DEFAULT '-11385',
+		b2 decimal(63, 14) DEFAULT '-6197127648752447138876497216172307937317445669286.98661563645110'
+	);
+	CREATE TABLE tc (
+		c1 text DEFAULT NULL,
+		c2 float NOT NULL DEFAULT '1.8132474',
+		PRIMARY KEY (c2)
+		/*T![clustered_index] CLUSTERED */
+	);
+	`)
+	tk.MustExec(`
+	insert into ta
+	values (NULL, 1228.0);
+	insert into ta
+	values ('"json string1"', 623.8);
+	insert into ta
+	values (NULL, 1337.0);
+	`)
+	err := tk.QueryToErr("select count(*)from ta where not ( ta.a1 in ( select b2 from tb where not ( ta.a1 in ( select c1 from tc where ta.a2 in ( select b2 from tb where IsNull(ta.a1) ) ) ) ) )")
+	require.Equal(t, "[planner:1815]expression isnull(cast(test.ta.a1, var_string(4294967295))) cannot be pushed down", err.Error())
+}
