@@ -53,7 +53,7 @@ func MemTotalNormal() (uint64, error) {
 	}
 	v, err := mem.VirtualMemory()
 	if err != nil {
-		return v.Total, err
+		return 0, err
 	}
 	memLimit.set(v.Total, time.Now())
 	return v.Total, nil
@@ -67,7 +67,7 @@ func MemUsedNormal() (uint64, error) {
 	}
 	v, err := mem.VirtualMemory()
 	if err != nil {
-		return v.Used, err
+		return 0, err
 	}
 	memUsage.set(v.Used, time.Now())
 	return v.Used, nil
