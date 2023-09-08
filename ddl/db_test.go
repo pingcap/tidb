@@ -963,7 +963,7 @@ func TestCreateTableWithIntegerLengthWarning(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 
 	tk.MustExec("create table t(a tinyint(1))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a smallint(2))")
@@ -986,8 +986,8 @@ func TestCreateTableWithIntegerLengthWarning(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int1(1))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+	tk.MustExec("create table t(a int1(1))") // Note that int1(1) is tinyint(1) which is boolean-ish
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int2(2))")
