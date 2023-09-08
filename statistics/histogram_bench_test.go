@@ -62,7 +62,7 @@ func genBucket4TestData(len int) []*bucket4Test {
 	return result
 }
 
-func genHist4Bench(t *testing.T, buckets []*bucket4Test, totColSize int64) *Histogram {
+func genHist4Bench(t *testing.B, buckets []*bucket4Test, totColSize int64) *Histogram {
 	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), len(buckets), totColSize)
 	for _, bucket := range buckets {
 		lower, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.lower))
@@ -79,8 +79,19 @@ func BenchABC(b *testing.B) {
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
 	hists := make([]*Histogram, 0, histogramLen)
+	buckets := genBucket4TestData(histogramLen)
+	hists := genHist4Bench(b, buckets, histogramLen)
 	const expBucketNumber = 100
 	poped := make([]TopNMeta, 0, popedTopNLen)
+	for _, top := range tt.popedTopN {
+		b, err := codec.EncodeKey(sc, nil, types.NewIntDatum(top.data))
+		require.NoError(t, err)
+		tmp := TopNMeta{
+			Encoded: b,
+			Count:   uint64(top.count),
+		}
+		poped = append(poped, tmp)
+	}
 	for _, top := range tt.popedTopN {
 		b, err := codec.EncodeKey(sc, nil, types.NewIntDatum(top.data))
 		require.NoError(t, err)
