@@ -286,6 +286,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.capability |= mysql.ClientSSL
 	}
 
+	logutil.BgLogger().Info("=================", zap.Bool("testing?", testing.Testing()))
 	if s.cfg.Host != "" && (s.cfg.Port != 0 || testing.Testing()) {
 		addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(int(s.cfg.Port)))
 		tcpProto := "tcp"
