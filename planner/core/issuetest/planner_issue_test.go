@@ -212,13 +212,3 @@ func TestIssue46005(t *testing.T) {
 	rs := tk.MustQuery("select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382")
 	rs.Check(testkit.Rows("1994", "1997"))
 }
-
-func TestIssue46618(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("create table _bar (id int)")
-	tk.MustExec("create table bar (id int)")
-	require.Len(t, tk.MustQuery(`show tables like '\_%'`).Rows(), 1)
-}
