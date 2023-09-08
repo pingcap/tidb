@@ -843,6 +843,18 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 
 	sunk := false
 	if cop, ok := t.(*copTask); ok {
+		suspendLimitAboveTablePlan := func() {
+			newCount := p.Offset + p.Count
+			childProfile := cop.tablePlan.StatsInfo()
+			// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
+			stats := deriveLimitStats(childProfile, float64(newCount))
+			pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+			pushedDownLimit.SetChildren(cop.tablePlan)
+			cop.tablePlan = pushedDownLimit
+			// Don't use clone() so that Limit and its children share the same schema. Otherwise, the virtual generated column may not be resolved right.
+			pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+			t = cop.convertToRootTask(p.SCtx())
+		}
 		if len(cop.idxMergePartPlans) == 0 {
 			// For double read which requires order being kept, the limit cannot be pushed down to the table side,
 			// because handles would be reordered before being sent to table scan.
@@ -865,16 +877,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			if len(cop.rootTaskConds) == 0 {
 				if cop.indexPlanFinished {
 					// when the index plan is finished, sink the limit to the index merge table side.
-					newCount := p.Offset + p.Count
-					childProfile := cop.plan().StatsInfo()
-					// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
-					stats := deriveLimitStats(childProfile, float64(newCount))
-					pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-					pushedDownLimit.SetChildren(cop.tablePlan)
-					cop.tablePlan = pushedDownLimit
-					// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
-					pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
-					t = cop.convertToRootTask(p.SCtx())
+					suspendLimitAboveTablePlan()
 				} else {
 					// cop.indexPlanFinished = false indicates the table side is a pure table-scan, sink the limit to the index merge index side.
 					newCount := p.Offset + p.Count
@@ -902,18 +905,6 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			// IndexMerge.PushedLimit is applied before table scan fetching, limiting the indexPartialPlan rows returned (it maybe ordered if orderBy items not empty)
 			// TableProbeSide sink limit is applied on the top of table plan, which will quickly shut down the both fetch-back and read-back process.
 			if len(cop.rootTaskConds) == 0 {
-				suspendLimitAboveTablePlan := func() {
-					newCount := p.Offset + p.Count
-					childProfile := cop.tablePlan.StatsInfo()
-					// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
-					stats := deriveLimitStats(childProfile, float64(newCount))
-					pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-					pushedDownLimit.SetChildren(cop.tablePlan)
-					cop.tablePlan = pushedDownLimit
-					// Don't use clone() so that Limit and its children share the same schema. Otherwise, the virtual generated column may not be resolved right.
-					pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
-					t = cop.convertToRootTask(p.SCtx())
-				}
 				// if cop.indexPlanFinished = true
 				// 		indicates the table side is not a pure table-scan, so we could only append the limit upon the table plan.
 				//		suspendLimitAboveTablePlan()
