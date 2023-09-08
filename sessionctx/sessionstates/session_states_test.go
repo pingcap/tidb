@@ -975,7 +975,7 @@ func TestPreparedStatements(t *testing.T) {
 			setFunc: func(tk *testkit.TestKit, conn server.MockConn) any {
 				tk.MustExec("create table test.t1(id int)")
 				tk.MustExec("prepare stmt from 'select * from test.t1'")
-				tk.MustExec("drop table test.t1")
+				tk.MustExec("drop table test.t1;")
 				return nil
 			},
 			restoreErr: errno.ErrNoSuchTable,
