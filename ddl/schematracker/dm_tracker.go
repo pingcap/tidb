@@ -76,7 +76,11 @@ func (d SchemaTracker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateData
 		}
 	}
 
-	chs, coll, err := ddl.ResolveCharsetCollation(charsetOpt)
+	var sessVars *variable.SessionVars
+	if ctx != nil {
+		sessVars = ctx.GetSessionVars()
+	}
+	chs, coll, err := ddl.ResolveCharsetCollation(sessVars, charsetOpt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -90,8 +94,8 @@ func (d SchemaTracker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateData
 }
 
 // CreateTestDB creates the `test` database, which is the default behavior of TiDB.
-func (d SchemaTracker) CreateTestDB() {
-	_ = d.CreateSchema(nil, &ast.CreateDatabaseStmt{
+func (d SchemaTracker) CreateTestDB(ctx sessionctx.Context) {
+	_ = d.CreateSchema(ctx, &ast.CreateDatabaseStmt{
 		Name: model.NewCIStr("test"),
 	})
 }
@@ -111,7 +115,7 @@ func (d SchemaTracker) CreateSchemaWithInfo(_ sessionctx.Context, dbInfo *model.
 }
 
 // AlterSchema implements the DDL interface.
-func (d SchemaTracker) AlterSchema(_ sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
+func (d SchemaTracker) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	dbInfo := d.SchemaByName(stmt.Name)
 	if dbInfo == nil {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(stmt.Name.O)
@@ -150,8 +154,8 @@ func (d SchemaTracker) AlterSchema(_ sessionctx.Context, stmt *ast.AlterDatabase
 			toCollate = info.Name
 		}
 	}
-	if toCharset == "" {
-		if toCollate, err = charset.GetDefaultCollation(toCharset); err != nil {
+	if toCollate == "" {
+		if toCollate, err = ddl.GetDefaultCollation(ctx.GetSessionVars(), toCharset); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -980,7 +984,7 @@ func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, 
 						continue
 					}
 					var toCharset, toCollate string
-					toCharset, toCollate, err = ddl.GetCharsetAndCollateInTableOption(i, spec.Options)
+					toCharset, toCollate, err = ddl.GetCharsetAndCollateInTableOption(sctx.GetSessionVars(), i, spec.Options)
 					if err != nil {
 						return err
 					}

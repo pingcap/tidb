@@ -13,6 +13,7 @@ go_library(
     deps = [
         "//config",
         "//disttask/framework/proto",
+        "//disttask/framework/scheduler/execute",
         "//disttask/framework/storage",
         "//domain/infosync",
         "//resourcemanager/pool/spool",
@@ -35,9 +36,10 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "on",
-    shard_count = 9,
+    shard_count = 7,
     deps = [
         "//disttask/framework/mock",
+        "//disttask/framework/mock/execute",
         "//disttask/framework/proto",
         "//resourcemanager/pool/spool",
         "//resourcemanager/util",
