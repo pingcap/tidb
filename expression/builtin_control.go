@@ -266,6 +266,16 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinCaseWhenRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenReal)
 	case types.ETDecimal:
+		for i := 1; i < l-1; i += 2 {
+			if !bf.args[i].GetType().Equal(fieldTp) {
+				bf.args[i] = BuildCastFunction(ctx, bf.args[i], fieldTp)
+			}
+		}
+		if l%2 == 1 {
+			if !bf.args[l-1].GetType().Equal(fieldTp) {
+				bf.args[l-1] = BuildCastFunction(ctx, bf.args[l-1], fieldTp)
+			}
+		}
 		sig = &builtinCaseWhenDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenDecimal)
 	case types.ETString:
@@ -568,6 +578,12 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &builtinIfRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfReal)
 	case types.ETDecimal:
+		if !bf.args[1].GetType().Equal(retTp) {
+			bf.args[1] = BuildCastFunction(ctx, bf.args[1], retTp)
+		}
+		if !bf.args[2].GetType().Equal(retTp) {
+			bf.args[2] = BuildCastFunction(ctx, bf.args[2], retTp)
+		}
 		sig = &builtinIfDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfDecimal)
 	case types.ETString:
@@ -768,6 +784,12 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		sig = &builtinIfNullRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullReal)
 	case types.ETDecimal:
+		if !bf.args[0].GetType().Equal(retTp) {
+			bf.args[0] = BuildCastFunction(ctx, bf.args[0], retTp)
+		}
+		if !bf.args[1].GetType().Equal(retTp) {
+			bf.args[1] = BuildCastFunction(ctx, bf.args[1], retTp)
+		}
 		sig = &builtinIfNullDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullDecimal)
 	case types.ETString:
