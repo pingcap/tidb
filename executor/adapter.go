@@ -1517,6 +1517,7 @@ func (a *ExecStmt) RecordHistoryStats() {
 		return
 	}
 
+	// TODO: handle CTE operators
 	for _, flatOp := range flat.Main {
 		pp, isPhysicalPlan := flatOp.Origin.(plannercore.PhysicalPlan)
 		if !isPhysicalPlan {
