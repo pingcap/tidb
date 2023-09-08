@@ -356,7 +356,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 		// not support procedure right now.
 		if node.Schema.L != "" {
-			p.err = dbterror.ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", node.Schema.L+"."+node.FnName.L)
+			p.err = expression.ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", node.Schema.L+"."+node.FnName.L)
 		}
 	case *ast.BRIEStmt:
 		if node.Kind == ast.BRIEKindRestore {
