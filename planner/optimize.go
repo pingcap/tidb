@@ -156,12 +156,17 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
-	if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && sctx.GetSessionVars().StrictSQLMode && !IsReadOnly(node, sessVars) {
+	if sctx.GetSessionVars().StrictSQLMode && !IsReadOnly(node, sessVars) {
 		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
-		delete(sessVars.IsolationReadEngines, kv.TiFlash)
+		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
+		if hasTiFlashAccess {
+			delete(sessVars.IsolationReadEngines, kv.TiFlash)
+		}
 		defer func() {
 			sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = false
-			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+			if hasTiFlashAccess {
+				sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+			}
 		}()
 	}
 
@@ -197,11 +202,15 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}()
 
 	warns = warns[:0]
-	for name, val := range originStmtHints.SetVars {
-		err := sessVars.SetStmtVar(name, val)
+	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+		oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
 		if err != nil {
 			sessVars.StmtCtx.AppendWarning(err)
 		}
+		sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
+	}
+	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("SET_VAR is used in the SQL"))
 	}
 
 	txnManger := sessiontxn.GetTxnManager(sctx)
@@ -287,10 +296,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			sessVars.StmtCtx.StmtHints = curStmtHints
 			// update session var by hint /set_var/
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
-				err := sessVars.SetStmtVar(name, val)
+				oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
 				if err != nil {
 					sessVars.StmtCtx.AppendWarning(err)
 				}
+				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 			}
 			plan, curNames, cost, err := optimize(ctx, sctx, node, is)
 			if err != nil {
@@ -571,7 +581,7 @@ func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Nod
 }
 
 // ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
-func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error) {
+func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string, forBinding bool) (ast.StmtNode, string, string, error) {
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
 		// This function is only used to find bind record.
@@ -584,18 +594,33 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 		}
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-			normalizeSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
+			var normalizeSQL string
+			if forBinding {
+				// Apply additional binding rules if enabled
+				normalizeSQL = parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
+			} else {
+				normalizeSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
+			}
 			normalizeSQL = core.EraseLastSemicolonInSQL(normalizeSQL)
 			hash := parser.DigestNormalized(normalizeSQL)
 			return x.Stmt, normalizeSQL, hash.String(), nil
 		case *ast.SetOprStmt:
 			core.EraseLastSemicolon(x)
 			var normalizeExplainSQL string
+			var explainSQL string
 			if specifiledDB != "" {
-				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
+				explainSQL = utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text())
+			} else {
+				explainSQL = x.Text()
+			}
+
+			if forBinding {
+				// Apply additional binding rules
+				normalizeExplainSQL = parser.NormalizeForBinding(explainSQL)
 			} else {
 				normalizeExplainSQL = parser.Normalize(x.Text())
 			}
+
 			idx := strings.Index(normalizeExplainSQL, "select")
 			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")
 			if parenthesesIdx != -1 && parenthesesIdx < idx {
@@ -615,7 +640,16 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 		if len(x.Text()) == 0 {
 			return x, "", "", nil
 		}
-		normalizedSQL, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
+
+		var normalizedSQL string
+		var hash *parser.Digest
+		if forBinding {
+			// Apply additional binding rules
+			normalizedSQL, hash = parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
+		} else {
+			normalizedSQL, hash = parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
+		}
+
 		return x, normalizedSQL, hash.String(), nil
 	}
 	return nil, "", "", nil
@@ -626,7 +660,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, "", nil
 	}
-	stmtNode, normalizedSQL, hash, err := ExtractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB)
+	stmtNode, normalizedSQL, hash, err := ExtractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB, true)
 	if err != nil || stmtNode == nil {
 		return nil, "", err
 	}
