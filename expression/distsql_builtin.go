@@ -1086,7 +1086,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinInternalFromBinarySig{base}
 
 	default:
-		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
+		e = ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
 		return nil, e
 	}
 	f.setPbCode(sigCode)
