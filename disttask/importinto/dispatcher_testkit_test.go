@@ -22,7 +22,6 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
@@ -67,6 +66,7 @@ func TestDispatcherExt(t *testing.T) {
 			TableInfo: &model.TableInfo{
 				Name: model.NewCIStr("t"),
 			},
+			DisableTiKVImportMode: true,
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
 		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
@@ -89,10 +89,6 @@ func TestDispatcherExt(t *testing.T) {
 	require.NoError(t, err)
 	task.ID = taskID
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/importinto/skipSwitchTiKVMode", "return(true)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/importinto/skipSwitchTiKVMode"))
-	})
 	// to import stage, job should be running
 	d := dsp.MockDispatcher(task)
 	ext := importinto.ImportDispatcherExt{}

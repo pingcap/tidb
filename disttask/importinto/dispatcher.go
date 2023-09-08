@@ -336,9 +336,6 @@ func (*ImportDispatcherExt) IsRetryableErr(error) bool {
 }
 
 func (dsp *ImportDispatcherExt) switchTiKV2NormalMode(ctx context.Context, task *proto.Task, logger *zap.Logger) {
-	failpoint.Inject("skipSwitchTiKVMode", func() {
-		failpoint.Return()
-	})
 	dsp.updateCurrentTask(task)
 	if dsp.disableTiKVImportMode.Load() {
 		return
@@ -515,7 +512,7 @@ func startJob(ctx context.Context, logger *zap.Logger, taskHandle dispatcher.Tas
 	})
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	// we consider all errors as retryable errors, except context done.
-	// the errors include errors to communicate with PD and TiKV.
+	// the errors include errors happened when communicate with PD and TiKV.
 	// we didn't consider system corrupt cases like system table dropped/altered.
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
 	err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,

@@ -120,7 +120,8 @@ func CancelGlobalTask(taskKey string) error {
 	return globalTaskManager.CancelGlobalTask(globalTask.ID)
 }
 
-// RunWithRetry runs a function with retry.
+// RunWithRetry runs a function with retry, when retry exceed max retry time, it
+// returns the last error met.
 // if the function fails with err, it should return a bool to indicate whether
 // the error is retryable.
 // if context done, it will stop early and return ctx.Err().
@@ -138,8 +139,8 @@ func RunWithRetry(
 			return err
 		}
 		lastErr = err
-		logger.Warn("met retryable error", zap.Error(err),
-			zap.Int("retry-count", i), zap.Int("max-retry", maxRetry))
+		logger.Warn("met retryable error", zap.Int("retry-count", i),
+			zap.Int("max-retry", maxRetry), zap.Error(err))
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
