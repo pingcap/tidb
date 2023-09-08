@@ -37,7 +37,6 @@ func TestBackfillingDispatcher(t *testing.T) {
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-
 	// test partition table OnNextSubtasksBatch.
 	tk.MustExec("create table tp1(id int primary key, v int) PARTITION BY RANGE (id) (\n    " +
 		"PARTITION p0 VALUES LESS THAN (10),\n" +
@@ -50,7 +49,6 @@ func TestBackfillingDispatcher(t *testing.T) {
 	tblInfo := tbl.Meta()
 	metas, err := dsp.OnNextSubtasksBatch(context.Background(), nil, gTask)
 	require.NoError(t, err)
-	require.Equal(t, proto.StepOne, gTask.Step)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
 	for i, par := range tblInfo.Partition.Definitions {
 		var subTask ddl.BackfillSubTaskMeta
@@ -58,8 +56,9 @@ func TestBackfillingDispatcher(t *testing.T) {
 		require.Equal(t, par.ID, subTask.PhysicalTableID)
 	}
 
-	// test partition table OnNextSubtasksBatch after step1 finished.
+	// test partition table OnNextSubtasksBatch after stepOne finished.
 	gTask.State = proto.TaskStateRunning
+	gTask.Step++
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
@@ -110,7 +109,7 @@ func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName 
 	gTask := &proto.Task{
 		ID:              time.Now().UnixMicro(),
 		Type:            taskType,
-		Step:            proto.StepInit,
+		Step:            proto.StepOne,
 		State:           proto.TaskStatePending,
 		Meta:            gTaskMetaBytes,
 		StartTime:       time.Now(),
