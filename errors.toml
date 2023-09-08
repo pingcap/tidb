@@ -1921,6 +1921,11 @@ error = '''
 Illegal mix of collations for operation '%s'
 '''
 
+["expression:1305"]
+error = '''
+%s %s does not exist
+'''
+
 ["expression:1365"]
 error = '''
 Division by 0
