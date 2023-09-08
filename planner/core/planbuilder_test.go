@@ -707,3 +707,29 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, specifiedCols, cols)
 }
+
+func TestRequireInsertAndSelectPriv(t *testing.T) {
+	ctx := MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	pb, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
+
+	tables := []*ast.TableName{
+		{
+			Schema: model.NewCIStr("test"),
+			Name:   model.NewCIStr("t1"),
+		},
+		{
+			Schema: model.NewCIStr("test"),
+			Name:   model.NewCIStr("t2"),
+		},
+	}
+
+	pb.requireInsertAndSelectPriv(tables)
+	require.Len(t, pb.visitInfo, 4)
+	require.Equal(t, "test", pb.visitInfo[0].db)
+	require.Equal(t, "t1", pb.visitInfo[0].table)
+	require.Equal(t, mysql.InsertPriv, pb.visitInfo[0].privilege)
+	require.Equal(t, mysql.SelectPriv, pb.visitInfo[1].privilege)
+}
