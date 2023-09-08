@@ -477,6 +477,13 @@ func (stm *TaskManager) StartSubtask(subtaskID int64) error {
 	return err
 }
 
+// StartManager insert the manager information into dist_framework_meta.
+func (stm *TaskManager) StartManager(tidbID string, role string) error {
+	_, err := stm.executeSQLWithNewSession(stm.ctx, `insert into mysql.dist_framework_meta values(%?, %?, DEFAULT)
+        on duplicate key update role = %?`, tidbID, role, role)
+	return err
+}
+
 // UpdateSubtaskStateAndError updates the subtask state.
 func (stm *TaskManager) UpdateSubtaskStateAndError(id int64, state string, subTaskErr error) error {
 	_, err := stm.executeSQLWithNewSession(stm.ctx, `update mysql.tidb_background_subtask
@@ -661,7 +668,7 @@ func serializeErr(err error) []byte {
 	return errBytes
 }
 
-// CancelGlobalTask cancels global task
+// CancelGlobalTask cancels global task.
 func (stm *TaskManager) CancelGlobalTask(taskID int64) error {
 	_, err := stm.executeSQLWithNewSession(stm.ctx, "update mysql.tidb_global_task set state=%? where id=%? and state in (%?, %?)",
 		proto.TaskStateCancelling, taskID, proto.TaskStatePending, proto.TaskStateRunning,
@@ -669,14 +676,14 @@ func (stm *TaskManager) CancelGlobalTask(taskID int64) error {
 	return err
 }
 
-// CancelGlobalTaskByKeySession cancels global task by key using input session
+// CancelGlobalTaskByKeySession cancels global task by key using input session.
 func (stm *TaskManager) CancelGlobalTaskByKeySession(se sessionctx.Context, taskKey string) error {
 	_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state=%? where task_key=%? and state in (%?, %?)",
 		proto.TaskStateCancelling, taskKey, proto.TaskStatePending, proto.TaskStateRunning)
 	return err
 }
 
-// IsGlobalTaskCancelling checks whether the task state is cancelling
+// IsGlobalTaskCancelling checks whether the task state is cancelling.
 func (stm *TaskManager) IsGlobalTaskCancelling(taskID int64) (bool, error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select 1 from mysql.tidb_global_task where id=%? and state = %?",
 		taskID, proto.TaskStateCancelling,
@@ -689,7 +696,7 @@ func (stm *TaskManager) IsGlobalTaskCancelling(taskID int64) (bool, error) {
 	return len(rs) > 0, nil
 }
 
-// GetSubtasksByStep gets subtasks of global task by step
+// GetSubtasksByStep gets subtasks of global task by step.
 func (stm *TaskManager) GetSubtasksByStep(taskID, step int64) ([]*proto.Subtask, error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx,
 		"select * from mysql.tidb_background_subtask where task_key = %? and step = %?",
@@ -705,4 +712,18 @@ func (stm *TaskManager) GetSubtasksByStep(taskID, step int64) ([]*proto.Subtask,
 		subtasks = append(subtasks, row2SubTask(r))
 	}
 	return subtasks, nil
+}
+
+// GetNodesByRole gets nodes map from dist_framework_meta by role.
+func (stm *TaskManager) GetNodesByRole(role string) (map[string]bool, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx,
+		"select host from mysql.dist_framework_meta where role = %?", role)
+	if err != nil {
+		return nil, err
+	}
+	nodes := make(map[string]bool, len(rs))
+	for _, r := range rs {
+		nodes[r.GetString(0)] = true
+	}
+	return nodes, nil
 }

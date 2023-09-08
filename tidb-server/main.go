@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
+	distroleutil "github.com/pingcap/tidb/util/distrole"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
@@ -129,6 +130,7 @@ const (
 	nmInitializeSQLFile           = "initialize-sql-file"
 	nmDisconnectOnExpiredPassword = "disconnect-on-expired-password"
 	nmKeyspaceName                = "keyspace-name"
+	nmTiDBServiceScope            = "tidb-service-scope"
 )
 
 var (
@@ -179,6 +181,7 @@ var (
 	initializeSQLFile           = flag.String(nmInitializeSQLFile, "", "SQL file to execute on first bootstrap")
 	disconnectOnExpiredPassword = flagBoolean(nmDisconnectOnExpiredPassword, true, "the server disconnects the client when the password is expired")
 	keyspaceName                = flag.String(nmKeyspaceName, "", "keyspace name.")
+	serviceScope                = flag.String(nmTiDBServiceScope, "", "tidb service scope")
 )
 
 func main() {
@@ -592,6 +595,17 @@ func overrideConfig(cfg *config.Config) {
 	if actualFlags[nmKeyspaceName] {
 		cfg.KeyspaceName = *keyspaceName
 	}
+
+	if actualFlags[nmTiDBServiceScope] {
+		scope, ok := distroleutil.ToTiDBServiceScope(*serviceScope)
+		if !ok {
+			err := fmt.Errorf("incorrect value: `%s`. %s options: %s",
+				*serviceScope,
+				nmTiDBServiceScope, `"", background`)
+			terror.MustNil(err)
+		}
+		cfg.Instance.TiDBServiceScope = scope
+	}
 }
 
 func setVersions() {
@@ -773,6 +787,10 @@ func setGlobalVars() {
 	txninfo.Recorder.ResizeSummaries(cfg.TrxSummary.TransactionSummaryCapacity)
 	txninfo.Recorder.SetMinDuration(time.Duration(cfg.TrxSummary.TransactionIDDigestMinDuration) * time.Millisecond)
 	chunk.InitChunkAllocSize(cfg.TiDBMaxReuseChunk, cfg.TiDBMaxReuseColumn)
+
+	if len(cfg.Instance.TiDBServiceScope) > 0 {
+		variable.ServiceScope.Store(strings.ToLower(cfg.Instance.TiDBServiceScope))
+	}
 }
 
 func setupLog() {

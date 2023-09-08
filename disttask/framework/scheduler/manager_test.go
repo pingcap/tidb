@@ -177,7 +177,7 @@ func TestManager(t *testing.T) {
 	taskID2 := int64(2)
 	task1 := &proto.Task{ID: taskID1, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type"}
 	task2 := &proto.Task{ID: taskID2, State: proto.TaskStateReverting, Step: proto.StepOne, Type: "type"}
-
+	mockTaskTable.EXPECT().StartManager("test", "").Return(nil).Times(1)
 	mockTaskTable.EXPECT().GetGlobalTasksInStates(proto.TaskStateRunning, proto.TaskStateReverting).
 		Return([]*proto.Task{task1, task2}, nil).AnyTimes()
 	mockTaskTable.EXPECT().GetGlobalTasksInStates(proto.TaskStateReverting).
@@ -215,7 +215,7 @@ func TestManager(t *testing.T) {
 	}).Times(2)
 	m, err := b.BuildManager(context.Background(), id, mockTaskTable)
 	require.NoError(t, err)
-	m.Start()
+	require.NoError(t, m.Start())
 	time.Sleep(5 * time.Second)
 	m.Stop()
 }

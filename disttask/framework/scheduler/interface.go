@@ -27,9 +27,11 @@ type TaskTable interface {
 	GetGlobalTaskByID(taskID int64) (task *proto.Task, err error)
 
 	GetSubtaskInStates(instanceID string, taskID int64, step int64, states ...interface{}) (*proto.Subtask, error)
+	StartManager(tidbID string, role string) error
 	StartSubtask(subtaskID int64) error
 	UpdateSubtaskStateAndError(subtaskID int64, state string, err error) error
 	FinishSubtask(subtaskID int64, meta []byte) error
+
 	HasSubtasksInStates(instanceID string, taskID int64, step int64, states ...interface{}) (bool, error)
 	UpdateErrorToSubtask(instanceID string, taskID int64, err error) error
 	IsSchedulerCanceled(taskID int64, instanceID string) (bool, error)

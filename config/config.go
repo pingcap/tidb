@@ -547,6 +547,8 @@ type Instance struct {
 	MaxConnections    uint32     `toml:"max_connections" json:"max_connections"`
 	TiDBEnableDDL     AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
 	TiDBRCReadCheckTS bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
+	// TiDBServiceScope indicates the role for tidb for distributed task framework.
+	TiDBServiceScope string `toml:"tidb_service_scope" json:"tidb_service_scope"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -956,6 +958,7 @@ var defaultConf = Config{
 		MaxConnections:              0,
 		TiDBEnableDDL:               *NewAtomicBool(true),
 		TiDBRCReadCheckTS:           false,
+		TiDBServiceScope:            "",
 	},
 	Status: Status{
 		ReportStatus:          true,

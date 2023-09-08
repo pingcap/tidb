@@ -192,6 +192,7 @@ go_library(
         "//util/dbterror/exeerrors",
         "//util/deadlockhistory",
         "//util/disk",
+        "//util/disttask",
         "//util/etcd",
         "//util/execdetails",
         "//util/filter",
