@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const partition = 1000
 const histogramLen = 100
 const popedTopNLen = 100
 
@@ -84,8 +85,8 @@ func BenchmarkMergePartitionHist2GlobalHist(b *testing.B) {
 		b.StopTimer()
 		ctx := mock.NewContext()
 		sc := ctx.GetSessionVars().StmtCtx
-		hists := make([]*Histogram, 0, histogramLen)
-		for i := 0; i < histogramLen; i++ {
+		hists := make([]*Histogram, 0, partition)
+		for i := 0; i < partition; i++ {
 			buckets := genBucket4TestData(histogramLen)
 			hist := genHist4Bench(b, buckets, histogramLen)
 			hists = append(hists, hist)
