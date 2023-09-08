@@ -36,6 +36,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var multiFileStatNum = 500
+
 // rangePropertiesCollector collects range properties for each range. The zero
 // value of rangePropertiesCollector is not ready to use, should call reset()
 // first.
@@ -59,11 +61,12 @@ func (rc *rangePropertiesCollector) encode() []byte {
 
 // WriterSummary is the summary of a writer.
 type WriterSummary struct {
-	WriterID  int
-	Seq       int
-	Min       tidbkv.Key
-	Max       tidbkv.Key
-	TotalSize uint64
+	WriterID           int
+	Seq                int
+	Min                tidbkv.Key
+	Max                tidbkv.Key
+	TotalSize          uint64
+	MultipleFilesStats []MultipleFilesStat
 }
 
 // OnCloseFunc is the callback function when a writer is closed.
@@ -155,7 +158,7 @@ func (b *WriterBuilder) Build(
 	if b.dupeDetectEnabled {
 		keyAdapter = common.DupDetectKeyAdapter{}
 	}
-	return &Writer{
+	ret := &Writer{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
 			currProp:     &rangeProperty{},
@@ -173,7 +176,47 @@ func (b *WriterBuilder) Build(
 		kvStore:        nil,
 		onClose:        b.onClose,
 		closed:         false,
+		multiFileStats: make([]MultipleFilesStat, 1),
+		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
+		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
 	}
+	ret.multiFileStats[0].Filenames = make([][2]string, 0, multiFileStatNum)
+	return ret
+}
+
+// MultipleFilesStat is the statistic information of multiple files (currently
+// every 500 files). It is used to estimate the data overlapping, and per-file
+// statistic information maybe too big to loaded into memory.
+type MultipleFilesStat struct {
+	MinKey            tidbkv.Key
+	MaxKey            tidbkv.Key
+	Filenames         [][2]string // [dataFile, statFile]
+	MaxOverlappingNum int
+}
+
+func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
+	if len(startKeys) == 0 {
+		return
+	}
+	m.MinKey = startKeys[0]
+	m.MaxKey = endKeys[0]
+	for i := 1; i < len(startKeys); i++ {
+		if m.MinKey.Cmp(startKeys[i]) > 0 {
+			m.MinKey = startKeys[i]
+		}
+		if m.MaxKey.Cmp(endKeys[i]) < 0 {
+			m.MaxKey = endKeys[i]
+		}
+	}
+
+	points := make([]Endpoint, 0, len(startKeys)*2)
+	for _, k := range startKeys {
+		points = append(points, Endpoint{Key: k, Tp: InclusiveStart, Weight: 1})
+	}
+	for _, k := range endKeys {
+		points = append(points, Endpoint{Key: k, Tp: InclusiveEnd, Weight: 1})
+	}
+	m.MaxOverlappingNum = GetMaxOverlapping(points)
 }
 
 // Writer is used to write data into external storage.
@@ -198,6 +241,11 @@ type Writer struct {
 	// Statistic information per batch.
 	batchSize uint64
 
+	// Statistic information per 500 batches.
+	multiFileStats []MultipleFilesStat
+	fileMinKeys    []tidbkv.Key
+	fileMaxKeys    []tidbkv.Key
+
 	// Statistic information per writer.
 	minKey    tidbkv.Key
 	maxKey    tidbkv.Key
@@ -218,7 +266,7 @@ func (w *Writer) AppendRows(ctx context.Context, _ []string, rows encode.Rows) e
 
 		w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val})
 		if w.batchSize >= w.memSizeLimit {
-			if err := w.flushKVs(ctx); err != nil {
+			if err := w.flushKVs(ctx, false); err != nil {
 				return err
 			}
 		}
@@ -238,10 +286,12 @@ func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
 	}
 	w.closed = true
 	defer w.kvBuffer.Destroy()
-	err := w.flushKVs(ctx)
+	err := w.flushKVs(ctx, true)
 	if err != nil {
 		return status(false), err
 	}
+	// remove the trailing empty MultipleFilesStat
+	w.multiFileStats = w.multiFileStats[:len(w.multiFileStats)-1]
 
 	logutil.Logger(ctx).Info("close writer",
 		zap.Int("writerID", w.writerID),
@@ -251,11 +301,12 @@ func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
 	w.writeBatch = nil
 
 	w.onClose(&WriterSummary{
-		WriterID:  w.writerID,
-		Seq:       w.currentSeq,
-		Min:       w.minKey,
-		Max:       w.maxKey,
-		TotalSize: w.totalSize,
+		WriterID:           w.writerID,
+		Seq:                w.currentSeq,
+		Min:                w.minKey,
+		Max:                w.maxKey,
+		TotalSize:          w.totalSize,
+		MultipleFilesStats: w.multiFileStats,
 	})
 	return status(true), nil
 }
@@ -277,13 +328,13 @@ func (s status) Flushed() bool {
 	return bool(s)
 }
 
-func (w *Writer) flushKVs(ctx context.Context) (err error) {
+func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	if len(w.writeBatch) == 0 {
 		return nil
 	}
 
 	logger := logutil.Logger(ctx)
-	dataWriter, statWriter, err := w.createStorageWriter(ctx)
+	dataFile, statFile, dataWriter, statWriter, err := w.createStorageWriter(ctx)
 	if err != nil {
 		return err
 	}
@@ -339,6 +390,23 @@ func (w *Writer) flushKVs(ctx context.Context) (err error) {
 
 	w.recordMinMax(w.writeBatch[0].Key, w.writeBatch[len(w.writeBatch)-1].Key, kvSize)
 
+	// maintain 500-batch statistics
+
+	l := len(w.multiFileStats)
+	w.multiFileStats[l-1].Filenames = append(w.multiFileStats[l-1].Filenames,
+		[2]string{dataFile, statFile},
+	)
+	w.fileMinKeys = append(w.fileMinKeys, tidbkv.Key(w.writeBatch[0].Key).Clone())
+	w.fileMaxKeys = append(w.fileMaxKeys, tidbkv.Key(w.writeBatch[len(w.writeBatch)-1].Key).Clone())
+	if fromClose || len(w.multiFileStats[l-1].Filenames) == multiFileStatNum {
+		w.multiFileStats[l-1].build(w.fileMinKeys, w.fileMaxKeys)
+		w.multiFileStats = append(w.multiFileStats, MultipleFilesStat{
+			Filenames: make([][2]string, 0, multiFileStatNum),
+		})
+		w.fileMinKeys = w.fileMinKeys[:0]
+		w.fileMaxKeys = w.fileMaxKeys[:0]
+	}
+
 	w.writeBatch = w.writeBatch[:0]
 	w.rc.reset()
 	w.kvBuffer.Reset()
@@ -347,16 +415,20 @@ func (w *Writer) flushKVs(ctx context.Context) (err error) {
 	return nil
 }
 
-func (w *Writer) createStorageWriter(ctx context.Context) (data, stats storage.ExternalFileWriter, err error) {
+func (w *Writer) createStorageWriter(ctx context.Context) (
+	dataFile, statFile string,
+	data, stats storage.ExternalFileWriter,
+	err error,
+) {
 	dataPath := filepath.Join(w.filenamePrefix, strconv.Itoa(w.currentSeq))
 	dataWriter, err := w.store.Create(ctx, dataPath, nil)
 	if err != nil {
-		return nil, nil, err
+		return "", "", nil, nil, err
 	}
 	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(w.currentSeq))
 	statsWriter, err := w.store.Create(ctx, statPath, nil)
 	if err != nil {
-		return nil, nil, err
+		return "", "", nil, nil, err
 	}
-	return dataWriter, statsWriter, nil
+	return dataPath, statPath, dataWriter, statsWriter, nil
 }
