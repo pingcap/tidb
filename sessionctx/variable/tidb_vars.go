@@ -1089,8 +1089,8 @@ const (
 	TiDBSkipMissingPartitionStats = "tidb_skip_missing_partition_stats"
 	// TiDBSessionAlias indicates the alias of a session which is used for tracing.
 	TiDBSessionAlias = "tidb_session_alias"
-	// TiDBEnableHistoryStats indicates whether collecting and using history stats for plan optimization
-	TiDBEnableHistoryStats = "tidb_enable_history_stats"
+	// TiDBOptimizerHistoryStats indicates whether collecting and using history stats for plan optimization
+	TiDBOptimizerHistoryStats = "tidb_optimizer_history_stats"
 )
 
 // TiDB intentional limits
@@ -1396,7 +1396,7 @@ const (
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
-	DefTiDBEnableHistoryStats                         = false
+	DefTiDBOptimizerHistoryStats                      = false
 )
 
 // Process global variables.

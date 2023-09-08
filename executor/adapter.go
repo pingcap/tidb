@@ -80,7 +80,7 @@ import (
 
 const (
 	// HistoryStatsUpdateThreshold represents the threshold to check if history stats needs to be updated
-	HistoryStatsUpdateThreshold = 1.0
+	HistoryStatsUpdateThreshold = 2.0
 )
 
 // processinfoSetter is the interface use to set current running process info.
@@ -1506,7 +1506,7 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 // Currently, only support "Selection + TableScan" pattern
 func (a *ExecStmt) RecordHistoryStats() {
 	sessVars := a.Ctx.GetSessionVars()
-	if !sessVars.EnableHistoryStats || sessVars.InRestrictedSQL || !sessVars.StmtCtx.InSelectStmt {
+	if !sessVars.EnableOptimizerHistoryStats || sessVars.InRestrictedSQL || !sessVars.StmtCtx.InSelectStmt {
 		return
 	}
 
@@ -1522,31 +1522,60 @@ func (a *ExecStmt) RecordHistoryStats() {
 		if !isPhysicalPlan {
 			continue
 		}
-		if x, isSelect := pp.(*plannercore.PhysicalSelection); isSelect {
-			if _, ok := x.Children()[0].(*plannercore.PhysicalTableScan); ok {
-				checkAndRecordHistoryStats(stmtCtx, sql, x)
+		switch x := pp.(type) {
+		case *plannercore.PhysicalSelection:
+			if tableScan, ok := x.Children()[0].(*plannercore.PhysicalTableScan); ok {
+				if tableScan.HasRFFilters() {
+					break
+				}
+				needRecord, estRows, actualRows := needRecordHistoryStats(stmtCtx, x)
+				if !needRecord {
+					break
+				}
+				succ, hashCode := genHashCodeForSelection(stmtCtx, x)
+				if !succ {
+					break
+				}
+				recordHistoryStats(stmtCtx, sql, tableScan.Table.ID, x.ID(), false, hashCode, estRows, actualRows)
 			}
+		case *plannercore.PhysicalTableScan:
+			if x.HasRFFilters() {
+				break
+			}
+			needRecord, estRows, actualRows := needRecordHistoryStats(stmtCtx, x)
+			if !needRecord {
+				break
+			}
+			recordHistoryStats(stmtCtx, sql, x.Table.ID, x.ID(), true, 0, estRows, actualRows)
 		}
 	}
 }
 
-func checkAndRecordHistoryStats(stmtCtx *stmtctx.StatementContext, sql string, x *plannercore.PhysicalSelection) bool {
+func recordHistoryStats(stmtCtx *stmtctx.StatementContext, sql string, tableID int64, planID int, nullHashCode bool, hashCode uint64, estRows float64, actualRows int64) {
+	logutil.BgLogger().Debug(
+		sql,
+		zap.Int64("TableID", tableID),
+		zap.Int("PlanID", planID),
+		zap.Bool("NullHashCode", nullHashCode),
+		zap.Uint64("FinalHash", hashCode),
+		zap.Float64("EstRows", estRows),
+		zap.Int64("ActRows", actualRows))
+}
+
+func genHashCodeForSelection(stmtCtx *stmtctx.StatementContext, x *plannercore.PhysicalSelection) (bool, uint64) {
+	return expression.SortAndGenMD5HashForCNFExprs(stmtCtx, x.Conditions)
+}
+
+func needRecordHistoryStats(stmtCtx *stmtctx.StatementContext, x plannercore.PhysicalPlan) (bool, float64, int64) {
 	estRows := plannercore.GetPhysicalPlanEstRowCount(x)
 	hasCopStats, actualRows := GetResultRowsCountForCopStats(stmtCtx, x.ID())
-	if hasCopStats && math.Abs(float64(actualRows)-estRows) > 2*HistoryStatsUpdateThreshold {
-		succ, hashCode := expression.SortAndGenMD5HashForCNFExprs(stmtCtx, x.Conditions)
-		if !succ {
-			return false
-		}
-		logutil.BgLogger().Info(
-			sql,
-			zap.Uint64("FinalHash", hashCode),
-			zap.Float64("EstRows", estRows),
-			zap.Int64("ActRows", actualRows),
-			zap.Int("PlanID", x.ID()))
-		return true
+	if !hasCopStats {
+		return false, estRows, actualRows
 	}
-	return false
+	actualRowsFloat := float64(actualRows)
+	max := math.Max(actualRowsFloat, estRows)
+	min := math.Min(actualRowsFloat, estRows)
+	return max > min*HistoryStatsUpdateThreshold, estRows, actualRows
 }
 
 // LogSlowQuery is used to print the slow query in the log files.

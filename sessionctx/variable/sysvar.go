@@ -2809,11 +2809,11 @@ var defaultSysVars = []*SysVar{
 	},
 	{
 		Scope: ScopeGlobal | ScopeSession,
-		Name:  TiDBEnableHistoryStats,
-		Value: BoolToOnOff(DefTiDBEnableHistoryStats),
+		Name:  TiDBOptimizerHistoryStats,
+		Value: BoolToOnOff(DefTiDBOptimizerHistoryStats),
 		Type:  TypeBool,
 		SetSession: func(vars *SessionVars, s string) error {
-			vars.EnableHistoryStats = TiDBOptOn(s)
+			vars.EnableOptimizerHistoryStats = TiDBOptOn(s)
 			return nil
 		},
 	},

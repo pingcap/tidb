@@ -1545,7 +1545,7 @@ type SessionVars struct {
 	OptObjective string
 
 	// Whether collect and using history stats for plan optimization
-	EnableHistoryStats bool
+	EnableOptimizerHistoryStats bool
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
