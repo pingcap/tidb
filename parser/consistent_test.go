@@ -14,6 +14,7 @@
 package parser
 
 import (
+	"fmt"
 	gio "io"
 	"os"
 	"sort"
@@ -47,10 +48,10 @@ func TestKeywordConsistent(t *testing.T) {
 		requires.Equal(t, tokenMap[v], tokenMap[k])
 	}
 
-	requires.Len(t, reservedKeywords, len(reservedTokenMap))
 	for _, v := range reservedKeywords {
-		requires.NotNil(t, reservedTokenMap[v])
+		requires.NotEqual(t, reservedTokenMap[v], 0, fmt.Sprintf("Not found %s in reservedTokenMap", v))
 	}
+	requires.Len(t, reservedKeywords, len(reservedTokenMap))
 
 	keywordCount := len(reservedKeywords) + len(unreservedKeywords) + len(notKeywordTokens) + len(tidbKeywords)
 	requires.Equal(t, keywordCount-len(windowFuncTokenMap), len(tokenMap)-len(aliases))
