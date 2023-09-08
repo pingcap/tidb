@@ -37,9 +37,6 @@ import (
 
 func TestDispatcherExt(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	t.Cleanup(func() {
-		require.NoError(t, store.Close())
-	})
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
 		return tk.Session(), nil
