@@ -201,6 +201,7 @@ type Writer struct {
 	totalSize uint64
 }
 
+// WriteRow implements ingest.Writer.
 func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tidbkv.Handle) error {
 	keyAdapter := w.keyAdapter
 	w.batchSize += uint64(len(idxKey) + len(idxVal))
