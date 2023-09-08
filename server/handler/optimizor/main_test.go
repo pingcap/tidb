@@ -32,7 +32,6 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	server.RunInGoTest = true
 	testsetup.SetupForCommonTest()
 	topsqlstate.EnableTopSQL()
 	unistore.CheckResourceTagForTopSQLInGoTest = true

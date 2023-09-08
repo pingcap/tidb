@@ -23,7 +23,6 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	server.RunInGoTest = true
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),

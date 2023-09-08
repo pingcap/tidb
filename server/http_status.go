@@ -32,6 +32,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -89,7 +90,7 @@ func sleepWithCtx(ctx context.Context, d time.Duration) {
 
 func (s *Server) listenStatusHTTPServer() error {
 	s.statusAddr = net.JoinHostPort(s.cfg.Status.StatusHost, strconv.Itoa(int(s.cfg.Status.StatusPort)))
-	if s.cfg.Status.StatusPort == 0 && !RunInGoTest {
+	if s.cfg.Status.StatusPort == 0 && !testing.Testing() {
 		s.statusAddr = net.JoinHostPort(s.cfg.Status.StatusHost, strconv.Itoa(defaultStatusPort))
 	}
 
@@ -111,7 +112,7 @@ func (s *Server) listenStatusHTTPServer() error {
 	if err != nil {
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
 		return errors.Trace(err)
-	} else if RunInGoTest && s.cfg.Status.StatusPort == 0 {
+	} else if testing.Testing() && s.cfg.Status.StatusPort == 0 {
 		s.statusAddr = s.statusListener.Addr().String()
 		s.cfg.Status.StatusPort = uint(s.statusListener.Addr().(*net.TCPAddr).Port)
 	}

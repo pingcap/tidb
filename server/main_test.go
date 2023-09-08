@@ -37,7 +37,6 @@ var testDataMap = make(testdata.BookKeeper, 1)
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
-	RunInGoTest = true // flag for NewServer to known it is running in test environment
 	// Enable TopSQL for all test, and check the resource tag for each RPC request.
 	// This is used to detect which codes are not tracked by TopSQL.
 	topsqlstate.EnableTopSQL()

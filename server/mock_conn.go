@@ -89,10 +89,6 @@ func (mc *mockConn) GetOutput() *bytes.Buffer {
 
 // CreateMockServer creates a mock server.
 func CreateMockServer(t *testing.T, store kv.Storage) *Server {
-	if !RunInGoTest {
-		// If CreateMockServer is called in another package, RunInGoTest is not initialized.
-		RunInGoTest = testing.Testing()
-	}
 	tidbdrv := NewTiDBDriver(store)
 	cfg := config.NewConfig()
 	cfg.Socket = ""
