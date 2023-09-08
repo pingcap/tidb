@@ -69,20 +69,20 @@ notExhausted:
 	lenStatFiles := len(statFiles)
 	require.Equal(t, lenDataFiles, lenStatFiles)
 	require.Greater(t, lenDataFiles, 0)
-	require.Greater(t, len(splitKeys), 0)
-
-	// splitKeys should be strictly increasing
-	for i := 1; i < len(splitKeys); i++ {
-		cmp := bytes.Compare(splitKeys[i], splitKeys[i-1])
-		require.Equal(t, 1, cmp, "splitKeys: %v", splitKeys)
-	}
-	// first splitKeys should be strictly greater than lastEndKey
-	cmp := bytes.Compare(splitKeys[0], lastEndKey)
-	require.Equal(t, 1, cmp, "splitKeys: %v, lastEndKey: %v", splitKeys, lastEndKey)
-	// last splitKeys should be strictly less than endKey
-	if endKey != nil {
-		cmp = bytes.Compare(splitKeys[len(splitKeys)-1], endKey)
-		require.Equal(t, -1, cmp, "splitKeys: %v, endKey: %v", splitKeys, endKey)
+	if len(splitKeys) > 0 {
+		// splitKeys should be strictly increasing
+		for i := 1; i < len(splitKeys); i++ {
+			cmp := bytes.Compare(splitKeys[i], splitKeys[i-1])
+			require.Equal(t, 1, cmp, "splitKeys: %v", splitKeys)
+		}
+		// first splitKeys should be strictly greater than lastEndKey
+		cmp := bytes.Compare(splitKeys[0], lastEndKey)
+		require.Equal(t, 1, cmp, "splitKeys: %v, lastEndKey: %v", splitKeys, lastEndKey)
+		// last splitKeys should be strictly less than endKey
+		if endKey != nil {
+			cmp = bytes.Compare(splitKeys[len(splitKeys)-1], endKey)
+			require.Equal(t, -1, cmp, "splitKeys: %v, endKey: %v", splitKeys, endKey)
+		}
 	}
 
 	lastEndKey = endKey

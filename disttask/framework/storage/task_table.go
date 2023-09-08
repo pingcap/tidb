@@ -338,14 +338,14 @@ func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, step int
 }
 
 // UpdateErrorToSubtask updates the error to subtask.
-func (stm *TaskManager) UpdateErrorToSubtask(tidbID string, err error) error {
+func (stm *TaskManager) UpdateErrorToSubtask(tidbID string, taskID int64, err error) error {
 	if err == nil {
 		return nil
 	}
 	_, err1 := stm.executeSQLWithNewSession(stm.ctx, `update mysql.tidb_background_subtask
 		set state = %?, error = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
-		where exec_id = %? and state = %? limit 1;`,
-		proto.TaskStateFailed, serializeErr(err), tidbID, proto.TaskStatePending)
+		where exec_id = %? and task_key = %? and state = %? limit 1;`,
+		proto.TaskStateFailed, serializeErr(err), tidbID, taskID, proto.TaskStatePending)
 	return err1
 }
 
@@ -386,6 +386,29 @@ func (stm *TaskManager) GetSucceedSubtasksByStep(taskID int64, step int64) ([]*p
 		subtasks = append(subtasks, row2SubTask(r))
 	}
 	return subtasks, nil
+}
+
+// GetSubtaskRowCount gets the subtask row count.
+func (stm *TaskManager) GetSubtaskRowCount(taskID int64, step int64) (int64, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select
+    	cast(sum(json_extract(summary, '$.row_count')) as signed) as row_count
+		from mysql.tidb_background_subtask where task_key = %? and step = %?`,
+		taskID, step)
+	if err != nil {
+		return 0, err
+	}
+	if len(rs) == 0 {
+		return 0, nil
+	}
+	return rs[0].GetInt64(0), nil
+}
+
+// UpdateSubtaskRowCount updates the subtask row count.
+func (stm *TaskManager) UpdateSubtaskRowCount(subtaskID int64, rowCount int64) error {
+	_, err := stm.executeSQLWithNewSession(stm.ctx, `update mysql.tidb_background_subtask
+		set summary = json_set(summary, '$.row_count', %?) where id = %?`,
+		rowCount, subtaskID)
+	return err
 }
 
 // GetSubtaskInStatesCnt gets the subtask count in the states.
@@ -446,11 +469,18 @@ func (stm *TaskManager) HasSubtasksInStates(tidbID string, taskID int64, step in
 }
 
 // StartSubtask updates the subtask state to running.
-func (stm *TaskManager) StartSubtask(id int64) error {
+func (stm *TaskManager) StartSubtask(subtaskID int64) error {
 	_, err := stm.executeSQLWithNewSession(stm.ctx, `update mysql.tidb_background_subtask
 		set state = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
 		where id = %?`,
-		proto.TaskStateRunning, id)
+		proto.TaskStateRunning, subtaskID)
+	return err
+}
+
+// StartManager insert the manager information into dist_framework_meta.
+func (stm *TaskManager) StartManager(tidbID string, role string) error {
+	_, err := stm.executeSQLWithNewSession(stm.ctx, `insert into mysql.dist_framework_meta values(%?, %?, DEFAULT)
+        on duplicate key update role = %?`, tidbID, role, role)
 	return err
 }
 
@@ -495,6 +525,26 @@ func (stm *TaskManager) DeleteSubtasksByTaskID(taskID int64) error {
 func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select distinct(exec_id) from mysql.tidb_background_subtask
 		where task_key = %?`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+
+	instanceIDs := make([]string, 0, len(rs))
+	for _, r := range rs {
+		id := r.GetString(0)
+		instanceIDs = append(instanceIDs, id)
+	}
+
+	return instanceIDs, nil
+}
+
+// GetSchedulerIDsByTaskIDAndStep gets the scheduler IDs of the given global task ID and step.
+func (stm *TaskManager) GetSchedulerIDsByTaskIDAndStep(taskID int64, step int64) ([]string, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select distinct(exec_id) from mysql.tidb_background_subtask
+		where task_key = %? and step = %?`, taskID, step)
 	if err != nil {
 		return nil, err
 	}
@@ -618,7 +668,7 @@ func serializeErr(err error) []byte {
 	return errBytes
 }
 
-// CancelGlobalTask cancels global task
+// CancelGlobalTask cancels global task.
 func (stm *TaskManager) CancelGlobalTask(taskID int64) error {
 	_, err := stm.executeSQLWithNewSession(stm.ctx, "update mysql.tidb_global_task set state=%? where id=%? and state in (%?, %?)",
 		proto.TaskStateCancelling, taskID, proto.TaskStatePending, proto.TaskStateRunning,
@@ -626,14 +676,14 @@ func (stm *TaskManager) CancelGlobalTask(taskID int64) error {
 	return err
 }
 
-// CancelGlobalTaskByKeySession cancels global task by key using input session
+// CancelGlobalTaskByKeySession cancels global task by key using input session.
 func (stm *TaskManager) CancelGlobalTaskByKeySession(se sessionctx.Context, taskKey string) error {
 	_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state=%? where task_key=%? and state in (%?, %?)",
 		proto.TaskStateCancelling, taskKey, proto.TaskStatePending, proto.TaskStateRunning)
 	return err
 }
 
-// IsGlobalTaskCancelling checks whether the task state is cancelling
+// IsGlobalTaskCancelling checks whether the task state is cancelling.
 func (stm *TaskManager) IsGlobalTaskCancelling(taskID int64) (bool, error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select 1 from mysql.tidb_global_task where id=%? and state = %?",
 		taskID, proto.TaskStateCancelling,
@@ -646,7 +696,7 @@ func (stm *TaskManager) IsGlobalTaskCancelling(taskID int64) (bool, error) {
 	return len(rs) > 0, nil
 }
 
-// GetSubtasksByStep gets subtasks of global task by step
+// GetSubtasksByStep gets subtasks of global task by step.
 func (stm *TaskManager) GetSubtasksByStep(taskID, step int64) ([]*proto.Subtask, error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx,
 		"select * from mysql.tidb_background_subtask where task_key = %? and step = %?",
@@ -662,4 +712,18 @@ func (stm *TaskManager) GetSubtasksByStep(taskID, step int64) ([]*proto.Subtask,
 		subtasks = append(subtasks, row2SubTask(r))
 	}
 	return subtasks, nil
+}
+
+// GetNodesByRole gets nodes map from dist_framework_meta by role.
+func (stm *TaskManager) GetNodesByRole(role string) (map[string]bool, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx,
+		"select host from mysql.dist_framework_meta where role = %?", role)
+	if err != nil {
+		return nil, err
+	}
+	nodes := make(map[string]bool, len(rs))
+	for _, r := range rs {
+		nodes[r.GetString(0)] = true
+	}
+	return nodes, nil
 }
