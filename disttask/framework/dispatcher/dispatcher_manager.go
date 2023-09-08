@@ -198,7 +198,7 @@ func (dm *Manager) dispatchTaskLoop() {
 }
 
 func (dm *Manager) gcSubtaskHistoryTable() {
-	logutil.BgLogger().Info("task table gc loop start")
+	logutil.Logger(dm.ctx).Info("task table gc loop start")
 	ticker := time.NewTicker(defaultHistorySubtaskTableGcInterval)
 	defer ticker.Stop()
 	for {
