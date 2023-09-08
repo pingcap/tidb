@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
+	"github.com/pingcap/tidb/disttask/operator"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -98,7 +99,7 @@ func (s *importStepExecutor) SplitSubtask(ctx context.Context, subtask *proto.Su
 	if err != nil {
 		return nil, err
 	}
-	s.logger.Info("split subtask", zap.Int32("engine-id", subtaskMeta.ID))
+	s.logger.Info("split and run subtask", zap.Int32("engine-id", subtaskMeta.ID))
 
 	dataEngine, err := s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
 	if err != nil {
@@ -123,15 +124,31 @@ func (s *importStepExecutor) SplitSubtask(ctx context.Context, subtask *proto.Su
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
-	miniTask := make([]proto.MinimalTask, 0, len(subtaskMeta.Chunks))
+	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
+	op := newEncodeAndSortOperator(ctx, int(s.taskMeta.Plan.ThreadCnt), s.logger)
+	op.SetSource(source)
+	pipeline := operator.NewAsyncPipeline(op)
+	if err = pipeline.Execute(); err != nil {
+		return nil, err
+	}
+
+outer:
 	for _, chunk := range subtaskMeta.Chunks {
-		miniTask = append(miniTask, &importStepMinimalTask{
+		// TODO: current workpool impl doesn't drain the input channel, it will
+		// just return on context cancel(error happened), so we add this select.
+		select {
+		case source.Channel() <- &importStepMinimalTask{
 			Plan:       s.taskMeta.Plan,
 			Chunk:      chunk,
 			SharedVars: sharedVars,
-		})
+		}:
+		case <-op.Done():
+			break outer
+		}
 	}
-	return miniTask, nil
+	source.Finish()
+
+	return nil, pipeline.Close()
 }
 
 func (s *importStepExecutor) OnFinished(ctx context.Context, subtaskMetaBytes []byte) ([]byte, error) {
@@ -266,14 +283,7 @@ func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, 
 
 func (*importScheduler) GetMiniTaskExecutor(minimalTask proto.MinimalTask, _ string, step int64) (execute.MiniTaskExecutor, error) {
 	switch step {
-	case StepImport:
-		task, ok := minimalTask.(*importStepMinimalTask)
-		if !ok {
-			return nil, errors.Errorf("invalid task type %T", minimalTask)
-		}
-		return &ImportMinimalTaskExecutor{mTtask: task}, nil
 	case StepPostProcess:
-
 		mTask, ok := minimalTask.(*postProcessStepMinimalTask)
 		if !ok {
 			return nil, errors.Errorf("invalid task type %T", minimalTask)
