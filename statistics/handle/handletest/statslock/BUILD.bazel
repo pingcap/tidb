@@ -12,6 +12,7 @@ go_test(
     deps = [
         "//config",
         "//domain",
+        "//kv",
         "//parser/auth",
         "//parser/model",
         "//session",

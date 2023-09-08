@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
@@ -29,23 +30,10 @@ import (
 )
 
 func TestStatsLockAndUnlockTable(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.EnableStatsCacheMemQuota = true
-	})
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b))")
-	tk.MustExec("analyze table test.t")
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	_, tk, tbl := setupTestEnvironmentWithTableT(t)
 
 	handle := domain.GetDomain(tk.Session()).StatsHandle()
-	tblStats := handle.GetTableStats(tbl.Meta())
+	tblStats := handle.GetTableStats(tbl)
 	for _, col := range tblStats.Columns {
 		require.True(t, col.IsStatsInitialized())
 	}
@@ -59,7 +47,7 @@ func TestStatsLockAndUnlockTable(t *testing.T) {
 	tk.MustExec("insert into t(a, b) values(2,'b')")
 
 	tk.MustExec("analyze table test.t")
-	tblStats1 := handle.GetTableStats(tbl.Meta())
+	tblStats1 := handle.GetTableStats(tbl)
 	require.Equal(t, tblStats, tblStats1)
 
 	lockedTables, err := handle.GetTableLockedAndClearForTest()
@@ -72,28 +60,15 @@ func TestStatsLockAndUnlockTable(t *testing.T) {
 	require.Equal(t, num, 0)
 
 	tk.MustExec("analyze table test.t")
-	tblStats2 := handle.GetTableStats(tbl.Meta())
+	tblStats2 := handle.GetTableStats(tbl)
 	require.Equal(t, int64(2), tblStats2.RealtimeCount)
 }
 
 func TestStatsLockTableAndUnlockTableRepeatedly(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.EnableStatsCacheMemQuota = true
-	})
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b))")
-	tk.MustExec("analyze table test.t")
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	_, tk, tbl := setupTestEnvironmentWithTableT(t)
 
 	handle := domain.GetDomain(tk.Session()).StatsHandle()
-	tblStats := handle.GetTableStats(tbl.Meta())
+	tblStats := handle.GetTableStats(tbl)
 	for _, col := range tblStats.Columns {
 		require.True(t, col.IsStatsInitialized())
 	}
@@ -107,7 +82,7 @@ func TestStatsLockTableAndUnlockTableRepeatedly(t *testing.T) {
 	tk.MustExec("insert into t(a, b) values(2,'b')")
 
 	tk.MustExec("analyze table test.t")
-	tblStats1 := handle.GetTableStats(tbl.Meta())
+	tblStats1 := handle.GetTableStats(tbl)
 	require.Equal(t, tblStats, tblStats1)
 
 	// Lock the table again and check the warning.
@@ -129,7 +104,7 @@ func TestStatsLockTableAndUnlockTableRepeatedly(t *testing.T) {
 	require.Equal(t, num, 0)
 
 	tk.MustExec("analyze table test.t")
-	tblStats2 := handle.GetTableStats(tbl.Meta())
+	tblStats2 := handle.GetTableStats(tbl)
 	require.Equal(t, int64(2), tblStats2.RealtimeCount)
 
 	// Unlock the table again and check the warning.
@@ -207,23 +182,10 @@ func TestStatsLockAndUnlockTables(t *testing.T) {
 }
 
 func TestLockAndUnlockTablePrivilege(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.EnableStatsCacheMemQuota = true
-	})
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b))")
-	tk.MustExec("analyze table test.t")
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	store, tk, tbl := setupTestEnvironmentWithTableT(t)
 
 	handle := domain.GetDomain(tk.Session()).StatsHandle()
-	tblStats := handle.GetTableStats(tbl.Meta())
+	tblStats := handle.GetTableStats(tbl)
 	for _, col := range tblStats.Columns {
 		require.True(t, col.IsStatsInitialized())
 	}
@@ -280,23 +242,10 @@ func TestLockAndUnlockTablePrivilege(t *testing.T) {
 }
 
 func TestShowStatsLockedTablePrivilege(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.EnableStatsCacheMemQuota = true
-	})
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b))")
-	tk.MustExec("analyze table test.t")
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	store, tk, tbl := setupTestEnvironmentWithTableT(t)
 
 	handle := domain.GetDomain(tk.Session()).StatsHandle()
-	tblStats := handle.GetTableStats(tbl.Meta())
+	tblStats := handle.GetTableStats(tbl)
 	for _, col := range tblStats.Columns {
 		require.True(t, col.IsStatsInitialized())
 	}
@@ -328,4 +277,23 @@ func TestShowStatsLockedTablePrivilege(t *testing.T) {
 	// Try again
 	rows = tk.MustQuery("show stats_locked").Rows()
 	require.Len(t, rows, 1)
+}
+
+func setupTestEnvironmentWithTableT(t *testing.T) (kv.Storage, *testkit.TestKit, *model.TableInfo) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b))")
+	tk.MustExec("analyze table test.t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+
+	return store, tk, tbl.Meta()
 }
