@@ -506,7 +506,13 @@ func NewBackend(
 	tls *common.TLS,
 	config BackendConfig,
 	regionSizeGetter TableRegionSizeGetter,
-) (*Backend, error) {
+) (b *Backend, err error) {
+	var duplicateDB *pebble.DB
+	defer func() {
+		if err != nil && duplicateDB != nil {
+			_ = duplicateDB.Close()
+		}
+	}()
 	config.adjust()
 	pdCtl, err := pdutil.NewPdController(ctx, config.PDAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
 	if err != nil {
@@ -532,7 +538,6 @@ func NewBackend(
 		}
 	}
 
-	var duplicateDB *pebble.DB
 	if config.DupeDetectEnabled {
 		duplicateDB, err = openDuplicateDB(config.LocalStoreDir)
 		if err != nil {
