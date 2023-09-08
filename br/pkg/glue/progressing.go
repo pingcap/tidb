@@ -16,10 +16,6 @@ import (
 	"golang.org/x/term"
 )
 
-const OnlyOneTask int = -1
-
-var spinnerText []string = []string{".", "..", "..."}
-
 type pbProgress struct {
 	bar      *mpb.Bar
 	progress *mpb.Progress
@@ -117,30 +113,8 @@ func (ops ConsoleOperations) startProgressBarOverDummy(title string, total int, 
 
 func (ops ConsoleOperations) startProgressBarOverTTY(title string, total int, extraFields ...ExtraField) ProgressWaiter {
 	pb := mpb.New(mpb.WithOutput(ops.Out()), mpb.WithRefreshRate(400*time.Millisecond))
-	bar := adjustTotal(pb, title, total, extraFields...)
-
-	// If total is zero, finish right now.
-	if total == 0 {
-		bar.SetTotal(0, true)
-	}
-
-	return pbProgress{
-		bar:      bar,
-		ops:      ops,
-		progress: pb,
-	}
-}
-
-func adjustTotal(pb *mpb.Progress, title string, total int, extraFields ...ExtraField) *mpb.Bar {
-	if total == OnlyOneTask {
-		return buildOneTaskBar(pb, title, 1)
-	}
-	return buildProgressBar(pb, title, total, extraFields...)
-}
-
-func buildProgressBar(pb *mpb.Progress, title string, total int, extraFields ...ExtraField) *mpb.Bar {
 	greenTitle := color.GreenString(title)
-	return pb.New(int64(total),
+	bar := pb.New(int64(total),
 		// Play as if the old BR style.
 		mpb.BarStyle().Lbound("<").Filler("-").Padding(".").Rbound(">").Tip("-", "\\", "|", "/", "-").TipOnComplete("-"),
 		mpb.BarFillerMiddleware(func(bf mpb.BarFiller) mpb.BarFiller {
@@ -154,16 +128,15 @@ func buildProgressBar(pb *mpb.Progress, title string, total int, extraFields ...
 		mpb.PrependDecorators(decor.OnAbort(decor.OnComplete(decor.Name(greenTitle), fmt.Sprintf("%s  ::", title)), fmt.Sprintf("%s  ::", title))),
 		mpb.AppendDecorators(decor.OnAbort(decor.Any(cbOnComplete(decor.NewPercentage("%02.2f"), printFinalMessage(extraFields))), color.RedString("ABORTED"))),
 	)
-}
 
-var (
-	spinnerDoneText string = fmt.Sprintf("... %s", color.GreenString("DONE"))
-)
+	// If total is zero, finish right now.
+	if total == 0 {
+		bar.SetTotal(0, true)
+	}
 
-func buildOneTaskBar(pb *mpb.Progress, title string, total int) *mpb.Bar {
-	return pb.New(int64(total),
-		mpb.NopStyle(),
-		mpb.PrependDecorators(decor.Name(title)),
-		mpb.AppendDecorators(decor.OnAbort(decor.OnComplete(decor.Spinner(spinnerText), spinnerDoneText), color.RedString("ABORTED"))),
-	)
+	return pbProgress{
+		bar:      bar,
+		ops:      ops,
+		progress: pb,
+	}
 }
