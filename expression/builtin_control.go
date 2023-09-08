@@ -231,6 +231,19 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		fieldTp.SetDecimal(0)
 		types.SetBinChsClnFlag(fieldTp)
 	}
+
+	// The types of the output arguments should all be retType for the CASE WHEN function.
+	for i := 1; i < l-1; i += 2 {
+		if !args[i].GetType().Equal(fieldTp) {
+			args[i] = BuildCastFunction(ctx, args[i], fieldTp)
+		}
+	}
+	if l%2 == 1 {
+		if !args[l-1].GetType().Equal(fieldTp) {
+			args[l-1] = BuildCastFunction(ctx, args[l-1], fieldTp)
+		}
+	}
+
 	argTps := make([]types.EvalType, 0, l)
 	for i := 0; i < l-1; i += 2 {
 		if args[i], err = wrapWithIsTrue(ctx, true, args[i], false); err != nil {
@@ -266,16 +279,6 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinCaseWhenRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenReal)
 	case types.ETDecimal:
-		for i := 1; i < l-1; i += 2 {
-			if !bf.args[i].GetType().Equal(fieldTp) {
-				bf.args[i] = BuildCastFunction(ctx, bf.args[i], fieldTp)
-			}
-		}
-		if l%2 == 1 {
-			if !bf.args[l-1].GetType().Equal(fieldTp) {
-				bf.args[l-1] = BuildCastFunction(ctx, bf.args[l-1], fieldTp)
-			}
-		}
 		sig = &builtinCaseWhenDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenDecimal)
 	case types.ETString:
@@ -563,6 +566,15 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	if err != nil {
 		return nil, err
 	}
+
+	// The types of the output arguments should all be retType for the IF function.
+	if !args[1].GetType().Equal(retTp) {
+		args[1] = BuildCastFunction(ctx, args[1], retTp)
+	}
+	if !args[2].GetType().Equal(retTp) {
+		args[2] = BuildCastFunction(ctx, args[2], retTp)
+	}
+
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, types.ETInt, evalTps, evalTps)
 	if err != nil {
 		return nil, err
@@ -578,12 +590,6 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &builtinIfRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfReal)
 	case types.ETDecimal:
-		if !bf.args[1].GetType().Equal(retTp) {
-			bf.args[1] = BuildCastFunction(ctx, bf.args[1], retTp)
-		}
-		if !bf.args[2].GetType().Equal(retTp) {
-			bf.args[2] = BuildCastFunction(ctx, bf.args[2], retTp)
-		}
 		sig = &builtinIfDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfDecimal)
 	case types.ETString:
@@ -770,6 +776,15 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		retTp.SetDecimal(0)
 		types.SetBinChsClnFlag(retTp)
 	}
+
+	// The types of arg0 and arg1 for the IFNULL function should be retType.
+	if !args[0].GetType().Equal(retTp) {
+		args[0] = BuildCastFunction(ctx, args[0], retTp)
+	}
+	if !args[1].GetType().Equal(retTp) {
+		args[1] = BuildCastFunction(ctx, args[1], retTp)
+	}
+
 	evalTps := retTp.EvalType()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, evalTps, evalTps)
 	if err != nil {
@@ -784,12 +799,6 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		sig = &builtinIfNullRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullReal)
 	case types.ETDecimal:
-		if !bf.args[0].GetType().Equal(retTp) {
-			bf.args[0] = BuildCastFunction(ctx, bf.args[0], retTp)
-		}
-		if !bf.args[1].GetType().Equal(retTp) {
-			bf.args[1] = BuildCastFunction(ctx, bf.args[1], retTp)
-		}
 		sig = &builtinIfNullDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullDecimal)
 	case types.ETString:
