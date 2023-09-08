@@ -482,7 +482,7 @@ func (local *Backend) BatchSplitRegions(
 	for _, region := range scatterRegions {
 		err = local.ScatterRegion(ctx, region)
 		if err != nil && failedErr == nil {
-			failedErr = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scatter region failed")
+			failedErr = err
 		}
 	}
 
