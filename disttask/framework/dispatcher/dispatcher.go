@@ -57,6 +57,8 @@ var (
 type TaskHandle interface {
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(taskID int64, step int64) ([][]byte, error)
+	// UpdateTask update the task in tidb_global_task table.
+	UpdateTask(taskState string, newSubTasks []*proto.Subtask, retryTimes int) error
 	storage.SessionExecutor
 }
 
@@ -194,7 +196,7 @@ func (d *BaseDispatcher) onReverting() error {
 	if cnt == 0 {
 		// Finish the rollback step.
 		logutil.Logger(d.logCtx).Info("all reverting tasks finished, update the task to reverted state")
-		return d.updateTask(proto.TaskStateReverted, nil, retrySQLTimes)
+		return d.UpdateTask(proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 	// Wait all subtasks in this stage finished.
 	d.OnTick(d.ctx, d.task)
@@ -205,7 +207,7 @@ func (d *BaseDispatcher) onReverting() error {
 // handle task in pending state, dispatch subtasks.
 func (d *BaseDispatcher) onPending() error {
 	logutil.Logger(d.logCtx).Debug("on pending state", zap.String("state", d.task.State), zap.Int64("stage", d.task.Step))
-	return d.onNextSubtasksBatch()
+	return d.onNextStage()
 }
 
 // handle task in running state, check all running subtasks finished.
@@ -234,14 +236,14 @@ func (d *BaseDispatcher) onRunning() error {
 		if d.Finished(d.task) {
 			d.task.StateUpdateTime = time.Now().UTC()
 			logutil.Logger(d.logCtx).Info("all subtasks dispatched and processed, finish the task")
-			err := d.updateTask(proto.TaskStateSucceed, nil, retrySQLTimes)
+			err := d.UpdateTask(proto.TaskStateSucceed, nil, retrySQLTimes)
 			if err != nil {
 				logutil.Logger(d.logCtx).Warn("update task failed", zap.Error(err))
 				return err
 			}
 			return nil
 		}
-		return d.onNextSubtasksBatch()
+		return d.onNextStage()
 	}
 	// Check if any node are down.
 	if err := d.replaceDeadNodesIfAny(); err != nil {
@@ -332,7 +334,8 @@ func (d *BaseDispatcher) addSubtasks(subtasks []*proto.Subtask) (err error) {
 	return err
 }
 
-func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
+// UpdateTask update the task in tidb_global_task table.
+func (d *BaseDispatcher) UpdateTask(taskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
 	prevState := d.task.State
 	d.task.State = taskState
 	if !VerifyTaskStateTransform(prevState, taskState) {
@@ -388,73 +391,72 @@ func (d *BaseDispatcher) dispatchSubTask4Revert(task *proto.Task, meta []byte) e
 	for _, id := range instanceIDs {
 		subTasks = append(subTasks, proto.NewSubtask(task.ID, task.Type, id, meta))
 	}
-	return d.updateTask(proto.TaskStateReverting, subTasks, retrySQLTimes)
+	return d.UpdateTask(proto.TaskStateReverting, subTasks, retrySQLTimes)
 }
 
-func (d *BaseDispatcher) onNextSubtasksBatch() error {
+func (d *BaseDispatcher) onNextStage() error {
 	/// dynamic dispatch subtasks.
 	failpoint.Inject("mockDynamicDispatchErr", func() {
 		failpoint.Return(errors.New("mockDynamicDispatchErr"))
 	})
 
-	// 1. when previous stage finished, update to next stage.
+	// 1. Adjust the global task's concurrency.
 	if d.task.State == proto.TaskStatePending {
+		if d.task.Concurrency == 0 {
+			d.task.Concurrency = DefaultSubtaskConcurrency
+		}
+		if d.task.Concurrency > MaxSubtaskConcurrency {
+			d.task.Concurrency = MaxSubtaskConcurrency
+		}
 		d.task.StateUpdateTime = time.Now().UTC()
-		if err := d.updateTask(proto.TaskStateRunning, nil, retrySQLTimes); err != nil {
+		if err := d.UpdateTask(proto.TaskStateRunning, nil, retrySQLTimes); err != nil {
 			return err
 		}
 	} else if d.StageFinished(d.task) {
+		// 2. when previous stage finished, update to next stage.
 		d.task.Step++
 		logutil.Logger(d.logCtx).Info("previous stage finished, run into next stage", zap.Int64("from", d.task.Step-1), zap.Int64("to", d.task.Step))
 		d.task.StateUpdateTime = time.Now().UTC()
-		err := d.updateTask(proto.TaskStateRunning, nil, retrySQLTimes)
+		err := d.UpdateTask(proto.TaskStateRunning, nil, retrySQLTimes)
 		if err != nil {
 			return err
 		}
 	}
 
-	// 2. generate a batch of subtasks.
-	metas, err := d.OnNextSubtasksBatch(d.ctx, d, d.task)
-	if err != nil {
-		logutil.Logger(d.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
-		return d.handlePlanErr(err)
+	for {
+		// 3. generate a batch of subtasks.
+		metas, err := d.OnNextSubtasksBatch(d.ctx, d, d.task)
+		if err != nil {
+			logutil.Logger(d.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
+			return d.handlePlanErr(err)
+		}
+
+		failpoint.Inject("mockDynamicDispatchErr1", func() {
+			failpoint.Return(errors.New("mockDynamicDispatchErr1"))
+		})
+
+		// 4. dispatch batch of subtasks to EligibleInstances.
+		err = d.dispatchSubTask(d.task, metas)
+		if err != nil {
+			return err
+		}
+
+		if d.StageFinished(d.task) {
+			break
+		}
+
+		failpoint.Inject("mockDynamicDispatchErr2", func() {
+			failpoint.Return(errors.New("mockDynamicDispatchErr2"))
+		})
+		return nil
 	}
-
-	failpoint.Inject("mockDynamicDispatchEr1", func() {
-		failpoint.Return(errors.New("mockDynamicDispatchErr"))
-	})
-
-	// 3. dispatch batch of subtasks to EligibleInstances.
-	err = d.dispatchSubTask(d.task, metas)
-	if err != nil {
-		return err
-	}
-
-	failpoint.Inject("mockDynamicDispatchErr2", func() {
-		failpoint.Return(errors.New("mockDynamicDispatchErr1"))
-	})
 	return nil
 }
 
 func (d *BaseDispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error {
 	logutil.Logger(d.logCtx).Info("dispatch subtasks", zap.String("state", d.task.State), zap.Int64("step", d.task.Step), zap.Uint64("concurrency", d.task.Concurrency), zap.Int("subtasks", len(metas)))
-	// 1. Adjust the global task's concurrency.
-	if task.Concurrency == 0 {
-		task.Concurrency = DefaultSubtaskConcurrency
-	}
-	if task.Concurrency > MaxSubtaskConcurrency {
-		task.Concurrency = MaxSubtaskConcurrency
-	}
 
-	// 2. Special handling for the new tasks.
-	if task.State == proto.TaskStatePending {
-		// TODO: Consider using TS.
-		nowTime := time.Now().UTC()
-		task.StartTime = nowTime
-		task.StateUpdateTime = nowTime
-	}
-
-	// 3. select all available TiDB nodes for task.
+	// select all available TiDB nodes for task.
 	serverNodes, err := d.GetEligibleInstances(d.ctx, task)
 	logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
 
@@ -476,7 +478,7 @@ func (d *BaseDispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error
 		logutil.Logger(d.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(task.ID, task.Type, instanceID, meta))
 	}
-	return d.updateTask(proto.TaskStateRunning, subTasks, retrySQLTimes)
+	return d.addSubtasks(subTasks)
 }
 
 func (d *BaseDispatcher) handlePlanErr(err error) error {
@@ -486,7 +488,7 @@ func (d *BaseDispatcher) handlePlanErr(err error) error {
 	}
 	d.task.Error = err
 	// state transform: pending -> failed.
-	return d.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
+	return d.UpdateTask(proto.TaskStateFailed, nil, retrySQLTimes)
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.

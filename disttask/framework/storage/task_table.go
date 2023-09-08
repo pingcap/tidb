@@ -632,7 +632,7 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 		if err != nil {
 			return err
 		}
-		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 && gTask.State != proto.TaskStateRunning {
+		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
 			retryable = false
 			return errors.New("invalid task state transform, state already changed")
 		}

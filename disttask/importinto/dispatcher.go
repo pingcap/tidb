@@ -49,6 +49,7 @@ const (
 	registerTaskTTL        = 10 * time.Minute
 	refreshTaskTTLInterval = 3 * time.Minute
 	registerTimeout        = 5 * time.Second
+	retrySQLTimes          = 5
 )
 
 // NewTaskRegisterWithTTL is the ctor for TaskRegister.
@@ -237,6 +238,9 @@ func (dsp *importDispatcherExt) OnNextSubtasksBatch(ctx context.Context, handle 
 			failpoint.Return(nil, errors.New("injected error after StepImport"))
 		})
 		if err := updateResult(handle, gTask, taskMeta); err != nil {
+			return nil, err
+		}
+		if err := handle.UpdateTask(gTask.State, nil, retrySQLTimes); err != nil {
 			return nil, err
 		}
 		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result))
@@ -458,6 +462,7 @@ func updateMeta(gTask *proto.Task, taskMeta *TaskMeta) error {
 		return err
 	}
 	gTask.Meta = bs
+
 	return nil
 }
 
@@ -531,6 +536,9 @@ func job2Step(ctx context.Context, taskMeta *TaskMeta, step string) error {
 func (dsp *importDispatcherExt) finishJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
 	dsp.unregisterTask(ctx, gTask)
 	redactSensitiveInfo(gTask, taskMeta)
+	if err := handle.UpdateTask(gTask.State, nil, retrySQLTimes); err != nil {
+		return err
+	}
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
 	return handle.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
@@ -543,6 +551,9 @@ func (dsp *importDispatcherExt) failJob(ctx context.Context, handle dispatcher.T
 	dsp.switchTiKV2NormalMode(ctx, gTask, logger)
 	dsp.unregisterTask(ctx, gTask)
 	redactSensitiveInfo(gTask, taskMeta)
+	if err := handle.UpdateTask(gTask.State, nil, retrySQLTimes); err != nil {
+		return err
+	}
 	return handle.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg)
