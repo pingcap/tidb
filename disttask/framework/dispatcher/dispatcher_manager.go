@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
@@ -199,7 +200,13 @@ func (dm *Manager) dispatchTaskLoop() {
 
 func (dm *Manager) gcSubtaskHistoryTable() {
 	logutil.Logger(dm.ctx).Info("task table gc loop start")
-	ticker := time.NewTicker(defaultHistorySubtaskTableGcInterval)
+	historySubtaskTableGcInterval := defaultHistorySubtaskTableGcInterval
+	failpoint.Inject("historySubtaskTableGcInterval", func(val failpoint.Value) {
+		if seconds, ok := val.(int); ok {
+			historySubtaskTableGcInterval = time.Second * time.Duration(seconds)
+		}
+	})
+	ticker := time.NewTicker(historySubtaskTableGcInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -211,6 +218,7 @@ func (dm *Manager) gcSubtaskHistoryTable() {
 			if err != nil {
 				logutil.BgLogger().Warn("task table gc failed", zap.Error(err))
 			}
+			logutil.Logger(dm.ctx).Info("task table gc")
 		}
 	}
 }
