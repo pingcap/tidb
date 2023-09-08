@@ -588,8 +588,8 @@ func ParseAnalyzeSkipColumnTypes(val string) map[string]struct{} {
 	return skipTypes
 }
 
-// ParseCloudStorageURI makes validation for tidb_cloud_storage_uri.
-func ParseCloudStorageURI(ctx context.Context, uri string, checkPermission bool) (storage.ExternalStorage, error) {
+// ParseGlobalStorageURI makes validation for tidb_cloud_storage_uri.
+func ParseGlobalStorageURI(ctx context.Context, uri string, checkPermission bool) (storage.ExternalStorage, error) {
 	b, err := storage.ParseBackend(uri, nil)
 	if err != nil {
 		return nil, err
