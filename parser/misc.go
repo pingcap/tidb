@@ -1322,8 +1322,8 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 		}
 	}
 
-	// select * from t where t. status = 1; -- parse ok, unreserved keyword
-	// select * from t where t. and = 1; -- parse failed, reserverd keyword.
+	// select * from t where t. status = 1; -- parse ok, unreserved keyword.
+	// select * from t where t. and = 1; -- parse failed, reserved keyword.
 	if !isReservedKeyWord(string(data)) {
 		for idx := offset - 1; idx >= 0; idx-- {
 			if s.r.s[idx] == ' ' {
