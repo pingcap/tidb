@@ -29,6 +29,12 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	// DefaultDispatchConcurrency is the default concurrency for dispatching task.
+	DefaultDispatchConcurrency = 4
+	checkTaskRunningInterval   = 3 * time.Second
+)
+
 func (dm *Manager) getRunningTaskCnt() int {
 	dm.runningTasks.RLock()
 	defer dm.runningTasks.RUnlock()

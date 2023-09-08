@@ -16,7 +16,6 @@ go_library(
         "//resourcemanager/pool/spool",
         "//resourcemanager/util",
         "//sessionctx",
-        "//sessionctx/variable",
         "//util",
         "//util/disttask",
         "//util/intest",
