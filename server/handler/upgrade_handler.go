@@ -147,7 +147,7 @@ func (h ClusterUpgradeHandler) showUpgrade(w http.ResponseWriter) error {
 	}
 	defer se.Close()
 
-	// Check if we are upgrading by pausing user DDL.
+	// Check if we are upgrading by pausing user DDL(in other words by "/upgrade/start").
 	isUpgrading, err := session.IsUpgradingClusterState(se)
 	if err != nil {
 		return err
