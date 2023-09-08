@@ -193,7 +193,7 @@ func TestIndexLength(t *testing.T) {
 		"  KEY `a` (`a`(768)),\n" +
 		"  KEY `b` (`b`(3072)),\n" +
 		"  KEY `c` (`c`(3072))\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
 	checkShowCreateTable(t, tblInfo, expected)
 
 	err := tracker.DeleteTable(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -250,7 +250,7 @@ func TestIssue5092(t *testing.T) {
 		"  `f` int(11) DEFAULT NULL,\n" +
 		"  `g` int(11) DEFAULT NULL,\n" +
 		"  `ff` text DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
 	checkShowCreateTable(t, tblInfo, expected)
 }
 
@@ -318,7 +318,7 @@ func TestAddExpressionIndex(t *testing.T) {
 		"  `b` double DEFAULT NULL,\n" +
 		"  KEY `idx` ((`a` + `b`)),\n" +
 		"  KEY `idx_multi` ((`a` + `b`),(`a` + 1),`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
 	checkShowCreateTable(t, tblInfo, expected)
 
 	sql = "alter table test.t drop index idx;"
@@ -331,7 +331,7 @@ func TestAddExpressionIndex(t *testing.T) {
 	expected = "CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` double DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
 	checkShowCreateTable(t, tblInfo, expected)
 
 	sql = "create table test.t2 (a varchar(10), b varchar(10));"
@@ -345,7 +345,7 @@ func TestAddExpressionIndex(t *testing.T) {
 		"  `a` varchar(10) DEFAULT NULL,\n" +
 		"  `b` varchar(10) DEFAULT NULL,\n" +
 		"  UNIQUE KEY `ei_ab` ((concat(`a`, `b`)))\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
 	checkShowCreateTable(t, tblInfo, expected)
 
 	sql = "alter table test.t2 alter index ei_ab invisible;"
@@ -357,7 +357,7 @@ func TestAddExpressionIndex(t *testing.T) {
 		"  `a` varchar(10) DEFAULT NULL,\n" +
 		"  `b` varchar(10) DEFAULT NULL,\n" +
 		"  UNIQUE KEY `ei_ab` ((concat(`a`, `b`))) /*!80000 INVISIBLE */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
 	checkShowCreateTable(t, tblInfo, expected)
 
 	sql = "create table test.t3(a int, key((a+1)), key((a+2)), key idx((a+3)), key((a+4)), UNIQUE KEY ((a * 2)));"
@@ -372,7 +372,7 @@ func TestAddExpressionIndex(t *testing.T) {
 		"  KEY `idx` ((`a` + 3)),\n" +
 		"  KEY `expression_index_3` ((`a` + 4)),\n" +
 		"  UNIQUE KEY `expression_index_4` ((`a` * 2))\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
 	checkShowCreateTable(t, tblInfo, expected)
 
 	sql = `create table test.t4(
@@ -397,7 +397,7 @@ func TestAddExpressionIndex(t *testing.T) {
 		"  `b` varchar(100) DEFAULT NULL,\n" +
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  KEY `idx` ((`a` + `c`))\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (6),\n" +
 		" PARTITION `p1` VALUES LESS THAN (11),\n" +

@@ -359,7 +359,7 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `fk` (`a`),\n" +
 		"  CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `test2`.`t2` (`id`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tblInfo := getTableInfo(t, dom, "test2", "t2")
 	tbReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t2")
 	require.Equal(t, 1, len(tblInfo.ForeignKeys))
@@ -454,7 +454,7 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `fk_b` (`b`),\n" +
 		"  CONSTRAINT `fk_b` FOREIGN KEY (`b`) REFERENCES `test3`.`tt1` (`id`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func TestCreateTableWithForeignKeyDML(t *testing.T) {
@@ -548,7 +548,7 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 		},
 		{
 			refer:  "create table t1 (id int key, a varchar(10) collate utf8_bin, index(a));",
-			create: "create table t2 (a int, b varchar(10) collate utf8mb4_bin, foreign key fk_b(b) references t1(a));",
+			create: "create table t2 (a int, b varchar(10) collate utf8mb4_0900_ai_ci, foreign key fk_b(b) references t1(a));",
 			err:    "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
 		},
 		{
@@ -1140,7 +1140,7 @@ func TestRenameColumnWithForeignKeyMetaInfo(t *testing.T) {
 			"  KEY `fk_1` (`aa`),\n  KEY `fk_2` (`bb`),\n" +
 			"  CONSTRAINT `fk_1` FOREIGN KEY (`aa`) REFERENCES `test`.`t1` (`bb`),\n" +
 			"  CONSTRAINT `fk_2` FOREIGN KEY (`bb`) REFERENCES `test`.`t1` (`bb`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func TestDropDatabaseWithForeignKeyReferred(t *testing.T) {
@@ -1260,7 +1260,7 @@ func TestAddForeignKey(t *testing.T) {
 		"  `id` int(11) NOT NULL,\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
-		"  KEY `a` (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		"  KEY `a` (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	// Test add foreign key with auto-create index failed.
 	tk.MustExec("drop table if exists t1,t2")
@@ -1278,7 +1278,7 @@ func TestAddForeignKey(t *testing.T) {
 		"  `id` int(11) NOT NULL,\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func TestAlterTableAddForeignKeyError(t *testing.T) {
@@ -1383,7 +1383,7 @@ func TestAlterTableAddForeignKeyError(t *testing.T) {
 		{
 			prepares: []string{
 				"create table t1 (id int key, a varchar(10) collate utf8_bin, index(a));",
-				"create table t2 (a int, b varchar(10) collate utf8mb4_bin);",
+				"create table t2 (a int, b varchar(10) collate utf8mb4_0900_ai_ci);",
 			},
 			alter: "alter  table t2 add foreign key fk_b(b) references t1(a)",
 			err:   "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
@@ -1597,14 +1597,14 @@ func TestRenameTablesWithForeignKey(t *testing.T) {
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test2`.`tt2` (`id`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustQuery("show create table test2.tt2").Check(testkit.Rows("tt2 CREATE TABLE `tt2` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test1`.`tt1` (`id`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func getLatestSchemaDiff(t *testing.T, tk *testkit.TestKit) *model.SchemaDiff {
@@ -1644,7 +1644,7 @@ func TestMultiSchemaAddForeignKey(t *testing.T) {
 		"  KEY `fk_2` (`b`),\n" +
 		"  CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `test`.`t1` (`id`),\n" +
 		"  CONSTRAINT `fk_2` FOREIGN KEY (`b`) REFERENCES `test`.`t1` (`id`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustExec("drop table t2")
 	tk.MustExec("create table t2 (a int, b int, index idx0(a,b), index idx1(a), index idx2(b));")
 	tk.MustExec("alter table t2 drop index idx1, add foreign key (a) references t1(id), add foreign key (b) references t1(id)")

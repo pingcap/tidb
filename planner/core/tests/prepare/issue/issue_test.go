@@ -36,7 +36,7 @@ func TestIssue31280(t *testing.T) {
 		"`COL4` int(11) DEFAULT NULL," +
 		"UNIQUE KEY `U_M_COL4` (`COL1`(10),`COL2`)," +
 		"UNIQUE KEY `U_M_COL5` (`COL3`,`COL2`)" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustExec("insert into UK_MU15569  values(0x1C4FDBA09B42D999AC3019B6A9C0C787FBA08446, 0xCA74, '-836:46:08', 735655453);")
 
 	tk.MustExec(`prepare stmt from 'select * from UK_MU15569 where col2 >= ? and col1 is not null and col3 = ?;';`)
@@ -70,7 +70,7 @@ func TestIssue31375(t *testing.T) {
 		"`COL3` year(4) DEFAULT NULL," +
 		"KEY `U_M_COL4` (`COL1`,`COL2`)," +
 		"KEY `U_M_COL5` (`COL3`,`COL2`)" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustExec("insert into IDT_MULTI15844STROBJSTROBJ values('bb', -16994, 1987);")
 
 	tk.MustExec(`prepare stmt from 'SELECT/*+ HASH_JOIN(t1, t2) */ t2.* FROM IDT_MULTI15844STROBJSTROBJ t1 LEFT JOIN IDT_MULTI15844STROBJSTROBJ t2 ON t1.col1 = t2.col1 WHERE t1.col2 BETWEEN ? AND ? AND t1.col1 >= ?;';`)
@@ -123,7 +123,7 @@ func TestIssueEnablePreparedPlanCache(t *testing.T) {
 	  COL1 enum('aa','bb','cc') DEFAULT NULL,
 	  COL2 mediumint(41) DEFAULT NULL,
 	  KEY U_M_COL4 (COL1,COL2)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`)
 	tk.MustExec(`insert into IDT_MULTI15853STROBJSTROBJ values("aa", 1)`)
 	tk.MustExec(`prepare stmt from 'SELECT * FROM IDT_MULTI15853STROBJSTROBJ WHERE col1 = ? AND col1 != ?'`)
 	tk.MustExec(`set @a="mm", @b="aa"`)
@@ -269,7 +269,7 @@ func TestIssue31730(t *testing.T) {
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists PK_S_MULTI_37;`)
-	tk.MustExec(`CREATE TABLE PK_S_MULTI_37 (COL1 decimal(55,0) NOT NULL, COL2 decimal(55,0) NOT NULL,PRIMARY KEY (COL1, COL2) /*T![clustered_index] NONCLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`CREATE TABLE PK_S_MULTI_37 (COL1 decimal(55,0) NOT NULL, COL2 decimal(55,0) NOT NULL,PRIMARY KEY (COL1, COL2) /*T![clustered_index] NONCLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;`)
 	tk.MustExec(`insert into PK_S_MULTI_37 values(-9999999999999999999999999999999999999999999999, 1);`)
 	tk.MustExec(`prepare stmt from 'SELECT SUM(COL1+?), col2 FROM PK_S_MULTI_37 GROUP BY col2';`)
 	tk.MustExec(`set @a=1;`)
@@ -403,7 +403,7 @@ func TestIssueEnablePreparedPlanCache2(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows(`偧孇鱓鼂瘠钻篝醗時鷷聽箌磇砀玸眞扦鸇祈灇 127 7902-03-05 08:54:04 -1094128660`))
 	// TestIssue28246
 	tk.MustExec("drop table if exists PK_AUTO_RANDOM9111;")
-	tk.MustExec("CREATE TABLE `PK_AUTO_RANDOM9111` (   `COL1` bigint(45) NOT NULL  ,   `COL2` varchar(20) DEFAULT NULL,   `COL4` datetime DEFAULT NULL,   `COL3` bigint(20) DEFAULT NULL,   `COL5` float DEFAULT NULL,   PRIMARY KEY (`COL1`)  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `PK_AUTO_RANDOM9111` (   `COL1` bigint(45) NOT NULL  ,   `COL2` varchar(20) DEFAULT NULL,   `COL4` datetime DEFAULT NULL,   `COL3` bigint(20) DEFAULT NULL,   `COL5` float DEFAULT NULL,   PRIMARY KEY (`COL1`)  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustExec("insert into PK_AUTO_RANDOM9111(col1) values (-9223372036854775808), (9223372036854775807);")
 	tk.MustExec("set @a=9223372036854775807, @b=1")
 	tk.MustExec(`prepare stmt from 'select min(col1) from PK_AUTO_RANDOM9111 where col1 > ?;';`)
@@ -425,7 +425,7 @@ func TestIssue29805(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_clustered_index=on;")
 	tk.MustExec("drop table if exists PK_TCOLLATION10197;")
-	tk.MustExec("CREATE TABLE `PK_TCOLLATION10197` (`COL1` char(1) NOT NULL, PRIMARY KEY (`COL1`(1)) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `PK_TCOLLATION10197` (`COL1` char(1) NOT NULL, PRIMARY KEY (`COL1`(1)) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustExec("insert into PK_TCOLLATION10197 values('龺');")
 	tk.MustExec("set @a='畻', @b='龺';")
 	tk.MustExec(`prepare stmt from 'select/*+ hash_agg() */ count(distinct col1) from PK_TCOLLATION10197 where col1 > ?;';`)
@@ -449,7 +449,7 @@ func TestIssue29993(t *testing.T) {
 	// test PointGet + cluster index
 	tk.MustExec("set tidb_enable_clustered_index=on;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE `t` (`COL1` enum('a', 'b') NOT NULL PRIMARY KEY, col2 int) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `t` (`COL1` enum('a', 'b') NOT NULL PRIMARY KEY, col2 int) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustExec("insert into t values('a', 1), ('b', 2);")
 	tk.MustExec("set @a='a', @b='b', @z='z';")
 	tk.MustExec(`prepare stmt from 'select col1 from t where col1 = ? and col2 in (1, 2);';`)
@@ -463,7 +463,7 @@ func TestIssue29993(t *testing.T) {
 
 	// test batchPointGet + cluster index
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE `t` (`COL1` enum('a', 'b') NOT NULL, col2 int, PRIMARY KEY(col1, col2)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `t` (`COL1` enum('a', 'b') NOT NULL, col2 int, PRIMARY KEY(col1, col2)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustExec("insert into t values('a', 1), ('b', 2);")
 	tk.MustExec("set @a='a', @b='b', @z='z';")
 	tk.MustExec(`prepare stmt from 'select col1 from t where (col1, col2) in ((?, 1));';`)
@@ -477,7 +477,7 @@ func TestIssue29993(t *testing.T) {
 	// test PointGet + non cluster index
 	tk.MustExec("set tidb_enable_clustered_index=off;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE `t` (`COL1` enum('a', 'b') NOT NULL PRIMARY KEY, col2 int) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `t` (`COL1` enum('a', 'b') NOT NULL PRIMARY KEY, col2 int) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustExec("insert into t values('a', 1), ('b', 2);")
 	tk.MustExec("set @a='a', @b='b', @z='z';")
 	tk.MustExec(`prepare stmt from 'select col1 from t where col1 = ? and col2 in (1, 2);';`)
@@ -491,7 +491,7 @@ func TestIssue29993(t *testing.T) {
 
 	// test batchPointGet + non cluster index
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE `t` (`COL1` enum('a', 'b') NOT NULL, col2 int, PRIMARY KEY(col1, col2)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `t` (`COL1` enum('a', 'b') NOT NULL, col2 int, PRIMARY KEY(col1, col2)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustExec("insert into t values('a', 1), ('b', 2);")
 	tk.MustExec("set @a='a', @b='b', @z='z';")
 	tk.MustExec(`prepare stmt from 'select col1 from t where (col1, col2) in ((?, 1));';`)

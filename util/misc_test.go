@@ -172,7 +172,7 @@ func TestToPB(t *testing.T) {
 		FieldType:    *types.NewFieldType(0),
 		Hidden:       true,
 	}
-	column2.SetCollate("utf8mb4_bin")
+	column2.SetCollate("utf8mb4_0900_ai_ci")
 
 	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnToProto(column, false).String())
 	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnsToProto([]*model.ColumnInfo{column, column2}, false, false)[0].String())

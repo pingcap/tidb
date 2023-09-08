@@ -525,7 +525,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("drop table if exists UK_GCOL_VIRTUAL_18588;")
 	tk.MustExec("CREATE TABLE `UK_GCOL_VIRTUAL_18588` (`COL1` bigint(20), UNIQUE KEY `UK_COL1` (`COL1`)" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustExec("insert into UK_GCOL_VIRTUAL_18588 values('8502658334322817163');")
 	tk.MustExec(`prepare stmt from 'select col1 from UK_GCOL_VIRTUAL_18588 where col1 between ? and ? or col1 < ?';`)
 	tk.MustExec("set @a=5516958330762833919, @b=8551969118506051323, @c=2887622822023883594;")
@@ -749,7 +749,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 		"`COL3` datetime DEFAULT NULL," +
 		"KEY `U_M_COL4` (`COL1`,`COL2`)," +
 		"KEY `U_M_COL5` (`COL3`,`COL2`)" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustExec("insert into IDT_MULTI15858STROBJSTROBJ values('aa', 1333053589,'1037-12-26 01:38:52');")
 
 	tk.MustExec("set tidb_enable_index_merge=on;")

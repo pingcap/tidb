@@ -159,7 +159,7 @@ func TestReorganizePartitionRollback(t *testing.T) {
 		"    `pad` char(60) NOT NULL DEFAULT '',\n" +
 		"    PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 		"    KEY `k_1` (`k`)\n" +
-		"  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"  PARTITION BY RANGE (`id`)\n" +
 		"  (PARTITION `p0` VALUES LESS THAN (2000000),\n" +
 		"   PARTITION `p1` VALUES LESS THAN (4000000),\n" +
@@ -230,7 +230,7 @@ func TestReorganizePartitionRollback(t *testing.T) {
 		"  `pad` char(60) NOT NULL DEFAULT '',\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `k_1` (`k`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5001\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci AUTO_INCREMENT=5001\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (2000000),\n" +
 		" PARTITION `p1` VALUES LESS THAN (4000000),\n" +
@@ -268,7 +268,7 @@ func TestAlterPartitionBy(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (1000000),\n" +
 		" PARTITION `p1` VALUES LESS THAN (2000000),\n" +
@@ -280,7 +280,7 @@ func TestAlterPartitionBy(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY HASH (`a`) PARTITIONS 7"))
 	tk.MustExec(`alter table t partition by key(a) partitions 5`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
@@ -289,7 +289,7 @@ func TestAlterPartitionBy(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY KEY (`a`) PARTITIONS 5"))
 }
 
@@ -333,7 +333,7 @@ PARTITION BY hash (a) PARTITIONS 1`)
 		"  `b` varchar(100) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY HASH (`a`) PARTITIONS 1"))
 
 	tk.MustExec(`ALTER TABLE t REMOVE PARTITIONING`)
@@ -343,6 +343,6 @@ PARTITION BY hash (a) PARTITIONS 1`)
 		"  `b` varchar(100) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 a", "2 bye", "3 Hi"))
 }

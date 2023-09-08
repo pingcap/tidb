@@ -1100,7 +1100,7 @@ func TestMultiSchemaChangeTableOption(t *testing.T) {
 	tk.MustExec("create table t (a int, b int) charset = utf8 shard_row_id_bits=2;")
 	tk.MustExec("alter table t modify column a tinyint, comment = 'abc', charset = utf8mb4;")
 	tk.MustQuery("select TIDB_ROW_ID_SHARDING_INFO, TABLE_COMMENT, TABLE_COLLATION from information_schema.tables where table_name = 't';").
-		Check(testkit.Rows("SHARD_BITS=2 abc utf8mb4_bin"))
+		Check(testkit.Rows("SHARD_BITS=2 abc utf8mb4_0900_ai_ci"))
 }
 
 func TestMultiSchemaChangeNonPublicDefaultValue(t *testing.T) {

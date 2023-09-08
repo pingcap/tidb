@@ -138,8 +138,8 @@ var allTestCase = []testCancelJob{
 	{"alter table t_cs convert to charset utf8mb4", true, model.StateNone, true, false, []string{"create table t_cs(a varchar(10)) charset utf8"}},
 	{"alter table t_cs convert to charset utf8mb4", false, model.StatePublic, false, true, nil},
 	// Modify schema charset and collate.
-	{"alter database db_coll charset utf8mb4 collate utf8mb4_bin", true, model.StateNone, true, false, []string{"create database db_coll default charset utf8 collate utf8_bin"}},
-	{"alter database db_coll charset utf8mb4 collate utf8mb4_bin", false, model.StatePublic, false, true, nil},
+	{"alter database db_coll charset utf8mb4 collate utf8mb4_0900_ai_ci", true, model.StateNone, true, false, []string{"create database db_coll default charset utf8 collate utf8_bin"}},
+	{"alter database db_coll charset utf8mb4 collate utf8mb4_0900_ai_ci", false, model.StatePublic, false, true, nil},
 	// Truncate partition.
 	{"alter table t_partition truncate partition p3", true, model.StatePublic, true, false, nil},
 	{"alter table t_partition truncate partition p3", false, model.StatePublic, false, true, nil},

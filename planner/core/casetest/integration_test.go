@@ -872,7 +872,7 @@ func TestIssue22105(t *testing.T) {
   KEY i4 (key4),
   KEY i5 (key5),
   KEY i6 (key6)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`)
 
 	var input []string
 	var output []struct {
@@ -1472,7 +1472,7 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
   c2 text DEFAULT NULL,
   KEY idx1 (c1),
   KEY idx2 (c1,c2(5))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`)
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table t2(a int, b varchar(10), index idx(b(5)))")
 	tk.MustExec("create table t3(a int, b varchar(10), c int, primary key (a, b(5)) clustered)")

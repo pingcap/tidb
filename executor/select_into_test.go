@@ -62,7 +62,7 @@ func TestSelectIntoOutfileTypes(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE `t` ( `a` bit(10) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `t` ( `a` bit(10) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustExec("INSERT INTO `t` VALUES (_binary '\\0'), (_binary '\\1'), (_binary '\\2'), (_binary '\\3');")
 	tk.MustExec(fmt.Sprintf("SELECT * FROM t INTO OUTFILE %q", outfile))
 	cmpAndRm("\x00\x00\n\x001\n\x002\n\x003\n", outfile, t)
@@ -90,7 +90,7 @@ func TestSelectIntoOutfileTypes(t *testing.T) {
 `, outfile, t)
 
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id float(16,2)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("create table t (id float(16,2)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci")
 	tk.MustExec("insert into t values (3.4), (1), (10.1), (2.00)")
 	tk.MustExec(fmt.Sprintf("SELECT * FROM t ORDER BY id INTO OUTFILE %q", outfile))
 	cmpAndRm(`1.00

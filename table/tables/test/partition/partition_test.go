@@ -458,7 +458,7 @@ func TestTimeZoneChange(t *testing.T) {
 	tk.MustQuery("SHOW CREATE TABLE timezone_test").Check(testkit.Rows("timezone_test CREATE TABLE `timezone_test` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (UNIX_TIMESTAMP(`creation_dt`))\n" +
 		"(PARTITION `p5` VALUES LESS THAN (1578035400),\n" +
 		" PARTITION `p6` VALUES LESS THAN (1578035700),\n" +
@@ -473,7 +473,7 @@ func TestTimeZoneChange(t *testing.T) {
 	tk.MustQuery("SHOW CREATE TABLE timezone_test").Check(testkit.Rows("timezone_test CREATE TABLE `timezone_test` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (UNIX_TIMESTAMP(`creation_dt`))\n" +
 		"(PARTITION `p5` VALUES LESS THAN (1578064200),\n" +
 		" PARTITION `p6` VALUES LESS THAN (1578064500),\n" +
@@ -798,7 +798,7 @@ func TestExchangePartitionStates(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (1000000),\n" +
 		" PARTITION `p1M` VALUES LESS THAN (2000000))"))
@@ -808,7 +808,7 @@ func TestExchangePartitionStates(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustExec(`commit`)
 	tk.MustExec(`insert into t values (11,"11")`)
 	tk.MustExec(`insert into t values (1000011,"1000011")`)
@@ -869,7 +869,7 @@ func TestAddKeyPartitionStates(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY HASH (`a`) PARTITIONS 3"))
 	tk3.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "2 2", "3 3"))
 	tk3.MustExec(`insert into t values (5,"5")`)
@@ -883,7 +883,7 @@ func TestAddKeyPartitionStates(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY HASH (`a`) PARTITIONS 4"))
 	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "2 2", "3 3", "4 4"))
 	tk.MustExec(`insert into t values (6,"6")`)
@@ -2226,7 +2226,7 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 		"  `col3` int(11) NOT NULL,\n" +
 		"  `col4` int(11) NOT NULL,\n" +
 		"  UNIQUE KEY `col3` (`col3`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY KEY (`col3`) PARTITIONS 4"))
 
 	// BLOB, JSON don't support key partition
@@ -2286,7 +2286,7 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 		"  `col1` int(11) DEFAULT NULL,\n" +
 		"  `col2` char(5) DEFAULT NULL,\n" +
 		"  `col3` date DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY KEY (`col3`) PARTITIONS 5"))
 
 	// It ignores /*!50100 */ format, but doesn't ignore specified partition names
@@ -2302,7 +2302,7 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 		"  `col1` int(11) DEFAULT NULL,\n" +
 		"  `col2` char(5) DEFAULT NULL,\n" +
 		"  `col3` date DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY KEY (`col1`)\n" +
 		"(PARTITION `pp0`,\n" +
 		" PARTITION `pp1`,\n" +
@@ -2321,7 +2321,7 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 		"  `col1` int(11) DEFAULT NULL,\n" +
 		"  `col2` char(5) DEFAULT NULL,\n" +
 		"  `col3` date DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY KEY (`col1`)\n" +
 		"(PARTITION `pp0` COMMENT 'huaian',\n" +
 		" PARTITION `pp1` COMMENT 'nanjing',\n" +
@@ -2338,7 +2338,7 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 		"  `col1` int(11) DEFAULT NULL,\n" +
 		"  `col2` char(5) DEFAULT NULL,\n" +
 		"  `col3` date DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`fivereplicas` */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T![placement] PLACEMENT POLICY=`fivereplicas` */\n" +
 		"PARTITION BY KEY (`col1`) PARTITIONS 4"))
 
 	// The partition column can has null value
@@ -2398,7 +2398,7 @@ func TestKeyPartitionWithDifferentCharsets(t *testing.T) {
 		"col3 VARCHAR(12) NOT NULL," +
 		"col4 INT NOT NULL," +
 		"UNIQUE KEY (col3)" +
-		") CHARSET=utf8mb4 COLLATE=utf8mb4_bin " +
+		") CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci " +
 		"PARTITION BY KEY(col3) " +
 		"PARTITIONS 4")
 	// ignore tail spaces
@@ -2447,7 +2447,7 @@ func TestIssue31721(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_list_partition=on;")
 	tk.MustExec("drop tables if exists t_31721")
-	tk.MustExec("CREATE TABLE `t_31721` (`COL1` char(1) NOT NULL) CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY LIST COLUMNS(`COL1`) " +
+	tk.MustExec("CREATE TABLE `t_31721` (`COL1` char(1) NOT NULL) CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci PARTITION BY LIST COLUMNS(`COL1`) " +
 		"(PARTITION `P0` VALUES IN ('1')," +
 		"PARTITION `P1` VALUES IN ('2')," +
 		"PARTITION `P2` VALUES IN ('3'));")
@@ -2862,7 +2862,7 @@ func TestPartitionByExtensivePart(t *testing.T) {
 		"  KEY `c` (`c`,`b`),\n" +
 		"  KEY `d` (`d`,`c`),\n" +
 		"  KEY `e` (`e`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n"
 	tAlter := []struct{ alter, result string }{
 		{
 			// RANGE COLUMNS
@@ -2965,7 +2965,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 		"  `f` double DEFAULT NULL,\n" +
 		"  `g` text DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE COLUMNS(`a`)\n" +
 		"(PARTITION `pNull` VALUES LESS THAN (''),\n" +
 		" PARTITION `pM` VALUES LESS THAN ('M'),\n" +
@@ -2985,7 +2985,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 		"  KEY `c` (`c`,`b`),\n" +
 		"  KEY `d` (`d`,`c`),\n" +
 		"  KEY `e` (`e`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	rows := 1000
 	pkInserts := 200

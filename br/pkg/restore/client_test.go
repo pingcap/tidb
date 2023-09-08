@@ -73,7 +73,7 @@ func TestCreateTables(t *testing.T) {
 					State:     model.StatePublic,
 				}},
 				Charset: "utf8mb4",
-				Collate: "utf8mb4_bin",
+				Collate: "utf8mb4_0900_ai_ci",
 			},
 		}
 	}
@@ -170,7 +170,7 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 				State:     model.StatePublic,
 			}},
 			Charset: "utf8mb4",
-			Collate: "utf8mb4_bin",
+			Collate: "utf8mb4_0900_ai_ci",
 		},
 	}
 	_, _, err = client.CreateTables(cluster.Domain, []*metautil.Table{table}, 0)
@@ -308,7 +308,7 @@ func TestPreCheckTableClusterIndex(t *testing.T) {
 					State:     model.StatePublic,
 				}},
 				Charset: "utf8mb4",
-				Collate: "utf8mb4_bin",
+				Collate: "utf8mb4_0900_ai_ci",
 			},
 		}
 	}

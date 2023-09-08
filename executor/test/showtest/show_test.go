@@ -64,7 +64,7 @@ func TestShowCreateViewDefiner(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create or replace view v1 as select 1")
-	tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1`|utf8mb4|utf8mb4_bin"))
+	tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1`|utf8mb4|utf8mb4_0900_ai_ci"))
 	tk.MustExec("drop view v1")
 }
 
@@ -77,44 +77,44 @@ func TestShowCreateTable(t *testing.T) {
 	tk.MustExec("create table t1(a int,b int)")
 	tk.MustExec("drop view if exists v1")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select * from t1")
-	tk.MustQuery("show create table v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1`|utf8mb4|utf8mb4_bin"))
-	tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1`|utf8mb4|utf8mb4_bin"))
+	tk.MustQuery("show create table v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1`|utf8mb4|utf8mb4_0900_ai_ci"))
+	tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1`|utf8mb4|utf8mb4_0900_ai_ci"))
 	tk.MustExec("drop view v1")
 	tk.MustExec("drop table t1")
 
 	tk.MustExec("drop view if exists v")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v as select JSON_MERGE('{}', '{}') as col;")
-	tk.MustQuery("show create view v").Check(testkit.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE(_UTF8MB4'{}', _UTF8MB4'{}') AS `col`|utf8mb4|utf8mb4_bin"))
+	tk.MustQuery("show create view v").Check(testkit.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE(_UTF8MB4'{}', _UTF8MB4'{}') AS `col`|utf8mb4|utf8mb4_0900_ai_ci"))
 	tk.MustExec("drop view if exists v")
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int,b int)")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select avg(a),t1.* from t1 group by a")
-	tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`avg(a)`, `a`, `b`) AS SELECT AVG(`a`) AS `avg(a)`,`test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1` GROUP BY `a`|utf8mb4|utf8mb4_bin"))
+	tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`avg(a)`, `a`, `b`) AS SELECT AVG(`a`) AS `avg(a)`,`test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1` GROUP BY `a`|utf8mb4|utf8mb4_0900_ai_ci"))
 	tk.MustExec("drop view v1")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select a+b, t1.* , a as c from t1")
-	tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a+b`, `a`, `b`, `c`) AS SELECT `a`+`b` AS `a+b`,`test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b`,`a` AS `c` FROM `test`.`t1`|utf8mb4|utf8mb4_bin"))
+	tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a+b`, `a`, `b`, `c`) AS SELECT `a`+`b` AS `a+b`,`test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b`,`a` AS `c` FROM `test`.`t1`|utf8mb4|utf8mb4_0900_ai_ci"))
 	tk.MustExec("drop table t1")
 	tk.MustExec("drop view v1")
 
 	// For issue #9211
-	tk.MustExec("create table t(c int, b int as (c + 1))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("create table t(c int, b int as (c + 1))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `c` int(11) DEFAULT NULL,\n"+
 			"  `b` int(11) GENERATED ALWAYS AS (`c` + 1) VIRTUAL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 
 	tk.MustExec("drop table t")
-	tk.MustExec("create table t(c int, b int as (c + 1) not null)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("create table t(c int, b int as (c + 1) not null)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `c` int(11) DEFAULT NULL,\n"+
 			"  `b` int(11) GENERATED ALWAYS AS (`c` + 1) VIRTUAL NOT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t ( a char(10) charset utf8 collate utf8_bin, b char(10) as (rtrim(a)));")
@@ -123,7 +123,7 @@ func TestShowCreateTable(t *testing.T) {
 			"t CREATE TABLE `t` (\n"+
 			"  `a` char(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
 			"  `b` char(10) GENERATED ALWAYS AS (rtrim(`a`)) VIRTUAL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 	tk.MustExec("drop table t")
 
@@ -134,7 +134,7 @@ func TestShowCreateTable(t *testing.T) {
 			"different_charset CREATE TABLE `different_charset` (\n"+
 			"  `ch1` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
 			"  `ch2` varbinary(10) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 
 	tk.MustExec("drop table if exists t")
@@ -158,7 +158,7 @@ func TestShowCreateTable(t *testing.T) {
 			"  `f` datetime(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2),\n"+
 			"  `g` timestamp(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2),\n"+
 			"  `h` date DEFAULT CURRENT_DATE\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 	tk.MustExec("drop table t")
 
@@ -168,7 +168,7 @@ func TestShowCreateTable(t *testing.T) {
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL,\n"+
 			"  `b` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T! SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */",
 	))
 	tk.MustExec("drop table t")
 
@@ -179,7 +179,7 @@ func TestShowCreateTable(t *testing.T) {
 		""+
 			"t1 CREATE TABLE `t1` (\n"+
 			"  `c` int(10) unsigned DEFAULT '0'\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 	tk.MustExec("drop table t1")
 
@@ -245,12 +245,12 @@ func TestShowCreateTable(t *testing.T) {
 			"  `a` varchar(123) COLLATE utf8mb4_unicode_ci DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 	))
-	tk.MustExec("create table ttt5(a varchar(123) default null)engine=innodb default charset=utf8mb4 collate=utf8mb4_bin;")
+	tk.MustExec("create table ttt5(a varchar(123) default null)engine=innodb default charset=utf8mb4 collate=utf8mb4_0900_ai_ci;")
 	tk.MustQuery("show create table `ttt5`").Check(testkit.RowsWithSep("|",
 		""+
 			"ttt5 CREATE TABLE `ttt5` (\n"+
 			"  `a` varchar(123) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 
 	// for expression index
@@ -263,7 +263,7 @@ func TestShowCreateTable(t *testing.T) {
 			"  `a` int(11) DEFAULT NULL,\n"+
 			"  `b` double DEFAULT NULL,\n"+
 			"  KEY `expr_idx` ((`a` * `b` + 1))\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 
 	// Fix issue #15175, show create table sequence_name.
@@ -289,12 +289,12 @@ func TestShowCreateTable(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=binary", // binary collate is ignored
 	))
 	tk.MustExec(`drop table if exists binary_collate`)
-	tk.MustExec(`create table binary_collate(a varchar(10)) default charset=utf8mb4 collate=utf8mb4_bin;`)
+	tk.MustExec(`create table binary_collate(a varchar(10)) default charset=utf8mb4 collate=utf8mb4_0900_ai_ci;`)
 	tk.MustQuery(`show create table binary_collate`).Check(testkit.RowsWithSep("|",
 		""+
 			"binary_collate CREATE TABLE `binary_collate` (\n"+
 			"  `a` varchar(10) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin", // non-binary collate is kept.
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci", // non-binary collate is kept.
 	))
 	// Test for issue #17 in bug competition, default num and sequence should be shown without quote.
 	tk.MustExec(`drop table if exists default_num`)
@@ -303,7 +303,7 @@ func TestShowCreateTable(t *testing.T) {
 		""+
 			"default_num CREATE TABLE `default_num` (\n"+
 			"  `a` int(11) DEFAULT '11'\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 	tk.MustExec(`drop table if exists default_varchar`)
 	tk.MustExec("create table default_varchar(a varchar(10) default \"haha\")")
@@ -311,7 +311,7 @@ func TestShowCreateTable(t *testing.T) {
 		""+
 			"default_varchar CREATE TABLE `default_varchar` (\n"+
 			"  `a` varchar(10) DEFAULT 'haha'\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 	tk.MustExec(`drop table if exists default_sequence`)
 	tk.MustExec("create table default_sequence(a int default nextval(seq))")
@@ -319,7 +319,7 @@ func TestShowCreateTable(t *testing.T) {
 		""+
 			"default_sequence CREATE TABLE `default_sequence` (\n"+
 			"  `a` int(11) DEFAULT nextval(`test`.`seq`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 
 	// set @@foreign_key_checks=0,
@@ -337,7 +337,7 @@ func TestShowCreateTable(t *testing.T) {
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  KEY `par_ind` (`parent_id`),\n"+
 			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `test`.`parent` (`id`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 
 	// Test Foreign keys + ON DELETE / ON UPDATE
@@ -351,7 +351,7 @@ func TestShowCreateTable(t *testing.T) {
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  KEY `par_ind` (`parent_id`),\n"+
 			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `test`.`parent` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 
 	// Test Foreign key refer other database table.
@@ -365,7 +365,7 @@ func TestShowCreateTable(t *testing.T) {
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `fk` (`b`),\n" +
 		"  CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test1`.`t1` (`id`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	// Test issue #20327
 	tk.MustExec("drop table if exists t;")
@@ -390,7 +390,7 @@ func TestShowCreateTable(t *testing.T) {
 			"  `id` int(11) DEFAULT NULL,\n"+
 			"  `name` varchar(10) DEFAULT NULL,\n"+
 			"  UNIQUE KEY `idx` (`id`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n"+
 			"PARTITION BY LIST (`id`)\n"+
 			"(PARTITION `p0` VALUES IN (3,5,6,9,17),\n"+
 			" PARTITION `p1` VALUES IN (1,2,10,11,19,20),\n"+
@@ -409,7 +409,7 @@ func TestShowCreateTable(t *testing.T) {
 			"  `id` int(11) DEFAULT NULL,\n"+
 			"  `name` varchar(10) DEFAULT NULL,\n"+
 			"  UNIQUE KEY `idx` (`id`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n"+
 			"PARTITION BY LIST COLUMNS(`id`)\n"+
 			"(PARTITION `p0` VALUES IN (3,5,6,9,17),\n"+
 			" PARTITION `p1` VALUES IN (1,2,10,11,19,20),\n"+
@@ -425,7 +425,7 @@ func TestShowCreateTable(t *testing.T) {
 			"  `id` int(11) DEFAULT NULL,\n"+
 			"  `name` varchar(10) DEFAULT NULL,\n"+
 			"  UNIQUE KEY `idx` (`id`,`name`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n"+
 			"PARTITION BY LIST COLUMNS(`id`,`name`)\n"+
 			"(PARTITION `p0` VALUES IN ((3,'1'),(5,'5')),\n"+
 			" PARTITION `p1` VALUES IN ((1,'1')))"))
@@ -437,7 +437,7 @@ func TestShowCreateTable(t *testing.T) {
 			"  `v` varchar(255) NOT NULL,\n"+
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  KEY `idx_v` (`v`) COMMENT 'foo''bar'\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	// For issue #29922
 	tk.MustExec("CREATE TABLE `thash` (\n  `id` bigint unsigned NOT NULL,\n  `data` varchar(255) DEFAULT NULL,\n  PRIMARY KEY (`id`)\n)\nPARTITION BY HASH (`id`)\n(PARTITION pEven COMMENT = \"Even ids\",\n PARTITION pOdd COMMENT = \"Odd ids\");")
@@ -446,7 +446,7 @@ func TestShowCreateTable(t *testing.T) {
 		"  `id` bigint(20) unsigned NOT NULL,\n"+
 		"  `data` varchar(255) DEFAULT NULL,\n"+
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n"+
 		"PARTITION BY HASH (`id`)\n"+
 		"(PARTITION `pEven` COMMENT 'Even ids',\n"+
 		" PARTITION `pOdd` COMMENT 'Odd ids')",
@@ -459,7 +459,7 @@ func TestShowCreateTable(t *testing.T) {
 		"  `id` bigint(20) unsigned NOT NULL,\n"+
 		"  `data` varchar(255) DEFAULT NULL,\n"+
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n"+
 		"PARTITION BY HASH (`id`) PARTITIONS 1",
 	))
 
@@ -472,7 +472,7 @@ func TestShowCreateTable(t *testing.T) {
 			"  `a` int(11) NOT NULL,\n"+
 			"  `b` varchar(20) DEFAULT '\\\\',\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(" +
@@ -483,14 +483,14 @@ func TestShowCreateTable(t *testing.T) {
 			"t CREATE TABLE `t` (\n"+
 			"  `a` set('a','b') CHARACTER SET binary COLLATE binary DEFAULT NULL,\n"+
 			"  `b` enum('a','b') CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(a bit default (rand()))`)
 	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
 		"t CREATE TABLE `t` (\n"+
 		"  `a` bit(1) DEFAULT rand()\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	tk.MustExec(`drop table if exists t`)
 	err := tk.ExecToErr(`create table t (a varchar(255) character set ascii) partition by range columns (a) (partition p values less than (0xff))`)
@@ -499,7 +499,7 @@ func TestShowCreateTable(t *testing.T) {
 	tk.MustQuery(`show create table t`).Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `a` varchar(255) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 			"PARTITION BY RANGE COLUMNS(`a`)\n" +
 			"(PARTITION `p` VALUES LESS THAN (x'7f'))"))
 }
@@ -521,7 +521,7 @@ func TestShowCreateTablePlacement(t *testing.T) {
 	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci "+
 			"/*T![placement] PLACEMENT POLICY=`x` */",
 	))
 
@@ -532,7 +532,7 @@ func TestShowCreateTablePlacement(t *testing.T) {
 	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci "+
 			"/*T![placement] PLACEMENT POLICY=`x` */",
 	))
 
@@ -551,7 +551,7 @@ func TestShowCreateTablePlacement(t *testing.T) {
 		"t CREATE TABLE `t` (\n"+
 		"  `a` int(11) DEFAULT NULL,\n"+
 		"  `b` varchar(255) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`x` */\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T![placement] PLACEMENT POLICY=`x` */\n"+
 		"PARTITION BY LIST (`a`)\n"+
 		"(PARTITION `pLow` VALUES IN (1,2,3,5,8) COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
 		" PARTITION `pMid` VALUES IN (9) COMMENT 'another comment',\n"+
@@ -567,7 +567,7 @@ func TestShowCreateTablePlacement(t *testing.T) {
 		"t CREATE TABLE `t` (\n"+
 		"  `a` int(11) DEFAULT NULL,\n"+
 		"  `b` varchar(255) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n"+
 		"PARTITION BY LIST COLUMNS(`b`)\n"+
 		"(PARTITION `pLow` VALUES IN ('1','2','3','5','8') COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
 		" PARTITION `pMax` VALUES IN ('10','11','12'))",
@@ -582,7 +582,7 @@ func TestShowCreateTablePlacement(t *testing.T) {
 		"t CREATE TABLE `t` (\n"+
 		"  `a` int(11) DEFAULT NULL,\n"+
 		"  `b` varchar(255) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n"+
 		"PARTITION BY LIST COLUMNS(`a`,`b`)\n"+
 		"(PARTITION `pLow` VALUES IN ((1,'1'),(2,'2'),(3,'3'),(5,'5'),(8,'8')) COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
 		" PARTITION `pMax` VALUES IN ((10,'10'),(11,'11'),(12,'12')))",
@@ -597,7 +597,7 @@ func TestShowCreateTablePlacement(t *testing.T) {
 		"t CREATE TABLE `t` (\n"+
 		"  `a` int(11) DEFAULT NULL,\n"+
 		"  `b` varchar(255) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n"+
 		"PARTITION BY RANGE (`a`)\n"+
 		"(PARTITION `pLow` VALUES LESS THAN (1000000) COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))",
@@ -612,7 +612,7 @@ func TestShowCreateTablePlacement(t *testing.T) {
 		"t CREATE TABLE `t` (\n"+
 		"  `a` int(11) DEFAULT NULL,\n"+
 		"  `b` varchar(255) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n"+
 		"PARTITION BY RANGE COLUMNS(`b`)\n"+
 		"(PARTITION `pLow` VALUES LESS THAN ('1000000') COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))",
@@ -634,7 +634,7 @@ func TestShowCreateTablePlacement(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) DEFAULT NULL,\n" +
 			"  `b` varchar(255) DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`x` */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T![placement] PLACEMENT POLICY=`x` */\n" +
 			"PARTITION BY RANGE COLUMNS(`a`,`b`)\n" +
 			"(PARTITION `pLow` VALUES LESS THAN (1000000,'1000000') COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n" +
 			" PARTITION `pMidLow` VALUES LESS THAN (1000000,MAXVALUE) COMMENT 'another comment' /*T![placement] PLACEMENT POLICY=`x` */,\n" +
@@ -649,7 +649,7 @@ func TestShowCreateTablePlacement(t *testing.T) {
 		"t CREATE TABLE `t` (\n"+
 		"  `a` int(11) DEFAULT NULL,\n"+
 		"  `b` varchar(255) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`x` */\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T![placement] PLACEMENT POLICY=`x` */\n"+
 		"PARTITION BY HASH (`a`) PARTITIONS 2",
 	))
 
@@ -662,7 +662,7 @@ func TestShowCreateTablePlacement(t *testing.T) {
 		"t CREATE TABLE `t` (\n"+
 		"  `a` int(11) DEFAULT NULL,\n"+
 		"  `b` varchar(255) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n"+
 		"PARTITION BY HASH (`a`)\n"+
 		"(PARTITION `pLow` COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
 		" PARTITION `pMax`)",
@@ -1053,7 +1053,7 @@ func TestShow2(t *testing.T) {
 	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "192.168.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	r := tk.MustQuery("show table status from test like 't'")
-	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 0 0 0 0 0 0 <nil> %s <nil> <nil> utf8mb4_bin   注释", createTime)))
+	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 0 0 0 0 0 0 <nil> %s <nil> <nil> utf8mb4_0900_ai_ci   注释", createTime)))
 
 	tk.MustQuery("show databases like 'test'").Check(testkit.Rows("test"))
 
@@ -1192,7 +1192,7 @@ func TestUnprivilegedShow(t *testing.T) {
 	require.NoError(t, err)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format(time.DateTime)
 
-	tk.MustQuery("show table status from testshow").Check(testkit.Rows(fmt.Sprintf("t1 InnoDB 10 Compact 0 0 0 0 0 0 <nil> %s <nil> <nil> utf8mb4_bin   ", createTime)))
+	tk.MustQuery("show table status from testshow").Check(testkit.Rows(fmt.Sprintf("t1 InnoDB 10 Compact 0 0 0 0 0 0 <nil> %s <nil> <nil> utf8mb4_0900_ai_ci   ", createTime)))
 }
 
 func TestCollation(t *testing.T) {
@@ -1304,7 +1304,7 @@ func TestShowCreateTableAutoRandom(t *testing.T) {
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(3) */,\n"+
 			"  `b` varchar(255) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 
 	// Implicit auto_random value should be shown explicitly.
@@ -1315,7 +1315,7 @@ func TestShowCreateTableAutoRandom(t *testing.T) {
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  `b` char(1) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 
 	// Special version comment can be shown in TiDB with new version.
@@ -1325,7 +1325,7 @@ func TestShowCreateTableAutoRandom(t *testing.T) {
 			"auto_random_tbl3 CREATE TABLE `auto_random_tbl3` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 	// Test show auto_random table option.
 	tk.MustExec("create table auto_random_tbl4 (a bigint primary key auto_random(5), b varchar(255)) auto_random_base = 100")
@@ -1335,7 +1335,7 @@ func TestShowCreateTableAutoRandom(t *testing.T) {
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  `b` varchar(255) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */",
 	))
 	// Test implicit auto_random with auto_random table option.
 	tk.MustExec("create table auto_random_tbl5 (a bigint auto_random primary key, b char) auto_random_base 50")
@@ -1345,7 +1345,7 @@ func TestShowCreateTableAutoRandom(t *testing.T) {
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  `b` char(1) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=50 */",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T![auto_rand_base] AUTO_RANDOM_BASE=50 */",
 	))
 	// Test auto_random table option already with special comment.
 	tk.MustExec("create table auto_random_tbl6 (a bigint /*T![auto_rand] auto_random */ primary key) auto_random_base 200")
@@ -1354,7 +1354,7 @@ func TestShowCreateTableAutoRandom(t *testing.T) {
 			"auto_random_tbl6 CREATE TABLE `auto_random_tbl6` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=200 */",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T![auto_rand_base] AUTO_RANDOM_BASE=200 */",
 	))
 	// Test auto_random table with range bits can be shown correctly.
 	tk.MustExec("create table auto_random_tbl7 (a bigint primary key auto_random(4, 32), b varchar(255));")
@@ -1364,7 +1364,7 @@ func TestShowCreateTableAutoRandom(t *testing.T) {
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(4, 32) */,\n"+
 			"  `b` varchar(255) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 }
 
@@ -1381,7 +1381,7 @@ func TestAutoIdCache(t *testing.T) {
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=10 */",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T![auto_id_cache] AUTO_ID_CACHE=10 */",
 	))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int auto_increment unique, b int key) auto_id_cache 100")
@@ -1392,7 +1392,7 @@ func TestAutoIdCache(t *testing.T) {
 			"  `b` int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (`b`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  UNIQUE KEY `a` (`a`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=100 */",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T![auto_id_cache] AUTO_ID_CACHE=100 */",
 	))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int key) auto_id_cache 5")
@@ -1401,7 +1401,7 @@ func TestAutoIdCache(t *testing.T) {
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=5 */",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T![auto_id_cache] AUTO_ID_CACHE=5 */",
 	))
 }
 
@@ -1418,7 +1418,7 @@ func TestShowCreateStmtIgnoreLocalTemporaryTables(t *testing.T) {
 		""+
 			"v1 CREATE TEMPORARY TABLE `v1` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 	tk.MustExec("drop view v1")
 	err := tk.ExecToErr("show create view v1")
@@ -1455,7 +1455,7 @@ func TestAutoRandomBase(t *testing.T) {
 			"  `b` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  UNIQUE KEY `b` (`b`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100 /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci AUTO_INCREMENT=100 /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */",
 	))
 
 	tk.MustExec("insert into t(`a`) values (1000)")
@@ -1466,7 +1466,7 @@ func TestAutoRandomBase(t *testing.T) {
 			"  `b` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  UNIQUE KEY `b` (`b`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5100 /*T![auto_rand_base] AUTO_RANDOM_BASE=6001 */",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci AUTO_INCREMENT=5100 /*T![auto_rand_base] AUTO_RANDOM_BASE=6001 */",
 	))
 }
 
@@ -1502,7 +1502,7 @@ func TestShowEscape(t *testing.T) {
 			"t`abl\"e CREATE TABLE `t``abl\"e` (\n"+
 			"  `c``olum\"n` int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (`c``olum\"n`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 
 	// ANSI_QUOTES will change the SHOW output
@@ -1513,7 +1513,7 @@ func TestShowEscape(t *testing.T) {
 			"t`abl\"e CREATE TABLE \"t`abl\"\"e\" (\n"+
 			"  \"c`olum\"\"n\" int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (\"c`olum\"\"n\") /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 
 	tk.MustExec("rename table \"t`abl\"\"e\" to t")
@@ -1605,7 +1605,7 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int DEFAULT NULL,\n" +
 		"  `b` varchar(2) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint(10), b bigint)")
@@ -1613,7 +1613,7 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` bigint DEFAULT NULL,\n" +
 		"  `b` bigint DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a tinyint(5), b tinyint(2), c tinyint)")
@@ -1624,7 +1624,7 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 		"  `a` tinyint DEFAULT NULL,\n" +
 		"  `b` tinyint DEFAULT NULL,\n" +
 		"  `c` tinyint DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a smallint(5), b smallint)")
@@ -1632,7 +1632,7 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` smallint DEFAULT NULL,\n" +
 		"  `b` smallint DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a mediumint(5), b mediumint)")
@@ -1640,7 +1640,7 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` mediumint DEFAULT NULL,\n" +
 		"  `b` mediumint DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int1(1), b int2(2), c int3, d int4, e int8)")
@@ -1652,7 +1652,7 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 		"  `c` mediumint DEFAULT NULL,\n" +
 		"  `d` int DEFAULT NULL,\n" +
 		"  `e` bigint DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, c1 bool, c2 int(10) zerofill)")
@@ -1662,7 +1662,7 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 		"  `c1` tinyint(1) DEFAULT NULL,\n" +
 		"  `c2` int(10) unsigned zerofill DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func TestShowVar(t *testing.T) {
@@ -1772,13 +1772,13 @@ func TestShowTemporaryTable(t *testing.T) {
 	// For issue https://github.com/pingcap/tidb/issues/24752
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE GLOBAL TEMPORARY TABLE `t1` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ON COMMIT DELETE ROWS"))
 	// No panic, fix issue https://github.com/pingcap/tidb/issues/24788
 	expect := "CREATE GLOBAL TEMPORARY TABLE `t3` (\n" +
 		"  `i` int(11) NOT NULL,\n" +
 		"  `j` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ON COMMIT DELETE ROWS"
 	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 " + expect))
 
 	// Verify that the `show create table` result can be used to build the table.
@@ -1798,7 +1798,7 @@ func TestShowTemporaryTable(t *testing.T) {
 		"  `pad` varbinary(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ON COMMIT DELETE ROWS"
 	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 " + expect))
 
 	tk.MustExec("create temporary table t6 (i int primary key, j int)")
@@ -1806,7 +1806,7 @@ func TestShowTemporaryTable(t *testing.T) {
 		"  `i` int(11) NOT NULL,\n" +
 		"  `j` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
 	tk.MustQuery("show create table t6").Check(testkit.Rows("t6 " + expect))
 	tk.MustExec("create temporary table t7 (i int primary key auto_increment, j int)")
 	defer func() {
@@ -1820,7 +1820,7 @@ func TestShowTemporaryTable(t *testing.T) {
 		"  `i` int(11) NOT NULL AUTO_INCREMENT,\n" +
 		"  `j` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=3"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci AUTO_INCREMENT=3"
 	tk.MustQuery("show create table t7").Check(testkit.Rows("t7 " + expect))
 }
 
@@ -1833,7 +1833,7 @@ func TestShowCachedTable(t *testing.T) {
 	tk.MustQuery("show create table t1").Check(
 		testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 			"  `id` int(11) DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /* CACHED ON */"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /* CACHED ON */"))
 	tk.MustQuery("select create_options from information_schema.tables where table_schema = 'test' and table_name = 't1'").Check(
 		testkit.Rows("cached=on"))
 
@@ -1841,7 +1841,7 @@ func TestShowCachedTable(t *testing.T) {
 	tk.MustQuery("show create table t1").Check(
 		testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 			"  `id` int(11) DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustQuery("select create_options from information_schema.tables where table_schema = 'test' and table_name = 't1'").Check(
 		testkit.Rows(""))
 }
@@ -1972,8 +1972,8 @@ func TestShowCollationsLike(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "root", Hostname: "%"}, nil, nil, nil))
-	tk.MustQuery("SHOW COLLATION LIKE 'UTF8MB4_BI%'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
-	tk.MustQuery("SHOW COLLATION LIKE 'utf8mb4_bi%'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
+	tk.MustQuery("SHOW COLLATION LIKE 'UTF8MB4_BI%'").Check(testkit.Rows("utf8mb4_0900_ai_ci utf8mb4 46 Yes Yes 1"))
+	tk.MustQuery("SHOW COLLATION LIKE 'utf8mb4_bi%'").Check(testkit.Rows("utf8mb4_0900_ai_ci utf8mb4 46 Yes Yes 1"))
 }
 
 func TestShowViewWithWindowFunction(t *testing.T) {
@@ -2048,22 +2048,22 @@ func TestShowTTLOption(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR")
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR ttl_enable = 'OFF'")
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (created_at datetime) TTL = created_at + INTERVAL 3.14159 HOUR_MINUTE")
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 3.14159 HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T![ttl] TTL=`created_at` + INTERVAL 3.14159 HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (created_at datetime) TTL = created_at + INTERVAL \"15:20\" HOUR_MINUTE")
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL _utf8mb4'15:20' HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T![ttl] TTL=`created_at` + INTERVAL _utf8mb4'15:20' HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (created_at datetime) TTL = created_at + INTERVAL 100 YEAR TTL_JOB_INTERVAL = '1d'")
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
 }
 
 func TestShowBindingDigestField(t *testing.T) {

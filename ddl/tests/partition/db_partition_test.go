@@ -257,7 +257,7 @@ func TestCreateTableWithPartition(t *testing.T) {
 			  partition p0 values less than (to_seconds('2004-01-01')),
 			  partition p1 values less than (to_seconds('2005-01-01')));`)
 	tk.MustQuery("show create table t26").Check(
-		testkit.Rows("t26 CREATE TABLE `t26` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE (TO_SECONDS(`a`))\n(PARTITION `p0` VALUES LESS THAN (63240134400),\n PARTITION `p1` VALUES LESS THAN (63271756800))"))
+		testkit.Rows("t26 CREATE TABLE `t26` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\nPARTITION BY RANGE (TO_SECONDS(`a`))\n(PARTITION `p0` VALUES LESS THAN (63240134400),\n PARTITION `p1` VALUES LESS THAN (63271756800))"))
 	tk.MustExec(`create table t27 (a bigint unsigned not null)
 		  partition by range(a) (
 		  partition p0 values less than (10),
@@ -392,7 +392,7 @@ func TestCreateTableWithHashPartition(t *testing.T) {
 		"t_linear CREATE TABLE `t_linear` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` varchar(128) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY HASH (`a`) PARTITIONS 4"))
 	tk.MustQuery("select * from t_linear partition (p0)").Check(testkit.Rows())
 
@@ -407,7 +407,7 @@ func TestCreateTableWithHashPartition(t *testing.T) {
 		"t_sub CREATE TABLE `t_sub` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` varchar(128) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (200),\n" +
@@ -429,7 +429,7 @@ func TestSubPartitioning(t *testing.T) {
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 	tk.MustExec(`drop table t`)
@@ -439,7 +439,7 @@ func TestSubPartitioning(t *testing.T) {
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST (`a`)\n" +
 		"(PARTITION `pMax` VALUES IN (1,3,4))"))
 	tk.MustExec(`drop table t`)
@@ -612,14 +612,14 @@ create table log_message_1 (
 			dbterror.ErrWrongTypeColumnValue,
 		},
 		{
-			"create table t(a char(10) collate utf8mb4_bin) " +
+			"create table t(a char(10) collate utf8mb4_0900_ai_ci) " +
 				"partition by range columns (a) (" +
 				"partition p0 values less than ('a'), " +
 				"partition p1 values less than ('G'));",
 			dbterror.ErrRangeNotIncreasing,
 		},
 		{
-			"create table t(a char(10) collate utf8mb4_bin) " +
+			"create table t(a char(10) collate utf8mb4_0900_ai_ci) " +
 				"partition by range columns (a) (" +
 				"partition p0 values less than ('g'), " +
 				"partition p1 values less than ('A'));",
@@ -707,7 +707,7 @@ create table log_message_1 (
     	partition p1 values less than ('G'));`)
 
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec(`create table t (a varchar(255) charset utf8mb4 collate utf8mb4_bin) ` +
+	tk.MustExec(`create table t (a varchar(255) charset utf8mb4 collate utf8mb4_0900_ai_ci) ` +
 		`partition by range columns (a) ` +
 		`(partition pnull values less than (""),` +
 		`partition puppera values less than ("AAA"),` +
@@ -735,7 +735,7 @@ create table log_message_1 (
 	tk.MustQuery(`show create table t`).Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `a` time DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 			"PARTITION BY RANGE COLUMNS(`a`)\n" +
 			"(PARTITION `p1` VALUES LESS THAN ('2020'))"))
 	tk.MustExec(`drop table t`)
@@ -744,7 +744,7 @@ create table log_message_1 (
 		"t CREATE TABLE `t` (\n" +
 			"  `a` time DEFAULT NULL,\n" +
 			"  `b` time DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 			"PARTITION BY RANGE COLUMNS(`a`)\n" +
 			"(PARTITION `p1` VALUES LESS THAN ('2020'),\n" +
 			" PARTITION `p2` VALUES LESS THAN ('20:20:10'))"))
@@ -756,7 +756,7 @@ create table log_message_1 (
 		"t CREATE TABLE `t` (\n" +
 			"  `a` time DEFAULT NULL,\n" +
 			"  `b` time DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 			"PARTITION BY RANGE COLUMNS(`a`,`b`)\n" +
 			"(PARTITION `p1` VALUES LESS THAN ('00:20:20','00:20:20'),\n" +
 			" PARTITION `p2` VALUES LESS THAN ('20:20:10','20:20:10'))"))
@@ -769,7 +769,7 @@ func TestPartitionRangeColumnsCollate(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create schema PartitionRangeColumnsCollate")
 	tk.MustExec("use PartitionRangeColumnsCollate")
-	tk.MustExec(`create table t (a varchar(255) charset utf8mb4 collate utf8mb4_bin) partition by range columns (a)
+	tk.MustExec(`create table t (a varchar(255) charset utf8mb4 collate utf8mb4_0900_ai_ci) partition by range columns (a)
  (partition p0A values less than ("A"),
  partition p1AA values less than ("AA"),
  partition p2Aa values less than ("Aa"),
@@ -832,43 +832,43 @@ func TestPartitionRangeColumnsCollate(t *testing.T) {
 		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from t where a = "aa" collate utf8mb4_general_ci`).Sort().Check(testkit.Rows(
 		"AA", "Aa", "aA", "aa"))
-	tk.MustQuery(`explain select * from t where a = "aa" collate utf8mb4_bin`).Check(testkit.Rows(
+	tk.MustQuery(`explain select * from t where a = "aa" collate utf8mb4_0900_ai_ci`).Check(testkit.Rows(
 		`TableReader_7 8000.00 root partition:p2 data:Selection_6`,
 		`└─Selection_6 8000.00 cop[tikv]  eq(partitionrangecolumnscollate.t.a, "aa")`,
 		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
-	tk.MustQuery(`select * from t where a = "aa" collate utf8mb4_bin`).Sort().Check(testkit.Rows("aa"))
+	tk.MustQuery(`select * from t where a = "aa" collate utf8mb4_0900_ai_ci`).Sort().Check(testkit.Rows("aa"))
 	// 'a' < 'b' < 'ä' in _bin
-	tk.MustQuery(`explain select * from t where a = "ä" collate utf8mb4_bin`).Check(testkit.Rows(
+	tk.MustQuery(`explain select * from t where a = "ä" collate utf8mb4_0900_ai_ci`).Check(testkit.Rows(
 		`TableReader_7 8000.00 root partition:p1 data:Selection_6`,
 		`└─Selection_6 8000.00 cop[tikv]  eq(partitionrangecolumnscollate.t.a, "ä")`,
 		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
-	tk.MustQuery(`select * from t where a = "ä" collate utf8mb4_bin`).Sort().Check(testkit.Rows("ä"))
-	tk.MustQuery(`explain select * from t where a = "b" collate utf8mb4_bin`).Check(testkit.Rows(
+	tk.MustQuery(`select * from t where a = "ä" collate utf8mb4_0900_ai_ci`).Sort().Check(testkit.Rows("ä"))
+	tk.MustQuery(`explain select * from t where a = "b" collate utf8mb4_0900_ai_ci`).Check(testkit.Rows(
 		`TableReader_7 8000.00 root partition:p5 data:Selection_6`,
 		`└─Selection_6 8000.00 cop[tikv]  eq(partitionrangecolumnscollate.t.a, "b")`,
 		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
-	tk.MustQuery(`select * from t where a = "b" collate utf8mb4_bin`).Sort().Check(testkit.Rows("b"))
-	tk.MustQuery(`explain select * from t where a <= "b" collate utf8mb4_bin`).Check(testkit.Rows(
+	tk.MustQuery(`select * from t where a = "b" collate utf8mb4_0900_ai_ci`).Sort().Check(testkit.Rows("b"))
+	tk.MustQuery(`explain select * from t where a <= "b" collate utf8mb4_0900_ai_ci`).Check(testkit.Rows(
 		`TableReader_7 8000.00 root partition:all data:Selection_6`,
 		`└─Selection_6 8000.00 cop[tikv]  le(partitionrangecolumnscollate.t.a, "b")`,
 		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
-	tk.MustQuery(`select * from t where a <= "b" collate utf8mb4_bin`).Sort().Check(testkit.Rows("A", "AA", "AB", "Aa", "Ab", "B", "BA", "BB", "Ba", "Bb", "a", "aA", "aB", "aa", "ab", "b"))
-	tk.MustQuery(`explain select * from t where a < "b" collate utf8mb4_bin`).Check(testkit.Rows(
+	tk.MustQuery(`select * from t where a <= "b" collate utf8mb4_0900_ai_ci`).Sort().Check(testkit.Rows("A", "AA", "AB", "Aa", "Ab", "B", "BA", "BB", "Ba", "Bb", "a", "aA", "aB", "aa", "ab", "b"))
+	tk.MustQuery(`explain select * from t where a < "b" collate utf8mb4_0900_ai_ci`).Check(testkit.Rows(
 		`TableReader_7 8000.00 root partition:all data:Selection_6`,
 		`└─Selection_6 8000.00 cop[tikv]  lt(partitionrangecolumnscollate.t.a, "b")`,
 		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
 	// Missing upper case B if not p5 is included!
-	tk.MustQuery(`select * from t where a < "b" collate utf8mb4_bin`).Sort().Check(testkit.Rows("A", "AA", "AB", "Aa", "Ab", "B", "BA", "BB", "Ba", "Bb", "a", "aA", "aB", "aa", "ab"))
-	tk.MustQuery(`explain select * from t where a >= "b" collate utf8mb4_bin`).Check(testkit.Rows(
+	tk.MustQuery(`select * from t where a < "b" collate utf8mb4_0900_ai_ci`).Sort().Check(testkit.Rows("A", "AA", "AB", "Aa", "Ab", "B", "BA", "BB", "Ba", "Bb", "a", "aA", "aB", "aa", "ab"))
+	tk.MustQuery(`explain select * from t where a >= "b" collate utf8mb4_0900_ai_ci`).Check(testkit.Rows(
 		`TableReader_7 8000.00 root partition:all data:Selection_6`,
 		`└─Selection_6 8000.00 cop[tikv]  ge(partitionrangecolumnscollate.t.a, "b")`,
 		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
-	tk.MustQuery(`select * from t where a >= "b" collate utf8mb4_bin`).Sort().Check(testkit.Rows("b", "bA", "bB", "ba", "bb", "ÄÄÄ", "ä"))
-	tk.MustQuery(`explain select * from t where a > "b" collate utf8mb4_bin`).Check(testkit.Rows(
+	tk.MustQuery(`select * from t where a >= "b" collate utf8mb4_0900_ai_ci`).Sort().Check(testkit.Rows("b", "bA", "bB", "ba", "bb", "ÄÄÄ", "ä"))
+	tk.MustQuery(`explain select * from t where a > "b" collate utf8mb4_0900_ai_ci`).Check(testkit.Rows(
 		`TableReader_7 8000.00 root partition:all data:Selection_6`,
 		`└─Selection_6 8000.00 cop[tikv]  gt(partitionrangecolumnscollate.t.a, "b")`,
 		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
-	tk.MustQuery(`select * from t where a > "b" collate utf8mb4_bin`).Sort().Check(testkit.Rows("bA", "bB", "ba", "bb", "ÄÄÄ", "ä"))
+	tk.MustQuery(`select * from t where a > "b" collate utf8mb4_0900_ai_ci`).Sort().Check(testkit.Rows("bA", "bB", "ba", "bb", "ÄÄÄ", "ä"))
 }
 
 func TestDisableTablePartition(t *testing.T) {
@@ -1478,7 +1478,7 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 		"  `id` int(11) DEFAULT NULL,\n" +
 		"  `name` varchar(10) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST COLUMNS(`id`,`name`)\n" +
 		"(PARTITION `p0` VALUES IN ((1,'a'),(2,'b')),\n" +
 		" PARTITION `p1` VALUES IN ((3,'a'),(4,'b')),\n" +
@@ -1550,7 +1550,7 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 		"CREATE TABLE `t` (\n" +
 			"  `id` int(11) DEFAULT NULL,\n" +
 			"  `name` varchar(10) DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 			"PARTITION BY LIST COLUMNS(`id`,`name`)\n" +
 			"(PARTITION `p0` VALUES IN ((1,'a'),(2,'b')),\n" +
 			" PARTITION `p1` VALUES IN ((3,'a'),(4,'b')),\n" +
@@ -1607,7 +1607,7 @@ func TestDefaultListPartition(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  UNIQUE KEY `a` (`a`),\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST (`a`)\n" +
 		"(PARTITION `p0` VALUES IN (0,4),\n" +
 		" PARTITION `p1` VALUES IN (1,NULL,DEFAULT),\n" +
@@ -1652,7 +1652,7 @@ func TestDefaultListColumnPartition(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 		"  `b` int(11) DEFAULT NULL,\n" +
 		"  `a` varchar(255) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST COLUMNS(`a`)\n" +
 		"(PARTITION `p0` VALUES IN (0,4),\n" +
 		" PARTITION `p1` VALUES IN (1,NULL,DEFAULT),\n" +
@@ -1766,7 +1766,7 @@ func TestDefaultListErrors(t *testing.T) {
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` varchar(55) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST COLUMNS(`a`)\n" +
 		"(PARTITION `p0` DEFAULT)"))
 	tk.MustExec(`drop table t`)
@@ -1775,7 +1775,7 @@ func TestDefaultListErrors(t *testing.T) {
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST (`a`)\n" +
 		"(PARTITION `p0` DEFAULT)"))
 	tk.MustExec(`drop table t`)
@@ -2094,7 +2094,7 @@ func TestAlterTableAddPartition(t *testing.T) {
 	// less than value can be negative or expression.
 	tk.MustExec(`CREATE TABLE tt5 (
 		c3 bigint(20) NOT NULL
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 	PARTITION BY RANGE ( c3 ) (
 		PARTITION p0 VALUES LESS THAN (-3),
 		PARTITION p1 VALUES LESS THAN (-2)
@@ -4400,7 +4400,7 @@ func TestCoalescePartition(t *testing.T) {
 		"  `fname` varchar(30) DEFAULT NULL,\n" +
 		"  `lname` varchar(30) DEFAULT NULL,\n" +
 		"  `signed` date DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY HASH (MONTH(`signed`)) PARTITIONS 8"))
 	tk.MustExec(`analyze table t`)
 	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_name = 't' and table_schema = 'coalescePart'`).Sort().Check(testkit.Rows(""+
@@ -4449,7 +4449,7 @@ func TestCoalescePartition(t *testing.T) {
 		"  `fname` varchar(30) DEFAULT NULL,\n" +
 		"  `lname` varchar(30) DEFAULT NULL,\n" +
 		"  `signed` date DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY KEY (`signed`,`fname`) PARTITIONS 8"))
 	tk.MustExec(`analyze table t`)
 	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_name = 't' and table_schema = 'coalescePart'`).Sort().Check(testkit.Rows(""+
@@ -4527,7 +4527,7 @@ func TestAddHashPartition(t *testing.T) {
 		"  `separated` date DEFAULT NULL,\n" +
 		"  `job_code` int(11) DEFAULT NULL,\n" +
 		"  `store_id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY HASH (`store_id`) PARTITIONS 12"))
 	tk.MustContainErrMsg(`alter table t coalesce partition 0`,
 		"[ddl:1515]At least one partition must be coalesced")
@@ -4548,7 +4548,7 @@ func TestAddHashPartition(t *testing.T) {
 		"  `separated` date DEFAULT NULL,\n" +
 		"  `job_code` int(11) DEFAULT NULL,\n" +
 		"  `store_id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY HASH (`store_id`)\n" +
 		"(PARTITION `p0`,\n" +
 		" PARTITION `p1`,\n" +
@@ -4578,7 +4578,7 @@ func TestAddHashPartition(t *testing.T) {
 		"  `separated` date DEFAULT NULL,\n" +
 		"  `job_code` int(11) DEFAULT NULL,\n" +
 		"  `store_id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY HASH (`store_id`)\n" +
 		"(PARTITION `p0`,\n" +
 		" PARTITION `p1`,\n" +
@@ -4608,7 +4608,7 @@ func TestAddHashPartition(t *testing.T) {
 		"  `separated` date DEFAULT NULL,\n" +
 		"  `job_code` int(11) DEFAULT NULL,\n" +
 		"  `store_id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY HASH (`store_id`) PARTITIONS 12"))
 	tk.MustExec(`alter table t add partition (partition p12 comment 'p12' placement policy tworeplicas)`)
 	tk.MustExec("alter table t placement policy fourreplicas")
@@ -4622,7 +4622,7 @@ func TestAddHashPartition(t *testing.T) {
 		"  `separated` date DEFAULT NULL,\n" +
 		"  `job_code` int(11) DEFAULT NULL,\n" +
 		"  `store_id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`fourreplicas` */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T![placement] PLACEMENT POLICY=`fourreplicas` */\n" +
 		"PARTITION BY HASH (`store_id`)\n" +
 		"(PARTITION `p0`,\n" +
 		" PARTITION `p1`,\n" +
@@ -4648,7 +4648,7 @@ func TestAddHashPartition(t *testing.T) {
 		"  `separated` date DEFAULT NULL,\n" +
 		"  `job_code` int(11) DEFAULT NULL,\n" +
 		"  `store_id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`fourreplicas` */"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci /*T![placement] PLACEMENT POLICY=`fourreplicas` */"))
 	tk.MustQuery(`select sum(store_id), avg(store_id), max(store_id), min(store_id), sum(id) from t`).Check(testkit.Rows("524802 511.5029 1024 1 524841"))
 	tk.MustExec("alter table t placement policy default")
 	tk.MustExec(`drop placement policy tworeplicas`)
@@ -4678,7 +4678,7 @@ func TestAddHashPartition(t *testing.T) {
 		"  `separated` date DEFAULT NULL,\n" +
 		"  `job_code` int(11) DEFAULT NULL,\n" +
 		"  `store_id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY KEY (`hired`) PARTITIONS 12"))
 	tk.MustExec("alter table t add partition (partition p13)")
 	tk.MustContainErrMsg(`alter table t add partition partitions 1`,
@@ -4692,7 +4692,7 @@ func TestAddHashPartition(t *testing.T) {
 		"  `separated` date DEFAULT NULL,\n" +
 		"  `job_code` int(11) DEFAULT NULL,\n" +
 		"  `store_id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY KEY (`hired`)\n" +
 		"(PARTITION `p0`,\n" +
 		" PARTITION `p1`,\n" +
@@ -4718,7 +4718,7 @@ func TestAddHashPartition(t *testing.T) {
 		"  `separated` date DEFAULT NULL,\n" +
 		"  `job_code` int(11) DEFAULT NULL,\n" +
 		"  `store_id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY KEY (`hired`) PARTITIONS 11"))
 }
 
@@ -4868,7 +4868,7 @@ func TestUnsupportedPartitionManagementDDLs(t *testing.T) {
 	tk.MustQuery(`show create table test_1465`).Check(testkit.Rows("" +
 		"test_1465 CREATE TABLE `test_1465` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY HASH (`a`) PARTITIONS 1"))
 	tk.MustContainErrMsg(`alter table test_1465 drop partition p0`, "[ddl:1512]DROP PARTITION can only be used on RANGE/LIST partitions")
 }
@@ -5203,7 +5203,7 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST COLUMNS(`a`)\n" +
 		"(PARTITION `p0` VALUES IN (10,11,45),\n" +
 		" PARTITION `p1` VALUES IN (20,1,23,56),\n" +
@@ -5239,7 +5239,7 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST COLUMNS(`a`)\n" +
 		"(PARTITION `p0` VALUES IN (10,11,45),\n" +
 		" PARTITION `p1` VALUES IN (34,2,23),\n" +
@@ -5324,7 +5324,7 @@ func TestDuplicatePartitionNames(t *testing.T) {
 	tk.MustQuery("Show create table t1").Check(testkit.Rows("" +
 		"t1 CREATE TABLE `t1` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST (`a`)\n" +
 		"(PARTITION `p2` VALUES IN (2),\n" +
 		" PARTITION `p3` VALUES IN (3))"))
@@ -5365,7 +5365,7 @@ func TestCreateIntervalPartitionSyntax(t *testing.T) {
 		{
 			"CREATE TABLE `t` (\n" +
 				"  `id` int(11) DEFAULT NULL\n" +
-				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 				"PARTITION BY RANGE (`id`)\n" +
 				"(PARTITION `pNull` VALUES LESS THAN (-9223372036854775808),\n" +
 				" PARTITION `p_0` VALUES LESS THAN (0),\n" +
@@ -5382,7 +5382,7 @@ func TestCreateIntervalPartitionSyntax(t *testing.T) {
 			true,
 			"CREATE TABLE `t` (\n" +
 				"  `id` int(11) DEFAULT NULL\n" +
-				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 				"PARTITION BY RANGE (`id`)\n" +
 				"(PARTITION `pNull` VALUES LESS THAN (-9223372036854775808),\n" +
 				" PARTITION `p_0` VALUES LESS THAN (0),\n" +
@@ -5401,7 +5401,7 @@ func TestCreateIntervalPartitionSyntax(t *testing.T) {
 		{
 			"CREATE TABLE `t` (\n" +
 				"  `id` int(11) DEFAULT NULL\n" +
-				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 				"PARTITION BY RANGE COLUMNS(`id`)\n" +
 				"(PARTITION `pNull` VALUES LESS THAN (-2147483648),\n" +
 				" PARTITION `p_0` VALUES LESS THAN (0),\n" +
@@ -5418,7 +5418,7 @@ func TestCreateIntervalPartitionSyntax(t *testing.T) {
 			true,
 			"CREATE TABLE `t` (\n" +
 				"  `id` int(11) DEFAULT NULL\n" +
-				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 				"PARTITION BY RANGE COLUMNS(`id`)\n" +
 				"(PARTITION `pNull` VALUES LESS THAN (-2147483648),\n" +
 				" PARTITION `p_0` VALUES LESS THAN (0),\n" +
@@ -5439,7 +5439,7 @@ func TestCreateIntervalPartitionSyntax(t *testing.T) {
 			true,
 			"CREATE TABLE `t` (\n" +
 				"  `id` int(11) DEFAULT NULL\n" +
-				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 				"PARTITION BY RANGE (`id`)\n" +
 				"(PARTITION `P_NULL` VALUES LESS THAN (-9223372036854775808),\n" +
 				" PARTITION `P_LT_0` VALUES LESS THAN (0),\n" +
@@ -5459,7 +5459,7 @@ func TestCreateIntervalPartitionSyntax(t *testing.T) {
 			true,
 			"CREATE TABLE `t` (\n" +
 				"  `id` int(11) DEFAULT NULL\n" +
-				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 				"PARTITION BY RANGE COLUMNS(`id`)\n" +
 				"(PARTITION `P_NULL` VALUES LESS THAN (-2147483648),\n" +
 				" PARTITION `P_LT_0` VALUES LESS THAN (0),\n" +
@@ -5505,7 +5505,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  `val` varchar(255) DEFAULT NULL,\n" +
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 			"  KEY `val` (`val`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 			"PARTITION BY RANGE (`id`)\n" +
 			"(PARTITION `P_LT_10` VALUES LESS THAN (10),\n" +
 			" PARTITION `P_LT_20` VALUES LESS THAN (20),\n" +
@@ -5530,7 +5530,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  `val` varchar(255) DEFAULT NULL,\n" +
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 			"  KEY `val` (`val`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 			"PARTITION BY RANGE (`id`)\n" +
 			"(PARTITION `P_LT_30` VALUES LESS THAN (30),\n" +
 			" PARTITION `P_LT_40` VALUES LESS THAN (40),\n" +
@@ -5558,7 +5558,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  `val` varchar(255) DEFAULT NULL,\n" +
 			"  KEY `val` (`val`),\n" +
 			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 			"PARTITION BY RANGE COLUMNS(`id`)\n" +
 			"(PARTITION `P_NULL` VALUES LESS THAN ('0000-01-01'),\n" +
 			" PARTITION `P_LT_2022-02-01` VALUES LESS THAN ('2022-02-01'),\n" +
@@ -5584,7 +5584,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  `val` varchar(255) DEFAULT NULL,\n" +
 			"  KEY `val` (`val`),\n" +
 			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 			"PARTITION BY RANGE COLUMNS(`id`)\n" +
 			"(PARTITION `P_LT_2022-01-31` VALUES LESS THAN ('2022-01-31'),\n" +
 			" PARTITION `P_LT_2022-02-28` VALUES LESS THAN ('2022-02-28'),\n" +
@@ -5598,7 +5598,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  `val` varchar(255) DEFAULT NULL,\n" +
 			"  KEY `val` (`val`),\n" +
 			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 			"PARTITION BY RANGE COLUMNS(`id`)\n" +
 			"(PARTITION `P_LT_2022-02-28` VALUES LESS THAN ('2022-02-28'),\n" +
 			" PARTITION `P_LT_2022-03-31` VALUES LESS THAN ('2022-03-31'),\n" +
@@ -5621,7 +5621,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  `val` varchar(255) DEFAULT NULL,\n" +
 			"  KEY `val` (`val`),\n" +
 			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 			"PARTITION BY RANGE COLUMNS(`id`)\n" +
 			"(PARTITION `P_LT_2022-02-28` VALUES LESS THAN ('2022-02-28'),\n" +
 			" PARTITION `P_LT_2022-03-31` VALUES LESS THAN ('2022-03-31'),\n" +
@@ -5646,7 +5646,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  `val` varchar(255) DEFAULT NULL,\n" +
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 			"  KEY `val` (`val`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 			"PARTITION BY RANGE (`id`)\n" +
 			"(PARTITION `P_LT_20` VALUES LESS THAN (20),\n" +
 			" PARTITION `P_LT_30` VALUES LESS THAN (30),\n" +
@@ -5685,7 +5685,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 			"  `id` timestamp NULL DEFAULT NULL,\n" +
 			"  `val` varchar(255) DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 			"PARTITION BY RANGE (UNIX_TIMESTAMP(`id`))\n" +
 			"(PARTITION `P_LT_1640991600` VALUES LESS THAN (1640991600),\n" +
 			" PARTITION `P_LT_1640995200` VALUES LESS THAN (1640995200),\n" +
@@ -5722,7 +5722,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 			"  `id` tinyint(4) DEFAULT NULL,\n" +
 			"  `val` varchar(255) DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 			"PARTITION BY RANGE (`id`)\n" +
 			"(PARTITION `P_LT_-300` VALUES LESS THAN (-300),\n" +
 			" PARTITION `P_LT_-250` VALUES LESS THAN (-250),\n" +
@@ -5811,7 +5811,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  `id` int(11) DEFAULT NULL,\n" +
 			"  `val` varchar(255) DEFAULT NULL,\n" +
 			"  `comment` varchar(255) DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 			"PARTITION BY RANGE (`id`)\n" +
 			"(PARTITION `P_LT_-1000` VALUES LESS THAN (-1000))"))
 	err = tk.ExecToErr("alter table t last partition less than (0)")
@@ -5887,7 +5887,7 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		PARTITION p1 VALUES LESS THAN ('2022-01-01 00:00:00'))`)
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
 		"  \"created_at\" datetime DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE COLUMNS(\"created_at\")\n" +
 		"(PARTITION \"p0\" VALUES LESS THAN ('2021-12-01 00:00:00'),\n" +
 		" PARTITION \"p1\" VALUES LESS THAN ('2022-01-01 00:00:00'))"))
@@ -5902,7 +5902,7 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 	// FIXME: should be "created_at" instead of `created_at`, see #35389.
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
 		"  \"created_at\" timestamp NULL DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (UNIX_TIMESTAMP(`created_at`))\n" +
 		"(PARTITION \"p0\" VALUES LESS THAN (1638288000),\n" +
 		" PARTITION \"p1\" VALUES LESS THAN (1640966400))"))
@@ -5916,7 +5916,7 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
 		"  \"a\" int(11) DEFAULT NULL,\n" +
 		"  \"b\" varchar(255) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST COLUMNS(\"a\",\"b\")\n" +
 		"(PARTITION \"p0\" VALUES IN ((1,'1'),(2,'2')),\n" +
 		" PARTITION \"p1\" VALUES IN ((10,'10'),(11,'11')))"))
@@ -5928,7 +5928,7 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		PARTITION p1 VALUES IN ('""','\\','\\\'\t\n'))`)
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
 		"  \"a\" varchar(255) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST COLUMNS(\"a\")\n" +
 		`(PARTITION "p0" VALUES IN ('''','''''',''''''''),` + "\n" +
 		` PARTITION "p1" VALUES IN ('""','\\','\\''\t\n'))`))
@@ -5940,7 +5940,7 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 	tk.MustExec(`insert into t values (0x5c27090a),('\\''\t\n')`)
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
 		"  \"a\" varchar(255) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST COLUMNS(\"a\")\n" +
 		`(PARTITION "p0" VALUES IN ('''','''''',''''''''),` + "\n" +
 		` PARTITION "p1" VALUES IN ('""','\\',x'5c27090a'))`))
@@ -5951,7 +5951,7 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 	tk.MustExec(`insert into t values (0x5c27090a),('\\''\t\n')`)
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
 		"  \"a\" varchar(255) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST COLUMNS(\"a\")\n" +
 		`(PARTITION "p0" VALUES IN ('''','''''',''''''''),` + "\n" +
 		` PARTITION "p1" VALUES IN ('""','\\',x'5c27090a'))`))
@@ -5969,7 +5969,7 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 	tk.MustExec(`insert into t values (0x5c27090a),('\\''\t\n')`)
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
 		"  \"a\" varchar(255) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		`PARTITION BY RANGE COLUMNS("a")` + "\n" +
 		`(PARTITION "p0" VALUES LESS THAN ('"'),` + "\n" +
 		` PARTITION "p1" VALUES LESS THAN ('""'),` + "\n" +
@@ -5988,7 +5988,7 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 	tk.MustExec(`insert into t values (0x5c27090a),('\\''\t\n')`)
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
 		"  \"a\" varchar(255) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		`PARTITION BY RANGE COLUMNS("a")` + "\n" +
 		`(PARTITION "p0" VALUES LESS THAN ('"'),` + "\n" +
 		` PARTITION "p1" VALUES LESS THAN ('""'),` + "\n" +
@@ -6009,7 +6009,7 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
 		"  \"a\" varchar(255) DEFAULT NULL,\n" +
 		"  \"b\" varchar(255) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		`PARTITION BY RANGE COLUMNS("a","b")` + "\n" +
 		`(PARTITION "p0" VALUES LESS THAN ('"','"'),` + "\n" +
 		` PARTITION "p1" VALUES LESS THAN ('""','""'),` + "\n" +
@@ -6143,7 +6143,7 @@ partition p1 values less than maxvalue)`)
 		"t6 CREATE TABLE `t6` (\n" +
 		"  `colint` int(11) DEFAULT NULL,\n" +
 		"  `col1` date DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`colint`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (1998),\n" +
 		" PARTITION `p1` VALUES LESS THAN (MAXVALUE))"))
@@ -6164,7 +6164,7 @@ partition pMax values less than maxvalue)`)
 		"  `a` int(10) unsigned NOT NULL,\n" +
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (1000000),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
@@ -6174,7 +6174,7 @@ partition pMax values less than maxvalue)`)
 		"  `a` int(10) unsigned NOT NULL,\n" +
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func TestRemoveRangeColumnPartitioning(t *testing.T) {
@@ -6192,7 +6192,7 @@ partition pMax values less than maxvalue)`)
 		"  `a` varchar(55) NOT NULL,\n" +
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE COLUMNS(`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN ('1000000'),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
@@ -6202,7 +6202,7 @@ partition pMax values less than maxvalue)`)
 		"  `a` varchar(55) NOT NULL,\n" +
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func TestRemoveRangeColumnsPartitioning(t *testing.T) {
@@ -6219,7 +6219,7 @@ partition pMax values less than (maxvalue,1))`)
 		"tRange CREATE TABLE `tRange` (\n" +
 		"  `a` varchar(55) DEFAULT NULL,\n" +
 		"  `b` varchar(255) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE COLUMNS(`a`,`b`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN ('1000000','1000000'),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE,'1'))"))
@@ -6228,7 +6228,7 @@ partition pMax values less than (maxvalue,1))`)
 		"tRange CREATE TABLE `tRange` (\n" +
 		"  `a` varchar(55) DEFAULT NULL,\n" +
 		"  `b` varchar(255) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func TestRemoveHashPartitioning(t *testing.T) {
@@ -6257,7 +6257,7 @@ func TestRemoveHashPartitioning(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  KEY `a` (`a`,`b`),\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func TestRemoveKeyPartitioning(t *testing.T) {
@@ -6297,7 +6297,7 @@ func TestRemoveKeyPartitioning(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  KEY `a` (`a`,`b`),\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	// Statistics are updated asynchronously
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	// And also cached and lazy loaded
@@ -6343,7 +6343,7 @@ func TestRemoveListPartitioning(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  KEY `a` (`a`,`b`),\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	// Statistics are updated asynchronously
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	// And also cached and lazy loaded
@@ -6389,7 +6389,7 @@ func TestRemoveListColumnPartitioning(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  KEY `a` (`a`,`b`),\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	// Statistics are updated asynchronously
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	// And also cached and lazy loaded
@@ -6435,7 +6435,7 @@ func TestRemoveListColumnsPartitioning(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  KEY `a` (`a`,`b`),\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	// Statistics are updated asynchronously
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	// And also cached and lazy loaded

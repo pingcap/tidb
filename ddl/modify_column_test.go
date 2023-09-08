@@ -420,7 +420,7 @@ func TestModifyColumnCharset(t *testing.T) {
 		"t_mcc CREATE TABLE `t_mcc` (\n" +
 			"  `a` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
 			"  `b` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	tk.MustExec("alter table t_mcc modify column a varchar(8);")
 	tbl := external.GetTableByName(t, tk, "test", "t_mcc")
@@ -433,7 +433,7 @@ func TestModifyColumnCharset(t *testing.T) {
 		"t_mcc CREATE TABLE `t_mcc` (\n" +
 			"  `a` varchar(8) DEFAULT NULL,\n" +
 			"  `b` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func TestModifyColumnTime_TimeToYear(t *testing.T) {

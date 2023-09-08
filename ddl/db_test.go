@@ -94,7 +94,7 @@ func TestCreateTextAdjustLen(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|", ""+
 		"t CREATE TABLE `t` (\n"+
 		"  `a` text DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustExec("alter table t add b text(100);")
 	tk.MustExec("alter table t add c text;")
 	tk.MustExec("alter table t add d text(50);")
@@ -105,7 +105,7 @@ func TestCreateTextAdjustLen(t *testing.T) {
 		"  `b` text DEFAULT NULL,\n"+
 		"  `c` text DEFAULT NULL,\n"+
 		"  `d` tinytext DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	// Ref: https://dev.mysql.com/doc/refman/8.0/en/storage-requirements.html
 	// TINYBLOB, TINYTEXT	L + 1 bytes, where L < 2^8
@@ -121,7 +121,7 @@ func TestCreateTextAdjustLen(t *testing.T) {
 		"  `b` longtext DEFAULT NULL,\n"+
 		"  `c` mediumtext DEFAULT NULL,\n"+
 		"  `d` text DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustExec("drop table if exists t")
 }
 
@@ -867,7 +867,7 @@ func TestAutoIncrementIDOnTemporaryTable(t *testing.T) {
 		tk.MustQuery("show create table global_temp_auto_id").Check(testkit.Rows("global_temp_auto_id CREATE GLOBAL TEMPORARY TABLE `global_temp_auto_id` (\n" +
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100 ON COMMIT DELETE ROWS"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci AUTO_INCREMENT=100 ON COMMIT DELETE ROWS"))
 		tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 100 _TIDB_ROWID"))
 		tk.MustExec("begin")
 		tk.MustExec("insert into global_temp_auto_id value(null)")
@@ -893,14 +893,14 @@ func TestAutoIncrementIDOnTemporaryTable(t *testing.T) {
 	tk.MustQuery("show create table local_temp_auto_id").Check(testkit.Rows("local_temp_auto_id CREATE TEMPORARY TABLE `local_temp_auto_id` (\n" +
 		"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci AUTO_INCREMENT=100"))
 	tk.MustExec("insert into local_temp_auto_id value(null)")
 	tk.MustQuery("select @@last_insert_id").Check(testkit.Rows("100"))
 	tk.MustQuery("select id from local_temp_auto_id").Check(testkit.Rows("100"))
 	tk.MustQuery("show create table local_temp_auto_id").Check(testkit.Rows("local_temp_auto_id CREATE TEMPORARY TABLE `local_temp_auto_id` (\n" +
 		"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=101"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci AUTO_INCREMENT=101"))
 }
 
 func TestDDLJobErrorCount(t *testing.T) {

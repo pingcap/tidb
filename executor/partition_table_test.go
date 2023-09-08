@@ -1256,7 +1256,7 @@ func TestIssue25527(t *testing.T) {
 	// the original case
 	tk.MustExec(`CREATE TABLE t (
 		  col1 tinyint(4) primary key
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH( COL1 DIV 80 )
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci PARTITION BY HASH( COL1 DIV 80 )
 		PARTITIONS 6`)
 	tk.MustExec(`insert into t values(-128), (107)`)
 	tk.MustExec(`prepare stmt from 'select col1 from t where col1 in (?, ?, ?)'`)
@@ -1295,7 +1295,7 @@ func TestIssue25598(t *testing.T) {
 	  COL3 bigint(20) DEFAULT NULL,
 	  COL5 float DEFAULT NULL,
 	  UNIQUE KEY UK_COL1 (COL1) /*!80000 INVISIBLE */
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 	PARTITION BY HASH( COL1 )
 	PARTITIONS 25`)
 
@@ -2383,7 +2383,7 @@ func TestIssue25253(t *testing.T) {
 	  COL3 bigint DEFAULT NULL,
 	  COL5 float DEFAULT NULL,
 	  KEY UK_COL1 (COL1)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 	PARTITION BY HASH( COL1+30 )
 	PARTITIONS 6`)
 	tk.MustExec(`insert ignore into IDT_HP23902 partition(p0, p1)(col1, col3) values(-10355, 1930590137900568573), (13810, -1332233145730692137)`)
@@ -3181,7 +3181,7 @@ func TestIssue24636(t *testing.T) {
 		  k bigint(20) DEFAULT NULL,
 		  l bigint(20) DEFAULT NULL,
 		  PRIMARY KEY (a,b,c) /*T![clustered_index] NONCLUSTERED */
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 		PARTITION BY RANGE ( TO_DAYS(b) ) (
 		  PARTITION pmin VALUES LESS THAN (737821),
 		  PARTITION p20200601 VALUES LESS THAN (738289))`)
@@ -3306,7 +3306,7 @@ func TestIssue25309(t *testing.T) {
       PRIMARY KEY (col_29,col_20) /*T![clustered_index] NONCLUSTERED */,
       KEY idx_7 (col_28,col_20,col_26,col_27,col_21,col_24),
       KEY idx_8 (col_25,col_29,col_24)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`)
 
 	tk.MustExec(`CREATE TABLE tbl_600 (
       col_60 int(11) NOT NULL DEFAULT '-776833487',
@@ -3775,7 +3775,7 @@ func TestIssue25528(t *testing.T) {
 	tk.MustQuery("select * from issue25528 where id = 1 for update").Check(testkit.Rows("1 100.00 -100.00 2021-06-17 22:35:20"))
 
 	tk.MustExec("drop table if exists issue25528")
-	tk.MustExec("CREATE TABLE `issue25528` ( `c1` int(11) NOT NULL, `c2` int(11) DEFAULT NULL, `c3` int(11) DEFAULT NULL, `c4` int(11) DEFAULT NULL, PRIMARY KEY (`c1`) /*T![clustered_index] CLUSTERED */, KEY `k2` (`c2`), KEY `k3` (`c3`) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH( `c1` ) PARTITIONS 10;")
+	tk.MustExec("CREATE TABLE `issue25528` ( `c1` int(11) NOT NULL, `c2` int(11) DEFAULT NULL, `c3` int(11) DEFAULT NULL, `c4` int(11) DEFAULT NULL, PRIMARY KEY (`c1`) /*T![clustered_index] CLUSTERED */, KEY `k2` (`c2`), KEY `k3` (`c3`) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci PARTITION BY HASH( `c1` ) PARTITIONS 10;")
 	tk.MustExec("INSERT INTO issue25528 (`c1`, `c2`, `c3`, `c4`) VALUES (1, 1, 1, 1) , (3, 3, 3, 3) , (2, 2, 2, 2) , (4, 4, 4, 4);")
 	tk.MustQuery("select * from issue25528 where c1 in (3, 4) order by c2 for update;").Check(testkit.Rows("3 3 3 3", "4 4 4 4"))
 }
@@ -4185,7 +4185,7 @@ func TestGlobalIndexForIssue40149(t *testing.T) {
   		a int(11) NOT NULL,
   		b int(11) DEFAULT NULL,
   		c int(11) DEFAULT NULL
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY RANGE (c) (
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci PARTITION BY RANGE (c) (
  	PARTITION p0 VALUES LESS THAN (10),
  	PARTITION p1 VALUES LESS THAN (MAXVALUE));`)
 		tk.MustExec("alter table test_t1 add unique  p_a (a);")
@@ -4214,7 +4214,7 @@ func TestGlobalIndexMerge(t *testing.T) {
 		d int(11) NOT NULL AUTO_INCREMENT,
 		KEY idx_bd (b, c),
 		UNIQUE KEY uidx_ac(a)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY RANGE (c) (
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci PARTITION BY RANGE (c) (
  	PARTITION p0 VALUES LESS THAN (10),
  	PARTITION p1 VALUES LESS THAN (MAXVALUE));`)
 	tk.MustExec("insert into t values (1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4),(5,5,5,5),(6,6,6,6),(7,7,7,7),(8,8,8,8);")

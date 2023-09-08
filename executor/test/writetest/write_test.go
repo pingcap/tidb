@@ -958,7 +958,7 @@ func TestInsertOnDupUpdateDefault(t *testing.T) {
 	tk.MustExec("drop table t1, t2")
 
 	tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
-	tk.MustExec("create table t ( c_int int, c_string varchar(40) collate utf8mb4_bin , primary key (c_string), unique key (c_int));")
+	tk.MustExec("create table t ( c_int int, c_string varchar(40) collate utf8mb4_0900_ai_ci , primary key (c_string), unique key (c_int));")
 	tk.MustExec("insert into t values (22, 'gold witch'), (24, 'gray singer'), (21, 'silver sight');")
 	tk.MustExec("begin;")
 	err := tk.ExecToErr("insert into t values (21,'black warlock'), (22, 'dark sloth'), (21,  'cyan song') on duplicate key update c_int = c_int + 1, c_string = concat(c_int, ':', c_string);")

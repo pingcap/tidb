@@ -137,9 +137,9 @@ func TestValidator(t *testing.T) {
 		{"drop table `t `", true, errors.New("[ddl:1103]Incorrect table name 't '")},
 		{"create database ``", true, errors.New("[ddl:1102]Incorrect database name ''")},
 		{"create database `test `", true, errors.New("[ddl:1102]Incorrect database name 'test '")},
-		{"alter database collate = 'utf8mb4_bin'", true, nil},
-		{"alter database `` collate = 'utf8mb4_bin'", true, errors.New("[ddl:1102]Incorrect database name ''")},
-		{"alter database `test ` collate = 'utf8mb4_bin'", true, errors.New("[ddl:1102]Incorrect database name 'test '")},
+		{"alter database collate = 'utf8mb4_0900_ai_ci'", true, nil},
+		{"alter database `` collate = 'utf8mb4_0900_ai_ci'", true, errors.New("[ddl:1102]Incorrect database name ''")},
+		{"alter database `test ` collate = 'utf8mb4_0900_ai_ci'", true, errors.New("[ddl:1102]Incorrect database name 'test '")},
 		{"drop database ``", true, errors.New("[ddl:1102]Incorrect database name ''")},
 		{"drop database `test `", true, errors.New("[ddl:1102]Incorrect database name 'test '")},
 		{"alter table `t ` add column c int", true, errors.New("[ddl:1103]Incorrect table name 't '")},
@@ -333,7 +333,7 @@ func TestErrKeyPart0(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database TestErrKeyPart")
 	tk.MustExec("use TestErrKeyPart")
-	err := tk.ExecToErr("CREATE TABLE `tbl11`(`a` INT(11) NOT NULL, `b` INT(11), PRIMARY KEY (`a`(0))) CHARSET UTF8MB4 COLLATE UTF8MB4_BIN")
+	err := tk.ExecToErr("CREATE TABLE `tbl11`(`a` INT(11) NOT NULL, `b` INT(11), PRIMARY KEY (`a`(0))) CHARSET UTF8MB4 COLLATE utf8mb4_0900_ai_ci")
 	require.EqualError(t, err, "[planner:1391]Key part 'a' length cannot be 0")
 	err = tk.ExecToErr("create table t (a int, b varchar(255), key (b(0)))")
 	require.EqualError(t, err, "[planner:1391]Key part 'b' length cannot be 0")

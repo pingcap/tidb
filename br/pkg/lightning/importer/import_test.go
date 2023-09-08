@@ -56,7 +56,7 @@ func TestNewTableRestore(t *testing.T) {
 
 	dbInfo := &checkpoints.TidbDBInfo{Name: "mockdb", Tables: map[string]*checkpoints.TidbTableInfo{}}
 	for i, tc := range testCases {
-		node, err := p.ParseOneStmt(tc.createStmt, "utf8mb4", "utf8mb4_bin")
+		node, err := p.ParseOneStmt(tc.createStmt, "utf8mb4", "utf8mb4_0900_ai_ci")
 		require.NoError(t, err)
 		tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), int64(i+1))
 		require.NoError(t, err)
@@ -397,7 +397,7 @@ func TestFilterColumns(t *testing.T) {
 	}
 	for i, tc := range testCases {
 		t.Logf("test case #%d", i)
-		node, err := p.ParseOneStmt(tc.createTableSQL, "utf8mb4", "utf8mb4_bin")
+		node, err := p.ParseOneStmt(tc.createTableSQL, "utf8mb4", "utf8mb4_0900_ai_ci")
 		require.NoError(t, err)
 		tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), int64(i+1))
 		require.NoError(t, err)

@@ -383,7 +383,7 @@ func TestIssue23722(t *testing.T) {
 		col_19 tinyblob,
 		PRIMARY KEY (col_19(5),col_16) /*T![clustered_index] NONCLUSTERED */,
 		UNIQUE KEY idx_10 (col_19(5),col_16)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;`)
 	tk.MustExec("INSERT INTO `t` VALUES (38799.400,20301,'KETeFZhkoxnwMAhA','Charlie',x'7a7968584570705a647179714e56');")
 	tk.MustQuery("select  t.* from t where col_19 in  " +
 		"( select col_19 from t where t.col_18 <> 'David' and t.col_19 >= 'jDzNn' ) " +
@@ -433,7 +433,7 @@ PARTITIONS 1`)
   pk tinyint(3) unsigned NOT NULL,
   postfiller bigint(20) NOT NULL,
   PRIMARY KEY (pk) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin `)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci `)
 	defer tk.MustExec("drop table t2")
 
 	// Why does the t2.prefiller need be at least 2^32 ? If smaller the bug will not appear!?!

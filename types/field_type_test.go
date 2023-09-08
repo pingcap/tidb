@@ -80,12 +80,12 @@ func TestFieldType(t *testing.T) {
 	ft = NewFieldType(mysql.TypeVarchar)
 	ft.SetFlen(10)
 	ft.AddFlag(mysql.BinaryFlag)
-	require.Equal(t, "varchar(10) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin", ft.String())
+	require.Equal(t, "varchar(10) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci", ft.String())
 
 	ft = NewFieldType(mysql.TypeString)
 	ft.SetCharset(charset.CollationBin)
 	ft.AddFlag(mysql.BinaryFlag)
-	require.Equal(t, "binary(1) COLLATE utf8mb4_bin", ft.String())
+	require.Equal(t, "binary(1) COLLATE utf8mb4_0900_ai_ci", ft.String())
 
 	ft = NewFieldType(mysql.TypeEnum)
 	ft.SetElems([]string{"a", "b"})

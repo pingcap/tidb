@@ -121,7 +121,7 @@ func TestBindParse(t *testing.T) {
 	defaultDb := "test"
 	status := bindinfo.Enabled
 	charset := "utf8mb4"
-	collation := "utf8mb4_bin"
+	collation := "utf8mb4_0900_ai_ci"
 	source := bindinfo.Manual
 	mockDigest := "0f644e22c38ecc71d4592c52df127df7f86b6ca7f7c0ee899113b794578f9396"
 	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation,source, sql_digest, plan_digest) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s', '%s', '%s', '%s')`,
@@ -141,7 +141,7 @@ func TestBindParse(t *testing.T) {
 	require.Equal(t, "test", bindData.Db)
 	require.Equal(t, bindinfo.Enabled, bind.Status)
 	require.Equal(t, "utf8mb4", bind.Charset)
-	require.Equal(t, "utf8mb4_bin", bind.Collation)
+	require.Equal(t, "utf8mb4_0900_ai_ci", bind.Collation)
 	require.NotNil(t, bind.CreateTime)
 	require.NotNil(t, bind.UpdateTime)
 	dur, err := bind.SinceUpdateTime()

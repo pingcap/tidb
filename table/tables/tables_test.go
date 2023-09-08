@@ -483,7 +483,7 @@ func TestHiddenColumn(t *testing.T) {
 			"  `c` int(11) DEFAULT NULL,\n" +
 			"  `e` int(11) DEFAULT NULL,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	// Test show (extended) columns
 	tk.MustQuery("show columns from t").Check(testkit.RowsWithSep("|",
@@ -585,7 +585,7 @@ func TestHiddenColumn(t *testing.T) {
 			"  `c` int(11) DEFAULT NULL,\n" +
 			"  `e` int(11) DEFAULT NULL,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustQuery("show extended columns from t").Check(testkit.RowsWithSep("|",
 		"a|int(11)|NO|PRI|<nil>|",
 		"b|int(11)|YES||<nil>|VIRTUAL GENERATED",

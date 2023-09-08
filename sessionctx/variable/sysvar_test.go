@@ -184,7 +184,7 @@ func TestCollationServer(t *testing.T) {
 	require.Nil(t, sv.SetSessionFromHook(vars, "latin1_bin"))
 	require.Equal(t, "latin1", vars.systems[CharacterSetServer]) // check it also changes charset.
 
-	require.Nil(t, sv.SetSessionFromHook(vars, "utf8mb4_bin"))
+	require.Nil(t, sv.SetSessionFromHook(vars, "utf8mb4_0900_ai_ci"))
 	require.Equal(t, "utf8mb4", vars.systems[CharacterSetServer]) // check it also changes charset.
 }
 
@@ -193,9 +193,9 @@ func TestDefaultCollationForUTF8MB4(t *testing.T) {
 	vars := NewSessionVars(nil)
 
 	// test normalization
-	val, err := sv.Validate(vars, "utf8mb4_BIN", ScopeSession)
+	val, err := sv.Validate(vars, "utf8mb4_0900_ai_ci", ScopeSession)
 	require.NoError(t, err)
-	require.Equal(t, "utf8mb4_bin", val)
+	require.Equal(t, "utf8mb4_0900_ai_ci", val)
 	warn := vars.StmtCtx.GetWarnings()[0].Err
 	require.Equal(t, "[variable:1681]Updating 'default_collation_for_utf8mb4' is deprecated. It will be made read-only in a future release.", warn.Error())
 	val, err = sv.Validate(vars, "utf8mb4_GENeral_CI", ScopeGlobal)

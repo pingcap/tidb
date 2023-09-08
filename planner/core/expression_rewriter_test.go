@@ -231,7 +231,7 @@ func TestCompareSubquery(t *testing.T) {
 
 	// for issue 20059
 	tk.MustExec("DROP TABLE IF EXISTS `t`")
-	tk.MustExec("CREATE TABLE `t` (  `a` int(11) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `t` (  `a` int(11) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustExec("INSERT INTO `t` VALUES (1);")
 	tk.MustExec("DROP TABLE IF EXISTS `table_40_utf8_4`;")
 	tk.MustExec("CREATE TABLE `table_40_utf8_4` (`col_tinyint_key_unsigned` tinyint(4) DEFAULT NULL,  `col_bit64_key_signed` bit(64) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;")
@@ -387,7 +387,7 @@ func TestConvertIfNullToCast(t *testing.T) {
 	tk.MustExec("INSERT INTO t1 VALUES(1, 1);")
 	tk.MustQuery("select CAST(IFNULL(cnull, '1') AS DATE), CAST(IFNULL(cnotnull, '1') AS DATE) from t1;").Check(testkit.Rows("<nil> <nil>"))
 	tk.MustQuery("explain format=\"brief\" select IFNULL(cnotnull, '1') from t1;").Check(testkit.Rows(
-		"Projection 10000.00 root  cast(test.t1.cnotnull, varchar(4) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#4]\n" +
+		"Projection 10000.00 root  cast(test.t1.cnotnull, varchar(4) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci)->Column#4]\n" +
 			"[└─TableReader 10000.00 root  data:TableFullScan]\n" +
 			"[  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 	))

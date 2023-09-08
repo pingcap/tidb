@@ -91,7 +91,7 @@ func TestSchemataTables(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
-		testkit.Rows("def mysql utf8mb4 utf8mb4_bin <nil> <nil>"))
+		testkit.Rows("def mysql utf8mb4 utf8mb4_0900_ai_ci <nil> <nil>"))
 
 	// Test the privilege of new user for information_schema.schemata.
 	tk.MustExec("create user schemata_tester")
@@ -105,7 +105,7 @@ func TestSchemataTables(t *testing.T) {
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
 		[][]interface{}{})
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='INFORMATION_SCHEMA';").Check(
-		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil> <nil>"))
+		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_0900_ai_ci <nil> <nil>"))
 
 	// Test the privilege of user with privilege of mysql for information_schema.schemata.
 	tk.MustExec("CREATE ROLE r_mysql_priv;")
@@ -114,7 +114,7 @@ func TestSchemataTables(t *testing.T) {
 	schemataTester.MustExec("set role r_mysql_priv")
 	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("2"))
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA;").Check(
-		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil> <nil>", "def mysql utf8mb4 utf8mb4_bin <nil> <nil>"))
+		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_0900_ai_ci <nil> <nil>", "def mysql utf8mb4 utf8mb4_0900_ai_ci <nil> <nil>"))
 }
 
 func TestTableIDAndIndexID(t *testing.T) {
@@ -133,7 +133,7 @@ func TestSchemataCharacterSet(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DATABASE `foo` DEFAULT CHARACTER SET = 'utf8mb4'")
 	tk.MustQuery("select default_character_set_name, default_collation_name FROM information_schema.SCHEMATA  WHERE schema_name = 'foo'").Check(
-		testkit.Rows("utf8mb4 utf8mb4_bin"))
+		testkit.Rows("utf8mb4 utf8mb4_0900_ai_ci"))
 	tk.MustExec("drop database `foo`")
 }
 
@@ -142,7 +142,7 @@ func TestViews(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DEFINER='root'@'localhost' VIEW test.v1 AS SELECT 1")
 	tk.MustQuery("select TABLE_COLLATION is null from INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='VIEW'").Check(testkit.Rows("1", "1"))
-	tk.MustQuery("SELECT * FROM information_schema.views WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 SELECT 1 AS `1` CASCADED NO root@localhost DEFINER utf8mb4 utf8mb4_bin"))
+	tk.MustQuery("SELECT * FROM information_schema.views WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 SELECT 1 AS `1` CASCADED NO root@localhost DEFINER utf8mb4 utf8mb4_0900_ai_ci"))
 	tk.MustQuery("SELECT table_catalog, table_schema, table_name, table_type, engine, version, row_format, table_rows, avg_row_length, data_length, max_data_length, index_length, data_free, auto_increment, update_time, check_time, table_collation, checksum, create_options, table_comment FROM information_schema.tables WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 VIEW <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> VIEW"))
 }
 
@@ -198,14 +198,14 @@ func TestDataTypesMaxLengthAndOctLength(t *testing.T) {
 		octLen int
 	}{
 		{"varchar(255) collate ascii_bin", 255, 255},
-		{"varchar(255) collate utf8mb4_bin", 255, 255 * 4},
+		{"varchar(255) collate utf8mb4_0900_ai_ci", 255, 255 * 4},
 		{"varchar(255) collate utf8_bin", 255, 255 * 3},
 		{"char(10) collate ascii_bin", 10, 10},
-		{"char(10) collate utf8mb4_bin", 10, 10 * 4},
+		{"char(10) collate utf8mb4_0900_ai_ci", 10, 10 * 4},
 		{"set('a', 'b', 'cccc') collate ascii_bin", 8, 8},
-		{"set('a', 'b', 'cccc') collate utf8mb4_bin", 8, 8 * 4},
+		{"set('a', 'b', 'cccc') collate utf8mb4_0900_ai_ci", 8, 8 * 4},
 		{"enum('a', 'b', 'cccc') collate ascii_bin", 4, 4},
-		{"enum('a', 'b', 'cccc') collate utf8mb4_bin", 4, 4 * 4},
+		{"enum('a', 'b', 'cccc') collate utf8mb4_0900_ai_ci", 4, 4 * 4},
 	}
 	for _, tc := range testCases {
 		createSQL := fmt.Sprintf("create table t (a %s);", tc.colTp)
@@ -566,7 +566,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 		"  `REMAINING_SECONDS` bigint(64) unsigned DEFAULT NULL,\n" +
 		"  `PROGRESS` double(22,6) DEFAULT NULL,\n" +
 		"  `ESTIMATED_TOTAL_ROWS` bigint(64) unsigned DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
 	tk.MustQuery("show create table information_schema.analyze_status").Check(testkit.Rows("ANALYZE_STATUS " + analyzeStatusTable))
 	tk.MustExec("delete from mysql.analyze_jobs")
 	tk.MustExec("use test")

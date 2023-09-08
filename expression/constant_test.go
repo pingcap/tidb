@@ -247,7 +247,7 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 		{
 			condition: newFunction(ast.Length, newFunctionWithType(
 				InternalFuncToBinary, types.NewFieldType(mysql.TypeVarchar),
-				newString("中文", "utf8mb4_bin"))),
+				newString("中文", "utf8mb4_0900_ai_ci"))),
 			result: "6",
 		},
 		{

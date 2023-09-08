@@ -1069,7 +1069,7 @@ func TestIssue23919(t *testing.T) {
   UNIQUE KEY idx_6 (col_9,col_7,col_8),
   KEY idx_8 (col_8,col_6,col_5(6),col_9,col_7),
   KEY idx_9 (col_9,col_7,col_8)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 PARTITION BY RANGE ( col_8 ) (
   PARTITION p0 VALUES LESS THAN (-17650),
   PARTITION p1 VALUES LESS THAN (-13033),
@@ -1416,7 +1416,7 @@ func TestBitColumnPushDown(t *testing.T) {
 		testkit.Rows("True"))
 	tk.MustExec("create table t3 (a bit(8));")
 	tk.MustExec("insert into t3 values (65)")
-	tk.MustExec("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
+	tk.MustExec("SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci")
 	tk.MustQuery("select a from t3 where cast(a as char) = 'a'").Check(testkit.Rows())
 	tk.MustExec("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci")
 	tk.MustQuery("select a from t3 where cast(a as char) = 'a'").Check(testkit.Rows("A"))
@@ -2848,7 +2848,7 @@ func TestPanicWhileQueryTableWithIsNull(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists NT_HP27193")
-	tk.MustExec("CREATE TABLE `NT_HP27193` (  `COL1` int(20) DEFAULT NULL,  `COL2` varchar(20) DEFAULT NULL,  `COL4` datetime DEFAULT NULL,  `COL3` bigint(20) DEFAULT NULL,  `COL5` float DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH ( `COL1`%`COL3` ) PARTITIONS 10;")
+	tk.MustExec("CREATE TABLE `NT_HP27193` (  `COL1` int(20) DEFAULT NULL,  `COL2` varchar(20) DEFAULT NULL,  `COL4` datetime DEFAULT NULL,  `COL3` bigint(20) DEFAULT NULL,  `COL5` float DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci PARTITION BY HASH ( `COL1`%`COL3` ) PARTITIONS 10;")
 	rs, err := tk.Exec("select col1 from NT_HP27193 where col1 is null;")
 	require.NoError(t, err)
 	rs.Close()
@@ -2886,7 +2886,7 @@ func TestIssue23839(t *testing.T) {
 		"	`col_datetime_not_null` datetime NOT NULL,\n" +
 		"	`col_varchar_10_not_null` varchar(10) NOT NULL,\n" +
 		"	PRIMARY KEY (`pk`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2000001")
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci AUTO_INCREMENT=2000001")
 	tk.Exec("explain SELECT OUTR . col2 AS X FROM (SELECT INNR . col1 as col1, SUM( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR2 INNER JOIN (SELECT INNR . col1 as col1, MAX( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR ON OUTR2.col1 = OUTR.col1 GROUP BY OUTR . col1, OUTR2 . col1 HAVING X <> 'b'")
 }
 
@@ -3018,15 +3018,15 @@ func TestIssue27167(t *testing.T) {
 		"PRIMARY KEY (`id`));",
 	)
 
-	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("utf8mb4_0900_ai_ci"))
 
 	tk.MustExec(`insert into all_types values(0, 0, 1, 2, 3, 1.5, 2.2, 10.23, 12, 'xy', '2021-12-12', '2021-12-12 12:00:00', '2021-12-12 12:00:00', '123');`)
 
-	tk.MustQuery("select collation(c) from (select d_date c from all_types union select d_int c from all_types) t").Check(testkit.Rows("utf8mb4_bin", "utf8mb4_bin"))
+	tk.MustQuery("select collation(c) from (select d_date c from all_types union select d_int c from all_types) t").Check(testkit.Rows("utf8mb4_0900_ai_ci", "utf8mb4_0900_ai_ci"))
 	tk.MustQuery("select collation(c) from (select d_date c from all_types union select d_int collate binary c from all_types) t").Check(testkit.Rows("binary", "binary"))
-	tk.MustQuery("select collation(c) from (select d_date c from all_types union select d_float c from all_types) t").Check(testkit.Rows("utf8mb4_bin", "utf8mb4_bin"))
+	tk.MustQuery("select collation(c) from (select d_date c from all_types union select d_float c from all_types) t").Check(testkit.Rows("utf8mb4_0900_ai_ci", "utf8mb4_0900_ai_ci"))
 	// timestamp also OK
-	tk.MustQuery("select collation(c) from (select d_timestamp c from all_types union select d_float c from all_types) t").Check(testkit.Rows("utf8mb4_bin", "utf8mb4_bin"))
+	tk.MustQuery("select collation(c) from (select d_timestamp c from all_types union select d_float c from all_types) t").Check(testkit.Rows("utf8mb4_0900_ai_ci", "utf8mb4_0900_ai_ci"))
 }
 
 func TestIssue25300(t *testing.T) {
@@ -3189,7 +3189,7 @@ func TestIssue29834(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists IDT_MC21814;")
-	tk.MustExec("CREATE TABLE `IDT_MC21814` (`COL1` year(4) DEFAULT NULL,`COL2` year(4) DEFAULT NULL,KEY `U_M_COL` (`COL1`,`COL2`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `IDT_MC21814` (`COL1` year(4) DEFAULT NULL,`COL2` year(4) DEFAULT NULL,KEY `U_M_COL` (`COL1`,`COL2`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustExec("insert into IDT_MC21814 values(1901, 2119), (2155, 2000);")
 	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(1) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
 	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(2) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
@@ -3394,7 +3394,7 @@ func TestIssue27797(t *testing.T) {
 		"`COL3` bigint(20) DEFAULT NULL, " +
 		"`COL5` float DEFAULT NULL, " +
 		"KEY `UM_COL` (`COL1`,`COL3`) " +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin " +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci " +
 		"PARTITION BY HASH( `COL1`+`COL3` ) " +
 		"PARTITIONS 8;")
 	tk.MustExec("insert into IDT_HP24172(col1) values(8388607);")
@@ -3546,7 +3546,7 @@ func TestIssue30271(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a char(10), b char(10), c char(10), index (a, b, c)) collate utf8mb4_bin;")
+	tk.MustExec("create table t(a char(10), b char(10), c char(10), index (a, b, c)) collate utf8mb4_0900_ai_ci;")
 	tk.MustExec("insert into t values ('b', 'a', '1'), ('b', 'A', '2'), ('c', 'a', '3');")
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
 	tk.MustQuery("select * from t where (a>'a' and b='a') or (b = 'A' and a < 'd') order by a,c;").Check(testkit.Rows("b a 1", "b A 2", "c a 3"))

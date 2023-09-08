@@ -1357,7 +1357,7 @@ func TestPrefixIndexAppendPointRanges(t *testing.T) {
 		"  `COL2` tinyint(16) DEFAULT NULL,\n" +
 		"  `COL3` timestamp NULL DEFAULT NULL,\n" +
 		"  KEY `u_m_col` (`COL1`(10),`COL2`,`COL3`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci")
 	testKit.MustExec("INSERT INTO IDT_20755 VALUES(\"牾窓螎刳闌蜹瑦詬鍖湪槢壿玟瞏膍敗特森撇縆\", 73, \"2010-06-03 07:29:05\")")
 	testKit.MustExec("INSERT INTO IDT_20755 VALUES(\"xxxxxxxxxxxxxxx\", 73, \"2010-06-03 07:29:05\")")
 
@@ -1659,14 +1659,14 @@ create table t(
 		},
 		{
 			indexPos:    4,
-			exprStr:     "f = 'a' and f = 'B' collate utf8mb4_bin",
+			exprStr:     "f = 'a' and f = 'B' collate utf8mb4_0900_ai_ci",
 			accessConds: "[eq(test.t.f, a)]",
 			filterConds: "[eq(test.t.f, B)]",
 			resultStr:   "[[\"a\",\"a\"]]",
 		},
 		{
 			indexPos:    4,
-			exprStr:     "f like '@%' collate utf8mb4_bin",
+			exprStr:     "f like '@%' collate utf8mb4_0900_ai_ci",
 			accessConds: "[]",
 			filterConds: "[like(test.t.f, @%, 92)]",
 			resultStr:   "[[NULL,+inf]]",

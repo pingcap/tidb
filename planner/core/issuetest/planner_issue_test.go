@@ -166,7 +166,7 @@ func TestIssue45036(t *testing.T) {
 		"  `aml_cntpr_accno` varchar(64) DEFAULT NULL,\n" +
 		"  `acpayr_accno` varchar(35) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`cusno`,`txn_dt`,`unn_trno`) NONCLUSTERED\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST COLUMNS(`txn_dt`)\n" +
 		"(PARTITION `p20000101` VALUES IN ('20000101'),\n" +
 		"PARTITION `p20220101` VALUES IN ('20220101'),\n" +

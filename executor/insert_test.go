@@ -569,7 +569,7 @@ func TestInsertZeroYear(t *testing.T) {
 	))
 
 	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t(f_year year NOT NULL DEFAULT '0000')ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`create table t(f_year year NOT NULL DEFAULT '0000')ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;`)
 	tk.MustExec(`insert into t values();`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(
 		`0`,

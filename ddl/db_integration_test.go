@@ -403,7 +403,7 @@ func TestIssue5092(t *testing.T) {
 		"  `c1` int(11) DEFAULT NULL,\n" +
 		"  `f` int(11) DEFAULT NULL,\n" +
 		"  `g` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	// The following two statements are consistent with MariaDB.
 	tk.MustGetErrCode("alter table t_issue_5092 add column if not exists d int, add column d int", errno.ErrDupFieldName)
 	tk.MustGetErrCode("alter table t_issue_5092 add column dd int, add column if not exists dd int", errno.ErrUnsupportedDDLOperation)
@@ -430,7 +430,7 @@ func TestIssue5092(t *testing.T) {
 		"  `f` int(11) DEFAULT NULL,\n" +
 		"  `g` int(11) DEFAULT NULL,\n" +
 		"  `ff` text DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	ddlChecker.Enable()
 	tk.MustExec("drop table t_issue_5092")
 
@@ -449,7 +449,7 @@ func TestIssue5092(t *testing.T) {
 		"  `c` int(11) DEFAULT '3',\n" +
 		"  `c1` int(11) DEFAULT '33',\n" +
 		"  `d` int(11) DEFAULT '4'\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustExec("drop table t_issue_5092")
 
 	tk.MustExec("create table t_issue_5092 (a int)")
@@ -714,7 +714,7 @@ func TestNullGeneratedColumn(t *testing.T) {
 		"`c` int(11) GENERATED ALWAYS AS (`a` + `b`) VIRTUAL," +
 		"`h` varchar(10) DEFAULT NULL," +
 		"`m` int(11) DEFAULT NULL" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci")
 
 	tk.MustExec("insert into t values()")
 	tk.MustExec("alter table t add index idx_c(c)")
@@ -731,7 +731,7 @@ func TestDependedGeneratedColumnPrior2GeneratedColumn(t *testing.T) {
 		"`a` int(11) DEFAULT NULL," +
 		"`b` int(11) GENERATED ALWAYS AS (`a` + 1) VIRTUAL," +
 		"`c` int(11) GENERATED ALWAYS AS (`b` + 1) VIRTUAL" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci")
 	// should check unknown column first, then the prior ones.
 	sql := "alter table t add column d int as (c + f + 1) first"
 	tk.MustGetErrCode(sql, errno.ErrBadField)
@@ -760,11 +760,11 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustGetErrCode("alter table t charset gbk", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t charset ''", errno.ErrUnknownCharacterSet)
 
-	tk.MustGetErrCode("alter table t charset utf8mb4 collate '' collate utf8mb4_bin;", errno.ErrUnknownCollation)
+	tk.MustGetErrCode("alter table t charset utf8mb4 collate '' collate utf8mb4_0900_ai_ci;", errno.ErrUnknownCollation)
 
 	tk.MustGetErrCode("alter table t charset utf8 collate latin1_bin", errno.ErrCollationCharsetMismatch)
-	tk.MustGetErrCode("alter table t charset utf8 collate utf8mb4_bin;", errno.ErrCollationCharsetMismatch)
-	tk.MustGetErrCode("alter table t charset utf8 collate utf8_bin collate utf8mb4_bin collate utf8_bin;", errno.ErrCollationCharsetMismatch)
+	tk.MustGetErrCode("alter table t charset utf8 collate utf8mb4_0900_ai_ci;", errno.ErrCollationCharsetMismatch)
+	tk.MustGetErrCode("alter table t charset utf8 collate utf8_bin collate utf8mb4_0900_ai_ci collate utf8_bin;", errno.ErrCollationCharsetMismatch)
 	tk.MustGetErrCode("alter table t charset utf8", errno.ErrUnsupportedDDLOperation)
 
 	tk.MustExec("drop table if exists t")
@@ -774,7 +774,7 @@ func TestChangingTableCharset(t *testing.T) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10), index i(a)) charset latin1 collate latin1_bin")
-	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_0900_ai_ci")
 	tk.MustExec("admin check table t")
 
 	tk.MustGetErrCode("alter table t charset latin1 charset utf8 charset utf8mb4 collate utf8_bin;", errno.ErrConflictingDeclarations)
@@ -872,11 +872,11 @@ func TestChangingTableCharset(t *testing.T) {
 	ddlChecker.Enable()
 
 	tk.MustExec("create table t (a blob) character set utf8;")
-	tk.MustExec("alter table t charset=utf8mb4 collate=utf8mb4_bin;")
+	tk.MustExec("alter table t charset=utf8mb4 collate=utf8mb4_0900_ai_ci;")
 	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` blob DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 
 	tk.MustExec("drop table t")
@@ -885,7 +885,7 @@ func TestChangingTableCharset(t *testing.T) {
 	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl)
 	require.Equal(t, "utf8mb4", tbl.Meta().Charset)
-	require.Equal(t, "utf8mb4_bin", tbl.Meta().Collate)
+	require.Equal(t, "utf8mb4_0900_ai_ci", tbl.Meta().Collate)
 	for _, col := range tbl.Meta().Columns {
 		// Column charset and collate should remain unchanged.
 		require.Equal(t, "utf8", col.GetCharset())
@@ -1056,7 +1056,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 	tk.MustExec("create table t(id int) ENGINE=InnoDB DEFAULT CHARSET=UTF8 COLLATE=UTF8_BIN;")
 	tk.MustExec("create table t1(id int) ENGINE=InnoDB DEFAULT CHARSET=UTF8 COLLATE=uTF8_BIN;")
 	tk.MustExec("create table t2(id int) ENGINE=InnoDB DEFAULT CHARSET=Utf8 COLLATE=utf8_BIN;")
-	tk.MustExec("create table t3(id int) ENGINE=InnoDB DEFAULT CHARSET=Utf8mb4 COLLATE=utf8MB4_BIN;")
+	tk.MustExec("create table t3(id int) ENGINE=InnoDB DEFAULT CHARSET=Utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustExec("create table t4(id int) ENGINE=InnoDB DEFAULT CHARSET=Utf8mb4 COLLATE=utf8MB4_general_ci;")
 
 	tk.MustExec("create table t5(a varchar(20)) ENGINE=InnoDB DEFAULT CHARSET=UTF8MB4 COLLATE=UTF8MB4_GENERAL_CI;")
@@ -1321,7 +1321,7 @@ func TestChangeColumnPosition(t *testing.T) {
 		"  `c` int(11) DEFAULT NULL,",
 		"  `a` int(11) DEFAULT NULL,",
 		"  KEY `t` (`c`)",
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	}
 	require.Equal(t, strings.Join(expectedSQL, "\n"), createSQL)
 }
@@ -1638,7 +1638,7 @@ func TestAlterColumn(t *testing.T) {
 	require.Error(t, err)
 	result := tk.MustQuery("show create table mc")
 	createSQL := result.Rows()[0][1]
-	expected := "CREATE TABLE `mc` (\n  `a` int(11) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	expected := "CREATE TABLE `mc` (\n  `a` int(11) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
 	require.Equal(t, expected, createSQL)
 
 	// Change / modify column should preserve index options.
@@ -1649,7 +1649,7 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("alter table mc modify column c bigint") // Unique should be preserved
 	result = tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]
-	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` bigint(20) DEFAULT NULL,\n  `c` bigint(20) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */,\n  UNIQUE KEY `c` (`c`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` bigint(20) DEFAULT NULL,\n  `c` bigint(20) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */,\n  UNIQUE KEY `c` (`c`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
 	require.Equal(t, expected, createSQL)
 
 	// Dropping or keeping auto_increment is allowed, however adding is not allowed.
@@ -1658,7 +1658,7 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("alter table mc modify column a bigint auto_increment") // Keeps auto_increment
 	result = tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]
-	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
 	require.Equal(t, expected, createSQL)
 	err = tk.ExecToErr("alter table mc modify column a bigint") // Droppping auto_increment is not allow when @@tidb_allow_remove_auto_inc == 'off'
 	require.Error(t, err)
@@ -1666,7 +1666,7 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("alter table mc modify column a bigint") // Dropping auto_increment is ok when @@tidb_allow_remove_auto_inc == 'on'
 	result = tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]
-	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
 	require.Equal(t, expected, createSQL)
 
 	err = tk.ExecToErr("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
@@ -1902,7 +1902,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
 		"  `b` varchar(10) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	// Mock old version table info with column charset is utf8.
 	db, ok := domain.GetDomain(tk.Session()).InfoSchema().SchemaByName(model.NewCIStr("test"))
@@ -1932,7 +1932,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 		"  `a` varchar(10) DEFAULT NULL,\n" +
 		"  `b` varchar(10) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,\n" +
 		"  `c` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TreatOldVersionUTF8AsUTF8MB4 = false
 	})
@@ -1941,7 +1941,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
 		"  `b` varchar(10) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	// Mock old version table info with table and column charset is utf8.
 	tbl = external.GetTableByName(t, tk, "test", "t")
@@ -1961,7 +1961,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 		"  `a` varchar(10) DEFAULT NULL,\n" +
 		"  `b` varchar(10) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,\n" +
 		"  `c` varchar(10) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TreatOldVersionUTF8AsUTF8MB4 = false
@@ -1986,7 +1986,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(10) DEFAULT NULL,\n" +
 		"  `b` varchar(10) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	// Test for change column should not modify the column version.
 	tk.MustExec("alter table t change column a a varchar(20)") //  change column.
 	tbl = external.GetTableByName(t, tk, "test", "t")
@@ -2010,7 +2010,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(20) DEFAULT NULL,\n" +
 		"  `b` varchar(20) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TreatOldVersionUTF8AsUTF8MB4 = false
@@ -2036,7 +2036,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(20) DEFAULT NULL,\n" +
 		"  `b` varchar(50) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func TestDefaultValueIsString(t *testing.T) {
@@ -2091,17 +2091,17 @@ func TestDefaultColumnWithRand(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 			"  `c` int(10) DEFAULT NULL,\n" +
 			"  `c1` int(11) DEFAULT rand()\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustQuery("show create table t1").Check(testkit.Rows(
 		"t1 CREATE TABLE `t1` (\n" +
 			"  `c` int(11) DEFAULT NULL,\n" +
 			"  `c1` double DEFAULT rand()\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustQuery("show create table t2").Check(testkit.Rows(
 		"t2 CREATE TABLE `t2` (\n" +
 			"  `c` int(11) DEFAULT NULL,\n" +
 			"  `c1` double DEFAULT rand(1)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	// use a non-existent function name
 	tk.MustGetErrCode("CREATE TABLE t3 (c int, c1 int default a_function_not_supported_yet());", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
@@ -2130,7 +2130,7 @@ func TestDefaultColumnWithUUID(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 			"  `c` int(10) DEFAULT NULL,\n" +
 			"  `c1` varchar(256) DEFAULT uuid()\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func TestChangingDBCharset(t *testing.T) {
@@ -2218,11 +2218,11 @@ func TestChangingDBCharset(t *testing.T) {
 			"[ddl:1302]Conflicting declarations: 'CHARACTER SET utf8' and 'CHARACTER SET utf8mb4'",
 		},
 		{
-			"ALTER SCHEMA CHARACTER SET = 'utf8' COLLATE = 'utf8mb4_bin'",
+			"ALTER SCHEMA CHARACTER SET = 'utf8' COLLATE = 'utf8mb4_0900_ai_ci'",
 			"[ddl:1302]Conflicting declarations: 'CHARACTER SET utf8' and 'CHARACTER SET utf8mb4'",
 		},
 		{
-			"ALTER DATABASE COLLATE = 'utf8mb4_bin' COLLATE = 'utf8_bin'",
+			"ALTER DATABASE COLLATE = 'utf8mb4_0900_ai_ci' COLLATE = 'utf8_bin'",
 			"[ddl:1302]Conflicting declarations: 'CHARACTER SET utf8mb4' and 'CHARACTER SET utf8'",
 		},
 	}
@@ -2234,7 +2234,7 @@ func TestChangingDBCharset(t *testing.T) {
 	verifyDBCharsetAndCollate("alterdb2", "utf8", "utf8_unicode_ci")
 
 	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8mb4'")
-	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_bin")
+	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_0900_ai_ci")
 
 	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8mb4' COLLATE = 'utf8mb4_general_ci'")
 	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_general_ci")
@@ -2383,7 +2383,7 @@ func TestSchemaNameAndTableNameInGeneratedExpr(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` int(11) GENERATED ALWAYS AS (lower(`a`)) VIRTUAL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int)")
@@ -2391,7 +2391,7 @@ func TestSchemaNameAndTableNameInGeneratedExpr(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` int(11) GENERATED ALWAYS AS (lower(`a`)) VIRTUAL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	tk.MustGetErrCode("alter table t add index idx((lower(test.t1.a)))", errno.ErrBadField)
 
@@ -3048,14 +3048,14 @@ func TestAutoIncrementForce(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5201"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci AUTO_INCREMENT=5201"))
 	tk.MustExec("alter table t auto_increment=100;")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Can't reset AUTO_INCREMENT to 100 without FORCE option, using 5201 instead"))
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5201"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci AUTO_INCREMENT=5201"))
 	tk.MustExec("drop table t")
 }
 
@@ -3175,7 +3175,7 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=201 /*T![auto_id_cache] AUTO_ID_CACHE=1 */"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci AUTO_INCREMENT=201 /*T![auto_id_cache] AUTO_ID_CACHE=1 */"))
 	tk.MustExec("alter table t auto_increment=100;")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Can't reset AUTO_INCREMENT to 100 without FORCE option, using 201 instead"))
 	tk.MustExec("insert into t values ()")
@@ -3184,7 +3184,7 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=212 /*T![auto_id_cache] AUTO_ID_CACHE=1 */"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci AUTO_INCREMENT=212 /*T![auto_id_cache] AUTO_ID_CACHE=1 */"))
 	tk.MustExec("drop table t")
 }
 
@@ -3547,14 +3547,14 @@ func TestPlacementOnTemporaryTable(t *testing.T) {
 	tk.MustQuery("show create table db2.tplacement3").Check(testkit.Rows(
 		"tplacement3 CREATE GLOBAL TEMPORARY TABLE `tplacement3` (\n" +
 			"  `id` int(11) DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ON COMMIT DELETE ROWS",
 	))
 
 	tk.MustExec("create temporary table db2.tplacement4 (id int)")
 	tk.MustQuery("show create table db2.tplacement4").Check(testkit.Rows(
 		"tplacement4 CREATE TEMPORARY TABLE `tplacement4` (\n" +
 			"  `id` int(11) DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 
 	tk.MustExec("create table db2.t1 (a int) placement policy 'default'")
@@ -3565,7 +3565,7 @@ func TestPlacementOnTemporaryTable(t *testing.T) {
 	tk.MustQuery("show create table db2.tplacement5").Check(testkit.Rows(
 		"tplacement5 CREATE GLOBAL TEMPORARY TABLE `tplacement5` (\n" +
 			"  `a` int(11) DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ON COMMIT DELETE ROWS",
 	))
 
 	tk.MustExec("create temporary table db2.tplacement6 like db2.t1")
@@ -3573,7 +3573,7 @@ func TestPlacementOnTemporaryTable(t *testing.T) {
 	tk.MustQuery("show create table db2.tplacement6").Check(testkit.Rows(
 		"tplacement6 CREATE TEMPORARY TABLE `tplacement6` (\n" +
 			"  `a` int(11) DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 }
 
@@ -4174,7 +4174,7 @@ func TestIssue29326(t *testing.T) {
 	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` " +
 		"SQL SECURITY DEFINER VIEW `v1` (`1`, `Name_exp_1`) " +
 		"AS SELECT 1 AS `1`,1 AS `Name_exp_1` UNION ALL SELECT 1 AS `1`,1 AS `1` " +
-		"utf8mb4 utf8mb4_bin"))
+		"utf8mb4 utf8mb4_0900_ai_ci"))
 	rs, err = tk.Exec("select * from v1")
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1", "1 1"))
@@ -4186,7 +4186,7 @@ func TestIssue29326(t *testing.T) {
 	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` " +
 		"SQL SECURITY DEFINER VIEW `v1` (`Name_exp_id`, `id`) " +
 		"AS SELECT _UTF8MB4'id' AS `Name_exp_id`,`id` AS `id` FROM `test`.`t1` " +
-		"utf8mb4 utf8mb4_bin"))
+		"utf8mb4 utf8mb4_0900_ai_ci"))
 	rs, err = tk.Exec("select * from v1")
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("id 1"))
@@ -4198,7 +4198,7 @@ func TestIssue29326(t *testing.T) {
 	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` " +
 		"SQL SECURITY DEFINER VIEW `v1` (`Name_exp_1`, `1`) " +
 		"AS SELECT 1 AS `Name_exp_1`,(SELECT `id` AS `id` FROM `test`.`t1` WHERE `t1`.`id`=`t2`.`id`) AS `1` FROM `test`.`t2` " +
-		"utf8mb4 utf8mb4_bin"))
+		"utf8mb4 utf8mb4_0900_ai_ci"))
 	rs, err = tk.Exec("select * from v1")
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
@@ -4210,7 +4210,7 @@ func TestIssue29326(t *testing.T) {
 	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` " +
 		"SQL SECURITY DEFINER VIEW `v1` (`abs(t1.id)`, `Name_exp_abs(t1.id)`) " +
 		"AS SELECT 1 AS `abs(t1.id)`,ABS(`t1`.`id`) AS `Name_exp_abs(t1.id)` FROM `test`.`t1` " +
-		"utf8mb4 utf8mb4_bin"))
+		"utf8mb4 utf8mb4_0900_ai_ci"))
 	rs, err = tk.Exec("select * from v1")
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
@@ -4418,7 +4418,7 @@ func TestDefaultCollationForUTF8MB4(t *testing.T) {
 	tk.MustExec("create table t1 (b char(1) default null)")
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `b` char(1) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustExec("create table t4 (b char(1) default null) engine=InnoDB default charset=utf8mb4")
 	tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n" +
 		"  `b` char(1) COLLATE utf8mb4_general_ci DEFAULT NULL\n" +

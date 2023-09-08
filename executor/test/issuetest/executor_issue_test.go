@@ -1271,7 +1271,7 @@ func TestIssue39618(t *testing.T) {
   KEY c_int_2 (c_int),
   KEY c_decimal (c_decimal),
   KEY c_datetime (c_datetime)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 PARTITION BY LIST COLUMNS(c_int)
 (PARTITION p0 VALUES IN (1,5,9,13,17,21,25,29,33,37),
  PARTITION p1 VALUES IN (2,6,10,14,18,22,26,30,34,38),
@@ -1292,7 +1292,7 @@ PARTITION BY LIST COLUMNS(c_int)
   KEY c_int_2 (c_int),
   KEY c_decimal (c_decimal),
   KEY c_datetime (c_datetime)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 PARTITION BY LIST COLUMNS(c_int)
 (PARTITION p0 VALUES IN (1,5,9,13,17,21,25,29,33,37),
  PARTITION p1 VALUES IN (2,6,10,14,18,22,26,30,34,38),

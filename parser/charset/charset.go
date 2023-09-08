@@ -221,7 +221,7 @@ const (
 	// CollationUTF8 is the default collation for CharsetUTF8.
 	CollationUTF8 = "utf8_bin"
 	// CollationUTF8MB4 is the default collation for CharsetUTF8MB4.
-	CollationUTF8MB4 = "utf8mb4_bin"
+	CollationUTF8MB4 = mysql.UTF8MB4DefaultCollation
 	// CollationASCII is the default collation for CharsetACSII.
 	CollationASCII = "ascii_bin"
 	// CollationLatin1 is the default collation for CharsetLatin1.
@@ -374,7 +374,7 @@ var collations = []*Collation{
 	{43, "macce", "macce_bin", false},
 	{44, "cp1250", "cp1250_croatian_ci", false},
 	{45, "utf8mb4", "utf8mb4_general_ci", false},
-	{46, "utf8mb4", "utf8mb4_bin", true},
+	{46, "utf8mb4", "utf8mb4_bin", false},
 	{47, "latin1", "latin1_bin", true},
 	{48, "latin1", "latin1_general_ci", false},
 	{49, "latin1", "latin1_general_cs", false},
@@ -553,7 +553,7 @@ var collations = []*Collation{
 	{248, "gb18030", "gb18030_chinese_ci", false},
 	{249, "gb18030", "gb18030_bin", true},
 	{250, "gb18030", "gb18030_unicode_520_ci", false},
-	{255, "utf8mb4", "utf8mb4_0900_ai_ci", false},
+	{255, "utf8mb4", "utf8mb4_0900_ai_ci", true},
 	{256, "utf8mb4", "utf8mb4_de_pb_0900_ai_ci", false},
 	{257, "utf8mb4", "utf8mb4_is_0900_ai_ci", false},
 	{258, "utf8mb4", "utf8mb4_lv_0900_ai_ci", false},

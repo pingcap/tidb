@@ -166,7 +166,7 @@ func TestDoChecksumWithTikv(t *testing.T) {
 			},
 		},
 		Charset: "utf8mb4",
-		Collate: "utf8mb4_bin",
+		Collate: "utf8mb4_0900_ai_ci",
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

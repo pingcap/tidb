@@ -207,7 +207,7 @@ func TestFlashbackAddDropModifyColumn(t *testing.T) {
 			"  `a` tinyint(4) DEFAULT NULL,\n"+
 			"  `c` int(11) DEFAULT NULL,\n"+
 			"  KEY `i` (`a`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci")
 
 		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
@@ -221,7 +221,7 @@ func TestFlashbackAddDropModifyColumn(t *testing.T) {
 			"  `a` int(11) DEFAULT NULL,\n"+
 			"  `b` int(11) DEFAULT NULL,\n"+
 			"  KEY `i` (`a`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci")
 		require.Equal(t, tk.MustQuery("select max(b) from t").Rows()[0][0], "3")
 
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))

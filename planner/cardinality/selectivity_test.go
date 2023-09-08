@@ -1015,7 +1015,7 @@ func testTopNAssistedEstimationInner(t *testing.T, input []string, output []outp
 	tk.MustExec("set @@tidb_default_string_match_selectivity = 0")
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 3000")
 	tk.MustExec("create table t(" +
-		"a varchar(100) charset utf8mb4 collate utf8mb4_bin," +
+		"a varchar(100) charset utf8mb4 collate utf8mb4_0900_ai_ci," +
 		"b varchar(100) charset utf8mb4 collate utf8mb4_general_ci," +
 		"c varchar(100) charset utf8mb4 collate utf8mb4_general_ci," +
 		"d varchar(100) charset gbk collate gbk_bin," +

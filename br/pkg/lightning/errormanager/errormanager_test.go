@@ -238,7 +238,7 @@ func TestReplaceConflictKeysIndexKvChecking(t *testing.T) {
 		ID:         75,
 		Name:       model.NewCIStr("a"),
 		Charset:    "utf8mb4",
-		Collate:    "utf8mb4_bin",
+		Collate:    "utf8mb4_0900_ai_ci",
 		Columns:    []*model.ColumnInfo{column1, column2, column3},
 		Indices:    []*model.IndexInfo{index},
 		PKIsHandle: true,

@@ -55,7 +55,7 @@ func TestCharsetFeature(t *testing.T) {
 	tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n" +
 		"  `a` char(10) DEFAULT NULL,\n" +
 		"  `b` char(10) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 	tk.MustExec("create table t5(a char(20), b char(20) charset utf8, c binary) charset gbk collate gbk_bin")
 
@@ -82,8 +82,8 @@ func TestCharsetFeatureCollation(t *testing.T) {
 	tk.MustExec("insert into t values ('a', 'a', 'a', 'a'), ('a', '啊', '€', 'ㅂ')")
 	tk.MustQuery("select collation(concat(ascii_char, gbk_char)) from t").Check(testkit.Rows("gbk_bin", "gbk_bin"))
 	tk.MustQuery("select collation(concat(gbk_char, ascii_char)) from t").Check(testkit.Rows("gbk_bin", "gbk_bin"))
-	tk.MustQuery("select collation(concat(utf8mb4_char, gbk_char)) from t").Check(testkit.Rows("utf8mb4_bin", "utf8mb4_bin"))
-	tk.MustQuery("select collation(concat(gbk_char, utf8mb4_char)) from t").Check(testkit.Rows("utf8mb4_bin", "utf8mb4_bin"))
+	tk.MustQuery("select collation(concat(utf8mb4_char, gbk_char)) from t").Check(testkit.Rows("utf8mb4_0900_ai_ci", "utf8mb4_0900_ai_ci"))
+	tk.MustQuery("select collation(concat(gbk_char, utf8mb4_char)) from t").Check(testkit.Rows("utf8mb4_0900_ai_ci", "utf8mb4_0900_ai_ci"))
 	tk.MustQuery("select collation(concat('啊', convert('啊' using gbk) collate gbk_bin))").Check(testkit.Rows("gbk_bin"))
 	tk.MustQuery("select collation(concat(_latin1 'a', convert('啊' using gbk) collate gbk_bin))").Check(testkit.Rows("gbk_bin"))
 

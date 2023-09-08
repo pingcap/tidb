@@ -180,7 +180,7 @@ func TestJoinSchemas(t *testing.T) {
 		{
 			name:    "DM_040",
 			a:       "CREATE TABLE tb1 (a INT, b VARCHAR(10), col1 VARCHAR(10) CHARSET utf8 COLLATE utf8_bin)",
-			b:       "CREATE TABLE tb2 (a INT, b VARCHAR(10), col1 VARCHAR(10) CHARSET utf8mb4 COLLATE utf8mb4_bin)",
+			b:       "CREATE TABLE tb2 (a INT, b VARCHAR(10), col1 VARCHAR(10) CHARSET utf8mb4 COLLATE utf8mb4_0900_ai_ci)",
 			cmpErr:  `.*"col1".*distinct singletons.*`,
 			joinErr: `.*"col1".*distinct singletons.*`,
 		},
@@ -264,7 +264,7 @@ func TestJoinSchemas(t *testing.T) {
 		// { // these table options are somehow ignored by the parser.
 		// 	name:    "DM_074",
 		// 	a:       "CREATE TABLE tbl1 (a INT, b VARCHAR(10)) CHARSET utf8 COLLATE utf8_bin",
-		// 	b:       "CREATE TABLE tbl2 (a INT, b VARCHAR(10)) CHARSET utf8mb4 COLLATE utf8mb4_bin",
+		// 	b:       "CREATE TABLE tbl2 (a INT, b VARCHAR(10)) CHARSET utf8mb4 COLLATE utf8mb4_0900_ai_ci",
 		// 	joinErr: `.*distinct singletons.*`,
 		// },
 		{

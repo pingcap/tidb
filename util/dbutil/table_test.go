@@ -161,5 +161,5 @@ func TestSchemacmpEncode(t *testing.T) {
 	require.NoError(t, err)
 
 	table := schemacmp.Encode(tableInfo)
-	require.Equal(t, "CREATE TABLE `tbl`(`id` INT(24) NOT NULL, PRIMARY KEY (`id`)) CHARSET UTF8MB4 COLLATE UTF8MB4_BIN", table.String())
+	require.Equal(t, "CREATE TABLE `tbl`(`id` INT(24) NOT NULL, PRIMARY KEY (`id`)) CHARSET UTF8MB4 COLLATE utf8mb4_0900_ai_ci", table.String())
 }

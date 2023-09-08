@@ -482,7 +482,7 @@ func TestRangePartitionPredicatePruner(t *testing.T) {
 	tk.MustExec("use test_partition")
 	tk.MustExec("drop table if exists t")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
-	tk.MustExec(`create table t (a int(11) default null) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+	tk.MustExec(`create table t (a int(11) default null) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 		partition by range(a) (
 		partition p0 values less than (1),
 		partition p1 values less than (2),

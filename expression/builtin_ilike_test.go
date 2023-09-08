@@ -91,7 +91,7 @@ func TestIlike(t *testing.T) {
 	}
 
 	var charsetAndCollationUnicode = [][]string{
-		{"utf8mb4", "utf8mb4_bin"},
+		{"utf8mb4", "utf8mb4_0900_ai_ci"},
 		{"utf8mb4", "utf8mb4_unicode_ci"},
 		{"utf8", "utf8_bin"},
 		{"utf8", "utf8_unicode_ci"}}

@@ -679,7 +679,7 @@ func TestPrefixedClusteredIndexUniqueKeyWithNewCollation(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (a text collate utf8mb4_general_ci not null, b int(11) not null, " +
-		"primary key (a(10), b) clustered, key idx(a(2)) ) default charset=utf8mb4 collate=utf8mb4_bin;")
+		"primary key (a(10), b) clustered, key idx(a(2)) ) default charset=utf8mb4 collate=utf8mb4_0900_ai_ci;")
 	tk.MustExec("insert into t values ('aaa', 2);")
 	// Key-value content: sk = sortKey, p = prefixed
 	// row record:     sk(aaa), 2              -> aaa

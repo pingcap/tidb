@@ -164,7 +164,7 @@ func TestReorganizeRangePartition(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
 		" PARTITION `p1` VALUES LESS THAN (20),\n" +
@@ -214,7 +214,7 @@ func TestReorganizeRangePartition(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
 		" PARTITION `p1` VALUES LESS THAN (20),\n" +
@@ -242,7 +242,7 @@ func TestReorganizeRangePartition(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
 		" PARTITION `p2` VALUES LESS THAN (35),\n" +
@@ -264,7 +264,7 @@ func TestReorganizeRangePartition(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
 		" PARTITION `p2` VALUES LESS THAN (35),\n" +
@@ -291,7 +291,7 @@ func TestReorganizeRangePartition(t *testing.T) {
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
 		" PARTITION `p2` VALUES LESS THAN (35),\n" +
@@ -307,7 +307,7 @@ func TestReorganizeRangePartition(t *testing.T) {
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
 		" PARTITION `p2` VALUES LESS THAN (35),\n" +
@@ -331,7 +331,7 @@ func TestReorganizeRangePartition(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (ABS(`a`))\n" +
 		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
 		" PARTITION `p1` VALUES LESS THAN (20),\n" +
@@ -351,7 +351,7 @@ func TestReorganizeRangePartition(t *testing.T) {
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (ABS(`a`))\n" +
 		"(PARTITION `pAll` VALUES LESS THAN (MAXVALUE))"))
 	tk.MustQuery(`select * from t partition (pAll)`).Sort().Check(testkit.Rows(""+
@@ -392,7 +392,7 @@ func TestReorganizeRangeColumnsPartition(t *testing.T) {
 		"  `b` char(3) DEFAULT NULL,\n" +
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE COLUMNS(`a`,`b`)\n" +
 		"(PARTITION `p00` VALUES LESS THAN (2,'ggg'),\n" +
 		" PARTITION `p01` VALUES LESS THAN (5,'ggg'),\n" +
@@ -432,7 +432,7 @@ func TestReorganizeRangeColumnsPartition(t *testing.T) {
 		"  `b` char(3) DEFAULT NULL,\n" +
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE COLUMNS(`b`,`a`)\n" +
 		"(PARTITION `p00` VALUES LESS THAN ('ccc',2),\n" +
 		" PARTITION `p01` VALUES LESS THAN ('ggg',5),\n" +
@@ -449,7 +449,7 @@ func TestReorganizeRangeColumnsPartition(t *testing.T) {
 		"  `b` char(3) DEFAULT NULL,\n" +
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE COLUMNS(`b`,`a`)\n" +
 		"(PARTITION `p1` VALUES LESS THAN ('mmm',10),\n" +
 		" PARTITION `p2` VALUES LESS THAN ('sss',15),\n" +
@@ -490,7 +490,7 @@ func TestReorganizeRangeColumnsPartition(t *testing.T) {
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE COLUMNS(`a`,`b`)\n" +
 		"(PARTITION `p00` VALUES LESS THAN ('2020-04-10','2020-04-10 10:10:10'),\n" +
 		" PARTITION `p01` VALUES LESS THAN ('2020-05-05','2020-05-05 10:10:10'),\n" +
@@ -512,7 +512,7 @@ func TestReorganizeRangeColumnsPartition(t *testing.T) {
 		"  `b` datetime DEFAULT NULL,\n" +
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE COLUMNS(`a`,`b`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN ('2022-05-05','2022-05-05 10:10:10'),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE,MAXVALUE))"))
@@ -552,7 +552,7 @@ func TestReorganizeRangeColumnsPartition(t *testing.T) {
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE COLUMNS(`b`,`a`)\n" +
 		"(PARTITION `p00` VALUES LESS THAN ('2020-04-10 10:10:10','2020-04-10'),\n" +
 		" PARTITION `p01` VALUES LESS THAN ('2020-05-05 10:10:10','2020-05-05'),\n" +
@@ -574,7 +574,7 @@ func TestReorganizeRangeColumnsPartition(t *testing.T) {
 		"  `b` datetime DEFAULT NULL,\n" +
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE COLUMNS(`b`,`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN ('2022-05-05 10:10:10','2022-05-05'),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE,MAXVALUE))"))
@@ -600,7 +600,7 @@ func TestReorganizeListPartition(t *testing.T) {
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` varchar(55) DEFAULT NULL,\n" +
 		"  `c` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST (`a`)\n" +
 		"(PARTITION `p0` VALUES IN (12,51,13),\n" +
 		" PARTITION `p1` VALUES IN (23),\n" +
@@ -622,7 +622,7 @@ func TestReorganizeListPartition(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST (`a`)\n" +
 		"(PARTITION `p0` VALUES IN (12,51,13),\n" +
 		" PARTITION `pa` VALUES IN (45,23,15),\n" +
@@ -648,7 +648,7 @@ func TestReorganizeListPartition(t *testing.T) {
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` varchar(55) DEFAULT NULL,\n" +
 		"  `c` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST (ABS(`a`))\n" +
 		"(PARTITION `p0` VALUES IN (0,1,2,12,51,13),\n" +
 		" PARTITION `p1` VALUES IN (23),\n" +
@@ -668,7 +668,7 @@ func TestReorganizeListPartition(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST (ABS(`a`))\n" +
 		"(PARTITION `paa` VALUES IN (0,1,2,12,13,23,24,45,51,63,64))"))
 }
@@ -708,7 +708,7 @@ func TestReorganizeListColumnsPartition(t *testing.T) {
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST COLUMNS(`a`,`b`)\n" +
 		"(PARTITION `p00` VALUES IN ((0,'uuu'),(1,'aaa')),\n" +
 		" PARTITION `p01` VALUES IN ((2,'bbb'),(3,'ccc')),\n" +
@@ -752,7 +752,7 @@ func TestReorganizeListColumnsPartition(t *testing.T) {
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST COLUMNS(`b`,`a`)\n" +
 		"(PARTITION `p00` VALUES IN (('uuu',-1),('aaa',1)),\n" +
 		" PARTITION `p01` VALUES IN (('bbb',2),('ccc',3),('ccc',4)),\n" +
@@ -796,7 +796,7 @@ func TestReorganizeListColumnsPartition(t *testing.T) {
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST COLUMNS(`a`,`b`)\n" +
 		"(PARTITION `p00` VALUES IN (('2020-04-10','2020-04-10 10:10:10')),\n" +
 		" PARTITION `p01` VALUES IN (('2020-05-04','2020-05-04 10:10:10')),\n" +
@@ -824,7 +824,7 @@ func TestReorganizeListColumnsPartition(t *testing.T) {
 		"  `b` datetime DEFAULT NULL,\n" +
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST COLUMNS(`a`,`b`)\n" +
 		"(PARTITION `pAll` VALUES IN " +
 		"(('2020-04-10','2020-04-10 10:10:10'),('2020-05-04','2020-05-04 10:10:10')," +
@@ -869,7 +869,7 @@ func TestReorganizeListColumnsPartition(t *testing.T) {
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST COLUMNS(`b`,`a`)\n" +
 		"(PARTITION `p00` VALUES IN (('2020-04-10 10:10:10','2020-04-10')),\n" +
 		" PARTITION `p01` VALUES IN (('2020-05-04 10:10:10','2020-05-04')),\n" +
@@ -897,7 +897,7 @@ func TestReorganizeListColumnsPartition(t *testing.T) {
 		"  `b` datetime DEFAULT NULL,\n" +
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY LIST COLUMNS(`b`,`a`)\n" +
 		"(PARTITION `pAll` VALUES IN " +
 		"(('2020-04-10 10:10:10','2020-04-10'),('2020-05-04 10:10:10','2020-05-04')," +
@@ -1003,7 +1003,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
 		" PARTITION `p1` VALUES LESS THAN (20),\n" +
@@ -1040,7 +1040,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
 		" PARTITION `p1` VALUES LESS THAN (20),\n" +
@@ -1076,7 +1076,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
 		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
@@ -1094,7 +1094,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
 		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
@@ -1157,7 +1157,7 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
 		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
@@ -1298,7 +1298,7 @@ func TestReorgPartitionFailInject(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
 		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
@@ -1345,7 +1345,7 @@ func TestReorgPartitionRollback(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
 		" PARTITION `p1` VALUES LESS THAN (20),\n" +

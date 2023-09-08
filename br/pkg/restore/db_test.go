@@ -95,7 +95,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 	tk.MustExec("drop database if exists test;")
 	// Test empty charset value
 	table.DB.Charset = ""
-	table.DB.Collate = "utf8mb4_bin"
+	table.DB.Collate = "utf8mb4_0900_ai_ci"
 	err = db.CreateDatabase(context.Background(), table.DB)
 	require.NoErrorf(t, err, "Error create empty charset db: %s %s", err, s.mock.DSN)
 	uniqueMap := make(map[restore.UniqueTableName]bool)
@@ -153,7 +153,7 @@ func TestCreateTablesInDb(t *testing.T) {
 					State:     model.StatePublic,
 				}},
 				Charset: "utf8mb4",
-				Collate: "utf8mb4_bin",
+				Collate: "utf8mb4_0900_ai_ci",
 			},
 		}
 		ddlJobMap[restore.UniqueTableName{dbSchema.Name.String(), tables[i].Info.Name.String()}] = false

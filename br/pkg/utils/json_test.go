@@ -32,7 +32,7 @@ var testMetaJSONs = [][]byte{
         "auto_rand_id": 0,
         "auto_random_bits": 0,
         "charset": "utf8mb4",
-        "collate": "utf8mb4_bin",
+        "collate": "utf8mb4_0900_ai_ci",
         "cols": [
           {
             "change_state_info": null,
@@ -55,7 +55,7 @@ var testMetaJSONs = [][]byte{
             "state": 5,
             "type": {
               "charset": "utf8mb4",
-              "collate": "utf8mb4_bin",
+              "collate": "utf8mb4_0900_ai_ci",
               "decimal": 0,
               "elems": null,
               "flag": 4099,
@@ -123,7 +123,7 @@ var testMetaJSONs = [][]byte{
       },
       "db": {
         "charset": "utf8mb4",
-        "collate": "utf8mb4_bin",
+        "collate": "utf8mb4_0900_ai_ci",
         "db_name": {
           "L": "test",
           "O": "test"
@@ -224,7 +224,7 @@ var testMetaJSONs = [][]byte{
       {
         "db": {
           "charset": "utf8mb4",
-          "collate": "utf8mb4_bin",
+          "collate": "utf8mb4_0900_ai_ci",
           "db_name": {
             "L": "test",
             "O": "test"

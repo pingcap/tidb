@@ -874,7 +874,7 @@ func TestShowCheckConstraint(t *testing.T) {
 		"  `b` int(11) DEFAULT NULL,\n" +
 		"CONSTRAINT `my_constr` CHECK ((`a` < 10)),\n" +
 		"CONSTRAINT `t_chk_1` CHECK ((`a` > 1))\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	// Alter table add constraint.
 	tk.MustExec("alter table t add constraint my_constr2 check (a<b) not enforced")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -883,7 +883,7 @@ func TestShowCheckConstraint(t *testing.T) {
 		"CONSTRAINT `my_constr` CHECK ((`a` < 10)),\n" +
 		"CONSTRAINT `t_chk_1` CHECK ((`a` > 1)),\n" +
 		"CONSTRAINT `my_constr2` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	// Alter table drop constraint.
 	tk.MustExec("alter table t drop constraint t_chk_1")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -891,7 +891,7 @@ func TestShowCheckConstraint(t *testing.T) {
 		"  `b` int(11) DEFAULT NULL,\n" +
 		"CONSTRAINT `my_constr` CHECK ((`a` < 10)),\n" +
 		"CONSTRAINT `my_constr2` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustExec("drop table if exists t")
 }
 
@@ -979,7 +979,7 @@ func TestAlterAddConstraintStateChange(t *testing.T) {
 	d.SetHook(callback)
 	tk.MustExec("alter table t add constraint c0 check ( a > 10)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("12", "1"))
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `c0` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `c0` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustExec("alter table t drop constraint c0")
 	tk.MustExec("delete from t where a = 1")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockVerifyRemainDataSuccess"))
@@ -1025,7 +1025,7 @@ func TestAlterAddConstraintStateChange1(t *testing.T) {
 	d.SetHook(callback)
 	tk.MustGetErrMsg("alter table t add constraint c1 check ( a > 10)", "[ddl:3819]Check constraint 'c1' is violated.")
 	tk.MustQuery("select * from t").Check(testkit.Rows("12", "1"))
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustExec("delete from t where a = 1")
 }
 
@@ -1068,7 +1068,7 @@ func TestAlterAddConstraintStateChange2(t *testing.T) {
 	d.SetHook(callback)
 	tk.MustExec("alter table t add constraint c2 check ( a > 10)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("12"))
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `c2` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `c2` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustExec("alter table t drop constraint c2")
 }
 
@@ -1111,7 +1111,7 @@ func TestAlterAddConstraintStateChange3(t *testing.T) {
 	d.SetHook(callback)
 	tk.MustExec("alter table t add constraint c3 check ( a > 10)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("12"))
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `c3` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `c3` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func TestAlterEnforcedConstraintStateChange(t *testing.T) {
@@ -1177,13 +1177,13 @@ func TestCheckConstraintSwitch(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int check(a > 0))")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 the switch of check constraint is off"))
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	tk.MustExec("drop table t")
 	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t(a int check(a > 0))")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `t_chk_1` CHECK ((`a` > 0))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `t_chk_1` CHECK ((`a` > 0))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustExec("alter table t add constraint chk check(true)")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustExec("alter table t alter constraint chk not enforced")
@@ -1196,5 +1196,5 @@ func TestCheckConstraintSwitch(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 the switch of check constraint is off"))
 	tk.MustExec("alter table t alter constraint t_chk_1 not enforced")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 the switch of check constraint is off"))
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `t_chk_1` CHECK ((`a` > 0))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `t_chk_1` CHECK ((`a` > 0))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }

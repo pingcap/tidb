@@ -100,7 +100,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 			"  `c` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  `d` int(11) DEFAULT NULL,\n" +
 			"  PRIMARY KEY (`c`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=30002"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci AUTO_INCREMENT=30002"))
 
 	// Test auto_increment for table without auto_increment column
 	tk.MustExec("drop table if exists t")
@@ -164,7 +164,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 			"  `DISK` bigint(21) unsigned DEFAULT NULL,\n" +
 			"  `TxnStart` varchar(64) NOT NULL DEFAULT '',\n" +
 			"  `RESOURCE_GROUP` varchar(32) NOT NULL DEFAULT ''\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustQuery("show create table information_schema.cluster_log").Check(
 		testkit.Rows("" +
 			"CLUSTER_LOG CREATE TABLE `CLUSTER_LOG` (\n" +
@@ -173,7 +173,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 			"  `INSTANCE` varchar(64) DEFAULT NULL,\n" +
 			"  `LEVEL` varchar(8) DEFAULT NULL,\n" +
 			"  `MESSAGE` longtext DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func TestCharacterSetCollations(t *testing.T) {
@@ -1693,8 +1693,8 @@ func TestTableConstraintsContainForeignKeys(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DATABASE tableconstraints")
 	tk.MustExec("use tableconstraints")
-	tk.MustExec("CREATE TABLE `t1` (`id` int(11) NOT NULL AUTO_INCREMENT, `name` varchar(25) DEFAULT NULL, PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
-	tk.MustExec("CREATE TABLE `t2` (`id` int(11) NOT NULL AUTO_INCREMENT, `t1_id` int(11) DEFAULT NULL,	PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,	CONSTRAINT `fk_t2_t1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `t1` (`id` int(11) NOT NULL AUTO_INCREMENT, `name` varchar(25) DEFAULT NULL, PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
+	tk.MustExec("CREATE TABLE `t2` (`id` int(11) NOT NULL AUTO_INCREMENT, `t1_id` int(11) DEFAULT NULL,	PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,	CONSTRAINT `fk_t2_t1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustQuery("SELECT *  FROM INFORMATION_SCHEMA.table_constraints WHERE constraint_schema = 'tableconstraints' AND table_name = 't2'").Sort().Check(testkit.Rows("def tableconstraints PRIMARY tableconstraints t2 PRIMARY KEY", "def tableconstraints fk_t2_t1 tableconstraints t2 FOREIGN KEY"))
 	tk.MustQuery("SELECT *  FROM INFORMATION_SCHEMA.table_constraints WHERE constraint_schema = 'tableconstraints' AND table_name = 't1'").Sort().Check(testkit.Rows("def tableconstraints PRIMARY tableconstraints t1 PRIMARY KEY"))
 }
@@ -1807,7 +1807,7 @@ func TestAddFieldsForBinding(t *testing.T) {
 	require.Equal(t, rows[0][3], "test")
 	require.Equal(t, rows[0][4], "select /*+ ignore_index(t, a)*/ * from t where a = 1")
 	require.Equal(t, rows[0][5], "utf8mb4")
-	require.Equal(t, rows[0][6], "utf8mb4_bin")
+	require.Equal(t, rows[0][6], "utf8mb4_0900_ai_ci")
 	require.Equal(t, rows[0][7], "use_index(@`sel_1` `test`.`t` ), ignore_index(`t` `a`)")
 	require.Equal(t, rows[0][8], "select * from `t` where `a` = ?")
 }

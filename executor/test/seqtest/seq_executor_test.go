@@ -166,7 +166,7 @@ func TestShow(t *testing.T) {
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
+		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
 	}
@@ -192,7 +192,7 @@ func TestShow(t *testing.T) {
 			"  `c3` mediumint(8) unsigned DEFAULT NULL,\n" +
 			"  `c4` int(10) unsigned DEFAULT NULL,\n" +
 			"  `c5` bigint(20) unsigned DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
 	}
@@ -208,7 +208,7 @@ func TestShow(t *testing.T) {
 	expectedRow = []interface{}{
 		"decimalschema", "CREATE TABLE `decimalschema` (\n" +
 			"  `c1` decimal(10,0) DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
 	}
@@ -223,7 +223,7 @@ func TestShow(t *testing.T) {
 	expectedRow = []interface{}{
 		"decimalschema", "CREATE TABLE `decimalschema` (\n" +
 			"  `c1` decimal(15,0) DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
 	}
@@ -247,7 +247,7 @@ func TestShow(t *testing.T) {
 			"  KEY `d` (`d`) /*!80000 INVISIBLE */,\n" +
 			"  UNIQUE KEY `c` (`c`),\n" +
 			"  UNIQUE KEY `d_2` (`d`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
 	tk.MustQuery("show create table t").Check(testkit.Rows(expected))
 	tk.MustExec("drop table t")
 
@@ -350,7 +350,7 @@ func TestShow(t *testing.T) {
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=4",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci AUTO_INCREMENT=4",
 	))
 	// for issue https://github.com/pingcap/tidb/issues/4678
 	autoIDStep := autoid.GetStep()
@@ -361,7 +361,7 @@ func TestShow(t *testing.T) {
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT="+strconv.Itoa(int(autoID)),
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci AUTO_INCREMENT="+strconv.Itoa(int(autoID)),
 	))
 	tk.MustExec(`drop table show_auto_increment`)
 	tk.MustExec(`create table show_auto_increment (id int primary key auto_increment)`)
@@ -370,7 +370,7 @@ func TestShow(t *testing.T) {
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 	tk.MustExec("insert into show_auto_increment values(10)")
 	autoID = autoIDStep + 11
@@ -379,7 +379,7 @@ func TestShow(t *testing.T) {
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT="+strconv.Itoa(int(autoID)),
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci AUTO_INCREMENT="+strconv.Itoa(int(autoID)),
 	))
 
 	// Test show table with column's comment contain escape character
@@ -390,7 +390,7 @@ func TestShow(t *testing.T) {
 		""+
 			"show_escape_character CREATE TABLE `show_escape_character` (\n"+
 			"  `id` int(11) DEFAULT NULL COMMENT 'a\\rb\\nc	d\\0ef'\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 
 	// for issue https://github.com/pingcap/tidb/issues/4424
@@ -404,7 +404,7 @@ func TestShow(t *testing.T) {
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"show_test", "CREATE TABLE `show_test` (\n  `a` varchar(10) DEFAULT NULL COMMENT 'a\\nb\\rc	d\\0e'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='a\\nb\\rc	d\\0e'"}
+		"show_test", "CREATE TABLE `show_test` (\n  `a` varchar(10) DEFAULT NULL COMMENT 'a\\nb\\rc	d\\0e'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='a\\nb\\rc	d\\0e'"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
 	}
@@ -420,7 +420,7 @@ func TestShow(t *testing.T) {
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"show_test", "CREATE TABLE `show_test` (\n  `a` varchar(10) DEFAULT 'a\\nb\\rc	d\\0e'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
+		"show_test", "CREATE TABLE `show_test` (\n  `a` varchar(10) DEFAULT 'a\\nb\\rc	d\\0e'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
 	}
@@ -439,7 +439,7 @@ func TestShow(t *testing.T) {
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"show_test", "CREATE TABLE `show_test` (\n  `a` bit(1) DEFAULT NULL,\n  `b` bit(32) DEFAULT b'0',\n  `c` bit(1) DEFAULT b'1',\n  `d` bit(10) DEFAULT b'1010'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
+		"show_test", "CREATE TABLE `show_test` (\n  `a` bit(1) DEFAULT NULL,\n  `b` bit(32) DEFAULT b'0',\n  `c` bit(1) DEFAULT b'1',\n  `d` bit(10) DEFAULT b'1010'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
 	}
@@ -467,7 +467,7 @@ func TestShow(t *testing.T) {
 			"  `c` mediumint(9) DEFAULT NULL,\n" +
 			"  `d` int(11) DEFAULT NULL,\n" +
 			"  `e` bigint(20) DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
@@ -479,7 +479,7 @@ func TestShow(t *testing.T) {
 	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
 	))
 
 	// Test range partition
@@ -491,7 +491,7 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE (`a`)\n(PARTITION `p0` VALUES LESS THAN (10),\n PARTITION `p1` VALUES LESS THAN (20),\n PARTITION `p2` VALUES LESS THAN (MAXVALUE))",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"+"\nPARTITION BY RANGE (`a`)\n(PARTITION `p0` VALUES LESS THAN (10),\n PARTITION `p1` VALUES LESS THAN (20),\n PARTITION `p2` VALUES LESS THAN (MAXVALUE))",
 	))
 
 	tk.MustExec(`drop table if exists t`)
@@ -514,7 +514,7 @@ func TestShow(t *testing.T) {
 			"  `b` int(11) DEFAULT NULL,\n"+
 			"  `c` varchar(25) DEFAULT NULL,\n"+
 			"  `d` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n"+
 			"PARTITION BY RANGE COLUMNS(`a`,`d`,`c`)\n"+
 			"(PARTITION `p0` VALUES LESS THAN (5,10,'ggg'),\n"+
 			" PARTITION `p1` VALUES LESS THAN (10,20,'mmm'),\n"+
@@ -527,7 +527,7 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n"+
 			"PARTITION BY HASH (`a`) PARTITIONS 4"))
 
 	// Test show create table compression type.
@@ -536,7 +536,7 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show create table t1").Check(testkit.RowsWithSep("|",
 		"t1 CREATE TABLE `t1` (\n"+
 			"  `c1` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMPRESSION='zlib'",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMPRESSION='zlib'",
 	))
 
 	// Test show create table year type
@@ -547,7 +547,7 @@ func TestShow(t *testing.T) {
 			"  `y` year(4) NOT NULL,\n"+
 			"  `x` int(11) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`y`) /*T![clustered_index] NONCLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	// Test show create table with zerofill flag
 	tk.MustExec(`drop table if exists t`)
@@ -557,7 +557,7 @@ func TestShow(t *testing.T) {
 			"  `id` int(11) NOT NULL,\n"+
 			"  `val` tinyint(10) unsigned zerofill DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	// Test show columns with different types of default value
 	tk.MustExec(`drop table if exists t`)
@@ -1202,16 +1202,16 @@ func TestShowForNewCollations(t *testing.T) {
 		"utf8_bin utf8 83 Yes Yes 1",
 		"utf8_general_ci utf8 33  Yes 1",
 		"utf8_unicode_ci utf8 192  Yes 1",
-		"utf8mb4_0900_ai_ci utf8mb4 255  Yes 1",
+		"utf8mb4_0900_ai_ci utf8mb4 255 Yes Yes 1",
 		"utf8mb4_0900_bin utf8mb4 309  Yes 1",
-		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
+		"utf8mb4_0900_ai_ci utf8mb4 46  Yes 1",
 		"utf8mb4_general_ci utf8mb4 45  Yes 1",
 		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
 	)
 	tk.MustQuery("show collation").Check(expectRows)
 	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
-	tk.MustQuery("show character set like '%utf8mb4%'").Check(testkit.Rows("utf8mb4 UTF-8 Unicode utf8mb4_bin 4"))
-	tk.MustQuery("select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
+	tk.MustQuery("show character set like '%utf8mb4%'").Check(testkit.Rows("utf8mb4 UTF-8 Unicode utf8mb4_0900_ai_ci 4"))
+	tk.MustQuery("select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4'").Check(testkit.Rows("utf8mb4_0900_ai_ci utf8mb4 255 Yes Yes 1"))
 	// update default_collation_for_utf8mb4
 	tk.MustExec("set @@session.default_collation_for_utf8mb4='utf8mb4_0900_ai_ci';")
 	tk.MustQuery("show variables like 'default_collation_for_utf8mb4';").Check(testkit.Rows("default_collation_for_utf8mb4 utf8mb4_0900_ai_ci"))
@@ -1224,16 +1224,16 @@ func TestShowForNewCollations(t *testing.T) {
 		"utf8_bin utf8 83 Yes Yes 1",
 		"utf8_general_ci utf8 33  Yes 1",
 		"utf8_unicode_ci utf8 192  Yes 1",
-		"utf8mb4_0900_ai_ci utf8mb4 255 Yes Yes 1",
+		"utf8mb4_0900_ai_ci utf8mb4 255  Yes 1",
 		"utf8mb4_0900_bin utf8mb4 309  Yes 1",
-		"utf8mb4_bin utf8mb4 46  Yes 1",
+		"utf8mb4_0900_ai_ci utf8mb4 46 Yes Yes 1",
 		"utf8mb4_general_ci utf8mb4 45  Yes 1",
 		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
 	)
 	tk.MustQuery("show collation").Check(expectRows1)
 	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
 	tk.MustQuery("show character set like '%utf8mb4%'").Check(testkit.Rows("utf8mb4 UTF-8 Unicode utf8mb4_0900_ai_ci 4"))
-	tk.MustQuery("select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
+	tk.MustQuery("select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4'").Check(testkit.Rows("utf8mb4_0900_ai_ci utf8mb4 255 Yes Yes 1"))
 }
 
 func TestForbidUnsupportedCollations(t *testing.T) {
@@ -1528,7 +1528,7 @@ func TestIssue18744(t *testing.T) {
   KEY c (c),
   KEY d (d),
   KEY f (f)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;`)
 	tk.MustExec(`CREATE TABLE t1 (
   id int(11) NOT NULL,
   a bigint(20) DEFAULT NULL,
@@ -1543,7 +1543,7 @@ func TestIssue18744(t *testing.T) {
   KEY c (c),
   KEY d (d),
   KEY f (f)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;`)
 	tk.MustExec(`insert into t1(id) values(0),(1),(2);`)
 	tk.MustExec(`insert into t values(0, 2010,  "2010-01-01 01:01:00" , "2010-01-01 01:01:00" , 2010 , 2010 , 2010.000000);`)
 	tk.MustExec(`insert into t values(1 , NULL , NULL                , NULL                , NULL , NULL ,        NULL);`)

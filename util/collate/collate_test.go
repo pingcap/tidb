@@ -55,7 +55,7 @@ func testKeyTable(t *testing.T, collations []string, tests []keyTable) {
 func TestUTF8CollatorCompare(t *testing.T) {
 	SetNewCollationEnabledForTest(true)
 	defer SetNewCollationEnabledForTest(false)
-	collations := []string{"binary", "utf8mb4_bin", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "utf8mb4_0900_ai_ci", "utf8mb4_0900_bin", "gbk_bin", "gbk_chinese_ci"}
+	collations := []string{"binary", "utf8mb4_0900_ai_ci", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "utf8mb4_0900_ai_ci", "utf8mb4_0900_bin", "gbk_bin", "gbk_chinese_ci"}
 	tests := []compareTable{
 		{"a", "b", []int{-1, -1, -1, -1, -1, -1, -1, -1}},
 		{"a", "A", []int{1, 1, 0, 0, 0, 1, 1, 0}},
@@ -84,7 +84,7 @@ func TestUTF8CollatorCompare(t *testing.T) {
 func TestUTF8CollatorKey(t *testing.T) {
 	SetNewCollationEnabledForTest(true)
 	defer SetNewCollationEnabledForTest(false)
-	collations := []string{"binary", "utf8mb4_bin", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "utf8mb4_0900_ai_ci", "utf8mb4_0900_bin", "gbk_bin", "gbk_chinese_ci"}
+	collations := []string{"binary", "utf8mb4_0900_ai_ci", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "utf8mb4_0900_ai_ci", "utf8mb4_0900_bin", "gbk_bin", "gbk_chinese_ci"}
 	tests := []keyTable{
 		{"a", [][]byte{{0x61}, {0x61}, {0x0, 0x41}, {0x0E, 0x33}, {0x1C, 0x47}, {0x61}, {0x61}, {0x41}}},
 		{"A", [][]byte{{0x41}, {0x41}, {0x0, 0x41}, {0x0E, 0x33}, {0x1C, 0x47}, {0x41}, {0x41}, {0x41}}},
@@ -168,7 +168,7 @@ func TestGetCollator(t *testing.T) {
 	SetNewCollationEnabledForTest(true)
 	defer SetNewCollationEnabledForTest(false)
 	require.IsType(t, &binCollator{}, GetCollator("binary"))
-	require.IsType(t, &binPaddingCollator{}, GetCollator("utf8mb4_bin"))
+	require.IsType(t, &binPaddingCollator{}, GetCollator("utf8mb4_0900_ai_ci"))
 	require.IsType(t, &binPaddingCollator{}, GetCollator("utf8_bin"))
 	require.IsType(t, &generalCICollator{}, GetCollator("utf8mb4_general_ci"))
 	require.IsType(t, &generalCICollator{}, GetCollator("utf8_general_ci"))
@@ -191,7 +191,7 @@ func TestGetCollator(t *testing.T) {
 
 	SetNewCollationEnabledForTest(false)
 	require.IsType(t, &binCollator{}, GetCollator("binary"))
-	require.IsType(t, &binCollator{}, GetCollator("utf8mb4_bin"))
+	require.IsType(t, &binCollator{}, GetCollator("utf8mb4_0900_ai_ci"))
 	require.IsType(t, &binCollator{}, GetCollator("utf8_bin"))
 	require.IsType(t, &binCollator{}, GetCollator("utf8mb4_general_ci"))
 	require.IsType(t, &binCollator{}, GetCollator("utf8_general_ci"))

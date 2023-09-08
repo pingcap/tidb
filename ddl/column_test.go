@@ -924,7 +924,7 @@ func TestGetDefaultValueOfColumn(t *testing.T) {
 		"  `dt` datetime DEFAULT '1962-03-03 00:00:00',\n"+
 		"  `ti` time DEFAULT '12:23:23',\n"+
 		"  `ts` timestamp DEFAULT '2020-10-13 12:23:23'\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	tk.MustExec("insert into t1 values()")
 
@@ -940,7 +940,7 @@ func TestGetDefaultValueOfColumn(t *testing.T) {
 		"  `ti` time DEFAULT '12:23:23',\n"+
 		"  `ts` timestamp DEFAULT '2020-10-13 12:23:23',\n"+
 		"  `da1` date DEFAULT '2020-03-27'\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", ""+
 		"1962-03-03 1962-03-03 00:00:00 12:23:23 2020-10-13 12:23:23 2020-03-27"))
@@ -954,7 +954,7 @@ func TestGetDefaultValueOfColumn(t *testing.T) {
 		"  `ti` time DEFAULT '12:23:23',\n"+
 		"  `da2` date DEFAULT '2020-10-10',\n"+
 		"  `da1` date DEFAULT '2020-03-27'\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", ""+
 		"1962-03-03 1962-03-03 00:00:00 12:23:23 2020-10-13 2020-03-27"))
@@ -972,7 +972,7 @@ func TestIssue39080(t *testing.T) {
 		"  `authorId` int(11) NOT NULL AUTO_INCREMENT,\n"+
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
 		"  UNIQUE KEY `authorId` (`authorId`)\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	//Do not affect the specified name
 	tk.MustExec("CREATE TABLE `t2`( `id` INTEGER PRIMARY KEY, `authorId` int(11) AUTO_INCREMENT, UNIQUE KEY `authorIdx` (`authorId`))")
@@ -983,7 +983,7 @@ func TestIssue39080(t *testing.T) {
 		"  `authorId` int(11) NOT NULL AUTO_INCREMENT,\n"+
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
 		"  UNIQUE KEY `authorIdx` (`authorId`)\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func TestWriteDataWriteOnlyMode(t *testing.T) {

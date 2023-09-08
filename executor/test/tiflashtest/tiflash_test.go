@@ -1301,8 +1301,8 @@ func TestIssue41014(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("CREATE TABLE `tai1` (\n  `aid` int(11) DEFAULT NULL,\n  `rid` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
-	tk.MustExec("CREATE TABLE `tai2` (\n  `rid` int(11) DEFAULT NULL,\n  `prilan` varchar(20) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("CREATE TABLE `tai1` (\n  `aid` int(11) DEFAULT NULL,\n  `rid` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci")
+	tk.MustExec("CREATE TABLE `tai2` (\n  `rid` int(11) DEFAULT NULL,\n  `prilan` varchar(20) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci")
 	tk.MustExec("alter table tai1 set tiflash replica 1")
 	tk.MustExec("alter table tai2 set tiflash replica 1")
 	tk.MustExec("alter table tai2 add index idx((lower(prilan)));")
@@ -1328,7 +1328,7 @@ func TestTiflashEmptyDynamicPruneResult(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE `IDT_RP24833` (  `COL1` bigint(16) DEFAULT '15' COMMENT 'NUMERIC UNIQUE INDEX',\n  `COL2` varchar(20) DEFAULT NULL,\n  `COL4` datetime DEFAULT NULL,\n  `COL3` bigint(20) DEFAULT NULL,\n  `COL5` float DEFAULT NULL,\n  KEY `UK_COL1` (`COL1`) /*!80000 INVISIBLE */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE ((`COL1`-57))\n(PARTITION `P0` VALUES LESS THAN (-3503857335115112215),\n PARTITION `P1` VALUES LESS THAN (-2987877108151063747),\n PARTITION `P2` VALUES LESS THAN (-1981049919102122710),\n PARTITION `P3` VALUES LESS THAN (-1635802972727465681),\n PARTITION `P4` VALUES LESS THAN (1186020639986357714),\n PARTITION `P5` VALUES LESS THAN (1220018677454711359),\n PARTITION `PMX` VALUES LESS THAN (MAXVALUE));")
+	tk.MustExec("CREATE TABLE `IDT_RP24833` (  `COL1` bigint(16) DEFAULT '15' COMMENT 'NUMERIC UNIQUE INDEX',\n  `COL2` varchar(20) DEFAULT NULL,\n  `COL4` datetime DEFAULT NULL,\n  `COL3` bigint(20) DEFAULT NULL,\n  `COL5` float DEFAULT NULL,\n  KEY `UK_COL1` (`COL1`) /*!80000 INVISIBLE */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\nPARTITION BY RANGE ((`COL1`-57))\n(PARTITION `P0` VALUES LESS THAN (-3503857335115112215),\n PARTITION `P1` VALUES LESS THAN (-2987877108151063747),\n PARTITION `P2` VALUES LESS THAN (-1981049919102122710),\n PARTITION `P3` VALUES LESS THAN (-1635802972727465681),\n PARTITION `P4` VALUES LESS THAN (1186020639986357714),\n PARTITION `P5` VALUES LESS THAN (1220018677454711359),\n PARTITION `PMX` VALUES LESS THAN (MAXVALUE));")
 	tk.MustExec("alter table IDT_RP24833 set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "IDT_RP24833")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
@@ -1422,13 +1422,13 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tbl_1")
 	tk.MustExec(`create table tbl_1 ( col_1 bigint not null default -1443635317331776148,
-		col_2 text ( 176 ) collate utf8mb4_bin not null,
+		col_2 text ( 176 ) collate utf8mb4_0900_ai_ci not null,
 		col_3 decimal ( 8, 3 ),
-		col_4 varchar ( 128 ) collate utf8mb4_bin not null,
-		col_5 varchar ( 377 ) collate utf8mb4_bin,
+		col_4 varchar ( 128 ) collate utf8mb4_0900_ai_ci not null,
+		col_5 varchar ( 377 ) collate utf8mb4_0900_ai_ci,
 		col_6 double,
-		col_7 varchar ( 459 ) collate utf8mb4_bin,
-		col_8 tinyint default -88 ) charset utf8mb4 collate utf8mb4_bin ;`)
+		col_7 varchar ( 459 ) collate utf8mb4_0900_ai_ci,
+		col_8 tinyint default -88 ) charset utf8mb4 collate utf8mb4_0900_ai_ci ;`)
 	tk.MustExec("alter table tbl_1 set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "tbl_1")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)

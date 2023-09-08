@@ -988,7 +988,7 @@ func TestHypoIndexDDL(t *testing.T) {
 		"  KEY `a` (`a`),\n" +
 		"  KEY `hypo_a` (`a`) /* HYPO INDEX */,\n" +
 		"  KEY `hypo_bc` (`b`,`c`) /* HYPO INDEX */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 
 	tk.MustExec(`drop hypo index hypo_a on t`)
 	tk.MustExec(`drop hypo index hypo_bc on t`)
@@ -998,7 +998,7 @@ func TestHypoIndexDDL(t *testing.T) {
 		"  `c` int(11) DEFAULT NULL,\n" +
 		"  `d` int(11) DEFAULT NULL,\n" +
 		"  KEY `a` (`a`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func TestHypoIndexPlan(t *testing.T) {

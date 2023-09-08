@@ -112,7 +112,7 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 	tk.MustExec("create database test_range_col_in_string")
 
 	tk.MustExec("use test_range_col_in_string")
-	tk.MustExec("set names utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("set names utf8mb4 collate utf8mb4_0900_ai_ci")
 	tk.MustExec("set @@session.tidb_partition_prune_mode='static'")
 
 	type testStruct struct {
@@ -148,7 +148,7 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 			}
 		}
 	}
-	tk.MustExec("create table t (a varchar(255) charset utf8mb4 collate utf8mb4_bin) partition by range columns(a)" +
+	tk.MustExec("create table t (a varchar(255) charset utf8mb4 collate utf8mb4_0900_ai_ci) partition by range columns(a)" +
 		`( partition pNull values less than (""),` +
 		`partition pAAAA values less than ("AAAA"),` +
 		`partition pCCC values less than ("CCC"),` +
@@ -193,19 +193,19 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 	tests = []testStruct{
 		{sql: `select * from t where a IS NULL`, partitions: "pNull", rows: []string{"<nil>"}},
 		{sql: `select * from t where a = 'AA'`, partitions: "paaa", rows: []string{"AA", "aa"}},
-		{sql: `select * from t where a = 'AA' collate utf8mb4_bin`, partitions: "paaa", rows: []string{"AA"}},
+		{sql: `select * from t where a = 'AA' collate utf8mb4_0900_ai_ci`, partitions: "paaa", rows: []string{"AA"}},
 		{sql: `select * from t where a = 'AAA'`, partitions: "pAAAA", rows: []string{"AAA", "aaa"}},
-		{sql: `select * from t where a = 'AAA' collate utf8mb4_bin`, partitions: "pAAAA", rows: []string{"AAA"}},
+		{sql: `select * from t where a = 'AAA' collate utf8mb4_0900_ai_ci`, partitions: "pAAAA", rows: []string{"AAA"}},
 		{sql: `select * from t where a = 'AB'`, partitions: "pCCC", rows: []string{}},
 		{sql: `select * from t where a = 'aB'`, partitions: "pCCC", rows: []string{}},
 		{sql: `select * from t where a = '🍣'`, partitions: "pSushi", rows: []string{}},
 		{sql: `select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?")`, partitions: "pShrimpsandwich,pSushi,pMax", rows: []string{"Räkmacka", "🍣 is life"}},
 		{sql: `select * from t where a in ('AA', 'aaa')`, partitions: "paaa,pAAAA", rows: []string{"AA", "AAA", "aa", "aaa"}},
-		{sql: `select * from t where a in ('AAA' collate utf8mb4_bin, 'aa')`, partitions: "paaa,pAAAA", rows: []string{"AAA", "aa"}},
-		{sql: `select * from t where a in ('AAA', 'aa' collate utf8mb4_bin)`, partitions: "paaa,pAAAA", rows: []string{"AAA", "aa"}},
+		{sql: `select * from t where a in ('AAA' collate utf8mb4_0900_ai_ci, 'aa')`, partitions: "paaa,pAAAA", rows: []string{"AAA", "aa"}},
+		{sql: `select * from t where a in ('AAA', 'aa' collate utf8mb4_0900_ai_ci)`, partitions: "paaa,pAAAA", rows: []string{"AAA", "aa"}},
 	}
 
-	tk.MustExec(`set names utf8mb4 collate utf8mb4_bin`)
+	tk.MustExec(`set names utf8mb4 collate utf8mb4_0900_ai_ci`)
 	checkColumnStringPruningTests(tests)
 	tk.MustExec(`set names utf8mb4 collate utf8mb4_general_ci`)
 	checkColumnStringPruningTests(tests)
@@ -280,7 +280,7 @@ func TestIssue22635(t *testing.T) {
 CREATE TABLE t1 (
   a int(11) DEFAULT NULL,
   b int(11) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 PARTITION BY HASH( a )
 PARTITIONS 4`)
 	tk.MustQuery("SELECT (SELECT tt.a FROM t1 tt ORDER BY a ASC LIMIT 1) aa, COUNT(DISTINCT b) FROM t1 GROUP BY aa").Check(testkit.Rows()) // work fine without any error
@@ -392,7 +392,7 @@ func TestHashPartitionPruning(t *testing.T) {
 		"`COL1` int NOT NULL DEFAULT '25' COMMENT 'NUMERIC PK'," +
 		"`COL3` bigint NOT NULL," +
 		"PRIMARY KEY (`COL1`,`COL3`)" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin " +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci " +
 		"PARTITION BY HASH ((`COL1` * `COL3`))" +
 		"PARTITIONS 13;")
 	tk.MustExec("insert into t(col1, col3) values(0, 3522101843073676459);")

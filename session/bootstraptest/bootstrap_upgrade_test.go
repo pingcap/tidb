@@ -282,7 +282,7 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 			"  KEY `idx_c2` (`c2`),\n" +
 			"  KEY `idx_v` (`c1`) /*!80000 INVISIBLE */,\n" +
 			"  KEY `rename_idx2` (`c1`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustQuery("show create table mysql.mock_sys_partition").Check(testkit.Rows(
 		"mock_sys_partition CREATE TABLE `mock_sys_partition` (\n" +
 			"  `c1` int(11) NOT NULL,\n" +
@@ -290,7 +290,7 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 			"  `c3` int(11) DEFAULT NULL,\n" +
 			"  UNIQUE KEY `c3_index` (`c1`),\n" +
 			"  PRIMARY KEY (`c1`) /*T![clustered_index] NONCLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 			"PARTITION BY RANGE (`c1`)\n" +
 			"(PARTITION `p0` VALUES LESS THAN (1024),\n" +
 			" PARTITION `p1` VALUES LESS THAN (2048),\n" +
@@ -844,7 +844,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			"  KEY `idx_c2` (`c2`),\n" +
 			"  KEY `idx_v` (`c1`) /*!80000 INVISIBLE */,\n" +
 			"  KEY `rename_idx2` (`c1`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 	tk.MustQuery("show create table mysql.mock_sys_partition").Check(testkit.Rows(
 		"mock_sys_partition CREATE TABLE `mock_sys_partition` (\n" +
 			"  `c1` int(11) NOT NULL,\n" +
@@ -852,7 +852,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			"  `c3` int(11) DEFAULT NULL,\n" +
 			"  UNIQUE KEY `c3_index` (`c1`),\n" +
 			"  PRIMARY KEY (`c1`) /*T![clustered_index] NONCLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci\n" +
 			"PARTITION BY RANGE (`c1`)\n" +
 			"(PARTITION `p0` VALUES LESS THAN (1024),\n" +
 			" PARTITION `p1` VALUES LESS THAN (2048),\n" +

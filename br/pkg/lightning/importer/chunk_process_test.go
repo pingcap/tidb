@@ -305,7 +305,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopWithExtendData() {
 		s.tr.tableInfo = lastTi
 	}()
 
-	node, err := p.ParseOneStmt("CREATE TABLE `t1` (`c1` varchar(5) NOT NULL, `c_table` varchar(5), `c_schema` varchar(5), `c_source` varchar(5))", "utf8mb4", "utf8mb4_bin")
+	node, err := p.ParseOneStmt("CREATE TABLE `t1` (`c1` varchar(5) NOT NULL, `c_table` varchar(5), `c_schema` varchar(5), `c_source` varchar(5))", "utf8mb4", "utf8mb4_0900_ai_ci")
 	require.NoError(s.T(), err)
 	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), int64(1))
 	require.NoError(s.T(), err)

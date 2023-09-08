@@ -446,7 +446,7 @@ func TestConvertToBinaryString(t *testing.T) {
 		output        string
 	}{
 		{nhUTF8, "utf8_bin", "utf8", nhUTF8},
-		{nhUTF8, "utf8mb4_bin", "utf8mb4", nhUTF8},
+		{nhUTF8, "utf8mb4_0900_ai_ci", "utf8mb4", nhUTF8},
 		{nhUTF8, "gbk_bin", "utf8", nhUTF8},
 		{nhUTF8, "gbk_bin", "gbk", nhUTF8},
 		{nhUTF8, "binary", "utf8mb4", nhUTF8},

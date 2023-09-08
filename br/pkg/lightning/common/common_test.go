@@ -39,7 +39,7 @@ func newTableInfo(t *testing.T,
 	p := parser.New()
 	se := tmock.NewContext()
 
-	node, err := p.ParseOneStmt(createTableSql, "utf8mb4", "utf8mb4_bin")
+	node, err := p.ParseOneStmt(createTableSql, "utf8mb4", "utf8mb4_0900_ai_ci")
 	require.NoError(t, err)
 	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), tableID)
 	require.NoError(t, err)

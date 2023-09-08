@@ -101,14 +101,14 @@ func TestHintForIntersectionIndexMerge(t *testing.T) {
 		"partition p3 values in (16,17,18,19,20))")
 	tk.MustExec("insert into t4 values (30, 20, 5, 8, 100), (20, 20, 20, 3, 2), (10, 30, 5, 3, 100)")
 	tk.MustExec("create table t5(" +
-		"s1 varchar(20) collate utf8mb4_bin," +
+		"s1 varchar(20) collate utf8mb4_0900_ai_ci," +
 		"s2 varchar(30) collate ascii_bin," +
 		"s3 varchar(50) collate utf8_unicode_ci," +
 		"s4 varchar(20) collate gbk_chinese_ci," +
 		"index is1(s1), index is2(s2), index is3(s3), index is4(s4))")
 	tk.MustExec("insert into t5 values ('Abc', 'zzzz', 'aa', 'ccc'), ('abc', 'zzzz', 'CCC', 'ccc')")
 	tk.MustExec("create table t6(" +
-		"s1 varchar(20) collate utf8mb4_bin," +
+		"s1 varchar(20) collate utf8mb4_0900_ai_ci," +
 		"s2 varchar(30) collate ascii_bin," +
 		"s3 varchar(50) collate utf8_unicode_ci," +
 		"s4 varchar(20) collate gbk_chinese_ci," +

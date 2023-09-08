@@ -352,15 +352,15 @@ INSERT INTO db01.tbl01 (ival, sval) VALUES (444, 'ddd');`
 			ExpectFirstRowDatums: [][]types.Datum{
 				{
 					types.NewIntDatum(1),
-					types.NewCollationStringDatum("name_1", "utf8mb4_bin"),
+					types.NewCollationStringDatum("name_1", "utf8mb4_0900_ai_ci"),
 				},
 				{
 					types.NewIntDatum(2),
-					types.NewCollationStringDatum("name_2", "utf8mb4_bin"),
+					types.NewCollationStringDatum("name_2", "utf8mb4_0900_ai_ci"),
 				},
 				{
 					types.NewIntDatum(3),
-					types.NewCollationStringDatum("name_3", "utf8mb4_bin"),
+					types.NewCollationStringDatum("name_3", "utf8mb4_0900_ai_ci"),
 				},
 			},
 			ExpectColumns: []string{"id", "name"},

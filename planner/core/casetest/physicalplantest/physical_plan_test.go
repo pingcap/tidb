@@ -1707,7 +1707,7 @@ func TestIssue27233(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE `PK_S_MULTI_31` (\n  `COL1` tinyint(45) NOT NULL,\n  `COL2` tinyint(45) NOT NULL,\n  PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `PK_S_MULTI_31` (\n  `COL1` tinyint(45) NOT NULL,\n  `COL2` tinyint(45) NOT NULL,\n  PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
 	tk.MustExec("insert into PK_S_MULTI_31 values(122,100),(124,-22),(124,34),(127,103);")
 
 	for i, ts := range input {
@@ -2161,7 +2161,7 @@ func TestHashAggPushdownToTiFlashCompute(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tbl_15;")
-	tk.MustExec(`create table tbl_15 (col_89 text (473) collate utf8mb4_bin ,
+	tk.MustExec(`create table tbl_15 (col_89 text (473) collate utf8mb4_0900_ai_ci ,
 					col_90 timestamp default '1976-04-03' ,
 					col_91 tinyint unsigned not null ,
 					col_92 tinyint ,
@@ -2175,7 +2175,7 @@ func TestHashAggPushdownToTiFlashCompute(t *testing.T) {
 	tk.MustExec(`create table tbl_16 (col_98 text (246) not null ,
 					col_99 decimal (30 ,19) ,
 					col_100 mediumint unsigned ,
-					col_101 text (410) collate utf8mb4_bin ,
+					col_101 text (410) collate utf8mb4_0900_ai_ci ,
 					col_102 date not null ,
 					col_103 timestamp not null default '2003-08-27' ,
 					col_104 text (391) not null ,
