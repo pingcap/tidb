@@ -18,11 +18,27 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 var (
 	ErrInternal = dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
+)
+
+// These types are used for serializing or deserializing interface type
+const (
+	BoolType       = 0
+	Int64Type      = 1
+	Uint64Type     = 2
+	FloatType      = 3
+	StringType     = 4
+	BinaryJSONType = 5
+	OpaqueType     = 6
+	MyDecimalType  = 7
+	TimeType       = 8
+	DurationType   = 9
 )
 
 // DeserializeBool deserializes bool type
@@ -63,6 +79,53 @@ func DeserializeFloat32(buf []byte, pos int64) float32 {
 // DeserializeFloat64 deserializes float64 type
 func DeserializeFloat64(buf []byte, pos int64) float64 {
 	return *(*float64)(unsafe.Pointer(&buf[pos]))
+}
+
+// DeserializeInterface deserializes interface type and return the new readPos
+func DeserializeInterface(buf []byte, readPos int64) (interface{}, int64) {
+	// Get type
+	dataType := int(buf[readPos])
+	readPos++
+
+	switch dataType {
+	case BoolType:
+		res := int(buf[readPos])
+		readPos++
+		if res == 0 {
+			return false, readPos
+		} else if res == 1 {
+			return true, readPos
+		} else {
+			panic("Invalid value happens when deserializing agg spill data!")
+		}
+	case Int64Type:
+		res := DeserializeInt64(buf, readPos)
+		readPos += 8
+		return res, readPos
+	case Uint64Type:
+		res := DeserializeUint64(buf, readPos)
+		readPos += 8
+		return res, readPos
+	case FloatType:
+		res := DeserializeFloat64(buf, readPos)
+		readPos += 8
+		return res, readPos
+	case StringType:
+		strLen := DeserializeInt64(buf, readPos)
+		readPos += 8
+		res := string(hack.String(buf[readPos : readPos+strLen]))
+		readPos += strLen
+		return res, readPos
+	case BinaryJSONType:
+		// TODO
+	case OpaqueType:
+	case MyDecimalType:
+	case TimeType:
+	case DurationType:
+	default:
+		panic("Invalid data type happens in agg spill deserializing!")
+	}
+	return nil, 0
 }
 
 // SerializeBool serializes bool type
@@ -111,4 +174,65 @@ func SerializeFloat32(value float32, tmpBuf []byte) []byte {
 func SerializeFloat64(value float64, tmpBuf []byte) []byte {
 	*(*float64)(unsafe.Pointer(&tmpBuf[0])) = value
 	return tmpBuf
+}
+
+// SerializeInterface serialize interface type and return the number of bytes serialized
+func SerializeInterface(value interface{}, varBuf *[]byte, tmpBuf []byte) int64 {
+	// Data type always occupies 1 byte
+	encodedBytesNum := int64(1)
+
+	switch v := value.(type) {
+	case bool:
+		*varBuf = append(*varBuf, BoolType)
+		if v {
+			*varBuf = append(*varBuf, byte(1))
+		} else {
+			*varBuf = append(*varBuf, byte(0))
+		}
+		encodedBytesNum += 1
+	case int64:
+		*varBuf = append(*varBuf, Int64Type)
+		*varBuf = append(*varBuf, SerializeInt64(v, tmpBuf)...)
+		encodedBytesNum += 8
+	case uint64:
+		*varBuf = append(*varBuf, Uint64Type)
+		*varBuf = append(*varBuf, SerializeUint64(v, tmpBuf)...)
+		encodedBytesNum += 8
+	case float64:
+		*varBuf = append(*varBuf, FloatType)
+		*varBuf = append(*varBuf, SerializeFloat64(v, tmpBuf)...)
+		encodedBytesNum += 8
+	case string:
+		*varBuf = append(*varBuf, StringType)
+		vLen := int64(len(v))
+		*varBuf = append(*varBuf, SerializeInt64(vLen, tmpBuf)...)
+		*varBuf = append(*varBuf, v...)
+		encodedBytesNum += vLen + 8
+	case types.BinaryJSON:
+		*varBuf = append(*varBuf, BinaryJSONType)
+		valueLen := int64(len(v.Value))
+		*varBuf = append(*varBuf, v.TypeCode)
+		*varBuf = append(*varBuf, SerializeInt64(int64(len(v.Value)), tmpBuf)...)
+		*varBuf = append(*varBuf, v.Value...)
+		encodedBytesNum += valueLen + 1 + 8
+	case types.Opaque:
+		*varBuf = append(*varBuf, OpaqueType)
+		bufLen := int64(len(v.Buf))
+		*varBuf = append(*varBuf, v.TypeCode)
+		*varBuf = append(*varBuf, SerializeInt64(int64(len(v.Buf)), tmpBuf)...)
+		*varBuf = append(*varBuf, v.Buf...)
+		encodedBytesNum += bufLen + 1 + 8
+	case types.Time:
+		*varBuf = append(*varBuf, TimeType)
+		*varBuf = append(*varBuf, SerializeUint64(uint64(v.CoreTime()), tmpBuf)...)
+		encodedBytesNum += 8
+	case types.Duration:
+		*varBuf = append(*varBuf, DurationType)
+		*varBuf = append(*varBuf, SerializeInt64(int64(v.Duration), tmpBuf)...)
+		encodedBytesNum += 8
+	default:
+		panic("Agg spill encounters an unexpected interface type!")
+	}
+
+	return encodedBytesNum
 }

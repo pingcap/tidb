@@ -143,11 +143,11 @@ type PartialResult unsafe.Pointer
 type AggPartialResultMapper map[string][]PartialResult
 
 type aggSpillHelper interface {
-	// SerializeForSpill will serialize meta data of aggregate function into bytes and put them into chunk.
-	SerializeForSpill(ctx sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper)
+	// SerializePartialResult will serialize meta data of aggregate function into bytes and put them into chunk.
+	SerializePartialResult(ctx sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper)
 
-	// DeserializeToPartialResultForSpill deserializes from bytes to PartialResult.
-	DeserializeToPartialResultForSpill(ctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64)
+	// DeserializePartialResult deserializes from bytes to PartialResult.
+	DeserializePartialResult(ctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64)
 }
 
 // AggFunc is the interface to evaluate the aggregate functions.
@@ -209,7 +209,14 @@ func (*baseAggFunc) MergePartialResult(sessionctx.Context, PartialResult, Partia
 	return 0, nil
 }
 
+// TODO uncomment it
+// func (*baseAggFunc) SerializePartialResult(ctx sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+// }
 
+// TODO uncomment it
+// func (*baseAggFunc) DeserializePartialResult(ctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+// 	return nil, 0
+// }
 
 // SlidingWindowAggFunc is the interface to evaluate the aggregate functions using sliding window.
 type SlidingWindowAggFunc interface {

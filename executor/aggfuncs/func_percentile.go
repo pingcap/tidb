@@ -69,11 +69,11 @@ func (e *basePercentile) AppendFinalResult2Chunk(_ sessionctx.Context, _ Partial
 }
 
 // TODO implement it
-func (e *basePercentile) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *basePercentile) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 }
 
 // TODO implement it
-func (e *basePercentile) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (e *basePercentile) DeserializePartialResult(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
 	return nil, 0
 }
 

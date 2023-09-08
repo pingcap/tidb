@@ -300,13 +300,13 @@ func (e *maxMin4Int) MergePartialResult(_ sessionctx.Context, src, dst PartialRe
 	return 0, nil
 }
 
-func (c *maxMin4Int) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *maxMin4Int) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4MaxMinInt)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinInt(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *maxMin4Int) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *maxMin4Int) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
@@ -476,13 +476,13 @@ func (e *maxMin4Uint) MergePartialResult(_ sessionctx.Context, src, dst PartialR
 	return 0, nil
 }
 
-func (c *maxMin4Uint) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *maxMin4Uint) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4MaxMinUint)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinUint(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *maxMin4Uint) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *maxMin4Uint) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
@@ -649,13 +649,13 @@ func (e *maxMin4Float32) MergePartialResult(_ sessionctx.Context, src, dst Parti
 	return 0, nil
 }
 
-func (c *maxMin4Float32) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *maxMin4Float32) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4MaxMinFloat32)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinFloat32(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *maxMin4Float32) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *maxMin4Float32) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
@@ -820,13 +820,13 @@ func (e *maxMin4Float64) MergePartialResult(_ sessionctx.Context, src, dst Parti
 	return 0, nil
 }
 
-func (c *maxMin4Float64) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *maxMin4Float64) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4MaxMinFloat64)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinFloat64(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *maxMin4Float64) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *maxMin4Float64) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
@@ -1003,13 +1003,13 @@ func (e *maxMin4Decimal) MergePartialResult(_ sessionctx.Context, src, dst Parti
 	return 0, nil
 }
 
-func (c *maxMin4Decimal) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *maxMin4Decimal) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4MaxMinDecimal)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinDecimal(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *maxMin4Decimal) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *maxMin4Decimal) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
@@ -1198,13 +1198,13 @@ func (e *maxMin4String) MergePartialResult(_ sessionctx.Context, src, dst Partia
 	return 0, nil
 }
 
-func (c *maxMin4String) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *maxMin4String) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4MaxMinString)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinString(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *maxMin4String) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *maxMin4String) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
@@ -1415,13 +1415,13 @@ func (e *maxMin4TimeSliding) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	return 0, nil
 }
 
-func (c *maxMin4TimeSliding) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *maxMin4TimeSliding) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4MaxMinTime)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinTime(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *maxMin4TimeSliding) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *maxMin4TimeSliding) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
@@ -1545,13 +1545,13 @@ func (e *maxMin4Duration) MergePartialResult(_ sessionctx.Context, src, dst Part
 	return 0, nil
 }
 
-func (c *maxMin4Duration) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *maxMin4Duration) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4MaxMinDuration)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinDuration(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *maxMin4Duration) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *maxMin4Duration) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
@@ -1724,13 +1724,13 @@ func (e *maxMin4JSON) MergePartialResult(_ sessionctx.Context, src, dst PartialR
 	return 0, nil
 }
 
-func (c *maxMin4JSON) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *maxMin4JSON) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4MaxMinJSON)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinJSON(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *maxMin4JSON) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *maxMin4JSON) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
@@ -1825,13 +1825,13 @@ func (e *maxMin4Enum) MergePartialResult(_ sessionctx.Context, src, dst PartialR
 	return 0, nil
 }
 
-func (c *maxMin4Enum) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *maxMin4Enum) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4MaxMinEnum)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinEnum(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *maxMin4Enum) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *maxMin4Enum) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
@@ -1926,13 +1926,13 @@ func (e *maxMin4Set) MergePartialResult(_ sessionctx.Context, src, dst PartialRe
 	return 0, nil
 }
 
-func (c *maxMin4Set) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *maxMin4Set) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4MaxMinSet)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinSet(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *maxMin4Set) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *maxMin4Set) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())

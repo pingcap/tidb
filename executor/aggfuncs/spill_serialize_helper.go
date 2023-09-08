@@ -162,34 +162,3 @@ func (s *SpillSerializeHelper) serializePartialResult4BitFunc(value partialResul
 	spill.SerializeUint64(value, s.tmpBuf[:])
 	return s.tmpBuf[0:uint64Len]
 }
-
-// func serializeInterface(val interface{}) (memDelta int64) {
-// 	memDelta = DefInterfaceSize
-// 	switch v := val.(type) {
-// 	case bool:
-// 		memDelta += DefBoolSize
-// 	case int64:
-// 		memDelta += DefInt64Size
-// 	case uint64:
-// 		memDelta += DefUint64Size
-// 	case float64:
-// 		memDelta += DefFloat64Size
-// 	case string:
-// 		memDelta += int64(len(v))
-// 	case types.BinaryJSON:
-// 		// +1 for the memory usage of the JSONTypeCode of json
-// 		memDelta += int64(len(v.Value) + 1)
-// 	case types.Opaque:
-// 		// +1 for the memory usage of the JSONTypeCode of opaque value
-// 		memDelta += int64(len(v.Buf) + 1)
-// 	case *types.MyDecimal:
-// 		memDelta += DefMyDecimalSize
-// 	case []uint8:
-// 		memDelta += int64(len(v))
-// 	case types.Time:
-// 		memDelta += DefTimeSize
-// 	case types.Duration:
-// 		memDelta += DefDurationSize
-// 	}
-// 	return memDelta
-// }

@@ -32,8 +32,6 @@ type baseCount struct {
 
 type partialResult4Count = int64
 
-const partialResult4CountByteLen = int(unsafe.Sizeof(partialResult4Count(0)))
-
 func (*baseCount) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4Count)), DefPartialResult4CountSize
 }
@@ -49,13 +47,13 @@ func (e *baseCount) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResu
 	return nil
 }
 
-func (c *baseCount) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *baseCount) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4Count)(partialResult)
 	resBuf := spillHelper.serializePartialResult4Count(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *baseCount) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *baseCount) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
