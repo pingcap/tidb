@@ -46,14 +46,6 @@ const (
 	TaskStateReverted      = "reverted"
 )
 
-// task substate
-// when global task start to dispatch subtasks to every nodes,
-// the substate will transfer to dispatching.
-const (
-	TaskSubStateDispatching = "dispatching"
-	TaskSubStateNormal      = "normal"
-)
-
 // TaskStep is the step of task.
 const (
 	StepInit int64 = 0

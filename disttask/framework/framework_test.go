@@ -228,9 +228,9 @@ func RegisterTaskMetaForExample2(t *testing.T, ctrl *gomock.Controller, m *sync.
 	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(minimalTask proto.MinimalTask, tp string, step int64) (execute.MiniTaskExecutor, error) {
 			switch step {
-			case proto.StepOne:
+			case proto.StepInit:
 				return &testSubtaskExecutor2{m: m}, nil
-			case proto.StepTwo:
+			case proto.StepOne:
 				return &testSubtaskExecutor3{m: m}, nil
 			}
 			panic("invalid step")
@@ -239,6 +239,10 @@ func RegisterTaskMetaForExample2(t *testing.T, ctrl *gomock.Controller, m *sync.
 }
 
 func RegisterTaskMetaForExample2Inner(t *testing.T, mockExtension scheduler.Extension, dispatcherHandle dispatcher.Extension) {
+	t.Cleanup(func() {
+		dispatcher.ClearDispatcherFactory()
+		scheduler.ClearSchedulers()
+	})
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample2,
 		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
@@ -260,9 +264,9 @@ func RegisterTaskMetaForExample3(t *testing.T, ctrl *gomock.Controller, m *sync.
 	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(minimalTask proto.MinimalTask, tp string, step int64) (execute.MiniTaskExecutor, error) {
 			switch step {
-			case proto.StepOne:
+			case proto.StepInit:
 				return &testSubtaskExecutor4{m: m}, nil
-			case proto.StepTwo:
+			case proto.StepOne:
 				return &testSubtaskExecutor5{m: m}, nil
 			}
 			panic("invalid step")
@@ -271,6 +275,10 @@ func RegisterTaskMetaForExample3(t *testing.T, ctrl *gomock.Controller, m *sync.
 }
 
 func RegisterTaskMetaForExample3Inner(t *testing.T, mockExtension scheduler.Extension, dispatcherHandle dispatcher.Extension) {
+	t.Cleanup(func() {
+		dispatcher.ClearDispatcherFactory()
+		scheduler.ClearSchedulers()
+	})
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample3,
 		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
