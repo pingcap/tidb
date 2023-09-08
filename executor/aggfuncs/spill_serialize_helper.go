@@ -25,6 +25,9 @@ type SpillSerializeHelper struct {
 	// tmpBuf is an auxiliary data struct that used for encoding bytes.
 	// 1024 is large enough for all fixed length data struct.
 	tmpBuf [1024]byte
+
+	// varBuf is used for storing variable length data struct
+	varBuf []byte
 }
 
 func (s *SpillSerializeHelper) serializePartialResult4Count(value partialResult4Count) []byte {
@@ -132,23 +135,61 @@ func (s *SpillSerializeHelper) serializePartialResult4SumFloat64(value partialRe
 	return s.tmpBuf[0 : float64Len+int64Len]
 }
 
-// basePartialResult4GroupConcat
-// partialResult4GroupConcat
-// type basePartialResult4GroupConcat struct {
-// 	valsBuf *bytes.Buffer
-// 	buffer  *bytes.Buffer
-// }
-// type Buffer struct {
-// 	buf      []byte // contents are the bytes buf[off : len(buf)]
-// 	off      int    // read at &buf[off], write at &buf[len(buf)]
-// 	lastRead readOp // last read operation, so that Unread* can work correctly. int8
-// }
+func (s *SpillSerializeHelper) serializeBasePartialResult4GroupConcat(value basePartialResult4GroupConcat) []byte {
+	valsBuf := value.valsBuf.Bytes()
+	valsBufLen := int64(len(valsBuf))
+	buffer := value.buffer.Bytes()
+	bufferLen := int64(len(buffer))
+	dataLen := valsBufLen + bufferLen + int64Len
+	if dataLen > int64(len(s.varBuf)) {
+		s.varBuf = make([]byte, dataLen)
+	}
 
-// func (s *SpillSerializeHelper) serializeBasePartialResult4GroupConcat(value basePartialResult4GroupConcat) []byte {
-// totalMemLen := 2 * intLen + 2 * int8Len + len(value.valsBuf.)
-// }
+	spill.SerializeInt64(valsBufLen, s.varBuf)
+	copy(s.varBuf[int64Len:], valsBuf)
+	copy(s.varBuf[int64Len+valsBufLen:], buffer)
+	return s.varBuf[:dataLen]
+}
+
+func (s *SpillSerializeHelper) serializePartialResult4GroupConcat(value partialResult4GroupConcat) []byte {
+	return s.serializeBasePartialResult4GroupConcat(basePartialResult4GroupConcat{
+		valsBuf: value.valsBuf,
+		buffer:  value.buffer,
+	})
+}
 
 func (s *SpillSerializeHelper) serializePartialResult4BitFunc(value partialResult4BitFunc) []byte {
 	spill.SerializeUint64(value, s.tmpBuf[:])
 	return s.tmpBuf[0:uint64Len]
 }
+
+// func serializeInterface(val interface{}) (memDelta int64) {
+// 	memDelta = DefInterfaceSize
+// 	switch v := val.(type) {
+// 	case bool:
+// 		memDelta += DefBoolSize
+// 	case int64:
+// 		memDelta += DefInt64Size
+// 	case uint64:
+// 		memDelta += DefUint64Size
+// 	case float64:
+// 		memDelta += DefFloat64Size
+// 	case string:
+// 		memDelta += int64(len(v))
+// 	case types.BinaryJSON:
+// 		// +1 for the memory usage of the JSONTypeCode of json
+// 		memDelta += int64(len(v.Value) + 1)
+// 	case types.Opaque:
+// 		// +1 for the memory usage of the JSONTypeCode of opaque value
+// 		memDelta += int64(len(v.Buf) + 1)
+// 	case *types.MyDecimal:
+// 		memDelta += DefMyDecimalSize
+// 	case []uint8:
+// 		memDelta += int64(len(v))
+// 	case types.Time:
+// 		memDelta += DefTimeSize
+// 	case types.Duration:
+// 		memDelta += DefDurationSize
+// 	}
+// 	return memDelta
+// }

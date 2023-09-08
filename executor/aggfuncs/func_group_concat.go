@@ -173,6 +173,40 @@ func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	return memDelta, e.truncatePartialResultIfNeed(sctx, p2.buffer)
 }
 
+func (c *groupConcat) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4GroupConcat)(partialResult)
+	resBuf := spillHelper.serializePartialResult4GroupConcat(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *groupConcat) DeserializeToPartialResultForSpill(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *groupConcat) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4GroupConcat)(pr)
+	success := helper.deserializePartialResult4GroupConcat(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
 func (e *groupConcat) SetTruncated(t *int32) {
 	e.truncated = t

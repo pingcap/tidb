@@ -15,6 +15,7 @@
 package aggfuncs
 
 import (
+	"bytes"
 	"time"
 	"unsafe"
 
@@ -230,16 +231,25 @@ func (s *spillDeserializeHelper) deserializePartialResult4SumFloat64(dst *partia
 	return false
 }
 
-// func (s *spillDeserializeHelper) deserializeBasePartialResult4GroupConcat(dst *basePartialResult4GroupConcat) bool {
-// 	if s.readRowIndex < s.rowNum {
-// 		bytes := s.column.GetBytes(s.readRowIndex)
-// 		dst.val = spill.DeserializeFloat64(bytes, 0)
-// 		dst.notNullRowCount = spill.DeserializeInt64(bytes, float64Len)
-// 		s.readRowIndex++
-// 		return true
-// 	}
-// 	return false
-// }
+func (s *spillDeserializeHelper) deserializeBasePartialResult4GroupConcat(dst *basePartialResult4GroupConcat) bool {
+	if s.readRowIndex < s.rowNum {
+		restoredBytes := s.column.GetBytes(s.readRowIndex)
+		valsBufLen := spill.DeserializeInt64(restoredBytes, int64Len)
+		dst.valsBuf = bytes.NewBuffer(restoredBytes[int64Len:])
+		dst.buffer = bytes.NewBuffer(restoredBytes[int64Len+valsBufLen:])
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4GroupConcat(dst *partialResult4GroupConcat) bool {
+	base := basePartialResult4GroupConcat{}
+	success := s.deserializeBasePartialResult4GroupConcat(&base)
+	dst.valsBuf = base.valsBuf
+	dst.buffer = base.buffer
+	return success
+}
 
 func (s *spillDeserializeHelper) deserializePartialResult4BitFunc(dst *partialResult4BitFunc) bool {
 	if s.readRowIndex < s.rowNum {
