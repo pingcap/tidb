@@ -44,9 +44,12 @@ const (
 var (
 	checkTaskFinishedInterval = 500 * time.Millisecond
 	nonRetrySQLTime           = 1
-	RetrySQLTimes             = 30
-	RetrySQLInterval          = 3 * time.Second
-	RetrySQLMaxInterval       = 30 * time.Second
+	// RetrySQLTimes is the max retry times when executing SQL.
+	RetrySQLTimes = 30
+	// RetrySQLInterval is the initial interval between two SQL retries.
+	RetrySQLInterval = 3 * time.Second
+	// RetrySQLMaxInterval is the max interval between two SQL retries.
+	RetrySQLMaxInterval = 30 * time.Second
 )
 
 // TaskHandle provides the interface for operations needed by Dispatcher.

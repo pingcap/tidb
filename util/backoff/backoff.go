@@ -16,6 +16,7 @@ package backoff
 
 import "time"
 
+// Backoffer is the interface to get backoff.
 type Backoffer interface {
 	// Backoff returns the duration to wait for the retryCnt-th retry.
 	// retryCnt starts from 0.
