@@ -80,6 +80,7 @@ func genHist4Bench(t *testing.B, buckets []*bucket4Test, totColSize int64) *Hist
 	return h
 }
 
+// cmd: go test -run=^$ -bench=BenchmarkMergePartitionHist2GlobalHist -benchmem github.com/pingcap/tidb/statistics
 func BenchmarkMergePartitionHist2GlobalHist(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
