@@ -65,6 +65,7 @@ func (e *ShowBaseExtractor) Extract(show *ast.ShowStmt) bool {
 				e.Field = strings.ToLower(string(patValue))
 				return true
 			}
+<<<<<<< HEAD
 			e.FieldPatterns = strings.ToLower(string(patValue))
 			return true
 		}
@@ -91,6 +92,9 @@ func (e *ShowColumnsTableExtractor) Extract(show *ast.ShowStmt) bool {
 				return true
 			}
 			e.FieldPatterns = strings.ToLower(string(patValue))
+=======
+			e.fieldPattern = strings.ToLower(ptn)
+>>>>>>> df1830fe0c9 (planner: use orginal pattern instead of compiled one (#46741))
 			return true
 		case *ast.ColumnNameExpr:
 			// It is used in `SHOW COLUMNS FROM t LIKE abc`.
