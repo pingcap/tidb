@@ -769,7 +769,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		txn.SetOption(kv.ResourceGroupTagger, tagger)
 	}
 	if job.ReorgMeta != nil {
-		txn.SetOption(kv.ResourceGroupTagger, job.ReorgMeta.ResourceGroupName)
+		txn.SetOption(kv.ResourceGroupName, job.ReorgMeta.ResourceGroupName)
 	}
 
 	t := meta.NewMeta(txn)
