@@ -2536,7 +2536,12 @@ func (s *SessionVars) SetSystemVarWithOldValAsRet(name string, val string) (stri
 	if err != nil {
 		return "", err
 	}
-	oldV := sv.Value
+	// The map s.systems[sv.Name] is lazy initialized. If we directly read it, we might read empty result.
+	// Since this code path is not a hot path, we directly call GetSessionOrGlobalSystemVar to get the value safely.
+	oldV, err := s.GetSessionOrGlobalSystemVar(context.Background(), sv.Name)
+	if err != nil {
+		return "", err
+	}
 	return oldV, sv.SetSessionFromHook(s, val)
 }
 
