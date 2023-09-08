@@ -1532,11 +1532,11 @@ func (a *ExecStmt) RecordHistoryStats() {
 				if !needRecord {
 					break
 				}
-				succ, hashCode := genHashCodeForSelection(stmtCtx, x)
+				succ, hashCode := genHistoryStatsHashCodeForSelection(stmtCtx, x)
 				if !succ {
 					break
 				}
-				recordHistoryStats(stmtCtx, sql, tableScan.Table.ID, x.ID(), false, hashCode, estRows, actualRows)
+				recordHistoryStats(sql, tableScan.Table.ID, x.ID(), false, hashCode, estRows, actualRows)
 			}
 		case *plannercore.PhysicalTableScan:
 			if x.HasRFFilters() {
@@ -1546,12 +1546,12 @@ func (a *ExecStmt) RecordHistoryStats() {
 			if !needRecord {
 				break
 			}
-			recordHistoryStats(stmtCtx, sql, x.Table.ID, x.ID(), true, 0, estRows, actualRows)
+			recordHistoryStats(sql, x.Table.ID, x.ID(), true, 0, estRows, actualRows)
 		}
 	}
 }
 
-func recordHistoryStats(stmtCtx *stmtctx.StatementContext, sql string, tableID int64, planID int, nullHashCode bool, hashCode uint64, estRows float64, actualRows int64) {
+func recordHistoryStats(sql string, tableID int64, planID int, nullHashCode bool, hashCode uint64, estRows float64, actualRows int64) {
 	logutil.BgLogger().Debug(
 		sql,
 		zap.Int64("TableID", tableID),
@@ -1562,7 +1562,7 @@ func recordHistoryStats(stmtCtx *stmtctx.StatementContext, sql string, tableID i
 		zap.Int64("ActRows", actualRows))
 }
 
-func genHashCodeForSelection(stmtCtx *stmtctx.StatementContext, x *plannercore.PhysicalSelection) (bool, uint64) {
+func genHistoryStatsHashCodeForSelection(stmtCtx *stmtctx.StatementContext, x *plannercore.PhysicalSelection) (bool, uint64) {
 	return expression.SortAndGenMD5HashForCNFExprs(stmtCtx, x.Conditions)
 }
 

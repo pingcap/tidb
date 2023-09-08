@@ -1290,3 +1290,25 @@ func TestTiDBTiFlashReplicaRead(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, DefTiFlashReplicaRead, val)
 }
+
+func TestTiDBOptimizerHistoryStats(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	tidbOptimizerHistoryStats := GetSysVar(TiDBOptimizerHistoryStats)
+	// Check default value
+	require.Equal(t, Off, tidbOptimizerHistoryStats.Value)
+
+	err := mock.SetGlobalSysVar(context.Background(), TiDBOptimizerHistoryStats, On)
+	require.NoError(t, err)
+	val, err := mock.GetGlobalSysVar(TiDBOptimizerHistoryStats)
+	require.NoError(t, err)
+	require.Equal(t, On, val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBOptimizerHistoryStats, Off)
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBOptimizerHistoryStats)
+	require.NoError(t, err)
+	require.Equal(t, Off, val)
+}
