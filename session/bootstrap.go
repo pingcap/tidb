@@ -582,6 +582,11 @@ const (
 		key(state),
       	UNIQUE KEY task_key(task_key)
 	);`
+	// CreateDistFrameworkMeta create a system table that distributed task framework use to store meta information
+	CreateDistFrameworkMeta = `CREATE TABLE IF NOT EXISTS mysql.dist_framework_meta (
+        host VARCHAR(100) NOT NULL PRIMARY KEY,
+        role VARCHAR(64),
+        keyspace_id bigint(8) NOT NULL DEFAULT -1);`
 
 	// CreateLoadDataJobs is a table that LOAD DATA uses
 	CreateLoadDataJobs = `CREATE TABLE IF NOT EXISTS mysql.load_data_jobs (
@@ -2841,6 +2846,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTimers)
 	// create runaway_watch done
 	mustExecute(s, CreateDoneRunawayWatchTable)
+	// create dist_framework_meta
+	mustExecute(s, CreateDistFrameworkMeta)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
@@ -2962,7 +2969,6 @@ func doDMLWorks(s Session) {
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES(%?, %?, "Bootstrap version. Do not delete.")`,
 		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion,
 	)
-
 	writeSystemTZ(s)
 
 	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)
