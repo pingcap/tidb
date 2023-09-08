@@ -725,13 +725,15 @@ func (stm *TaskManager) TransferSubTasks2History(taskID int64) error {
 
 // GC deletes the history subtask which is older than the given days.
 func (stm *TaskManager) GC() error {
-	subtaskHistoryKeepDays := defaultSubtaskKeepDays
-	failpoint.Inject("SubtaskHistoryKeepDays", func() {
-		subtaskHistoryKeepDays = 0
+	subtaskHistoryKeepSeconds := defaultSubtaskKeepDays * 24 * 60 * 60
+	failpoint.Inject("subtaskHistoryKeepSeconds", func(val failpoint.Value) {
+		if val, ok := val.(int); ok {
+			subtaskHistoryKeepSeconds = val
+		}
 	})
 	_, err := stm.executeSQLWithNewSession(
 		stm.ctx,
-		fmt.Sprintf("DELETE FROM mysql.tidb_background_subtask_history WHERE state_update_time < UNIX_TIMESTAMP() - %d * 24 * 60 * 60;", subtaskHistoryKeepDays),
+		fmt.Sprintf("DELETE FROM mysql.tidb_background_subtask_history WHERE state_update_time < UNIX_TIMESTAMP() - %d ;", subtaskHistoryKeepSeconds),
 	)
 	return err
 }

@@ -41,7 +41,7 @@ const (
 	// DefaultLiveNodesCheckInterval is the tick interval of fetching all server infos from etcd.
 	DefaultLiveNodesCheckInterval = 2
 	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
-	defaultHistorySubtaskTableGcInterval = 10 * time.Minute
+	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
 )
 
 var (
@@ -159,8 +159,9 @@ func (d *BaseDispatcher) scheduleTask() {
 			case proto.TaskStateRunning:
 				err = d.onRunning()
 			case proto.TaskStateSucceed, proto.TaskStateReverted, proto.TaskStateFailed:
-				err = d.onFinished()
-				logutil.Logger(d.logCtx).Info("schedule task, task is finished", zap.String("state", d.task.State), zap.Error(err))
+				if err := d.onFinished(); err != nil {
+					logutil.Logger(d.logCtx).Error("schedule task meet error", zap.String("state", d.task.State), zap.Error(err))
+				}
 				return
 			}
 			if err != nil {
@@ -247,6 +248,7 @@ func (d *BaseDispatcher) onRunning() error {
 }
 
 func (d *BaseDispatcher) onFinished() error {
+	logutil.Logger(d.logCtx).Debug("schedule task, task is finished", zap.String("state", d.task.State))
 	return d.taskMgr.TransferSubTasks2History(d.task.ID)
 }
 

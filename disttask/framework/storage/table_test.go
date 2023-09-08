@@ -433,9 +433,11 @@ func TestSubtaskHistoryTable(t *testing.T) {
 
 	const (
 		taskID       = 1
+		taskID2      = 2
 		subTask1     = 1
 		subTask2     = 2
 		subTask3     = 3
+		subTask4     = 4 // taskID2
 		tidb1        = "tidb1"
 		tidb2        = "tidb2"
 		tidb3        = "tidb3"
@@ -458,8 +460,7 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	require.Equal(t, 0, historySubTasksCnt)
 
 	// test TransferSubTasks2History
-	err = sm.TransferSubTasks2History(taskID)
-	require.NoError(t, err)
+	require.NoError(t, sm.TransferSubTasks2History(taskID))
 
 	subTasks, err = sm.GetSubtasksByStep(taskID, proto.StepInit)
 	require.NoError(t, err)
@@ -470,14 +471,19 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	require.Equal(t, 3, historySubTasksCnt)
 
 	// test GC
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/SubtaskHistoryKeepDays", "return")
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/SubtaskHistoryKeepDays"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds"))
 	}()
-	time.Sleep(time.Second)
+	time.Sleep(2 * time.Second)
+
+	require.NoError(t, sm.AddNewSubTask(taskID2, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, false))
+	require.NoError(t, sm.UpdateSubtaskStateAndError(subTask4, proto.TaskStateFailed, nil))
+	require.NoError(t, sm.TransferSubTasks2History(taskID2))
+
 	require.NoError(t, sm.GC())
 
 	historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(sm)
 	require.NoError(t, err)
-	require.Equal(t, 0, historySubTasksCnt)
+	require.Equal(t, 1, historySubTasksCnt)
 }
