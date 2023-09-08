@@ -1340,7 +1340,7 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 		require.True(t, col.IsStatsInitialized())
 	}
 
-	tk.MustExec("lock stats t")
+	tk.MustExec("lock stats table t")
 
 	tk.MustExec("delete from t limit 12")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
@@ -1350,7 +1350,7 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 	tblStats1 := h.GetTableStats(tbl.Meta())
 	require.Equal(t, tblStats, tblStats1)
 
-	tk.MustExec("unlock stats t")
+	tk.MustExec("unlock stats table t")
 
 	tk.MustExec("delete from t limit 4")
 
@@ -1378,7 +1378,7 @@ func TestStatsLockForDelta(t *testing.T) {
 	tableInfo1 := tbl1.Meta()
 	h := dom.StatsHandle()
 
-	testKit.MustExec("lock stats t1")
+	testKit.MustExec("lock stats table t1")
 
 	rowCount1 := 10
 	rowCount2 := 20
@@ -1414,7 +1414,7 @@ func TestStatsLockForDelta(t *testing.T) {
 	stats1 = h.GetTableStats(tableInfo1)
 	require.Equal(t, stats1.RealtimeCount, int64(0))
 
-	testKit.MustExec("unlock stats t1")
+	testKit.MustExec("unlock stats table t1")
 
 	testKit.MustExec("analyze table t1")
 	stats1 = h.GetTableStats(tableInfo1)

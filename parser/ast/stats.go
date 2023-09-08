@@ -269,16 +269,17 @@ func (n *LoadStatsStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// LockStatsStmt is the statement node for lock table statistic
-type LockStatsStmt struct {
+// LockTableStatsStmt is the statement node for lock table statistic
+type LockTableStatsStmt struct {
 	stmtNode
 
-	Tables []*TableName
+	Tables         []*TableName
+	PartitionNames []model.CIStr
 }
 
 // Restore implements Node interface.
-func (n *LockStatsStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("LOCK STATS ")
+func (n *LockTableStatsStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("LOCK STATS TABLE ")
 	for index, table := range n.Tables {
 		if index != 0 {
 			ctx.WritePlain(", ")
@@ -287,16 +288,25 @@ func (n *LockStatsStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotatef(err, "An error occurred while restore LockStatsStmt.Tables[%d]", index)
 		}
 	}
+	if len(n.PartitionNames) != 0 {
+		ctx.WriteKeyWord(" PARTITION ")
+	}
+	for i, partition := range n.PartitionNames {
+		if i != 0 {
+			ctx.WritePlain(",")
+		}
+		ctx.WriteName(partition.O)
+	}
 	return nil
 }
 
 // Accept implements Node Accept interface.
-func (n *LockStatsStmt) Accept(v Visitor) (Node, bool) {
+func (n *LockTableStatsStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*LockStatsStmt)
+	n = newNode.(*LockTableStatsStmt)
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -307,16 +317,17 @@ func (n *LockStatsStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// UnlockStatsStmt is the statement node for unlock table statistic
-type UnlockStatsStmt struct {
+// UnlockTableStatsStmt is the statement node for unlock table statistic
+type UnlockTableStatsStmt struct {
 	stmtNode
 
-	Tables []*TableName
+	Tables         []*TableName
+	PartitionNames []model.CIStr
 }
 
 // Restore implements Node interface.
-func (n *UnlockStatsStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("UNLOCK STATS ")
+func (n *UnlockTableStatsStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("UNLOCK STATS TABLE ")
 	for index, table := range n.Tables {
 		if index != 0 {
 			ctx.WritePlain(", ")
@@ -325,16 +336,25 @@ func (n *UnlockStatsStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotatef(err, "An error occurred while restore UnlockStatsStmt.Tables[%d]", index)
 		}
 	}
+	if len(n.PartitionNames) != 0 {
+		ctx.WriteKeyWord(" PARTITION ")
+	}
+	for i, partition := range n.PartitionNames {
+		if i != 0 {
+			ctx.WritePlain(",")
+		}
+		ctx.WriteName(partition.O)
+	}
 	return nil
 }
 
 // Accept implements Node Accept interface.
-func (n *UnlockStatsStmt) Accept(v Visitor) (Node, bool) {
+func (n *UnlockTableStatsStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*UnlockStatsStmt)
+	n = newNode.(*UnlockTableStatsStmt)
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {

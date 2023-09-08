@@ -206,9 +206,9 @@ func (b *executorBuilder) build(p plannercore.Plan) exec.Executor {
 	case *plannercore.LoadStats:
 		return b.buildLoadStats(v)
 	case *plannercore.LockStats:
-		return b.buildLockStats(v)
+		return b.buildLockTableStats(v)
 	case *plannercore.UnlockStats:
-		return b.buildUnlockStats(v)
+		return b.buildUnlockTableStats(v)
 	case *plannercore.IndexAdvise:
 		return b.buildIndexAdvise(v)
 	case *plannercore.PlanReplayer:
@@ -1073,18 +1073,20 @@ func (b *executorBuilder) buildLoadStats(v *plannercore.LoadStats) exec.Executor
 	return e
 }
 
-func (b *executorBuilder) buildLockStats(v *plannercore.LockStats) exec.Executor {
+func (b *executorBuilder) buildLockTableStats(v *plannercore.LockStats) exec.Executor {
 	e := &lockstats.LockExec{
-		BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, v.ID()),
-		Tables:       v.Tables,
+		BaseExecutor:   exec.NewBaseExecutor(b.ctx, nil, v.ID()),
+		Tables:         v.Tables,
+		PartitionNames: v.PartitionNames,
 	}
 	return e
 }
 
-func (b *executorBuilder) buildUnlockStats(v *plannercore.UnlockStats) exec.Executor {
+func (b *executorBuilder) buildUnlockTableStats(v *plannercore.UnlockStats) exec.Executor {
 	e := &lockstats.UnlockExec{
-		BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, v.ID()),
-		Tables:       v.Tables,
+		BaseExecutor:   exec.NewBaseExecutor(b.ctx, nil, v.ID()),
+		Tables:         v.Tables,
+		PartitionNames: v.PartitionNames,
 	}
 	return e
 }

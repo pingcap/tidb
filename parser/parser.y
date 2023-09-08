@@ -998,8 +998,8 @@ import (
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
-	LockStatsStmt              "Lock statistic statement"
-	UnlockStatsStmt            "Unlock statistic statement"
+	LockTableStatsStmt         "Lock table statistic statement"
+	UnlockTableStatsStmt       "Unlock table statistic statement"
 	LockTablesStmt             "Lock tables statement"
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
 	PlanReplayerStmt           "Plan replayer statement"
@@ -11942,8 +11942,8 @@ Statement:
 |	KillStmt
 |	LoadDataStmt
 |	LoadStatsStmt
-|	LockStatsStmt
-|	UnlockStatsStmt
+|	LockTableStatsStmt
+|	UnlockTableStatsStmt
 |	PlanReplayerStmt
 |	PreparedStmt
 |	RollbackStmt
@@ -14662,19 +14662,33 @@ LoadStatsStmt:
 		}
 	}
 
-LockStatsStmt:
-	"LOCK" "STATS" TableNameList
+LockTableStatsStmt:
+	"LOCK" "STATS" "TABLE" TableNameList
 	{
-		$$ = &ast.LockStatsStmt{
-			Tables: $3.([]*ast.TableName),
+		$$ = &ast.LockTableStatsStmt{
+			Tables: $4.([]*ast.TableName),
+		}
+	}
+|	"LOCK" "STATS" "TABLE" TableName "PARTITION" PartitionNameList
+	{
+		$$ = &ast.LockTableStatsStmt{
+			Tables:         []*ast.TableName{$4.(*ast.TableName)},
+			PartitionNames: $6.([]model.CIStr),
 		}
 	}
 
-UnlockStatsStmt:
-	"UNLOCK" "STATS" TableNameList
+UnlockTableStatsStmt:
+	"UNLOCK" "STATS" "TABLE" TableNameList
 	{
-		$$ = &ast.UnlockStatsStmt{
-			Tables: $3.([]*ast.TableName),
+		$$ = &ast.UnlockTableStatsStmt{
+			Tables: $4.([]*ast.TableName),
+		}
+	}
+|	"UNLOCK" "STATS" "TABLE" TableName "PARTITION" PartitionNameList
+	{
+		$$ = &ast.UnlockTableStatsStmt{
+			Tables:         []*ast.TableName{$4.(*ast.TableName)},
+			PartitionNames: $6.([]model.CIStr),
 		}
 	}
 

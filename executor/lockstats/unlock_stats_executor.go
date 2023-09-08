@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -29,7 +30,11 @@ var _ exec.Executor = &UnlockExec{}
 // UnlockExec represents a unlock statistic executor.
 type UnlockExec struct {
 	exec.BaseExecutor
+	// Tables is the list of tables to be unlocked.
 	Tables []*ast.TableName
+	// PartitionNames is the list of partitions to be unlocked.
+	// Only used when unlocking partitions.
+	PartitionNames []model.CIStr
 }
 
 // Next implements the Executor Next interface.
@@ -44,20 +49,38 @@ func (e *UnlockExec) Next(context.Context, *chunk.Chunk) error {
 	}
 	is := do.InfoSchema()
 
-	tids, pids, err := populateTableAndPartitionIDs(e.Tables, is)
-	if err != nil {
-		return err
-	}
-
-	msg, err := h.RemoveLockedTables(tids, pids, e.Tables)
-	if err != nil {
-		return err
-	}
-	if msg != "" {
-		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
+	if e.onlyUnlockPartitions() {
+		tableName := e.Tables[0]
+		tid, pidNames, err := populatePartitionIDAndNames(tableName, e.PartitionNames, is)
+		if err != nil {
+			return err
+		}
+		msg, err := h.RemoveLockedPartitions(tid, tableName, pidNames)
+		if err != nil {
+			return err
+		}
+		if msg != "" {
+			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
+		}
+	} else {
+		tids, pids, err := populateTableAndPartitionIDs(e.Tables, is)
+		if err != nil {
+			return err
+		}
+		msg, err := h.RemoveLockedTables(tids, pids, e.Tables)
+		if err != nil {
+			return err
+		}
+		if msg != "" {
+			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
+		}
 	}
 
 	return nil
+}
+
+func (e *UnlockExec) onlyUnlockPartitions() bool {
+	return len(e.PartitionNames) > 0 && len(e.Tables) == 1
 }
 
 // Close implements the Executor Close interface.
