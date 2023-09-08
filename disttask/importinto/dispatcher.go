@@ -119,7 +119,8 @@ func (t *taskInfo) close(ctx context.Context) {
 	}
 }
 
-type importDispatcherExt struct {
+// ImportDispatcherExt is an extension of ImportDispatcher, exported for test.
+type ImportDispatcherExt struct {
 	mu sync.RWMutex
 	// NOTE: there's no need to sync for below 2 fields actually, since we add a restriction that only one
 	// task can be running at a time. but we might support task queuing in the future, leave it for now.
@@ -135,9 +136,10 @@ type importDispatcherExt struct {
 	disableTiKVImportMode atomic.Bool
 }
 
-var _ dispatcher.Extension = (*importDispatcherExt)(nil)
+var _ dispatcher.Extension = (*ImportDispatcherExt)(nil)
 
-func (dsp *importDispatcherExt) OnTick(ctx context.Context, task *proto.Task) {
+// OnTick implements dispatcher.Extension interface.
+func (dsp *ImportDispatcherExt) OnTick(ctx context.Context, task *proto.Task) {
 	// only switch TiKV mode or register task when task is running
 	if task.State != proto.TaskStateRunning {
 		return
@@ -146,7 +148,7 @@ func (dsp *importDispatcherExt) OnTick(ctx context.Context, task *proto.Task) {
 	dsp.registerTask(ctx, task)
 }
 
-func (dsp *importDispatcherExt) switchTiKVMode(ctx context.Context, task *proto.Task) {
+func (dsp *ImportDispatcherExt) switchTiKVMode(ctx context.Context, task *proto.Task) {
 	dsp.updateCurrentTask(task)
 	// only import step need to switch to IMPORT mode,
 	// If TiKV is in IMPORT mode during checksum, coprocessor will time out.
@@ -175,20 +177,21 @@ func (dsp *importDispatcherExt) switchTiKVMode(ctx context.Context, task *proto.
 	dsp.lastSwitchTime.Store(time.Now())
 }
 
-func (dsp *importDispatcherExt) registerTask(ctx context.Context, task *proto.Task) {
+func (dsp *ImportDispatcherExt) registerTask(ctx context.Context, task *proto.Task) {
 	val, _ := dsp.taskInfoMap.LoadOrStore(task.ID, &taskInfo{taskID: task.ID})
 	info := val.(*taskInfo)
 	info.register(ctx)
 }
 
-func (dsp *importDispatcherExt) unregisterTask(ctx context.Context, task *proto.Task) {
+func (dsp *ImportDispatcherExt) unregisterTask(ctx context.Context, task *proto.Task) {
 	if val, loaded := dsp.taskInfoMap.LoadAndDelete(task.ID); loaded {
 		info := val.(*taskInfo)
 		info.close(ctx)
 	}
 }
 
-func (dsp *importDispatcherExt) OnNextStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (
+// OnNextStage implements dispatcher.Extension interface.
+func (dsp *ImportDispatcherExt) OnNextStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (
 	resSubtaskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
 		zap.String("type", gTask.Type),
@@ -274,7 +277,8 @@ func (dsp *importDispatcherExt) OnNextStage(ctx context.Context, handle dispatch
 	return metaBytes, nil
 }
 
-func (dsp *importDispatcherExt) OnErrStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) ([]byte, error) {
+// OnErrStage implements dispatcher.Extension interface.
+func (dsp *ImportDispatcherExt) OnErrStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) ([]byte, error) {
 	logger := logutil.BgLogger().With(
 		zap.String("type", gTask.Type),
 		zap.Int64("task-id", gTask.ID),
@@ -312,7 +316,8 @@ func (dsp *importDispatcherExt) OnErrStage(ctx context.Context, handle dispatche
 	return nil, err
 }
 
-func (*importDispatcherExt) GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error) {
+// GetEligibleInstances implements dispatcher.Extension interface.
+func (*ImportDispatcherExt) GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error) {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
@@ -324,12 +329,16 @@ func (*importDispatcherExt) GetEligibleInstances(ctx context.Context, gTask *pro
 	return dispatcher.GenerateSchedulerNodes(ctx)
 }
 
-func (*importDispatcherExt) IsRetryableErr(error) bool {
+// IsRetryableErr implements dispatcher.Extension interface.
+func (*ImportDispatcherExt) IsRetryableErr(error) bool {
 	// TODO: check whether the error is retryable.
 	return false
 }
 
-func (dsp *importDispatcherExt) switchTiKV2NormalMode(ctx context.Context, task *proto.Task, logger *zap.Logger) {
+func (dsp *ImportDispatcherExt) switchTiKV2NormalMode(ctx context.Context, task *proto.Task, logger *zap.Logger) {
+	failpoint.Inject("skipSwitchTiKVMode", func() {
+		failpoint.Return()
+	})
 	dsp.updateCurrentTask(task)
 	if dsp.disableTiKVImportMode.Load() {
 		return
@@ -350,7 +359,7 @@ func (dsp *importDispatcherExt) switchTiKV2NormalMode(ctx context.Context, task 
 	dsp.lastSwitchTime.Store(time.Time{})
 }
 
-func (dsp *importDispatcherExt) updateCurrentTask(task *proto.Task) {
+func (dsp *ImportDispatcherExt) updateCurrentTask(task *proto.Task) {
 	if dsp.currTaskID.Swap(task.ID) != task.ID {
 		taskMeta := &TaskMeta{}
 		if err := json.Unmarshal(task.Meta, taskMeta); err == nil {
@@ -369,7 +378,7 @@ func newImportDispatcher(ctx context.Context, taskMgr *storage.TaskManager,
 	dis := importDispatcher{
 		BaseDispatcher: dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task),
 	}
-	dis.BaseDispatcher.Extension = &importDispatcherExt{}
+	dis.BaseDispatcher.Extension = &ImportDispatcherExt{}
 	return &dis
 }
 
@@ -542,7 +551,7 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 	)
 }
 
-func (dsp *importDispatcherExt) finishJob(ctx context.Context, logger *zap.Logger,
+func (dsp *ImportDispatcherExt) finishJob(ctx context.Context, logger *zap.Logger,
 	taskHandle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
 	dsp.unregisterTask(ctx, gTask)
 	redactSensitiveInfo(gTask, taskMeta)
@@ -559,7 +568,7 @@ func (dsp *importDispatcherExt) finishJob(ctx context.Context, logger *zap.Logge
 	)
 }
 
-func (dsp *importDispatcherExt) failJob(ctx context.Context, taskHandle dispatcher.TaskHandle, gTask *proto.Task,
+func (dsp *ImportDispatcherExt) failJob(ctx context.Context, taskHandle dispatcher.TaskHandle, gTask *proto.Task,
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
 	dsp.switchTiKV2NormalMode(ctx, gTask, logger)
 	dsp.unregisterTask(ctx, gTask)

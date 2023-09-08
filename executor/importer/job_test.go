@@ -36,6 +36,9 @@ func jobInfoEqual(t *testing.T, expected, got *importer.JobInfo) {
 
 func TestJobHappyPath(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
 	tk := testkit.NewTestKit(t, store)
 	ctx := context.Background()
 	conn := tk.Session().(sqlexec.SQLExecutor)
@@ -151,6 +154,9 @@ func TestJobHappyPath(t *testing.T) {
 
 func TestGetAndCancelJob(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
 	tk := testkit.NewTestKit(t, store)
 	ctx := context.Background()
 	conn := tk.Session().(sqlexec.SQLExecutor)
@@ -282,6 +288,9 @@ func TestJobInfo_CanCancel(t *testing.T) {
 
 func TestGetJobInfoNullField(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
 	tk := testkit.NewTestKit(t, store)
 	ctx := context.Background()
 	conn := tk.Session().(sqlexec.SQLExecutor)

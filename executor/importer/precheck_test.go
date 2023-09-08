@@ -66,6 +66,9 @@ func createMockETCD(t *testing.T) (string, *embed.Etcd) {
 
 func TestCheckRequirements(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
 	tk := testkit.NewTestKit(t, store)
 	ctx := util.WithInternalSourceType(context.Background(), kv.InternalImportInto)
 	conn := tk.Session().(sqlexec.SQLExecutor)
