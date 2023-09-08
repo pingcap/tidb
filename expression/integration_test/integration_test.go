@@ -3717,15 +3717,14 @@ func TestNotExistFunc(t *testing.T) {
 
 	// current db is empty
 	tk.MustGetErrMsg("SELECT xxx(1)", "[planner:1046]No database selected")
-
 	tk.MustGetErrMsg("SELECT yyy()", "[planner:1046]No database selected")
+	tk.MustGetErrMsg("SELECT T.upper(1)", "[expression:1305]FUNCTION t.upper does not exist")
 
 	// current db is not empty
 	tk.MustExec("use test")
 	tk.MustGetErrMsg("SELECT xxx(1)", "[expression:1305]FUNCTION test.xxx does not exist")
 	tk.MustGetErrMsg("SELECT yyy()", "[expression:1305]FUNCTION test.yyy does not exist")
-
-	tk.MustExec("use test")
+	tk.MustGetErrMsg("SELECT t.upper(1)", "[expression:1305]FUNCTION t.upper does not exist")
 	tk.MustGetErrMsg("SELECT timestampliteral(rand())", "[expression:1305]FUNCTION test.timestampliteral does not exist")
 }
 
