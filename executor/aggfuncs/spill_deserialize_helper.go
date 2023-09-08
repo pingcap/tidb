@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/spill"
 )
 
+const intLen = int64(unsafe.Sizeof(int(0)))
 const boolLen = int64(unsafe.Sizeof(true))
 const uint32Len = int64(unsafe.Sizeof(uint32(0)))
 const uint64Len = int64(unsafe.Sizeof(uint64(0)))
@@ -179,6 +180,50 @@ func (s *spillDeserializeHelper) deserializePartialResult4MaxMinSet(dst *partial
 		dst.val.Value = spill.DeserializeUint64(bytes, 0)
 		dst.isNull = spill.DeserializeBool(bytes, uint64Len)
 		dst.val.Name = string(hack.String(bytes[boolLen+uint64Len:]))
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4AvgDecimal(dst *partialResult4AvgDecimal) bool {
+	if s.readRowIndex < s.rowNum {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.sum = *(*types.MyDecimal)(unsafe.Pointer(&bytes[0]))
+		dst.count = spill.DeserializeInt64(bytes, types.MyDecimalStructSize)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4AvgFloat64(dst *partialResult4AvgFloat64) bool {
+	if s.readRowIndex < s.rowNum {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.sum = spill.DeserializeFloat64(bytes, 0)
+		dst.count = spill.DeserializeInt64(bytes, float64Len)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4SumDecimal(dst *partialResult4SumDecimal) bool {
+	if s.readRowIndex < s.rowNum {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.val = *(*types.MyDecimal)(unsafe.Pointer(&bytes[0]))
+		dst.notNullRowCount = spill.DeserializeInt64(bytes, types.MyDecimalStructSize)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4SumFloat64(dst *partialResult4SumFloat64) bool {
+	if s.readRowIndex < s.rowNum {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.val = spill.DeserializeFloat64(bytes, 0)
+		dst.notNullRowCount = spill.DeserializeInt64(bytes, float64Len)
 		s.readRowIndex++
 		return true
 	}

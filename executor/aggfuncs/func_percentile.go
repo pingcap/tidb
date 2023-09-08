@@ -73,8 +73,8 @@ func (e *basePercentile) SerializeForSpill(_ sessionctx.Context, partialResult P
 }
 
 // TODO implement it
-func (e *basePercentile) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
-	return nil, 0, nil
+func (e *basePercentile) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	return nil, 0
 }
 
 type partialResult4Percentile interface {

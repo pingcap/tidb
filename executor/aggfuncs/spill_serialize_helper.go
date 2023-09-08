@@ -107,3 +107,43 @@ func (s *SpillSerializeHelper) serializePartialResult4MaxMinSet(value partialRes
 	copy(s.tmpBuf[uint64Len+boolLen:], []byte(value.val.Name))
 	return s.tmpBuf[0 : uint64Len+boolLen+int64(len(value.val.Name))]
 }
+
+func (s *SpillSerializeHelper) serializePartialResult4AvgDecimal(value partialResult4AvgDecimal) []byte {
+	*(*types.MyDecimal)(unsafe.Pointer(&s.tmpBuf[0])) = value.sum
+	spill.SerializeInt64(value.count, s.tmpBuf[types.MyDecimalStructSize:])
+	return s.tmpBuf[0 : types.MyDecimalStructSize+int64Len]
+}
+
+func (s *SpillSerializeHelper) serializePartialResult4AvgFloat64(value partialResult4AvgFloat64) []byte {
+	spill.SerializeFloat64(value.sum, s.tmpBuf[:])
+	spill.SerializeInt64(value.count, s.tmpBuf[float64Len:])
+	return s.tmpBuf[0 : float64Len+int64Len]
+}
+
+func (s *SpillSerializeHelper) serializePartialResult4SumDecimal(value partialResult4SumDecimal) []byte {
+	*(*types.MyDecimal)(unsafe.Pointer(&s.tmpBuf[0])) = value.val
+	spill.SerializeInt64(value.notNullRowCount, s.tmpBuf[types.MyDecimalStructSize:])
+	return s.tmpBuf[0 : types.MyDecimalStructSize+int64Len]
+}
+
+func (s *SpillSerializeHelper) serializePartialResult4SumFloat64(value partialResult4SumFloat64) []byte {
+	spill.SerializeFloat64(value.val, s.tmpBuf[:])
+	spill.SerializeInt64(value.notNullRowCount, s.tmpBuf[float64Len:])
+	return s.tmpBuf[0 : float64Len+int64Len]
+}
+
+// basePartialResult4GroupConcat
+// partialResult4GroupConcat
+// type basePartialResult4GroupConcat struct {
+// 	valsBuf *bytes.Buffer
+// 	buffer  *bytes.Buffer
+// }
+// type Buffer struct {
+// 	buf      []byte // contents are the bytes buf[off : len(buf)]
+// 	off      int    // read at &buf[off], write at &buf[len(buf)]
+// 	lastRead readOp // last read operation, so that Unread* can work correctly. int8
+// }
+
+func (s *SpillSerializeHelper) serializeBasePartialResult4GroupConcat(value basePartialResult4GroupConcat) []byte {
+	// totalMemLen := 2 * intLen + 2 * int8Len + len(value.valsBuf.)
+}

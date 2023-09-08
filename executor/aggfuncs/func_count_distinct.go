@@ -147,8 +147,8 @@ func (e *countOriginalWithDistinct4Real) SerializeForSpill(_ sessionctx.Context,
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4Real) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
-	return nil, 0, nil
+func (e *countOriginalWithDistinct4Real) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	return nil, 0
 }
 
 type partialResult4CountDistinctDecimal struct {
@@ -208,8 +208,8 @@ func (e *countOriginalWithDistinct4Decimal) SerializeForSpill(_ sessionctx.Conte
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4Decimal) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
-	return nil, 0, nil
+func (e *countOriginalWithDistinct4Decimal) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	return nil, 0
 }
 
 type partialResult4CountDistinctDuration struct {
@@ -264,8 +264,8 @@ func (e *countOriginalWithDistinct4Duration) SerializeForSpill(_ sessionctx.Cont
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4Duration) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
-	return nil, 0, nil
+func (e *countOriginalWithDistinct4Duration) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	return nil, 0
 }
 
 type partialResult4CountDistinctString struct {
@@ -324,8 +324,8 @@ func (e *countOriginalWithDistinct4String) SerializeForSpill(_ sessionctx.Contex
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct4String) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
-	return nil, 0, nil
+func (e *countOriginalWithDistinct4String) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	return nil, 0
 }
 
 type countOriginalWithDistinct struct {
@@ -396,8 +396,8 @@ func (e *countOriginalWithDistinct) SerializeForSpill(_ sessionctx.Context, part
 }
 
 // TODO implement it
-func (e *countOriginalWithDistinct) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
-	return nil, 0, nil
+func (e *countOriginalWithDistinct) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	return nil, 0
 }
 
 // evalAndEncode eval one row with an expression and encode value to bytes.
@@ -819,8 +819,8 @@ func (e *baseApproxCountDistinct) SerializeForSpill(_ sessionctx.Context, partia
 }
 
 // TODO implement it
-func (e *baseApproxCountDistinct) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
-	return nil, 0, nil
+func (e *baseApproxCountDistinct) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	return nil, 0
 }
 
 type approxCountDistinctOriginal struct {
