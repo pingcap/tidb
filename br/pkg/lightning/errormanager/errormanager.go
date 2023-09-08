@@ -591,8 +591,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			if err != nil {
 				return errors.Trace(err)
 			}
-			em.logger.Debug("got latestValue0 from fnGetLatest",
-				zap.Binary("latestValue0", latestValue))
 
 			// if the latest value of rawKey equals to rawValue, that means this index KV is maintained in downstream TiDB
 			// if not, that means this index KV has been overwritten, and its corresponding data KV needs to be deleted
@@ -610,8 +608,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			if err != nil {
 				return errors.Trace(err)
 			}
-			em.logger.Debug("got overwritten from fnGetLatest",
-				zap.Binary("overwritten", overwritten))
 
 			overwrittenHandle, err := tablecodec.DecodeRowKey(rawHandle)
 			if err != nil {
@@ -687,8 +683,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			if err != nil {
 				return errors.Trace(err)
 			}
-			em.logger.Debug("got latestValue from fnGetLatest",
-				zap.Binary("latestValue", latestValue))
 			if latestValue != nil {
 				handle, err := tablecodec.DecodeRowKey(rawKey)
 				if err != nil {
@@ -753,8 +747,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					if err != nil {
 						return errors.Trace(err)
 					}
-					em.logger.Debug("got kvLatestValue from fnGetLatest",
-						zap.Binary("kvLatestValue", kvLatestValue))
 
 					if !bytes.Equal(kvLatestValue, kvPair.Val) {
 						continue
