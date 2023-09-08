@@ -1537,19 +1537,15 @@ func (local *Backend) ImportEngine(
 func (local *Backend) GetRegionSplitSizeKeys(
 	ctx context.Context,
 	regionSplitSize, regionSplitKeys int64,
-) (int64, int64, error) {
-	kvRegionSplitSize, kvRegionSplitKeys, err := getRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
+) (finalSize int64, finalKeys int64, err error) {
+	finalSize, finalKeys, err = getRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
 	if err == nil {
-		if kvRegionSplitSize > regionSplitSize {
-			regionSplitSize = kvRegionSplitSize
-		}
-		if kvRegionSplitKeys > regionSplitKeys {
-			regionSplitKeys = kvRegionSplitKeys
-		}
+		finalSize = min(finalSize, regionSplitSize)
+		finalKeys = min(finalKeys, regionSplitKeys)
 	} else {
 		log.FromContext(ctx).Warn("fail to get region split keys and size", zap.Error(err))
 	}
-	return kvRegionSplitSize, kvRegionSplitKeys, err
+	return finalSize, finalKeys, err
 }
 
 // expose these variables to unit test.

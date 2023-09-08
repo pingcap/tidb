@@ -277,9 +277,8 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 }
 
 func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute.SubtaskExecutor, subtask *proto.Subtask) {
-	var subtaskMeta []byte
 	if err := s.getError(); err == nil {
-		if subtaskMeta, err = scheduler.OnFinished(ctx, subtask.Meta); err != nil {
+		if err = scheduler.OnFinished(ctx, subtask); err != nil {
 			s.onError(err)
 		}
 	}
@@ -292,7 +291,7 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute
 		s.markErrorHandled()
 		return
 	}
-	if err := s.taskTable.FinishSubtask(subtask.ID, subtaskMeta); err != nil {
+	if err := s.taskTable.FinishSubtask(subtask.ID, subtask.Meta); err != nil {
 		s.onError(err)
 	}
 	failpoint.Inject("syncAfterSubtaskFinish", func() {

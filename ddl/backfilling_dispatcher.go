@@ -109,7 +109,7 @@ func (h *backfillingDispatcherExt) OnNextStage(
 		// TODO(tangenta): check external storage URI is empty
 		if true {
 			gTask.Step = stageMergeSort
-			return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, globalTaskMeta.EleID)
+			return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID)
 		}
 		gTask.Step = stageInstanceIngest
 		return generateIngestTaskPlan(ctx)
@@ -262,7 +262,6 @@ func generateMergeSortPlan(
 	taskHandle dispatcher.TaskHandle,
 	task *proto.Task,
 	jobID int64,
-	indexID int64,
 ) ([][]byte, error) {
 	firstKey, lastKey, totalSize, err := getSummaryFromLastStep(taskHandle, task.ID)
 	if err != nil {
@@ -272,7 +271,7 @@ func generateMergeSortPlan(
 	if err != nil {
 		return nil, err
 	}
-	splitter, err := getRangeSplitter(ctx, jobID, indexID, int64(totalSize), int64(len(instanceIDs)))
+	splitter, err := getRangeSplitter(ctx, jobID, int64(totalSize), int64(len(instanceIDs)))
 	if err != nil {
 		return nil, err
 	}
@@ -309,7 +308,7 @@ func generateMergeSortPlan(
 			DataFiles:      dataFiles,
 			StatFiles:      statFiles,
 			RangeSplitKeys: rangeSplitKeys,
-			TotalKVSize:    uint64(totalSize) / uint64(len(instanceIDs)),
+			TotalKVSize:    totalSize / uint64(len(instanceIDs)),
 		}
 		metaBytes, err := json.Marshal(m)
 		if err != nil {
@@ -326,7 +325,6 @@ func generateMergeSortPlan(
 func getRangeSplitter(
 	ctx context.Context,
 	jobID int64,
-	indexID int64,
 	totalSize int64,
 	instancCnt int64,
 ) (*external.RangeSplitter, error) {
@@ -341,13 +339,13 @@ func getRangeSplitter(
 	if err != nil {
 		return nil, err
 	}
-	dataFiles, statFiles, err := external.GetAllFileNames(ctx, extStore, strconv.Itoa(int(indexID)))
+	dataFiles, statFiles, err := external.GetAllFileNames(ctx, extStore, strconv.Itoa(int(jobID)))
 	if err != nil {
 		return nil, err
 	}
 
-	var rangeGroupSize int64 = totalSize / instancCnt
-	var rangeGroupKeys int64 = math.MaxInt64
+	rangeGroupSize := totalSize / instancCnt
+	rangeGroupKeys := int64(math.MaxInt64)
 	bcCtx, ok := ingest.LitBackCtxMgr.Load(jobID)
 	if !ok {
 		return nil, errors.Errorf("backend context not found")

@@ -252,6 +252,6 @@ func (wCtx *writerContext) LockForWrite() (unlock func()) {
 }
 
 // Close implements ingest.Writer interface.
-func (wCtx *writerContext) Close(_ context.Context) error {
+func (*writerContext) Close(_ context.Context) error {
 	return nil
 }

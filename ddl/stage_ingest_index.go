@@ -61,7 +61,7 @@ func (i *ingestIndexStage) Init(ctx context.Context) error {
 	return err
 }
 
-func (i *ingestIndexStage) SplitSubtask(ctx context.Context, _ *proto.Subtask) ([]proto.MinimalTask, error) {
+func (*ingestIndexStage) SplitSubtask(ctx context.Context, _ *proto.Subtask) ([]proto.MinimalTask, error) {
 	logutil.Logger(ctx).Info("ingest index stage split subtask")
 	return nil, nil
 }
@@ -72,9 +72,9 @@ func (i *ingestIndexStage) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (*ingestIndexStage) OnFinished(ctx context.Context, subtask []byte) ([]byte, error) {
+func (*ingestIndexStage) OnFinished(ctx context.Context, _ *proto.Subtask) error {
 	logutil.Logger(ctx).Info("ingest index stage finish subtask")
-	return subtask, nil
+	return nil
 }
 
 func (i *ingestIndexStage) Rollback(ctx context.Context) error {

@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"path"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -151,6 +152,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	sessPool opSessPool,
 	sessCtx sessionctx.Context,
 	jobID int64,
+	subtaskID int64,
 	tbl table.PhysicalTable,
 	idxInfo *model.IndexInfo,
 	startKey, endKey kv.Key,
@@ -184,7 +186,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	writeOp := NewWriteExternalStoreOperator(
-		ctx, copCtx, sessPool, jobID, tbl, index, extStore, srcChkPool, writerCnt, onClose)
+		ctx, copCtx, sessPool, jobID, subtaskID, tbl, index, extStore, srcChkPool, writerCnt, onClose)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, index, totalRowCount, nil)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
@@ -443,15 +445,18 @@ func (w *tableScanWorker) recycleChunk(chk *chunk.Chunk) {
 	w.srcChkPool <- chk
 }
 
+// WriteExternalStoreOperator writes index records to external storage.
 type WriteExternalStoreOperator struct {
 	*operator.AsyncOperator[IndexRecordChunk, IndexWriteResult]
 }
 
+// NewWriteExternalStoreOperator creates a new WriteExternalStoreOperator.
 func NewWriteExternalStoreOperator(
 	ctx *OperatorCtx,
 	copCtx *CopContext,
 	sessPool opSessPool,
 	jobID int64,
+	subtaskID int64,
 	tbl table.PhysicalTable,
 	index table.Index,
 	store storage.ExternalStorage,
@@ -472,7 +477,7 @@ func NewWriteExternalStoreOperator(
 				builder = builder.EnableDuplicationDetection()
 			}
 
-			prefix := strconv.Itoa(int(jobID))
+			prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
 			writer := builder.Build(store, prefix, writerID)
 
 			return &indexIngestWorker{

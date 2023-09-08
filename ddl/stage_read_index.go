@@ -48,6 +48,10 @@ type readIndexStage struct {
 	bc      ingest.BackendCtx
 	summary *execute.Summary
 
+	subtaskSummary sync.Map // subtaskID => readIndexSummary
+}
+
+type readIndexSummary struct {
 	minKey    []byte
 	maxKey    []byte
 	totalSize uint64
@@ -85,6 +89,8 @@ func (*readIndexStage) Init(_ context.Context) error {
 func (r *readIndexStage) SplitSubtask(ctx context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error) {
 	logutil.BgLogger().Info("read index stage run subtask",
 		zap.String("category", "ddl"))
+
+	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{})
 
 	d := r.d
 	sm := &BackfillSubTaskMeta{}
@@ -142,18 +148,21 @@ func (r *readIndexStage) SplitSubtask(ctx context.Context, subtask *proto.Subtas
 		}
 	} else {
 		onClose := func(summary *external.WriterSummary) {
-			r.mu.Lock()
-			if len(r.minKey) == 0 || summary.Min.Cmp(r.minKey) < 0 {
-				r.minKey = summary.Min.Clone()
+			sum, _ := r.subtaskSummary.Load(subtask.ID)
+			s := sum.(*readIndexSummary)
+			s.mu.Lock()
+			if len(s.minKey) == 0 || summary.Min.Cmp(s.minKey) < 0 {
+				s.minKey = summary.Min.Clone()
 			}
-			if len(r.maxKey) == 0 || summary.Max.Cmp(r.maxKey) > 0 {
-				r.maxKey = summary.Max.Clone()
+			if len(s.maxKey) == 0 || summary.Max.Cmp(s.maxKey) > 0 {
+				s.maxKey = summary.Max.Clone()
 			}
-			r.totalSize += summary.TotalSize
-			r.mu.Unlock()
+			s.totalSize += summary.TotalSize
+			s.mu.Unlock()
 		}
 		pipe, err = NewWriteIndexToExternalStoragePipeline(
-			opCtx, d.store, d.sessPool, sessCtx, r.job.ID, tbl, r.index, startKey, endKey, totalRowCount, onClose)
+			opCtx, d.store, d.sessPool, sessCtx, r.job.ID, subtask.ID,
+			tbl, r.index, startKey, endKey, totalRowCount, onClose)
 		if err != nil {
 			return nil, err
 		}
@@ -187,7 +196,7 @@ func (r *readIndexStage) Cleanup(ctx context.Context) error {
 // MockDMLExecutionAddIndexSubTaskFinish is used to mock DML execution during distributed add index.
 var MockDMLExecutionAddIndexSubTaskFinish func()
 
-func (r *readIndexStage) OnFinished(ctx context.Context, subtask []byte) ([]byte, error) {
+func (r *readIndexStage) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecutionAddIndexSubTaskFinish != nil {
@@ -195,26 +204,29 @@ func (r *readIndexStage) OnFinished(ctx context.Context, subtask []byte) ([]byte
 		}
 	})
 	if !r.useExternalStore {
-		return subtask, nil
+		return nil
 	}
 	// Rewrite the subtask meta to record statistics.
 	var subtaskMeta BackfillSubTaskMeta
-	err := json.Unmarshal(subtask, &subtaskMeta)
+	err := json.Unmarshal(subtask.Meta, &subtaskMeta)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	subtaskMeta.MinKey = r.minKey
-	subtaskMeta.MaxKey = r.maxKey
-	subtaskMeta.TotalKVSize = r.totalSize
+	sum, _ := r.subtaskSummary.LoadAndDelete(subtask.ID)
+	s := sum.(*readIndexSummary)
+	subtaskMeta.MinKey = s.minKey
+	subtaskMeta.MaxKey = s.maxKey
+	subtaskMeta.TotalKVSize = s.totalSize
 	logutil.Logger(ctx).Info("get key boundary on subtask finished",
-		zap.String("min", hex.EncodeToString(r.minKey)),
-		zap.String("max", hex.EncodeToString(r.maxKey)),
-		zap.Uint64("totalSize", r.totalSize))
+		zap.String("min", hex.EncodeToString(s.minKey)),
+		zap.String("max", hex.EncodeToString(s.maxKey)),
+		zap.Uint64("totalSize", s.totalSize))
 	meta, err := json.Marshal(subtaskMeta)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return meta, nil
+	subtask.Meta = meta
+	return nil
 }
 
 func (r *readIndexStage) Rollback(ctx context.Context) error {

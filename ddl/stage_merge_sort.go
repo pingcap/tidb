@@ -51,7 +51,7 @@ func newMergeSortStage(
 	}, nil
 }
 
-func (m *mergeSortStage) Init(ctx context.Context) error {
+func (*mergeSortStage) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("merge sort stage init subtask exec env")
 	return nil
 }
@@ -77,7 +77,7 @@ func (m *mergeSortStage) SplitSubtask(ctx context.Context, subtask *proto.Subtas
 	uri := fmt.Sprintf("s3://%s/%s?access-key=%s&secret-access-key=%s&endpoint=http://%s:%s&force-path-style=true",
 		"globalsort", "addindex", "minioadmin", "minioadmin", "127.0.0.1", "9000")
 	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, int32(m.index.ID))
-	local.CloseEngine(ctx, &backend.EngineConfig{
+	err = local.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:    uri,
 			DataFiles:     sm.DataFiles,
@@ -89,21 +89,24 @@ func (m *mergeSortStage) SplitSubtask(ctx context.Context, subtask *proto.Subtas
 			TotalKVCount:  0,
 		},
 	}, engineUUID)
+	if err != nil {
+		return nil, err
+	}
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	return nil, err
 }
 
-func (m *mergeSortStage) Cleanup(ctx context.Context) error {
+func (*mergeSortStage) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("merge sort stage clean up subtask env")
 	return nil
 }
 
-func (m *mergeSortStage) OnFinished(ctx context.Context, subtask []byte) ([]byte, error) {
+func (*mergeSortStage) OnFinished(ctx context.Context, _ *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort stage finish subtask")
-	return subtask, nil
+	return nil
 }
 
-func (m *mergeSortStage) Rollback(ctx context.Context) error {
+func (*mergeSortStage) Rollback(ctx context.Context) error {
 	logutil.Logger(ctx).Info("merge sort stage rollback subtask")
 	return nil
 }

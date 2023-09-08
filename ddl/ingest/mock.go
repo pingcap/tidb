@@ -150,7 +150,7 @@ func (m *MockBackendCtx) GetCheckpointManager() *CheckpointManager {
 }
 
 // GetLocalBackend returns the local backend.
-func (m *MockBackendCtx) GetLocalBackend() *local.Backend {
+func (*MockBackendCtx) GetLocalBackend() *local.Backend {
 	return nil
 }
 

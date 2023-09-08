@@ -30,8 +30,7 @@ type SubtaskExecutor interface {
 	Cleanup(context.Context) error
 	// OnFinished is used to handle the subtask when it is finished.
 	// return the result of the subtask.
-	// MUST return subtask meta back on success.
-	OnFinished(ctx context.Context, subtask []byte) ([]byte, error)
+	OnFinished(ctx context.Context, subtask *proto.Subtask) error
 	// Rollback is used to roll back all subtasks.
 	Rollback(context.Context) error
 }
