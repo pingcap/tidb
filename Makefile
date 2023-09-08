@@ -501,7 +501,7 @@ bazel_coverage_test: check-bazel-prepare failpoint-enable bazel_ci_simple_prepar
 
 bazel_build:
 	mkdir -p bin
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG)  --jobs=1 \
 		//... --//build:with_nogo_flag=true
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//cmd/importer:importer //tidb-server:tidb-server //tidb-server:tidb-server-check --//build:with_nogo_flag=true
