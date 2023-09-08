@@ -11,7 +11,7 @@ go_test(
     ],
     flaky = True,
     race = "off",
-    shard_count = 23,
+    shard_count = 24,
     deps = [
         "//disttask/framework/dispatcher",
         "//disttask/framework/mock",

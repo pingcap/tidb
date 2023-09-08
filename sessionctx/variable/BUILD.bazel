@@ -45,6 +45,7 @@ go_library(
         "//util/collate",
         "//util/dbterror",
         "//util/disk",
+        "//util/distrole",
         "//util/execdetails",
         "//util/gctuner",
         "//util/kvcache",
