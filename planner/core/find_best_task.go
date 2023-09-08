@@ -1129,6 +1129,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	return
 }
 
+<<<<<<< HEAD
 func (ds *DataSource) isSafePointGetPlan4PlanCache(path *util.AccessPath) bool {
 	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
 	// these assumptions may be broken after parameters change.
@@ -1149,13 +1150,33 @@ func (ds *DataSource) isSafePointGetPlan4PlanCache(path *util.AccessPath) bool {
 	return false
 }
 
+=======
+// convertToIndexMergeScan builds the index merge scan for intersection or union cases.
+>>>>>>> e341b2f287c (planner: sink limit down to index merge table side under union and intersection case (#46619))
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
 	if prop.IsFlashProp() || prop.TaskTp == property.CopSingleReadTaskType || !prop.IsSortItemEmpty() {
 		return invalidTask, nil
 	}
-	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IndexMergeIsIntersection {
+	// lift the limitation of that double read can not build index merge **COP** task with intersection.
+	// that means we can output a cop task here without encapsulating it as root task, for the convenience of attaching limit to its table side.
+
+	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
+<<<<<<< HEAD
+=======
+	// while for now, we still can not push the sort prop to the intersection index plan side, temporarily banned here.
+	if !prop.IsSortItemEmpty() && candidate.path.IndexMergeIsIntersection {
+		return invalidTask, nil
+	}
+	failpoint.Inject("forceIndexMergeKeepOrder", func(_ failpoint.Value) {
+		if len(candidate.path.PartialIndexPaths) > 0 && !candidate.path.IndexMergeIsIntersection {
+			if prop.IsSortItemEmpty() {
+				failpoint.Return(invalidTask, nil)
+			}
+		}
+	})
+>>>>>>> e341b2f287c (planner: sink limit down to index merge table side under union and intersection case (#46619))
 	path := candidate.path
 	scans := make([]PhysicalPlan, 0, len(path.PartialIndexPaths))
 	cop := &copTask{
