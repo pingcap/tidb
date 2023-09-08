@@ -32,11 +32,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -44,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	server2 "github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/server/handler"
 	"github.com/pingcap/tidb/server/handler/optimizor"
 	"github.com/pingcap/tidb/server/handler/tikvhandler"
 	"github.com/pingcap/tidb/server/internal/testserverclient"
@@ -1282,8 +1285,17 @@ func TestUpgrade(t *testing.T) {
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, "\"It's a duplicated op and the cluster is already in upgrading state.\"", string(body))
+	require.Equal(t, "\"It's a duplicated operation and the cluster is already in upgrading state.\"", string(body))
 	// check the result
+	se, err = session.CreateSession(ts.store)
+	require.NoError(t, err)
+	isUpgrading, err = session.IsUpgradingClusterState(se)
+	require.NoError(t, err)
+	require.True(t, isUpgrading)
+
+	// test upgrade show
+	testUpgradeShow(t, ts)
+	// check the cluster state
 	se, err = session.CreateSession(ts.store)
 	require.NoError(t, err)
 	isUpgrading, err = session.IsUpgradingClusterState(se)
@@ -1308,6 +1320,18 @@ func TestUpgrade(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, isUpgrading)
 
+	// test upgrade show failed
+	resp, err = ts.PostStatus("/upgrade/show", "application/x-www-form-urlencoded", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	b, err = httputil.DumpResponse(resp, true)
+	require.NoError(t, err)
+	require.Greater(t, len(b), 0)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "\"The cluster state is normal.\"\"success!\"", string(body))
+
 	// Do finish upgrade again.
 	resp, err = ts.PostStatus("/upgrade/finish", "application/x-www-form-urlencoded", nil)
 	require.NoError(t, err)
@@ -1318,11 +1342,102 @@ func TestUpgrade(t *testing.T) {
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, "\"It's a duplicated op and the cluster is already in normal state.\"", string(body))
+	require.Equal(t, "\"It's a duplicated operation and the cluster is already in normal state.\"", string(body))
 	// check the result
 	se, err = session.CreateSession(ts.store)
 	require.NoError(t, err)
 	isUpgrading, err = session.IsUpgradingClusterState(se)
 	require.NoError(t, err)
 	require.False(t, isUpgrading)
+}
+
+func testUpgradeShow(t *testing.T, ts *basicHTTPHandlerTestSuite) {
+	do, err := session.GetDomain(ts.store)
+	require.NoError(t, err)
+	ddlID := do.DDL().GetID()
+	// check the result for upgrade show
+	mockedAllServerInfos := map[string]*infosync.ServerInfo{
+		"s0": {
+			ID:           ddlID,
+			IP:           "127.0.0.1",
+			Port:         4000,
+			JSONServerID: 0,
+			ServerVersionInfo: infosync.ServerVersionInfo{
+				Version: "ver",
+				GitHash: "hash",
+			},
+		},
+		"s2": {
+			ID:           "ID2",
+			IP:           "127.0.0.1",
+			Port:         4002,
+			JSONServerID: 2,
+			ServerVersionInfo: infosync.ServerVersionInfo{
+				Version: "ver2",
+				GitHash: "hash2",
+			},
+		},
+		"s1": {
+			ID:           "ID1",
+			IP:           "127.0.0.1",
+			Port:         4001,
+			JSONServerID: 1,
+			ServerVersionInfo: infosync.ServerVersionInfo{
+				Version: "ver",
+				GitHash: "hash",
+			},
+		},
+	}
+	makeFailpointRes := func(v interface{}) string {
+		bytes, err := json.Marshal(v)
+		require.NoError(t, err)
+		return fmt.Sprintf("return(`%s`)", string(bytes))
+	}
+	checkSimpleServerInfo := func(sInfo handler.SimpleServerInfo) {
+		key := fmt.Sprintf("s%d", sInfo.JSONServerID)
+		val, ok := mockedAllServerInfos[key]
+		require.True(t, ok)
+		require.Equal(t, val.Version, sInfo.Version)
+		require.Equal(t, val.GitHash, sInfo.GitHash)
+		require.Equal(t, val.IP, sInfo.IP)
+		require.Equal(t, val.Port, sInfo.Port)
+	}
+	checkUpgradeShow := func(serverNum, upgradedPercent, diffInfos int) {
+		resp, err := ts.PostStatus("/upgrade/show", "application/x-www-form-urlencoded", nil)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		b, err := httputil.DumpResponse(resp, true)
+		require.NoError(t, err)
+		require.Greater(t, len(b), 0)
+		decoder := json.NewDecoder(resp.Body)
+		clusterInfo := handler.ClusterUpgradeInfo{}
+		err = decoder.Decode(&clusterInfo)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		require.Equal(t, ddlID, clusterInfo.OwnerID)
+		require.Equal(t, serverNum, clusterInfo.ServersNum)
+		require.Equal(t, upgradedPercent, clusterInfo.UpgradedPercent)
+		require.Equal(t, diffInfos, len(clusterInfo.AllServersDiffInfos))
+		if diffInfos > 0 {
+			require.False(t, clusterInfo.IsAllUpgraded)
+			for _, info := range clusterInfo.AllServersDiffInfos {
+				checkSimpleServerInfo(info)
+			}
+		} else {
+			require.True(t, clusterInfo.IsAllUpgraded)
+		}
+	}
+
+	// test upgrade show for 1 server
+	checkUpgradeShow(1, 100, 0)
+	// test upgrade show for 3 servers
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo")
+	// test upgrade show again with 3 different version servers
+	checkUpgradeShow(3, 33, 3)
+	// test upgrade show again with 3 servers of the same version
+	mockedAllServerInfos["s2"].Version = mockedAllServerInfos["s0"].Version
+	mockedAllServerInfos["s2"].GitHash = mockedAllServerInfos["s0"].GitHash
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	checkUpgradeShow(3, 100, 0)
 }
