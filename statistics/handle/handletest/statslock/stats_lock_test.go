@@ -280,11 +280,6 @@ func TestShowStatsLockedTablePrivilege(t *testing.T) {
 }
 
 func setupTestEnvironmentWithTableT(t *testing.T) (kv.Storage, *testkit.TestKit, *model.TableInfo) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.EnableStatsCacheMemQuota = true
-	})
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version = 1")
