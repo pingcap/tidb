@@ -25,6 +25,8 @@ import (
 // Operator is the basic operation unit in the task execution.
 type Operator interface {
 	Open() error
+	// Close wait task done and close the operator.
+	// TODO: the wait part should be separated from the close part.
 	Close() error
 	String() string
 }
