@@ -1545,6 +1545,7 @@ type SessionVars struct {
 
 	// SessionAlias is the identifier of the session
 	SessionAlias string
+
 	// OptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
 	// For now, the possible values and corresponding behaviors are:
 	// OptObjectiveModerate: The default value. The optimizer considers the real-time stats (real-time row count, modify count).

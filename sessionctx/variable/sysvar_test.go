@@ -1393,7 +1393,7 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 	}))
 	defer s.Close()
 
-	// Set to s3, skip validation
+	// Set to s3, should return uri without variable
 	s3URI := "s3://tiflow-test?access-key=testid&secret-access-key=testkey8&session-token=testtoken&endpoint=" + s.URL
 	err = mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, s3URI)
 	require.NoError(t, err)
