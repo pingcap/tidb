@@ -25,7 +25,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
+const (
 	selectDeltaSQL = "SELECT count, modify_count, version FROM mysql.stats_table_locked WHERE table_id = %?"
 	updateDeltaSQL = "UPDATE mysql.stats_meta SET version = %?, count = count + %?, modify_count = modify_count + %? WHERE table_id = %?"
 	deleteLockSQL  = "DELETE FROM mysql.stats_table_locked WHERE table_id = %?"
@@ -58,9 +58,9 @@ func RemoveLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids [
 
 	statsLogger.Info("unlock table", zap.Int64s("tableIDs", tids))
 
-	lockedStatuses := GetTablesLockedStatuses(lockedTables, tids...)
+	checkedTables := GetLockedTables(lockedTables, tids...)
 	for i, tid := range tids {
-		if !lockedStatuses[tid] {
+		if _, ok := checkedTables[tid]; !ok {
 			skippedTables = append(skippedTables, tables[i].Schema.L+"."+tables[i].Name.L)
 			continue
 		}
@@ -70,9 +70,9 @@ func RemoveLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids [
 	}
 
 	// Delete related partitions while don't warning delete empty partitions
-	lockedStatuses = GetTablesLockedStatuses(lockedTables, pids...)
+	checkedTables = GetLockedTables(lockedTables, pids...)
 	for _, pid := range pids {
-		if !lockedStatuses[pid] {
+		if _, ok := checkedTables[pid]; !ok {
 			continue
 		}
 		if err := updateStatsAndUnlockTable(ctx, exec, pid); err != nil {
