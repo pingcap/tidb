@@ -417,6 +417,36 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	require.Equal(t, int64(0), cnt)
 }
 
+func TestDistFrameworkMeta(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	sm := storage.NewTaskManager(context.Background(), pool)
+
+	storage.SetTaskManager(sm)
+	sm, err := storage.GetTaskManager()
+	require.NoError(t, err)
+
+	require.NoError(t, sm.StartManager(":4000", "background"))
+	require.NoError(t, sm.StartManager(":4001", ""))
+	require.NoError(t, sm.StartManager(":4002", "background"))
+	nodes, err := sm.GetNodesByRole("background")
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{
+		":4000": true,
+		":4002": true,
+	}, nodes)
+
+	nodes, err = sm.GetNodesByRole("")
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{
+		":4001": true,
+	}, nodes)
+}
+
 func TestSubtaskHistoryTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
