@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
@@ -43,14 +42,11 @@ const (
 )
 
 var (
-	// DefaultDispatchConcurrency is the default concurrency for handling task.
-	DefaultDispatchConcurrency = 4
-	checkTaskFinishedInterval  = 500 * time.Millisecond
-	checkTaskRunningInterval   = 300 * time.Millisecond
-	nonRetrySQLTime            = 1
-	RetrySQLTimes              = variable.DefTiDBDDLErrorCountLimit
-	RetrySQLInterval           = 500 * time.Millisecond
-	RetrySQLMaxInterval        = 5 * time.Second
+	checkTaskFinishedInterval = 500 * time.Millisecond
+	nonRetrySQLTime           = 1
+	RetrySQLTimes             = 30
+	RetrySQLInterval          = 3 * time.Second
+	RetrySQLMaxInterval       = 30 * time.Second
 )
 
 // TaskHandle provides the interface for operations needed by Dispatcher.
@@ -410,6 +406,14 @@ func (d *BaseDispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error
 	if err != nil {
 		return err
 	}
+	// 4. filter by role.
+	serverNodes, err = d.filterByRole(serverNodes)
+	if err != nil {
+		return err
+	}
+
+	logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
+
 	if len(serverNodes) == 0 {
 		return errors.New("no available TiDB node to dispatch subtasks")
 	}
@@ -459,6 +463,30 @@ func GenerateSchedulerNodes(ctx context.Context) (serverNodes []*infosync.Server
 		serverNodes = append(serverNodes, serverInfo)
 	}
 	return serverNodes, nil
+}
+
+func (d *BaseDispatcher) filterByRole(infos []*infosync.ServerInfo) ([]*infosync.ServerInfo, error) {
+	nodes, err := d.taskMgr.GetNodesByRole("background")
+	if err != nil {
+		return nil, err
+	}
+
+	if len(nodes) == 0 {
+		nodes, err = d.taskMgr.GetNodesByRole("")
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	res := make([]*infosync.ServerInfo, 0, len(nodes))
+	for _, info := range infos {
+		_, ok := nodes[disttaskutil.GenerateExecID(info.IP, info.Port)]
+		if ok {
+			res = append(res, info)
+		}
+	}
+	return res, nil
 }
 
 // GetAllSchedulerIDs gets all the scheduler IDs.

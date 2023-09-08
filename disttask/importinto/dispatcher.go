@@ -504,7 +504,7 @@ func startJob(ctx context.Context, logger *zap.Logger, taskHandle dispatcher.Tas
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
 	})
-	// retry for 0.5+1+2+4+(512-4)*5 ~= 42 minutes
+	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	// we consider all errors as retryable errors, except context done.
 	// the errors include errors to communicate with PD and TiKV.
 	// we didn't consider system corrupt cases like system table dropped/altered.
@@ -530,7 +530,7 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 	}
 	// todo: use dispatcher.TaskHandle
 	// we might call this in scheduler later, there's no dispatcher.TaskHandle, so we use globalTaskManager here.
-	// retry for 0.5+1+2+4+(512-4)*5 ~= 42 minutes
+	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
@@ -547,7 +547,7 @@ func (dsp *importDispatcherExt) finishJob(ctx context.Context, logger *zap.Logge
 	dsp.unregisterTask(ctx, gTask)
 	redactSensitiveInfo(gTask, taskMeta)
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
-	// retry for 0.5+1+2+4+(512-4)*5 ~= 42 minutes
+	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
@@ -564,7 +564,7 @@ func (dsp *importDispatcherExt) failJob(ctx context.Context, taskHandle dispatch
 	dsp.switchTiKV2NormalMode(ctx, gTask, logger)
 	dsp.unregisterTask(ctx, gTask)
 	redactSensitiveInfo(gTask, taskMeta)
-	// retry for 0.5+1+2+4+(512-4)*5 ~= 42 minutes
+	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
