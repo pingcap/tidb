@@ -142,6 +142,8 @@ import (
 	fetch             "FETCH"
 	firstValue        "FIRST_VALUE"
 	floatType         "FLOAT"
+	float4Type        "FLOAT4"
+	float8Type        "FLOAT8"
 	forKwd            "FOR"
 	force             "FORCE"
 	foreign           "FOREIGN"
@@ -204,6 +206,7 @@ import (
 	mediumblobType    "MEDIUMBLOB"
 	mediumIntType     "MEDIUMINT"
 	mediumtextType    "MEDIUMTEXT"
+	middleIntType     "MIDDLEINT"
 	minuteMicrosecond "MINUTE_MICROSECOND"
 	minuteSecond      "MINUTE_SECOND"
 	mod               "MOD"
@@ -12555,6 +12558,10 @@ IntegerType:
 	{
 		$$ = mysql.TypeInt24
 	}
+|	"MIDDLEINT"
+	{
+		$$ = mysql.TypeInt24
+	}
 |	"INT"
 	{
 		$$ = mysql.TypeLong
@@ -12635,6 +12642,14 @@ FloatingPointType:
 		$$ = mysql.TypeDouble
 	}
 |	"DOUBLE" "PRECISION"
+	{
+		$$ = mysql.TypeDouble
+	}
+|	"FLOAT4"
+	{
+		$$ = mysql.TypeFloat
+	}
+|	"FLOAT8"
 	{
 		$$ = mysql.TypeDouble
 	}

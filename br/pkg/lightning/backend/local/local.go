@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
@@ -454,7 +456,8 @@ func (c *BackendConfig) adjust() {
 
 // Backend is a local backend.
 type Backend struct {
-	engines sync.Map // sync version of map[uuid.UUID]*Engine
+	engines        sync.Map // sync version of map[uuid.UUID]*Engine
+	externalEngine map[uuid.UUID]common.Engine
 
 	pdCtl            *pdutil.PdController
 	splitCli         split.SplitClient
@@ -577,6 +580,7 @@ func NewBackend(
 	}
 	local := &Backend{
 		engines:          sync.Map{},
+		externalEngine:   map[uuid.UUID]common.Engine{},
 		pdCtl:            pdCtl,
 		splitCli:         splitCli,
 		tikvCli:          tikvCli,
@@ -735,14 +739,16 @@ func (local *Backend) lockAllEnginesUnless(newState, ignoreStateMask importMutex
 
 // Close the local backend.
 func (local *Backend) Close() {
-	allEngines := local.lockAllEnginesUnless(importMutexStateClose, 0)
-	local.engines = sync.Map{}
-
-	for _, engine := range allEngines {
-		_ = engine.Close()
-		engine.unlock()
+	for _, e := range local.externalEngine {
+		_ = e.Close()
 	}
-
+	local.externalEngine = map[uuid.UUID]common.Engine{}
+	allLocalEngines := local.lockAllEnginesUnless(importMutexStateClose, 0)
+	for _, e := range allLocalEngines {
+		_ = e.Close()
+		e.unlock()
+	}
+	local.engines = sync.Map{}
 	local.importClientFactory.Close()
 	local.bufferPool.Destroy()
 
@@ -923,6 +929,39 @@ func (local *Backend) allocateTSIfNotExists(ctx context.Context, engine *Engine)
 
 // CloseEngine closes backend engine by uuid.
 func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
+	if externalCfg := cfg.External; externalCfg != nil {
+		storeBackend, err := storage.ParseBackend(externalCfg.StorageURI, nil)
+		if err != nil {
+			return err
+		}
+		store, err := storage.New(ctx, storeBackend, nil)
+		if err != nil {
+			return err
+		}
+		physical, logical, err := local.pdCtl.GetPDClient().GetTS(ctx)
+		if err != nil {
+			return err
+		}
+		ts := oracle.ComposeTS(physical, logical)
+		externalEngine := external.NewExternalEngine(
+			store,
+			externalCfg.DataFiles,
+			externalCfg.StatFiles,
+			externalCfg.MinKey,
+			externalCfg.MaxKey,
+			externalCfg.SplitKeys,
+			local.keyAdapter,
+			local.DupeDetectEnabled,
+			local.duplicateDB,
+			local.DuplicateDetectOpt,
+			ts,
+			externalCfg.TotalFileSize,
+			externalCfg.TotalKVCount,
+		)
+		local.externalEngine[engineUUID] = externalEngine
+		return nil
+	}
+
 	// flush mem table to storage, to free memory,
 	// ask others' advise, looks like unnecessary, but with this we can control memory precisely.
 	engineI, ok := local.engines.Load(engineUUID)
@@ -1015,11 +1054,11 @@ func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, si
 
 func readAndSplitIntoRange(
 	ctx context.Context,
-	engine *Engine,
+	engine common.Engine,
 	sizeLimit int64,
 	keysLimit int64,
 ) ([]common.Range, error) {
-	firstKey, lastKey, err := engine.GetFirstAndLastKey(nil, nil)
+	firstKey, lastKey, err := engine.GetKeyRange()
 	if err != nil {
 		return nil, err
 	}
@@ -1038,7 +1077,7 @@ func readAndSplitIntoRange(
 
 	logger := log.FromContext(ctx).With(zap.String("engine", engine.ID()))
 	ranges, err := engine.SplitRanges(firstKey, endKey, sizeLimit, keysLimit, logger)
-	logger.Info("split local engine key ranges",
+	logger.Info("split engine key ranges",
 		zap.Int64("totalSize", engineFileTotalSize), zap.Int64("totalCount", engineFileLength),
 		logutil.Key("firstKey", firstKey), logutil.Key("lastKey", lastKey),
 		zap.Int("ranges", len(ranges)), zap.Error(err))
@@ -1113,22 +1152,24 @@ func (local *Backend) generateAndSendJob(
 	jobWg *sync.WaitGroup,
 ) error {
 	logger := log.FromContext(ctx)
-	// TODO(lance6716): external engine should also support it
-	localEngine, ok := engine.(*Engine)
-
-	// when use dynamic region feature, the region may be very big, we need
-	// to split to smaller ranges to increase the concurrency.
-	if regionSplitSize > 2*int64(config.SplitRegionSize) && ok {
-		start := jobRanges[0].Start
-		end := jobRanges[len(jobRanges)-1].End
-		sizeLimit := int64(config.SplitRegionSize)
-		keysLimit := int64(config.SplitRegionKeys)
-		jrs, err := localEngine.SplitRanges(start, end, sizeLimit, keysLimit, logger)
-		if err != nil {
-			return errors.Trace(err)
+	// TODO(lance6716): external engine should also support split into smaller ranges
+	// to improve concurrency.
+	if localEngine, ok := engine.(*Engine); ok {
+		// when use dynamic region feature, the region may be very big, we need
+		// to split to smaller ranges to increase the concurrency.
+		if regionSplitSize > 2*int64(config.SplitRegionSize) {
+			start := jobRanges[0].Start
+			end := jobRanges[len(jobRanges)-1].End
+			sizeLimit := int64(config.SplitRegionSize)
+			keysLimit := int64(config.SplitRegionKeys)
+			jrs, err := localEngine.SplitRanges(start, end, sizeLimit, keysLimit, logger)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			jobRanges = jrs
 		}
-		jobRanges = jrs
 	}
+
 	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -1399,15 +1440,25 @@ func (local *Backend) executeJob(
 }
 
 // ImportEngine imports an engine to TiKV.
-func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
-	lf := local.lockEngine(engineUUID, importMutexStateImport)
-	if lf == nil {
-		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
-		return nil
+func (local *Backend) ImportEngine(
+	ctx context.Context,
+	engineUUID uuid.UUID,
+	regionSplitSize, regionSplitKeys int64,
+) error {
+	var e common.Engine
+	if externalEngine, ok := local.externalEngine[engineUUID]; ok {
+		e = externalEngine
+	} else {
+		localEngine := local.lockEngine(engineUUID, importMutexStateImport)
+		if localEngine == nil {
+			// skip if engine not exist. See the comment of `CloseEngine` for more detail.
+			return nil
+		}
+		defer localEngine.unlock()
+		e = localEngine
 	}
-	defer lf.unlock()
 
-	lfTotalSize, lfLength := lf.KVStatistics()
+	lfTotalSize, lfLength := e.KVStatistics()
 	if lfTotalSize == 0 {
 		// engine is empty, this is likes because it's a index engine but the table contains no index
 		log.FromContext(ctx).Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
@@ -1426,7 +1477,7 @@ func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, re
 	}
 
 	// split sorted file into range about regionSplitSize per file
-	regionRanges, err := readAndSplitIntoRange(ctx, lf, regionSplitSize, regionSplitKeys)
+	regionRanges, err := readAndSplitIntoRange(ctx, e, regionSplitSize, regionSplitKeys)
 	if err != nil {
 		return err
 	}
@@ -1478,9 +1529,9 @@ func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, re
 
 	failpoint.Inject("ReadyForImportEngine", func() {})
 
-	err = local.doImport(ctx, lf, regionRanges, regionSplitSize, regionSplitKeys)
+	err = local.doImport(ctx, e, regionRanges, regionSplitSize, regionSplitKeys)
 	if err == nil {
-		importedSize, importedLength := lf.ImportedStatistics()
+		importedSize, importedLength := e.ImportedStatistics()
 		log.FromContext(ctx).Info("import engine success",
 			zap.Stringer("uuid", engineUUID),
 			zap.Int64("size", lfTotalSize),
@@ -1490,6 +1541,12 @@ func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, re
 	}
 	return err
 }
+
+// expose these variables to unit test.
+var (
+	testJobToWorkerCh = make(chan *regionJob)
+	testJobWg         *sync.WaitGroup
+)
 
 func (local *Backend) doImport(ctx context.Context, engine common.Engine, regionRanges []common.Range, regionSplitSize, regionSplitKeys int64) error {
 	/*
@@ -1519,6 +1576,11 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 		dispatchJobGoroutine = make(chan struct{})
 	)
 	defer workerCancel()
+
+	failpoint.Inject("injectVariables", func() {
+		jobToWorkerCh = testJobToWorkerCh
+		testJobWg = &jobWg
+	})
 
 	retryer := startRegionJobRetryer(workerCtx, jobToWorkerCh, &jobWg)
 
@@ -1570,11 +1632,17 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 		}
 	}()
 
+	failpoint.Inject("skipStartWorker", func() {
+		failpoint.Goto("afterStartWorker")
+	})
+
 	for i := 0; i < local.WorkerConcurrency; i++ {
 		workGroup.Go(func() error {
 			return local.startWorker(workerCtx, jobToWorkerCh, jobFromWorkerCh, &jobWg)
 		})
 	}
+
+	failpoint.Label("afterStartWorker")
 
 	err := local.prepareAndSendJob(
 		workerCtx,
