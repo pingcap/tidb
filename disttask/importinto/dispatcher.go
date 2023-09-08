@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/disttask/framework/planner"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/backoff"
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -205,7 +207,7 @@ func (dsp *importDispatcherExt) OnNextStage(ctx context.Context, handle dispatch
 		taskFinished := err == nil && len(resSubtaskMeta) == 0
 		if taskFinished {
 			// todo: we're not running in a transaction with task update
-			if err2 := dsp.finishJob(ctx, handle, gTask, taskMeta); err2 != nil {
+			if err2 := dsp.finishJob(ctx, logger, handle, gTask, taskMeta); err2 != nil {
 				err = err2
 			}
 		} else if err != nil && !dsp.IsRetryableErr(err) {
@@ -223,7 +225,7 @@ func (dsp *importDispatcherExt) OnNextStage(ctx context.Context, handle dispatch
 		if err := preProcess(ctx, handle, gTask, taskMeta, logger); err != nil {
 			return nil, err
 		}
-		if err = startJob(ctx, handle, taskMeta); err != nil {
+		if err = startJob(ctx, logger, handle, taskMeta); err != nil {
 			return nil, err
 		}
 		logger.Info("move to import step")
@@ -233,7 +235,7 @@ func (dsp *importDispatcherExt) OnNextStage(ctx context.Context, handle dispatch
 		failpoint.Inject("clearLastSwitchTime", func() {
 			dsp.lastSwitchTime.Store(time.Time{})
 		})
-		if err = job2Step(ctx, taskMeta, importer.JobStepValidating); err != nil {
+		if err = job2Step(ctx, logger, taskMeta, importer.JobStepValidating); err != nil {
 			return nil, err
 		}
 		failpoint.Inject("failWhenDispatchPostProcessSubtask", func() {
@@ -497,53 +499,81 @@ func updateResult(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *Tas
 	return updateMeta(gTask, taskMeta)
 }
 
-func startJob(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta) error {
+func startJob(ctx context.Context, logger *zap.Logger, taskHandle dispatcher.TaskHandle, taskMeta *TaskMeta) error {
 	failpoint.Inject("syncBeforeJobStarted", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
 	})
-	err := handle.WithNewSession(func(se sessionctx.Context) error {
-		exec := se.(sqlexec.SQLExecutor)
-		return importer.StartJob(ctx, exec, taskMeta.JobID)
-	})
+	// retry for 0.5+1+2+4+(512-4)*5 ~= 42 minutes
+	// we consider all errors as retryable errors, except context done.
+	// the errors include errors to communicate with PD and TiKV.
+	// we didn't consider system corrupt cases like system table dropped/altered.
+	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
+	err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+		func(ctx context.Context) (bool, error) {
+			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
+				exec := se.(sqlexec.SQLExecutor)
+				return importer.StartJob(ctx, exec, taskMeta.JobID)
+			})
+		},
+	)
 	failpoint.Inject("syncAfterJobStarted", func() {
 		TestSyncChan <- struct{}{}
 	})
 	return err
 }
 
-func job2Step(ctx context.Context, taskMeta *TaskMeta, step string) error {
+func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step string) error {
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
 	}
 	// todo: use dispatcher.TaskHandle
 	// we might call this in scheduler later, there's no dispatcher.TaskHandle, so we use globalTaskManager here.
-	return globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
-		exec := se.(sqlexec.SQLExecutor)
-		return importer.Job2Step(ctx, exec, taskMeta.JobID, step)
-	})
+	// retry for 0.5+1+2+4+(512-4)*5 ~= 42 minutes
+	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
+	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+		func(ctx context.Context) (bool, error) {
+			return true, globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+				exec := se.(sqlexec.SQLExecutor)
+				return importer.Job2Step(ctx, exec, taskMeta.JobID, step)
+			})
+		},
+	)
 }
 
-func (dsp *importDispatcherExt) finishJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
+func (dsp *importDispatcherExt) finishJob(ctx context.Context, logger *zap.Logger,
+	taskHandle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
 	dsp.unregisterTask(ctx, gTask)
 	redactSensitiveInfo(gTask, taskMeta)
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
-	return handle.WithNewSession(func(se sessionctx.Context) error {
-		exec := se.(sqlexec.SQLExecutor)
-		return importer.FinishJob(ctx, exec, taskMeta.JobID, summary)
-	})
+	// retry for 0.5+1+2+4+(512-4)*5 ~= 42 minutes
+	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
+	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+		func(ctx context.Context) (bool, error) {
+			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
+				exec := se.(sqlexec.SQLExecutor)
+				return importer.FinishJob(ctx, exec, taskMeta.JobID, summary)
+			})
+		},
+	)
 }
 
-func (dsp *importDispatcherExt) failJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task,
+func (dsp *importDispatcherExt) failJob(ctx context.Context, taskHandle dispatcher.TaskHandle, gTask *proto.Task,
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
 	dsp.switchTiKV2NormalMode(ctx, gTask, logger)
 	dsp.unregisterTask(ctx, gTask)
 	redactSensitiveInfo(gTask, taskMeta)
-	return handle.WithNewSession(func(se sessionctx.Context) error {
-		exec := se.(sqlexec.SQLExecutor)
-		return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg)
-	})
+	// retry for 0.5+1+2+4+(512-4)*5 ~= 42 minutes
+	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
+	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+		func(ctx context.Context) (bool, error) {
+			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
+				exec := se.(sqlexec.SQLExecutor)
+				return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg)
+			})
+		},
+	)
 }
 
 func redactSensitiveInfo(gTask *proto.Task, taskMeta *TaskMeta) {
