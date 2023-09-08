@@ -27,6 +27,7 @@ import (
 func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database testa")
 	tk.MustExec("use testa")
 	tk.MustExec("drop table if exists tbl")
 	tk.MustExec("create table tbl(a int, b int, c int, key idx_b_c(b,c))")
