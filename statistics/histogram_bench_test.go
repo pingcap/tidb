@@ -15,6 +15,7 @@
 package statistics
 
 import (
+	"fmt"
 	"math/rand"
 	"testing"
 
@@ -25,7 +26,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const partition = 1000
 const histogramLen = 100
 const popedTopNLen = 100
 
@@ -80,29 +80,40 @@ func genHist4Bench(t *testing.B, buckets []*bucket4Test, totColSize int64) *Hist
 	return h
 }
 
+func benchmarkMergePartitionHist2GlobalHist(b *testing.B, partition int) {
+	b.StopTimer()
+	ctx := mock.NewContext()
+	sc := ctx.GetSessionVars().StmtCtx
+	hists := make([]*Histogram, 0, partition)
+	for i := 0; i < partition; i++ {
+		buckets := genBucket4TestData(histogramLen)
+		hist := genHist4Bench(b, buckets, histogramLen)
+		hists = append(hists, hist)
+	}
+	const expBucketNumber = 100
+	poped := make([]TopNMeta, 0, popedTopNLen)
+	for n := 0; n < popedTopNLen; n++ {
+		b, _ := codec.EncodeKey(sc, nil, types.NewIntDatum(rand.Int63n(10000)))
+		tmp := TopNMeta{
+			Encoded: b,
+			Count:   uint64(rand.Int63n(10000)),
+		}
+		poped = append(poped, tmp)
+	}
+	b.StartTimer()
+	MergePartitionHist2GlobalHist(sc, hists, poped, expBucketNumber, true)
+}
+
+var benchmarkPartitionSize = []int{1000, 10000, 100000}
+
 // cmd: go test -run=^$ -bench=BenchmarkMergePartitionHist2GlobalHist -benchmem github.com/pingcap/tidb/statistics
 func BenchmarkMergePartitionHist2GlobalHist(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		ctx := mock.NewContext()
-		sc := ctx.GetSessionVars().StmtCtx
-		hists := make([]*Histogram, 0, partition)
-		for i := 0; i < partition; i++ {
-			buckets := genBucket4TestData(histogramLen)
-			hist := genHist4Bench(b, buckets, histogramLen)
-			hists = append(hists, hist)
-		}
-		const expBucketNumber = 100
-		poped := make([]TopNMeta, 0, popedTopNLen)
-		for n := 0; n < popedTopNLen; n++ {
-			b, _ := codec.EncodeKey(sc, nil, types.NewIntDatum(rand.Int63n(10000)))
-			tmp := TopNMeta{
-				Encoded: b,
-				Count:   uint64(rand.Int63n(10000)),
+	for _, size := range benchmarkPartitionSize {
+		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				benchmarkMergePartitionHist2GlobalHist(b, size)
 			}
-			poped = append(poped, tmp)
-		}
-		b.StartTimer()
-		MergePartitionHist2GlobalHist(sc, hists, poped, expBucketNumber, true)
+		})
 	}
+
 }
