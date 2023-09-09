@@ -22,7 +22,7 @@ type AsyncPipeline struct {
 	ops []Operator
 }
 
-// Execute starts all operators waiting to handle tasks.
+// Execute opens all operators, it's run asynchronously.
 func (p *AsyncPipeline) Execute() error {
 	// Start running each operator.
 	for i, op := range p.ops {

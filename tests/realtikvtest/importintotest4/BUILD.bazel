@@ -4,13 +4,16 @@ go_test(
     name = "importintotest4_test",
     timeout = "moderate",
     srcs = [
-        "dummy_test.go",
         "main_test.go",
+        "split_file_test.go",
     ],
     flaky = True,
     race = "on",
     deps = [
+        "//br/pkg/lightning/config",
         "//config",
+        "//disttask/framework/storage",
+        "//disttask/importinto",
         "//kv",
         "//testkit",
         "//tests/realtikvtest",

@@ -234,6 +234,42 @@
           "└─Selection 832.49 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
+      },
+      {
+        "SQL": "set @@tidb_opt_objective = 'determinate'",
+        "Result": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 300",
+        "Result": [
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  le(test.t.a, 300)",
+          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 500",
+        "Result": [
+          "TableReader 1010.00 root  data:Selection",
+          "└─Selection 1010.00 cop[tikv]  le(test.t.a, 500)",
+          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a > 900",
+        "Result": [
+          "TableReader 5.00 root  data:Selection",
+          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 900)",
+          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 900",
+        "Result": [
+          "TableReader 3000.00 root  data:Selection",
+          "└─Selection 3000.00 cop[tikv]  le(test.t.a, 900)",
+          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
+        ]
       }
     ]
   },

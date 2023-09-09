@@ -94,6 +94,7 @@ type Subtask struct {
 	// it's 0 if it hasn't started yet.
 	UpdateTime time.Time
 	Meta       []byte
+	Summary    string
 }
 
 // NewSubtask create a new subtask.
@@ -117,6 +118,10 @@ type MinimalTask interface {
 const (
 	// TaskTypeExample is TaskType of Example.
 	TaskTypeExample = "Example"
+	// TaskTypeExample2 is TaskType of Example.
+	TaskTypeExample2 = "Example1"
+	// TaskTypeExample3 is TaskType of Example.
+	TaskTypeExample3 = "Example2"
 	// ImportInto is TaskType of ImportInto.
 	ImportInto = "ImportInto"
 )
@@ -128,6 +133,10 @@ func Type2Int(t string) int {
 		return 1
 	case ImportInto:
 		return 2
+	case TaskTypeExample2:
+		return 3
+	case TaskTypeExample3:
+		return 4
 	default:
 		return 0
 	}
@@ -140,6 +149,10 @@ func Int2Type(i int) string {
 		return TaskTypeExample
 	case 2:
 		return ImportInto
+	case 3:
+		return TaskTypeExample2
+	case 4:
+		return TaskTypeExample3
 	default:
 		return ""
 	}

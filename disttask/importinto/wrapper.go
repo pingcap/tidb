@@ -29,11 +29,13 @@ func toChunkCheckpoint(chunk Chunk) checkpoints.ChunkCheckpoint {
 			Path:        chunk.Path,
 			Type:        chunk.Type,
 			Compression: chunk.Compression,
-			FileSize:    chunk.EndOffset,
+			FileSize:    chunk.FileSize,
 		},
 		Chunk: mydump.Chunk{
 			PrevRowIDMax: chunk.PrevRowIDMax,
+			RowIDMax:     chunk.RowIDMax,
 			Offset:       chunk.Offset,
+			EndOffset:    chunk.EndOffset,
 		},
 		Timestamp: chunk.Timestamp,
 	}
@@ -42,9 +44,11 @@ func toChunkCheckpoint(chunk Chunk) checkpoints.ChunkCheckpoint {
 func toChunk(chunkCheckpoint checkpoints.ChunkCheckpoint) Chunk {
 	return Chunk{
 		Path:         chunkCheckpoint.FileMeta.Path,
+		FileSize:     chunkCheckpoint.FileMeta.FileSize,
 		Offset:       chunkCheckpoint.Chunk.Offset,
 		EndOffset:    chunkCheckpoint.Chunk.EndOffset,
 		PrevRowIDMax: chunkCheckpoint.Chunk.PrevRowIDMax,
+		RowIDMax:     chunkCheckpoint.Chunk.RowIDMax,
 		Type:         chunkCheckpoint.FileMeta.Type,
 		Compression:  chunkCheckpoint.FileMeta.Compression,
 		Timestamp:    chunkCheckpoint.Timestamp,

@@ -96,8 +96,8 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
 	batchDelete := e.Ctx().GetSessionVars().BatchDelete && !e.Ctx().GetSessionVars().InTxn() &&
 		variable.EnableBatchDML.Load() && batchDMLSize > 0
-	fields := retTypes(e.Children(0))
-	chk := tryNewCacheChunk(e.Children(0))
+	fields := exec.RetTypes(e.Children(0))
+	chk := exec.TryNewCacheChunk(e.Children(0))
 	columns := e.Children(0).Schema().Columns
 	if len(columns) != len(fields) {
 		logutil.BgLogger().Error("schema columns and fields mismatch",
@@ -110,7 +110,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
 		iter := chunk.NewIterator4Chunk(chk)
-		err := Next(ctx, e.Children(0), chk)
+		err := exec.Next(ctx, e.Children(0), chk)
 		if err != nil {
 			return err
 		}
@@ -197,14 +197,14 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []p
 func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	colPosInfos := e.tblColPosInfos
 	tblRowMap := make(tableRowMapType)
-	fields := retTypes(e.Children(0))
-	chk := tryNewCacheChunk(e.Children(0))
+	fields := exec.RetTypes(e.Children(0))
+	chk := exec.TryNewCacheChunk(e.Children(0))
 	memUsageOfChk := int64(0)
 	joinedDatumRowBuffer := make([]types.Datum, len(fields))
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
 		iter := chunk.NewIterator4Chunk(chk)
-		err := Next(ctx, e.Children(0), chk)
+		err := exec.Next(ctx, e.Children(0), chk)
 		if err != nil {
 			return err
 		}
@@ -221,7 +221,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 				return err
 			}
 		}
-		chk = tryNewCacheChunk(e.Children(0))
+		chk = exec.TryNewCacheChunk(e.Children(0))
 	}
 
 	return e.removeRowsInTblRowMap(tblRowMap)
