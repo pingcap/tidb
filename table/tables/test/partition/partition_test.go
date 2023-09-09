@@ -881,33 +881,46 @@ func TestExchangePartitionCheckConstraintStates(t *testing.T) {
 	// row in partition p0(less than (50)), is ok.
 	tk.MustExec(`insert into pt values (30, 50)`)
 
-	tk.MustExec(`set @@global.tidb_enable_check_constraint = 0`)
-	// The failed sql above, now will be success.
-	tk.MustExec(`insert into nt values (80, 60)`)
-	tk.MustExec(`insert into nt values (60, 80)`)
-	tk.MustExec(`update nt set a = 80 where a = 60`)
-	tk.MustExec(`update nt set b = 80 where b = 60`)
-	tk.MustExec(`insert into pt values (60, 50)`)
-	tk.MustExec(`update pt set b = 50 where b = 60`)
-
 	tk5 := testkit.NewTestKit(t, store)
 	tk5.MustExec(`use check_constraint`)
 	tk5.MustExec("begin")
 	// Let tk5 get mdl of pt with the version of write-only state.
 	tk5.MustQuery(`select * from pt`)
 
-	// Release tk2 mdl, then ddl will enter next state.
-	tk2.MustExec("commit")
+	tk6 := testkit.NewTestKit(t, store)
+	tk6.MustExec(`use check_constraint`)
+	tk6.MustExec("begin")
+	// Let tk6 get mdl of nt with the version of write-only state.
+	tk6.MustQuery(`select * from nt`)
 
+	// Release tk2 mdl, wait ddl enter next state.
+	tk2.MustExec("commit")
 	waitFor("pt", "none", 4)
 
-	tk.MustExec(`set @@global.tidb_enable_check_constraint = 1`)
 	// violate nt (b > 50)
 	// Now tk5 handle the sql with MDL: pt version state is write-only, nt version state is none.
 	tk5.MustContainErrMsg(`insert into pt values (60, 50)`, errMsg)
+	// Verify exists row(60, 60) in pt.
+	tk5.MustQuery(`select * from pt where a = 60 and b = 60`).Check(testkit.Rows("60 60"))
+	// Update oldData and newData both in p1, violate nt (b > 50)
+	tk5.MustContainErrMsg(`update pt set b = 50 where a = 60 and b = 60`, errMsg)
+	// Verify exists row(30, 50) in pt.
+	tk5.MustQuery(`select * from pt where a = 30 and b = 50`).Check(testkit.Rows("30 50"))
+	// update oldData in p0, newData in p1, violate nt (b > 50)
+	tk5.MustContainErrMsg(`update pt set a = 60 where a = 30 and b = 50`, errMsg)
 
-	// Release tk5 mdl.
+	// violate pt (a < 75)
+	tk6.MustContainErrMsg(`insert into nt values (80, 60)`, errMsg)
+	// violate pt (b < 75)
+	tk6.MustContainErrMsg(`insert into nt values (60, 80)`, errMsg)
+	// Verify exists row(60, 60) in nt.
+	tk6.MustQuery(`select * from pt where a = 60 and b = 60`).Check(testkit.Rows("60 60"))
+	// violate pt (a < 75)
+	tk6.MustContainErrMsg(`update nt set a = 80 where a = 60 and b = 60`, errMsg)
+
+	// Let tk5, tk6 release mdl.
 	tk5.MustExec("commit")
+	tk6.MustExec("commit")
 
 	// Wait ddl finish.
 	<-alterChan
@@ -974,13 +987,6 @@ func TestExchangePartitionCheckConstraintStatesTwo(t *testing.T) {
 	tk.MustExec(`update pt set b = 50 where b = 60`)
 	// row in partition p0(less than (50)), is ok.
 	tk.MustExec(`insert into pt values (30, 50)`)
-
-	tk.MustExec(`set @@global.tidb_enable_check_constraint = 0`)
-	// The failed sql above, now will be success.
-	tk.MustExec(`insert into nt values (80, 60)`)
-	tk.MustExec(`insert into nt values (60, 80)`)
-	tk.MustExec(`update nt set a = 80 where a = 60`)
-	tk.MustExec(`update nt set b = 80 where b = 60`)
 
 	// Release tk2 mdl.
 	tk2.MustExec("commit")
