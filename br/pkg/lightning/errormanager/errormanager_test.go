@@ -19,8 +19,6 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"math/rand"
@@ -261,6 +259,7 @@ func TestReplaceConflictKeysIndexKvChecking(t *testing.T) {
 		Logger:         log.L(),
 	})
 	require.NoError(t, err)
+	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),
@@ -278,20 +277,12 @@ func TestReplaceConflictKeysIndexKvChecking(t *testing.T) {
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
-	rawKey, err := hex.DecodeString(fmt.Sprintf("%x", kvPairs.Pairs[1].Key))
-	require.NoError(t, err)
-	rawValue1, err := hex.DecodeString(fmt.Sprintf("%x", kvPairs.Pairs[1].Val))
-	require.NoError(t, err)
-	rawValue2, err := hex.DecodeString(fmt.Sprintf("%x", kvPairs.Pairs[3].Val))
-	require.NoError(t, err)
-	rawHandle1, err := hex.DecodeString(fmt.Sprintf("%x", kvPairs.Pairs[0].Key))
-	require.NoError(t, err)
-	rawHandle2, err := hex.DecodeString(fmt.Sprintf("%x", kvPairs.Pairs[2].Key))
-	require.NoError(t, err)
-
-	rawRowBase64 := "gAACAAAAAgMBAAYABjIuY3N2"
-	rawRow, err := base64.StdEncoding.DecodeString(rawRowBase64)
-	require.NoError(t, err)
+	rawKey := kvPairs.Pairs[1].Key
+	rawValue1 := kvPairs.Pairs[1].Val
+	rawValue2 := kvPairs.Pairs[3].Val
+	rawHandle1 := kvPairs.Pairs[0].Key
+	rawHandle2 := kvPairs.Pairs[2].Key
+	rawRow := kvPairs.Pairs[2].Val
 
 	db, mockDB, err := sqlmock.New()
 	require.NoError(t, err)
@@ -424,6 +415,7 @@ func TestReplaceConflictKeys(t *testing.T) {
 		Logger:         log.L(),
 	})
 	require.NoError(t, err)
+	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),
@@ -462,42 +454,20 @@ func TestReplaceConflictKeys(t *testing.T) {
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
-	rawKey1Base64 := "dIAAAAAAAABoX2mAAAAAAAAAAQOAAAAAAAAABA=="
-	rawKey1, err := base64.StdEncoding.DecodeString(rawKey1Base64)
-	require.NoError(t, err)
-	rawKey2, err := hex.DecodeString(fmt.Sprintf("%x", kvPairs.Pairs[1].Key))
-	require.NoError(t, err)
-	rawValue1, err := hex.DecodeString(fmt.Sprintf("%x", kvPairs.Pairs[5].Val))
-	require.NoError(t, err)
-	rawValue2Base64 := "AAAAAAAAAAU="
-	rawValue2, err := base64.StdEncoding.DecodeString(rawValue2Base64)
-	require.NoError(t, err)
-	rawHandle1, err := hex.DecodeString(fmt.Sprintf("%x", kvPairs.Pairs[4].Key))
-	require.NoError(t, err)
-	rawHandle2Base64 := "dIAAAAAAAABoX3KAAAAAAAAABQ=="
-	rawHandle2, err := base64.StdEncoding.DecodeString(rawHandle2Base64)
-	require.NoError(t, err)
-	rawValue3, err := hex.DecodeString(fmt.Sprintf("%x", kvPairs.Pairs[1].Val))
-	require.NoError(t, err)
-	rawValue4, err := hex.DecodeString(fmt.Sprintf("%x", kvPairs.Pairs[3].Val))
-	require.NoError(t, err)
-	rawHandle3, err := hex.DecodeString(fmt.Sprintf("%x", kvPairs.Pairs[0].Key))
-	require.NoError(t, err)
-	rawHandle4, err := hex.DecodeString(fmt.Sprintf("%x", kvPairs.Pairs[2].Key))
-	require.NoError(t, err)
-
-	rawRow1Base64 := "gAACAAAAAgMBAAYABDUuY3N2"
-	rawRow1, err := base64.StdEncoding.DecodeString(rawRow1Base64)
-	require.NoError(t, err)
-	rawRow2Base64 := "gAACAAAAAgMBAAYABjIuY3N2"
-	rawRow2, err := base64.StdEncoding.DecodeString(rawRow2Base64)
-	require.NoError(t, err)
-	rawRow3Base64 := "gAACAAAAAgMBAAYAAzMuY3N2"
-	rawRow3, err := base64.StdEncoding.DecodeString(rawRow3Base64)
-	require.NoError(t, err)
-	rawRow4Base64 := "gAACAAAAAgMBAAYABDQuY3N2"
-	rawRow4, err := base64.StdEncoding.DecodeString(rawRow4Base64)
-	require.NoError(t, err)
+	rawKey1 := kvPairs.Pairs[7].Key
+	rawKey2 := kvPairs.Pairs[1].Key
+	rawValue1 := kvPairs.Pairs[5].Val
+	rawValue2 := kvPairs.Pairs[9].Val
+	rawHandle1 := kvPairs.Pairs[4].Key
+	rawHandle2 := kvPairs.Pairs[8].Key
+	rawValue3 := kvPairs.Pairs[1].Val
+	rawValue4 := kvPairs.Pairs[3].Val
+	rawHandle3 := kvPairs.Pairs[0].Key
+	rawHandle4 := kvPairs.Pairs[2].Key
+	rawRow1 := kvPairs.Pairs[8].Val
+	rawRow2 := kvPairs.Pairs[2].Val
+	rawRow3 := kvPairs.Pairs[4].Val
+	rawRow4 := kvPairs.Pairs[6].Val
 
 	db, mockDB, err := sqlmock.New()
 	require.NoError(t, err)

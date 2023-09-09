@@ -674,7 +674,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				return errors.Trace(err)
 			}
 			em.logger.Debug("got group raw_key from table",
-				zap.Binary("raw_key", rawKey))
+				logutil.Key("raw_key", rawKey))
 
 			var mustKeepKvPairs *kv.Pairs
 
@@ -716,6 +716,8 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					zap.Binary("raw_value", rawValue),
 					zap.Binary("raw_handle", rawHandle))
 
+				// if the latest value of rawKey equals to rawValue, that means this data KV is maintained in downstream TiDB
+				// if not, that means this data KV has been deleted due to overwritten index KV
 				if bytes.Equal(rawValue, latestValue) {
 					continue
 				}
@@ -748,10 +750,14 @@ func (em *ErrorManager) ReplaceConflictKeys(
 						return errors.Trace(err)
 					}
 
+					// if the value of the KV pair is not equal to the latest value of the key of the KV pair
+					// that means the value of the KV pair has been overwritten, so it needs no extra operation
 					if !bytes.Equal(kvLatestValue, kvPair.Val) {
 						continue
 					}
 
+					// if the KV pair is contained in mustKeepKvPairs, we cannot delete it
+					// if not, delete the KV pair
 					isContained := false
 					for _, mustKeepKvPair := range mustKeepKvPairs.Pairs {
 						if bytes.Equal(mustKeepKvPair.Key, kvPair.Key) && bytes.Equal(mustKeepKvPair.Val, kvPair.Val) {
