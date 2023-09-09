@@ -935,15 +935,14 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek")
 		}
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
-		dataFiles = append(dataFiles, &mydump.SourceFileMeta{
+		fileMeta := mydump.SourceFileMeta{
 			Path:        fileNameKey,
 			FileSize:    size,
 			Compression: compressTp,
 			Type:        sourceType,
-			// todo: if we support compression for physical mode, should set it to size * compressRatio to better split
-			// engines
-			RealSize: size,
-		})
+		}
+		fileMeta.RealSize = e.getFileRealSize(ctx, fileMeta, s)
+		dataFiles = append(dataFiles, &fileMeta)
 		totalSize = size
 	} else {
 		var commonPrefix string
@@ -965,13 +964,14 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					return nil
 				}
 				compressTp := mydump.ParseCompressionOnFileExtension(remotePath)
-				dataFiles = append(dataFiles, &mydump.SourceFileMeta{
+				fileMeta := mydump.SourceFileMeta{
 					Path:        remotePath,
 					FileSize:    size,
 					Compression: compressTp,
 					Type:        sourceType,
-					RealSize:    size,
-				})
+				}
+				fileMeta.RealSize = e.getFileRealSize(ctx, fileMeta, s)
+				dataFiles = append(dataFiles, &fileMeta)
 				totalSize += size
 				return nil
 			})
@@ -984,6 +984,19 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 	return nil
+}
+
+func (e *LoadDataController) getFileRealSize(ctx context.Context,
+	fileMeta mydump.SourceFileMeta, store storage.ExternalStorage) int64 {
+	if fileMeta.Compression == mydump.CompressionNone {
+		return fileMeta.FileSize
+	}
+	compressRatio, err := mydump.SampleFileCompressRatio(ctx, fileMeta, store)
+	if err != nil {
+		e.logger.Warn("failed to get compress ratio", zap.String("file", fileMeta.Path), zap.Error(err))
+		return fileMeta.FileSize
+	}
+	return int64(compressRatio * float64(fileMeta.FileSize))
 }
 
 func (e *LoadDataController) getSourceType() mydump.SourceType {

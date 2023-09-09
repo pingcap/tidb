@@ -77,12 +77,12 @@ func newByteReader(ctx context.Context, storageReader storage.ExternalFileReader
 		bufOffset:     0,
 		conReader:     conReader,
 	}
-	r.SwitchReaderMode(defaultUseConcurrency)
+	r.switchReaderMode(defaultUseConcurrency)
 	return r, r.reload()
 }
 
-// SwitchReaderMode switches to concurrent reader.
-func (r *byteReader) SwitchReaderMode(useConcurrent bool) {
+// switchReaderMode switches to concurrent reader.
+func (r *byteReader) switchReaderMode(useConcurrent bool) {
 	r.useConcurrentReader.Store(useConcurrent)
 }
 
