@@ -1058,6 +1058,7 @@ AAAAAAAAAAAA5gm5Mg==
 
 		{"select `t`.`1a`.1 from t;", true, "SELECT `t`.`1a`.`1` FROM `t`"},
 		{"select * from 1db.1table;", true, "SELECT * FROM `1db`.`1table`"},
+		{"select * from t where t. status = 1;", true, "SELECT * FROM `t` WHERE `t`.`status`=1"},
 
 		// for show placement
 		{"SHOW PLACEMENT", true, "SHOW PLACEMENT"},
@@ -2746,7 +2747,12 @@ func TestDDL(t *testing.T) {
 		{"drop schema xxx", true, "DROP DATABASE `xxx`"},
 		{"drop schema if exists xxx", true, "DROP DATABASE IF EXISTS `xxx`"},
 		{"drop schema if not exists xxx", false, ""},
-		{"drop table", false, "DROP TABLE"},
+		{"drop table", false, ""},
+		{"drop table if exists t'xyz", false, ""},
+		{"drop table if exists t'", false, ""},
+		{"drop table if exists t`", false, ""},
+		{`drop table if exists t'`, false, ""},
+		{`drop table if exists t"`, false, ""},
 		{"drop table xxx", true, "DROP TABLE `xxx`"},
 		{"drop table xxx, yyy", true, "DROP TABLE `xxx`, `yyy`"},
 		{"drop tables xxx", true, "DROP TABLE `xxx`"},
@@ -6324,6 +6330,7 @@ func TestWindowFunctions(t *testing.T) {
 
 		// For TSO functions
 		{`select tidb_parse_tso(1)`, true, "SELECT TIDB_PARSE_TSO(1)"},
+		{`select tidb_parse_tso_logical(1)`, true, "SELECT TIDB_PARSE_TSO_LOGICAL(1)"},
 		{`select tidb_bounded_staleness('2015-09-21 00:07:01', NOW())`, true, "SELECT TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', NOW())"},
 		{`select tidb_bounded_staleness(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())`, true, "SELECT TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())"},
 		{`select tidb_bounded_staleness('2015-09-21 00:07:01', '2021-04-27 11:26:13')`, true, "SELECT TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', _UTF8MB4'2021-04-27 11:26:13')"},
@@ -7455,4 +7462,28 @@ func TestMultiStmt(t *testing.T) {
 	require.Equal(t, "'bar'", stmt3.Fields.Fields[1].Text())
 	require.Equal(t, "'baz'", stmt3.Fields.Fields[2].Text())
 	require.Equal(t, "1", stmt4.Fields.Fields[0].Text())
+}
+
+// https://dev.mysql.com/doc/refman/8.1/en/other-vendor-data-types.html
+func TestCompatTypes(t *testing.T) {
+	table := []testCase{
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 BOOL)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` TINYINT(1))"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 BOOLEAN)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` TINYINT(1))"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 CHARACTER VARYING(0))`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` VARCHAR(0))"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 FIXED)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` DECIMAL)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 FLOAT4)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` FLOAT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 FLOAT8)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` DOUBLE)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 INT1)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` TINYINT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 INT2)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` SMALLINT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 INT3)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMINT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 INT4)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` INT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 INT8)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` BIGINT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 LONG VARBINARY)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMBLOB)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 LONG VARCHAR)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMTEXT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 LONG)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMTEXT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 MIDDLEINT)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMINT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 NUMERIC)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` DECIMAL)"},
+	}
+
+	RunTest(t, table, false)
 }

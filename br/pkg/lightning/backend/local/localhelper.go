@@ -112,10 +112,8 @@ func (g *TableRegionSizeGetterImpl) GetTableRegionSize(ctx context.Context, tabl
 // Too many split&scatter requests may put a lot of pressure on TiKV and PD.
 func (local *Backend) SplitAndScatterRegionInBatches(
 	ctx context.Context,
-	ranges []Range,
-	tableInfo *checkpoints.TidbTableInfo,
+	ranges []common.Range,
 	needSplit bool,
-	regionSplitSize int64,
 	batchCnt int,
 ) error {
 	for i := 0; i < len(ranges); i += batchCnt {
@@ -123,7 +121,7 @@ func (local *Backend) SplitAndScatterRegionInBatches(
 		if len(batch) > batchCnt {
 			batch = batch[:batchCnt]
 		}
-		if err := local.SplitAndScatterRegionByRanges(ctx, batch, tableInfo, needSplit, regionSplitSize); err != nil {
+		if err := local.SplitAndScatterRegionByRanges(ctx, batch, needSplit); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -136,10 +134,8 @@ func (local *Backend) SplitAndScatterRegionInBatches(
 // TODO: remove this file and use br internal functions
 func (local *Backend) SplitAndScatterRegionByRanges(
 	ctx context.Context,
-	ranges []Range,
-	tableInfo *checkpoints.TidbTableInfo,
+	ranges []common.Range,
 	needSplit bool,
-	regionSplitSize int64,
 ) (err error) {
 	if len(ranges) == 0 {
 		return nil
@@ -154,13 +150,12 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 		}()
 	}
 
-	minKey := codec.EncodeBytes([]byte{}, ranges[0].start)
-	maxKey := codec.EncodeBytes([]byte{}, ranges[len(ranges)-1].end)
+	minKey := codec.EncodeBytes([]byte{}, ranges[0].Start)
+	maxKey := codec.EncodeBytes([]byte{}, ranges[len(ranges)-1].End)
 
 	scatterRegions := make([]*split.RegionInfo, 0)
 	var retryKeys [][]byte
 	waitTime := splitRegionBaseBackOffTime
-	skippedKeys := 0
 	for i := 0; i < splitRetryTimes; i++ {
 		log.FromContext(ctx).Info("split and scatter region",
 			logutil.Key("minKey", minKey),
@@ -197,12 +192,12 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 			break
 		}
 
-		needSplitRanges := make([]Range, 0, len(ranges))
+		needSplitRanges := make([]common.Range, 0, len(ranges))
 		startKey := make([]byte, 0)
 		endKey := make([]byte, 0)
 		for _, r := range ranges {
-			startKey = codec.EncodeBytes(startKey, r.start)
-			endKey = codec.EncodeBytes(endKey, r.end)
+			startKey = codec.EncodeBytes(startKey, r.Start)
+			endKey = codec.EncodeBytes(endKey, r.End)
 			idx := sort.Search(len(regions), func(i int) bool {
 				return beforeEnd(startKey, regions[i].Region.EndKey)
 			})
@@ -220,16 +215,6 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 		if len(ranges) == 0 {
 			log.FromContext(ctx).Info("no ranges need to be split, skipped.")
 			return nil
-		}
-
-		var tableRegionStats map[uint64]int64
-		if tableInfo != nil {
-			tableRegionStats, err = local.regionSizeGetter.GetTableRegionSize(ctx, tableInfo.ID)
-			if err != nil {
-				log.FromContext(ctx).Warn("fetch table region size statistics failed",
-					zap.String("table", tableInfo.Name), zap.Error(err))
-				tableRegionStats, err = make(map[uint64]int64), nil
-			}
 		}
 
 		regionMap := make(map[uint64]*split.RegionInfo)
@@ -340,15 +325,6 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 		}
 	sendLoop:
 		for regionID, keys := range splitKeyMap {
-			// if region not in tableRegionStats, that means this region is newly split, so
-			// we can skip split it again.
-			regionSize, ok := tableRegionStats[regionID]
-			if !ok {
-				log.FromContext(ctx).Warn("region stats not found", zap.Uint64("region", regionID))
-			}
-			if len(keys) == 1 && regionSize < regionSplitSize {
-				skippedKeys++
-			}
 			select {
 			case ch <- &splitInfo{region: regionMap[regionID], keys: keys}:
 			case <-ctx.Done():
@@ -382,11 +358,9 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 	scatterCount, err := local.waitForScatterRegions(ctx, scatterRegions)
 	if scatterCount == len(scatterRegions) {
 		log.FromContext(ctx).Info("waiting for scattering regions done",
-			zap.Int("skipped_keys", skippedKeys),
 			zap.Int("regions", len(scatterRegions)), zap.Duration("take", time.Since(startTime)))
 	} else {
 		log.FromContext(ctx).Info("waiting for scattering regions timeout",
-			zap.Int("skipped_keys", skippedKeys),
 			zap.Int("scatterCount", scatterCount),
 			zap.Int("regions", len(scatterRegions)),
 			zap.Duration("take", time.Since(startTime)),
@@ -540,15 +514,15 @@ func (local *Backend) checkRegionScatteredOrReScatter(ctx context.Context, regio
 	}
 }
 
-func getSplitKeysByRanges(ranges []Range, regions []*split.RegionInfo, logger log.Logger) map[uint64][][]byte {
+func getSplitKeysByRanges(ranges []common.Range, regions []*split.RegionInfo, logger log.Logger) map[uint64][][]byte {
 	checkKeys := make([][]byte, 0)
 	var lastEnd []byte
 	for _, rg := range ranges {
-		if !bytes.Equal(lastEnd, rg.start) {
-			checkKeys = append(checkKeys, rg.start)
+		if !bytes.Equal(lastEnd, rg.Start) {
+			checkKeys = append(checkKeys, rg.Start)
 		}
-		checkKeys = append(checkKeys, rg.end)
-		lastEnd = rg.end
+		checkKeys = append(checkKeys, rg.End)
+		lastEnd = rg.End
 	}
 	return getSplitKeys(checkKeys, regions, logger)
 }
@@ -614,22 +588,22 @@ func keyInsideRegion(region *metapb.Region, key []byte) bool {
 	return bytes.Compare(key, region.GetStartKey()) >= 0 && (beforeEnd(key, region.GetEndKey()))
 }
 
-func intersectRange(region *metapb.Region, rg Range) Range {
+func intersectRange(region *metapb.Region, rg common.Range) common.Range {
 	var startKey, endKey []byte
 	if len(region.StartKey) > 0 {
 		_, startKey, _ = codec.DecodeBytes(region.StartKey, []byte{})
 	}
-	if bytes.Compare(startKey, rg.start) < 0 {
-		startKey = rg.start
+	if bytes.Compare(startKey, rg.Start) < 0 {
+		startKey = rg.Start
 	}
 	if len(region.EndKey) > 0 {
 		_, endKey, _ = codec.DecodeBytes(region.EndKey, []byte{})
 	}
-	if beforeEnd(rg.end, endKey) {
-		endKey = rg.end
+	if beforeEnd(rg.End, endKey) {
+		endKey = rg.End
 	}
 
-	return Range{start: startKey, end: endKey}
+	return common.Range{Start: startKey, End: endKey}
 }
 
 // StoreWriteLimiter is used to limit the write rate of a store.

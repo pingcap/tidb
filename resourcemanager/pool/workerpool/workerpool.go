@@ -15,6 +15,7 @@
 package workerpool
 
 import (
+	"context"
 	"time"
 
 	"github.com/pingcap/tidb/metrics"
@@ -26,12 +27,16 @@ import (
 
 // Worker is worker interface.
 type Worker[T, R any] interface {
-	HandleTask(task T) R
+	// HandleTask consumes a task(T) and produces a result(R).
+	// The result is sent to the result channel by calling `send` function.
+	HandleTask(task T, send func(R))
 	Close()
 }
 
 // WorkerPool is a pool of workers.
 type WorkerPool[T, R any] struct {
+	ctx           context.Context
+	cancel        context.CancelFunc
 	name          string
 	numWorkers    int32
 	originWorkers int32
@@ -55,7 +60,7 @@ type None struct{}
 
 // NewWorkerPool creates a new worker pool.
 func NewWorkerPool[T, R any](name string, _ util.Component, numWorkers int,
-	createWorker func() Worker[T, R], opts ...Option[T, R]) (*WorkerPool[T, R], error) {
+	createWorker func() Worker[T, R], opts ...Option[T, R]) *WorkerPool[T, R] {
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
@@ -72,7 +77,7 @@ func NewWorkerPool[T, R any](name string, _ util.Component, numWorkers int,
 	}
 
 	p.createWorker = createWorker
-	return p, nil
+	return p
 }
 
 // SetTaskReceiver sets the task receiver for the pool.
@@ -86,7 +91,7 @@ func (p *WorkerPool[T, R]) SetResultSender(sender chan R) {
 }
 
 // Start starts default count of workers.
-func (p *WorkerPool[T, R]) Start() {
+func (p *WorkerPool[T, R]) Start(ctx context.Context) {
 	if p.taskChan == nil {
 		p.taskChan = make(chan T)
 	}
@@ -98,6 +103,8 @@ func (p *WorkerPool[T, R]) Start() {
 			p.resChan = make(chan R)
 		}
 	}
+
+	p.ctx, p.cancel = context.WithCancel(ctx)
 
 	for i := 0; i < int(p.numWorkers); i++ {
 		p.runAWorker()
@@ -111,10 +118,17 @@ func (p *WorkerPool[T, R]) handleTaskWithRecover(w Worker[T, R], task T) {
 	}()
 	defer tidbutil.Recover(metrics.LabelWorkerPool, "handleTaskWithRecover", nil, false)
 
-	r := w.HandleTask(task)
-	if p.resChan != nil {
-		p.resChan <- r
+	sendResult := func(r R) {
+		if p.resChan == nil {
+			return
+		}
+		select {
+		case p.resChan <- r:
+		case <-p.ctx.Done():
+		}
 	}
+
+	w.HandleTask(task, sendResult)
 }
 
 func (p *WorkerPool[T, R]) runAWorker() {
@@ -125,9 +139,16 @@ func (p *WorkerPool[T, R]) runAWorker() {
 	p.wg.Run(func() {
 		for {
 			select {
-			case task := <-p.taskChan:
+			case task, ok := <-p.taskChan:
+				if !ok {
+					w.Close()
+					return
+				}
 				p.handleTaskWithRecover(w, task)
 			case <-p.quitChan:
+				w.Close()
+				return
+			case <-p.ctx.Done():
 				w.Close()
 				return
 			}
@@ -193,9 +214,23 @@ func (p *WorkerPool[T, R]) Name() string {
 // ReleaseAndWait releases the pool and wait for complete.
 func (p *WorkerPool[T, R]) ReleaseAndWait() {
 	close(p.quitChan)
+	p.Release()
+	p.Wait()
+}
+
+// Wait waits for all workers to complete.
+func (p *WorkerPool[T, R]) Wait() {
 	p.wg.Wait()
+}
+
+// Release releases the pool.
+func (p *WorkerPool[T, R]) Release() {
+	if p.cancel != nil {
+		p.cancel()
+	}
 	if p.resChan != nil {
 		close(p.resChan)
+		p.resChan = nil
 	}
 }
 

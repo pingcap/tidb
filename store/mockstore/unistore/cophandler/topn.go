@@ -15,6 +15,7 @@
 package cophandler
 
 import (
+	"cmp"
 	"container/heap"
 
 	"github.com/pingcap/errors"
@@ -104,7 +105,7 @@ func (t *topNHeap) Less(i, j int) bool {
 		var ret int
 		var err error
 		if expression.FieldTypeFromPB(by.GetExpr().GetFieldType()).GetType() == mysql.TypeEnum {
-			ret = types.CompareUint64(v1.GetUint64(), v2.GetUint64())
+			ret = cmp.Compare(v1.GetUint64(), v2.GetUint64())
 		} else {
 			ret, err = v1.Compare(t.sc, &v2, collate.GetCollator(collate.ProtoToCollation(by.Expr.FieldType.Collate)))
 			if err != nil {

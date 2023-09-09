@@ -45,7 +45,10 @@ func (s *StatsCachePointer) Load() *StatsCache {
 
 // Replace replaces the cache with the new cache.
 func (s *StatsCachePointer) Replace(newCache *StatsCache) {
-	s.Store(newCache)
+	old := s.Swap(newCache)
+	if old != nil {
+		old.Close()
+	}
 	metrics.CostGauge.Set(float64(newCache.Cost()))
 }
 

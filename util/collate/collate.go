@@ -322,6 +322,12 @@ func runeLen(b byte) int {
 	return 4
 }
 
+// IsDefaultCollationForUTF8MB4 returns if the collation is DefaultCollationForUTF8MB4.
+func IsDefaultCollationForUTF8MB4(collate string) bool {
+	// utf8mb4_bin is used for the migrations/replication from TiDB with version prior to v7.4.0.
+	return collate == "utf8mb4_bin" || collate == "utf8mb4_general_ci" || collate == "utf8mb4_0900_ai_ci"
+}
+
 // IsCICollation returns if the collation is case-insensitive
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
@@ -404,6 +410,8 @@ func init() {
 	newCollatorIDMap[CollationName2ID("utf8mb4_bin")] = &binPaddingCollator{}
 	newCollatorMap["utf8_bin"] = &binPaddingCollator{}
 	newCollatorIDMap[CollationName2ID("utf8_bin")] = &binPaddingCollator{}
+	newCollatorMap["utf8mb4_0900_bin"] = &binCollator{}
+	newCollatorIDMap[CollationName2ID("utf8mb4_0900_bin")] = &binCollator{}
 	newCollatorMap["utf8mb4_general_ci"] = &generalCICollator{}
 	newCollatorIDMap[CollationName2ID("utf8mb4_general_ci")] = &generalCICollator{}
 	newCollatorMap["utf8_general_ci"] = &generalCICollator{}

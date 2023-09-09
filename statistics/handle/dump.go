@@ -195,7 +195,7 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(
 	}
 	// dump its global-stats if existed
 	if tbl != nil {
-		jsonTbl.Partitions["global"] = tbl
+		jsonTbl.Partitions[TiDBGlobalStats] = tbl
 	}
 	return jsonTbl, fallbackTbls, nil
 }
@@ -233,7 +233,7 @@ func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.Table
 		return nil, errors.Trace(err)
 	}
 	if tbl != nil {
-		jsonTbl.Partitions["global"] = tbl
+		jsonTbl.Partitions[TiDBGlobalStats] = tbl
 	}
 	return jsonTbl, nil
 }
@@ -396,7 +396,7 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable)
 			}
 		}
 		// load global-stats if existed
-		if globalStats, ok := jsonTbl.Partitions["global"]; ok {
+		if globalStats, ok := jsonTbl.Partitions[TiDBGlobalStats]; ok {
 			if err := h.loadStatsFromJSON(tableInfo, tableInfo.ID, globalStats); err != nil {
 				return errors.Trace(err)
 			}

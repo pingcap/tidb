@@ -146,6 +146,8 @@ func TestBootstrapWithError(t *testing.T) {
 			store:       store,
 			sessionVars: variable.NewSessionVars(nil),
 		}
+		globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
+		se.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
 		se.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]interface{})
@@ -167,7 +169,6 @@ func TestBootstrapWithError(t *testing.T) {
 
 	dom, err := domap.Get(store)
 	require.NoError(t, err)
-	domap.Delete(store)
 	dom.Close()
 
 	dom1, err := BootstrapSession(store)
