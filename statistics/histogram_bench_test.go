@@ -81,7 +81,6 @@ func genHist4Bench(t *testing.B, buckets []*bucket4Test, totColSize int64) *Hist
 }
 
 func benchmarkMergePartitionHist2GlobalHist(b *testing.B, partition int) {
-	b.StopTimer()
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
 	hists := make([]*Histogram, 0, partition)
@@ -102,6 +101,7 @@ func benchmarkMergePartitionHist2GlobalHist(b *testing.B, partition int) {
 	}
 	b.StartTimer()
 	MergePartitionHist2GlobalHist(sc, hists, poped, expBucketNumber, true)
+	b.StopTimer()
 }
 
 var benchmarkPartitionSize = []int{1000, 10000, 100000}
