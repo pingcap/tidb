@@ -98,6 +98,19 @@ func TestPreparedStmtWithHint(t *testing.T) {
 	tk.MustQuery("execute stmt").Check(testkit.Rows("1"))
 }
 
+func TestPreparedCTEStmtWithHint(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+	sv.SetDomain(dom)
+	defer sv.Close()
+
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int)")
+	tk.MustExec("prepare stmt from 'with a as (select /*+ qb_name(qb1) */ * from t)  select /*+ leading(@qb1)*/ * from a;'")
+}
 func TestPreparedNullParam(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	flags := []bool{false, true}
