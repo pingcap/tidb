@@ -846,6 +846,8 @@ func TestAddKeyPartitionStates(t *testing.T) {
 		for {
 			res := tk4.MustQuery(`admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = 't' and job_type like 'alter table%'`).Rows()
 			if len(res) == 1 && res[0][i] == s {
+				// Sleep 50ms to wait load InforSchema finish.
+				gotime.Sleep(50 * gotime.Millisecond)
 				break
 			}
 			gotime.Sleep(10 * gotime.Millisecond)
