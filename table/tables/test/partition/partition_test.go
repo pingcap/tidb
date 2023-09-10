@@ -747,6 +747,8 @@ func TestExchangePartitionStates(t *testing.T) {
 			res := tk4.MustQuery(`admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'exchange partition'`).Rows()
 			if len(res) == 1 && res[0][pos] == s {
 				logutil.BgLogger().Info("Got state", zap.String("State", s))
+				// Sleep 50ms to wait load InforSchema finish, issue #46815.
+				gotime.Sleep(50 * gotime.Millisecond)
 				break
 			}
 			gotime.Sleep(50 * gotime.Millisecond)
