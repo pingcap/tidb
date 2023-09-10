@@ -329,6 +329,8 @@ func (b *Bundle) Tidy() error {
 		for _, group := range groups {
 			group.MergeTransformableRoles()
 		}
+	} else {
+		transformableLeaderConstraint(groups)
 	}
 	for _, group := range groups {
 		finalRules = append(finalRules, group.rules...)
@@ -343,7 +345,30 @@ func (b *Bundle) Tidy() error {
 
 // ConstraintsGroup is a group of rules with the same constraints.
 type ConstraintsGroup struct {
-	rules []*Rule
+	rules           []*Rule
+	canBecameLeader bool
+	isLeaderGroup   bool
+}
+
+func transformableLeaderConstraint(groups map[string]*ConstraintsGroup) error {
+	var leaderGroup *ConstraintsGroup
+	canBecameLeaderNum := 0
+	for _, group := range groups {
+		if group.isLeaderGroup {
+			if leaderGroup == nil {
+				leaderGroup = group
+			} else {
+				return errors.New("multiple leader group")
+			}
+		}
+		if group.canBecameLeader {
+			canBecameLeaderNum++
+		}
+	}
+	if leaderGroup != nil && canBecameLeaderNum == 1 {
+		leaderGroup.MergeTransformableRoles()
+	}
+	return nil
 }
 
 // MergeRulesByRole merges the rules with the same role.
@@ -355,6 +380,12 @@ func (c *ConstraintsGroup) MergeRulesByRole() {
 	for _, rule := range c.rules {
 		// Add the rule to the map based on its role
 		rulesByRole[rule.Role] = append(rulesByRole[rule.Role], rule)
+		if rule.Role == Leader || rule.Role == Voter {
+			c.canBecameLeader = true
+		}
+		if rule.Role == Leader {
+			c.isLeaderGroup = true
+		}
 	}
 
 	// Clear existing rules
@@ -383,6 +414,9 @@ func (c *ConstraintsGroup) MergeTransformableRoles() {
 	}
 	newRules := make([]*Rule, 0, len(c.rules))
 	var mergedRule *Rule
+	if len(c.rules) == 1 {
+		return
+	}
 	for _, rule := range c.rules {
 		// Learner is not transformable, it should be promote by PD.
 		if rule.Role == Learner {

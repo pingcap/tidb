@@ -907,7 +907,6 @@ func TestTidy(t *testing.T) {
 		require.Equal(t, []string{"zone", "host"}, bundle.Rules[1].LocationLabels)
 	}
 	err = bundle.Tidy()
-	fmt.Println(bundle.String())
 	chkfunc()
 
 	// tidy again
@@ -1160,6 +1159,163 @@ func TestTidy2(t *testing.T) {
 							{Op: In, Key: "rack", Values: []string{"1"}},
 						},
 						Count:          2,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+		},
+		{
+			name: "Rules with same constraints and role are merged,  Leader + Follower + Learner | Follower",
+			bundle: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "1",
+						Role: Leader,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "2",
+						Role: Follower,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "3",
+						Role: Learner,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "4",
+						Role: Follower,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"2"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+			expected: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "0",
+						Role: Voter,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          2,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "2",
+						Role: Learner,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "3",
+						Role: Follower,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"2"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+		},
+		{
+			name: "Rules with same constraints and role are merged,  Leader + Follower + Learner | Voter",
+			bundle: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "1",
+						Role: Leader,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "2",
+						Role: Follower,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "3",
+						Role: Learner,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "4",
+						Role: Voter,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"2"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+			expected: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "1",
+						Role: Leader,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "2",
+						Role: Follower,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "3",
+						Role: Learner,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "4",
+						Role: Voter,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"2"}},
+						},
+						Count:          1,
 						LocationLabels: []string{"region"},
 					},
 				},
