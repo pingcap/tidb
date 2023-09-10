@@ -330,7 +330,9 @@ func (b *Bundle) Tidy() error {
 			group.MergeTransformableRoles()
 		}
 	} else {
-		transformableLeaderConstraint(groups)
+		if err := transformableLeaderConstraint(groups); err != nil {
+			return err
+		}
 	}
 	for _, group := range groups {
 		finalRules = append(finalRules, group.rules...)
@@ -355,11 +357,10 @@ func transformableLeaderConstraint(groups map[string]*ConstraintsGroup) error {
 	canBecameLeaderNum := 0
 	for _, group := range groups {
 		if group.isLeaderGroup {
-			if leaderGroup == nil {
-				leaderGroup = group
-			} else {
-				return errors.New("multiple leader group")
+			if !(leaderGroup == nil) {
+				return ErrInvalidPlacementOptions
 			}
+			leaderGroup = group
 		}
 		if group.canBecameLeader {
 			canBecameLeaderNum++

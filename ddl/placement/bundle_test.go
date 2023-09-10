@@ -1283,7 +1283,7 @@ func TestTidy2(t *testing.T) {
 			expected: Bundle{
 				Rules: []*Rule{
 					{
-						ID:   "1",
+						ID:   "0",
 						Role: Leader,
 						Constraints: Constraints{
 							{Op: In, Key: "rack", Values: []string{"1"}},
@@ -1292,7 +1292,7 @@ func TestTidy2(t *testing.T) {
 						LocationLabels: []string{"region"},
 					},
 					{
-						ID:   "2",
+						ID:   "1",
 						Role: Follower,
 						Constraints: Constraints{
 							{Op: In, Key: "rack", Values: []string{"1"}},
@@ -1301,7 +1301,7 @@ func TestTidy2(t *testing.T) {
 						LocationLabels: []string{"region"},
 					},
 					{
-						ID:   "3",
+						ID:   "2",
 						Role: Learner,
 						Constraints: Constraints{
 							{Op: In, Key: "rack", Values: []string{"1"}},
@@ -1310,7 +1310,7 @@ func TestTidy2(t *testing.T) {
 						LocationLabels: []string{"region"},
 					},
 					{
-						ID:   "4",
+						ID:   "3",
 						Role: Voter,
 						Constraints: Constraints{
 							{Op: In, Key: "rack", Values: []string{"2"}},
