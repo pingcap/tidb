@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -45,7 +46,6 @@ import (
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -303,6 +303,8 @@ type StatementContext struct {
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
+
+	SetVarHintRestore map[string]string
 
 	// If the statement read from table cache, this flag is set.
 	ReadFromTableCache bool
@@ -1272,6 +1274,14 @@ func (sc *StatementContext) GetStaleTSO() (uint64, error) {
 	}
 	sc.StaleTSOProvider.value = &tso
 	return tso, nil
+}
+
+// AddSetVarHintRestore records the variables which are affected by SET_VAR hint. And restore them to the old value later.
+func (sc *StatementContext) AddSetVarHintRestore(name, val string) {
+	if sc.SetVarHintRestore == nil {
+		sc.SetVarHintRestore = make(map[string]string)
+	}
+	sc.SetVarHintRestore[name] = val
 }
 
 // CopTasksDetails collects some useful information of cop-tasks during execution.

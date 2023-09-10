@@ -65,67 +65,6 @@ func (m tableDeltaMap) merge(deltaMap tableDeltaMap) {
 	}
 }
 
-type errorRateDelta struct {
-	PkErrorRate  *statistics.ErrorRate
-	IdxErrorRate map[int64]*statistics.ErrorRate
-	PkID         int64
-}
-
-type errorRateDeltaMap map[int64]errorRateDelta
-
-func (m errorRateDeltaMap) update(tableID int64, histID int64, rate float64, isIndex bool) {
-	item := m[tableID]
-	if isIndex {
-		if item.IdxErrorRate == nil {
-			item.IdxErrorRate = make(map[int64]*statistics.ErrorRate)
-		}
-		if item.IdxErrorRate[histID] == nil {
-			item.IdxErrorRate[histID] = &statistics.ErrorRate{}
-		}
-		item.IdxErrorRate[histID].Update(rate)
-	} else {
-		if item.PkErrorRate == nil {
-			item.PkID = histID
-			item.PkErrorRate = &statistics.ErrorRate{}
-		}
-		item.PkErrorRate.Update(rate)
-	}
-	m[tableID] = item
-}
-
-func (m errorRateDeltaMap) merge(deltaMap errorRateDeltaMap) {
-	for tableID, item := range deltaMap {
-		tbl := m[tableID]
-		for histID, errorRate := range item.IdxErrorRate {
-			if tbl.IdxErrorRate == nil {
-				tbl.IdxErrorRate = make(map[int64]*statistics.ErrorRate)
-			}
-			if tbl.IdxErrorRate[histID] == nil {
-				tbl.IdxErrorRate[histID] = &statistics.ErrorRate{}
-			}
-			tbl.IdxErrorRate[histID].Merge(errorRate)
-		}
-		if item.PkErrorRate != nil {
-			if tbl.PkErrorRate == nil {
-				tbl.PkID = item.PkID
-				tbl.PkErrorRate = &statistics.ErrorRate{}
-			}
-			tbl.PkErrorRate.Merge(item.PkErrorRate)
-		}
-		m[tableID] = tbl
-	}
-}
-
-func (m errorRateDeltaMap) clear(tableID int64, histID int64, isIndex bool) {
-	item := m[tableID]
-	if isIndex {
-		delete(item.IdxErrorRate, histID)
-	} else {
-		item.PkErrorRate = nil
-	}
-	m[tableID] = item
-}
-
 // colStatsUsageMap maps (tableID, columnID) to the last time when the column stats are used(needed).
 type colStatsUsageMap map[model.TableItemID]time.Time
 
@@ -137,25 +76,30 @@ func (m colStatsUsageMap) merge(other colStatsUsageMap) {
 	}
 }
 
-func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, rateMap errorRateDeltaMap, colMap colStatsUsageMap) {
+func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, colMap colStatsUsageMap) {
 	deltaMap.merge(s.mapper)
 	s.mapper = make(tableDeltaMap)
-	rateMap.merge(s.rateMap)
-	s.rateMap = make(errorRateDeltaMap)
 	colMap.merge(s.colMap)
 	s.colMap = make(colStatsUsageMap)
 }
 
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
 type SessionStatsCollector struct {
-	mapper  tableDeltaMap
-	rateMap errorRateDeltaMap
-	colMap  colStatsUsageMap
-	next    *SessionStatsCollector
+	mapper tableDeltaMap
+	colMap colStatsUsageMap
+	next   *SessionStatsCollector
 	sync.Mutex
 
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
 	deleted bool
+}
+
+// NewSessionStatsCollector initializes a new SessionStatsCollector.
+func NewSessionStatsCollector() *SessionStatsCollector {
+	return &SessionStatsCollector{
+		mapper: make(tableDeltaMap),
+		colMap: make(colStatsUsageMap),
+	}
 }
 
 // Delete only sets the deleted flag true, it will be deleted from list when DumpStatsDeltaToKV is called.
@@ -177,7 +121,6 @@ func (s *SessionStatsCollector) ClearForTest() {
 	s.Lock()
 	defer s.Unlock()
 	s.mapper = make(tableDeltaMap)
-	s.rateMap = make(errorRateDeltaMap)
 	s.colMap = make(colStatsUsageMap)
 	s.next = nil
 	s.deleted = false
@@ -195,10 +138,9 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	h.listHead.Lock()
 	defer h.listHead.Unlock()
 	newCollector := &SessionStatsCollector{
-		mapper:  make(tableDeltaMap),
-		rateMap: make(errorRateDeltaMap),
-		next:    h.listHead.next,
-		colMap:  make(colStatsUsageMap),
+		mapper: make(tableDeltaMap),
+		next:   h.listHead.next,
+		colMap: make(colStatsUsageMap),
 	}
 	h.listHead.next = newCollector
 	return newCollector
@@ -408,14 +350,13 @@ const (
 // and remove closed session's collector.
 func (h *Handle) sweepList() {
 	deltaMap := make(tableDeltaMap)
-	errorRateMap := make(errorRateDeltaMap)
 	colMap := make(colStatsUsageMap)
 	prev := h.listHead
 	prev.Lock()
 	for curr := prev.next; curr != nil; curr = curr.next {
 		curr.Lock()
-		// Merge the session stats into deltaMap, errorRateMap respectively.
-		merge(curr, deltaMap, errorRateMap, colMap)
+		// Merge the session stats into deltaMap respectively.
+		merge(curr, deltaMap, colMap)
 		if curr.deleted {
 			prev.next = curr.next
 			// Since the session is already closed, we can safely unlock it here.
@@ -511,9 +452,12 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	}
 	startTS := txn.StartTS()
 	updateStatsMeta := func(id int64) error {
-		var err error
-		// This lock is already locked on it so it use isTableLocked without lock.
-		if h.isTableLocked(id) {
+		lockedTables, err := h.GetLockedTables(id)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// This lock is already locked on it so it use isTableLockedWithoutLock without lock.
+		if _, ok := lockedTables[id]; ok {
 			if delta.Delta < 0 {
 				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
 			} else {
@@ -674,7 +618,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, _ time.Duration, autoAnalyzeRatio f
 	}
 	// No need to analyze it.
 	tblCnt := float64(tbl.RealtimeCount)
-	if histCnt := tbl.GetColRowCount(); histCnt > 0 {
+	if histCnt := tbl.GetAnalyzeRowCount(); histCnt > 0 {
 		tblCnt = histCnt
 	}
 	if float64(tbl.ModifyCount)/tblCnt <= autoAnalyzeRatio {
@@ -775,9 +719,25 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		rd.Shuffle(len(tbls), func(i, j int) {
 			tbls[i], tbls[j] = tbls[j], tbls[i]
 		})
+
+		tids := make([]int64, 0, len(tbls))
 		for _, tbl := range tbls {
-			//if table locked, skip analyze
-			if h.IsTableLocked(tbl.Meta().ID) {
+			tids = append(tids, tbl.Meta().ID)
+		}
+
+		lockedTables, err := h.GetLockedTables(tids...)
+		if err != nil {
+			logutil.BgLogger().Error("check table lock failed",
+				zap.String("category", "stats"), zap.Error(err))
+			continue
+		}
+
+		for _, tbl := range tbls {
+			// If table locked, skip analyze.
+			// FIXME: This check is not accurate, because other nodes may change the table lock status at any time.
+			if _, ok := lockedTables[tbl.Meta().ID]; ok {
+				logutil.BgLogger().Info("skip analyze locked table", zap.String("category", "stats"),
+					zap.String("db", db), zap.String("table", tbl.Meta().Name.O))
 				continue
 			}
 			tblInfo := tbl.Meta()

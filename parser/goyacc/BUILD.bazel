@@ -14,7 +14,6 @@ go_library(
         "@com_github_cznic_sortutil//:sortutil",
         "@com_github_cznic_strutil//:strutil",
         "@com_github_pingcap_errors//:errors",
-        "@org_golang_x_exp//slices",
         "@org_modernc_parser//yacc",
         "@org_modernc_y//:y",
     ],

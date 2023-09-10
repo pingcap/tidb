@@ -21,7 +21,7 @@ import (
 
 // task state machine
 //  1. succeed:			pending -> running -> succeed
-//  2. failed:			pending -> running -> reverting -> reverted/revert_failed
+//  2. failed:			pending -> running -> reverting -> reverted/revert_failed, pending -> failed
 //  3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
 //  3. pause/resume:	pending -> running -> pausing -> paused -> running
 //
@@ -86,9 +86,15 @@ type Subtask struct {
 	// SchedulerID is the ID of scheduler, right now it's the same as instance_id, exec_id.
 	// its value is IP:PORT, see GenerateExecID
 	SchedulerID string
-	StartTime   uint64
-	EndTime     time.Time
-	Meta        []byte
+	// StartTime is the time when the subtask is started.
+	// it's 0 if it hasn't started yet.
+	StartTime time.Time
+	// UpdateTime is the time when the subtask is updated.
+	// it can be used as subtask end time if the subtask is finished.
+	// it's 0 if it hasn't started yet.
+	UpdateTime time.Time
+	Meta       []byte
+	Summary    string
 }
 
 // NewSubtask create a new subtask.
@@ -112,6 +118,10 @@ type MinimalTask interface {
 const (
 	// TaskTypeExample is TaskType of Example.
 	TaskTypeExample = "Example"
+	// TaskTypeExample2 is TaskType of Example.
+	TaskTypeExample2 = "Example1"
+	// TaskTypeExample3 is TaskType of Example.
+	TaskTypeExample3 = "Example2"
 	// ImportInto is TaskType of ImportInto.
 	ImportInto = "ImportInto"
 )
@@ -123,6 +133,10 @@ func Type2Int(t string) int {
 		return 1
 	case ImportInto:
 		return 2
+	case TaskTypeExample2:
+		return 3
+	case TaskTypeExample3:
+		return 4
 	default:
 		return 0
 	}
@@ -135,6 +149,10 @@ func Int2Type(i int) string {
 		return TaskTypeExample
 	case 2:
 		return ImportInto
+	case 3:
+		return TaskTypeExample2
+	case 4:
+		return TaskTypeExample3
 	default:
 		return ""
 	}

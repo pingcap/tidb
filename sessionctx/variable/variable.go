@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"golang.org/x/exp/maps"
 )
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
@@ -155,6 +156,10 @@ type SysVar struct {
 	// GetStateValue gets the value for session states, which is used for migrating sessions.
 	// We need a function to override GetSession sometimes, because GetSession may not return the real value.
 	GetStateValue func(*SessionVars) (string, bool, error)
+	// Depended indicates whether other variables depend on this one. That is, if this one is not correctly set,
+	// another variable cannot be set either.
+	// This flag is used to decide the order to replay session variables.
+	Depended bool
 	// skipInit defines if the sysvar should be loaded into the session on init.
 	// This is only important to set for sysvars that include session scope,
 	// since global scoped sysvars are not-applicable.
@@ -614,8 +619,27 @@ func GetSysVars() map[string]*SysVar {
 	return m
 }
 
+// OrderByDependency orders the vars by dependency. The depended sys vars are in the front.
+// Unknown sys vars are treated as not depended.
+func OrderByDependency(names map[string]string) []string {
+	depended, notDepended := make([]string, 0, len(names)), make([]string, 0, len(names))
+	sysVarsLock.RLock()
+	defer sysVarsLock.RUnlock()
+	for name := range names {
+		if sv, ok := sysVars[name]; ok && sv.Depended {
+			depended = append(depended, name)
+		} else {
+			notDepended = append(notDepended, name)
+		}
+	}
+	return append(depended, notDepended...)
+}
+
 func init() {
 	sysVars = make(map[string]*SysVar)
+	setHintUpdatable(defaultSysVars)
+	// Destroy the map after init.
+	maps.Clear(isHintUpdatable)
 	for _, v := range defaultSysVars {
 		RegisterSysVar(v)
 	}

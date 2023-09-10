@@ -15,8 +15,6 @@
 package importintotest
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
 	"fmt"
 	"net"
@@ -28,7 +26,6 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/golang/mock/gomock"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -52,6 +49,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
+	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
 
@@ -310,35 +308,35 @@ func (s *mockGCSSuite) TestGeneratedColumnsAndTSVFile() {
 		Content: []byte("1\t2\n2\t3"),
 	})
 
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 	s.tk.MustExec("delete from t_gen1")
 
 	// Specify the column, this should also work.
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a) 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 	s.tk.MustExec("delete from t_gen1")
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a,@1) 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a,@1)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 
 	// Swap the column and test again.
 	s.tk.MustExec(`create table t_gen2 (a int generated ALWAYS AS (b+1), b int);`)
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("3 2", "4 3"))
 	s.tk.MustExec(`delete from t_gen2`)
 
 	// Specify the column b
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(b) 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(b)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("2 1", "3 2"))
 	s.tk.MustExec(`delete from t_gen2`)
 
 	// Specify the column a
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(a) 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(a)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("<nil> <nil>", "<nil> <nil>"))
 }
@@ -440,60 +438,6 @@ func (s *mockGCSSuite) TestMultiValueIndex() {
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"1 [1, 2, 3]",
 		"2 [2, 3, 4]",
-	))
-}
-
-func (s *mockGCSSuite) TestMixedCompression() {
-	s.tk.MustExec("DROP DATABASE IF EXISTS multi_load;")
-	s.tk.MustExec("CREATE DATABASE multi_load;")
-	s.tk.MustExec("CREATE TABLE multi_load.t (i INT PRIMARY KEY, s varchar(32));")
-
-	// gzip content
-	var buf bytes.Buffer
-	w := gzip.NewWriter(&buf)
-	_, err := w.Write([]byte(`1,test1
-2,test2
-3,test3
-4,test4`))
-	require.NoError(s.T(), err)
-	err = w.Close()
-	require.NoError(s.T(), err)
-
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "test-multi-load",
-			Name:       "compress.001.tsv.gz",
-		},
-		Content: buf.Bytes(),
-	})
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "test-multi-load",
-			Name:       "compress.002.tsv",
-		},
-		Content: []byte(`5,test5
-6,test6
-7,test7
-8,test8
-9,test9`),
-	})
-
-	sql := fmt.Sprintf(`IMPORT INTO multi_load.t FROM 'gs://test-multi-load/compress.*?endpoint=%s'
-		WITH thread=1;`, gcsEndpoint)
-	s.tk.MustQuery(sql)
-	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
-		"1 test1", "2 test2", "3 test3", "4 test4",
-		"5 test5", "6 test6", "7 test7", "8 test8", "9 test9",
-	))
-
-	// with ignore N rows
-	s.tk.MustExec("truncate table multi_load.t")
-	sql = fmt.Sprintf(`IMPORT INTO multi_load.t FROM 'gs://test-multi-load/compress.*?endpoint=%s'
-		WITH skip_rows=3, thread=1;`, gcsEndpoint)
-	s.tk.MustQuery(sql)
-	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
-		"4 test4",
-		"8 test8", "9 test9",
 	))
 }
 
