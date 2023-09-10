@@ -26,9 +26,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const histogramLen = 100
-const popedTopNLen = 100
-const expBucketNumber = 100
+const (
+	histogramLen    = 100
+	popedTopNLen    = 100
+	expBucketNumber = 100
+)
 
 func genBucket4TestData(length int) []*bucket4Test {
 	result := make([]*bucket4Test, 0, length)
