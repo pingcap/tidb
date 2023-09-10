@@ -5153,7 +5153,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				handles = append(handles, handle)
 				if dupPartID {
 					e.planPhysIDs[dupPartPos] = e.planPhysIDs[idx]
-					dupPartPos += 1
+					dupPartPos++
 				}
 			}
 		} else {
@@ -5182,7 +5182,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				handles = append(handles, handle)
 				if dupPartID {
 					e.planPhysIDs[dupPartPos] = e.planPhysIDs[idx]
-					dupPartPos += 1
+					dupPartPos++
 				}
 			}
 		}
