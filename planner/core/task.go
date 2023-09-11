@@ -1115,14 +1115,18 @@ func (p *PhysicalTopN) canExpressionConvertedToPB(storeTp kv.StoreType) bool {
 
 // containVirtualColumn checks whether TopN.ByItems contains virtual generated columns.
 func (p *PhysicalTopN) containVirtualColumn(tCols []*expression.Column) bool {
+	tColSet := make(map[int64]struct{}, len(tCols))
+	for _, tCol := range tCols {
+		if tCol.ID > 0 && tCol.VirtualExpr != nil {
+			tColSet[tCol.ID] = struct{}{}
+		}
+	}
 	for _, by := range p.ByItems {
 		cols := expression.ExtractColumns(by.Expr)
 		for _, col := range cols {
-			for _, tCol := range tCols {
+			if _, ok := tColSet[col.ID]; ok {
 				// A column with ID > 0 indicates that the column can be resolved by data source.
-				if tCol.ID > 0 && tCol.ID == col.ID && tCol.VirtualExpr != nil {
-					return true
-				}
+				return true
 			}
 		}
 	}
