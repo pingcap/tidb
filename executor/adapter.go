@@ -1562,7 +1562,7 @@ func (a *ExecStmt) traverseFlatPlanForHistoryStats(stmtCtx *stmtctx.StatementCon
 }
 
 func recordHistoryStats(sql string, tableID int64, planID int, nullHashCode bool, hashCode uint64, estRows float64, actualRows int64) {
-	logutil.BgLogger().Debug(
+	logutil.BgLogger().Info(
 		sql,
 		zap.Int64("TableID", tableID),
 		zap.Int("PlanID", planID),

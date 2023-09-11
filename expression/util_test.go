@@ -456,7 +456,8 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 }
 
 func TestSortAndGenMD5HashForCNFExprs(t *testing.T) {
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	ctx := mock.NewContext()
+	sc := ctx.GetSessionVars().StmtCtx
 	hashCodeSet := make(map[uint64]bool)
 
 	// col0 < 10
@@ -599,7 +600,7 @@ func TestSortAndGenMD5HashForCNFExprs(t *testing.T) {
 	require.True(t, succ)
 	require.True(t, hashCode10 == hashCode11)
 
-	// TODO: add test cases for ParamMarker constants
+	// TODO: Test constant with param marker
 }
 
 func BenchmarkExtractColumns(b *testing.B) {

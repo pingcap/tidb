@@ -1806,14 +1806,9 @@ func ExprsToStringsForDisplay(exprs []Expression) []string {
 // 1. CanonicalHashCode will treat "a < b" the same with "b >= a", while this function won't
 // 2. This function will treat {"A or B or C", "A or C or B", "B or A or C", "B or C or A", "C or A or B", "C or B or A"} all the same,
 // while CanonicalHashCode won't
-// 3. This function will treat "a > 3" the same with "a > ?" and parameter is set 3, while CanonicalHashCode won't
+// TODO: treat "a > 3" the same with "a > ?" whose parameter is set 3. Currently, the hash code of constant with ParamMarker
+// contains ParamMarker order only, no value included
 func SortAndGenMD5HashForCNFExprs(sc *stmtctx.StatementContext, conditions []Expression) (bool, uint64) {
-	prevIgnoreParamMarkerFlag := sc.IgnoreParamMarkerHashCode
-	sc.IgnoreParamMarkerHashCode = true
-	defer func() {
-		sc.IgnoreParamMarkerHashCode = prevIgnoreParamMarkerFlag
-	}()
-
 	cnfHashCodes := make([][]byte, 0, len(conditions))
 	for _, arg := range conditions {
 		if sf, ok := arg.(*ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
