@@ -1811,3 +1811,33 @@ func TestAddFieldsForBinding(t *testing.T) {
 	require.Equal(t, rows[0][7], "use_index(@`sel_1` `test`.`t` ), ignore_index(`t` `a`)")
 	require.Equal(t, rows[0][8], "select * from `t` where `a` = ?")
 }
+
+func TestCheckConstraints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("SET GLOBAL tidb_enable_check_constraint = ON")
+
+	tk.MustExec("CREATE TABLE test.t1 (id INT PRIMARY KEY, CHECK (id<10))")
+	rows := tk.MustQuery("SELECT * FROM information_schema.CHECK_CONSTRAINTS").Rows()
+	require.Equal(t, len(rows), 1)
+	require.Equal(t, rows[0][0], "def")
+	require.Equal(t, rows[0][1], "test")
+	require.Equal(t, rows[0][2], "t1_chk_1")
+	require.Equal(t, rows[0][3], "(`id` < 10)")
+
+	tk.MustExec("ALTER TABLE test.t1 DROP CONSTRAINT t1_chk_1")
+	rows = tk.MustQuery("SELECT * FROM information_schema.CHECK_CONSTRAINTS").Rows()
+	require.Equal(t, len(rows), 0)
+
+	tk.MustExec("CREATE TABLE test.t2 (id INT PRIMARY KEY, CHECK (id<20))")
+	rows = tk.MustQuery("SELECT * FROM information_schema.CHECK_CONSTRAINTS").Rows()
+	require.Equal(t, len(rows), 1)
+	require.Equal(t, rows[0][0], "def")
+	require.Equal(t, rows[0][1], "test")
+	require.Equal(t, rows[0][2], "t2_chk_1")
+	require.Equal(t, rows[0][3], "(`id` < 20)")
+
+	tk.MustExec("DROP TABLE test.t2")
+	rows = tk.MustQuery("SELECT * FROM information_schema.CHECK_CONSTRAINTS").Rows()
+	require.Equal(t, len(rows), 0)
+}

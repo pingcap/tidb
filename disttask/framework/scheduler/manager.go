@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
@@ -34,7 +35,9 @@ var (
 	schedulerPoolSize       int32 = 4
 	subtaskExecutorPoolSize int32 = 10
 	// same as dispatcher
-	checkTime = 300 * time.Millisecond
+	checkTime        = 300 * time.Millisecond
+	retrySQLTimes    = 3
+	retrySQLInterval = 500 * time.Millisecond
 )
 
 // ManagerBuilder is used to build a Manager.
@@ -111,8 +114,24 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 }
 
 // Start starts the Manager.
-func (m *Manager) Start() {
+func (m *Manager) Start() error {
 	logutil.Logger(m.logCtx).Debug("manager start")
+	var err error
+	for i := 0; i < retrySQLTimes; i++ {
+		err = m.taskTable.StartManager(m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
+		if err == nil {
+			break
+		}
+		if i%10 == 0 {
+			logutil.Logger(m.logCtx).Warn("start manager failed", zap.String("scope", config.GetGlobalConfig().Instance.TiDBServiceScope),
+				zap.Int("retry times", retrySQLTimes), zap.Error(err))
+		}
+		time.Sleep(retrySQLInterval)
+	}
+	if err != nil {
+		return err
+	}
+
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
@@ -124,6 +143,7 @@ func (m *Manager) Start() {
 		defer m.wg.Done()
 		m.fetchAndFastCancelTasks(m.ctx)
 	}()
+	return nil
 }
 
 // Stop stops the Manager.
