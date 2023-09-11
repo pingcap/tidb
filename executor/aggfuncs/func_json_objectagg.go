@@ -116,7 +116,7 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 
 func (c *jsonObjectAgg) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4JsonObjectAgg)(partialResult)
-	resBuf := spillHelper.serializePartialResult4JsonObjectAgg(*pr, spillHelper.tmpBuf[:])
+	resBuf := spillHelper.serializePartialResult4JsonObjectAgg(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 

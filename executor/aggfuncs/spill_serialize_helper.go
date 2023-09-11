@@ -163,21 +163,38 @@ func (s *SpillSerializeHelper) serializePartialResult4BitFunc(value partialResul
 	return s.tmpBuf[0:uint64Len]
 }
 
-func (s *SpillSerializeHelper) serializePartialResult4JsonArrayagg(value partialResult4JsonArrayagg, tmpBuf []byte) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4JsonArrayagg(value partialResult4JsonArrayagg) []byte {
 	varBuf := make([]byte, 0)
 	for _, value := range value.entries {
-		spill.SerializeInterface(value, &varBuf, tmpBuf)
+		spill.SerializeInterface(value, &varBuf, s.tmpBuf[:])
 	}
 	return varBuf
 }
 
-func (s *SpillSerializeHelper) serializePartialResult4JsonObjectAgg(value partialResult4JsonObjectAgg, tmpBuf []byte) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4JsonObjectAgg(value partialResult4JsonObjectAgg) []byte {
 	resBuf := make([]byte, 0)
 	for key, value := range value.entries {
 		resBuf := spill.SerializeInt64(int64(len(key)), s.tmpBuf[:])
 		resBuf = append(resBuf, resBuf...)
 		resBuf = append(resBuf, key...)
-		spill.SerializeInterface(value, &resBuf, tmpBuf)
+		spill.SerializeInterface(value, &resBuf, s.tmpBuf[:])
 	}
 	return resBuf
 }
+
+
+
+// firstRow4Decimal
+
+
+
+// firstRow4Int
+// firstRow4Time
+// firstRow4String
+// firstRow4Duration
+// firstRow4Float32
+// firstRow4Float64
+// firstRow4JSON
+// firstRow4Enum
+// firstRow4Set
+

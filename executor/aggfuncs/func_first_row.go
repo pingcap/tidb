@@ -500,6 +500,41 @@ func (*firstRow4Decimal) MergePartialResult(_ sessionctx.Context, src, dst Parti
 	return memDelta, nil
 }
 
+
+// func (c *firstRow4Decimal) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+// 	pr := (*partialResult4FirstRowDecimal)(partialResult)
+// 	resBuf := spillHelper.serializePartialResult4MaxMinDecimal(*pr)
+// 	chk.AppendBytes(c.ordinal, resBuf)
+// }
+
+// func (c *firstRow4Decimal) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+// 	dataCol := src.Column(c.ordinal)
+// 	totalMemDelta := int64(0)
+// 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+// 	partialResults := make([]PartialResult, 0, src.NumRows())
+
+// 	for {
+// 		pr, memDelta := c.deserializeForSpill(&spillHelper)
+// 		if pr == nil {
+// 			break
+// 		}
+// 		partialResults = append(partialResults, pr)
+// 		totalMemDelta += memDelta
+// 	}
+
+// 	return partialResults, totalMemDelta
+// }
+
+// func (c *firstRow4Decimal) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+// 	pr, memDelta := c.AllocPartialResult()
+// 	result := (*partialResult4FirstRowDecimal)(pr)
+// 	success := helper.deserializePartialResult4MaxMinDecimal(result)
+// 	if !success {
+// 		return nil, 0
+// 	}
+// 	return pr, memDelta
+// }
+
 type firstRow4Enum struct {
 	baseAggFunc
 }

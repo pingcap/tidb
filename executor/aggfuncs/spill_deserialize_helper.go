@@ -305,3 +305,14 @@ func (s *spillDeserializeHelper) deserializePartialResult4JsonObjectAgg(dst *par
 	}
 	return false, memDelta
 }
+
+// firstRow4Decimal
+// firstRow4Int
+// firstRow4Time
+// firstRow4String
+// firstRow4Duration
+// firstRow4Float32
+// firstRow4Float64
+// firstRow4JSON
+// firstRow4Enum
+// firstRow4Set
