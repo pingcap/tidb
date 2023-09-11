@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
@@ -326,7 +327,7 @@ func getRangeSplitter(
 	ctx context.Context,
 	jobID int64,
 	totalSize int64,
-	instancCnt int64,
+	instanceCnt int64,
 ) (*external.RangeSplitter, error) {
 	// TODO(tangenta): replace uri with global variable.
 	uri := fmt.Sprintf("s3://%s/%s?access-key=%s&secret-access-key=%s&endpoint=http://%s:%s&force-path-style=true",
@@ -344,7 +345,7 @@ func getRangeSplitter(
 		return nil, err
 	}
 
-	rangeGroupSize := totalSize / instancCnt
+	rangeGroupSize := totalSize / instanceCnt
 	rangeGroupKeys := int64(math.MaxInt64)
 	bcCtx, ok := ingest.LitBackCtxMgr.Load(jobID)
 	if !ok {
@@ -355,11 +356,12 @@ func getRangeSplitter(
 	if local == nil {
 		return nil, errors.Errorf("local backend not found")
 	}
-	maxSizePerRange, maxKeysPerRange, err := local.GetRegionSplitSizeKeys(ctx,
-		int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	maxSizePerRange, maxKeysPerRange, err := local.GetRegionSplitSizeKeys(ctx)
 	if err != nil {
-		return nil, err
+		log.FromContext(ctx).Warn("fail to get region split keys and size", zap.Error(err))
 	}
+	maxSizePerRange = max(maxSizePerRange, int64(config.SplitRegionSize))
+	maxKeysPerRange = max(maxKeysPerRange, int64(config.SplitRegionKeys))
 
 	return external.NewRangeSplitter(ctx, dataFiles, statFiles, extStore,
 		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange)
