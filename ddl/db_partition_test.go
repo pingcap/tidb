@@ -2514,19 +2514,22 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 }
 
 func TestExchangePartitionMultiTable(t *testing.T) {
+	logutil.BgLogger().Info("mdl related variable status before bootstrap", zap.Bool("EnableMDL", variable.EnableMDL.Load()), zap.Bool("EnableConcurrentDDL", variable.EnableConcurrentDDL.Load()))
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
+	logutil.BgLogger().Info("mdl related variable status after bootstrap", zap.Bool("EnableMDL", variable.EnableMDL.Load()), zap.Bool("EnableConcurrentDDL", variable.EnableConcurrentDDL.Load()))
 
 	dbName := "ExchangeMultiTable"
 	tk1.MustExec(`create schema ` + dbName)
 	tk1.MustExec(`use ` + dbName)
-	tk1.MustExec(`set @@global.tidb_enable_metadata_lock = 1`)
+	tk1.MustExec(`set global tidb_enable_metadata_lock = 'ON'`)
 	tk1.MustExec(`CREATE TABLE t1 (a int)`)
 	tk1.MustExec(`CREATE TABLE t2 (a int)`)
 	tk1.MustExec(`CREATE TABLE tp (a int) partition by hash(a) partitions 3`)
 	tk1.MustExec(`insert into t1 values (0)`)
 	tk1.MustExec(`insert into t2 values (3)`)
 	tk1.MustExec(`insert into tp values (6)`)
+	logutil.BgLogger().Info("mdl related variable status after inserting rows", zap.Bool("EnableMDL", variable.EnableMDL.Load()), zap.Bool("EnableConcurrentDDL", variable.EnableConcurrentDDL.Load()))
 
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec(`use ` + dbName)
