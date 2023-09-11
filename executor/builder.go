@@ -5144,20 +5144,18 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		// Used for clear paritionIDs of duplicated rows.
 		dupPartPos := 0
 		if plan.IndexInfo == nil {
-			dupPartID := len(plan.PartitionIDs) >= len(plan.Handles)
 			for idx, handle := range plan.Handles {
 				if _, found := dedup.Get(handle); found {
 					continue
 				}
 				dedup.Set(handle, true)
 				handles = append(handles, handle)
-				if dupPartID {
+				if len(plan.PartitionIDs) > 0 {
 					e.planPhysIDs[dupPartPos] = e.planPhysIDs[idx]
 					dupPartPos++
 				}
 			}
 		} else {
-			dupPartID := len(plan.PartitionIDs) >= len(plan.IndexValues)
 			for idx, value := range plan.IndexValues {
 				if datumsContainNull(value) {
 					continue
@@ -5180,7 +5178,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				}
 				dedup.Set(handle, true)
 				handles = append(handles, handle)
-				if dupPartID {
+				if len(plan.PartitionIDs) > 0 {
 					e.planPhysIDs[dupPartPos] = e.planPhysIDs[idx]
 					dupPartPos++
 				}
