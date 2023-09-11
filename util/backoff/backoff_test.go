@@ -12,8 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package importintotest
+package backoff
 
-func (s *mockGCSSuite) TestDummy() {
-	s.True(true, gcsEndpoint)
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestExponential(t *testing.T) {
+	backoffer := NewExponential(1, 1, 1)
+	for i := 0; i < 10; i++ {
+		require.Equal(t, time.Duration(1), backoffer.Backoff(i))
+	}
+	backoffer = NewExponential(1, 1, 10)
+	for i := 0; i < 10; i++ {
+		require.Equal(t, time.Duration(1), backoffer.Backoff(i))
+	}
+	backoffer = NewExponential(1, 2, 10)
+	res := []time.Duration{1, 2, 4, 8, 10, 10, 10, 10, 10, 10}
+	for i := 0; i < 10; i++ {
+		require.Equal(t, res[i], backoffer.Backoff(i))
+	}
 }

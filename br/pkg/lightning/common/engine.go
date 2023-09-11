@@ -33,11 +33,13 @@ type Engine interface {
 	ID() string
 	// LoadIngestData returns an IngestData that contains the data in [start, end).
 	LoadIngestData(ctx context.Context, start, end []byte) (IngestData, error)
-	// KVStatistics returns the total kv size and total kv length.
-	KVStatistics() (totalKVSize int64, totalKVLength int64)
-	// ImportedStatistics returns the imported kv size and imported kv length.
-	ImportedStatistics() (importedKVSize int64, importedKVLength int64)
+	// KVStatistics returns the total kv size and total kv count.
+	KVStatistics() (totalKVSize int64, totalKVCount int64)
+	// ImportedStatistics returns the imported kv size and imported kv count.
+	ImportedStatistics() (importedKVSize int64, importedKVCount int64)
+	// GetKeyRange returns the key range of the engine. Both are inclusive.
+	GetKeyRange() (firstKey []byte, lastKey []byte, err error)
 	// SplitRanges splits the range [startKey, endKey) into multiple ranges.
 	SplitRanges(startKey, endKey []byte, sizeLimit, keysLimit int64, logger log.Logger) ([]Range, error)
-	// TODO(lance6716): add more methods
+	Close() error
 }

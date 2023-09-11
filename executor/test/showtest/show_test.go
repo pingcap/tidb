@@ -1526,7 +1526,7 @@ func TestShowBuiltin(t *testing.T) {
 	res := tk.MustQuery("show builtins;")
 	require.NotNil(t, res)
 	rows := res.Rows()
-	const builtinFuncNum = 290
+	const builtinFuncNum = 291
 	require.Equal(t, builtinFuncNum, len(rows))
 	require.Equal(t, rows[0][0].(string), "abs")
 	require.Equal(t, rows[builtinFuncNum-1][0].(string), "yearweek")
@@ -1601,7 +1601,9 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(2), b varchar(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1681 Integer display width is deprecated and will be removed in a future release.",
+	))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int DEFAULT NULL,\n" +
 		"  `b` varchar(2) DEFAULT NULL\n" +
@@ -1609,7 +1611,9 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint(10), b bigint)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1681 Integer display width is deprecated and will be removed in a future release.",
+	))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` bigint DEFAULT NULL,\n" +
 		"  `b` bigint DEFAULT NULL\n" +
@@ -1618,8 +1622,10 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a tinyint(5), b tinyint(2), c tinyint)")
 	// Here it will occur 2 warnings.
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release.",
-		"Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1681 Integer display width is deprecated and will be removed in a future release.",
+		"Warning 1681 Integer display width is deprecated and will be removed in a future release.",
+	))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` tinyint DEFAULT NULL,\n" +
 		"  `b` tinyint DEFAULT NULL,\n" +
@@ -1628,7 +1634,9 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a smallint(5), b smallint)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1681 Integer display width is deprecated and will be removed in a future release.",
+	))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` smallint DEFAULT NULL,\n" +
 		"  `b` smallint DEFAULT NULL\n" +
@@ -1636,7 +1644,9 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a mediumint(5), b mediumint)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1681 Integer display width is deprecated and will be removed in a future release.",
+	))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` mediumint DEFAULT NULL,\n" +
 		"  `b` mediumint DEFAULT NULL\n" +
@@ -1644,14 +1654,28 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int1(1), b int2(2), c int3, d int4, e int8)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release.",
-		"Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1681 Integer display width is deprecated and will be removed in a future release.",
+	))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
-		"  `a` tinyint DEFAULT NULL,\n" +
+		"  `a` tinyint(1) DEFAULT NULL,\n" +
 		"  `b` smallint DEFAULT NULL,\n" +
 		"  `c` mediumint DEFAULT NULL,\n" +
 		"  `d` int DEFAULT NULL,\n" +
 		"  `e` bigint DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, c1 bool, c2 int(10) zerofill)")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1681 Integer display width is deprecated and will be removed in a future release.",
+		"Warning 1681 The ZEROFILL attribute is deprecated and will be removed in a future release. Use the LPAD function to zero-pad numbers, or store the formatted numbers in a CHAR column.",
+	))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `id` int NOT NULL,\n" +
+		"  `c1` tinyint(1) DEFAULT NULL,\n" +
+		"  `c2` int(10) unsigned zerofill DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 

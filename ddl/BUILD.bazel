@@ -74,6 +74,8 @@ go_library(
         "//disttask/framework/handle",
         "//disttask/framework/proto",
         "//disttask/framework/scheduler",
+        "//disttask/framework/scheduler/execute",
+        "//disttask/framework/storage",
         "//disttask/operator",
         "//domain/infosync",
         "//domain/resourcegroup",
