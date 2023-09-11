@@ -201,7 +201,8 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			if err != nil {
 				checker.cacheable = false
 				checker.reason = fmt.Errorf("check partition table failed: %w", err).Error()
-				logutil.BgLogger().Warn("check partition table failed", zap.Error(err))
+				logutil.BgLogger().Warn("check partition table failed", zap.Error(err),
+					zap.String("sql", trimIfTooLong(checker.sctx.GetSessionVars().StmtCtx.OriginalSQL)))
 				return in, true
 			}
 			if isPartitioned {
@@ -221,7 +222,8 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			if err != nil {
 				checker.cacheable = false
 				checker.reason = fmt.Errorf("check generated column failed: %w", err).Error()
-				logutil.BgLogger().Warn("check generated column failed", zap.Error(err))
+				logutil.BgLogger().Warn("check generated column failed", zap.Error(err),
+					zap.String("sql", trimIfTooLong(checker.sctx.GetSessionVars().StmtCtx.OriginalSQL)))
 				return in, true
 			}
 			if hasGenCols {
@@ -234,7 +236,8 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			if err != nil {
 				checker.cacheable = false
 				checker.reason = fmt.Errorf("check temporary table failed: %w", err).Error()
-				logutil.BgLogger().Warn("check temporary table failed", zap.Error(err))
+				logutil.BgLogger().Warn("check temporary table failed", zap.Error(err),
+					zap.String("sql", trimIfTooLong(checker.sctx.GetSessionVars().StmtCtx.OriginalSQL)))
 				return in, true
 			}
 			if isTempTbl {
@@ -731,4 +734,11 @@ func getMaxParamLimit(sctx sessionctx.Context) int {
 	}
 
 	return v
+}
+
+func trimIfTooLong(sql string) string {
+	if len(sql) > 256 {
+		return sql[:256]
+	}
+	return sql
 }
