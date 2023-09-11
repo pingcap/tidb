@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -55,6 +56,8 @@ type readIndexSummary struct {
 	minKey    []byte
 	maxKey    []byte
 	totalSize uint64
+	dataFiles []string
+	statFiles []string
 	mu        sync.Mutex
 }
 
@@ -102,25 +105,9 @@ func (r *readIndexStage) SplitSubtask(ctx context.Context, subtask *proto.Subtas
 		return nil, err
 	}
 
-	var startKey, endKey kv.Key
-	var tbl table.PhysicalTable
-	currentVer, err1 := getValidCurrentVersion(d.store)
-	if err1 != nil {
-		return nil, errors.Trace(err1)
-	}
-	if parTbl, ok := r.ptbl.(table.PartitionedTable); ok {
-		pid := sm.PhysicalTableID
-		startKey, endKey, err = getTableRange(r.jc, d.ddlCtx, parTbl.GetPartition(pid), currentVer.Ver, r.job.Priority)
-		if err != nil {
-			logutil.BgLogger().Error("get table range error",
-				zap.String("category", "ddl"),
-				zap.Error(err))
-			return nil, err
-		}
-		tbl = parTbl.GetPartition(pid)
-	} else {
-		startKey, endKey = sm.StartKey, sm.EndKey
-		tbl = r.ptbl
+	startKey, endKey, tbl, err := r.getTableStartEndKey(sm)
+	if err != nil {
+		return nil, err
 	}
 	sessCtx, err := newSessCtx(d.store, r.job.ReorgMeta.SQLMode, r.job.ReorgMeta.Location)
 	if err != nil {
@@ -132,40 +119,13 @@ func (r *readIndexStage) SplitSubtask(ctx context.Context, subtask *proto.Subtas
 	totalRowCount := &atomic.Int64{}
 
 	var pipe *operator.AsyncPipeline
-	if !r.useExternalStore {
-		ei, err := r.bc.Register(r.job.ID, r.index.ID, r.job.SchemaName, r.job.TableName)
-		if err != nil {
-			logutil.Logger(ctx).Warn("cannot register new engine", zap.Error(err),
-				zap.Int64("job ID", r.job.ID), zap.Int64("index ID", r.index.ID))
-			return nil, err
-		}
-		counter := metrics.BackfillTotalCounter.WithLabelValues(
-			metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
-		pipe, err = NewAddIndexIngestPipeline(
-			opCtx, d.store, d.sessPool, r.bc, ei, sessCtx, tbl, r.index, startKey, endKey, totalRowCount, counter)
-		if err != nil {
-			return nil, err
-		}
+	if r.useExternalStore {
+		pipe, err = r.buildExternalStorePipeline(opCtx, d, subtask.ID, sessCtx, tbl, startKey, endKey, totalRowCount)
 	} else {
-		onClose := func(summary *external.WriterSummary) {
-			sum, _ := r.subtaskSummary.Load(subtask.ID)
-			s := sum.(*readIndexSummary)
-			s.mu.Lock()
-			if len(s.minKey) == 0 || summary.Min.Cmp(s.minKey) < 0 {
-				s.minKey = summary.Min.Clone()
-			}
-			if len(s.maxKey) == 0 || summary.Max.Cmp(s.maxKey) > 0 {
-				s.maxKey = summary.Max.Clone()
-			}
-			s.totalSize += summary.TotalSize
-			s.mu.Unlock()
-		}
-		pipe, err = NewWriteIndexToExternalStoragePipeline(
-			opCtx, d.store, d.sessPool, sessCtx, r.job.ID, subtask.ID,
-			tbl, r.index, startKey, endKey, totalRowCount, onClose)
-		if err != nil {
-			return nil, err
-		}
+		pipe, err = r.buildLocalStorePipeline(opCtx, d, sessCtx, tbl, startKey, endKey, totalRowCount)
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	err = pipe.Execute()
@@ -217,9 +177,12 @@ func (r *readIndexStage) OnFinished(ctx context.Context, subtask *proto.Subtask)
 	subtaskMeta.MinKey = s.minKey
 	subtaskMeta.MaxKey = s.maxKey
 	subtaskMeta.TotalKVSize = s.totalSize
+	subtaskMeta.DataFiles = s.dataFiles
+	subtaskMeta.StatFiles = s.statFiles
 	logutil.Logger(ctx).Info("get key boundary on subtask finished",
 		zap.String("min", hex.EncodeToString(s.minKey)),
 		zap.String("max", hex.EncodeToString(s.maxKey)),
+		zap.Int("fileCount", len(s.dataFiles)),
 		zap.Uint64("totalSize", s.totalSize))
 	meta, err := json.Marshal(subtaskMeta)
 	if err != nil {
@@ -234,4 +197,80 @@ func (r *readIndexStage) Rollback(ctx context.Context) error {
 		zap.String("category", "ddl"), zap.Int64("jobID", r.job.ID))
 	ingest.LitBackCtxMgr.Unregister(r.job.ID)
 	return nil
+}
+
+func (r *readIndexStage) getTableStartEndKey(sm *BackfillSubTaskMeta) (
+	start, end kv.Key, tbl table.PhysicalTable, err error) {
+	currentVer, err1 := getValidCurrentVersion(r.d.store)
+	if err1 != nil {
+		return nil, nil, nil, errors.Trace(err1)
+	}
+	if parTbl, ok := r.ptbl.(table.PartitionedTable); ok {
+		pid := sm.PhysicalTableID
+		start, end, err = getTableRange(r.jc, r.d.ddlCtx, parTbl.GetPartition(pid), currentVer.Ver, r.job.Priority)
+		if err != nil {
+			logutil.BgLogger().Error("get table range error",
+				zap.String("category", "ddl"),
+				zap.Error(err))
+			return nil, nil, nil, err
+		}
+		tbl = parTbl.GetPartition(pid)
+	} else {
+		start, end = sm.StartKey, sm.EndKey
+		tbl = r.ptbl
+	}
+	return start, end, tbl, nil
+}
+
+func (r *readIndexStage) buildLocalStorePipeline(
+	opCtx *OperatorCtx,
+	d *ddl,
+	sessCtx sessionctx.Context,
+	tbl table.PhysicalTable,
+	start, end kv.Key,
+	totalRowCount *atomic.Int64,
+) (*operator.AsyncPipeline, error) {
+	ei, err := r.bc.Register(r.job.ID, r.index.ID, r.job.SchemaName, r.job.TableName)
+	if err != nil {
+		logutil.Logger(opCtx).Warn("cannot register new engine", zap.Error(err),
+			zap.Int64("job ID", r.job.ID), zap.Int64("index ID", r.index.ID))
+		return nil, err
+	}
+	counter := metrics.BackfillTotalCounter.WithLabelValues(
+		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
+	return NewAddIndexIngestPipeline(
+		opCtx, d.store, d.sessPool, r.bc, ei, sessCtx, tbl, r.index, start, end, totalRowCount, counter)
+}
+
+func (r *readIndexStage) buildExternalStorePipeline(
+	opCtx *OperatorCtx,
+	d *ddl,
+	subtaskID int64,
+	sessCtx sessionctx.Context,
+	tbl table.PhysicalTable,
+	start, end kv.Key,
+	totalRowCount *atomic.Int64,
+) (*operator.AsyncPipeline, error) {
+	onClose := func(summary *external.WriterSummary) {
+		sum, _ := r.subtaskSummary.Load(subtaskID)
+		s := sum.(*readIndexSummary)
+		s.mu.Lock()
+		if len(s.minKey) == 0 || summary.Min.Cmp(s.minKey) < 0 {
+			s.minKey = summary.Min.Clone()
+		}
+		if len(s.maxKey) == 0 || summary.Max.Cmp(s.maxKey) > 0 {
+			s.maxKey = summary.Max.Clone()
+		}
+		s.totalSize += summary.TotalSize
+		for _, f := range summary.MultipleFilesStats {
+			for _, filename := range f.Filenames {
+				s.dataFiles = append(s.dataFiles, filename[0])
+				s.statFiles = append(s.statFiles, filename[1])
+			}
+		}
+		s.mu.Unlock()
+	}
+	return NewWriteIndexToExternalStoragePipeline(
+		opCtx, d.store, d.sessPool, sessCtx, r.job.ID, subtaskID,
+		tbl, r.index, start, end, totalRowCount, onClose)
 }

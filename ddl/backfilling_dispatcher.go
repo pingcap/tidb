@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
@@ -263,7 +262,7 @@ func generateMergeSortPlan(
 	task *proto.Task,
 	jobID int64,
 ) ([][]byte, error) {
-	firstKey, lastKey, totalSize, err := getSummaryFromLastStep(taskHandle, task.ID)
+	firstKey, lastKey, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +270,7 @@ func generateMergeSortPlan(
 	if err != nil {
 		return nil, err
 	}
-	splitter, err := getRangeSplitter(ctx, jobID, int64(totalSize), int64(len(instanceIDs)))
+	splitter, err := getRangeSplitter(ctx, jobID, int64(totalSize), int64(len(instanceIDs)), dataFiles, statFiles)
 	if err != nil {
 		return nil, err
 	}
@@ -327,6 +326,7 @@ func getRangeSplitter(
 	jobID int64,
 	totalSize int64,
 	instanceCnt int64,
+	dataFiles, statFiles []string,
 ) (*external.RangeSplitter, error) {
 	// TODO(tangenta): replace uri with global variable.
 	uri := fmt.Sprintf("s3://%s/%s?access-key=%s&secret-access-key=%s&endpoint=http://%s:%s&force-path-style=true",
@@ -336,10 +336,6 @@ func getRangeSplitter(
 		return nil, err
 	}
 	extStore, err := storage.New(ctx, backend, &storage.ExternalStorageOptions{})
-	if err != nil {
-		return nil, err
-	}
-	dataFiles, statFiles, err := external.GetAllFileNames(ctx, extStore, strconv.Itoa(int(jobID)))
 	if err != nil {
 		return nil, err
 	}
@@ -369,17 +365,18 @@ func getRangeSplitter(
 func getSummaryFromLastStep(
 	taskHandle dispatcher.TaskHandle,
 	gTaskID int64,
-) (min, max kv.Key, totalKVSize uint64, err error) {
+) (min, max kv.Key, totalKVSize uint64, dataFiles, statFiles []string, err error) {
 	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, proto.StepOne)
 	if err != nil {
-		return nil, nil, 0, errors.Trace(err)
+		return nil, nil, 0, nil, nil, errors.Trace(err)
 	}
 	var minKey, maxKey kv.Key
+	var allDataFiles, allStatFiles []string
 	for _, subTaskMeta := range subTaskMetas {
 		var subtask BackfillSubTaskMeta
 		err := json.Unmarshal(subTaskMeta, &subtask)
 		if err != nil {
-			return nil, nil, 0, errors.Trace(err)
+			return nil, nil, 0, nil, nil, errors.Trace(err)
 		}
 		subTaskMin := kv.Key(subtask.MinKey)
 		if len(minKey) == 0 || (len(subTaskMin) > 0 && subTaskMin.Cmp(minKey) < 0) {
@@ -390,6 +387,9 @@ func getSummaryFromLastStep(
 			maxKey = subtask.MaxKey
 		}
 		totalKVSize += subtask.TotalKVSize
+
+		allDataFiles = append(allDataFiles, subtask.DataFiles...)
+		allStatFiles = append(allStatFiles, subtask.StatFiles...)
 	}
-	return minKey, maxKey, totalKVSize, nil
+	return minKey, maxKey, totalKVSize, allDataFiles, allStatFiles, nil
 }
