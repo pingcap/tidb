@@ -58,7 +58,7 @@ func GetRowCountByIndexRanges(sctx sessionctx.Context, coll *statistics.HistColl
 		}
 	}
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
-	if !ok || idx.IsInvalid(sctx, coll.Pseudo) {
+	if statistics.IndexStatsIsInvalid(idx, sctx, coll.Pseudo, coll.PhysicalID, idxID) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)

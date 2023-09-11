@@ -779,10 +779,9 @@ func findAvailableStatsForCol(sctx sessionctx.Context, coll *statistics.HistColl
 	// try to find available stats in single column index stats (except for prefix index)
 	for idxStatsIdx, cols := range coll.Idx2ColumnIDs {
 		if len(cols) == 1 && cols[0] == uniqueID {
-			idxStats, ok := coll.Indices[idxStatsIdx]
-			if ok &&
+			idxStats := coll.Indices[idxStatsIdx]
+			if !statistics.IndexStatsIsInvalid(idxStats, sctx, coll.Pseudo, coll.PhysicalID, idxStatsIdx) &&
 				idxStats.Info.Columns[0].Length == types.UnspecifiedLength &&
-				!idxStats.IsInvalid(sctx, coll.Pseudo) &&
 				idxStats.IsFullLoad() {
 				return true, idxStatsIdx
 			}

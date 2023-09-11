@@ -128,9 +128,12 @@ func (idx *Index) TotalRowCount() float64 {
 	return idx.Histogram.TotalRowCount()
 }
 
-// IsInvalid checks if this index is invalid.
-func (idx *Index) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) {
-	idx.CheckStats()
+func IndexStatsIsInvalid(idxStats *Index, sctx sessionctx.Context, collPseudo bool, tid, cid int64) (res bool) {
+	// When we are using stats from PseudoTable(), all column/index ID will be -1.
+	if (idxStats != nil && idxStats.IsFullLoad()) || tid <= 0 {
+		return
+	}
+	HistogramNeededItems.insert(model.TableItemID{TableID: tid, ID: cid, IsIndex: true})
 	var totalCount float64
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -143,7 +146,10 @@ func (idx *Index) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
-	totalCount = idx.TotalRowCount()
+	if idxStats == nil {
+		return true
+	}
+	totalCount = idxStats.TotalRowCount()
 	return (collPseudo) || totalCount == 0
 }
 

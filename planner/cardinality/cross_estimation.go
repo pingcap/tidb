@@ -176,7 +176,7 @@ func getColumnRangeCounts(sctx sessionctx.Context, colID int64, ranges []*ranger
 	for i, ran := range ranges {
 		if idxID >= 0 {
 			idxHist := histColl.Indices[idxID]
-			if idxHist == nil || idxHist.IsInvalid(sctx, false) {
+			if statistics.IndexStatsIsInvalid(idxHist, sctx, histColl.Pseudo, histColl.PhysicalID, idxID) {
 				return nil, false
 			}
 			count, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran})

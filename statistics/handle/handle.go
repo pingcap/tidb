@@ -812,7 +812,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 		return nil
 	}
 	c, ok := tbl.Columns[col.ID]
-	if !ok || !c.IsLoadNeeded() {
+	if (!ok && !tbl.ColAndIndexExistenceMap.Has(col.ID, false)) || (ok && !c.IsLoadNeeded()) {
 		statistics.HistogramNeededItems.Delete(col)
 		return nil
 	}
@@ -875,7 +875,7 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 		return nil
 	}
 	index, ok := tbl.Indices[idx.ID]
-	if !ok {
+	if (!ok && tbl.ColAndIndexExistenceMap.Has(idx.ID, true)) || (ok && index.IsFullLoad()) {
 		statistics.HistogramNeededItems.Delete(idx)
 		return nil
 	}

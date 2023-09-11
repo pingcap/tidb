@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/cardinality"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/internal"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -363,7 +364,7 @@ func TestLoadStats(t *testing.T) {
 	require.Equal(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
 	require.False(t, idx.IsEssentialStatsLoaded())
 	// IsInvalid adds the index to HistogramNeededItems.
-	idx.IsInvalid(testKit.Session(), false)
+	statistics.IndexStatsIsInvalid(idx, testKit.Session(), false, stat.PhysicalID, idxBID)
 	require.NoError(t, h.LoadNeededHistograms())
 	stat = h.GetTableStats(tableInfo)
 	idx = stat.Indices[tableInfo.Indices[0].ID]
