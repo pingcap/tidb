@@ -48,7 +48,7 @@ func newIngestIndexStage(
 	}
 }
 
-func (i *ingestIndexStage) InitSubtaskExecEnv(_ context.Context) error {
+func (i *ingestIndexStage) Init(_ context.Context) error {
 	logutil.BgLogger().Info("ingest index stage init subtask exec env", zap.String("category", "ddl"))
 	_, _, err := i.bc.Flush(i.index.ID, ingest.FlushModeForceGlobal)
 	if err != nil {
@@ -67,13 +67,13 @@ func (*ingestIndexStage) SplitSubtask(_ context.Context, _ *proto.Subtask) ([]pr
 	return nil, nil
 }
 
-func (i *ingestIndexStage) CleanupSubtaskExecEnv(_ context.Context) error {
+func (i *ingestIndexStage) Cleanup(_ context.Context) error {
 	logutil.BgLogger().Info("ingest index stage cleanup subtask exec env", zap.String("category", "ddl"))
 	ingest.LitBackCtxMgr.Unregister(i.jobID)
 	return nil
 }
 
-func (*ingestIndexStage) OnSubtaskFinished(_ context.Context, subtask []byte) ([]byte, error) {
+func (*ingestIndexStage) OnFinished(_ context.Context, subtask []byte) ([]byte, error) {
 	return subtask, nil
 }
 

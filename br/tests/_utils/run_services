@@ -18,6 +18,7 @@ set -eu
 
 export PD_PEER_ADDR="127.0.0.1:2380"
 export PD_ADDR="127.0.0.1:2379"
+export PD_PID="${TEST_DIR:?}/pd_pid.txt"
 export TIDB_IP="127.0.0.1"
 export TIDB_PORT="4000"
 export TIDB_ADDR="127.0.0.1:4000"
@@ -75,13 +76,15 @@ start_services() {
 
 start_pd() {
     echo "Starting PD..."
-    mkdir -p "$TEST_DIR/pd"
+    mkdir -p "$TEST_DIR/pd" -m 700
     pd-server \
         --client-urls "https://$PD_ADDR" \
         --peer-urls "https://$PD_PEER_ADDR" \
         --log-file "$TEST_DIR/pd.log" \
         --data-dir "$TEST_DIR/pd" \
         --config $PD_CONFIG &
+    pid=$!
+    echo -e "$pid" > "${PD_PID}"
     # wait until PD is online...
     i=0
     while ! run_curl "https://$PD_ADDR/pd/api/v1/version"; do
