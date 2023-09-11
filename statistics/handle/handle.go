@@ -1125,6 +1125,8 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 	if len(rows) > 0 {
 		snapshot := rows[0].GetUint64(0)
 		// A newer version analyze result has been written, so skip this writing.
+		// For multi-valued index analyze, this check is not needed because we expect there's another normal v2 analyze
+		// table task that may update the snapshot in stats_meta table (that task may finish before or after this task).
 		if snapshot >= results.Snapshot && results.StatsVer == statistics.Version2 && !results.ForMVIndex {
 			return nil
 		}
