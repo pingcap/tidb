@@ -427,7 +427,7 @@ func expBackoffEstimation(sctx sessionctx.Context, idx *statistics.Index, coll *
 			err        error
 			foundStats bool
 		)
-		if col, ok := coll.Columns[colID]; ok && !col.IsInvalid(sctx, coll.Pseudo) {
+		if !statistics.ColumnStatsIsInvalid(coll.Columns[colID], sctx, coll.Pseudo, coll.PhysicalID, colID) {
 			foundStats = true
 			count, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
 		}

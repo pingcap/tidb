@@ -15,8 +15,6 @@
 package statistics
 
 import (
-	"strconv"
-
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util/debugtrace"
@@ -140,13 +138,10 @@ func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
 var HistogramNeededItems = neededStatsMap{items: map[model.TableItemID]struct{}{}}
 
-// IsInvalid checks if this column is invalid.
+// ColumnStatsIsInvalid checks if this column is invalid.
 // If this column has histogram but not loaded yet,
 // then we mark it as need histogram.
-func (c *Column) IsInvalid(
-	sctx sessionctx.Context,
-	collPseudo bool,
-) (res bool) {
+func ColumnStatsIsInvalid(colStats *Column, sctx sessionctx.Context, collPseudo bool, tid, cid int64) (res bool) {
 	var totalCount float64
 	var ndv int64
 	var inValidForCollPseudo, essentialLoaded bool
@@ -165,29 +160,32 @@ func (c *Column) IsInvalid(
 	}
 	if sctx != nil {
 		stmtctx := sctx.GetSessionVars().StmtCtx
-		if (!c.IsStatsInitialized() || c.IsLoadNeeded()) && stmtctx != nil {
+		if (colStats == nil || !colStats.IsStatsInitialized() || colStats.IsLoadNeeded()) && stmtctx != nil && tid > 0 {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
-					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
+					zap.Int64("table id", tid),
+					zap.Int64("column id", cid),
+				)
 			}
-			// In some tests, the c.Info is not set, so we add this check here.
-			// When we are using stats from PseudoTable(), the table ID will possibly be -1.
-			// In this case, we don't trigger stats loading.
-			if c.Info != nil && c.PhysicalID > 0 {
-				HistogramNeededItems.insert(model.TableItemID{TableID: c.PhysicalID, ID: c.Info.ID, IsIndex: false})
-			}
+			HistogramNeededItems.insert(model.TableItemID{TableID: tid, ID: cid, IsIndex: false})
 		}
 	}
 	if collPseudo {
 		inValidForCollPseudo = true
 		return true
 	}
+	if colStats == nil {
+		totalCount = -1
+		ndv = -1
+		essentialLoaded = false
+		return true
+	}
 	// In some cases, some statistics in column would be evicted
 	// For example: the cmsketch of the column might be evicted while the histogram and the topn are still exists
 	// In this case, we will think this column as valid due to we can still use the rest of the statistics to do optimize.
-	totalCount = c.TotalRowCount()
-	essentialLoaded = c.IsEssentialStatsLoaded()
-	ndv = c.Histogram.NDV
+	totalCount = colStats.TotalRowCount()
+	essentialLoaded = colStats.IsEssentialStatsLoaded()
+	ndv = colStats.Histogram.NDV
 	return totalCount == 0 || (!essentialLoaded && ndv > 0)
 }
 

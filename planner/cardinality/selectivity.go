@@ -102,7 +102,7 @@ func Selectivity(
 
 		colHist := coll.Columns[c.UniqueID]
 		var sel float64
-		if colHist == nil || colHist.IsInvalid(ctx, coll.Pseudo) {
+		if statistics.ColumnStatsIsInvalid(colHist, ctx, false, coll.PhysicalID, c.UniqueID) {
 			sel = 1.0 / pseudoEqualRate
 		} else if colHist.Histogram.NDV > 0 {
 			sel = 1 / float64(colHist.Histogram.NDV)
@@ -773,7 +773,7 @@ func GetSelectivityByFilter(sctx sessionctx.Context, coll *statistics.HistColl, 
 
 func findAvailableStatsForCol(sctx sessionctx.Context, coll *statistics.HistColl, uniqueID int64) (isIndex bool, idx int64) {
 	// try to find available stats in column stats
-	if colStats, ok := coll.Columns[uniqueID]; ok && colStats != nil && !colStats.IsInvalid(sctx, coll.Pseudo) && colStats.IsFullLoad() {
+	if colStats := coll.Columns[uniqueID]; !statistics.ColumnStatsIsInvalid(colStats, sctx, coll.Pseudo, coll.PhysicalID, uniqueID) && colStats.IsFullLoad() {
 		return false, uniqueID
 	}
 	// try to find available stats in single column index stats (except for prefix index)
@@ -915,29 +915,28 @@ func crossValidationSelectivity(
 		if i >= usedColsLen {
 			break
 		}
-		if col, ok := coll.Columns[colID]; ok {
-			if col.IsInvalid(sctx, coll.Pseudo) {
-				continue
-			}
-			// Since the column range is point range(LowVal is equal to HighVal), we need to set both LowExclude and HighExclude to false.
-			// Otherwise we would get 0.0 estRow from GetColumnRowCount.
-			rang := ranger.Range{
-				LowVal:      []types.Datum{idxPointRange.LowVal[i]},
-				LowExclude:  false,
-				HighVal:     []types.Datum{idxPointRange.HighVal[i]},
-				HighExclude: false,
-				Collators:   []collate.Collator{idxPointRange.Collators[i]},
-			}
+		col := coll.Columns[colID]
+		if statistics.ColumnStatsIsInvalid(col, sctx, coll.Pseudo, coll.PhysicalID, colID) {
+			continue
+		}
+		// Since the column range is point range(LowVal is equal to HighVal), we need to set both LowExclude and HighExclude to false.
+		// Otherwise we would get 0.0 estRow from GetColumnRowCount.
+		rang := ranger.Range{
+			LowVal:      []types.Datum{idxPointRange.LowVal[i]},
+			LowExclude:  false,
+			HighVal:     []types.Datum{idxPointRange.HighVal[i]},
+			HighExclude: false,
+			Collators:   []collate.Collator{idxPointRange.Collators[i]},
+		}
 
-			rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
-			if err != nil {
-				return 0, 0, err
-			}
-			crossValidationSelectivity = crossValidationSelectivity * (rowCount / totalRowCount)
+		rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
+		if err != nil {
+			return 0, 0, err
+		}
+		crossValidationSelectivity = crossValidationSelectivity * (rowCount / totalRowCount)
 
-			if rowCount < minRowCount {
-				minRowCount = rowCount
-			}
+		if rowCount < minRowCount {
+			minRowCount = rowCount
 		}
 	}
 	return minRowCount, crossValidationSelectivity, nil
