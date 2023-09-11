@@ -982,6 +982,8 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
+	// TiDBCloudStorageURI used to set a cloud storage uri for ddl add index and import into.
+	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
 	// TiDBAutoBuildStatsConcurrency is used to set the build concurrency of auto-analyze.
 	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
 	// TiDBSysProcScanConcurrency is used to set the scan concurrency of for backend system processes, like auto-analyze.
@@ -1504,6 +1506,7 @@ var (
 	SkipMissingPartitionStats = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 	ServiceScope              = atomic.NewString("")
 	SchemaVersionCacheLimit   = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
+	CloudStorageURI           = atomic.NewString("")
 )
 
 var (
@@ -1527,6 +1530,10 @@ var (
 	GetExternalTimestamp func(ctx context.Context) (uint64, error)
 	// SetGlobalResourceControl is the func registered by domain to set cluster resource control.
 	SetGlobalResourceControl atomic.Pointer[func(bool)]
+	// RedactCloudStorageURI redacts the cloud storage URI.
+	RedactCloudStorageURI func(uri string) (string, error)
+	// ValidateCloudStorageURI validates the cloud storage URI.
+	ValidateCloudStorageURI func(ctx context.Context, uri string) error
 )
 
 // Hooks functions for Cluster Resource Control.

@@ -2256,6 +2256,16 @@ var defaultSysVars = []*SysVar{
 		DDLDiskQuota.Store(TidbOptUint64(val, DefTiDBDDLDiskQuota))
 		return nil
 	}},
+	// can't assign validate function here. Because validation function will run after GetGlobal function
+	{Scope: ScopeGlobal, Name: TiDBCloudStorageURI, Value: "", Type: TypeStr, GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
+		return RedactCloudStorageURI(CloudStorageURI.Load())
+	}, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
+		if err := ValidateCloudStorageURI(ctx, val); err != nil {
+			return err
+		}
+		CloudStorageURI.Store(val)
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(config.GetGlobalConfig().PessimisticTxn.ConstraintCheckInPlacePessimistic), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.ConstraintCheckInPlacePessimistic = TiDBOptOn(val)
