@@ -1044,5 +1044,22 @@
       "select * from tcommon where (a = 1 and c = 2) or (b = 1) order by c limit 2",
       "select * from thash use index(idx_ac, idx_bc) where a = 1 or b = 1 order by c limit 2"
     ]
+  },
+  {
+    "name": "TestIndexMergeSinkLimit",
+    "cases": [
+      "explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 or b=1 and c=1 limit 2; -- test sink limit to table side of union index merge case, because of table side selection",
+      "explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 and c=1 limit 2; -- test sink limit to table side of intersection index merge case, because of table side selection",
+      "select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 and c=1 limit 2",
+      "explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 or b=1 limit 2; -- test sink limit to index side of union index merge case, because of table side is pure table scan",
+      "explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 limit 2; -- test sink limit to table side of intersection index merge case, because of intersection case special",
+      "select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 limit 2",
+      "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j)) limit 1; -- index merge union case, sink limit into index side and embed another one inside index merge reader",
+      "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') limit 1; -- index merge intersection case, sink limit into table side",
+      "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') limit 1; -- index merge union case, sink limit above selection above index merge reader, because json_overlaps can't be pushed down",
+      "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j) and a=1 ) limit 1; -- index merge union case, sink limit to table side, because selection exists on table side",
+      "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') and a=1 limit 1; -- index merge intersection case, sink limit to table side because selection exists on table side",
+      "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') and a=1 limit 1; -- index merge union case, sink limit above selection above index merge reader, because json_overlaps can't be pushed down"
+    ]
   }
 ]

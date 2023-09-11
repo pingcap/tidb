@@ -1053,7 +1053,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		exit:                make(chan struct{}),
 		sysSessionPool:      newSessionPool(capacity, factory),
 		statsLease:          statsLease,
-		infoCache:           infoschema.NewCache(16),
+		infoCache:           infoschema.NewCache(int(variable.SchemaVersionCacheLimit.Load())),
 		slowQuery:           newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		indexUsageSyncLease: idxUsageSyncLease,
 		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
@@ -1470,7 +1470,11 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 }
 
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager, serverID string) {
-	schedulerManager.Start()
+	err := schedulerManager.Start()
+	if err != nil {
+		logutil.BgLogger().Error("dist task scheduler failed", zap.Error(err))
+		return
+	}
 	logutil.BgLogger().Info("dist task scheduler started")
 	defer func() {
 		logutil.BgLogger().Info("stopping dist task scheduler")
@@ -1486,7 +1490,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		var err error
 		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager, serverID)
 		if err != nil {
-			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
+			logutil.BgLogger().Error("failed to create a dist task dispatcher", zap.Error(err))
 			return
 		}
 		dispatcherManager.Start()

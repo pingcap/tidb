@@ -586,6 +586,34 @@ func TestSchedulerDownManyNodes(t *testing.T) {
 	distContext.Close()
 }
 
+func TestFrameworkSetLabel(t *testing.T) {
+	var m sync.Map
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	distContext := testkit.NewDistExecutionContext(t, 3)
+	tk := testkit.NewTestKit(t, distContext.Store)
+	// 1. all "" role.
+	DispatchTaskAndCheckSuccess("😁", t, &m)
+	// 2. one "background" role.
+	tk.MustExec("set global tidb_service_scope=background")
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
+	tk.MustQuery("select @@tidb_service_scope").Check(testkit.Rows("background"))
+	DispatchTaskAndCheckSuccess("😊", t, &m)
+	// 3. 2 "background" role.
+	tk.MustExec("update mysql.dist_framework_meta set role = \"background\" where host = \":4001\"")
+	DispatchTaskAndCheckSuccess("😆", t, &m)
+
+	// 4. set wrong sys var.
+	tk.MustMatchErrMsg("set global tidb_service_scope=wrong", `incorrect value: .*. tidb_service_scope options: "", background`)
+
+	// 5. set keyspace id.
+	tk.MustExec("update mysql.dist_framework_meta set keyspace_id = 16777216 where host = \":4001\"")
+	tk.MustQuery("select keyspace_id from mysql.dist_framework_meta where host = \":4001\"").Check(testkit.Rows("16777216"))
+
+	distContext.Close()
+}
+
 func TestMultiTasks(t *testing.T) {
 	defer dispatcher.ClearDispatcherFactory()
 	defer scheduler.ClearSchedulers()
