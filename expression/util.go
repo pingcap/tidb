@@ -1802,8 +1802,13 @@ func ExprsToStringsForDisplay(exprs []Expression) []string {
 // SortAndGenMD5HashForCNFExprs sorts cnf exprs by their hash codes
 // Return true and the hash code if none DNF expressions' length > 1000;
 // Otherwise, return false and 0
-// TODO: handle paramMaker constant's hash code to be "constantFlag + encodedValue" instead of "parameterFlag + encodedOrder"
 func SortAndGenMD5HashForCNFExprs(sc *stmtctx.StatementContext, conditions []Expression) (bool, uint64) {
+	prevIgnoreParamMarkerFlag := sc.IgnoreParamMarkerHashCode
+	sc.IgnoreParamMarkerHashCode = true
+	defer func() {
+		sc.IgnoreParamMarkerHashCode = prevIgnoreParamMarkerFlag
+	}()
+
 	cnfHashCodes := make([][]byte, 0, len(conditions))
 	for _, arg := range conditions {
 		if sf, ok := arg.(*ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {

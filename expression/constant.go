@@ -112,8 +112,9 @@ type Constant struct {
 	DeferredExpr Expression
 	// ParamMarker holds param index inside sessionVars.PreparedParams.
 	// It's only used to reference a user variable provided in the `EXECUTE` statement or `COM_EXECUTE` binary protocol.
-	ParamMarker *ParamMarker
-	hashcode    []byte
+	ParamMarker               *ParamMarker
+	hashcode                  []byte
+	ignoreParamMarkerHashCode []byte // use ConstantFlag+EncodedValue even if ParamMarker is not nil
 
 	collationInfo
 }
@@ -436,16 +437,22 @@ func (c *Constant) Decorrelate(_ *Schema) Expression {
 
 // HashCode implements Expression interface.
 func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
-	if len(c.hashcode) > 0 {
-		return c.hashcode
+	useIgnoreParamMarkerHashCode := c.DeferredExpr == nil && c.ParamMarker != nil && sc.IgnoreParamMarkerHashCode
+	if !useIgnoreParamMarkerHashCode {
+		if len(c.hashcode) > 0 {
+			return c.hashcode
+		}
+	} else if len(c.ignoreParamMarkerHashCode) > 0 {
+		return c.ignoreParamMarkerHashCode
 	}
 
 	if c.DeferredExpr != nil {
+		// DeferredExpr won't contain ParamMarker, thus use hashcode directly
 		c.hashcode = c.DeferredExpr.HashCode(sc)
 		return c.hashcode
 	}
 
-	if c.ParamMarker != nil {
+	if !useIgnoreParamMarkerHashCode && c.ParamMarker != nil {
 		c.hashcode = append(c.hashcode, parameterFlag)
 		c.hashcode = codec.EncodeInt(c.hashcode, int64(c.ParamMarker.order))
 		return c.hashcode
@@ -455,9 +462,14 @@ func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
 	if err != nil {
 		terror.Log(err)
 	}
-	c.hashcode = append(c.hashcode, constantFlag)
-	c.hashcode = codec.HashCode(c.hashcode, c.Value)
-	return c.hashcode
+	if !useIgnoreParamMarkerHashCode {
+		c.hashcode = append(c.hashcode, constantFlag)
+		c.hashcode = codec.HashCode(c.hashcode, c.Value)
+		return c.hashcode
+	}
+	c.ignoreParamMarkerHashCode = append(c.ignoreParamMarkerHashCode, constantFlag)
+	c.ignoreParamMarkerHashCode = codec.HashCode(c.ignoreParamMarkerHashCode, c.Value)
+	return c.ignoreParamMarkerHashCode
 }
 
 // ResolveIndices implements Expression interface.
@@ -520,7 +532,7 @@ func (c *Constant) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyConstantSize + c.Value.MemUsage() + int64(cap(c.hashcode))
+	sum = emptyConstantSize + c.Value.MemUsage() + int64(cap(c.hashcode)) + int64(cap(c.ignoreParamMarkerHashCode))
 	if c.RetType != nil {
 		sum += c.RetType.MemoryUsage()
 	}

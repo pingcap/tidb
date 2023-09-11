@@ -1517,8 +1517,17 @@ func (a *ExecStmt) RecordHistoryStats() {
 		return
 	}
 
-	// TODO: handle CTE operators
-	for _, flatOp := range flat.Main {
+	for _, flatCTEPlanTree := range flat.CTEs {
+		a.traverseFlatPlanForHistoryStats(stmtCtx, flatCTEPlanTree, sql)
+	}
+	for _, flatSubQueryPlanTree := range flat.ScalarSubQueries {
+		a.traverseFlatPlanForHistoryStats(stmtCtx, flatSubQueryPlanTree, sql)
+	}
+	a.traverseFlatPlanForHistoryStats(stmtCtx, flat.Main, sql)
+}
+
+func (a *ExecStmt) traverseFlatPlanForHistoryStats(stmtCtx *stmtctx.StatementContext, flatPlanTree plannercore.FlatPlanTree, sql string) {
+	for _, flatOp := range flatPlanTree {
 		pp, isPhysicalPlan := flatOp.Origin.(plannercore.PhysicalPlan)
 		if !isPhysicalPlan {
 			continue

@@ -409,6 +409,8 @@ type StatementContext struct {
 	TiFlashEngineRemovedDueToStrictSQLMode bool
 	// CanonicalHashCode try to get the canonical hash code from expression.
 	CanonicalHashCode bool
+	// IgnoreParamMarkerHashCode try to use ConstantFlag+encoded_value instead of ParameterFlag+encoded_ParamMarkerOrder
+	IgnoreParamMarkerHashCode bool
 	// StaleTSOProvider is used to provide stale timestamp oracle for read-only transactions.
 	StaleTSOProvider struct {
 		sync.Mutex

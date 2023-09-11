@@ -598,6 +598,8 @@ func TestSortAndGenMD5HashForCNFExprs(t *testing.T) {
 	succ, hashCode11 := SortAndGenMD5HashForCNFExprs(sc, conditions)
 	require.True(t, succ)
 	require.True(t, hashCode10 == hashCode11)
+
+	// TODO: add test cases for ParamMarker constants
 }
 
 func BenchmarkExtractColumns(b *testing.B) {
