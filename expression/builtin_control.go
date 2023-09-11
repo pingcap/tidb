@@ -241,7 +241,6 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		types.SetBinChsClnFlag(fieldTp)
 	}
 
-	// The types of the output arguments should all be retType for the CASE WHEN function.
 	for i := 1; i < l-1; i += 2 {
 		args[i] = CastForDecimalIfNeed(ctx, fieldTp, args[i])
 	}
