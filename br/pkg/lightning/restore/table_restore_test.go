@@ -1445,7 +1445,7 @@ func (s *tableRestoreSuite) TestEstimate() {
 		targetInfoGetter: mockTarget,
 	}
 	preInfoGetter.Init()
-	theCheckBuilder := NewPrecheckItemBuilder(s.cfg, dbMetas, preInfoGetter, nil)
+	theCheckBuilder := NewPrecheckItemBuilder(s.cfg, dbMetas, preInfoGetter, nil, nil)
 	rc := &Controller{
 		cfg:                 s.cfg,
 		checkTemplate:       template,
