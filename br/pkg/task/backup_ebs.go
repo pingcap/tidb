@@ -39,6 +39,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/keepalive"
+
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
 
 const (
@@ -67,6 +69,27 @@ func DefineBackupEBSFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagOperatorPausedGCAndSchedulers)
 }
 
+// checkConflictingLightningTasks checks whether there are some running importing tasks in the cluster.
+// This is necessary because the Ingest raft command relies on the external context beyond the raft log.
+// Those context might be lost due to the time order of taking snapshot.
+func checkConflictingLightningTasks(ctx context.Context, cfg Config) error {
+	etcdCli, err := dialEtcdWithCfg(ctx, cfg)
+	if err != nil {
+		return errors.Annotate(err, "dial etcd failed")
+	}
+	defer func() {
+		_ = etcdCli.Close()
+	}()
+	hasImportTask, err := utils.GetImportTasksFrom(ctx, etcdCli)
+	if err != nil {
+		return errors.Annotate(err, "get import tasks from etcd failed")
+	}
+	if !hasImportTask.Empty() {
+		return errors.Annotate(berrors.ErrBackupConflicting, hasImportTask.MessageToUser())
+	}
+	return nil
+}
+
 // RunBackupEBS starts a backup task to backup volume vai EBS snapshot.
 func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	cfg.Adjust()
@@ -86,6 +109,10 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
+
+	if err := checkConflictingLightningTasks(ctx, cfg.Config); err != nil {
+		return err
+	}
 
 	// receive the volume info from TiDB deployment tools.
 	backupInfo := &config.EBSBasedBRMeta{}
