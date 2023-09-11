@@ -15,6 +15,7 @@ go_test(
         "//ddl",
         "//ddl/util",
         "//domain",
+        "//domain/infosync",
         "//infoschema",
         "//kv",
         "//meta",
