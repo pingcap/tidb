@@ -1927,6 +1927,13 @@ func (e *UnionExec) Close() error {
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
+	for name, val := range vars.StmtCtx.SetVarHintRestore {
+		err := vars.SetSystemVar(name, val)
+		if err != nil {
+			logutil.BgLogger().Warn("Failed to restore the variable after SET_VAR hint", zap.String("variable name", name), zap.String("expected value", val))
+		}
+	}
+	vars.StmtCtx.SetVarHintRestore = nil
 	var sc *stmtctx.StatementContext
 	if vars.TxnCtx.CouldRetry || mysql.HasCursorExistsFlag(vars.Status) {
 		// Must construct new statement context object, the retry history need context for every statement.
