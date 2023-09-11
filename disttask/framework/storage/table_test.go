@@ -482,7 +482,7 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	require.NoError(t, sm.AddNewSubTask(taskID, proto.StepInit, tidb3, []byte(meta), proto.TaskTypeExample, false))
 	require.NoError(t, sm.UpdateSubtaskStateAndError(subTask3, proto.TaskStateFailed, nil))
 
-	subTasks, err := sm.GetSubtasksByStep(taskID, proto.StepInit)
+	subTasks, err := storage.GetSubtasksByTaskIDForTest(sm, taskID)
 	require.NoError(t, err)
 	require.Len(t, subTasks, 3)
 	historySubTasksCnt, err := storage.GetSubtasksFromHistoryForTest(sm)
@@ -492,7 +492,7 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	// test TransferSubTasks2History
 	require.NoError(t, sm.TransferSubTasks2History(taskID))
 
-	subTasks, err = sm.GetSubtasksByStep(taskID, proto.StepInit)
+	subTasks, err = storage.GetSubtasksByTaskIDForTest(sm, taskID)
 	require.NoError(t, err)
 	require.Len(t, subTasks, 0)
 

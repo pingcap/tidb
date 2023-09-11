@@ -699,10 +699,32 @@ func (stm *TaskManager) IsGlobalTaskCancelling(taskID int64) (bool, error) {
 }
 
 // GetSubtasksByStep gets subtasks of global task by step.
-func (stm *TaskManager) GetSubtasksByStep(taskID, step int64) ([]*proto.Subtask, error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx,
-		"select * from mysql.tidb_background_subtask where task_key = %? and step = %?",
-		taskID, step)
+func (stm *TaskManager) GetSubtasksForImportInto(taskID, step int64) ([]*proto.Subtask, error) {
+	var (
+		rs  []chunk.Row
+		err error
+	)
+	err = stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
+		rs, err = ExecSQL(stm.ctx, se,
+			"select * from mysql.tidb_background_subtask where task_key = %? and step = %?",
+			taskID, step,
+		)
+		if err != nil {
+			return err
+		}
+
+		rsFromHistory, err := ExecSQL(stm.ctx, se,
+			"select * from mysql.tidb_background_subtask_history where task_key = %? and step = %?",
+			taskID, step,
+		)
+		if err != nil {
+			return err
+		}
+
+		rs = append(rs, rsFromHistory...)
+		return nil
+	})
+
 	if err != nil {
 		return nil, err
 	}

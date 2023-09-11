@@ -14,6 +14,8 @@
 
 package storage
 
+import "github.com/pingcap/tidb/disttask/framework/proto"
+
 // GetSubtasksFromHistoryForTest gets subtasks from history table for test.
 func GetSubtasksFromHistoryForTest(stm *TaskManager) (int, error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx,
@@ -22,4 +24,21 @@ func GetSubtasksFromHistoryForTest(stm *TaskManager) (int, error) {
 		return 0, err
 	}
 	return len(rs), nil
+}
+
+// GetSubtasksByTaskIDForTest gets subtasks by taskID for test.
+func GetSubtasksByTaskIDForTest(stm *TaskManager, taskID int64) ([]*proto.Subtask, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx,
+		"select * from mysql.tidb_background_subtask where task_key = %?", taskID)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+	subtasks := make([]*proto.Subtask, 0, len(rs))
+	for _, r := range rs {
+		subtasks = append(subtasks, row2SubTask(r))
+	}
+	return subtasks, nil
 }
