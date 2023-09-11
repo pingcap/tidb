@@ -595,8 +595,8 @@ func (p *BlockHintProcessor) GetCurrentStmtHints(hints []*ast.TableOptimizerHint
 		}
 		offset := p.GetHintOffset(hint.QBName, currentOffset)
 		if offset < 0 || !p.checkTableQBName(hint.Tables) {
-			hintStr := RestoreTableOptimizerHint(hint)
 			if p.Ctx != nil {
+				hintStr := RestoreTableOptimizerHint(hint)
 				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Hint %s is ignored due to unknown query block name", hintStr))
 			}
 			continue
