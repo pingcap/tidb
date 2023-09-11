@@ -128,7 +128,6 @@ func TestSchedulerRun(t *testing.T) {
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 	err = scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
 	require.EqualError(t, err, updateSubtaskErr.Error())
-
 	// 6. no subtask executor constructor
 	subtaskExecutorRegisterErr := errors.Errorf("constructor of subtask executor for key not found")
 	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, subtaskExecutorRegisterErr)
@@ -154,6 +153,7 @@ func TestSchedulerRun(t *testing.T) {
 	mockSubtaskExecutor.EXPECT().SplitSubtask(gomock.Any(), gomock.Any()).Return([]proto.MinimalTask{MockMinimalTask{}}, nil)
 	mockMiniTaskExecutor.EXPECT().Run(gomock.Any()).Return(runSubtaskErr)
 	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(taskID, proto.TaskStateFailed, gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetGlobalTaskByID(gomock.Any()).Return(&proto.Task{ID: taskID, Step: proto.StepTwo}, nil)
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 	err = scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
 	require.EqualError(t, err, runSubtaskErr.Error())
@@ -168,6 +168,7 @@ func TestSchedulerRun(t *testing.T) {
 	mockSubtaskExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return([]byte(""), nil)
 	mockSubtaskTable.EXPECT().FinishSubtask(int64(1), gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetSubtaskInStates("id", taskID, proto.StepOne, []interface{}{proto.TaskStatePending}).Return(nil, nil)
+	mockSubtaskTable.EXPECT().GetGlobalTaskByID(gomock.Any()).Return(&proto.Task{ID: taskID, Step: proto.StepTwo}, nil)
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 	err = scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
 	require.NoError(t, err)
@@ -193,7 +194,6 @@ func TestSchedulerRun(t *testing.T) {
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 	err = scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
 	require.NoError(t, err)
-
 	// 10. cancel
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockPool.EXPECT().RunWithConcurrency(gomock.Any(), gomock.Any()).DoAndReturn(runWithConcurrencyFn)
@@ -215,7 +215,6 @@ func TestSchedulerRun(t *testing.T) {
 	time.Sleep(time.Second)
 	runCancel()
 	wg.Wait()
-
 	// 11. run subtask one by one, on error, we should wait all minimal task finished before call Cleanup
 	syncCh := make(chan struct{})
 	lastMinimalTaskFinishTime, cleanupTime := time.Time{}, time.Time{}
