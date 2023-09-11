@@ -141,7 +141,7 @@ var HistogramNeededItems = neededStatsMap{items: map[model.TableItemID]struct{}{
 // ColumnStatsIsInvalid checks if this column is invalid.
 // If this column has histogram but not loaded yet,
 // then we mark it as need histogram.
-func ColumnStatsIsInvalid(colStats *Column, sctx sessionctx.Context, collPseudo bool, tid, cid int64) (res bool) {
+func ColumnStatsIsInvalid(colStats *Column, sctx sessionctx.Context, histColl *HistColl, cid int64) (res bool) {
 	var totalCount float64
 	var ndv int64
 	var inValidForCollPseudo, essentialLoaded bool
@@ -160,17 +160,20 @@ func ColumnStatsIsInvalid(colStats *Column, sctx sessionctx.Context, collPseudo 
 	}
 	if sctx != nil {
 		stmtctx := sctx.GetSessionVars().StmtCtx
-		if (colStats == nil || !colStats.IsStatsInitialized() || colStats.IsLoadNeeded()) && stmtctx != nil && tid > 0 {
+		if (colStats == nil || !colStats.IsStatsInitialized() || colStats.IsLoadNeeded()) &&
+			stmtctx != nil &&
+			histColl.PhysicalID > 0 &&
+			!histColl.CanNotTriggerLoad {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
-					zap.Int64("table id", tid),
+					zap.Int64("table id", histColl.PhysicalID),
 					zap.Int64("column id", cid),
 				)
 			}
-			HistogramNeededItems.insert(model.TableItemID{TableID: tid, ID: cid, IsIndex: false})
+			HistogramNeededItems.insert(model.TableItemID{TableID: histColl.PhysicalID, ID: cid, IsIndex: false})
 		}
 	}
-	if collPseudo {
+	if histColl.Pseudo {
 		inValidForCollPseudo = true
 		return true
 	}
@@ -208,7 +211,7 @@ func (c *Column) DropUnnecessaryData() {
 
 // IsAllEvicted indicates whether all stats evicted
 func (c *Column) IsAllEvicted() bool {
-	return c.statsInitialized && c.evictedStatus >= AllEvicted
+	return c == nil || (c.statsInitialized && c.evictedStatus >= AllEvicted)
 }
 
 // GetEvictedStatus indicates the evicted status

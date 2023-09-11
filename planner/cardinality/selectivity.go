@@ -102,7 +102,7 @@ func Selectivity(
 
 		colHist := coll.Columns[c.UniqueID]
 		var sel float64
-		if statistics.ColumnStatsIsInvalid(colHist, ctx, false, coll.PhysicalID, c.UniqueID) {
+		if statistics.ColumnStatsIsInvalid(colHist, ctx, coll, c.UniqueID) {
 			sel = 1.0 / pseudoEqualRate
 		} else if colHist.Histogram.NDV > 0 {
 			sel = 1 / float64(colHist.Histogram.NDV)
@@ -773,14 +773,14 @@ func GetSelectivityByFilter(sctx sessionctx.Context, coll *statistics.HistColl, 
 
 func findAvailableStatsForCol(sctx sessionctx.Context, coll *statistics.HistColl, uniqueID int64) (isIndex bool, idx int64) {
 	// try to find available stats in column stats
-	if colStats := coll.Columns[uniqueID]; !statistics.ColumnStatsIsInvalid(colStats, sctx, coll.Pseudo, coll.PhysicalID, uniqueID) && colStats.IsFullLoad() {
+	if colStats := coll.Columns[uniqueID]; !statistics.ColumnStatsIsInvalid(colStats, sctx, coll, uniqueID) && colStats.IsFullLoad() {
 		return false, uniqueID
 	}
 	// try to find available stats in single column index stats (except for prefix index)
 	for idxStatsIdx, cols := range coll.Idx2ColumnIDs {
 		if len(cols) == 1 && cols[0] == uniqueID {
 			idxStats := coll.Indices[idxStatsIdx]
-			if !statistics.IndexStatsIsInvalid(idxStats, sctx, coll.Pseudo, coll.PhysicalID, idxStatsIdx) &&
+			if !statistics.IndexStatsIsInvalid(idxStats, sctx, coll, idxStatsIdx) &&
 				idxStats.Info.Columns[0].Length == types.UnspecifiedLength &&
 				idxStats.IsFullLoad() {
 				return true, idxStatsIdx
@@ -915,7 +915,7 @@ func crossValidationSelectivity(
 			break
 		}
 		col := coll.Columns[colID]
-		if statistics.ColumnStatsIsInvalid(col, sctx, coll.Pseudo, coll.PhysicalID, colID) {
+		if statistics.ColumnStatsIsInvalid(col, sctx, coll, colID) {
 			continue
 		}
 		// Since the column range is point range(LowVal is equal to HighVal), we need to set both LowExclude and HighExclude to false.

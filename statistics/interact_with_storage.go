@@ -306,10 +306,7 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 		if histID != colInfo.ID {
 			continue
 		}
-		if table.ColAndIndexExistenceMap == nil {
-			logutil.BgLogger().Warn("read stats", zap.String("the tbl", table.String()))
-			table.ColAndIndexExistenceMap.InsertCol(col.ID, colInfo)
-		}
+		table.ColAndIndexExistenceMap.InsertCol(histID, colInfo)
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
@@ -395,11 +392,10 @@ func TableStatsFromStorage(reader *StatsReader, tableInfo *model.TableInfo, phys
 		histColl := HistColl{
 			PhysicalID:     physicalID,
 			HavePhysicalID: true,
-			Columns:        make(map[int64]*Column, len(tableInfo.Columns)),
-			Indices:        make(map[int64]*Index, len(tableInfo.Indices)),
 		}
 		table = &Table{
-			HistColl: histColl,
+			HistColl:                histColl,
+			ColAndIndexExistenceMap: NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
 		}
 	} else {
 		// We copy it before writing to avoid race.

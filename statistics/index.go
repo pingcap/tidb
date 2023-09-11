@@ -76,7 +76,7 @@ func (idx *Index) ItemID() int64 {
 
 // IsAllEvicted indicates whether all stats evicted
 func (idx *Index) IsAllEvicted() bool {
-	return idx.statsInitialized && idx.evictedStatus >= AllEvicted
+	return idx == nil || (idx.statsInitialized && idx.evictedStatus >= AllEvicted)
 }
 
 // GetEvictedStatus returns the evicted status
@@ -128,19 +128,21 @@ func (idx *Index) TotalRowCount() float64 {
 	return idx.Histogram.TotalRowCount()
 }
 
-func IndexStatsIsInvalid(idxStats *Index, sctx sessionctx.Context, collPseudo bool, tid, cid int64) (res bool) {
+func IndexStatsIsInvalid(idxStats *Index, sctx sessionctx.Context, coll *HistColl, cid int64) (res bool) {
 	// When we are using stats from PseudoTable(), all column/index ID will be -1.
-	if (idxStats != nil && idxStats.IsFullLoad()) || tid <= 0 {
+	if (idxStats != nil && idxStats.IsFullLoad()) || coll.PhysicalID <= 0 {
 		return
 	}
-	HistogramNeededItems.insert(model.TableItemID{TableID: tid, ID: cid, IsIndex: true})
+	if !coll.CanNotTriggerLoad {
+		HistogramNeededItems.insert(model.TableItemID{TableID: coll.PhysicalID, ID: cid, IsIndex: true})
+	}
 	var totalCount float64
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(sctx,
 				"IsInvalid", res,
-				"CollPseudo", collPseudo,
+				"CollPseudo", coll.Pseudo,
 				"TotalCount", totalCount,
 			)
 			debugtrace.LeaveContextCommon(sctx)
@@ -150,7 +152,7 @@ func IndexStatsIsInvalid(idxStats *Index, sctx sessionctx.Context, collPseudo bo
 		return true
 	}
 	totalCount = idxStats.TotalRowCount()
-	return (collPseudo) || totalCount == 0
+	return (coll.Pseudo) || totalCount == 0
 }
 
 // EvictAllStats evicts all stats
