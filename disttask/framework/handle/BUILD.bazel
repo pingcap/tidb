@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//disttask/framework/proto",
         "//disttask/framework/storage",
+        "//util/backoff",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
@@ -24,7 +25,10 @@ go_test(
         "//disttask/framework/proto",
         "//disttask/framework/storage",
         "//testkit",
+        "//util/backoff",
         "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",
     ],

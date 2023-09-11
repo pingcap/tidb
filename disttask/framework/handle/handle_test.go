@@ -16,14 +16,19 @@ package handle_test
 
 import (
 	"context"
+	"math"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/backoff"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -55,4 +60,65 @@ func TestHandle(t *testing.T) {
 	require.Equal(t, []byte("byte"), task.Meta)
 
 	require.NoError(t, handle.CancelGlobalTask("1"))
+}
+
+func TestRunWithRetry(t *testing.T) {
+	ctx := context.Background()
+
+	// retry count exceed
+	backoffer := backoff.NewExponential(100*time.Millisecond, 1, time.Second)
+	err := handle.RunWithRetry(ctx, 3, backoffer, log.L(),
+		func(ctx context.Context) (bool, error) {
+			return true, errors.New("mock error")
+		},
+	)
+	require.ErrorContains(t, err, "mock error")
+
+	// non-retryable error
+	var end atomic.Bool
+	go func() {
+		defer end.Store(true)
+		backoffer = backoff.NewExponential(100*time.Millisecond, 1, time.Second)
+		err = handle.RunWithRetry(ctx, math.MaxInt, backoffer, log.L(),
+			func(ctx context.Context) (bool, error) {
+				return false, errors.New("mock error")
+			},
+		)
+		require.Error(t, err)
+	}()
+	require.Eventually(t, func() bool {
+		return end.Load()
+	}, 5*time.Second, 100*time.Millisecond)
+
+	// fail with retryable error once, then success
+	end.Store(false)
+	go func() {
+		defer end.Store(true)
+		backoffer = backoff.NewExponential(100*time.Millisecond, 1, time.Second)
+		var i int
+		err = handle.RunWithRetry(ctx, math.MaxInt, backoffer, log.L(),
+			func(ctx context.Context) (bool, error) {
+				if i == 0 {
+					i++
+					return true, errors.New("mock error")
+				}
+				return false, nil
+			},
+		)
+		require.NoError(t, err)
+	}()
+	require.Eventually(t, func() bool {
+		return end.Load()
+	}, 5*time.Second, 100*time.Millisecond)
+
+	// context done
+	subctx, cancel := context.WithCancel(ctx)
+	cancel()
+	backoffer = backoff.NewExponential(100*time.Millisecond, 1, time.Second)
+	err = handle.RunWithRetry(subctx, math.MaxInt, backoffer, log.L(),
+		func(ctx context.Context) (bool, error) {
+			return true, errors.New("mock error")
+		},
+	)
+	require.ErrorIs(t, err, context.Canceled)
 }

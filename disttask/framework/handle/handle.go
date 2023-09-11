@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/util/backoff"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -117,4 +118,34 @@ func CancelGlobalTask(taskKey string) error {
 		return nil
 	}
 	return globalTaskManager.CancelGlobalTask(globalTask.ID)
+}
+
+// RunWithRetry runs a function with retry, when retry exceed max retry time, it
+// returns the last error met.
+// if the function fails with err, it should return a bool to indicate whether
+// the error is retryable.
+// if context done, it will stop early and return ctx.Err().
+func RunWithRetry(
+	ctx context.Context,
+	maxRetry int,
+	backoffer backoff.Backoffer,
+	logger *zap.Logger,
+	f func(context.Context) (bool, error),
+) error {
+	var lastErr error
+	for i := 0; i < maxRetry; i++ {
+		retryable, err := f(ctx)
+		if err == nil || !retryable {
+			return err
+		}
+		lastErr = err
+		logger.Warn("met retryable error", zap.Int("retry-count", i),
+			zap.Int("max-retry", maxRetry), zap.Error(err))
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoffer.Backoff(i)):
+		}
+	}
+	return lastErr
 }

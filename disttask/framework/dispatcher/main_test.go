@@ -43,7 +43,7 @@ func TestMain(m *testing.M) {
 	// Make test more fast.
 	checkTaskRunningInterval = checkTaskRunningInterval / 10
 	checkTaskFinishedInterval = checkTaskFinishedInterval / 10
-	retrySQLInterval = retrySQLInterval / 20
+	RetrySQLInterval = RetrySQLInterval / 20
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
