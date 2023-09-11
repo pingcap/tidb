@@ -34,6 +34,8 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/intest"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Cacheable checks whether the input ast(query) is cacheable with empty session context, which is mainly for testing.
@@ -199,6 +201,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			if err != nil {
 				checker.cacheable = false
 				checker.reason = fmt.Errorf("check partition table failed: %w", err).Error()
+				logutil.BgLogger().Warn("check partition table failed", zap.Error(err))
 				return in, true
 			}
 			if isPartitioned {
@@ -218,6 +221,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			if err != nil {
 				checker.cacheable = false
 				checker.reason = fmt.Errorf("check generated column failed: %w", err).Error()
+				logutil.BgLogger().Warn("check generated column failed", zap.Error(err))
 				return in, true
 			}
 			if hasGenCols {
@@ -230,6 +234,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			if err != nil {
 				checker.cacheable = false
 				checker.reason = fmt.Errorf("check temporary table failed: %w", err).Error()
+				logutil.BgLogger().Warn("check temporary table failed", zap.Error(err))
 				return in, true
 			}
 			if isTempTbl {
