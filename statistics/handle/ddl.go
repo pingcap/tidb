@@ -41,6 +41,13 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
+	case model.ActionDropTable:
+		ids := h.getInitStateTableIDs(t.TableInfo)
+		for _, id := range ids {
+			if err := h.resetTableStats2KVForDrop(id); err != nil {
+				return err
+			}
+		}
 	case model.ActionAddColumn, model.ActionModifyColumn:
 		ids := h.getInitStateTableIDs(t.TableInfo)
 		for _, id := range ids {
@@ -61,6 +68,37 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
+<<<<<<< HEAD
+=======
+		for _, def := range t.PartInfo.Definitions {
+			if err := h.resetTableStats2KVForDrop(def.ID); err != nil {
+				return err
+			}
+		}
+	case model.ActionReorganizePartition:
+		for _, def := range t.PartInfo.Definitions {
+			// TODO: Should we trigger analyze instead of adding 0s?
+			if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
+				return err
+			}
+			// Do not update global stats, since the data have not changed!
+		}
+	case model.ActionAlterTablePartitioning:
+		// Add partitioning
+		for _, def := range t.PartInfo.Definitions {
+			// TODO: Should we trigger analyze instead of adding 0s?
+			if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
+				return err
+			}
+		}
+		fallthrough
+	case model.ActionRemovePartitioning:
+		// Change id for global stats, since the data has not changed!
+		// Note that t.TableInfo is the current (new) table info
+		// and t.PartInfo.NewTableID is actually the old table ID!
+		// (see onReorganizePartition)
+		return h.changeGlobalStatsID(t.PartInfo.NewTableID, t.TableInfo.ID)
+>>>>>>> 51f1a828e47 (statistics: record last gc ts to avoid huge read on stats table (#46138))
 	case model.ActionFlashbackCluster:
 		return h.updateStatsVersion()
 	}
@@ -253,6 +291,36 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 		if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%?, 1, %?, 0, %?)", physicalID, idx.ID, startTS); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// resetTableStats2KV resets the count to 0.
+func (h *Handle) resetTableStats2KVForDrop(physicalID int64) (err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			h.recordHistoricalStatsMeta(physicalID, statsVer, StatsMetaHistorySourceSchemaChange)
+		}
+	}()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(ctx, "begin")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	startTS := txn.StartTS()
+	if _, err := exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%? where table_id =%?", startTS, physicalID); err != nil {
+		return err
 	}
 	return nil
 }

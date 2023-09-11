@@ -17,6 +17,7 @@ package handle
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -29,9 +30,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const gcLastTSVarName = "tidb_stats_gc_last_ts"
+
 // GCStats will garbage collect the useless stats info. For dropped tables, we will first update their version so that
 // other tidb could know that table is deleted.
-func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error {
+func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
 	ctx := context.Background()
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
@@ -42,7 +45,17 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 		return nil
 	}
 	gcVer := now - offset
-	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_meta where version < %?", gcVer)
+	lastGC, err := h.GetLastGCTimestamp(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			return
+		}
+		err = h.writeGCTimestampToKV(ctx, gcVer)
+	}()
+	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_meta where version >= %? and version < %?", lastGC, gcVer)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -52,6 +65,33 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 		}
 	}
 	return h.removeDeletedExtendedStats(gcVer)
+}
+
+// GetLastGCTimestamp loads the last gc time from mysql.tidb.
+func (h *Handle) GetLastGCTimestamp(ctx context.Context) (uint64, error) {
+	rows, _, err := h.execRestrictedSQL(ctx, "SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?", gcLastTSVarName)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	lastGcTSString := rows[0].GetString(0)
+	lastGcTS, err := strconv.ParseUint(lastGcTSString, 10, 64)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return lastGcTS, nil
+}
+
+func (h *Handle) writeGCTimestampToKV(ctx context.Context, newTS uint64) error {
+	_, _, err := h.execRestrictedSQL(ctx,
+		"insert into mysql.tidb (variable_name, variable_value) values (%?, %?) on duplicate key update variable_value = %?",
+		gcLastTSVarName,
+		newTS,
+		newTS,
+	)
+	return err
 }
 
 func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error {

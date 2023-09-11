@@ -402,6 +402,11 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, oldIDs, ruleIDs)
+		if tblInfo.IsSequence() {
+			asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropSequence, TableInfo: tblInfo})
+		} else if !tblInfo.IsView() {
+			asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropTable, TableInfo: tblInfo})
+		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State))
 	}
