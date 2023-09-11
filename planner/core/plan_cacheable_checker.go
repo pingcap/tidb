@@ -639,8 +639,8 @@ func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema in
 			sql = sql[:256]
 		}
 		logutil.BgLogger().Warn("find table failed", zap.Error(err), zap.String("sql", sql),
-			zap.String("table_schema", node.Schema.O), zap.String("table_name", node.Name.O))
-		return false, fmt.Sprintf("find table %s.%s failed: %s", node.Schema, node.Name, err.Error())
+			zap.String("table_schema", tableSchema.O), zap.String("table_name", node.Name.O))
+		return false, fmt.Sprintf("find table %s.%s failed: %s", tableSchema, node.Name, err.Error())
 	}
 
 	if tb.Meta().GetPartitionInfo() != nil {
