@@ -355,7 +355,7 @@ func (hg *Histogram) StandardizeForV2AnalyzeIndex() {
 	// pointer, points to.
 	nextRemainedBktIdx := 0
 	for checkingIdx := range hg.Buckets {
-		if hg.Buckets[checkingIdx].Count <= 0 && hg.Buckets[checkingIdx].Repeat <= 0 {
+		if hg.BucketCount(checkingIdx) <= 0 && hg.Buckets[checkingIdx].Repeat <= 0 {
 			continue
 		}
 		remainedBktIdxs = append(remainedBktIdxs, checkingIdx)
