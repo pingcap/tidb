@@ -110,7 +110,6 @@ func TestHABasic(t *testing.T) {
 
 func TestHAManyNodes(t *testing.T) {
 	var m sync.Map
-
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	RegisterTaskMeta(t, ctrl, &m, &haTestDispatcherExt{})
@@ -127,7 +126,6 @@ func TestHAManyNodes(t *testing.T) {
 
 func TestHAFailInDifferentStage(t *testing.T) {
 	var m sync.Map
-
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	RegisterTaskMeta(t, ctrl, &m, &haTestDispatcherExt{})
