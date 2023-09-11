@@ -135,6 +135,7 @@ func TestDispatcherExt(t *testing.T) {
 	bs, err = logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
 	task.Meta = bs
+	// Set step to StepPostProcess to skip the rollback sql.
 	task.Step = importinto.StepPostProcess
 	require.NoError(t, importer.StartJob(ctx, conn, jobID))
 	_, err = ext.OnErrStage(ctx, d, task, []error{errors.New("test")})
