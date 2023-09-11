@@ -14,7 +14,6 @@ go_library(
         "mem_root.go",
         "message.go",
         "mock.go",
-        "test_utils.go",
     ],
     importpath = "github.com/pingcap/tidb/ddl/ingest",
     visibility = ["//visibility:public"],
@@ -70,6 +69,7 @@ go_test(
     deps = [
         "//config",
         "//ddl",
+        "//ddl/ingest/testutil",
         "//ddl/internal/session",
         "//ddl/testutil",
         "//ddl/util/callback",

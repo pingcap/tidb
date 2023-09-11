@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
+	ingesttestutil "github.com/pingcap/tidb/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
@@ -28,7 +29,7 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 	port := config.GetGlobalConfig().Port
 	tc := testkit.NewDistExecutionContext(t, 3)
 	defer tc.Close()
-	defer ingest.InjectMockBackendMgr(t, tc.Store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, tc.Store)()
 	tk := testkit.NewTestKit(t, tc.Store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t (a int primary key, b int) partition by hash(a) partitions 8;")

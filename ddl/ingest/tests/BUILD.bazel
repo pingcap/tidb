@@ -9,6 +9,7 @@ go_test(
     deps = [
         "//config",
         "//ddl/ingest",
+        "//ddl/ingest/testutil",
         "//ddl/util/callback",
         "//parser/model",
         "//testkit",

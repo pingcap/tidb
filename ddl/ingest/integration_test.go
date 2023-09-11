@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
+	ingesttestutil "github.com/pingcap/tidb/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
@@ -37,7 +38,7 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingest.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	assertLastNDDLUseIngest := func(n int) {
 		tk.MustExec("admin check table t;")
@@ -84,7 +85,7 @@ func TestIngestError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingest.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1;")
 	tk.MustExec("create table t (a int primary key, b int);")
@@ -123,7 +124,7 @@ func TestAddIndexIngestPanic(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingest.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	// Mock panic on coprocessor request sender.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockCopSenderPanic", "return(true)"))
@@ -145,7 +146,7 @@ func TestAddIndexIngestCancel(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingest.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3);")
@@ -202,7 +203,7 @@ func TestIngestPartitionRowCount(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingest.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	tk.MustExec(`create table t (a int, b int, c int as (b+10), d int as (b+c),
 		primary key (a) clustered) partition by range (a) (
@@ -223,7 +224,7 @@ func TestAddIndexIngestClientError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingest.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	tk.MustExec("CREATE TABLE t1 (f1 json);")
 	tk.MustExec(`insert into t1(f1) values (cast("null" as json));`)
@@ -234,7 +235,7 @@ func TestAddIndexCancelOnNoneState(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
-	defer ingest.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (c1 int, c2 int, c3 int)`)
@@ -260,7 +261,7 @@ func TestAddIndexIngestTimezone(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingest.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	tk.MustExec("SET time_zone = '-06:00';")
 	tk.MustExec("create table t (`src` varchar(48),`t` timestamp,`timezone` varchar(100));")
