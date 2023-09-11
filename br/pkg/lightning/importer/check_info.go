@@ -157,9 +157,9 @@ func (rc *Controller) checkSourceSchema(ctx context.Context) error {
 	return rc.doPreCheckOnItem(ctx, precheck.CheckSourceSchemaValid)
 }
 
-func (rc *Controller) checkCDCPiTR(ctx context.Context) error {
+func (rc *Controller) checkConflictTask(ctx context.Context) error {
 	if rc.cfg.TikvImporter.Backend == config.BackendTiDB {
 		return nil
 	}
-	return rc.doPreCheckOnItem(ctx, precheck.CheckTargetUsingCDCPITR)
+	return rc.doPreCheckOnItem(ctx, precheck.CheckTargetConflictTaskRunning)
 }

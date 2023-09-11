@@ -2150,7 +2150,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				}
 			}
 			// even if checkpoint exists, we still need to make sure CDC/PiTR task is not running.
-			if err := rc.checkCDCPiTR(ctx); err != nil {
+			if err := rc.checkConflictTask(ctx); err != nil {
 				return common.ErrCheckCDCPiTR.Wrap(err).GenWithStackByArgs()
 			}
 		}

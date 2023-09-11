@@ -322,7 +322,16 @@ func (list RegisterTasksList) Empty() bool {
 
 // GetImportTasksFrom try to get all the import tasks with prefix `RegisterTaskPrefix`
 func GetImportTasksFrom(ctx context.Context, client *clientv3.Client) (RegisterTasksList, error) {
-	resp, err := client.KV.Get(ctx, RegisterImportTaskPrefix, clientv3.WithPrefix())
+	return getTasksFromWithPrefix(ctx, client, RegisterImportTaskPrefix)
+}
+
+// GetExportTasksFrom try to get all the import tasks with prefix `RegisterTaskPrefix`
+func GetExportTasksFrom(ctx context.Context, client *clientv3.Client) (RegisterTasksList, error) {
+	return getTasksFromWithPrefix(ctx, client, RegisterExportTaskPrefix)
+}
+
+func getTasksFromWithPrefix(ctx context.Context, client *clientv3.Client, prefix string) (RegisterTasksList, error) {
+	resp, err := client.KV.Get(ctx, prefix, clientv3.WithPrefix())
 	if err != nil {
 		return RegisterTasksList{}, errors.Trace(err)
 	}

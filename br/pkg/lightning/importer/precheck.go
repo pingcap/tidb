@@ -116,8 +116,8 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID precheck.CheckItemID) (p
 		return NewLocalDiskPlacementCheckItem(b.cfg), nil
 	case precheck.CheckLocalTempKVDir:
 		return NewLocalTempKVDirCheckItem(b.cfg, b.preInfoGetter, b.dbMetas), nil
-	case precheck.CheckTargetUsingCDCPITR:
-		return NewCDCPITRCheckItem(b.cfg), nil
+	case precheck.CheckTargetConflictTaskRunning:
+		return NewConflictedTaskCheckItem(b.cfg), nil
 	default:
 		return nil, errors.Errorf("unsupported check item: %v", checkID)
 	}

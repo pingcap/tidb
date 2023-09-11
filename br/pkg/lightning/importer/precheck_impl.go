@@ -744,26 +744,26 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 	return msgs, nil
 }
 
-// CDCPITRCheckItem check downstream has enabled CDC or PiTR. It's exposed to let
-// caller override the Instruction message.
-type CDCPITRCheckItem struct {
+// ConflictedTaskCheckItem check downstream has enabled some conflicted tasks like CDC or PiTR.
+// It's exposed to let caller override the Instruction message.
+type ConflictedTaskCheckItem struct {
 	cfg         *config.Config
 	Instruction string
 	// used in test
 	etcdCli *clientv3.Client
 }
 
-// NewCDCPITRCheckItem creates a checker to check downstream has enabled CDC or PiTR.
-func NewCDCPITRCheckItem(cfg *config.Config) precheck.Checker {
-	return &CDCPITRCheckItem{
+// NewConflictedTaskCheckItem creates a checker to check downstream has enabled CDC or PiTR.
+func NewConflictedTaskCheckItem(cfg *config.Config) precheck.Checker {
+	return &ConflictedTaskCheckItem{
 		cfg:         cfg,
 		Instruction: "local backend is not compatible with them. Please switch to tidb backend then try again.",
 	}
 }
 
 // GetCheckItemID implements Checker interface.
-func (*CDCPITRCheckItem) GetCheckItemID() precheck.CheckItemID {
-	return precheck.CheckTargetUsingCDCPITR
+func (*ConflictedTaskCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckTargetConflictTaskRunning
 }
 
 func dialEtcdWithCfg(ctx context.Context, cfg *config.Config) (*clientv3.Client, error) {
@@ -788,7 +788,7 @@ func dialEtcdWithCfg(ctx context.Context, cfg *config.Config) (*clientv3.Client,
 }
 
 // Check implements Checker interface.
-func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
+func (ci *ConflictedTaskCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
 	theResult := &precheck.CheckResult{
 		Item:     ci.GetCheckItemID(),
 		Severity: precheck.Critical,
@@ -832,6 +832,16 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*precheck.CheckResult, e
 
 	if !nameSet.Empty() {
 		errorMsg = append(errorMsg, nameSet.MessageToUser())
+	}
+
+	otasks, err := utils.GetExportTasksFrom(ctx, ci.etcdCli)
+	if err != nil {
+		return nil, errors.Annotate(err, "failed to get import tasks from etcd")
+	}
+	// NOTE: perhaps filter out by the type of tasks in the future.
+	// However for now we don't have the ability of extracting task type from a record of task.
+	if !otasks.Empty() {
+		errorMsg = append(errorMsg, otasks.MessageToUser())
 	}
 
 	if len(errorMsg) > 0 {

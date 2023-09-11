@@ -32,37 +32,37 @@ type CheckItemID string
 
 // CheckItemID constants
 const (
-	CheckLargeDataFile            CheckItemID = "CHECK_LARGE_DATA_FILES"
-	CheckSourcePermission         CheckItemID = "CHECK_SOURCE_PERMISSION"
-	CheckTargetTableEmpty         CheckItemID = "CHECK_TARGET_TABLE_EMPTY"
-	CheckSourceSchemaValid        CheckItemID = "CHECK_SOURCE_SCHEMA_VALID"
-	CheckCheckpoints              CheckItemID = "CHECK_CHECKPOINTS"
-	CheckCSVHeader                CheckItemID = "CHECK_CSV_HEADER"
-	CheckTargetClusterSize        CheckItemID = "CHECK_TARGET_CLUSTER_SIZE"
-	CheckTargetClusterEmptyRegion CheckItemID = "CHECK_TARGET_CLUSTER_EMPTY_REGION"
-	CheckTargetClusterRegionDist  CheckItemID = "CHECK_TARGET_CLUSTER_REGION_DISTRIBUTION"
-	CheckTargetClusterVersion     CheckItemID = "CHECK_TARGET_CLUSTER_VERSION"
-	CheckLocalDiskPlacement       CheckItemID = "CHECK_LOCAL_DISK_PLACEMENT"
-	CheckLocalTempKVDir           CheckItemID = "CHECK_LOCAL_TEMP_KV_DIR"
-	CheckTargetUsingCDCPITR       CheckItemID = "CHECK_TARGET_USING_CDC_PITR"
+	CheckLargeDataFile             CheckItemID = "CHECK_LARGE_DATA_FILES"
+	CheckSourcePermission          CheckItemID = "CHECK_SOURCE_PERMISSION"
+	CheckTargetTableEmpty          CheckItemID = "CHECK_TARGET_TABLE_EMPTY"
+	CheckSourceSchemaValid         CheckItemID = "CHECK_SOURCE_SCHEMA_VALID"
+	CheckCheckpoints               CheckItemID = "CHECK_CHECKPOINTS"
+	CheckCSVHeader                 CheckItemID = "CHECK_CSV_HEADER"
+	CheckTargetClusterSize         CheckItemID = "CHECK_TARGET_CLUSTER_SIZE"
+	CheckTargetClusterEmptyRegion  CheckItemID = "CHECK_TARGET_CLUSTER_EMPTY_REGION"
+	CheckTargetClusterRegionDist   CheckItemID = "CHECK_TARGET_CLUSTER_REGION_DISTRIBUTION"
+	CheckTargetClusterVersion      CheckItemID = "CHECK_TARGET_CLUSTER_VERSION"
+	CheckLocalDiskPlacement        CheckItemID = "CHECK_LOCAL_DISK_PLACEMENT"
+	CheckLocalTempKVDir            CheckItemID = "CHECK_LOCAL_TEMP_KV_DIR"
+	CheckTargetConflictTaskRunning CheckItemID = "CHECK_TARGET_CONFLICT_TASK_RUNNING"
 )
 
 var (
 	// CheckItemIDToDisplayName is a map from CheckItemID to its display name
 	checkItemIDToDisplayName = map[CheckItemID]string{
-		CheckLargeDataFile:            "Large data file",
-		CheckSourcePermission:         "Source permission",
-		CheckTargetTableEmpty:         "Target table empty",
-		CheckSourceSchemaValid:        "Source schema valid",
-		CheckCheckpoints:              "Checkpoints",
-		CheckCSVHeader:                "CSV header",
-		CheckTargetClusterSize:        "Target cluster size",
-		CheckTargetClusterEmptyRegion: "Target cluster empty region",
-		CheckTargetClusterRegionDist:  "Target cluster region dist",
-		CheckTargetClusterVersion:     "Target cluster version",
-		CheckLocalDiskPlacement:       "Local disk placement",
-		CheckLocalTempKVDir:           "Local temp KV dir",
-		CheckTargetUsingCDCPITR:       "Target using CDC/PITR",
+		CheckLargeDataFile:             "Large data file",
+		CheckSourcePermission:          "Source permission",
+		CheckTargetTableEmpty:          "Target table empty",
+		CheckSourceSchemaValid:         "Source schema valid",
+		CheckCheckpoints:               "Checkpoints",
+		CheckCSVHeader:                 "CSV header",
+		CheckTargetClusterSize:         "Target cluster size",
+		CheckTargetClusterEmptyRegion:  "Target cluster empty region",
+		CheckTargetClusterRegionDist:   "Target cluster region dist",
+		CheckTargetClusterVersion:      "Target cluster version",
+		CheckLocalDiskPlacement:        "Local disk placement",
+		CheckLocalTempKVDir:            "Local temp KV dir",
+		CheckTargetConflictTaskRunning: "Target is running a task that isn't compatible with importing",
 	}
 )
 
