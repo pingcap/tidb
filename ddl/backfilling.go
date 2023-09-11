@@ -684,7 +684,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.Physical
 		}
 	})
 
-	jc := dc.jobContext(job.ID, job.ReorgMeta)
+	jc := reorgInfo.NewJobContext()
 	sessCtx := newContext(reorgInfo.d.store)
 	scheduler, err := newBackfillScheduler(dc.ctx, reorgInfo, sessPool, bfWorkerType, t, sessCtx, jc)
 	if err != nil {
