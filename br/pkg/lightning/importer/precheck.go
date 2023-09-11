@@ -9,6 +9,7 @@ import (
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/importer/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
+	pd "github.com/tikv/pd/client"
 )
 
 type precheckContextKey string
@@ -30,9 +31,6 @@ type PrecheckItemBuilder struct {
 }
 
 // NewPrecheckItemBuilderFromConfig creates a new PrecheckItemBuilder from config
-<<<<<<< HEAD
-func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, opts ...ropts.PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
-=======
 // pdCli **must not** be nil for local backend
 func NewPrecheckItemBuilderFromConfig(
 	ctx context.Context,
@@ -40,7 +38,6 @@ func NewPrecheckItemBuilderFromConfig(
 	pdCli pd.Client,
 	opts ...ropts.PrecheckItemBuilderOption,
 ) (*PrecheckItemBuilder, error) {
->>>>>>> 41d1ec0267e (lightning: always get latest PD leader when access PD after initialized (#46726))
 	var gerr error
 	builderCfg := new(ropts.PrecheckItemBuilderConfig)
 	for _, o := range opts {

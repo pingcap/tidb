@@ -80,13 +80,7 @@ func InitLogger(cfg *Config, _ string) error {
 	tidbLogCfg := logutil.LogConfig{}
 	// Disable annoying TiDB Log.
 	// TODO: some error logs outputs randomly, we need to fix them in TiDB.
-<<<<<<< HEAD
 	tidbLogCfg.Level = "fatal"
-=======
-	// this LEVEL only affects SlowQueryLogger, later ReplaceGlobals will overwrite it.
-	tidbLogCfg.Level = "debug"
-	// this also init GRPCLogger, controlled by GRPC_DEBUG env.
->>>>>>> 41d1ec0267e (lightning: always get latest PD leader when access PD after initialized (#46726))
 	err := logutil.InitLogger(&tidbLogCfg)
 	if err != nil {
 		return errors.Trace(err)

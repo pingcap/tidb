@@ -74,13 +74,8 @@ start_services() {
 
 start_pd() {
     echo "Starting PD..."
-<<<<<<< HEAD
-    mkdir -p "$TEST_DIR/pd"
-    bin/pd-server \
-=======
     mkdir -p "$TEST_DIR/pd" -m 700
-    pd-server \
->>>>>>> 41d1ec0267e (lightning: always get latest PD leader when access PD after initialized (#46726))
+    bin/pd-server \
         --client-urls "https://$PD_ADDR" \
         --peer-urls "https://$PD_PEER_ADDR" \
         --log-file "$TEST_DIR/pd.log" \
