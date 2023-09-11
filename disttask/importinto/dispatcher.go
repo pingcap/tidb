@@ -190,6 +190,7 @@ func (dsp *ImportDispatcherExt) unregisterTask(ctx context.Context, task *proto.
 	}
 }
 
+// OnNextSubtasksBatch generate batch of next stage's plan.
 func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(ctx context.Context, taskHandle dispatcher.TaskHandle, gTask *proto.Task) (
 	resSubtaskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
@@ -332,10 +333,12 @@ func (*ImportDispatcherExt) IsRetryableErr(error) bool {
 	return false
 }
 
+// StageFinished check if current stage finished.
 func (*ImportDispatcherExt) StageFinished(_ *proto.Task) bool {
 	return true
 }
 
+// Finished check if current task finished.
 func (*ImportDispatcherExt) Finished(task *proto.Task) bool {
 	return task.Step == StepPostProcess+1
 }

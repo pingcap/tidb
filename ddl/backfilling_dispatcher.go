@@ -50,10 +50,11 @@ func NewBackfillingDispatcherExt(d DDL) (dispatcher.Extension, error) {
 	}, nil
 }
 
+// OnTick implements dispatcher.Extension interface.
 func (*backfillingDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-// OnNextSubtasksBatch generate next stage's plan.
+// OnNextSubtasksBatch generate batch of next stage's plan.
 func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
 	var globalTaskMeta BackfillGlobalMeta
 	if err := json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
@@ -107,10 +108,12 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context, _ di
 	}
 }
 
+// StageFinished check if current stage finished.
 func (*backfillingDispatcherExt) StageFinished(_ *proto.Task) bool {
 	return true
 }
 
+// Finished check if current task finished.
 func (*backfillingDispatcherExt) Finished(task *proto.Task) bool {
 	return task.Step == proto.StepOne
 }
