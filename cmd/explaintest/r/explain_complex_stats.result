@@ -133,7 +133,7 @@ Projection	424.00	root		explain_complex_stats.st.id, explain_complex_stats.dd.id
     └─HashJoin	424.00	root		inner join, equal:[eq(explain_complex_stats.st.aid, explain_complex_stats.dd.aid) eq(explain_complex_stats.st.ip, explain_complex_stats.dd.ip)], other cond:gt(explain_complex_stats.dd.t, explain_complex_stats.st.t)
       ├─TableReader(Build)	424.00	root		data:Selection
       │ └─Selection	424.00	cop[tikv]		eq(explain_complex_stats.st.bm, 0), eq(explain_complex_stats.st.pt, "android"), gt(explain_complex_stats.st.t, 1478143908), not(isnull(explain_complex_stats.st.ip))
-      │   └─TableFullScan	1999.00	cop[tikv]	table:gad	keep order:false, stats:partial[icd:allEvicted, id:allEvicted]
+      │   └─TableFullScan	1999.00	cop[tikv]	table:gad	keep order:false
       └─TableReader(Probe)	450.56	root		data:Selection
         └─Selection	450.56	cop[tikv]		eq(explain_complex_stats.dd.bm, 0), eq(explain_complex_stats.dd.pt, "android"), gt(explain_complex_stats.dd.t, 1478143908), not(isnull(explain_complex_stats.dd.ip)), not(isnull(explain_complex_stats.dd.t))
           └─TableFullScan	2000.00	cop[tikv]	table:dd	keep order:false
@@ -144,7 +144,7 @@ Projection	170.34	root		explain_complex_stats.st.id, explain_complex_stats.dd.id
   └─IndexJoin	170.34	root		inner join, inner:IndexLookUp, outer key:explain_complex_stats.st.aid, inner key:explain_complex_stats.dd.aid, equal cond:eq(explain_complex_stats.st.aid, explain_complex_stats.dd.aid), eq(explain_complex_stats.st.dic, explain_complex_stats.dd.mac), other cond:lt(explain_complex_stats.st.t, explain_complex_stats.dd.t)
     ├─TableReader(Build)	170.34	root		data:Selection
     │ └─Selection	170.34	cop[tikv]		eq(explain_complex_stats.st.bm, 0), eq(explain_complex_stats.st.dit, "mac"), eq(explain_complex_stats.st.pt, "ios"), gt(explain_complex_stats.st.t, 1477971479), not(isnull(explain_complex_stats.st.dic))
-    │   └─TableFullScan	1999.00	cop[tikv]	table:gad	keep order:false, stats:partial[icd:allEvicted, id:allEvicted]
+    │   └─TableFullScan	1999.00	cop[tikv]	table:gad	keep order:false
     └─IndexLookUp(Probe)	170.34	root		
       ├─IndexRangeScan(Build)	669.25	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(explain_complex_stats.dd.aid, explain_complex_stats.st.aid)], keep order:false
       └─Selection(Probe)	170.34	cop[tikv]		eq(explain_complex_stats.dd.bm, 0), eq(explain_complex_stats.dd.pt, "ios"), gt(explain_complex_stats.dd.t, 1477971479), not(isnull(explain_complex_stats.dd.mac)), not(isnull(explain_complex_stats.dd.t))
@@ -154,9 +154,9 @@ id	estRows	task	access object	operator info
 Projection	39.28	root		explain_complex_stats.st.cm, explain_complex_stats.st.p1, explain_complex_stats.st.p2, explain_complex_stats.st.p3, explain_complex_stats.st.p4, explain_complex_stats.st.p5, explain_complex_stats.st.p6_md5, explain_complex_stats.st.p7_md5, Column#20, Column#21
 └─HashAgg	39.28	root		group by:explain_complex_stats.st.cm, explain_complex_stats.st.p1, explain_complex_stats.st.p2, explain_complex_stats.st.p3, explain_complex_stats.st.p4, explain_complex_stats.st.p5, explain_complex_stats.st.p6_md5, explain_complex_stats.st.p7_md5, funcs:count(1)->Column#20, funcs:count(distinct explain_complex_stats.st.ip)->Column#21, funcs:firstrow(explain_complex_stats.st.cm)->explain_complex_stats.st.cm, funcs:firstrow(explain_complex_stats.st.p1)->explain_complex_stats.st.p1, funcs:firstrow(explain_complex_stats.st.p2)->explain_complex_stats.st.p2, funcs:firstrow(explain_complex_stats.st.p3)->explain_complex_stats.st.p3, funcs:firstrow(explain_complex_stats.st.p4)->explain_complex_stats.st.p4, funcs:firstrow(explain_complex_stats.st.p5)->explain_complex_stats.st.p5, funcs:firstrow(explain_complex_stats.st.p6_md5)->explain_complex_stats.st.p6_md5, funcs:firstrow(explain_complex_stats.st.p7_md5)->explain_complex_stats.st.p7_md5
   └─IndexLookUp	39.38	root		
-    ├─IndexRangeScan(Build)	160.23	cop[tikv]	table:st, index:t(t)	range:[1478188800,1478275200], keep order:false, stats:partial[icd:allEvicted]
+    ├─IndexRangeScan(Build)	160.23	cop[tikv]	table:st, index:t(t)	range:[1478188800,1478275200], keep order:false
     └─Selection(Probe)	39.38	cop[tikv]		eq(explain_complex_stats.st.aid, "cn.sbkcq"), eq(explain_complex_stats.st.pt, "android")
-      └─TableRowIDScan	160.23	cop[tikv]	table:st	keep order:false, stats:partial[icd:allEvicted]
+      └─TableRowIDScan	160.23	cop[tikv]	table:st	keep order:false
 explain format = 'brief' select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic as dic, dt.cm as cm, rr.gid as gid, rr.acd as acd, rr.t as t,dt.p1 as p1, dt.p2 as p2, dt.p3 as p3, dt.p4 as p4, dt.p5 as p5, dt.p6_md5 as p6, dt.p7_md5 as p7 from dt dt join rr rr on (rr.pt = 'ios' and rr.t > 1478185592 and dt.aid = rr.aid and dt.dic = rr.dic) where dt.pt = 'ios' and dt.t > 1478185592 and dt.bm = 0 limit 2000;
 id	estRows	task	access object	operator info
 Projection	428.32	root		explain_complex_stats.dt.id, explain_complex_stats.dt.aid, explain_complex_stats.dt.pt, explain_complex_stats.dt.dic, explain_complex_stats.dt.cm, explain_complex_stats.rr.gid, explain_complex_stats.rr.acd, explain_complex_stats.rr.t, explain_complex_stats.dt.p1, explain_complex_stats.dt.p2, explain_complex_stats.dt.p3, explain_complex_stats.dt.p4, explain_complex_stats.dt.p5, explain_complex_stats.dt.p6_md5, explain_complex_stats.dt.p7_md5
