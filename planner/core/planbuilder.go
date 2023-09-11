@@ -2443,13 +2443,13 @@ func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
 // See comments for AnalyzeResults.ForMVIndex for more details.
 func getModifiedIndexesInfoForAnalyze(tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) ([]*model.IndexInfo, []*model.IndexInfo) {
 	idxsInfo := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
-	independantIdxsInfo := make([]*model.IndexInfo, 0)
+	independentIdxsInfo := make([]*model.IndexInfo, 0)
 	for _, originIdx := range tblInfo.Indices {
 		if originIdx.State != model.StatePublic {
 			continue
 		}
 		if originIdx.MVIndex {
-			independantIdxsInfo = append(independantIdxsInfo, originIdx)
+			independentIdxsInfo = append(independentIdxsInfo, originIdx)
 			continue
 		}
 		if allColumns {
@@ -2465,7 +2465,7 @@ func getModifiedIndexesInfoForAnalyze(tblInfo *model.TableInfo, allColumns bool,
 		}
 		idxsInfo = append(idxsInfo, idx)
 	}
-	return idxsInfo, independantIdxsInfo
+	return idxsInfo, independentIdxsInfo
 }
 
 // filterSkipColumnTypes filters out columns whose types are in the skipTypes list.
