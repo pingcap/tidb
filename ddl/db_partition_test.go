@@ -1544,7 +1544,7 @@ func TestAlterTableTruncatePartitionPreSplitRegion(t *testing.T) {
 
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec(`CREATE TABLE t1 (id int, c varchar(128), key c(c)) partition by range (id) (
-		partition p0 values less than (10), 
+		partition p0 values less than (10),
 		partition p1 values less than MAXVALUE)`)
 	re := tk.MustQuery("show table t1 regions")
 	rows := re.Rows()
@@ -2465,6 +2465,71 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 	}
 	err = tk.Session().GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "0")
 	require.NoError(t, err)
+}
+
+func TestExchangePartitionValidation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	dbName := "ExchangeValidation"
+	tk.MustExec(`create schema ` + dbName)
+	tk.MustExec(`use ` + dbName)
+	tk.MustExec(`CREATE TABLE t1 (
+		d date NOT NULL ,
+		name varchar(10)  NOT NULL,
+		UNIQUE KEY (d,name))`)
+
+	tk.MustExec(`CREATE TABLE t1p (
+		d date NOT NULL ,
+		name varchar(10)  NOT NULL,
+		UNIQUE KEY (d,name)
+	)
+	PARTITION BY RANGE COLUMNS(d)
+	(PARTITION p202307 VALUES LESS THAN ('2023-08-01'),
+	 PARTITION p202308 VALUES LESS THAN ('2023-09-01'),
+	 PARTITION p202309 VALUES LESS THAN ('2023-10-01'),
+	 PARTITION p202310 VALUES LESS THAN ('2023-11-01'),
+	 PARTITION p202311 VALUES LESS THAN ('2023-12-01'),
+	 PARTITION p202312 VALUES LESS THAN ('2024-01-01'),
+	 PARTITION pfuture VALUES LESS THAN (MAXVALUE))`)
+
+	tk.MustExec(`insert into t1 values ("2023-08-06","0000")`)
+	tk.MustContainErrMsg(`alter table t1p exchange partition p202307 with table t1 with validation`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`insert into t1 values ("2023-08-06","0001")`)
+}
+
+func TestExchangePartitionPlacementPolicy(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`create schema ExchangePartWithPolicy`)
+	tk.MustExec(`use ExchangePartWithPolicy`)
+	tk.MustExec(`CREATE PLACEMENT POLICY rule1 FOLLOWERS=1`)
+	tk.MustExec(`CREATE PLACEMENT POLICY rule2 FOLLOWERS=2`)
+	tk.MustExec(`CREATE TABLE t1 (
+		d date NOT NULL ,
+		name varchar(10)  NOT NULL,
+		UNIQUE KEY (d,name)
+	) PLACEMENT POLICY="rule1"`)
+
+	tk.MustExec(`CREATE TABLE t1p (
+		d date NOT NULL ,
+		name varchar(10)  NOT NULL,
+		UNIQUE KEY (d,name)
+	) PLACEMENT POLICY="rule2"
+	PARTITION BY RANGE COLUMNS(d)
+	(PARTITION p202307 VALUES LESS THAN ('2023-08-01'),
+	 PARTITION p202308 VALUES LESS THAN ('2023-09-01'),
+	 PARTITION p202309 VALUES LESS THAN ('2023-10-01'),
+	 PARTITION p202310 VALUES LESS THAN ('2023-11-01'),
+	 PARTITION p202311 VALUES LESS THAN ('2023-12-01'),
+	 PARTITION p202312 VALUES LESS THAN ('2024-01-01'),
+	 PARTITION pfuture VALUES LESS THAN (MAXVALUE))`)
+
+	tk.MustContainErrMsg(`alter table t1p exchange partition p202307 with table t1`,
+		"[ddl:1736]Tables have different definitions")
+	tk.MustExec(`insert into t1 values ("2023-08-06","0000")`)
 }
 
 func TestExchangePartitionHook(t *testing.T) {

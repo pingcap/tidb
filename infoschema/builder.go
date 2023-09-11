@@ -219,6 +219,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyRecoverTable(m, diff)
 	case model.ActionCreateTables:
 		return b.applyCreateTables(m, diff)
+	case model.ActionExchangeTablePartition:
+		return b.applyExchangeTablePartition(m, diff)
 	case model.ActionFlashbackCluster:
 		return []int64{-1}, nil
 	default:
@@ -283,6 +285,47 @@ func (b *Builder) applyDropTableOrParition(m *meta.Meta, diff *model.SchemaDiff)
 		b.deleteBundle(b.is, opt.OldTableID)
 	}
 	return tblIDs, nil
+}
+
+func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	// The partitioned table is not affected until the last stage
+	if diff.OldTableID == diff.TableID && diff.OldSchemaID == diff.SchemaID {
+		return b.applyTableUpdate(m, diff)
+	}
+	ntSchemaID := diff.OldSchemaID
+	ntID := diff.OldTableID
+	ptSchemaID := diff.SchemaID
+	ptID := diff.TableID
+	if len(diff.AffectedOpts) > 0 {
+		// From old version
+		ptID = diff.AffectedOpts[0].TableID
+		ptSchemaID = diff.AffectedOpts[0].SchemaID
+	}
+	// The normal table needs to be updated first:
+	// Just update the tables separately
+	currDiff := &model.SchemaDiff{
+		Version:  diff.Version,
+		TableID:  ntID,
+		SchemaID: ntSchemaID,
+	}
+	ntIDs, err := b.applyTableUpdate(m, currDiff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	b.markPartitionBundleShouldUpdate(ntID)
+	// Then the partitioned table
+	currDiff.TableID = ptID
+	currDiff.SchemaID = ptSchemaID
+	ptIDs, err := b.applyTableUpdate(m, currDiff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	b.markTableBundleShouldUpdate(ptID)
+	err = updateAutoIDForExchangePartition(b.store, ptSchemaID, ptID, ntSchemaID, ntID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return append(ptIDs, ntIDs...), nil
 }
 
 func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
@@ -352,14 +395,6 @@ func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]in
 			return nil, errors.Trace(err)
 		}
 		tblIDs = append(tblIDs, affectedIDs...)
-
-		if diff.Type == model.ActionExchangeTablePartition {
-			// handle partition table and table AutoID
-			err = updateAutoIDForExchangePartition(b.store, affectedDiff.SchemaID, affectedDiff.TableID, diff.SchemaID, diff.TableID)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
 	}
 
 	return tblIDs, nil
@@ -391,7 +426,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
-	case model.ActionTruncateTable, model.ActionCreateView, model.ActionExchangeTablePartition:
+	case model.ActionTruncateTable, model.ActionCreateView:
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	default:
@@ -409,8 +444,6 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		b.markTableBundleShouldUpdate(newTableID)
 	case model.ActionRecoverTable:
 		b.markTableBundleShouldUpdate(newTableID)
-	case model.ActionExchangeTablePartition:
-		b.markPartitionBundleShouldUpdate(newTableID)
 	case model.ActionAlterTablePlacement:
 		b.markTableBundleShouldUpdate(newTableID)
 	}
@@ -421,7 +454,6 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
 		if oldTableID == newTableID && (diff.Type != model.ActionRenameTable && diff.Type != model.ActionRenameTables) &&
-			diff.Type != model.ActionExchangeTablePartition &&
 			// For repairing table in TiDB cluster, given 2 normal node and 1 repair node.
 			// For normal node's information schema, repaired table is existed.
 			// For repair node's information schema, repaired table is filtered (couldn't find it in `is`).
