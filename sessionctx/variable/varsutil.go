@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -586,27 +585,4 @@ func ParseAnalyzeSkipColumnTypes(val string) map[string]struct{} {
 		}
 	}
 	return skipTypes
-}
-
-// ParseCloudStorageURI makes validation for tidb_cloud_storage_uri.
-func ParseCloudStorageURI(ctx context.Context, uri string, checkPermission bool) (storage.ExternalStorage, error) {
-	b, err := storage.ParseBackend(uri, nil)
-	if err != nil {
-		return nil, err
-	}
-	var checkPermissions []storage.Permission
-	if checkPermission {
-		checkPermissions = []storage.Permission{
-			storage.ListObjects,
-			storage.GetObject,
-			storage.AccessBuckets,
-		}
-	}
-	backend, err := storage.New(ctx, b, &storage.ExternalStorageOptions{
-		CheckPermissions: checkPermissions,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return backend, nil
 }

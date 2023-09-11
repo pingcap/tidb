@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
@@ -2259,9 +2258,9 @@ var defaultSysVars = []*SysVar{
 	}},
 	// can't assign validate function here. Because validation function will run after GetGlobal function
 	{Scope: ScopeGlobal, Name: TiDBCloudStorageURI, Value: "", Type: TypeStr, GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
-		return storage.RedactURL(CloudStorageURI.Load())
+		return RedactCloudStorageURI(CloudStorageURI.Load())
 	}, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
-		if _, err := ParseCloudStorageURI(ctx, val, true); err != nil {
+		if err := ValidateCloudStorageURI(ctx, val); err != nil {
 			return err
 		}
 		CloudStorageURI.Store(val)
