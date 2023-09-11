@@ -768,11 +768,33 @@ func buildColumnsAndConstraints(
 	colMap := make(map[string]*table.Column, len(colDefs))
 
 	for i, colDef := range colDefs {
+		if field_types.TiDBStrictIntegerDisplayWidth {
+			switch colDef.Tp.GetType() {
+			case mysql.TypeTiny:
+				// No warning for BOOL-like tinyint(1)
+				if colDef.Tp.GetFlen() != types.UnspecifiedLength && colDef.Tp.GetFlen() != 1 {
+					ctx.GetSessionVars().StmtCtx.AppendWarning(
+						dbterror.ErrWarnDeprecatedIntegerDisplayWidth.GenWithStackByArgs(),
+					)
+				}
+			case mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+				if colDef.Tp.GetFlen() != types.UnspecifiedLength {
+					ctx.GetSessionVars().StmtCtx.AppendWarning(
+						dbterror.ErrWarnDeprecatedIntegerDisplayWidth.GenWithStackByArgs(),
+					)
+				}
+			}
+		}
 		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint, tblCharset, tblCollate)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 		col.State = model.StatePublic
+		if mysql.HasZerofillFlag(col.GetFlag()) {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(
+				dbterror.ErrWarnDeprecatedZerofill.GenWithStackByArgs(),
+			)
+		}
 		constraints = append(constraints, cts...)
 		cols = append(cols, col)
 		colMap[colDef.Name.Name.L] = col
