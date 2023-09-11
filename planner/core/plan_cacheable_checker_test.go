@@ -103,7 +103,7 @@ func TestIssue46760(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestIssue46760, struct{}{})
 	tk.MustExecWithContext(ctx, `prepare st from 'select * from t where a<?'`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: check temporary table failed: mock error"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: find table test.t failed: mock error"))
 	tk.MustExec(`set @a=1`)
 	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
 	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
