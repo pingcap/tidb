@@ -698,7 +698,7 @@ func (stm *TaskManager) IsGlobalTaskCancelling(taskID int64) (bool, error) {
 	return len(rs) > 0, nil
 }
 
-// GetSubtasksByStep gets subtasks of global task by step.
+// GetSubtasksForImportInto gets the subtasks for import into(show import jobs).
 func (stm *TaskManager) GetSubtasksForImportInto(taskID, step int64) ([]*proto.Subtask, error) {
 	var (
 		rs  []chunk.Row
