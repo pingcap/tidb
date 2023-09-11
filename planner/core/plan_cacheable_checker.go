@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 
 	"github.com/pingcap/tidb/expression"
@@ -623,7 +624,12 @@ func getMaxParamLimit(sctx sessionctx.Context) int {
 
 // checkTableCacheable checks whether a query accessing this table is cacheable.
 func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema infoschema.InfoSchema, node *ast.TableName, isNonPrep bool) (cacheable bool, reason string) {
-	tb, err := schema.TableByName(node.Schema, node.Name)
+	tableSchema := node.Schema
+	if tableSchema.L == "" {
+		tableSchema.O = sctx.GetSessionVars().CurrentDB
+		tableSchema.L = strings.ToLower(tableSchema.O)
+	}
+	tb, err := schema.TableByName(tableSchema, node.Name)
 	if intest.InTest && ctx != nil && ctx.Value(PlanCacheKeyTestIssue46760) != nil {
 		err = errors.New("mock error")
 	}
