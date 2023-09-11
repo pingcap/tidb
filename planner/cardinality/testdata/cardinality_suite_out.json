@@ -234,6 +234,42 @@
           "└─Selection 832.49 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
+      },
+      {
+        "SQL": "set @@tidb_opt_objective = 'determinate'",
+        "Result": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 300",
+        "Result": [
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  le(test.t.a, 300)",
+          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 500",
+        "Result": [
+          "TableReader 1010.00 root  data:Selection",
+          "└─Selection 1010.00 cop[tikv]  le(test.t.a, 500)",
+          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a > 900",
+        "Result": [
+          "TableReader 5.00 root  data:Selection",
+          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 900)",
+          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 900",
+        "Result": [
+          "TableReader 3000.00 root  data:Selection",
+          "└─Selection 3000.00 cop[tikv]  le(test.t.a, 900)",
+          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
+        ]
       }
     ]
   },
@@ -2145,7 +2181,7 @@
                     "TopN total count": 1095
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2155,7 +2191,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                           {
                             "Encoded": "A4AAAAAAAABk",
                             "Value": "KindInt64 100"
@@ -2214,7 +2250,7 @@
                     "TopN total count": 1098
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2224,7 +2260,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                           {
                             "Encoded": "A4AAAAAAAAFe",
                             "Value": "KindInt64 350"
@@ -2301,7 +2337,7 @@
                     "TopN total count": 0
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*HistColl).GetIndexRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.getIndexRowCountForStatsV1": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2311,9 +2347,9 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*HistColl).getEqualCondSelectivity": [
+                        "github.com/pingcap/tidb/planner/cardinality.getEqualCondSelectivity": [
                           {
-                            "github.com/pingcap/tidb/statistics.(*HistColl).crossValidationSelectivity": [
+                            "github.com/pingcap/tidb/planner/cardinality.crossValidationSelectivity": [
                               {
                                 "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
                                   "EssentialLoaded": true,
@@ -2324,7 +2360,7 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                                "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                                   {
                                     "Start estimate range": {
                                       "CurrentRowCount": 0,
@@ -2334,7 +2370,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAABk",
                                         "Value": "KindInt64 100"
@@ -2374,7 +2410,7 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                                "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                                   {
                                     "Start estimate range": {
                                       "CurrentRowCount": 0,
@@ -2384,7 +2420,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAFe",
                                         "Value": "KindInt64 350"
@@ -2514,7 +2550,7 @@
                     "TopN total count": 0
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*HistColl).GetIndexRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.getIndexRowCountForStatsV1": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2524,9 +2560,9 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*HistColl).getEqualCondSelectivity": [
+                        "github.com/pingcap/tidb/planner/cardinality.getEqualCondSelectivity": [
                           {
-                            "github.com/pingcap/tidb/statistics.(*HistColl).crossValidationSelectivity": [
+                            "github.com/pingcap/tidb/planner/cardinality.crossValidationSelectivity": [
                               {
                                 "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
                                   "EssentialLoaded": true,
@@ -2537,7 +2573,7 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                                "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                                   {
                                     "Start estimate range": {
                                       "CurrentRowCount": 0,
@@ -2547,7 +2583,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAFe",
                                         "Value": "KindInt64 350"
@@ -2702,7 +2738,7 @@
                     "TopN total count": 1000
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2712,7 +2748,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                           {
                             "Encoded": "A4AAAAAAAABk",
                             "Value": "KindInt64 100"
@@ -2771,7 +2807,7 @@
                     "TopN total count": 1000
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2781,7 +2817,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                           {
                             "Encoded": "A4AAAAAAAAFe",
                             "Value": "KindInt64 350"
@@ -2798,7 +2834,7 @@
                             ]
                           },
                           {
-                            "github.com/pingcap/tidb/statistics.(*Histogram).equalRowCount": [
+                            "github.com/pingcap/tidb/statistics.(*Histogram).EqualRowCount": [
                               {
                                 "Locate value in buckets": {
                                   "BucketIdx": 105,
@@ -2864,7 +2900,7 @@
                     "TopN total count": 1000
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Index).GetRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.getIndexRowCountForStatsV2": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2874,7 +2910,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Index).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnIndex": [
                           {
                             "Encoded Value": "A4AAAAAAAABkA4AAAAAAAAFe"
                           },
@@ -2890,7 +2926,7 @@
                             ]
                           },
                           {
-                            "github.com/pingcap/tidb/statistics.(*Histogram).equalRowCount": [
+                            "github.com/pingcap/tidb/statistics.(*Histogram).EqualRowCount": [
                               {
                                 "Locate value in buckets": {
                                   "BucketIdx": 136,
@@ -2955,7 +2991,7 @@
                     "TopN total count": 1000
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Index).GetRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.getIndexRowCountForStatsV2": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -2965,7 +3001,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Index).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnIndex": [
                           {
                             "Encoded Value": "A4AAAAAAAAFe"
                           },
@@ -2981,7 +3017,7 @@
                             ]
                           },
                           {
-                            "github.com/pingcap/tidb/statistics.(*Histogram).equalRowCount": [
+                            "github.com/pingcap/tidb/statistics.(*Histogram).EqualRowCount": [
                               {
                                 "Locate value in buckets": {
                                   "BucketIdx": 105,
@@ -3074,7 +3110,7 @@
                     "TopN total count": 1095
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -3146,7 +3182,7 @@
                         ]
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Histogram).outOfRangeRowCount": [
+                        "github.com/pingcap/tidb/statistics.(*Histogram).OutOfRangeRowCount": [
                           {
                             "lDatum": "KindMinNotNull <nil>",
                             "modifyCount": 0,
@@ -3209,7 +3245,7 @@
                     "TopN total count": 1098
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -3219,7 +3255,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                           {
                             "Encoded": "A4AAAAAAAAGQ",
                             "Value": "KindInt64 401"
@@ -3268,7 +3304,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                           {
                             "Encoded": "A4AAAAAAAAGQ",
                             "Value": "KindInt64 402"
@@ -3345,7 +3381,7 @@
                     "TopN total count": 0
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*HistColl).GetIndexRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.getIndexRowCountForStatsV1": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -3355,7 +3391,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Index).GetRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.getIndexRowCountForStatsV2": [
                           {
                             "Start estimate range": {
                               "CurrentRowCount": 0,
@@ -3427,7 +3463,7 @@
                             ]
                           },
                           {
-                            "github.com/pingcap/tidb/statistics.(*Histogram).outOfRangeRowCount": [
+                            "github.com/pingcap/tidb/statistics.(*Histogram).OutOfRangeRowCount": [
                               {
                                 "lDatum": "KindBytes \\x01",
                                 "modifyCount": 0,
@@ -3496,7 +3532,7 @@
                     "TopN total count": 0
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*HistColl).GetIndexRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.getIndexRowCountForStatsV1": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -3506,9 +3542,9 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*HistColl).getEqualCondSelectivity": [
+                        "github.com/pingcap/tidb/planner/cardinality.getEqualCondSelectivity": [
                           {
-                            "github.com/pingcap/tidb/statistics.(*HistColl).crossValidationSelectivity": [
+                            "github.com/pingcap/tidb/planner/cardinality.crossValidationSelectivity": [
                               {
                                 "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
                                   "EssentialLoaded": true,
@@ -3519,7 +3555,7 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                                "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                                   {
                                     "Start estimate range": {
                                       "CurrentRowCount": 0,
@@ -3529,7 +3565,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAGQ",
                                         "Value": "KindInt64 400"
@@ -3558,7 +3594,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAGQ",
                                         "Value": "KindInt64 401"
@@ -3607,7 +3643,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAGQ",
                                         "Value": "KindInt64 402"
@@ -3656,7 +3692,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAGQ",
                                         "Value": "KindInt64 403"
@@ -3752,9 +3788,9 @@
                         ]
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*HistColl).getEqualCondSelectivity": [
+                        "github.com/pingcap/tidb/planner/cardinality.getEqualCondSelectivity": [
                           {
-                            "github.com/pingcap/tidb/statistics.(*HistColl).crossValidationSelectivity": [
+                            "github.com/pingcap/tidb/planner/cardinality.crossValidationSelectivity": [
                               {
                                 "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
                                   "EssentialLoaded": true,
@@ -3765,7 +3801,7 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                                "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                                   {
                                     "Start estimate range": {
                                       "CurrentRowCount": 0,
@@ -3775,7 +3811,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAGQ",
                                         "Value": "KindInt64 400"
@@ -3804,7 +3840,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAGQ",
                                         "Value": "KindInt64 401"
@@ -3853,7 +3889,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAGQ",
                                         "Value": "KindInt64 402"
@@ -3902,7 +3938,7 @@
                                     }
                                   },
                                   {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                    "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                                       {
                                         "Encoded": "A4AAAAAAAAGQ",
                                         "Value": "KindInt64 403"
@@ -4065,7 +4101,7 @@
                     "TopN total count": 1000
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -4142,7 +4178,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Histogram).outOfRangeRowCount": [
+                        "github.com/pingcap/tidb/statistics.(*Histogram).OutOfRangeRowCount": [
                           {
                             "lDatum": "KindMinNotNull <nil>",
                             "modifyCount": 100,
@@ -4205,7 +4241,7 @@
                     "TopN total count": 1000
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.GetColumnRowCount": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -4295,7 +4331,7 @@
                         ]
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                        "github.com/pingcap/tidb/planner/cardinality.equalRowCountOnColumn": [
                           {
                             "Encoded": "A4AAAAAAAAGQ",
                             "Value": "KindInt64 400"
@@ -4352,7 +4388,7 @@
                     "TopN total count": 1000
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Index).GetRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.getIndexRowCountForStatsV2": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -4429,7 +4465,7 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*Histogram).outOfRangeRowCount": [
+                        "github.com/pingcap/tidb/statistics.(*Histogram).OutOfRangeRowCount": [
                           {
                             "lDatum": "KindBytes \\x01",
                             "modifyCount": 100,
@@ -4481,7 +4517,7 @@
                     "TopN total count": 1000
                   },
                   {
-                    "github.com/pingcap/tidb/statistics.(*Index).GetRowCount": [
+                    "github.com/pingcap/tidb/planner/cardinality.getIndexRowCountForStatsV2": [
                       {
                         "Start estimate range": {
                           "CurrentRowCount": 0,
@@ -4591,6 +4627,45 @@
               }
             ]
           }
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexJoinInnerRowCountUpperBound",
+    "Cases": [
+      {
+        "Query": "explain format = 'brief' select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b",
+        "Result": [
+          "Projection 2000.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
+          "└─IndexJoin 2000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+          "  ├─TableReader(Build) 1000.00 root  data:Selection",
+          "  │ └─Selection 1000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
+          "  │   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "  └─IndexLookUp(Probe) 2000.00 root  ",
+          "    ├─Selection(Build) 1000000.00 cop[tikv]  lt(test.t.b, 1), not(isnull(test.t.b))",
+          "    │ └─IndexRangeScan 500000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 2000.00 cop[tikv]  eq(test.t.a, 0)",
+          "      └─TableRowIDScan 1000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "set @@tidb_opt_fix_control = '44855:ON'",
+        "Result": null
+      },
+      {
+        "Query": "explain format = 'brief' select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b",
+        "Result": [
+          "Projection 2000.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
+          "└─IndexJoin 2000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+          "  ├─TableReader(Build) 1000.00 root  data:Selection",
+          "  │ └─Selection 1000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
+          "  │   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "  └─IndexLookUp(Probe) 2000.00 root  ",
+          "    ├─Selection(Build) 1000000.00 cop[tikv]  lt(test.t.b, 1), not(isnull(test.t.b))",
+          "    │ └─IndexRangeScan 1000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 2000.00 cop[tikv]  eq(test.t.a, 0)",
+          "      └─TableRowIDScan 1000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       }
     ]

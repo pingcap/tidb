@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/executor/aggregate"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -160,7 +161,7 @@ func TestAggPartialResultMapperB(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		aggMap := make(aggPartialResultMapper)
+		aggMap := make(aggregate.AggPartialResultMapper)
 		tempSlice := make([]aggfuncs.PartialResult, 10)
 		for num := 0; num < tc.rowNum; num++ {
 			aggMap[strconv.Itoa(num)] = tempSlice
@@ -187,13 +188,13 @@ type hmap struct {
 	nevacuate  uintptr        // nolint:unused // progress counter for evacuation (buckets less than this have been evacuated)
 }
 
-func getB(m aggPartialResultMapper) int {
+func getB(m aggregate.AggPartialResultMapper) int {
 	point := (**hmap)(unsafe.Pointer(&m))
 	value := *point
 	return int(value.B)
 }
 
-func getGrowing(m aggPartialResultMapper) bool {
+func getGrowing(m aggregate.AggPartialResultMapper) bool {
 	point := (**hmap)(unsafe.Pointer(&m))
 	value := *point
 	return value.oldbuckets != nil
@@ -241,7 +242,7 @@ func TestSortSpillDisk(t *testing.T) {
 		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
 	}
 	tmpCtx := context.Background()
-	chk := newFirstChunk(exe)
+	chk := exec.NewFirstChunk(exe)
 	dataSource.prepareChunks()
 	err := exe.Open(tmpCtx)
 	require.NoError(t, err)
@@ -336,7 +337,7 @@ func TestSortSpillDisk(t *testing.T) {
 		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
 	}
 	tmpCtx = context.Background()
-	chk = newFirstChunk(exe)
+	chk = exec.NewFirstChunk(exe)
 	dataSource.prepareChunks()
 	err = exe.Open(tmpCtx)
 	require.NoError(t, err)

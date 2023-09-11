@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
@@ -1086,6 +1087,57 @@ func TestTiFlashGroupIndexWhenStartup(t *testing.T) {
 	require.Equal(t, placement.RuleIndexTiFlash, tiflash.GetRuleGroupIndex(), errMsg)
 	require.Greater(t, tiflash.GetRuleGroupIndex(), placement.RuleIndexTable)
 	require.Greater(t, tiflash.GetRuleGroupIndex(), placement.RuleIndexPartition)
+}
+
+func TestTiFlashFailureProgressAfterAvailable(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	CheckTableAvailable(s.dom, t, 1, []string{})
+
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+	// after available, progress should can be updated.
+	// s.tiflash.ResetSyncStatus(int(tb.Meta().ID), false)
+
+	s.tiflash.SetNetworkError(true)
+	pool := s.dom.SysSessionPool()
+	se, err := pool.Get()
+	require.NoError(t, err)
+	sctx := se.(sessionctx.Context)
+	defer pool.Put(se)
+	pollTiflashContext, err := ddl.NewTiFlashManagementContext()
+	pollTiflashContext.UpdatingProgressTables.PushBack(ddl.AvailableTableID{
+		ID:          tb.Meta().ID,
+		IsPartition: false,
+	})
+	require.NoError(t, err)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ddl.PollAvailableTableProgress(s.dom.InfoSchema(), sctx, pollTiflashContext)
+	}()
+	time.Sleep(ddl.PollTiFlashInterval)
+
+	c := make(chan struct{})
+	go func() {
+		defer close(c)
+		wg.Wait()
+	}()
+	select {
+	case <-c:
+		return
+	case <-time.After(time.Second):
+		panic("DDL can't finish")
+	}
 }
 
 func TestTiFlashProgressAfterAvailable(t *testing.T) {

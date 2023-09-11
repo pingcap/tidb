@@ -2381,43 +2381,43 @@
       {
         "SQL": "explain with d1 as (\n    select a from (\n        select a from (\n            select /*+ qb_name(qb, v4) use_index(t4@qb, idx_a) */ a from v4 where a < 10\n        ) as t0 where a < 9\n    ) as t1 where a < 8\n), d2 as (select /*+ qb_name(qb2, v4) use_index(t4@qb2, idx_b) */ a from v4 where b < 10)\n\nselect * from (select * from d1) as t0 join (select * from d2) as t1;",
         "Plan": [
-          "HashJoin_41 6944.44 root  CARTESIAN inner join",
-          "├─IndexLookUp_50(Build) 83.33 root  ",
-          "│ ├─IndexRangeScan_47(Build) 250.00 cop[tikv] table:t4, index:idx_b(b) range:(3,10), keep order:false, stats:pseudo",
-          "│ └─Selection_49(Probe) 83.33 cop[tikv]  gt(test.t4.a, 2)",
-          "│   └─TableRowIDScan_48 250.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
-          "└─IndexLookUp_46(Probe) 83.33 root  ",
-          "  ├─IndexRangeScan_43(Build) 250.00 cop[tikv] table:t4, index:idx_a(a) range:(2,8), keep order:false, stats:pseudo",
-          "  └─Selection_45(Probe) 83.33 cop[tikv]  gt(test.t4.b, 3)",
-          "    └─TableRowIDScan_44 250.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+          "HashJoin_42 6944.44 root  CARTESIAN inner join",
+          "├─IndexLookUp_51(Build) 83.33 root  ",
+          "│ ├─IndexRangeScan_48(Build) 250.00 cop[tikv] table:t4, index:idx_b(b) range:(3,10), keep order:false, stats:pseudo",
+          "│ └─Selection_50(Probe) 83.33 cop[tikv]  gt(test.t4.a, 2)",
+          "│   └─TableRowIDScan_49 250.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "└─IndexLookUp_47(Probe) 83.33 root  ",
+          "  ├─IndexRangeScan_44(Build) 250.00 cop[tikv] table:t4, index:idx_a(a) range:(2,8), keep order:false, stats:pseudo",
+          "  └─Selection_46(Probe) 83.33 cop[tikv]  gt(test.t4.b, 3)",
+          "    └─TableRowIDScan_45 250.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain with d1 as (\n    select a from (\n        select a from (\n            select a from v4 where a < 10\n        ) as t0 where a < 9\n    ) as t1 where a < 8\n), d2 as (select a from v4 where b < 10)\n\nselect /*+ qb_name(qb, v4@sel_4) use_index(t4@qb, idx_a)   qb_name(qb2, v4@sel_5) use_index(t4@qb, idx_b) */ * from (select * from d1) as t0 join (select * from d2) as t1;",
         "Plan": [
-          "HashJoin_41 6944.44 root  CARTESIAN inner join",
-          "├─TableReader_53(Build) 83.33 root  data:Selection_52",
-          "│ └─Selection_52 83.33 cop[tikv]  gt(test.t4.a, 2), gt(test.t4.b, 3), lt(test.t4.b, 10)",
-          "│   └─TableFullScan_51 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
-          "└─IndexLookUp_46(Probe) 83.33 root  ",
-          "  ├─IndexRangeScan_43(Build) 250.00 cop[tikv] table:t4, index:idx_a(a) range:(2,8), keep order:false, stats:pseudo",
-          "  └─Selection_45(Probe) 83.33 cop[tikv]  gt(test.t4.b, 3)",
-          "    └─TableRowIDScan_44 250.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+          "HashJoin_42 6944.44 root  CARTESIAN inner join",
+          "├─TableReader_54(Build) 83.33 root  data:Selection_53",
+          "│ └─Selection_53 83.33 cop[tikv]  gt(test.t4.a, 2), gt(test.t4.b, 3), lt(test.t4.b, 10)",
+          "│   └─TableFullScan_52 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "└─IndexLookUp_47(Probe) 83.33 root  ",
+          "  ├─IndexRangeScan_44(Build) 250.00 cop[tikv] table:t4, index:idx_a(a) range:(2,8), keep order:false, stats:pseudo",
+          "  └─Selection_46(Probe) 83.33 cop[tikv]  gt(test.t4.b, 3)",
+          "    └─TableRowIDScan_45 250.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain with d1 as (\n    select a from (\n        select a from (\n            select /*+ qb_name(qb, v5) use_index(t4@qb, idx_a) */ a from v4 where a < 10\n        ) as t0 where a < 9\n    ) as t1 where a < 8\n), d2 as (select /*+ qb_name(qb2, v4) use_index(t4@qb2, idx_b) */ a from v4 where b < 10)\n\nselect * from (select * from d1) as t0 join (select * from d2) as t1;",
         "Plan": [
-          "HashJoin_41 6944.44 root  CARTESIAN inner join",
-          "├─IndexLookUp_57(Build) 83.33 root  ",
-          "│ ├─IndexRangeScan_54(Build) 250.00 cop[tikv] table:t4, index:idx_b(b) range:(3,10), keep order:false, stats:pseudo",
-          "│ └─Selection_56(Probe) 83.33 cop[tikv]  gt(test.t4.a, 2)",
-          "│   └─TableRowIDScan_55 250.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
-          "└─TableReader_45(Probe) 83.33 root  data:Selection_44",
-          "  └─Selection_44 83.33 cop[tikv]  gt(test.t4.a, 2), gt(test.t4.b, 3), lt(test.t4.a, 10), lt(test.t4.a, 8), lt(test.t4.a, 9)",
-          "    └─TableFullScan_43 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+          "HashJoin_42 6944.44 root  CARTESIAN inner join",
+          "├─IndexLookUp_58(Build) 83.33 root  ",
+          "│ ├─IndexRangeScan_55(Build) 250.00 cop[tikv] table:t4, index:idx_b(b) range:(3,10), keep order:false, stats:pseudo",
+          "│ └─Selection_57(Probe) 83.33 cop[tikv]  gt(test.t4.a, 2)",
+          "│   └─TableRowIDScan_56 250.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "└─TableReader_46(Probe) 83.33 root  data:Selection_45",
+          "  └─Selection_45 83.33 cop[tikv]  gt(test.t4.a, 2), gt(test.t4.b, 3), lt(test.t4.a, 10), lt(test.t4.a, 8), lt(test.t4.a, 9)",
+          "    └─TableFullScan_44 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "The qb_name hint qb is unused, please check whether the table list in the qb_name hint qb is correct"

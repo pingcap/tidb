@@ -598,7 +598,7 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 			Backend: config.BackendLocal,
 		},
 	}
-	ci := NewConflictedTaskCheckItem(cfg)
+	ci := NewConflictedTaskCheckItem(cfg, nil)
 	checker := ci.(*ConflictedTaskCheckItem)
 	checker.etcdCli = testEtcdCluster.RandClient()
 	result, err := ci.Check(ctx)
