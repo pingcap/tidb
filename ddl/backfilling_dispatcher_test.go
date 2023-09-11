@@ -37,7 +37,8 @@ func TestBackfillingDispatcher(t *testing.T) {
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	// test partition table OnNextSubtasksBatch.
+
+	/// 1. test partition table.
 	tk.MustExec("create table tp1(id int primary key, v int) PARTITION BY RANGE (id) (\n    " +
 		"PARTITION p0 VALUES LESS THAN (10),\n" +
 		"PARTITION p1 VALUES LESS THAN (100),\n" +
@@ -47,6 +48,8 @@ func TestBackfillingDispatcher(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
+
+	// 1.1 OnNextSubtasksBatch
 	metas, err := dsp.OnNextSubtasksBatch(context.Background(), nil, gTask)
 	require.NoError(t, err)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
@@ -56,14 +59,14 @@ func TestBackfillingDispatcher(t *testing.T) {
 		require.Equal(t, par.ID, subTask.PhysicalTableID)
 	}
 
-	// test partition table OnNextSubtasksBatch after stepOne finished.
+	// 1.2 test partition table OnNextSubtasksBatch after StepInit finished.
 	gTask.State = proto.TaskStateRunning
 	gTask.Step++
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
 
-	// test partition table OnErrStage.
+	// 1.3 test partition table OnErrStage.
 	errMeta, err := dsp.OnErrStage(context.Background(), nil, gTask, []error{errors.New("mockErr")})
 	require.NoError(t, err)
 	require.Nil(t, errMeta)
@@ -72,10 +75,27 @@ func TestBackfillingDispatcher(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, errMeta)
 
+	/// 2. test non partition table.
+	// 2.1 empty table
 	tk.MustExec("create table t1(id int primary key, v int)")
 	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", ddl.BackfillTaskType)
-	_, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask)
+	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask)
 	require.NoError(t, err)
+	require.Equal(t, 0, len(metas))
+	// 2.2 non empty table.
+	tk.MustExec("create table t2(id bigint auto_random primary key)")
+	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
+	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
+	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
+	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
+	gTask = createAddIndexGlobalTask(t, dom, "test", "t2", ddl.BackfillTaskType)
+	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask)
+	require.NoError(t, err)
+	gTask.Step++
+	gTask.State = proto.TaskStateRunning
+	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(metas))
 }
 
 func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName string, taskType string) *proto.Task {
@@ -109,7 +129,7 @@ func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName 
 	gTask := &proto.Task{
 		ID:              time.Now().UnixMicro(),
 		Type:            taskType,
-		Step:            proto.StepOne,
+		Step:            proto.StepInit,
 		State:           proto.TaskStatePending,
 		Meta:            gTaskMetaBytes,
 		StartTime:       time.Now(),

@@ -68,7 +68,7 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context, _ di
 	var subTaskMetas [][]byte
 	// generate partition table's plan.
 	if tblInfo.Partition != nil {
-		if gTask.Step != proto.StepOne {
+		if gTask.Step != proto.StepInit {
 			// This flow for partition table has only one step
 			return nil, nil
 		}
@@ -81,13 +81,13 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context, _ di
 
 	// generate non-partition table's plan.
 	switch gTask.Step {
-	case proto.StepOne:
+	case proto.StepInit:
 		subtaskMeta, err := generateNonPartitionPlan(h.d, tblInfo, job)
 		if err != nil {
 			return nil, err
 		}
 		return subtaskMeta, nil
-	case proto.StepTwo:
+	case proto.StepOne:
 		serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
 		if err != nil {
 			return nil, err
@@ -112,7 +112,7 @@ func (*backfillingDispatcherExt) StageFinished(_ *proto.Task) bool {
 }
 
 func (*backfillingDispatcherExt) Finished(task *proto.Task) bool {
-	return task.Step == proto.StepTwo
+	return task.Step == proto.StepOne
 }
 
 // OnErrStage generate error handling stage's plan.
