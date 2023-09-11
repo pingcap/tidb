@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,22 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sem
+package backoff
 
 import (
 	"testing"
+	"time"
 
-	"github.com/pingcap/tidb/testkit/testsetup"
-	"go.uber.org/goleak"
+	"github.com/stretchr/testify/require"
 )
 
-func TestMain(m *testing.M) {
-	testsetup.SetupForCommonTest()
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+func TestExponential(t *testing.T) {
+	backoffer := NewExponential(1, 1, 1)
+	for i := 0; i < 10; i++ {
+		require.Equal(t, time.Duration(1), backoffer.Backoff(i))
 	}
-	goleak.VerifyTestMain(m, opts...)
+	backoffer = NewExponential(1, 1, 10)
+	for i := 0; i < 10; i++ {
+		require.Equal(t, time.Duration(1), backoffer.Backoff(i))
+	}
+	backoffer = NewExponential(1, 2, 10)
+	res := []time.Duration{1, 2, 4, 8, 10, 10, 10, 10, 10, 10}
+	for i := 0; i < 10; i++ {
+		require.Equal(t, res[i], backoffer.Backoff(i))
+	}
 }
