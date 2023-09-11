@@ -2258,13 +2258,13 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	// can't assign validate function here. Because validation function will run after GetGlobal function
-	{Scope: ScopeGlobal, Name: TiDBGlobalStorageURI, Value: "", Type: TypeStr, GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
-		return storage.RedactURL(GlobalStorageURI.Load())
+	{Scope: ScopeGlobal, Name: TiDBCloudStorageURI, Value: "", Type: TypeStr, GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
+		return storage.RedactURL(CloudStorageURI.Load())
 	}, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
-		if _, err := ParseGlobalStorageURI(ctx, val, true); err != nil {
+		if _, err := ParseCloudStorageURI(ctx, val, true); err != nil {
 			return err
 		}
-		GlobalStorageURI.Store(val)
+		CloudStorageURI.Store(val)
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(config.GetGlobalConfig().PessimisticTxn.ConstraintCheckInPlacePessimistic), Type: TypeBool,

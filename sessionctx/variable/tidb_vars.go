@@ -982,8 +982,8 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
-	// TiDBGlobalStorageURI used to set a cloud storage uri for ddl add index and import into.
-	TiDBGlobalStorageURI = "tidb_global_storage_uri"
+	// TiDBCloudStorageURI used to set a cloud storage uri for ddl add index and import into.
+	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
 	// TiDBAutoBuildStatsConcurrency is used to set the build concurrency of auto-analyze.
 	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
 	// TiDBSysProcScanConcurrency is used to set the scan concurrency of for backend system processes, like auto-analyze.
@@ -1506,7 +1506,7 @@ var (
 	SkipMissingPartitionStats = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 	ServiceScope              = atomic.NewString("")
 	SchemaVersionCacheLimit   = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
-	GlobalStorageURI          = atomic.NewString("")
+	CloudStorageURI           = atomic.NewString("")
 )
 
 var (
