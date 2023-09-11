@@ -474,7 +474,7 @@ func (dc *ddlCtx) jobContext(jobID int64, reorgMeta *model.DDLReorgMeta) *JobCon
 	} else {
 		ctx = NewJobContext()
 	}
-	if reorgMeta != nil {
+	if reorgMeta != nil && len(ctx.resourceGroupName) == 0 {
 		ctx.resourceGroupName = reorgMeta.ResourceGroupName
 	}
 	return ctx
