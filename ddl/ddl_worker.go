@@ -768,9 +768,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	if tagger := w.getResourceGroupTaggerForTopSQL(job.ID); tagger != nil {
 		txn.SetOption(kv.ResourceGroupTagger, tagger)
 	}
-	if job.ReorgMeta != nil {
-		txn.SetOption(kv.ResourceGroupName, job.ReorgMeta.ResourceGroupName)
-	}
+	txn.SetOption(kv.ResourceGroupName, jobContext.resourceGroupName)
 
 	t := meta.NewMeta(txn)
 	if job.IsDone() || job.IsRollbackDone() {
