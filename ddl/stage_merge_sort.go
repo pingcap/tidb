@@ -96,8 +96,9 @@ func (m *mergeSortStage) SplitSubtask(ctx context.Context, subtask *proto.Subtas
 	return nil, err
 }
 
-func (*mergeSortStage) Cleanup(ctx context.Context) error {
+func (m *mergeSortStage) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("merge sort stage clean up subtask env")
+	ingest.LitBackCtxMgr.Unregister(m.jobID)
 	return nil
 }
 
