@@ -281,7 +281,7 @@ func (w *Writer) LockForWrite() func() {
 // Close closes the writer.
 func (w *Writer) Close(ctx context.Context) error {
 	if w.closed {
-		return errors.Errorf("writer %d has been closed", w.writerID)
+		return errors.Errorf("writer %s has been closed", w.writerID)
 	}
 	w.closed = true
 	defer w.kvBuffer.Destroy()

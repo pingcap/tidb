@@ -489,7 +489,6 @@ func NewWriteExternalStoreOperator(
 				copCtx:       copCtx,
 				se:           nil,
 				sessPool:     sessPool,
-				shareWriter:  true,
 				writer:       writer,
 				srcChunkPool: srcChunkPool,
 			}
@@ -542,7 +541,6 @@ func NewIndexIngestOperator(
 				copCtx:       copCtx,
 				se:           nil,
 				sessPool:     sessPool,
-				shareWriter:  false,
 				writer:       writer,
 				srcChunkPool: srcChunkPool,
 			}
@@ -562,7 +560,6 @@ type indexIngestWorker struct {
 	sessPool opSessPool
 	se       *session.Session
 
-	shareWriter  bool
 	writer       ingest.Writer
 	srcChunkPool chan *chunk.Chunk
 }
@@ -603,11 +600,9 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 }
 
 func (w *indexIngestWorker) Close() {
-	if !w.shareWriter {
-		err := w.writer.Close(w.ctx)
-		if err != nil {
-			w.ctx.onError(err)
-		}
+	err := w.writer.Close(w.ctx)
+	if err != nil {
+		w.ctx.onError(err)
 	}
 	if w.se != nil {
 		w.sessPool.Put(w.se.Context)
