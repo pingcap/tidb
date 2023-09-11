@@ -1011,6 +1011,11 @@ error = '''
 Statement is unsafe because it uses a system function that may return a different value on the slave
 '''
 
+["ddl:1681"]
+error = '''
+The ZEROFILL attribute is deprecated and will be removed in a future release. Use the LPAD function to zero-pad numbers, or store the formatted numbers in a CHAR column.
+'''
+
 ["ddl:1688"]
 error = '''
 Comment for index '%-.64s' is too long (max = %d)
