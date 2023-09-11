@@ -103,7 +103,7 @@ func TestDispatcherExt(t *testing.T) {
 	}
 	_, err = manager.UpdateGlobalTaskAndAddSubTasks(task, subtasks, proto.TaskStatePending)
 	require.NoError(t, err)
-	gotSubtasks, err := manager.GetSubtasksByStep(taskID, importinto.StepImport)
+	gotSubtasks, err := manager.GetSubtasksForImportInto(taskID, importinto.StepImport)
 	require.NoError(t, err)
 	for _, s := range gotSubtasks {
 		require.NoError(t, manager.FinishSubtask(s.ID, []byte("{}")))
