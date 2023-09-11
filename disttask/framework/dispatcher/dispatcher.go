@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
@@ -43,13 +42,14 @@ const (
 )
 
 var (
-	// DefaultDispatchConcurrency is the default concurrency for handling task.
-	DefaultDispatchConcurrency = 4
-	checkTaskFinishedInterval  = 500 * time.Millisecond
-	checkTaskRunningInterval   = 300 * time.Millisecond
-	nonRetrySQLTime            = 1
-	retrySQLTimes              = variable.DefTiDBDDLErrorCountLimit
-	retrySQLInterval           = 500 * time.Millisecond
+	checkTaskFinishedInterval = 500 * time.Millisecond
+	nonRetrySQLTime           = 1
+	// RetrySQLTimes is the max retry times when executing SQL.
+	RetrySQLTimes = 30
+	// RetrySQLInterval is the initial interval between two SQL retries.
+	RetrySQLInterval = 3 * time.Second
+	// RetrySQLMaxInterval is the max interval between two SQL retries.
+	RetrySQLMaxInterval = 30 * time.Second
 )
 
 // TaskHandle provides the interface for operations needed by Dispatcher.
@@ -195,7 +195,7 @@ func (d *BaseDispatcher) onReverting() error {
 	if prevStageFinished {
 		// Finish the rollback step.
 		logutil.Logger(d.logCtx).Info("update the task to reverted state")
-		return d.updateTask(proto.TaskStateReverted, nil, retrySQLTimes)
+		return d.updateTask(proto.TaskStateReverted, nil, RetrySQLTimes)
 	}
 	// Wait all subtasks in this stage finished.
 	d.OnTick(d.ctx, d.task)
@@ -325,7 +325,7 @@ func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subta
 			logutil.Logger(d.logCtx).Warn("updateTask first failed", zap.String("from", prevState), zap.String("to", d.task.State),
 				zap.Int("retry times", retryTimes), zap.Error(err))
 		}
-		time.Sleep(retrySQLInterval)
+		time.Sleep(RetrySQLInterval)
 	}
 	if err != nil && retryTimes != nonRetrySQLTime {
 		logutil.Logger(d.logCtx).Warn("updateTask failed",
@@ -358,7 +358,7 @@ func (d *BaseDispatcher) dispatchSubTask4Revert(task *proto.Task, meta []byte) e
 	for _, id := range instanceIDs {
 		subTasks = append(subTasks, proto.NewSubtask(task.ID, task.Type, id, meta))
 	}
-	return d.updateTask(proto.TaskStateReverting, subTasks, retrySQLTimes)
+	return d.updateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)
 }
 
 func (d *BaseDispatcher) onNextStage() error {
@@ -381,7 +381,7 @@ func (d *BaseDispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error
 		task.Concurrency = MaxSubtaskConcurrency
 	}
 
-	retryTimes := retrySQLTimes
+	retryTimes := RetrySQLTimes
 	// 2. Special handling for the new tasks.
 	if task.State == proto.TaskStatePending {
 		// TODO: Consider using TS.
@@ -409,6 +409,14 @@ func (d *BaseDispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error
 	if err != nil {
 		return err
 	}
+	// 4. filter by role.
+	serverNodes, err = d.filterByRole(serverNodes)
+	if err != nil {
+		return err
+	}
+
+	logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
+
 	if len(serverNodes) == 0 {
 		return errors.New("no available TiDB node to dispatch subtasks")
 	}
@@ -424,7 +432,7 @@ func (d *BaseDispatcher) dispatchSubTask(task *proto.Task, metas [][]byte) error
 		logutil.Logger(d.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(task.ID, task.Type, instanceID, meta))
 	}
-	return d.updateTask(proto.TaskStateRunning, subTasks, retrySQLTimes)
+	return d.updateTask(proto.TaskStateRunning, subTasks, RetrySQLTimes)
 }
 
 func (d *BaseDispatcher) handlePlanErr(err error) error {
@@ -434,7 +442,7 @@ func (d *BaseDispatcher) handlePlanErr(err error) error {
 	}
 	d.task.Error = err
 	// state transform: pending -> failed.
-	return d.updateTask(proto.TaskStateFailed, nil, retrySQLTimes)
+	return d.updateTask(proto.TaskStateFailed, nil, RetrySQLTimes)
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.
@@ -458,6 +466,30 @@ func GenerateSchedulerNodes(ctx context.Context) (serverNodes []*infosync.Server
 		serverNodes = append(serverNodes, serverInfo)
 	}
 	return serverNodes, nil
+}
+
+func (d *BaseDispatcher) filterByRole(infos []*infosync.ServerInfo) ([]*infosync.ServerInfo, error) {
+	nodes, err := d.taskMgr.GetNodesByRole("background")
+	if err != nil {
+		return nil, err
+	}
+
+	if len(nodes) == 0 {
+		nodes, err = d.taskMgr.GetNodesByRole("")
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	res := make([]*infosync.ServerInfo, 0, len(nodes))
+	for _, info := range infos {
+		_, ok := nodes[disttaskutil.GenerateExecID(info.IP, info.Port)]
+		if ok {
+			res = append(res, info)
+		}
+	}
+	return res, nil
 }
 
 // GetAllSchedulerIDs gets all the scheduler IDs.
