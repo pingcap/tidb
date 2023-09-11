@@ -59,7 +59,9 @@ var (
 // Table represents statistics for a table.
 type Table struct {
 	ExtendedStats *ExtendedStatsColl
-	Name          string
+
+	ColAndIndexExistenceMap *ColAndIndexExistenceMap
+	Name                    string
 	HistColl
 	Version uint64
 	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
@@ -69,15 +71,17 @@ type Table struct {
 	// table again.
 	TblInfoUpdateTS uint64
 
-	ColAndIndexExistenceMap *ColAndIndexExistenceMap
-	IsPkIsHandle            bool
+	IsPkIsHandle bool
 }
 
+// ColAndIndexExistenceMap is the meta map for statistics.Table.
+// It can tell whether a column/index really has its statistics. So we won't send useless kv request when we do online stats loading.
 type ColAndIndexExistenceMap struct {
 	m1 map[int64]*model.ColumnInfo
 	m2 map[int64]*model.IndexInfo
 }
 
+// Has checks whether a column/index stats exists.
 func (m *ColAndIndexExistenceMap) Has(id int64, isIndex bool) bool {
 	if isIndex {
 		_, ok := m.m2[id]
@@ -87,26 +91,32 @@ func (m *ColAndIndexExistenceMap) Has(id int64, isIndex bool) bool {
 	return ok
 }
 
+// InsertCol inserts a column with its meta into the map.
 func (m *ColAndIndexExistenceMap) InsertCol(id int64, info *model.ColumnInfo) {
 	m.m1[id] = info
 }
 
+// GetCol gets the meta data of the given column.
 func (m *ColAndIndexExistenceMap) GetCol(id int64) *model.ColumnInfo {
 	return m.m1[id]
 }
 
+// InsertIndex inserts an index with its meta into the map.
 func (m *ColAndIndexExistenceMap) InsertIndex(id int64, info *model.IndexInfo) {
 	m.m2[id] = info
 }
 
+// GetIndex gets the meta data of the given index.
 func (m *ColAndIndexExistenceMap) GetIndex(id int64) *model.IndexInfo {
 	return m.m2[id]
 }
 
+// IsEmpty checks whether the map is empty.
 func (m *ColAndIndexExistenceMap) IsEmpty() bool {
 	return len(m.m1)+len(m.m2) == 0
 }
 
+// Clone deeply copies the map.
 func (m *ColAndIndexExistenceMap) Clone() *ColAndIndexExistenceMap {
 	mm := NewColAndIndexExistenceMap(len(m.m1), len(m.m2))
 	for k, v := range m.m1 {
@@ -118,6 +128,7 @@ func (m *ColAndIndexExistenceMap) Clone() *ColAndIndexExistenceMap {
 	return mm
 }
 
+// NewColAndIndexExistenceMap return a new object with the given capcity.
 func NewColAndIndexExistenceMap(colCap, idxCap int) *ColAndIndexExistenceMap {
 	return &ColAndIndexExistenceMap{
 		m1: make(map[int64]*model.ColumnInfo, colCap),
@@ -362,7 +373,9 @@ func (t *Table) Copy() *Table {
 		}
 		nt.ExtendedStats = newExtStatsColl
 	}
-	nt.ColAndIndexExistenceMap = t.ColAndIndexExistenceMap.Clone()
+	if t.ColAndIndexExistenceMap != nil {
+		nt.ColAndIndexExistenceMap = t.ColAndIndexExistenceMap.Clone()
+	}
 	return nt
 }
 

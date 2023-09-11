@@ -416,7 +416,7 @@ func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, re
 	return w, nil
 }
 
-func (h *Handle) readHistFromStorage(item *model.TableItemID, wrapper *statsWrapper, reader *statistics.StatsReader) (*statistics.Histogram, *types.Datum, int64, error) {
+func (*Handle) readHistFromStorage(item *model.TableItemID, wrapper *statsWrapper, reader *statistics.StatsReader) (*statistics.Histogram, *types.Datum, int64, error) {
 	isIndex := 0
 	var tp *types.FieldType
 	if item.IsIndex {
