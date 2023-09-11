@@ -689,11 +689,7 @@ type CDCPITRCheckItem struct {
 }
 
 // NewCDCPITRCheckItem creates a checker to check downstream has enabled CDC or PiTR.
-<<<<<<< HEAD:br/pkg/lightning/restore/precheck_impl.go
-func NewCDCPITRCheckItem(cfg *config.Config) PrecheckItem {
-=======
-func NewCDCPITRCheckItem(cfg *config.Config, leaderAddrGetter func() string) precheck.Checker {
->>>>>>> 41d1ec0267e (lightning: always get latest PD leader when access PD after initialized (#46726)):br/pkg/lightning/importer/precheck_impl.go
+func NewCDCPITRCheckItem(cfg *config.Config, leaderAddrGetter func() string) PrecheckItem {
 	return &CDCPITRCheckItem{
 		cfg:              cfg,
 		Instruction:      "local backend is not compatible with them. Please switch to tidb backend then try again.",
