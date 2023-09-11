@@ -490,7 +490,7 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			return in, !checker.cacheable
 		}
 		if checker.schema != nil {
-			checker.cacheable, checker.reason = checkTableCacheable(checker.ctx, checker.sctx, checker.schema, node, false)
+			checker.cacheable, checker.reason = checkTableCacheable(nil, checker.sctx, checker.schema, node, true)
 		}
 		return in, !checker.cacheable
 	}
