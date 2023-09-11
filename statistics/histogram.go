@@ -1471,7 +1471,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	}
 	for i := 0; i < len(buckets); i++ {
 		releasebucket4MergingForRecycle(buckets[i])
-
 	}
 	// Because we merge backwards, we need to flip the slices.
 	for i, j := 0, len(globalBuckets)-1; i < j; i, j = i+1, j-1 {
