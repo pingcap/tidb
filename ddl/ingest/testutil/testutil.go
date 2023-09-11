@@ -1,13 +1,15 @@
 package testutil
 
 import (
+	"testing"
+
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
-	"testing"
 )
 
+// InjectMockBackendMgr mock LitBackCtxMgr.
 func InjectMockBackendMgr(t *testing.T, store kv.Storage) (restore func()) {
 	tk := testkit.NewTestKit(t, store)
 	oldLitBackendMgr := ingest.LitBackCtxMgr
