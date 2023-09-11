@@ -66,6 +66,7 @@ go_test(
         "cmsketch_bench_test.go",
         "cmsketch_test.go",
         "fmsketch_test.go",
+        "histogram_bench_test.go",
         "histogram_test.go",
         "integration_test.go",
         "main_test.go",
