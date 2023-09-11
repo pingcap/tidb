@@ -80,7 +80,7 @@ func InitLogger(cfg *Config, _ string) error {
 	tidbLogCfg := logutil.LogConfig{}
 	// Disable annoying TiDB Log.
 	// TODO: some error logs outputs randomly, we need to fix them in TiDB.
-	tidbLogCfg.Level = "debug"
+	tidbLogCfg.Level = "fatal"
 	err := logutil.InitLogger(&tidbLogCfg)
 	if err != nil {
 		return errors.Trace(err)
