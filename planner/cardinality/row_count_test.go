@@ -34,7 +34,7 @@ func TestPseudoTable(t *testing.T) {
 	}
 	ti.Columns = append(ti.Columns, colInfo)
 	tbl := statistics.PseudoTable(ti, false)
-	require.Len(t, tbl.Columns, 1)
+	require.Len(t, tbl.Columns, 0)
 	require.Greater(t, tbl.RealtimeCount, int64(0))
 	sctx := mock.NewContext()
 	count := columnLessRowCount(sctx, tbl, types.NewIntDatum(100), colInfo.ID)
@@ -51,6 +51,6 @@ func TestPseudoTable(t *testing.T) {
 		State:     model.StatePublic,
 	})
 	tbl = statistics.PseudoTable(ti, false)
-	// We added a hidden column. The pseudo table still only have one column.
-	require.Equal(t, len(tbl.Columns), 1)
+	// We added a hidden column. The pseudo table still only have zero column.
+	require.Equal(t, len(tbl.Columns), 0)
 }

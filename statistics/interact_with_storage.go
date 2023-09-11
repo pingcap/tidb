@@ -392,6 +392,8 @@ func TableStatsFromStorage(reader *StatsReader, tableInfo *model.TableInfo, phys
 		histColl := HistColl{
 			PhysicalID:     physicalID,
 			HavePhysicalID: true,
+			Columns:        make(map[int64]*Column, 4),
+			Indices:        make(map[int64]*Index, 4),
 		}
 		table = &Table{
 			HistColl:                histColl,

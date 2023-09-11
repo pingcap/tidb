@@ -594,7 +594,7 @@ func TestNotLoadedStatsOnAllNULLCol(t *testing.T) {
 		"  │ └─Selection 0.00 cop[tikv]  not(isnull(test.t2.a))",
 		"  │   └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false",
 		"  └─TableReader(Probe) 4.00 root  data:TableFullScan",
-		"    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"))
+		"    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 
 	res = tk.MustQuery("explain format = 'brief' select * from t2 left join t1 on t1.a=t2.a order by t1.a, t2.a")
 	res.Check(testkit.Rows(

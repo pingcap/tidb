@@ -130,10 +130,7 @@ func (idx *Index) TotalRowCount() float64 {
 
 func IndexStatsIsInvalid(idxStats *Index, sctx sessionctx.Context, coll *HistColl, cid int64) (res bool) {
 	// When we are using stats from PseudoTable(), all column/index ID will be -1.
-	if (idxStats != nil && idxStats.IsFullLoad()) || coll.PhysicalID <= 0 {
-		return
-	}
-	if !coll.CanNotTriggerLoad {
+	if ((idxStats != nil && idxStats.IsFullLoad()) || coll.PhysicalID <= 0) && !coll.CanNotTriggerLoad {
 		HistogramNeededItems.insert(model.TableItemID{TableID: coll.PhysicalID, ID: cid, IsIndex: true})
 	}
 	var totalCount float64
