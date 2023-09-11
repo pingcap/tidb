@@ -71,25 +71,36 @@ func DefineBackupEBSFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagOperatorPausedGCAndSchedulers)
 }
 
-// checkConflictingLightningTasks checks whether there are some running importing tasks in the cluster.
+// checkConflictingTasksAndRegisterSelf checks whether there are some running importing tasks in the cluster.
 // This is necessary because the Ingest raft command relies on the external context beyond the raft log.
 // Those context might be lost due to the time order of taking snapshot.
-func checkConflictingLightningTasks(ctx context.Context, cfg Config) error {
+func checkConflictingTasksAndRegisterSelf(ctx context.Context, cfg Config) (func(), error) {
 	etcdCli, err := dialEtcdWithCfg(ctx, cfg)
 	if err != nil {
-		return errors.Annotate(err, "dial etcd failed")
+		return nil, errors.Annotate(err, "dial etcd failed")
 	}
 	defer func() {
 		_ = etcdCli.Close()
 	}()
 	hasImportTask, err := utils.GetImportTasksFrom(ctx, etcdCli)
 	if err != nil {
-		return errors.Annotate(err, "get import tasks from etcd failed")
+		return nil, errors.Annotate(err, "get import tasks from etcd failed")
 	}
 	if !hasImportTask.Empty() {
-		return errors.Annotate(berrors.ErrBackupConflicting, hasImportTask.MessageToUser())
+		return nil, errors.Annotate(berrors.ErrBackupConflicting, hasImportTask.MessageToUser())
 	}
-	return nil
+	rg := utils.NewTaskRegister(etcdCli, utils.RegisterSnapshotBackup, uuid.New().String())
+	if err := rg.RegisterTask(ctx); err != nil {
+		return nil, errors.Annotate(err, "failed to register the task")
+	}
+	cleanUp := func() {
+		cx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := rg.Close(cx); err != nil {
+			log.Warn("Failed to deregister the task.", logutil.ShortError(err))
+		}
+	}
+	return cleanUp, nil
 }
 
 // RunBackupEBS starts a backup task to backup volume vai EBS snapshot.
@@ -112,13 +123,15 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
 
-	if err := checkConflictingLightningTasks(ctx, cfg.Config); err != nil {
+	cleanUp, err := checkConflictingTasksAndRegisterSelf(ctx, cfg.Config)
+	if err != nil {
 		return err
 	}
+	defer cleanUp()
 
 	// receive the volume info from TiDB deployment tools.
 	backupInfo := &config.EBSBasedBRMeta{}
-	err := backupInfo.ConfigFromFile(cfg.VolumeFile)
+	err = backupInfo.ConfigFromFile(cfg.VolumeFile)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -144,23 +157,6 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
-
-	ecli, err := dialEtcdWithCfg(ctx, cfg.Config)
-	if err != nil {
-		return errors.Annotate(err, "failed to dial etcd for registering the task")
-	}
-
-	rg := utils.NewTaskRegister(ecli, utils.RegisterSnapshotBackup, uuid.New().String())
-	if err := rg.RegisterTask(ctx); err != nil {
-		return errors.Annotate(err, "failed to register the task")
-	}
-	defer func() {
-		cx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := rg.Close(cx); err != nil {
-			log.Warn("Failed to deregister the task.", logutil.ShortError(err))
-		}
-	}()
 
 	client := backup.NewBackupClient(ctx, mgr)
 
