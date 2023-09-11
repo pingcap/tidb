@@ -44,8 +44,12 @@ const (
 var (
 	checkTaskFinishedInterval = 500 * time.Millisecond
 	nonRetrySQLTime           = 1
-	retrySQLTimes             = 30
-	retrySQLInterval          = 3 * time.Second
+	// RetrySQLTimes is the max retry times when executing SQL.
+	RetrySQLTimes = 30
+	// RetrySQLInterval is the initial interval between two SQL retries.
+	RetrySQLInterval = 3 * time.Second
+	// RetrySQLMaxInterval is the max interval between two SQL retries.
+	RetrySQLMaxInterval = 30 * time.Second
 )
 
 // TaskHandle provides the interface for operations needed by Dispatcher.
@@ -192,7 +196,7 @@ func (d *BaseDispatcher) onReverting() error {
 	if cnt == 0 {
 		// Finish the rollback step.
 		logutil.Logger(d.logCtx).Info("all reverting tasks finished, update the task to reverted state")
-		return d.UpdateTask(proto.TaskStateReverted, nil, retrySQLTimes)
+		return d.UpdateTask(proto.TaskStateReverted, nil, RetrySQLTimes)
 	}
 	// Wait all subtasks in this stage finished.
 	d.OnTick(d.ctx, d.task)
@@ -232,7 +236,7 @@ func (d *BaseDispatcher) onRunning() error {
 		if d.Finished(d.task) {
 			d.task.StateUpdateTime = time.Now().UTC()
 			logutil.Logger(d.logCtx).Info("all subtasks dispatched and processed, finish the task")
-			err := d.UpdateTask(proto.TaskStateSucceed, nil, retrySQLTimes)
+			err := d.UpdateTask(proto.TaskStateSucceed, nil, RetrySQLTimes)
 			if err != nil {
 				logutil.Logger(d.logCtx).Warn("update task failed", zap.Error(err))
 				return err
@@ -310,7 +314,7 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 }
 
 func (d *BaseDispatcher) addSubtasks(subtasks []*proto.Subtask) (err error) {
-	for i := 0; i < retrySQLTimes; i++ {
+	for i := 0; i < RetrySQLTimes; i++ {
 		err = d.taskMgr.AddSubTasks(d.task, subtasks)
 		if err == nil {
 			break
@@ -320,12 +324,12 @@ func (d *BaseDispatcher) addSubtasks(subtasks []*proto.Subtask) (err error) {
 				zap.Int("subtask cnt", len(subtasks)),
 				zap.Int("retry times", i), zap.Error(err))
 		}
-		time.Sleep(retrySQLInterval)
+		time.Sleep(RetrySQLInterval)
 	}
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("addSubtasks failed", zap.String("state", d.task.State), zap.Int64("step", d.task.Step),
 			zap.Int("subtask cnt", len(subtasks)),
-			zap.Int("retry times", retrySQLTimes), zap.Error(err))
+			zap.Int("retry times", RetrySQLTimes), zap.Error(err))
 	}
 	return err
 }
@@ -354,7 +358,7 @@ func (d *BaseDispatcher) UpdateTask(taskState string, newSubTasks []*proto.Subta
 			logutil.Logger(d.logCtx).Warn("updateTask first failed", zap.String("from", prevState), zap.String("to", d.task.State),
 				zap.Int("retry times", i), zap.Error(err))
 		}
-		time.Sleep(retrySQLInterval)
+		time.Sleep(RetrySQLInterval)
 	}
 	if err != nil && retryTimes != nonRetrySQLTime {
 		logutil.Logger(d.logCtx).Warn("updateTask failed",
@@ -387,7 +391,7 @@ func (d *BaseDispatcher) dispatchSubTask4Revert(task *proto.Task, meta []byte) e
 	for _, id := range instanceIDs {
 		subTasks = append(subTasks, proto.NewSubtask(task.ID, task.Type, id, meta))
 	}
-	return d.UpdateTask(proto.TaskStateReverting, subTasks, retrySQLTimes)
+	return d.UpdateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)
 }
 
 func (d *BaseDispatcher) onNextStage() error {
@@ -405,7 +409,7 @@ func (d *BaseDispatcher) onNextStage() error {
 			d.task.Concurrency = MaxSubtaskConcurrency
 		}
 		d.task.StateUpdateTime = time.Now().UTC()
-		if err := d.UpdateTask(proto.TaskStateRunning, nil, retrySQLTimes); err != nil {
+		if err := d.UpdateTask(proto.TaskStateRunning, nil, RetrySQLTimes); err != nil {
 			return err
 		}
 	} else if d.StageFinished(d.task) {
@@ -413,7 +417,7 @@ func (d *BaseDispatcher) onNextStage() error {
 		d.task.Step++
 		logutil.Logger(d.logCtx).Info("previous stage finished, run into next stage", zap.Int64("from", d.task.Step-1), zap.Int64("to", d.task.Step))
 		d.task.StateUpdateTime = time.Now().UTC()
-		err := d.UpdateTask(proto.TaskStateRunning, nil, retrySQLTimes)
+		err := d.UpdateTask(proto.TaskStateRunning, nil, RetrySQLTimes)
 		if err != nil {
 			return err
 		}
@@ -492,7 +496,7 @@ func (d *BaseDispatcher) handlePlanErr(err error) error {
 	}
 	d.task.Error = err
 	// state transform: pending -> failed.
-	return d.UpdateTask(proto.TaskStateFailed, nil, retrySQLTimes)
+	return d.UpdateTask(proto.TaskStateFailed, nil, RetrySQLTimes)
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.
