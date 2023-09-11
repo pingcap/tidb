@@ -2866,7 +2866,7 @@ var defaultSysVars = []*SysVar{
 			vars.EnableOptimizerHistoryStats = TiDBOptOn(s)
 			return nil
 		},
-	},  
+	},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

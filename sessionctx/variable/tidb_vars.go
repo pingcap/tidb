@@ -1100,7 +1100,7 @@ const (
 	// TiDBSchemaVersionCacheLimit defines the capacity size of domain infoSchema cache.
 	TiDBSchemaVersionCacheLimit = "tidb_schema_version_cache_limit"
 	// TiDBOptimizerHistoryStats indicates whether collecting and using history stats for plan optimization
-	TiDBOptimizerHistoryStats = "tidb_optimizer_history_stats"  
+	TiDBOptimizerHistoryStats = "tidb_optimizer_history_stats"
 )
 
 // TiDB intentional limits
@@ -1409,7 +1409,7 @@ const (
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
-	DefTiDBOptimizerHistoryStats                      = false  
+	DefTiDBOptimizerHistoryStats                      = false
 )
 
 // Process global variables.
