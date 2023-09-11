@@ -2297,6 +2297,11 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBSchemaVersionCacheLimit, Value: strconv.Itoa(DefTiDBSchemaVersionCacheLimit), Type: TypeInt, MinValue: 2, MaxValue: math.MaxUint8, AllowEmpty: true,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			SchemaVersionCacheLimit.Store(TidbOptInt64(val, DefTiDBSchemaVersionCacheLimit))
+			return nil
+		}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
