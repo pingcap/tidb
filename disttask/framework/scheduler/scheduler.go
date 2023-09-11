@@ -174,7 +174,15 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 			break
 		}
 		if subtask == nil {
-			break
+			newTask, err := s.taskTable.GetGlobalTaskByID(task.ID)
+			if err != nil {
+				s.onError(err)
+			}
+			// When the task move to next Stage or task state changes, the scheduler should exit.
+			if newTask.Step != task.Step || newTask.State != task.State {
+				break
+			}
+			continue
 		}
 		s.startSubtask(subtask.ID)
 		if err := s.getError(); err != nil {
