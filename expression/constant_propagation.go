@@ -69,7 +69,8 @@ func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (boo
 	return true, false
 }
 
-func validEqualCondHelper(ctx sessionctx.Context, eq *ScalarFunction, colIsLeft bool) (*Column, *Constant) {
+// ValidCompareConstantPredicateHelper checks if the predicate is a compare constant predicate, like "Column xxx Constant"
+func ValidCompareConstantPredicateHelper(eq *ScalarFunction, colIsLeft bool) (*Column, *Constant) {
 	var col *Column
 	var con *Constant
 	colOk := false
@@ -97,14 +98,14 @@ func validEqualCondHelper(ctx sessionctx.Context, eq *ScalarFunction, colIsLeft 
 }
 
 // validEqualCond checks if the cond is an expression like [column eq constant].
-func validEqualCond(ctx sessionctx.Context, cond Expression) (*Column, *Constant) {
+func validEqualCond(cond Expression) (*Column, *Constant) {
 	if eq, ok := cond.(*ScalarFunction); ok {
 		if eq.FuncName.L != ast.EQ {
 			return nil, nil
 		}
-		col, con := validEqualCondHelper(ctx, eq, true)
+		col, con := ValidCompareConstantPredicateHelper(eq, true)
 		if col == nil {
-			return validEqualCondHelper(ctx, eq, false)
+			return ValidCompareConstantPredicateHelper(eq, false)
 		}
 		return col, con
 	}
@@ -296,7 +297,7 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 		if visited[i] {
 			continue
 		}
-		col, con := validEqualCond(s.ctx, cond)
+		col, con := validEqualCond(cond)
 		// Then we check if this CNF item is a false constant. If so, we will set the whole condition to false.
 		var ok bool
 		if col == nil {
@@ -357,6 +358,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
+// This is a constant propagation logic for expression list such as ['a=1', 'a=b']
 func PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
 	return newPropConstSolver().PropagateConstant(ctx, conditions)
 }
@@ -400,7 +402,7 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 		if visited[i+condsOffset] {
 			continue
 		}
-		col, con := validEqualCond(s.ctx, cond)
+		col, con := validEqualCond(cond)
 		// Then we check if this CNF item is a false constant. If so, we will set the whole condition to false.
 		var ok bool
 		if col == nil {

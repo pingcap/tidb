@@ -282,6 +282,12 @@ type LogicalPlan interface {
 	// predicateSimplification consolidates different predcicates on a column and its equivalence classes.
 	predicateSimplification(opt *logicalOptimizeOp) LogicalPlan
 
+	// constantPropagation generate new constant predicate according to column equivalence relation
+	constantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *logicalOptimizeOp) (newRoot LogicalPlan)
+
+	// pullUpConstantPredicates recursive find constant predicate, used for the constant propagation rule
+	pullUpConstantPredicates() []expression.Expression
+
 	// recursiveDeriveStats derives statistic info between plans.
 	recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error)
 

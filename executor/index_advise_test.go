@@ -101,23 +101,22 @@ and b.txn_accno = a.new_accno;`
 	rows := [][]interface{}{
 		{"Update_8"},
 		{"└─IndexJoin_14"},
-		{"  ├─TableReader_25(Build)"},
-		{"  │ └─Selection_24"},
-		{"  │   └─TableFullScan_23"},
+		{"  ├─TableReader_23(Build)"},
+		{"  │ └─Selection_22"},
+		{"  │   └─TableFullScan_21"},
 		{"  └─IndexReader_12(Probe)"},
-		{"    └─Selection_11"},
-		{"      └─IndexRangeScan_10"},
+		{"    └─IndexRangeScan_11"},
 	}
 	tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern='ON'")
 	tk.MustQuery("explain "+sql).CheckAt([]int{0}, rows)
 	rows = [][]interface{}{
 		{"Update_8"},
-		{"└─HashJoin_10"},
-		{"  ├─IndexReader_17(Build)"},
-		{"  │ └─IndexRangeScan_16"},
-		{"  └─TableReader_14(Probe)"},
-		{"    └─Selection_13"},
-		{"      └─TableFullScan_12"},
+		{"└─HashJoin_12"},
+		{"  ├─TableReader_15(Build)"},
+		{"  │ └─Selection_14"},
+		{"  │   └─TableFullScan_13"},
+		{"  └─IndexReader_18(Probe)"},
+		{"    └─IndexRangeScan_17"},
 	}
 	tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern='OFF'")
 	tk.MustQuery("explain "+sql).CheckAt([]int{0}, rows)

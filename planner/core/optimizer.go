@@ -74,6 +74,7 @@ const (
 	flagSkewDistinctAgg
 	flagEliminateProjection
 	flagMaxMinEliminate
+	flagConstantPropagation
 	flagPredicatePushDown
 	flagEliminateOuterJoin
 	flagPartitionProcessor
@@ -100,6 +101,7 @@ var optRuleList = []logicalOptRule{
 	&skewDistinctAggRewriter{},
 	&projectionEliminator{},
 	&maxMinEliminator{},
+	&constantPropagationSolver{},
 	&ppdSolver{},
 	&outerJoinEliminator{},
 	&partitionProcessor{},
