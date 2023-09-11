@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/handle"
@@ -225,6 +226,10 @@ func (dsp *ImportDispatcherExt) OnNextStage(ctx context.Context, handle dispatch
 	var nextStep int64
 	switch gTask.Step {
 	case proto.StepInit:
+		if metrics, ok := metric.GetCommonMetric(ctx); ok {
+			metrics.BytesCounter.WithLabelValues(metric.StateTotalRestore).Add(float64(taskMeta.Plan.TotalFileSize))
+		}
+
 		if err := preProcess(ctx, handle, gTask, taskMeta, logger); err != nil {
 			return nil, err
 		}
@@ -372,11 +377,18 @@ type importDispatcher struct {
 
 func newImportDispatcher(ctx context.Context, taskMgr *storage.TaskManager,
 	serverID string, task *proto.Task) dispatcher.Dispatcher {
+	metrics := metricsManager.getOrCreateMetrics(task.ID)
+	subCtx := metric.WithCommonMetric(ctx, metrics)
 	dis := importDispatcher{
-		BaseDispatcher: dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task),
+		BaseDispatcher: dispatcher.NewBaseDispatcher(subCtx, taskMgr, serverID, task),
 	}
 	dis.BaseDispatcher.Extension = &ImportDispatcherExt{}
 	return &dis
+}
+
+func (dsp *importDispatcher) Close() {
+	metricsManager.unregister(dsp.Task.ID)
+	dsp.BaseDispatcher.Close()
 }
 
 // preProcess does the pre-processing for the task.

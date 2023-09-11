@@ -20,45 +20,25 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
+	ingesttestutil "github.com/pingcap/tidb/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func injectMockBackendMgr(t *testing.T, store kv.Storage) (restore func()) {
-	tk := testkit.NewTestKit(t, store)
-	oldLitBackendMgr := ingest.LitBackCtxMgr
-	oldInitialized := ingest.LitInitialized
-
-	ingest.LitBackCtxMgr = ingest.NewMockBackendCtxMgr(func() sessionctx.Context {
-		tk.MustExec("rollback;")
-		tk.MustExec("begin;")
-		return tk.Session()
-	})
-	ingest.LitInitialized = true
-
-	return func() {
-		ingest.LitBackCtxMgr = oldLitBackendMgr
-		ingest.LitInitialized = oldInitialized
-	}
-}
-
 func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer injectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	assertLastNDDLUseIngest := func(n int) {
 		tk.MustExec("admin check table t;")
@@ -105,7 +85,7 @@ func TestIngestError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer injectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1;")
 	tk.MustExec("create table t (a int primary key, b int);")
@@ -144,7 +124,7 @@ func TestAddIndexIngestPanic(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer injectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	// Mock panic on coprocessor request sender.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockCopSenderPanic", "return(true)"))
@@ -166,7 +146,7 @@ func TestAddIndexIngestCancel(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer injectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3);")
@@ -223,7 +203,7 @@ func TestIngestPartitionRowCount(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer injectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	tk.MustExec(`create table t (a int, b int, c int as (b+10), d int as (b+c),
 		primary key (a) clustered) partition by range (a) (
@@ -244,7 +224,7 @@ func TestAddIndexIngestClientError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer injectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	tk.MustExec("CREATE TABLE t1 (f1 json);")
 	tk.MustExec(`insert into t1(f1) values (cast("null" as json));`)
@@ -255,7 +235,7 @@ func TestAddIndexCancelOnNoneState(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
-	defer injectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (c1 int, c2 int, c3 int)`)
@@ -277,58 +257,11 @@ func TestAddIndexCancelOnNoneState(t *testing.T) {
 	require.True(t, available)
 }
 
-func TestAddIndexIngestRecoverPartition(t *testing.T) {
-	port := config.GetGlobalConfig().Port
-	tc := testkit.NewDistExecutionContext(t, 3)
-	defer tc.Close()
-	defer injectMockBackendMgr(t, tc.Store)()
-	tk := testkit.NewTestKit(t, tc.Store)
-	tk.MustExec("use test;")
-	tk.MustExec("create table t (a int primary key, b int) partition by hash(a) partitions 8;")
-	tk.MustExec("insert into t values (2, 3), (3, 3), (5, 5);")
-
-	partCnt := 0
-	changeOwner0To1 := func(job *model.Job, _ int64) {
-		partCnt++
-		if partCnt == 3 {
-			tc.SetOwner(1)
-			// TODO(tangenta): mock multiple backends in a better way.
-			//nolint: forcetypeassert
-			ingest.LitBackCtxMgr.(*ingest.MockBackendCtxMgr).ResetSessCtx()
-			bc, _ := ingest.LitBackCtxMgr.Load(job.ID)
-			bc.GetCheckpointManager().Close()
-			bc.AttachCheckpointManager(nil)
-			config.GetGlobalConfig().Port = port + 1
-		}
-	}
-	changeOwner1To2 := func(job *model.Job, _ int64) {
-		partCnt++
-		if partCnt == 6 {
-			tc.SetOwner(2)
-			//nolint: forcetypeassert
-			ingest.LitBackCtxMgr.(*ingest.MockBackendCtxMgr).ResetSessCtx()
-			bc, _ := ingest.LitBackCtxMgr.Load(job.ID)
-			bc.GetCheckpointManager().Close()
-			bc.AttachCheckpointManager(nil)
-			config.GetGlobalConfig().Port = port + 2
-		}
-	}
-	tc.SetOwner(0)
-	hook0 := &callback.TestDDLCallback{}
-	hook0.OnUpdateReorgInfoExported = changeOwner0To1
-	hook1 := &callback.TestDDLCallback{}
-	hook1.OnUpdateReorgInfoExported = changeOwner1To2
-	tc.GetDomain(0).DDL().SetHook(hook0)
-	tc.GetDomain(1).DDL().SetHook(hook1)
-	tk.MustExec("alter table t add index idx(b);")
-	tk.MustExec("admin check table t;")
-}
-
 func TestAddIndexIngestTimezone(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer injectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	tk.MustExec("SET time_zone = '-06:00';")
 	tk.MustExec("create table t (`src` varchar(48),`t` timestamp,`timezone` varchar(100));")
