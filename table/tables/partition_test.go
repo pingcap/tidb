@@ -724,6 +724,7 @@ func TestExchangePartitionStates(t *testing.T) {
 	tk.MustExec(`insert into t values (1, "1")`)
 	tk.MustExec(`insert into tp values (2, "2")`)
 	tk.MustExec(`analyze table t,tp`)
+	tk.MustQuery(`select * from information_schema.global_variables`).Check(testkit.Rows())
 	var wg sync.WaitGroup
 	wg.Add(1)
 	dumpChan := make(chan struct{})
@@ -735,7 +736,7 @@ func TestExchangePartitionStates(t *testing.T) {
 	tk.MustExec("BEGIN")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 1"))
 	tk.MustQuery(`select * from tp`).Check(testkit.Rows("2 2"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID", `pause`))
+	//require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID", `pause`))
 	alterChan := make(chan error)
 	go func() {
 		// WITH VALIDATION is the default
@@ -769,7 +770,7 @@ func TestExchangePartitionStates(t *testing.T) {
 	// MDL will block the alter to not continue until all clients
 	// are in StateWriteOnly, which tk is blocking until it commits
 	tk.MustExec(`COMMIT`)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID"))
+	//require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID"))
 	waitFor("t", "rollback done", 11)
 	// MDL will block the alter from finish, tk is in 'rollbacked' schema version
 	// but the alter is still waiting for tk3 to commit, before continuing

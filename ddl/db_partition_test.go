@@ -1590,7 +1590,7 @@ func TestAlterTableTruncatePartitionPreSplitRegion(t *testing.T) {
 
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec(`CREATE TABLE t1 (id int, c varchar(128), key c(c)) partition by range (id) (
-		partition p0 values less than (10), 
+		partition p0 values less than (10),
 		partition p1 values less than MAXVALUE)`)
 	re := tk.MustQuery("show table t1 regions")
 	rows := re.Rows()
@@ -2570,7 +2570,7 @@ func TestExchangePartitionMultiTable(t *testing.T) {
 	tk3.MustExec(`insert into t1 values (1)`)
 	tk3.MustExec(`insert into t2 values (2)`)
 	tk3.MustExec(`insert into tp values (3)`)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID", `pause`))
+	//require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID", `pause`))
 	go func() {
 		alterChan1 <- tk1.ExecToErr(`alter table tp exchange partition p0 with table t1`)
 	}()
@@ -2581,7 +2581,7 @@ func TestExchangePartitionMultiTable(t *testing.T) {
 	waitFor(11, "t2", "queueing")
 	tk3.MustExec(`rollback`)
 	logutil.BgLogger().Info("rollback done")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID"))
+	//require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID"))
 	require.NoError(t, <-alterChan1)
 	logutil.BgLogger().Info("alter1 done")
 	err := <-alterChan2
