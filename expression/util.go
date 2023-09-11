@@ -1799,9 +1799,14 @@ func ExprsToStringsForDisplay(exprs []Expression) []string {
 	return strs
 }
 
-// SortAndGenMD5HashForCNFExprs sorts cnf exprs by their hash codes
+// SortAndGenMD5HashForCNFExprs sorts cnf exprs by their hash codes: (A or B or C) and (D or E or F) and (G or H or I)
 // Return true and the hash code if none DNF expressions' length > 1000;
 // Otherwise, return false and 0
+// The differences between this function with CanonicalHashCode is:
+// 1. CanonicalHashCode will treat "a < b" the same with "b >= a", while this function won't
+// 2. This function will treat {"A or B or C", "A or C or B", "B or A or C", "B or C or A", "C or A or B", "C or B or A"} all the same,
+// while CanonicalHashCode won't
+// 3. This function will treat "a > 3" the same with "a > ?" and parameter is set 3, while CanonicalHashCode won't
 func SortAndGenMD5HashForCNFExprs(sc *stmtctx.StatementContext, conditions []Expression) (bool, uint64) {
 	prevIgnoreParamMarkerFlag := sc.IgnoreParamMarkerHashCode
 	sc.IgnoreParamMarkerHashCode = true
