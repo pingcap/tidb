@@ -89,8 +89,11 @@ func TestBackfillingDispatcher(t *testing.T) {
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	gTask = createAddIndexGlobalTask(t, dom, "test", "t2", ddl.BackfillTaskType)
+	// 2.2.1 stepInit
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask)
 	require.NoError(t, err)
+	require.Equal(t, 1, len(metas))
+	// 2.2.2 stepOne
 	gTask.Step++
 	gTask.State = proto.TaskStateRunning
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask)
